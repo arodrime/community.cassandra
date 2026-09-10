@@ -2,8 +2,6 @@ name: CI
 on:
   pull_request:
   workflow_dispatch:  # manual full run
-  schedule:
-    - cron: "0 3 * * *"
 
 env:
   setup_cassandra_version_file: "./tests/integration/targets/setup_cassandra/defaults/main.yml"
