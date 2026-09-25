@@ -1,6 +1,0 @@
----
-- name: Restart cassandra
-  ansible.builtin.systemd_service:
-    name: cassandra
-    state: restarted
-  when: cassandra_service_restart_on_change
