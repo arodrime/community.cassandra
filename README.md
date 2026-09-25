@@ -23,6 +23,20 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 - `cassandra_repository`- Configures a package repository for Cassandra on Debian and RedHat based platforms.
 - `cassandra_service`- Run Cassandra under a systemd unit, start it and wait for the node to join.
 
+#### Playbooks
+
+Operations on a cluster, described by one inventory group (`cassandra_hosts`,
+default `cassandra`; per-cluster settings such as `cassandra_seeds` in its
+group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
+
+- `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds).
+- `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first.
+- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time.
+- `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
+- `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
+
+    ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=my_cluster
+
 #### Modules
 
 - `cassandra_assassinate`- Run the assassinate command against a node.
