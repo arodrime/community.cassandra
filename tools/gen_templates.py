@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """Turn stock Cassandra conf files into cassandra_config templates.
 
-Usage: gen_templates.py <series> <stock_dir> <templates_out_dir> [<5.0 stock cassandra.yaml>]
-  e.g. gen_templates.py 4.1 ~/cassandra-4.1.12/conf roles/cassandra_config/templates/4.1 ~/cassandra-5.0.9/conf/cassandra.yaml
+Usage: python3 tools/gen_templates.py <series> <stock_dir> <templates_out_dir> [<5.0 stock cassandra.yaml>]
+  e.g. python3 tools/gen_templates.py 4.1 ~/cassandra-4.1.12/conf roles/cassandra_config/templates/4.1 ~/cassandra-5.0.9/conf/cassandra.yaml
 
 Each rule replaces one exact stock line (asserted unique, so an upstream
 version that moved/changed it fails loudly). Replacements are inline {{ }}
@@ -31,8 +30,15 @@ def opt(var, commented, active, example):
     return (commented, "{{ '' if %s else '#' }}%s" % (var, active.replace("@", value)))
 
 
+def jvm_var(n):
+    # cassandra_jvm<n>_<name> overrides cassandra_jvm_<name>
+    def var(name):
+        return "(cassandra_jvm%s_%s | default(cassandra_jvm_%s))" % (n, name, name)
+    return var
+
+
 def jvm_rules(n):
-    v = lambda name: "(cassandra_jvm%s_%s | default(cassandra_jvm_%s))" % (n, name, name)
+    v = jvm_var(n)
     return [
         ("-XX:MaxTenuringThreshold=2", "-XX:MaxTenuringThreshold={{ %s }}" % v("max_tenuring_threshold")),
         ("-XX:G1HeapRegionSize=16m", "-XX:G1HeapRegionSize={{ %s }}" % v("g1_heap_region_size")),
@@ -86,7 +92,7 @@ ENV_COMMON = [
 
 
 def gc_threads_rules(n):
-    v = lambda name: "(cassandra_jvm%s_%s | default(cassandra_jvm_%s))" % (n, name, name)
+    v = jvm_var(n)
     return [
         opt(v("parallel_gc_threads"), "#-XX:ParallelGCThreads=16", "-XX:ParallelGCThreads=@", "16"),
         opt(v("conc_gc_threads"), "#-XX:ConcGCThreads=16", "-XX:ConcGCThreads=@", "16"),
@@ -136,13 +142,13 @@ def yaml_paths(lines):
             stack.append([indent, "[%d]" % parent[2], 0])
             body, indent = body[2:], indent + 2
         stack.append([indent, body.split(":", 1)[0].strip(), 0])
-        out.append(tuple(k for _, k, _ in stack))
+        out.append(tuple(entry[1] for entry in stack))
     return out
 
 
 def split_value(line):
     # "key: value  # comment" -> ("key:", "value", "  # comment")
-    key, _, rest = line.partition(":")
+    key, rest = line.split(":", 1) if ":" in line else (line, "")
     m = re.match(r"\s*(.*?)(\s+#.*|\s*)$", rest)
     return key + ":", m.group(1), m.group(2)
 

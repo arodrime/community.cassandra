@@ -18,6 +18,7 @@ def test_nodetool_available(host):
     cmd = host.run("nodetool help")
     assert cmd.rc == 0
 
+
 def test_cqlsh_available(host):
     cmd = host.run("cqlsh --version")
 

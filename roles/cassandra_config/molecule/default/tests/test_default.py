@@ -41,7 +41,7 @@ def lines(host, path):
 
 @pytest.mark.parametrize("name", FILES)
 def test_defaults_match_stock(host, name):
-    with open(os.path.join(STOCK_DIR, name)) as f:
+    with open(os.path.join(STOCK_DIR, name + ".stock")) as f:
         expected = f.read().split("\n")
     changes = PACKAGED.get(name, {})
     expected = [changes.get(line, line) for line in expected]
@@ -52,7 +52,7 @@ def test_defaults_match_stock(host, name):
 @pytest.mark.parametrize("series,version", SERIES_4X)
 @pytest.mark.parametrize("name", FILES_4X)
 def test_4x_defaults_match_stock(host, series, version, name):
-    with open(os.path.join(FILES_DIR, f"stock-{version}", name)) as f:
+    with open(os.path.join(FILES_DIR, f"stock-{version}", name + ".stock")) as f:
         expected = [PACKAGED.get(name, {}).get(line, line) for line in f.read().split("\n")]
 
     assert lines(host, f"/tmp/cassandra-{series}/{name}") == expected
