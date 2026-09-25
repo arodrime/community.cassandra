@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_config, cassandra_service - cassandra_seeds takes a list, a new node listed as a seed in a running cluster is refused (a seed doesn't bootstrap), and the seed list is reloaded live (nodetool reloadseeds).

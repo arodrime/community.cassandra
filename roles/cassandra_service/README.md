@@ -43,12 +43,32 @@ Role Variables
 * `cassandra_service_wait_for_normal` (default `true`) and
   `cassandra_service_wait_timeout` (seconds, default 600).
 
+* `cassandra_service_allow_new_seed`: a node that never started and is
+  listed in `cassandra_seeds` is refused when another seed already answers
+  (seeds don't bootstrap: it would join without its data). Default `false`.
+
 Config changes made by `cassandra_config` never restart the node either.
 
 A unit the init script left `active (exited)` with no Cassandra running is
 reset first, so the node really starts. A Cassandra the init script started
 and that still runs is left alone (stopping it would be a restart): the role
 says so, and the native unit takes over at the next restart.
+
+One node at a time
+------------------
+
+The role manages the node it runs on: start it, wait until it has joined
+(`Mode: NORMAL`). Ordering several nodes is the playbook's job: new nodes
+must join one at a time, and a new cluster starts its seeds first.
+
+    # new cluster: seeds first, then the others, one at a time
+    - hosts: cassandra
+      serial: 1
+      roles:
+        - community.cassandra.cassandra_service
+
+    ansible-playbook site.yml --limit dc1-node1,dc2-node1   # the seeds
+    ansible-playbook site.yml                               # the others
 
 Example Playbook
 ----------------

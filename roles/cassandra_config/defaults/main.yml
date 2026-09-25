@@ -57,7 +57,12 @@ cassandra_commitlog_sync_period: "10000ms"
 cassandra_commitlog_segment_size: "32MiB"
 cassandra_commitlog_disk_access_mode: "legacy"
 cassandra_seed_provider_class_name: "org.apache.cassandra.locator.SimpleSeedProvider"
+# Seed nodes, set once per cluster (group_vars): a list (or the stock
+# comma-separated string) of addresses, "host" or "host:port". A new node
+# joining an existing cluster must not be in this list (seeds don't bootstrap).
 cassandra_seeds: "127.0.0.1:7000"
+# When the seed list changes on a running node, apply it live (nodetool reloadseeds)
+cassandra_config_reload_seeds: true
 cassandra_concurrent_reads: 32
 cassandra_concurrent_writes: 32
 cassandra_concurrent_counter_writes: 32
