@@ -236,4 +236,4 @@
       rescue:
         - name: Assert the failure came from the role's own assert
           ansible.builtin.assert:
-            that: ansible_failed_task.name == "Assert required cassandra_config variables are set"
+            that: ansible_failed_task.name is search('Validating arguments against arg spec')  # rejected by argument_specs

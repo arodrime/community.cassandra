@@ -1,0 +1,179 @@
+---
+argument_specs:
+  main:
+    short_description: Run Cassandra under a systemd unit.
+    description:
+      - Installs a native systemd unit, enables it, starts the node and waits
+        until it has joined the cluster.
+      - "Handles the node it runs on. Order several nodes in the playbook
+        (C(serial: 1), seeds first for a new cluster)."
+    options:
+      cassandra_service_enabled:
+        type: bool
+        default: true
+        description:
+          - Start Cassandra at boot.
+      cassandra_service_state:
+        type: str
+        default: started
+        choices: [started, stopped, restarted]
+        description:
+          - State of the service.
+      cassandra_service_restart_on_change:
+        type: bool
+        default: false
+        description:
+          - Restart a running node when the unit changes. Otherwise the change
+            applies at the next restart.
+      cassandra_service_allow_new_seed:
+        type: bool
+        default: false
+        description:
+          - Start a node that never started even when it is listed in
+            C(cassandra_seeds) and another seed already answers. Seeds don't
+            bootstrap, so such a node would join without its data.
+      cassandra_service_user:
+        type: str
+        default: cassandra
+        description:
+          - User running Cassandra.
+      cassandra_service_group:
+        type: str
+        default: cassandra
+        description:
+          - Group running Cassandra.
+      cassandra_service_restart:
+        type: str
+        default: "no"
+        choices: ["no", on-failure, always]
+        description:
+          - systemd C(Restart=). With V(no), a node that died stays down until
+            someone looks at it.
+      cassandra_service_start_limit_burst:
+        type: int
+        default: 3
+        description:
+          - Maximum automatic restarts per O(cassandra_service_start_limit_interval),
+            when O(cassandra_service_restart) is not V(no).
+      cassandra_service_start_limit_interval:
+        type: int
+        default: 1800
+        description:
+          - Interval for O(cassandra_service_start_limit_burst), in seconds.
+      cassandra_service_limit_nofile:
+        type: raw
+        default: 1048576
+        description:
+          - systemd C(LimitNOFILE=).
+      cassandra_service_limit_nproc:
+        type: raw
+        default: 32768
+        description:
+          - systemd C(LimitNPROC=).
+      cassandra_service_limit_memlock:
+        type: raw
+        default: infinity
+        description:
+          - systemd C(LimitMEMLOCK=).
+      cassandra_service_limit_as:
+        type: raw
+        default: infinity
+        description:
+          - systemd C(LimitAS=).
+      cassandra_service_timeout_stop:
+        type: int
+        default: 180
+        description:
+          - Seconds systemd waits for Cassandra to stop before killing it.
+      cassandra_service_environment:
+        type: dict
+        default: {}
+        description:
+          - "Extra environment variables for the unit, for example C({JAVA_HOME: /usr/lib/jvm/java-17})."
+      cassandra_service_wait_for_normal:
+        type: bool
+        default: true
+        description:
+          - "Wait until C(nodetool netstats) reports C(Mode: NORMAL)."
+      cassandra_service_wait_timeout:
+        type: int
+        default: 600
+        description:
+          - How long to wait for the node to join, in seconds.
+      cassandra_service_tasks_max:
+        type: str
+        default: infinity
+        description:
+          - systemd C(TasksMax=). systemd's own default (15% of C(pid_max)) can
+            be low enough to make a busy node fail with "unable to create native thread".
+      cassandra_service_drain_on_stop:
+        type: bool
+        default: true
+        description:
+          - Run C(nodetool drain) before the JVM gets SIGTERM, so a plain
+            C(systemctl stop cassandra) (OS patching, reboot) is clean. Never
+            blocks the stop.
+          - With JMX authentication it needs O(cassandra_jmx_username) and
+            O(cassandra_jmx_password_file) (the unit file is world-readable).
+      cassandra_service_drain_timeout:
+        type: int
+        default: 120
+        description:
+          - Seconds before the drain is abandoned and the JVM stopped anyway.
+            Must stay 10 below O(cassandra_service_timeout_stop).
+      cassandra_service_health_timeout:
+        type: int
+        default: 600
+        description:
+          - Operation playbooks, cluster health check before and after each
+            node. Seconds to wait for down nodes to come back.
+      cassandra_service_health_force:
+        type: bool
+        default: false
+        description:
+          - Go on although the cluster is not healthy. Risky, a second replica
+            down can make data unavailable.
+      cassandra_jmx_username:
+        type: str
+        default: ""
+        description:
+          - JMX user for the modules and C(nodetool) calls, when remote JMX
+            authentication is on.
+      cassandra_jmx_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - JMX password. Prefer O(cassandra_jmx_password_file).
+      cassandra_jmx_password_file:
+        type: str
+        default: ""
+        description:
+          - File holding the JMX password, on the nodes.
+      cassandra_operation_confirm:
+        type: bool
+        default: true
+        description:
+          - Ask the operator before a risky operation. C(false) for non-interactive runs.
+      cassandra_operation_drain:
+        type: bool
+        default: true
+        description:
+          - Rolling restarts drain each node before stopping it (the unit drains
+            on stop too, a second drain is harmless).
+      cassandra_rolling_resume:
+        type: bool
+        default: false
+        description:
+          - Resume the latest interrupted rolling operation of this cluster,
+            skipping the nodes already done.
+      cassandra_rolling_progress_dir:
+        type: path
+        description:
+          - Where rolling operations keep their progress files, on the
+            controller. Defaults to C(~/.cassandra_rolling).
+      cassandra_rolling_progress_days:
+        type: int
+        default: 30
+        description:
+          - Progress files older than this are removed.
