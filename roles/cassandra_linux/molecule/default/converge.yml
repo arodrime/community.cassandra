@@ -1,9 +1,175 @@
 ---
 - name: Converge
   hosts: all
-  roles:
-    - role: community.cassandra.cassandra_linux
   tasks:
+    - name: Run cassandra_linux with the defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+
+    - name: Check the container is detected, nothing applied live or at boot
+      ansible.builtin.assert:
+        that:
+          - _cassandra_linux_container is true
+          - _cassandra_linux_live is false
+          - _cassandra_linux_boot is false
+          - cassandra_data_findmnt is skipped
+          - _cassandra_data_disk == ''
+
+    - name: Run cassandra_linux with cassandra_linux_apply_live false
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_linux_apply_live: false
+
+    - name: Check nothing is applied live or at boot
+      ansible.builtin.assert:
+        that:
+          - _cassandra_linux_live is false
+          - _cassandra_linux_boot is false
+
+    # Its data disk may just not be mounted yet: not tuned
+    - name: Run cassandra_linux with a data directory not created yet
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_dir: /var/lib/cassandra/not/created/yet
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+    - name: Check the disk was looked up (also under --check) and not tuned
+      ansible.builtin.assert:
+        that:
+          - cassandra_data_findmnt is not skipped
+          - cassandra_data_findmnt.stdout == ''
+          - _cassandra_data_disk == ''
+          - cassandra_data_disk_stat is skipped
+
+    # The data directory exists, on the container's overlay: not a disk
+    # (not /tmp: a volume on the host's disk in some images)
+    - name: Run cassandra_linux with a data directory on a non-disk filesystem
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_dir: /opt
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+    - name: Check the filesystem was found and not tuned
+      ansible.builtin.assert:
+        that:
+          - cassandra_data_findmnt.stdout != ''
+          - cassandra_data_findmnt.stdout is not match('/dev/')
+          - _cassandra_data_disk == ''
+          - cassandra_data_disk_stat is skipped
+
+    - name: Run cassandra_linux with a relative data directory
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_dir: data
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+    - name: Check it was not looked up
+      ansible.builtin.assert:
+        that:
+          - cassandra_data_findmnt is skipped
+          - _cassandra_data_disk == ''
+
+    - name: A read-ahead that is not a number is refused
+      block:
+        - name: Run cassandra_linux with a read-ahead of 128k
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_linux
+          vars:
+            cassandra_data_readahead_kb: 128k
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: a read-ahead of 128k was accepted
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that: "'must be a number of KB' in ansible_failed_result.msg"
+
+    - name: A cassandra_linux_apply_live that is not auto or a boolean is refused
+      block:
+        - name: Run cassandra_linux with cassandra_linux_apply_live maybe
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_linux
+          vars:
+            cassandra_linux_apply_live: maybe
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: cassandra_linux_apply_live maybe was accepted
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that: "'must be auto, true or false' in ansible_failed_result.msg"
+
+    - name: An explicit device that can't be tuned is refused
+      block:
+        - name: Run cassandra_linux with a device missing from sysfs
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_linux
+          vars:
+            cassandra_data_block_device: /dev/sdx
+            cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: a device missing from sysfs was accepted
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that: "'is not a disk that can be tuned' in ansible_failed_result.msg"
+
+    # The real /sys/block is the host's: the disk is not tuned, nor refused
+    - name: Run cassandra_linux in the container with a device it doesn't see
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_block_device: /dev/sdx
+
+    - name: Check it was neither tuned nor refused
+      ansible.builtin.assert:
+        that:
+          - _cassandra_data_tuned_here is false
+          - cassandra_data_disk_stat is not skipped
+          - not cassandra_data_disk_stat.stat.exists
+
+    - name: Run cassandra_linux on a spinning disk (keeps its scheduler)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_block_device: /dev/sdy
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+      tags: molecule-idempotence-notest  # the next run rewrites the udev rule for sdz
+
+    - name: Run cassandra_linux with an explicit data disk on the fake sysfs tree
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_block_device: /dev/sdz
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+    - name: Under --check, the disk and the udev rule are left untouched
+      when: ansible_check_mode
+      block:
+        - name: Read the SSD's read-ahead
+          ansible.builtin.slurp:
+            src: /tmp/fake-sys/block/sdz/queue/read_ahead_kb
+          register: _check_readahead
+
+        - name: Look for the udev rule
+          ansible.builtin.stat:
+            path: /etc/udev/rules.d/61-cassandra-data-disk.rules
+          register: _check_rule
+
+        - name: Check nothing was written
+          ansible.builtin.assert:
+            that:
+              - _check_readahead.content | b64decode | trim == '128'
+              - not _check_rule.stat.exists
+
     # The role's own swap-removal task never runs in this test scenario
     # (always skipped), so it never actually proved ansible.posix.mount
     # resolves. This does, directly.
