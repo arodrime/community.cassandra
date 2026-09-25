@@ -139,11 +139,20 @@ cassandra_hints_dir: "/var/lib/cassandra/hints"
 cassandra_commitlog_dir: "/var/lib/cassandra/commitlog"
 cassandra_saved_caches_dir: "/var/lib/cassandra/saved_caches"
 
+# ---- cassandra.yaml, TLS / mTLS (commented out in stock 5.0, active in 4.x) ----
+# 5.0: "" keeps the stock commented line; set a value to enable it.
+cassandra_server_keystore_password: "{{ '' if cassandra_version == '50x' else 'cassandra' }}"
+cassandra_truststore_password: "{{ '' if cassandra_version == '50x' else 'cassandra' }}"
+cassandra_client_keystore_password: "{{ '' if cassandra_version == '50x' else 'cassandra' }}"
+cassandra_server_encryption_optional: ""  # true/false
+cassandra_server_outbound_keystore: ""  # 5.0 mTLS: client certificate for outbound internode connections
+cassandra_server_outbound_keystore_password: ""
+cassandra_client_encryption_optional: ""  # true/false
+cassandra_client_truststore: ""
+cassandra_client_truststore_password: ""
+
 # ---- cassandra.yaml, keys absent from 5.0 ----
 # 4.0 and 4.1
-cassandra_server_keystore_password: "cassandra"
-cassandra_truststore_password: "cassandra"
-cassandra_client_keystore_password: "cassandra"
 # 4.1 only
 cassandra_column_index_size: "64KiB"
 cassandra_scripted_user_defined_functions_enabled: false
@@ -196,7 +205,7 @@ cassandra_enable_drop_compact_storage: false
 # by the cassandra user in a package install).
 cassandra_log_dir: /var/log/cassandra
 cassandra_heap_size: ""  # "" = stock auto-sizing; e.g. "8G" sets -Xms/-Xmx
-cassandra_heap_newsize: ""  # 4.x only: CMS needs it with cassandra_heap_size, e.g. "800M"
+cassandra_heap_newsize: ""  # CMS only (4.x): required with cassandra_heap_size, e.g. "800M"
 cassandra_max_direct_memory_size: ""
 cassandra_heap_dump_dir: "$CASSANDRA_LOG_DIR"
 cassandra_local_jmx: true  # false = remote JMX, with authentication
@@ -205,8 +214,12 @@ cassandra_jmx_rmi_hostname: ""
 
 # ---- jvm8/jvm11/jvm17-server.options ----
 # Each cassandra_jvm_<option> applies to every jvm<N>-server.options file;
-# cassandra_jvm<N>_<option> overrides one. G1 settings are 5.0 only (4.x
-# runs CMS by default); gc threads and extra options apply to all series.
+# cassandra_jvm<N>_<option> overrides one (e.g. cassandra_jvm11_gc).
+# G1 for every series, with 5.0's G1 settings (stock 4.x runs CMS).
+# CMS: Java 8/11 only. custom: both blocks commented, set your own flags
+# with cassandra_jvm<N>_extra_options (e.g. ZGC or Shenandoah).
+cassandra_jvm_gc: G1  # G1, CMS or custom
+cassandra_jvm_cms_initiating_occupancy_fraction: 75
 cassandra_jvm_max_tenuring_threshold: 2
 cassandra_jvm_g1_heap_region_size: "16m"
 cassandra_jvm_g1_new_size_percent: 50

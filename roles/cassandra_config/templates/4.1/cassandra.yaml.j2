@@ -1410,7 +1410,7 @@ server_encryption_options:
   # When set to true, encrypted and unencrypted connections are allowed on the storage_port
   # This should _only be true_ while in unencrypted or transitional operation
   # optional defaults to true if internode_encryption is none
-  # optional: true
+  {{ '# ' if cassandra_server_encryption_optional == '' else '' }}optional: {{ 'true' if cassandra_server_encryption_optional == '' else (cassandra_server_encryption_optional | string | lower) }}
   # If enabled, will open up an encrypted listening socket on ssl_storage_port. Should only be used
   # during upgrade to 4.0; otherwise, set to false.
   legacy_ssl_storage_port_enabled: {{ cassandra_legacy_ssl_storage_port_enabled | lower }}
@@ -1457,7 +1457,7 @@ client_encryption_options:
   # When set to true, encrypted and unencrypted connections are allowed on the native_transport_port
   # This should _only be true_ while in unencrypted or transitional operation
   # optional defaults to true when enabled is false, and false when enabled is true.
-  # optional: true
+  {{ '# ' if cassandra_client_encryption_optional == '' else '' }}optional: {{ 'true' if cassandra_client_encryption_optional == '' else (cassandra_client_encryption_optional | string | lower) }}
   # Set keystore and keystore_password to valid keystores if enabled is true
   keystore: {{ cassandra_client_keystore }}
   keystore_password: {{ cassandra_client_keystore_password }}
@@ -1469,8 +1469,8 @@ client_encryption_options:
   # Verify client certificates
   require_client_auth: {{ cassandra_client_require_client_auth | lower }}
   # Set trustore and truststore_password if require_client_auth is true
-  # truststore: conf/.truststore
-  # truststore_password: cassandra
+  {{ '' if cassandra_client_truststore else '# ' }}truststore: {{ cassandra_client_truststore or 'conf/.truststore' }}
+  {{ '' if cassandra_client_truststore_password else '# ' }}truststore_password: {{ cassandra_client_truststore_password or 'cassandra' }}
   # More advanced defaults:
   # protocol: TLS
   # store_type: JKS

@@ -63,17 +63,32 @@ Role Variables
   `cassandra_max_direct_memory_size` and `cassandra_heap_dump_dir` (5.0
   only; on 4.x set `CASSANDRA_HEAPDUMP_DIR` in the service environment),
   `cassandra_local_jmx`, `cassandra_jmx_port`, `cassandra_jmx_rmi_hostname`.
+* GC: `cassandra_jvm_gc` is `G1` for every series (stock 4.x runs CMS; 4.x
+  then uses 5.0's G1 settings), `CMS` (Java 8/11 only, requires
+  `cassandra_heap_newsize` with `cassandra_heap_size`), or `custom` (both
+  blocks commented out; set your own flags, e.g. ZGC, with
+  `cassandra_jvm<N>_extra_options`). `cassandra_jvm11_gc` etc. override it
+  per file; `cassandra_jvm_cms_initiating_occupancy_fraction` tunes CMS.
 * `jvm<N>-server.options`: 5.0 G1 settings as
   `cassandra_jvm_<option>` (`max_gc_pause_millis`,
   `initiating_heap_occupancy_percent`, `g1_heap_region_size`,
   `g1_new_size_percent`, `max_tenuring_threshold`, `parallel_gc_threads`,
   `conc_gc_threads`), applied to both files; `cassandra_jvm11_<option>` or
-  `cassandra_jvm17_<option>` overrides one file. On 4.x (CMS by default)
-  only `parallel_gc_threads` and `conc_gc_threads` apply.
+  `cassandra_jvm17_<option>` overrides one file.
   `cassandra_jvm_extra_options` (jvm-server.options),
   `cassandra_jvm8_extra_options`, `cassandra_jvm11_extra_options` and
   `cassandra_jvm17_extra_options` append
   extra lines.
+* TLS / mTLS (`cassandra.yaml`): `cassandra_internode_encryption`,
+  `cassandra_server_keystore`, `cassandra_server_keystore_password`,
+  `cassandra_truststore`, `cassandra_truststore_password`,
+  `cassandra_server_require_client_auth`, `cassandra_server_encryption_optional`,
+  `cassandra_server_outbound_keystore` / `_password` (5.0: client certificate
+  for outbound internode connections), and on the client side
+  `cassandra_client_encryption_enabled`, `cassandra_client_keystore`,
+  `cassandra_client_keystore_password`, `cassandra_client_require_client_auth`,
+  `cassandra_client_encryption_optional`, `cassandra_client_truststore` /
+  `_password`. Settings commented out in stock stay commented until set.
 * `cassandra-rackdc.properties`: `cassandra_dc`, `cassandra_rack`,
   `cassandra_prefer_local`.
 * `logback.xml`: `cassandra_log_level` (root logger),

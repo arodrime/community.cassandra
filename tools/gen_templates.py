@@ -37,16 +37,50 @@ def jvm_var(n):
     return var
 
 
-def jvm_rules(n):
+def gc_switch(n, gc, lines):
+    # Lines of one GC's block: active when this file's GC is `gc`, commented
+    # otherwise. (stock, None) keeps the flag; (stock, name) sets its value
+    # from cassandra_jvm_<name>.
     v = jvm_var(n)
-    return [
-        ("-XX:MaxTenuringThreshold=2", "-XX:MaxTenuringThreshold={{ %s }}" % v("max_tenuring_threshold")),
-        ("-XX:G1HeapRegionSize=16m", "-XX:G1HeapRegionSize={{ %s }}" % v("g1_heap_region_size")),
-        ("-XX:G1NewSizePercent=50", "-XX:G1NewSizePercent={{ %s }}" % v("g1_new_size_percent")),
-        ("-XX:MaxGCPauseMillis=300", "-XX:MaxGCPauseMillis={{ %s }}" % v("max_gc_pause_millis")),
-        ("-XX:InitiatingHeapOccupancyPercent=70",
-         "-XX:InitiatingHeapOccupancyPercent={{ %s }}" % v("initiating_heap_occupancy_percent")),
-    ] + gc_threads_rules(n)
+    rules = []
+    for stock, name in lines:
+        flag = stock.lstrip("#")
+        on = "'%s'" % flag if name is None else "'%s=' ~ %s" % (flag.split("=")[0], v(name))
+        off = stock if stock.startswith("#") else "#" + stock
+        rules.append((stock, "{{ %s if %s == '%s' else '%s' }}" % (on, v("gc"), gc, off)))
+    return rules
+
+
+def cms_lines(prefix, parnew=False):
+    flags = (["-XX:+UseParNewGC"] if parnew else []) + [
+        "-XX:+UseConcMarkSweepGC", "-XX:+CMSParallelRemarkEnabled", "-XX:SurvivorRatio=8",
+        "-XX:MaxTenuringThreshold=1", "-XX:CMSInitiatingOccupancyFraction=75", "-XX:+UseCMSInitiatingOccupancyOnly",
+        "-XX:CMSWaitDuration=10000", "-XX:+CMSParallelInitialMarkEnabled", "-XX:+CMSEdenChunksRecordAlways",
+        "-XX:+CMSClassUnloadingEnabled"]
+    return [(prefix + f, "cms_initiating_occupancy_fraction" if "CMSInitiatingOccupancyFraction" in f else None) for f in flags]
+
+
+G1_50 = [
+    ("-XX:+UseG1GC", None), ("-XX:+ParallelRefProcEnabled", None),
+    ("-XX:MaxTenuringThreshold=2", "max_tenuring_threshold"), ("-XX:G1HeapRegionSize=16m", "g1_heap_region_size"),
+    ("-XX:+UnlockExperimentalVMOptions", None), ("-XX:G1NewSizePercent=50", "g1_new_size_percent"),
+    ("-XX:G1RSetUpdatingPauseTimePercent=5", None), ("-XX:MaxGCPauseMillis=300", "max_gc_pause_millis"),
+    ("-XX:InitiatingHeapOccupancyPercent=70", "initiating_heap_occupancy_percent"),
+]
+
+
+def g1_lines_4x(pause, tenuring_and_region):
+    lines = [("#-XX:+UseG1GC", None), ("#-XX:+ParallelRefProcEnabled", None)]
+    if tenuring_and_region:
+        lines += [("#-XX:MaxTenuringThreshold=1", "max_tenuring_threshold"),
+                  ("#-XX:G1HeapRegionSize=16m", "g1_heap_region_size")]
+    return lines + [("#-XX:G1RSetUpdatingPauseTimePercent=5", None),
+                    ("#-XX:MaxGCPauseMillis=%s" % pause, "max_gc_pause_millis"),
+                    ("#-XX:InitiatingHeapOccupancyPercent=70", "initiating_heap_occupancy_percent")]
+
+
+def jvm_rules(n, cms, g1):
+    return gc_switch(n, "CMS", cms) + gc_switch(n, "G1", g1) + gc_threads_rules(n)
 
 
 def append_list(var):
@@ -99,15 +133,18 @@ def gc_threads_rules(n):
     ]
 
 
-# 4.x: CMS by default (G1 commented out), heap and young gen set in pairs
-RULES_4X = dict(COMMON, **{
-    "cassandra-env.sh": ENV_COMMON + [
-        opt("cassandra_heap_size", '#MAX_HEAP_SIZE="4G"', 'MAX_HEAP_SIZE="@"', "4G"),
-        opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="800M"', 'HEAP_NEWSIZE="@"', "800M"),
-    ],
-    "jvm8-server.options": gc_threads_rules(8) + [last_line("cassandra_jvm8_extra_options")],
-    "jvm11-server.options": gc_threads_rules(11) + [last_line("cassandra_jvm11_extra_options")],
-})
+def rules_4x(pause, tenuring_and_region):
+    # Stock 4.x runs CMS (G1 commented out); heap and young gen set in pairs under CMS
+    g1 = g1_lines_4x(pause, tenuring_and_region)
+    return dict(COMMON, **{
+        "cassandra-env.sh": ENV_COMMON + [
+            opt("cassandra_heap_size", '#MAX_HEAP_SIZE="4G"', 'MAX_HEAP_SIZE="@"', "4G"),
+            opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="800M"', 'HEAP_NEWSIZE="@"', "800M"),
+        ],
+        "jvm8-server.options": jvm_rules(8, cms_lines("", parnew=True), g1) + [last_line("cassandra_jvm8_extra_options")],
+        "jvm11-server.options": jvm_rules(11, cms_lines(""), g1) + [last_line("cassandra_jvm11_extra_options")],
+    })
+
 
 RULES = {
     "5.0": dict(COMMON, **{
@@ -117,11 +154,11 @@ RULES = {
             ('    CASSANDRA_HEAPDUMP_DIR="$CASSANDRA_LOG_DIR"',
              '    CASSANDRA_HEAPDUMP_DIR="{{ cassandra_heap_dump_dir }}"'),
         ],
-        "jvm11-server.options": jvm_rules(11) + [last_line("cassandra_jvm11_extra_options")],
-        "jvm17-server.options": jvm_rules(17) + [last_line("cassandra_jvm17_extra_options")],
+        "jvm11-server.options": jvm_rules(11, cms_lines("##"), G1_50) + [last_line("cassandra_jvm11_extra_options")],
+        "jvm17-server.options": jvm_rules(17, [], G1_50) + [last_line("cassandra_jvm17_extra_options")],
     }),
-    "4.1": RULES_4X,
-    "4.0": RULES_4X,
+    "4.1": rules_4x("300", True),
+    "4.0": rules_4x("500", False),
 }
 
 
@@ -131,7 +168,8 @@ def yaml_paths(lines):
     for line in lines:
         body = line.lstrip()
         if not body or body.startswith("#"):
-            out.append(line)
+            # Indented comments repeat across sections (e.g. "  # optional: true")
+            out.append("%s\0%s" % (stack[0][1] if stack else "", line) if line.startswith(" ") else line)
             continue
         indent = len(line) - len(body)
         while stack and stack[-1][0] >= indent:
@@ -175,11 +213,13 @@ RENAMES = {
 def derive_yaml(ref_stock, ref_tpl, stock):
     ref = {}
     for key, a, b in zip(yaml_paths(ref_stock), ref_stock, ref_tpl):
-        ref[key] = (a, b)
+        if a != b:
+            assert key not in ref, "ambiguous reference line: %r" % a
+            ref[key] = (a, b)
     known = set(yaml_paths(ref_stock))
     out, new_vars, conflicts = [], {}, {}
     for key, line in zip(yaml_paths(stock), stock):
-        if key in ref and ref[key][0] != ref[key][1]:
+        if key in ref:
             a, b = ref[key]
             if not isinstance(key, tuple):
                 out.append(b)

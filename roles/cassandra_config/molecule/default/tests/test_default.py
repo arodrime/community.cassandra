@@ -49,13 +49,40 @@ def test_defaults_match_stock(host, name):
     assert lines(host, f"{conf_dir(host)}/{name}") == expected
 
 
+JVM_4X = ["jvm8-server.options", "jvm11-server.options"]
+
+
+def stock_lines(version, name):
+    with open(os.path.join(FILES_DIR, f"stock-{version}", name + ".stock")) as f:
+        return [PACKAGED.get(name, {}).get(line, line) for line in f.read().split("\n")]
+
+
+# Stock 4.x runs CMS: its jvm files match stock under CMS, the rest under G1 (default)
 @pytest.mark.parametrize("series,version", SERIES_4X)
 @pytest.mark.parametrize("name", FILES_4X)
 def test_4x_defaults_match_stock(host, series, version, name):
-    with open(os.path.join(FILES_DIR, f"stock-{version}", name + ".stock")) as f:
-        expected = [PACKAGED.get(name, {}).get(line, line) for line in f.read().split("\n")]
+    rendered = f"/tmp/cassandra-{series}-CMS/{name}" if name in JVM_4X else f"/tmp/cassandra-{series}/{name}"
 
-    assert lines(host, f"/tmp/cassandra-{series}/{name}") == expected
+    assert lines(host, rendered) == stock_lines(version, name)
+
+
+def gc_flags(host, path):
+    return [line for line in lines(host, path) if line.startswith(("-XX:+UseG1GC", "-XX:+UseConcMarkSweepGC", "-XX:+UseParNewGC"))]
+
+
+@pytest.mark.parametrize("series", ["40x", "41x"])
+@pytest.mark.parametrize("name", JVM_4X)
+def test_4x_g1_by_default(host, series, name):
+    jvm = lines(host, f"/tmp/cassandra-{series}/{name}")
+
+    assert gc_flags(host, f"/tmp/cassandra-{series}/{name}") == ["-XX:+UseG1GC"]
+    assert "-XX:MaxGCPauseMillis=300" in jvm
+    assert "-XX:InitiatingHeapOccupancyPercent=70" in jvm
+
+
+def test_50x_cms_on_java11_only(host):
+    assert gc_flags(host, "/tmp/cassandra-50x-CMS/jvm11-server.options") == ["-XX:+UseConcMarkSweepGC"]
+    assert gc_flags(host, "/tmp/cassandra-50x-CMS/jvm17-server.options") == []
 
 
 def test_4x_has_no_jvm17_file(host):
@@ -86,6 +113,22 @@ def test_overrides_cassandra_yaml(host):
     assert conf["endpoint_snitch"] == "GossipingPropertyFileSnitch"
     assert conf["data_file_directories"] == ["/data/cassandra/data"]
     assert conf["seed_provider"][0]["parameters"][0]["seeds"] == "10.0.0.1:7000,10.0.0.2:7000"
+
+
+def test_overrides_tls(host):
+    conf = yaml.safe_load(host.file(f"{OVERRIDE_DIR}/cassandra.yaml").content_string)
+    server, client = conf["server_encryption_options"], conf["client_encryption_options"]
+
+    assert server["internode_encryption"] == "all"
+    assert server["keystore_password"] == "s3cret"
+    assert server["truststore_password"] == "tru5t"
+    assert server["require_client_auth"] is True
+    assert server["outbound_keystore"] == "/etc/cassandra/outbound.keystore"
+    assert server["outbound_keystore_password"] == "0utb0und"
+    assert client["enabled"] is True
+    assert client["optional"] is False
+    assert client["truststore"] == "/etc/cassandra/client.truststore"
+    assert "keystore_password" not in client  # left commented: unset
 
 
 def test_overrides_cassandra_env(host):

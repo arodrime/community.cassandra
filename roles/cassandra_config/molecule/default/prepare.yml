@@ -22,3 +22,6 @@
         - /tmp/cassandra-40x
         - /tmp/cassandra-41x
         - /tmp/cassandra-40x-override
+        - /tmp/cassandra-40x-CMS
+        - /tmp/cassandra-41x-CMS
+        - /tmp/cassandra-50x-CMS
