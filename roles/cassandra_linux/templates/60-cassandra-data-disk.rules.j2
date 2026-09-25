@@ -1,1 +1,2 @@
+# Managed by Ansible (community.cassandra.cassandra_linux): change the role variables, not this file.
 ACTION=="add|change", KERNEL=="{{ _cassandra_data_disk }}", ATTR{queue/read_ahead_kb}="{{ cassandra_data_readahead_kb }}", ATTR{queue/scheduler}="none"

@@ -3,6 +3,7 @@
 Usage: python3 tools/gen_templates.py <series> <stock_dir> <templates_out_dir> [<5.0 stock cassandra.yaml>]
   e.g. python3 tools/gen_templates.py 4.1 ~/cassandra-4.1.12/conf roles/cassandra_config/templates/4.1 ~/cassandra-5.0.9/conf/cassandra.yaml
 
+Every template starts with a one-line "Managed by Ansible" comment.
 Each rule replaces one exact stock line (asserted unique, so an upstream
 version that moved/changed it fails loudly). Replacements are inline {{ }}
 only, so rendering with the role defaults gives back the stock file.
@@ -19,6 +20,13 @@ import sys
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+HEADER = "Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file."
+
+
+def header(name):
+    return "<!-- %s -->" % HEADER if name.endswith(".xml") else "# " + HEADER
+
+
 REF_SERIES = "5.0"
 REF_TEMPLATE = os.path.join(HERE, "..", "roles", "cassandra_config", "templates", REF_SERIES, "cassandra.yaml.j2")
 
@@ -255,15 +263,17 @@ def main(series, stock_dir, out_dir):
             assert len(hits) == 1, "%s: %r found %d times" % (name, old, len(hits))
             lines[hits[0]] = new
         with open(os.path.join(out_dir, name + ".j2"), "w") as f:
-            f.write("\n".join(lines))
+            f.write("\n".join([header(name)] + lines))
 
     if series != REF_SERIES:
         ref_stock = sys.argv[4] if len(sys.argv) > 4 else None
         assert ref_stock, "deriving cassandra.yaml needs the %s stock cassandra.yaml as 4th argument" % REF_SERIES
         with open(ref_stock) as a, open(REF_TEMPLATE) as b, open(os.path.join(stock_dir, "cassandra.yaml")) as c:
-            lines, new_vars, conflicts = derive_yaml(a.read().split("\n"), b.read().split("\n"), c.read().split("\n"))
+            ref_tpl = b.read().split("\n")
+            assert ref_tpl[0] == header("cassandra.yaml"), "reference template must start with the header"
+            lines, new_vars, conflicts = derive_yaml(a.read().split("\n"), ref_tpl[1:], c.read().split("\n"))
         with open(os.path.join(out_dir, "cassandra.yaml.j2"), "w") as f:
-            f.write("\n".join(lines))
+            f.write("\n".join([header("cassandra.yaml")] + lines))
         print("# %s: new variables" % series)
         print(yaml.safe_dump(new_vars, sort_keys=False) if new_vars else "{}")
         print("# %s: stock value differs from %s for" % (series, REF_SERIES))

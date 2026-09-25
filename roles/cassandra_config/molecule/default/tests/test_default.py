@@ -16,6 +16,13 @@ FILES_4X = COMMON_FILES + ["jvm8-server.options", "jvm11-server.options"]
 SERIES_4X = [("40x", "4.0.21"), ("41x", "4.1.12")]
 OVERRIDE_DIR = "/tmp/cassandra-override"
 
+HEADER = "Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file."
+
+
+def header(name):
+    return "<!-- %s -->" % HEADER if name.endswith(".xml") else "# " + HEADER
+
+
 # Deliberate differences from stock, as the deb/rpm packages ship them.
 PACKAGED = {
     "cassandra.yaml": {
@@ -44,7 +51,7 @@ def test_defaults_match_stock(host, name):
     with open(os.path.join(STOCK_DIR, name + ".stock")) as f:
         expected = f.read().split("\n")
     changes = PACKAGED.get(name, {})
-    expected = [changes.get(line, line) for line in expected]
+    expected = [header(name)] + [changes.get(line, line) for line in expected]
 
     assert lines(host, f"{conf_dir(host)}/{name}") == expected
 
@@ -54,7 +61,7 @@ JVM_4X = ["jvm8-server.options", "jvm11-server.options"]
 
 def stock_lines(version, name):
     with open(os.path.join(FILES_DIR, f"stock-{version}", name + ".stock")) as f:
-        return [PACKAGED.get(name, {}).get(line, line) for line in f.read().split("\n")]
+        return [header(name)] + [PACKAGED.get(name, {}).get(line, line) for line in f.read().split("\n")]
 
 
 # Stock 4.x runs CMS: its jvm files match stock under CMS, the rest under G1 (default)
