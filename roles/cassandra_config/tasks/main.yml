@@ -29,209 +29,260 @@
     - (cassandra_jvm11_gc | default(cassandra_jvm_gc)) == "CMS"
     - cassandra_heap_size != ""
 
-- name: Set up the RPM conf dir alternative
-  when:
-    - ansible_facts['os_family'] == 'RedHat'
-    - cassandra_rpm_conf_alternative != ""
-  block:
-    - name: Check for the alternative conf dir
-      ansible.builtin.stat:
-        path: "{{ cassandra_rpm_conf_alternative }}"
-      register: cassandra_rpm_conf_alternative_stat
-
-    # Only seeded once: later runs must not overwrite files the templates don't manage
-    - name: Seed the alternative conf dir from default.conf
-      ansible.builtin.copy:
-        src: /etc/cassandra/default.conf/
-        dest: "{{ cassandra_rpm_conf_alternative }}/"
-        remote_src: true
-        mode: preserve
-      when: not cassandra_rpm_conf_alternative_stat.stat.exists
-
-    - name: Select the alternative conf dir
-      community.general.alternatives:
-        name: cassandra
-        link: /etc/cassandra/conf
-        path: "{{ cassandra_rpm_conf_alternative }}"
-        priority: "{{ cassandra_rpm_conf_alternative_priority }}"
-        state: selected
-      when: cassandra_rpm_conf_alternative_stat.stat.exists or not ansible_check_mode  # not seeded under --check
-
-- name: Check whether this node was already initialized
+- name: Check that the Cassandra package's config is there
   ansible.builtin.stat:
-    path: "{{ cassandra_data_dir }}/system"
-  register: cassandra_config_initialized
+    path: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
+  register: cassandra_config_pkg_conf
 
-# Render into a temp dir and diff against the live files (Ansible's own
-# diff skips files over 100KB, cassandra.yaml included)
-- name: Preview config changes
+- name: Stop if Cassandra is not installed
+  ansible.builtin.fail:
+    msg: "{{ cassandra_config_pkg_conf.stat.path }} not found: install Cassandra first (cassandra_install)"
+  when:
+    - not cassandra_config_pkg_conf.stat.exists
+    - not ansible_check_mode
+
+- name: Nothing to compare yet (--check before the package is installed)
+  ansible.builtin.set_fact:
+    _cassandra_config_items:
+      - item: config files
+        before: Cassandra not installed yet
+        after: "{{ _cassandra_config_files[_cassandra_config_series] | length }} files templated"
+  when: not cassandra_config_pkg_conf.stat.exists
+
+- name: Configure
+  when: cassandra_config_pkg_conf.stat.exists
   block:
-    - name: Create a temp dir for the preview
-      ansible.builtin.tempfile:
-        state: directory
-        suffix: .cassandra_config
-      register: cassandra_config_tmp
-      check_mode: false
-      changed_when: false
+    - name: Set up the RPM conf dir alternative
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - cassandra_rpm_conf_alternative != ""
+      block:
+        - name: Check for the alternative conf dir
+          ansible.builtin.stat:
+            path: "{{ cassandra_rpm_conf_alternative }}"
+          register: cassandra_rpm_conf_alternative_stat
 
-    - name: Render the config files into the temp dir
+        - name: Read where /etc/cassandra/conf points now
+          ansible.builtin.stat:
+            path: /etc/cassandra/conf
+          register: cassandra_config_conf_target
+
+        # Only seeded once: later runs must not overwrite files the templates don't manage
+        - name: Seed the alternative conf dir from default.conf
+          ansible.builtin.copy:
+            src: /etc/cassandra/default.conf/
+            dest: "{{ cassandra_rpm_conf_alternative }}/"
+            remote_src: true
+            mode: preserve
+          when: not cassandra_rpm_conf_alternative_stat.stat.exists
+
+        - name: Select the alternative conf dir
+          community.general.alternatives:
+            name: cassandra
+            link: /etc/cassandra/conf
+            path: "{{ cassandra_rpm_conf_alternative }}"
+            priority: "{{ cassandra_rpm_conf_alternative_priority }}"
+            state: selected
+          when: cassandra_rpm_conf_alternative_stat.stat.exists or not ansible_check_mode  # not seeded under --check
+
+    - name: Check whether this node was already initialized
+      ansible.builtin.stat:
+        path: "{{ cassandra_data_dir }}/system"
+      register: cassandra_config_initialized
+
+    # Render into a temp dir and diff against the live files (Ansible's own
+    # diff skips files over 100KB, cassandra.yaml included)
+    - name: Preview config changes
+      block:
+        - name: Create a temp dir for the preview
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: .cassandra_config
+          register: cassandra_config_tmp
+          check_mode: false
+          changed_when: false
+
+        - name: Render the config files into the temp dir
+          ansible.builtin.template:
+            src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
+            dest: "{{ cassandra_config_tmp.path }}/{{ cassandra_config_file }}"
+            mode: "0600"
+          diff: false
+          loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
+          loop_control:
+            loop_var: cassandra_config_file
+          check_mode: false
+          changed_when: false
+
+        # difflib from the Python Ansible runs with: no diff binary needed
+        - name: Diff them against the live files
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined else ansible_python_interpreter | default('/usr/bin/python3') }}"
+              - -c
+              - |
+                import difflib, os, re, sys
+                live, new = sys.argv[1], sys.argv[2]
+                a = open(live).read().splitlines(True) if os.path.exists(live) else []
+                b = open(new).read().splitlines(True)
+                d = list(difflib.unified_diff(a, b, live + " (live)", "(new)"))
+                # values of password/secret keys never reach the output
+                secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
+                sys.stdout.write("".join(secret.sub(r"\1****", line) for line in d))
+                sys.exit(1 if d else 0)
+              - "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
+              - "{{ cassandra_config_tmp.path }}/{{ cassandra_config_file }}"
+          loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
+          loop_control:
+            loop_var: cassandra_config_file
+          register: cassandra_config_preview
+          check_mode: false
+          changed_when: false
+          failed_when: cassandra_config_preview.rc not in [0, 1]  # 1 = files differ
+        # Top-level keys and rackdc properties: plain text, no YAML parser needed on the node
+        - name: Compare the settings a joined node must keep
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined else ansible_python_interpreter | default('/usr/bin/python3') }}"
+              - -c
+              - |
+                import json, os, re, sys
+                def read(path, pattern):
+                    return {k: v.strip().strip("'\"") for k, v in re.findall(pattern, open(path).read(), re.M)}
+                yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch|initial_token):[ \t]*(.*?)[ \t]*$"
+                rackdc = r"^[ \t]*(dc|rack)[ \t]*=[ \t]*(.*?)[ \t]*$"
+                live, new = {}, {}
+                for live_file, new_file, pattern in ((sys.argv[1], sys.argv[2], yaml), (sys.argv[3], sys.argv[4], rackdc)):
+                    if os.path.exists(live_file):  # no live file: nothing to keep
+                        live.update(read(live_file, pattern))
+                        new.update(read(new_file, pattern))
+                print(json.dumps(["%s: %s -> %s" % (k, live.get(k, "(unset)"), new.get(k, "(unset)"))
+                                  for k in sorted(set(live) | set(new)) if live.get(k) != new.get(k)]))
+              - "{{ cassandra_conf_dir }}/cassandra.yaml"
+              - "{{ cassandra_config_tmp.path }}/cassandra.yaml"
+              - "{{ cassandra_conf_dir }}/cassandra-rackdc.properties"
+              - "{{ cassandra_config_tmp.path }}/cassandra-rackdc.properties"
+          register: cassandra_config_identity
+          check_mode: false
+          changed_when: false
+          when: cassandra_config_initialized.stat.exists
+      always:
+        - name: Remove the preview temp dir
+          ansible.builtin.file:
+            path: "{{ cassandra_config_tmp.path }}"
+            state: absent
+          check_mode: false
+          changed_when: false
+          when: cassandra_config_tmp.path is defined
+
+    - name: Refuse to change the identity of a joined node
+      ansible.builtin.assert:
+        that: _changes | length == 0 or cassandra_config_force_identity_change | bool
+        fail_msg: >-
+          {{ inventory_hostname }} has already joined a cluster ({{ cassandra_data_dir }}/system exists) and these
+          settings would change: {{ _changes | join('; ') }}. A node keeps them for life: a new cluster_name or
+          partitioner stops it from starting, new num_tokens/initial_token or dc/rack move data ownership without
+          streaming. Fix the inventory to match the node, or follow the documented procedure and set
+          cassandra_config_force_identity_change: true.
+        quiet: true
+      vars:
+        _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
+      when: cassandra_config_initialized.stat.exists
+
+    - name: Show the config changes
+      ansible.builtin.debug:
+        msg: "{{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='stdout_lines') | flatten }}"
+      when: cassandra_config_preview.results | selectattr('stdout') | list | length > 0
+
+    - name: List the files to change and whether to ask first
+      ansible.builtin.set_fact:
+        _cassandra_config_changes: "{{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file') | list }}"
+        _cassandra_config_ask: >-
+          {{ cassandra_config_preview.results | selectattr('stdout') | list | length > 0
+             and (cassandra_config_confirm | string | lower == 'true'
+                  or (cassandra_config_confirm | string | lower == 'auto' and cassandra_config_initialized.stat.exists)) }}
+
+    # The diffs are masked above: no password reaches the report
+    - name: Record the changes for the report
+      ansible.builtin.set_fact:
+        _cassandra_config_items: >-
+          {{ ([{'item': '/etc/cassandra/conf', 'before': _conf_target, 'after': cassandra_rpm_conf_alternative}]
+              if _conf_target | default(cassandra_rpm_conf_alternative, true) != cassandra_rpm_conf_alternative else [])
+             + _files }}
+      vars:
+        _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
+        _files: >-
+          {% set out = [] %}{% for r in cassandra_config_preview.results if r.stdout %}{% set _ = out.append({
+            'item': cassandra_conf_dir ~ '/' ~ r.cassandra_config_file,
+            'before': 'current',
+            'after': '%d line(s) changed' % (r.stdout_lines | select('match', '^[-+](?![-+]{2} )') | list | length),
+            'diff': r.stdout}) %}{% endfor %}{{ out }}
+
+    # One prompt per batch (pause runs once; with serial, once per batch)
+    - name: Confirm config changes
+      ansible.builtin.pause:
+        prompt: |-
+          cassandra_config is about to change (diffs above):
+          {% for h in ansible_play_batch if hostvars[h]._cassandra_config_ask | default(false) | bool %}
+            {{ h }}: {{ hostvars[h]._cassandra_config_changes | join(', ') }}
+          {% endfor %}
+          Nodes are NOT restarted by this role. Type 'yes' to apply
+      register: cassandra_config_answer
+      when:
+        - not ansible_check_mode
+        - ansible_play_batch | map('extract', hostvars) | map(attribute='_cassandra_config_ask', default=false) | map('bool') | select | list | length > 0
+
+    - name: Stop unless the changes were confirmed
+      ansible.builtin.assert:
+        that: (cassandra_config_answer.user_input | default('')) == 'yes'
+        fail_msg: >-
+          Config changes not confirmed on {{ inventory_hostname }}. Run interactively and answer 'yes',
+          or set cassandra_config_confirm: false to apply without asking.
+      when:
+        - not ansible_check_mode
+        - _cassandra_config_ask | bool
+
+    - name: Template Cassandra config files
       ansible.builtin.template:
         src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
-        dest: "{{ cassandra_config_tmp.path }}/{{ cassandra_config_file }}"
-        mode: "0600"
-      diff: false
+        dest: "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
+        owner: "{{ cassandra_config_owner }}"
+        group: "{{ cassandra_config_group }}"
+        mode: "{{ cassandra_config_mode }}"
+      diff: false  # shown above, with secrets masked
       loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
       loop_control:
         loop_var: cassandra_config_file
-      check_mode: false
-      changed_when: false
+      register: cassandra_config_applied
 
-    # difflib from the Python Ansible runs with: no diff binary needed
-    - name: Diff them against the live files
-      ansible.builtin.command:
-        argv:
-          - "{{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined else ansible_python_interpreter | default('/usr/bin/python3') }}"
-          - -c
-          - |
-            import difflib, os, re, sys
-            live, new = sys.argv[1], sys.argv[2]
-            a = open(live).read().splitlines(True) if os.path.exists(live) else []
-            b = open(new).read().splitlines(True)
-            d = list(difflib.unified_diff(a, b, live + " (live)", "(new)"))
-            # values of password/secret keys never reach the output
-            secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
-            sys.stdout.write("".join(secret.sub(r"\1****", line) for line in d))
-            sys.exit(1 if d else 0)
-          - "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
-          - "{{ cassandra_config_tmp.path }}/{{ cassandra_config_file }}"
-      loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
-      loop_control:
-        loop_var: cassandra_config_file
-      register: cassandra_config_preview
-      check_mode: false
-      changed_when: false
-      failed_when: cassandra_config_preview.rc not in [0, 1]  # 1 = files differ
-    # Top-level keys and rackdc properties: plain text, no YAML parser needed on the node
-    - name: Compare the settings a joined node must keep
-      ansible.builtin.command:
-        argv:
-          - "{{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined else ansible_python_interpreter | default('/usr/bin/python3') }}"
-          - -c
-          - |
-            import json, os, re, sys
-            def read(path, pattern):
-                return {k: v.strip().strip("'\"") for k, v in re.findall(pattern, open(path).read(), re.M)}
-            yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch|initial_token):[ \t]*(.*?)[ \t]*$"
-            rackdc = r"^[ \t]*(dc|rack)[ \t]*=[ \t]*(.*?)[ \t]*$"
-            live, new = {}, {}
-            for live_file, new_file, pattern in ((sys.argv[1], sys.argv[2], yaml), (sys.argv[3], sys.argv[4], rackdc)):
-                if os.path.exists(live_file):  # no live file: nothing to keep
-                    live.update(read(live_file, pattern))
-                    new.update(read(new_file, pattern))
-            print(json.dumps(["%s: %s -> %s" % (k, live.get(k, "(unset)"), new.get(k, "(unset)"))
-                              for k in sorted(set(live) | set(new)) if live.get(k) != new.get(k)]))
-          - "{{ cassandra_conf_dir }}/cassandra.yaml"
-          - "{{ cassandra_config_tmp.path }}/cassandra.yaml"
-          - "{{ cassandra_conf_dir }}/cassandra-rackdc.properties"
-          - "{{ cassandra_config_tmp.path }}/cassandra-rackdc.properties"
-      register: cassandra_config_identity
-      check_mode: false
-      changed_when: false
-      when: cassandra_config_initialized.stat.exists
-  always:
-    - name: Remove the preview temp dir
-      ansible.builtin.file:
-        path: "{{ cassandra_config_tmp.path }}"
-        state: absent
-      check_mode: false
-      changed_when: false
-      when: cassandra_config_tmp.path is defined
+    - name: Check whether Cassandra is running
+      ansible.builtin.service_facts:
+      when: cassandra_config_applied.changed
 
-- name: Refuse to change the identity of a joined node
-  ansible.builtin.assert:
-    that: _changes | length == 0 or cassandra_config_force_identity_change | bool
-    fail_msg: >-
-      {{ inventory_hostname }} has already joined a cluster ({{ cassandra_data_dir }}/system exists) and these
-      settings would change: {{ _changes | join('; ') }}. A node keeps them for life: a new cluster_name or
-      partitioner stops it from starting, new num_tokens/initial_token or dc/rack move data ownership without
-      streaming. Fix the inventory to match the node, or follow the documented procedure and set
-      cassandra_config_force_identity_change: true.
-    quiet: true
+    # seeds are re-read live by 4.0+ (nodetool reloadseeds), no restart needed
+    - name: Reload the seed list on the running node
+      community.cassandra.cassandra_reload:
+        reload: seeds
+        port: "{{ cassandra_jmx_port }}"
+      when:
+        - cassandra_config_reload_seeds
+        - cassandra_config_applied.changed
+        - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+        - cassandra_config_preview.results | selectattr('cassandra_config_file', 'equalto', 'cassandra.yaml')
+          | map(attribute='stdout') | first | default('') is search('^\+\s*- seeds:', multiline=True)
+
+    - name: Warn that a restart is needed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ _cassandra_config_changes | join(', ') }} changed while Cassandra is running;
+          the new settings apply at the next restart (not done by this role).
+      when:
+        - cassandra_config_applied.changed
+        - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+
+- name: Report
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
   vars:
-    _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
-  when: cassandra_config_initialized.stat.exists
-
-- name: Show the config changes
-  ansible.builtin.debug:
-    msg: "{{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='stdout_lines') | flatten }}"
-  when: cassandra_config_preview.results | selectattr('stdout') | list | length > 0
-
-- name: List the files to change and whether to ask first
-  ansible.builtin.set_fact:
-    _cassandra_config_changes: "{{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file') | list }}"
-    _cassandra_config_ask: >-
-      {{ cassandra_config_preview.results | selectattr('stdout') | list | length > 0
-         and (cassandra_config_confirm | string | lower == 'true'
-              or (cassandra_config_confirm | string | lower == 'auto' and cassandra_config_initialized.stat.exists)) }}
-
-# One prompt per batch (pause runs once; with serial, once per batch)
-- name: Confirm config changes
-  ansible.builtin.pause:
-    prompt: |-
-      cassandra_config is about to change (diffs above):
-      {% for h in ansible_play_batch if hostvars[h]._cassandra_config_ask | default(false) | bool %}
-        {{ h }}: {{ hostvars[h]._cassandra_config_changes | join(', ') }}
-      {% endfor %}
-      Nodes are NOT restarted by this role. Type 'yes' to apply
-  register: cassandra_config_answer
-  when:
-    - not ansible_check_mode
-    - ansible_play_batch | map('extract', hostvars) | map(attribute='_cassandra_config_ask', default=false) | map('bool') | select | list | length > 0
-
-- name: Stop unless the changes were confirmed
-  ansible.builtin.assert:
-    that: (cassandra_config_answer.user_input | default('')) == 'yes'
-    fail_msg: >-
-      Config changes not confirmed on {{ inventory_hostname }}. Run interactively and answer 'yes',
-      or set cassandra_config_confirm: false to apply without asking.
-  when:
-    - not ansible_check_mode
-    - _cassandra_config_ask | bool
-
-- name: Template Cassandra config files
-  ansible.builtin.template:
-    src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
-    dest: "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
-    owner: "{{ cassandra_config_owner }}"
-    group: "{{ cassandra_config_group }}"
-    mode: "{{ cassandra_config_mode }}"
-  diff: false  # shown above, with secrets masked
-  loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
-  loop_control:
-    loop_var: cassandra_config_file
-  register: cassandra_config_applied
-
-- name: Check whether Cassandra is running
-  ansible.builtin.service_facts:
-  when: cassandra_config_applied.changed
-
-# seeds are re-read live by 4.0+ (nodetool reloadseeds), no restart needed
-- name: Reload the seed list on the running node
-  community.cassandra.cassandra_reload:
-    reload: seeds
-    port: "{{ cassandra_jmx_port }}"
-  when:
-    - cassandra_config_reload_seeds
-    - cassandra_config_applied.changed
-    - ansible_facts.services['cassandra.service'].state | default('') == 'running'
-    - cassandra_config_preview.results | selectattr('cassandra_config_file', 'equalto', 'cassandra.yaml')
-      | map(attribute='stdout') | first | default('') is search('^\+\s*- seeds:', multiline=True)
-
-- name: Warn that a restart is needed
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }}: {{ _cassandra_config_changes | join(', ') }} changed while Cassandra is running;
-      the new settings apply at the next restart (not done by this role).
-  when:
-    - cassandra_config_applied.changed
-    - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+    cassandra_change_report_role: cassandra_config
+    cassandra_change_report_items: "{{ _cassandra_config_items | default([]) }}"

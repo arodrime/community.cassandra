@@ -1,0 +1,78 @@
+---
+# Packages this run installs, with the version installed (or, with --check,
+# the repo's candidate), plus the cqlsh Python pointer.
+- name: List the packages this role manages
+  ansible.builtin.set_fact:
+    _cassandra_install_new: >-
+      {{ ([cassandra_java_package] + ([cassandra_packages] | flatten)
+          + ([('libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc')]
+             if ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout | default('') != '' else [])
+          + (['python3.11'] if _cassandra_cqlsh_python == '/usr/bin/python3.11' else []))
+         | reject('in', _cassandra_install_before) | list }}
+
+- name: Refresh installed packages
+  ansible.builtin.package_facts:
+  check_mode: false
+  when: _cassandra_install_new | length > 0
+
+# apt has no module for this (apt-cache policy is read-only)
+- name: Look up candidate versions (check mode, Debian & Ubuntu)
+  ansible.builtin.shell: >-
+    set -o pipefail; apt-cache policy {{ item | quote }} | awk '/Candidate:/ {print $2}'
+  args:
+    executable: /bin/bash
+  loop: "{{ _cassandra_install_new }}"
+  register: cassandra_install_candidates_apt
+  changed_when: false
+  check_mode: false
+  when:
+    - ansible_check_mode
+    - ansible_facts['os_family'] == 'Debian'
+
+- name: Look up candidate versions (check mode, RedHat)
+  ansible.builtin.dnf:
+    list: "{{ item }}"
+  loop: "{{ _cassandra_install_new }}"
+  register: cassandra_install_candidates_dnf
+  check_mode: false
+  when:
+    - ansible_check_mode
+    - ansible_facts['os_family'] == 'RedHat'
+
+- name: Keep the candidate versions
+  ansible.builtin.set_fact:
+    _cassandra_install_candidates: >-
+      {% set out = {} %}
+      {% for r in cassandra_install_candidates_apt.results | default([]) if r.stdout is defined %}
+      {%   set _ = out.update({r.item: r.stdout | replace('(none)', '')}) %}
+      {% endfor %}
+      {% for r in cassandra_install_candidates_dnf.results | default([]) if r.results is defined %}
+      {%   set available = r.results | selectattr('yumstate', 'equalto', 'available') | list %}
+      {%   set _ = out.update({r.item: (available[-1].version ~ '-' ~ available[-1].release) if available else ''}) %}
+      {% endfor %}
+      {{ out }}
+  when: ansible_check_mode
+
+- name: Build the change list
+  ansible.builtin.set_fact:
+    _cassandra_install_items: >-
+      {{ _cassandra_install_items | default([]) + [{
+           'item': 'package ' ~ item,
+           'before': 'absent',
+           'after': (ansible_facts['packages'][item][0].version
+                     ~ (('-' ~ ansible_facts['packages'][item][0].release) if ansible_facts['packages'][item][0].release | default('') else ''))
+                    if (item in ansible_facts['packages'] and not ansible_check_mode)
+                    else (_cassandra_install_candidates[item] | default('') or 'not in configured repos yet')}] }}
+  loop: "{{ _cassandra_install_new }}"
+
+- name: Add the cqlsh Python pointer to the change list
+  ansible.builtin.set_fact:
+    _cassandra_install_items: "{{ _cassandra_install_items | default([]) + [{'item': 'cqlsh Python', 'before': 'python3', 'after': _cassandra_cqlsh_python}] }}"
+  when: cassandra_cqlsh_wrapper is changed
+
+- name: Report
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_install
+    cassandra_change_report_items: "{{ _cassandra_install_items | default([]) }}"
