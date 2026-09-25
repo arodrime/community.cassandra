@@ -17,7 +17,7 @@
         state: directory
         mode: "0755"
       loop:
-        - "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}"
+        - "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}"
         - /tmp/cassandra-override
         - /tmp/cassandra-40x
         - /tmp/cassandra-41x
@@ -25,3 +25,16 @@
         - /tmp/cassandra-40x-CMS
         - /tmp/cassandra-41x-CMS
         - /tmp/cassandra-50x-CMS
+
+    # What the rpm's %post does: /etc/cassandra/conf -> alternatives -> default.conf
+    - name: Seed default.conf with a file the templates don't manage (RedHat)
+      ansible.builtin.copy:
+        content: "package file\n"
+        dest: /etc/cassandra/default.conf/cqlshrc.sample
+        mode: "0644"
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Register default.conf as the cassandra alternative (RedHat)
+      ansible.builtin.command: alternatives --install /etc/cassandra/conf cassandra /etc/cassandra/default.conf/ 0
+      changed_when: true
+      when: ansible_facts['os_family'] == 'RedHat'

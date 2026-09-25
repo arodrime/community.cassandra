@@ -164,3 +164,15 @@ def test_overrides_logback(host):
 
     assert '<root level="WARN">' in logback
     assert '<!-- <appender-ref ref="ASYNCDEBUGLOG" /> -->' in logback
+
+
+def test_rpm_conf_alternative(host):
+    if host.system_info.distribution in ("ubuntu", "debian"):
+        pytest.skip("RPM layout only")
+    display = host.run("alternatives --display cassandra").stdout
+
+    assert "link currently points to /etc/cassandra/ansible.conf" in display
+    assert host.file("/etc/cassandra/conf").linked_to == "/etc/cassandra/ansible.conf"
+    assert host.file("/etc/cassandra/ansible.conf/cqlshrc.sample").content_string == "package file\n"  # seeded
+    assert host.file("/etc/cassandra/ansible.conf/cassandra.yaml").exists
+    assert not host.file("/etc/cassandra/default.conf/cassandra.yaml").exists  # package dir untouched

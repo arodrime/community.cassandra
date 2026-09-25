@@ -18,6 +18,33 @@
     - (cassandra_jvm11_gc | default(cassandra_jvm_gc)) == "CMS"
     - cassandra_heap_size != ""
 
+- name: Set up the RPM conf dir alternative
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_rpm_conf_alternative != ""
+  block:
+    - name: Check for the alternative conf dir
+      ansible.builtin.stat:
+        path: "{{ cassandra_rpm_conf_alternative }}"
+      register: cassandra_rpm_conf_alternative_stat
+
+    # Only seeded once: later runs must not overwrite files the templates don't manage
+    - name: Seed the alternative conf dir from default.conf
+      ansible.builtin.copy:
+        src: /etc/cassandra/default.conf/
+        dest: "{{ cassandra_rpm_conf_alternative }}/"
+        remote_src: true
+        mode: preserve
+      when: not cassandra_rpm_conf_alternative_stat.stat.exists
+
+    - name: Select the alternative conf dir
+      community.general.alternatives:
+        name: cassandra
+        link: /etc/cassandra/conf
+        path: "{{ cassandra_rpm_conf_alternative }}"
+        priority: "{{ cassandra_rpm_conf_alternative_priority }}"
+        state: selected
+
 - name: Template Cassandra config files
   ansible.builtin.template:
     src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"

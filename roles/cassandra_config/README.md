@@ -39,6 +39,12 @@ Role Variables
   `/etc/cassandra/conf` on RedHat, `/etc/cassandra` on Debian. Keep the
   default with a package install: the package's `cassandra.in.sh`
   hardcodes that path for Cassandra and its tools, anything else is not read.
+* `cassandra_rpm_conf_alternative` (RedHat): conf dir seeded once from the
+  package's `default.conf` and selected with `alternatives` (priority
+  `cassandra_rpm_conf_alternative_priority`, 100), so `/etc/cassandra/conf`
+  points to it and `default.conf` stays as shipped (`rpm -V` clean, package
+  upgrades never touch the live config). Default `/etc/cassandra/ansible.conf`;
+  `""` writes into `default.conf` instead.
 * `cassandra_data_dir`: Cassandra's data directory. Defaults to
   `/var/lib/cassandra/data`. This is the canonical definition - the
   `cassandra_linux` role reads the same variable (with no default of its

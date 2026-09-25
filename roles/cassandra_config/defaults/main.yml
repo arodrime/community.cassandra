@@ -6,6 +6,12 @@ cassandra_version: "50x"
 # (alternatives symlink), the deb /etc/cassandra.
 cassandra_conf_dir: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}"
 
+# RedHat: own conf dir, seeded from the package's default.conf and selected
+# through alternatives, so default.conf stays pristine. "" writes into
+# default.conf instead.
+cassandra_rpm_conf_alternative: /etc/cassandra/ansible.conf
+cassandra_rpm_conf_alternative_priority: 100
+
 # Cassandra's data directory. Also read by the cassandra_linux role to
 # auto-detect cassandra_data_block_device for read-ahead/IO scheduler
 # tuning - this is the canonical definition, cassandra_linux has none.
