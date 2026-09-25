@@ -54,3 +54,8 @@ def test_policy_rc_d_removed(host):
 
 def test_cassandra_not_started_by_package(host):
     assert host.run("pgrep -f [C]assandraDaemon").rc != 0
+
+
+def test_no_cqlsh_python_override_on_50x(host):
+    # 5.0's cqlsh supports the system python3: no wrapper installed
+    assert not host.file("/usr/local/bin/cqlsh").exists

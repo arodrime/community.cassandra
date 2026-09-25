@@ -17,3 +17,12 @@ cassandra_java_package: >-
   {{ ('openjdk-' ~ cassandra_java_version ~ '-jre-headless') if ansible_facts['os_family'] == 'Debian'
   else ('java-' ~ cassandra_java_version ~ '-amazon-corretto-headless') if ansible_facts['distribution'] == 'Amazon'
   else ('java-' ~ cassandra_java_version ~ '-openjdk-headless') }}
+
+# Python used by cqlsh. "" = python3, unless it is newer than the series'
+# cqlsh supports (4.x: <= 3.11), then python3.11 is installed next to it.
+cassandra_cqlsh_python: ""
+cassandra_cqlsh_python_max:
+  40x: "3.11"
+  41x: "3.11"
+# Ubuntu releases without python3.11 (24.04+); "" to rely on configured repos
+cassandra_cqlsh_python_ppa: "ppa:deadsnakes/ppa"
