@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_service - new role installing the systemd unit (drain on stop, limits), starting Cassandra and waiting until the node has joined the ring.

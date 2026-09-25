@@ -1,0 +1,35 @@
+---
+# defaults file for cassandra_service
+cassandra_service_enabled: true
+cassandra_service_state: started
+
+# Restarting a node is a cluster operation: a changed unit only takes effect
+# at the next restart unless this is set.
+cassandra_service_restart_on_change: false
+
+cassandra_service_user: cassandra
+cassandra_service_group: cassandra
+# systemd Restart=. "no": a node that died stays down until a human looks
+# (disk/commit failure policies and OOM kill it on purpose). "on-failure"
+# is capped at cassandra_service_start_limit_burst restarts per interval.
+cassandra_service_restart: "no"
+cassandra_service_start_limit_burst: 3
+cassandra_service_start_limit_interval: 1800  # seconds
+cassandra_service_limit_nofile: 1048576
+cassandra_service_limit_nproc: 32768
+cassandra_service_limit_memlock: infinity
+cassandra_service_limit_as: infinity
+cassandra_service_timeout_stop: 180  # seconds, let a busy node flush
+cassandra_service_environment: {}  # extra Environment= lines, e.g. {JAVA_HOME: /usr/lib/jvm/java-17}
+# Tasks (threads) the service may create. systemd's default is 15% of
+# pid_max (can be ~4900): too low for a busy node ("unable to create native thread").
+cassandra_service_tasks_max: infinity
+# Drain the node (nodetool drain) before the JVM gets SIGTERM, so a plain
+# "systemctl stop cassandra" (OS patching, reboot) is clean. Never blocks the
+# stop: after cassandra_service_drain_timeout the JVM is stopped anyway.
+cassandra_service_drain_on_stop: true
+cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout_stop
+
+# Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
+cassandra_service_wait_for_normal: true
+cassandra_service_wait_timeout: 600  # seconds
