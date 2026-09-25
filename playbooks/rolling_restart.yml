@@ -1,0 +1,26 @@
+---
+# Restarts every node of a cluster, one at a time: waits for the whole
+# cluster to be up, drains the node, restarts it, waits until it has joined.
+#   ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=my_cluster
+- name: Rolling restart
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  serial: 1
+  tasks:
+    - name: Wait until every node is up
+      ansible.builtin.command: nodetool status
+      register: cassandra_restart_status
+      until: >-
+        cassandra_restart_status.rc == 0
+        and cassandra_restart_status.stdout_lines | select('match', '^[UD][NLJM] ') | reject('match', '^UN ') | list | length == 0
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    - name: Drain the node
+      community.cassandra.cassandra_drain:
+
+    - name: Restart it and wait until it has joined
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+      vars:
+        cassandra_service_state: restarted

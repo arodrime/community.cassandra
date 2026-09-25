@@ -1,0 +1,2 @@
+minor_changes:
+  - New playbooks for cluster operations - preflight, create_cluster, add_node, rolling_restart and change_seeds.
