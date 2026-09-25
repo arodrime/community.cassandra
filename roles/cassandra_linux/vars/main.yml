@@ -1,0 +1,8 @@
+---
+_cassandra_timesync_pkg: "{{ (ansible_facts['os_family'] == 'Debian') | ternary('systemd-timesyncd', 'chrony') }}"
+_cassandra_timesync_service: "{{ (ansible_facts['os_family'] == 'Debian') | ternary('systemd-timesyncd', 'chronyd') }}"
+_cassandra_limits:
+  memlock: unlimited
+  nofile: "100000"
+  nproc: "32768"
+  as: unlimited
