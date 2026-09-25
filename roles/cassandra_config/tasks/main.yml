@@ -215,6 +215,18 @@
   ansible.builtin.service_facts:
   when: cassandra_config_applied.changed
 
+# seeds are re-read live by 4.0+ (nodetool reloadseeds), no restart needed
+- name: Reload the seed list on the running node
+  community.cassandra.cassandra_reload:
+    reload: seeds
+    port: "{{ cassandra_jmx_port }}"
+  when:
+    - cassandra_config_reload_seeds
+    - cassandra_config_applied.changed
+    - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+    - cassandra_config_preview.results | selectattr('cassandra_config_file', 'equalto', 'cassandra.yaml')
+      | map(attribute='stdout') | first | default('') is search('^\+\s*- seeds:', multiline=True)
+
 - name: Warn that a restart is needed
   ansible.builtin.debug:
     msg: >-
