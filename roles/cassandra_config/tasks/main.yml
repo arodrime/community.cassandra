@@ -4,19 +4,23 @@
     that:
       - cassandra_conf_dir is defined and cassandra_conf_dir != ""
       - cassandra_data_dir is defined and cassandra_data_dir != ""
-      - cassandra_version in ["50x"]
-    fail_msg: "cassandra_version must be one of: 50x"
+      - cassandra_version in ["40x", "41x", "50x"]
+    fail_msg: "cassandra_version must be one of: 40x, 41x, 50x"
+
+# 4.x cassandra-env.sh exits if only one of the pair is set under CMS
+- name: Assert heap settings are consistent (4.x)
+  ansible.builtin.assert:
+    that: cassandra_heap_newsize != ""
+    fail_msg: "On 4.x (CMS), set cassandra_heap_newsize together with cassandra_heap_size"
+  when:
+    - cassandra_version in ["40x", "41x"]
+    - cassandra_heap_size != ""
 
 - name: Template Cassandra config files
   ansible.builtin.template:
-    src: "{{ cassandra_version[0] }}.{{ cassandra_version[1] }}/{{ item }}.j2"
-    dest: "{{ cassandra_conf_dir }}/{{ item }}"
+    src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
+    dest: "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
     mode: "0644"
-  loop:
-    - cassandra.yaml
-    - cassandra-env.sh
-    - jvm-server.options
-    - jvm11-server.options
-    - jvm17-server.options
-    - cassandra-rackdc.properties
-    - logback.xml
+  loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
+  loop_control:
+    loop_var: cassandra_config_file

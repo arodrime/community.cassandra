@@ -28,6 +28,46 @@
         cassandra_log_level: WARN
         cassandra_debug_log_enabled: false
 
+    - name: Render 4.x series with defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_version: "{{ series }}"
+        cassandra_conf_dir: "/tmp/cassandra-{{ series }}"
+      loop: [40x, 41x]
+      loop_control:
+        loop_var: series
+
+    - name: Render 4.0 with overrides
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_version: 40x
+        cassandra_conf_dir: /tmp/cassandra-40x-override
+        cassandra_key_cache_save_period: 3600
+        cassandra_read_request_timeout_in_ms: 7000
+        cassandra_heap_size: 512M
+        cassandra_heap_newsize: 128M
+        cassandra_jvm8_extra_options: ["-Dmolecule.jvm8=1"]
+
+    - name: Render 4.x with a heap size but no newsize
+      block:
+        - name: Run the role, expecting its heap assert to fail
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+          vars:
+            cassandra_version: 41x
+            cassandra_conf_dir: /tmp/cassandra-41x
+            cassandra_heap_size: 512M
+
+        - name: Fail if the role accepted a heap size without newsize on 4.x
+          ansible.builtin.fail:
+            msg: cassandra_config accepted cassandra_heap_size without cassandra_heap_newsize on 4.x
+      rescue:
+        - name: Assert the failure came from the role's heap assert
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == "Assert heap settings are consistent (4.x)"
+
     - name: Render with an empty cassandra_conf_dir
       block:
         - name: Run the role, expecting its assert to fail

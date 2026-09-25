@@ -8,16 +8,12 @@ testinfra_hosts = testinfra.utils.ansible_runner.AnsibleRunner(
     os.environ['MOLECULE_INVENTORY_FILE']
 ).get_hosts('all')
 
-STOCK_DIR = os.path.join(os.path.dirname(__file__), '..', 'files', 'stock-5.0.9')
-FILES = [
-    "cassandra.yaml",
-    "cassandra-env.sh",
-    "jvm-server.options",
-    "jvm11-server.options",
-    "jvm17-server.options",
-    "cassandra-rackdc.properties",
-    "logback.xml",
-]
+FILES_DIR = os.path.join(os.path.dirname(__file__), '..', 'files')
+STOCK_DIR = os.path.join(FILES_DIR, 'stock-5.0.9')
+COMMON_FILES = ["cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "cassandra-rackdc.properties", "logback.xml"]
+FILES = COMMON_FILES + ["jvm11-server.options", "jvm17-server.options"]
+FILES_4X = COMMON_FILES + ["jvm8-server.options", "jvm11-server.options"]
+SERIES_4X = [("40x", "4.0.21"), ("41x", "4.1.12")]
 OVERRIDE_DIR = "/tmp/cassandra-override"
 
 # Deliberate differences from stock, as the deb/rpm packages ship them.
@@ -51,6 +47,30 @@ def test_defaults_match_stock(host, name):
     expected = [changes.get(line, line) for line in expected]
 
     assert lines(host, f"{conf_dir(host)}/{name}") == expected
+
+
+@pytest.mark.parametrize("series,version", SERIES_4X)
+@pytest.mark.parametrize("name", FILES_4X)
+def test_4x_defaults_match_stock(host, series, version, name):
+    with open(os.path.join(FILES_DIR, f"stock-{version}", name)) as f:
+        expected = [PACKAGED.get(name, {}).get(line, line) for line in f.read().split("\n")]
+
+    assert lines(host, f"/tmp/cassandra-{series}/{name}") == expected
+
+
+def test_4x_has_no_jvm17_file(host):
+    assert not host.file("/tmp/cassandra-41x/jvm17-server.options").exists
+
+
+def test_40x_overrides(host):
+    conf = yaml.safe_load(host.file("/tmp/cassandra-40x-override/cassandra.yaml").content_string)
+    env = lines(host, "/tmp/cassandra-40x-override/cassandra-env.sh")
+
+    assert conf["key_cache_save_period"] == 3600  # version-dependent default is overridable
+    assert conf["read_request_timeout_in_ms"] == 7000
+    assert 'MAX_HEAP_SIZE="512M"' in env
+    assert 'HEAP_NEWSIZE="128M"' in env
+    assert lines(host, "/tmp/cassandra-40x-override/jvm8-server.options")[-2:] == ["-Dmolecule.jvm8=1", ""]
 
 
 @pytest.mark.parametrize("name", FILES)
