@@ -9,7 +9,12 @@ cassandra_service_restart_on_change: false
 
 cassandra_service_user: cassandra
 cassandra_service_group: cassandra
-cassandra_service_restart: on-failure  # systemd Restart=
+# systemd Restart=. "no": a node that died stays down until a human looks
+# (disk/commit failure policies and OOM kill it on purpose). "on-failure"
+# is capped at cassandra_service_start_limit_burst restarts per interval.
+cassandra_service_restart: "no"
+cassandra_service_start_limit_burst: 3
+cassandra_service_start_limit_interval: 1800  # seconds
 cassandra_service_limit_nofile: 1048576
 cassandra_service_limit_nproc: 32768
 cassandra_service_limit_memlock: infinity

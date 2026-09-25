@@ -5,6 +5,11 @@ Description=Apache Cassandra
 Documentation=https://cassandra.apache.org/doc/latest/
 After=network-online.target
 Wants=network-online.target
+{% if cassandra_service_restart != 'no' %}
+# Caps automatic restarts (manual starts count too)
+StartLimitIntervalSec={{ cassandra_service_start_limit_interval }}
+StartLimitBurst={{ cassandra_service_start_limit_burst }}
+{% endif %}
 
 [Service]
 Type=simple
@@ -18,7 +23,9 @@ ExecStart=/usr/sbin/cassandra -f
 SuccessExitStatus=143
 TimeoutStopSec={{ cassandra_service_timeout_stop }}
 Restart={{ cassandra_service_restart }}
+{% if cassandra_service_restart != 'no' %}
 RestartSec=30
+{% endif %}
 LimitNOFILE={{ cassandra_service_limit_nofile }}
 LimitNPROC={{ cassandra_service_limit_nproc }}
 LimitMEMLOCK={{ cassandra_service_limit_memlock }}

@@ -42,13 +42,18 @@ def test_cluster_name_applied(host):
     assert "Name: Molecule Cluster" in host.run("nodetool describecluster").stdout
 
 
-def test_crash_is_restarted_by_systemd(host):
-    # Restart=on-failure: a killed JVM comes back (RestartSec=30)
-    before = host.run("systemctl show cassandra -p MainPID --value").stdout.strip()
-    host.run(f"kill -9 {before}")
-    after = host.run(
-        "for i in $(seq 1 60); do p=$(systemctl show cassandra -p MainPID --value);"
-        " [ \"$p\" != 0 ] && [ \"$p\" != %s ] && echo $p && exit; sleep 2; done" % before
-    ).stdout.strip()
+def test_restart_policy_is_no(host):
+    unit = host.file("/etc/systemd/system/cassandra.service").content_string
 
-    assert after and after != before
+    assert "Restart=no" in unit
+    assert "StartLimitBurst" not in unit  # would also block manual restarts
+
+
+def test_crashed_node_stays_down(host):
+    # Restart=no: a killed JVM is not brought back behind the operator's back
+    pid = host.run("systemctl show cassandra -p MainPID --value").stdout.strip()
+    host.run(f"kill -9 {pid}")
+    host.run("sleep 45")
+
+    assert host.run("systemctl show cassandra -p MainPID --value").stdout.strip() == "0"
+    assert not host.service("cassandra").is_running
