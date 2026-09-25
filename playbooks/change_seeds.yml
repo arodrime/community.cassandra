@@ -1,0 +1,12 @@
+---
+# Applies a new cassandra_seeds list to every node of a cluster: the new
+# cassandra.yaml is shown and confirmed, then reloaded live (no restart).
+#   ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=my_cluster
+# The preflight check refuses seeds that are not up members of the cluster.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Update the seed list
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  roles:
+    - community.cassandra.cassandra_config
