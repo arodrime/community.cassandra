@@ -20,8 +20,8 @@
   retries: 3
 
 # The Debian package starts Cassandra from its postinst, with stock config,
-# before cassandra_config runs: the node would initialise as "Test Cluster"
-# and later refuse the real cluster_name. policy-rc.d (exit 101) tells
+# before the node is configured: it would initialise as "Test Cluster" and
+# later refuse the real cluster_name. policy-rc.d (exit 101) tells
 # invoke-rc.d not to start or restart services during package operations.
 - name: Check for an existing policy-rc.d
   ansible.builtin.stat:
