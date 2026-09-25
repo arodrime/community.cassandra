@@ -18,11 +18,13 @@ cassandra_java_package: >-
   else ('java-' ~ cassandra_java_version ~ '-amazon-corretto-headless') if ansible_facts['distribution'] == 'Amazon'
   else ('java-' ~ cassandra_java_version ~ '-openjdk-headless') }}
 
-# Python used by cqlsh. "" = python3, unless it is newer than the series'
-# cqlsh supports (4.x: <= 3.11), then python3.11 is installed next to it.
+# Python used by cqlsh. "" = python3, unless it is outside the range the
+# series' cqlsh supports, then python3.11 (fits every range) is installed
+# next to it. python3 itself is never changed.
 cassandra_cqlsh_python: ""
-cassandra_cqlsh_python_max:
-  40x: "3.11"
-  41x: "3.11"
+cassandra_cqlsh_python_supported:  # [min, max]
+  40x: ["3.6", "3.11"]  # bundled six/driver break on 3.12
+  41x: ["3.6", "3.11"]
+  50x: ["3.8", "3.13"]  # bin/cqlsh refuses 3.6/3.7
 # Ubuntu releases without python3.11 (24.04+); "" to rely on configured repos
 cassandra_cqlsh_python_ppa: "ppa:deadsnakes/ppa"
