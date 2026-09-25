@@ -198,6 +198,10 @@
     login_user: "{{ cassandra_admin_user }}"
     login_password: "{{ cassandra_admin_pwd }}"
   register: myrole
+  # the password change can fail transiently on 4.1+
+  until: myrole is succeeded
+  retries: 3
+  delay: 3
 
 - assert:
     that:
