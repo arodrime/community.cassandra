@@ -176,3 +176,13 @@ def test_rpm_conf_alternative(host):
     assert host.file("/etc/cassandra/ansible.conf/cqlshrc.sample").content_string == "package file\n"  # seeded
     assert host.file("/etc/cassandra/ansible.conf/cassandra.yaml").exists
     assert not host.file("/etc/cassandra/default.conf/cassandra.yaml").exists  # package dir untouched
+
+
+def test_unconfirmed_change_not_applied(host):
+    conf = yaml.safe_load(host.file("/tmp/cassandra-confirm/cassandra.yaml").content_string)
+
+    assert conf["num_tokens"] == 16  # the change to 8 was refused
+
+
+def test_preview_leaves_no_temp_dir(host):
+    assert host.run("ls -d /tmp/*.cassandra_config").rc != 0

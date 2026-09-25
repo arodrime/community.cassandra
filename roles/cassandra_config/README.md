@@ -29,6 +29,23 @@ variables whose default equals the exact stock value: every active key of
 Each template is verified by rendering it with only its defaults and
 diffing the result byte-for-byte against the real stock file.
 
+Changing an existing node
+-------------------------
+
+Every run first renders the files into a temp dir on the node and shows a
+`diff -u` against the live files (Ansible's own `--diff` skips files over
+100KB, which includes `cassandra.yaml`). Settings you did not set as
+variables are rendered with their stock value, so a hand-edited node shows
+here what would be reverted.
+
+With `cassandra_config_confirm: auto` (default), a node that was already
+initialized (`<cassandra_data_dir>/system` exists) is only changed after you
+type `yes` at a single prompt listing every host and file concerned; a
+first install is not blocked. `true` always asks, `false` never does. With
+no terminal to answer (CI, AWX), a required confirmation fails the run.
+`--check` shows the diff and changes nothing. The role never restarts
+Cassandra: when it changed files of a running node, it says so.
+
 Role Variables
 --------------
 

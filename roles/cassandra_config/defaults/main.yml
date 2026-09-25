@@ -12,6 +12,12 @@ cassandra_conf_dir: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == '
 cassandra_rpm_conf_alternative: /etc/cassandra/ansible.conf
 cassandra_rpm_conf_alternative_priority: 100
 
+# Show the diff and ask ("yes") before changing files: auto = only on a node
+# that was already initialized (<cassandra_data_dir>/system exists), so a
+# first install is not blocked; true = always; false = never. Without a
+# terminal to answer, a required confirmation fails the run.
+cassandra_config_confirm: auto
+
 # Cassandra's data directory. Also read by the cassandra_linux role to
 # auto-detect cassandra_data_block_device for read-ahead/IO scheduler
 # tuning - this is the canonical definition, cassandra_linux has none.

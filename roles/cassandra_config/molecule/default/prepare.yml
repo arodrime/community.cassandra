@@ -25,6 +25,8 @@
         - /tmp/cassandra-40x-CMS
         - /tmp/cassandra-41x-CMS
         - /tmp/cassandra-50x-CMS
+        - /tmp/cassandra-confirm
+        - /tmp/initialized-node/system
 
     # What the rpm's %post does: /etc/cassandra/conf -> alternatives -> default.conf
     - name: Seed default.conf with a file the templates don't manage (RedHat)

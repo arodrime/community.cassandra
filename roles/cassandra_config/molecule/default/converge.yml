@@ -89,6 +89,34 @@
           ansible.builtin.assert:
             that: ansible_failed_task.name == "Assert heap settings are consistent (4.x, CMS)"
 
+    - name: First render on an initialized node (confirmation disabled)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_conf_dir: /tmp/cassandra-confirm
+        cassandra_data_dir: /tmp/initialized-node
+        cassandra_rpm_conf_alternative: ""
+        cassandra_config_confirm: false
+
+    - name: Change a setting on the initialized node, no terminal to confirm
+      block:
+        - name: Run the role, expecting the confirmation to fail
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+          vars:
+            cassandra_conf_dir: /tmp/cassandra-confirm
+            cassandra_data_dir: /tmp/initialized-node
+            cassandra_rpm_conf_alternative: ""
+            cassandra_num_tokens: 8
+
+        - name: Fail if the change went through unconfirmed
+          ansible.builtin.fail:
+            msg: cassandra_config changed an initialized node without confirmation
+      rescue:
+        - name: Assert the failure came from the confirmation
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == "Stop unless the changes were confirmed"
+
     - name: Render with an empty cassandra_conf_dir
       block:
         - name: Run the role, expecting its assert to fail
