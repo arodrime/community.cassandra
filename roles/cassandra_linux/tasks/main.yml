@@ -13,6 +13,9 @@
       {{ (ansible_facts['virtualization_type'] not in cassandra_linux_container_types)
          if cassandra_linux_apply_live | string | lower == 'auto' else cassandra_linux_apply_live | bool }}
 
+- name: Snapshot the current OS settings (change report)
+  ansible.builtin.include_tasks: snapshot.yml
+
 - name: Disable Swap
   ansible.builtin.command: swapoff -a
   when:
@@ -32,33 +35,22 @@
     sysctl_file: /etc/sysctl.conf
     sysctl_set: "{{ _cassandra_linux_live }}"
     reload: "{{ _cassandra_linux_live }}"
-  loop:
-    - { key: vm.swappiness, value: 1 }
-    - { key: vm.max_map_count, value: 1048575 }
-    - { key: vm.zone_reclaim_mode, value: 0 }
-    # TCP settings to prevent timeouts and handle many connections
-    - { key: net.ipv4.tcp_keepalive_time, value: 60 }
-    - { key: net.ipv4.tcp_keepalive_probes, value: 3 }
-    - { key: net.ipv4.tcp_keepalive_intvl, value: 10 }
-    - { key: net.core.rmem_max, value: 16777216 }
-    - { key: net.core.wmem_max, value: 16777216 }
-    - { key: net.core.rmem_default, value: 16777216 }
-    - { key: net.core.wmem_default, value: 16777216 }
-    - { key: net.core.optmem_max, value: 40960 }
-    - { key: net.ipv4.tcp_rmem, value: "4096 87380 16777216" }
-    - { key: net.ipv4.tcp_wmem, value: "4096 65536 16777216" }
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
 
 - name: Install time sync package
   ansible.builtin.package:
-    name: "{{ (ansible_facts['os_family'] == 'Debian') | ternary('systemd-timesyncd', 'chrony') }}"
+    name: "{{ _cassandra_timesync_pkg }}"
     state: present
   retries: 3
+  register: cassandra_timesync_install
 
 - name: Ensure timesync service starts
   ansible.builtin.service:
-    name: "{{ (ansible_facts['os_family'] == 'Debian') | ternary('systemd-timesyncd', 'chronyd') }}"
+    name: "{{ _cassandra_timesync_service }}"
     enabled: yes
     state: started
+  when: not (ansible_check_mode and cassandra_timesync_install is changed)  # not installed yet under --check
+  register: cassandra_timesync_service_result
   tags:
   - molecule-idempotence-notest # Ubuntu 2404 timesyncd issue
 
@@ -80,6 +72,7 @@
     line: "* - nproc 32768"
     create: yes
   when: ansible_facts['os_family'] == "RedHat"
+  register: cassandra_linux_nproc
 
 - name: Ensure disable-thp service file exists
   ansible.builtin.copy:
@@ -97,6 +90,7 @@
   when:
     - _cassandra_linux_live
     - thp.changed
+    - not ansible_check_mode  # the unit file only exists once really copied
 
 # Resolve the data disk into an internal fact (_cassandra_data_disk, kernel
 # name only) rather than overwriting cassandra_data_block_device: a role param
@@ -152,6 +146,14 @@
   vars:
     cassandra_data_queue: "{{ cassandra_sysfs_block_root }}/{{ _cassandra_data_disk }}/queue"
   block:
+    - name: Read the current read-ahead and IO scheduler (change report)
+      ansible.builtin.shell: >-
+        echo "$(cat {{ cassandra_data_queue }}/read_ahead_kb)|$(sed -n 's/.*\[\(.*\)\].*/\1/p' {{ cassandra_data_queue }}/scheduler)"
+      register: cassandra_data_disk_before
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
     - name: Set read-ahead on the Cassandra data device (immediate)
       ansible.builtin.copy:
         content: "{{ cassandra_data_readahead_kb }}"
@@ -178,3 +180,7 @@
         src: 60-cassandra-data-disk.rules.j2
         dest: /etc/udev/rules.d/60-cassandra-data-disk.rules
         mode: "0644"
+      register: cassandra_data_disk_udev
+
+- name: Report changes
+  ansible.builtin.include_tasks: report.yml

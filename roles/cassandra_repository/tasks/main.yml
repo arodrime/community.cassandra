@@ -1,5 +1,16 @@
 ---
 # tasks file for cassandra_repository
+# Also under --check: the package tasks below need a current cache to say
+# what they would install
+- name: Refresh the apt cache (Debian & Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  check_mode: false
+  changed_when: false
+  retries: 3
+  when: ansible_facts['os_family'] == "Debian"
+
 - name: Install debian packages (Debian & Ubuntu)
   ansible.builtin.apt:
     name: "{{ debian_packages }}"

@@ -1,0 +1,26 @@
+---
+# A real --check needs the command line flag (a play-level check_mode does
+# not set ansible_check_mode), so site.yml is run three times from here:
+# --check on the blank hosts, apply, then again.
+- name: Converge
+  hosts: localhost
+  gather_facts: false
+  vars:
+    reports: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/reports"
+  tasks:
+    - name: Run site.yml ({{ item.name }})
+      ansible.builtin.command:
+        argv: >-
+          {{ ['ansible-playbook', '-i', lookup('env', 'MOLECULE_INVENTORY_FILE'), playbook_dir ~ '/site.yml',
+              '-e', 'cassandra_change_report_dir=' ~ reports ~ '/' ~ item.name] + item.flags }}
+      loop:
+        - {name: check, flags: [--check]}
+        - {name: apply, flags: []}
+        - {name: rerun, flags: [--skip-tags, molecule-idempotence-notest]}  # timesyncd won't stay up in containers
+      register: site_runs
+      changed_when: false
+
+    - name: The re-run changed nothing
+      ansible.builtin.assert:
+        that: site_runs.results[2].stdout is not search('changed=[1-9]')
+        fail_msg: "{{ site_runs.results[2].stdout_lines | select('search', 'changed=') | list }}"

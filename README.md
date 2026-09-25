@@ -16,6 +16,7 @@ If you like this collection please give us a rating on [Ansible Galaxy](https://
 
 These roles prepare servers with Debian-based and RHEL-based distributions to run Cassandra.
 
+- `cassandra_change_report`- Used by the other roles: show and record what they change (before -> after), also under `--check`.
 - `cassandra_config`- Template Cassandra's configuration files from stock defaults.
 - `cassandra_firewall`- Manage the firewall on Cassandra nodes.
 - `cassandra_install`- Install Cassandra.

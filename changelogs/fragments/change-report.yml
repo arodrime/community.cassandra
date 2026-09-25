@@ -1,0 +1,2 @@
+minor_changes:
+  - All roles - show and record what each run changes (or would change, under --check) with the new cassandra_change_report role.
