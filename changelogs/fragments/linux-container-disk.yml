@@ -1,0 +1,3 @@
+minor_changes:
+  - cassandra_linux - no live kernel settings (sysctl, transparent huge pages) inside containers, where they belong to the host; the files are still written.
+  - cassandra_linux - read-ahead and I/O scheduler of the data disk, applied now and kept across reboots with a udev rule.
