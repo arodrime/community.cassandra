@@ -1,3 +1,19 @@
 ---
 # defaults file for cassandra_install
 cassandra_packages: cassandra
+
+# Cassandra series, same values as cassandra_repository ("40x", "41x", "50x").
+cassandra_version: "50x"
+
+# Java installed before Cassandra, so the package's Java dependency is
+# already met and no other JVM gets pulled in. Defaults to the version
+# each series is built and tested against.
+cassandra_java_versions:
+  40x: "11"
+  41x: "11"
+  50x: "17"
+cassandra_java_version: "{{ cassandra_java_versions[cassandra_version] | default('17') }}"
+cassandra_java_package: >-
+  {{ ('openjdk-' ~ cassandra_java_version ~ '-jre-headless') if ansible_facts['os_family'] == 'Debian'
+  else ('java-' ~ cassandra_java_version ~ '-amazon-corretto-headless') if ansible_facts['distribution'] == 'Amazon'
+  else ('java-' ~ cassandra_java_version ~ '-openjdk-headless') }}

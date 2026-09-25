@@ -1,0 +1,176 @@
+---
+# Cassandra series, same values as cassandra_repository; picks templates/<x.y>/.
+cassandra_version: "50x"
+
+# Where Cassandra reads its config: the RPM uses /etc/cassandra/conf
+# (alternatives symlink), the deb /etc/cassandra.
+cassandra_conf_dir: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}"
+
+# Cassandra's data directory. Also read by the cassandra_linux role to
+# auto-detect cassandra_data_block_device for read-ahead/IO scheduler
+# tuning - this is the canonical definition, cassandra_linux has none.
+cassandra_data_dir: /var/lib/cassandra/data
+
+# ---- cassandra.yaml ----
+cassandra_cluster_name: "Test Cluster"
+cassandra_num_tokens: 16
+cassandra_allocate_tokens_for_local_replication_factor: 3
+cassandra_hinted_handoff_enabled: true
+cassandra_max_hint_window: "3h"
+cassandra_hinted_handoff_throttle: "1024KiB"
+cassandra_max_hints_delivery_threads: 2
+cassandra_hints_flush_period: "10000ms"
+cassandra_max_hints_file_size: "128MiB"
+cassandra_auto_hints_cleanup_enabled: false
+cassandra_batchlog_replay_throttle: "1024KiB"
+cassandra_authenticator: "AllowAllAuthenticator"
+cassandra_authorizer: "AllowAllAuthorizer"
+cassandra_role_manager: "CassandraRoleManager"
+cassandra_network_authorizer: "AllowAllNetworkAuthorizer"
+cassandra_cidr_authorizer_class_name: "AllowAllCIDRAuthorizer"
+cassandra_roles_validity: "2000ms"
+cassandra_permissions_validity: "2000ms"
+cassandra_credentials_validity: "2000ms"
+cassandra_partitioner: "org.apache.cassandra.dht.Murmur3Partitioner"
+cassandra_cdc_enabled: false
+cassandra_disk_failure_policy: "stop"
+cassandra_commit_failure_policy: "stop"
+cassandra_prepared_statements_cache_size: ""
+cassandra_key_cache_size: ""
+cassandra_key_cache_save_period: "4h"
+cassandra_row_cache_size: "0MiB"
+cassandra_row_cache_save_period: "0s"
+cassandra_counter_cache_size: ""
+cassandra_counter_cache_save_period: "7200s"
+cassandra_commitlog_sync: "periodic"
+cassandra_commitlog_sync_period: "10000ms"
+cassandra_commitlog_segment_size: "32MiB"
+cassandra_commitlog_disk_access_mode: "legacy"
+cassandra_seed_provider_class_name: "org.apache.cassandra.locator.SimpleSeedProvider"
+cassandra_seeds: "127.0.0.1:7000"
+cassandra_concurrent_reads: 32
+cassandra_concurrent_writes: 32
+cassandra_concurrent_counter_writes: 32
+cassandra_concurrent_materialized_view_writes: 32
+cassandra_memtable_default: "skiplist"
+cassandra_memtable_allocation_type: "heap_buffers"
+cassandra_index_summary_capacity: ""
+cassandra_index_summary_resize_interval: "60m"
+cassandra_trickle_fsync: false
+cassandra_trickle_fsync_interval: "10240KiB"
+cassandra_storage_port: 7000
+cassandra_ssl_storage_port: 7001
+cassandra_listen_address: "localhost"
+cassandra_start_native_transport: true
+cassandra_native_transport_port: 9042
+cassandra_native_transport_allow_older_protocols: true
+cassandra_rpc_address: "localhost"
+cassandra_rpc_keepalive: true
+cassandra_incremental_backups: false
+cassandra_snapshot_before_compaction: false
+cassandra_auto_snapshot: true
+cassandra_snapshot_links_per_second: 0
+cassandra_column_index_cache_size: "2KiB"
+cassandra_concurrent_materialized_view_builders: 1
+cassandra_compaction_throughput: "64MiB/s"
+cassandra_sstable_preemptive_open_interval: "50MiB"
+cassandra_uuid_sstable_identifiers_enabled: false
+cassandra_read_request_timeout: "5000ms"
+cassandra_range_request_timeout: "10000ms"
+cassandra_write_request_timeout: "2000ms"
+cassandra_counter_write_request_timeout: "5000ms"
+cassandra_cas_contention_timeout: "1000ms"
+cassandra_truncate_request_timeout: "60000ms"
+cassandra_request_timeout: "10000ms"
+cassandra_slow_query_log_timeout: "500ms"
+cassandra_endpoint_snitch: "SimpleSnitch"
+cassandra_dynamic_snitch_update_interval: "100ms"
+cassandra_dynamic_snitch_reset_interval: "600000ms"
+cassandra_dynamic_snitch_badness_threshold: 1.0
+cassandra_crypto_provider_class_name: "org.apache.cassandra.security.DefaultCryptoProvider"
+cassandra_crypto_provider_fail_on_missing_provider: "false"
+cassandra_internode_encryption: "none"
+cassandra_legacy_ssl_storage_port_enabled: false
+cassandra_server_keystore: "conf/.keystore"
+cassandra_server_require_client_auth: false
+cassandra_truststore: "conf/.truststore"
+cassandra_require_endpoint_verification: false
+cassandra_client_encryption_enabled: false
+cassandra_client_keystore: "conf/.keystore"
+cassandra_client_require_client_auth: false
+cassandra_internode_compression: "dc"
+cassandra_inter_dc_tcp_nodelay: false
+cassandra_trace_type_query_ttl: "1d"
+cassandra_trace_type_repair_ttl: "7d"
+cassandra_user_defined_functions_enabled: false
+cassandra_tde_enabled: false
+cassandra_tde_chunk_length_kb: 64
+cassandra_tde_cipher: "AES/CBC/PKCS5Padding"
+cassandra_tde_key_alias: "testing:1"
+cassandra_tde_key_provider_class_name: "org.apache.cassandra.security.JKSKeyProvider"
+cassandra_tde_keystore: "conf/.keystore"
+cassandra_tde_keystore_password: "cassandra"
+cassandra_tde_store_type: "JCEKS"
+cassandra_tde_key_password: "cassandra"
+cassandra_tombstone_warn_threshold: 1000
+cassandra_tombstone_failure_threshold: 100000
+cassandra_cached_rows_warn_threshold: 2000
+cassandra_cached_rows_fail_threshold: 32000
+cassandra_batch_size_warn_threshold: "5KiB"
+cassandra_batch_size_fail_threshold: "50KiB"
+cassandra_unlogged_batch_across_partitions_warn_threshold: 10
+cassandra_audit_logging_enabled: false
+cassandra_audit_logger_class_name: "BinAuditLogger"
+cassandra_diagnostic_events_enabled: false
+cassandra_repaired_data_tracking_for_range_reads_enabled: false
+cassandra_repaired_data_tracking_for_partition_reads_enabled: false
+cassandra_report_unconfirmed_repaired_data_mismatches: false
+cassandra_materialized_views_enabled: false
+cassandra_sasi_indexes_enabled: false
+cassandra_transient_replication_enabled: false
+cassandra_drop_compact_storage_enabled: false
+cassandra_storage_compatibility_mode: "CASSANDRA_4"
+
+# These 3 are commented out in stock cassandra.yaml (data lands under
+# $CASSANDRA_HOME by default) but are deliberately uncommented in the
+# template and wired to cassandra_data_dir and its siblings, so this role
+# actually places data rather than just tuning settings around it.
+cassandra_hints_dir: "/var/lib/cassandra/hints"
+cassandra_commitlog_dir: "/var/lib/cassandra/commitlog"
+cassandra_saved_caches_dir: "/var/lib/cassandra/saved_caches"
+
+# ---- cassandra-env.sh ----
+# Packaged value (the tarball's stock is $CASSANDRA_HOME/logs, not writable
+# by the cassandra user in a package install).
+cassandra_log_dir: /var/log/cassandra
+cassandra_heap_size: ""  # "" = stock auto-sizing; e.g. "8G" sets -Xms/-Xmx
+cassandra_max_direct_memory_size: ""
+cassandra_heap_dump_dir: "$CASSANDRA_LOG_DIR"
+cassandra_local_jmx: true  # false = remote JMX, with authentication
+cassandra_jmx_port: 7199
+cassandra_jmx_rmi_hostname: ""
+
+# ---- jvm11-server.options / jvm17-server.options ----
+# Each cassandra_jvm_<option> applies to both files; set
+# cassandra_jvm11_<option> or cassandra_jvm17_<option> to override one.
+cassandra_jvm_max_tenuring_threshold: 2
+cassandra_jvm_g1_heap_region_size: "16m"
+cassandra_jvm_g1_new_size_percent: 50
+cassandra_jvm_max_gc_pause_millis: 300
+cassandra_jvm_initiating_heap_occupancy_percent: 70
+cassandra_jvm_parallel_gc_threads: ""  # "" = JVM default
+cassandra_jvm_conc_gc_threads: ""  # "" = JVM default
+# Extra lines appended to jvm-server.options (all Java versions) or to one file.
+cassandra_jvm_extra_options: []
+cassandra_jvm11_extra_options: []
+cassandra_jvm17_extra_options: []
+
+# ---- cassandra-rackdc.properties ---- (per node, usually host_vars)
+cassandra_dc: dc1
+cassandra_rack: rack1
+cassandra_prefer_local: false
+
+# ---- logback.xml ----
+cassandra_log_level: INFO  # root logger
+cassandra_log_level_cassandra: DEBUG  # org.apache.cassandra logger, feeds debug.log
+cassandra_debug_log_enabled: true

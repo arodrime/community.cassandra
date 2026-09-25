@@ -5,28 +5,97 @@
     file: "{{ ansible_facts['os_family'] }}.yml"
 
 # tasks file for cassandra_install
-- name: Ensure man1 directory exists (fix Ubuntu 24.04 Java bug)
+# Minimal images drop man pages; the JDK postinst then fails on its man1 alternatives
+- name: Ensure man1 directory exists (Debian JDK postinst)
   ansible.builtin.file:
     path: /usr/share/man/man1
     state: directory
     mode: "0755"
-  when:
-    - ansible_facts['os_family'] == 'Debian'
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - ansible_facts['distribution_major_version'] | int == 24
+  when: ansible_facts['os_family'] == 'Debian'
 
-- name: Install Cassandra Packages
+- name: Install Java
   ansible.builtin.package:
-    name: "{{ cassandra_packages }}"
+    name: "{{ cassandra_java_package }}"
     state: present
   retries: 3
 
-# https://issues.apache.org/jira/browse/CASSANDRA-16822?orderby=created+DESC%2C+priority+DESC%2C+updated+DESC
-- name: Install clqshlib - bug - ImportError - No module named cqlshlib
-  ansible.builtin.shell: cp -r /usr/lib/python3.6/site-packages/cqlshlib /usr/lib/python2.7/site-packages/cqlshlib
-  args:
-    creates: /usr/lib/python2.7/site-packages/cqlshlib
+# The Debian package starts Cassandra from its postinst, with stock config,
+# before cassandra_config runs: the node would initialise as "Test Cluster"
+# and later refuse the real cluster_name. policy-rc.d (exit 101) tells
+# invoke-rc.d not to start or restart services during package operations.
+- name: Check for an existing policy-rc.d
+  ansible.builtin.stat:
+    path: /usr/sbin/policy-rc.d
+  register: cassandra_policy_rc_d
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install Cassandra Packages
+  block:
+    - name: Block service starts during package install (Debian)
+      ansible.builtin.copy:
+        content: "#!/bin/sh\nexit 101\n"
+        dest: /usr/sbin/policy-rc.d
+        mode: "0755"
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - not cassandra_policy_rc_d.stat.exists
+      changed_when: false
+
+    - name: Install Cassandra Packages
+      ansible.builtin.package:
+        name: "{{ cassandra_packages }}"
+        state: present
+      retries: 3
+  always:
+    - name: Remove the temporary policy-rc.d (Debian)
+      ansible.builtin.file:
+        path: /usr/sbin/policy-rc.d
+        state: absent
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - not cassandra_policy_rc_d.stat.exists
+      changed_when: false
+
+# jemalloc is preloaded by the cassandra script when found; RedHat-likes
+# only have it in EPEL (or Amazon's base repos), so it is optional there.
+- name: Look up jemalloc in the enabled repos (RedHat)
+  ansible.builtin.command: dnf -q repoquery jemalloc
+  register: cassandra_jemalloc_query
+  changed_when: false
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install jemalloc
+  ansible.builtin.package:
+    name: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
+    state: present
+  retries: 3
+  when: ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout != ''
+
+# The rpm installs cqlshlib for python3.6 only; cqlsh runs the system
+# python3, so link it there when that is another version (CASSANDRA-19206).
+- name: Find the system python3 site-packages (RedHat)
+  ansible.builtin.command: python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+  register: cassandra_python3_purelib
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Ensure the system python3 site-packages exists (RedHat)
+  ansible.builtin.file:
+    path: "{{ cassandra_python3_purelib.stdout }}"
+    state: directory
+    mode: "0755"
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - ansible_facts['distribution_major_version'] == "7"
-    - "cassandra_version.startswith('4') or cassandra_version.startswith('3')"
+    - cassandra_python3_purelib.rc == 0
+    - cassandra_python3_purelib.stdout != '/usr/lib/python3.6/site-packages'
+
+- name: Link cqlshlib into the system python3 (RedHat)
+  ansible.builtin.file:
+    src: /usr/lib/python3.6/site-packages/cqlshlib
+    dest: "{{ cassandra_python3_purelib.stdout }}/cqlshlib"
+    state: link
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_python3_purelib.rc == 0
+    - cassandra_python3_purelib.stdout != '/usr/lib/python3.6/site-packages'
