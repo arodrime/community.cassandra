@@ -1,0 +1,67 @@
+---
+# First converge only: the package's init script started Cassandra, which then
+# died, leaving the unit "active (exited)" (found on real hosts)
+- name: Leave the package's unit active with no Cassandra running
+  hosts: all
+  vars:
+    cassandra_cluster_name: "Molecule Cluster"
+    cassandra_heap_size: 256M
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_dc: dc_molecule
+    cassandra_config_confirm: false  # the package may have started (and initialized) it already
+  tasks:
+    - name: Look for the native unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cassandra.service
+      register: native_unit
+
+    - name: Install and start Cassandra with the package's init script
+      when: not native_unit.stat.exists
+      block:
+        - name: Install and configure
+          ansible.builtin.include_role:
+            name: "{{ item }}"
+          loop:
+            - community.cassandra.cassandra_repository
+            - community.cassandra.cassandra_install
+            - community.cassandra.cassandra_config
+
+        # Only where systemd still generates units from init scripts (not RHEL 9)
+        - name: Look for the SysV-generated unit
+          ansible.builtin.command: systemctl list-unit-files cassandra.service
+          register: sysv_unit
+          changed_when: false
+          failed_when: false
+
+        - name: Start it through the SysV-generated unit
+          ansible.builtin.systemd_service:
+            name: cassandra
+            state: started
+          when: sysv_unit.rc == 0
+
+        - name: Wait for the JVM
+          ansible.builtin.command: pgrep -f org.apache.cassandra.service.CassandraDaemon
+          register: jvm
+          until: jvm.rc == 0
+          retries: 30
+          delay: 2
+          changed_when: false
+          when: sysv_unit.rc == 0
+
+        - name: Kill it
+          ansible.builtin.command: pkill -9 -f org.apache.cassandra.service.CassandraDaemon
+          changed_when: true
+          when: sysv_unit.rc == 0
+
+- name: Converge
+  hosts: all
+  vars:
+    cassandra_cluster_name: "Molecule Cluster"
+    cassandra_heap_size: 256M
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_dc: dc_molecule
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install
+    - role: community.cassandra.cassandra_config
+    - role: community.cassandra.cassandra_service

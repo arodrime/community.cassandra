@@ -1,0 +1,72 @@
+---
+- name: Leave time for the drain within the stop timeout
+  ansible.builtin.assert:
+    that: cassandra_service_drain_timeout | int + 10 < cassandra_service_timeout_stop | int
+    fail_msg: >-
+      cassandra_service_drain_timeout ({{ cassandra_service_drain_timeout }}) + 10 must be below
+      cassandra_service_timeout_stop ({{ cassandra_service_timeout_stop }}), or systemd kills the JVM mid-drain.
+    quiet: true
+  when: cassandra_service_drain_on_stop
+
+# Same name as the package's init script: systemd prefers a native unit
+# over the SysV-generated one, so service/systemctl both use this.
+- name: Install the cassandra systemd unit
+  ansible.builtin.template:
+    src: cassandra.service.j2
+    dest: /etc/systemd/system/cassandra.service
+    mode: "0644"
+  notify: Restart cassandra
+
+# The package's init script can leave the unit "active (exited)" with no JVM
+# (e.g. Cassandra died after a SysV start): systemd then sees nothing to start.
+- name: Read the unit state
+  ansible.builtin.systemd_service:
+    name: cassandra
+    daemon_reload: true
+  register: cassandra_service_unit
+  changed_when: false
+
+- name: Look for a running Cassandra JVM
+  ansible.builtin.command: pgrep -f org.apache.cassandra.service.CassandraDaemon
+  register: cassandra_service_jvm
+  changed_when: false
+  failed_when: cassandra_service_jvm.rc > 1
+  when:
+    - cassandra_service_unit.status.ActiveState == 'active'
+    - cassandra_service_unit.status.MainPID | int == 0
+
+- name: Reset a unit left active with no Cassandra running
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: stopped
+  when: cassandra_service_jvm.rc | default(0) == 1
+
+# Taking over a node started by the init script: its JVM is not the unit's
+# main process. Stopping it is a restart, which this role never does alone.
+- name: Warn that a Cassandra started by the init script keeps running
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Cassandra runs under the package's init script; the native unit
+      takes over at the next restart (e.g. the rolling_restart playbook).
+  when: cassandra_service_jvm.rc | default(1) == 0
+
+- name: Start and enable cassandra
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: "{{ cassandra_service_state }}"
+    enabled: "{{ cassandra_service_enabled }}"
+    daemon_reload: true
+
+- name: Flush handlers (restart on a changed unit, if allowed)
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the node to be joined (Mode NORMAL)
+  community.cassandra.cassandra_netstats:
+    port: "{{ cassandra_jmx_port | default(7199) }}"
+  register: cassandra_service_netstats
+  until: cassandra_service_netstats.mode | default('') == 'NORMAL'
+  retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
+  delay: 10
+  when:
+    - cassandra_service_wait_for_normal
+    - cassandra_service_state in ['started', 'restarted']
