@@ -15,6 +15,8 @@
   ansible.builtin.apt:
     name: "{{ debian_packages }}"
     state: present
+    update_cache: true
+    cache_valid_time: 3600
   retries: 3
   when: ansible_facts['os_family'] == "Debian"
 
