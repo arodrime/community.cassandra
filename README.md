@@ -21,6 +21,7 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 - `cassandra_linux`- Configure Linux OS Settings for Cassandra.
 - `cassandra_config`- Template Cassandra's configuration files from stock defaults.
 - `cassandra_firewall`- Manage the firewall on Cassandra nodes.
+- `cassandra_service`- Run Cassandra under a native systemd unit, start it and wait for the node to join.
 
 #### Modules
 

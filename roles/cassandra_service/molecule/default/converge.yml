@@ -1,0 +1,13 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    cassandra_cluster_name: "Molecule Cluster"
+    cassandra_heap_size: 256M
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_dc: dc_molecule
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install
+    - role: community.cassandra.cassandra_config
+    - role: community.cassandra.cassandra_service
