@@ -96,52 +96,6 @@
   retries: 5
   delay: 5
 
-- name: Download ant package and unarchive
-  unarchive:
-    src: "{{ ant_download }}"
-    dest: /usr/local
-    remote_src: yes
-    validate_certs: False
-  retries: 10
-  delay: 5
-
-- name: Create a symbolic link for ant
-  file:
-    state: link
-    src: "/usr/local/apache-ant-{{ ant_version }}/"
-    dest: /usr/local/ant
-
-- name: "Adds ant script"
-  blockinfile:
-    path: /etc/profile.d/ant.sh
-    marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
-    block: |
-      export ANT_HOME=/usr/local/ant
-      export PATH=${PATH}:${ANT_HOME}/bin
-    create: true
-
-- name: Check ant setup
-  ansible.builtin.shell: source /etc/profile.d/ant.sh && echo $ANT_HOME
-  args:
-    executable: /bin/bash
-  register: ant_setup
-
-- name: Validate ant setup
-  assert:
-    that:
-      - "'/usr/local/ant' in ant_setup.stdout"
-
-- name: Check ant setup
-  ansible.builtin.shell: source /etc/profile.d/ant.sh && echo $PATH
-  args:
-    executable: /bin/bash
-  register: ant_path_setup
-
-- name: Validate path
-  assert:
-    that:
-      - "'/usr/local/ant' in ant_path_setup.stdout"
-
 - name: Create cassandra user
   user:
     name: cassandra
@@ -197,7 +151,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/ant/bin
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}"
   ignore_errors: true
 
@@ -209,7 +163,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/ant/bin
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}"
   retries: 5
   delay: 5
@@ -222,7 +176,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/ant
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}"
   with_items: "{{ cassandra_nodes }}"
 
@@ -293,7 +247,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/ant/bin
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}"
     CCM_CLUSTER_START_DEFAULT_TIMEOUT: "600"
   register: ccm_start_result
@@ -310,7 +264,7 @@
   environment:
     CCM_CONFIG_DIR: "/home/cassandra/config"
     CASSANDRA_HOME: "/home/cassandra"
-    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/ant/bin
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     JAVA_HOME: "{{ (ansible_os_family == 'RedHat') | ternary('/usr/lib/jvm/java-' ~ j_version ~ '-openjdk', '/usr/lib/jvm/java-' ~ j_version ~ '-openjdk-amd64') }}"
 
 - debug:
