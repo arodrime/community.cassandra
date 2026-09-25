@@ -1,0 +1,63 @@
+---
+argument_specs:
+  main:
+    short_description: Linux settings for Cassandra nodes.
+    description:
+      - Kernel settings, swap, transparent huge pages, time sync, limits,
+        and read-ahead and IO scheduler of the data disk.
+      - In containers, settings are written but not applied live unless
+        O(cassandra_linux_apply_live=true).
+    options:
+      cassandra_data_block_device:
+        type: str
+        default: ""
+        description:
+          - Block device of the data disk, for example C(/dev/nvme0n1).
+          - When empty, it is found from O(cassandra_data_dir). The disk
+            tuning is skipped if it can't be found.
+      cassandra_data_dir:
+        type: path
+        description:
+          - Cassandra's data directory, used to find the data disk. No default in this role.
+      cassandra_data_readahead_kb:
+        type: int
+        default: 4
+        description:
+          - Read-ahead of the data disk, in KB.
+      cassandra_sysfs_block_root:
+        type: path
+        default: /sys/block
+        description:
+          - sysfs block root used for the disk tuning. Only meant for tests.
+      cassandra_linux_apply_live:
+        type: raw
+        default: auto
+        description:
+          - Apply kernel settings live (sysctl, swapoff, THP), not just persist them.
+          - C(auto) applies them everywhere except in containers, where they
+            belong to the host. V(true) or V(false) forces it.
+      cassandra_linux_container_types:
+        type: list
+        elements: str
+        default: [docker, podman, container, containerd, lxc]
+        description:
+          - Values of C(ansible_virtualization_type) treated as containers.
+      cassandra_linux_sysctl:
+        type: dict
+        default:
+          vm.swappiness: 1
+          vm.max_map_count: 1048575
+          vm.zone_reclaim_mode: 0
+          net.ipv4.tcp_keepalive_time: 60
+          net.ipv4.tcp_keepalive_probes: 3
+          net.ipv4.tcp_keepalive_intvl: 10
+          net.core.rmem_max: 16777216
+          net.core.wmem_max: 16777216
+          net.core.rmem_default: 16777216
+          net.core.wmem_default: 16777216
+          net.core.optmem_max: 40960
+          net.ipv4.tcp_rmem: "4096 87380 16777216"
+          net.ipv4.tcp_wmem: "4096 65536 16777216"
+        description:
+          - Kernel settings, written to C(/etc/sysctl.conf) and applied live
+            (not from a container, which shares the host kernel).

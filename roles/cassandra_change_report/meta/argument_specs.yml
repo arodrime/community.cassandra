@@ -1,0 +1,13 @@
+---
+argument_specs:
+  main:
+    short_description: Show and record what the other roles change.
+    description:
+      - Used by the other roles of the collection, not on its own.
+    options:
+      cassandra_change_report_dir:
+        type: str
+        default: ""
+        description:
+          - Directory on the controller where each host and role writes what it
+            changed (or would change under C(--check)). Empty writes nothing.

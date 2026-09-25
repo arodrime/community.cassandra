@@ -1,0 +1,13 @@
+---
+argument_specs:
+  main:
+    short_description: Open the Cassandra ports in the host firewall.
+    description:
+      - Uses firewalld on RedHat family systems and ufw on Debian and Ubuntu.
+    options:
+      open_ports:
+        type: list
+        elements: str
+        default: [22/tcp, 7199/tcp, 7000/tcp, 7001/tcp, 9042/tcp]
+        description:
+          - Ports to open, as C(port/protocol).
