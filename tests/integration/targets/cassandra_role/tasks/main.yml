@@ -198,6 +198,10 @@
     login_user: "{{ cassandra_admin_user }}"
     login_password: "{{ cassandra_admin_pwd }}"
   register: myrole
+  # 4.1+ refuses a password change within 5s of the previous one
+  until: myrole is succeeded
+  retries: 3
+  delay: 3
 
 - assert:
     that:
