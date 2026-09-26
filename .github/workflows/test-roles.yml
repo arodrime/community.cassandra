@@ -94,6 +94,7 @@ jobs:
 
     strategy:
       fail-fast: false  # a failing scenario must not stop the others
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         python_version:
           - "3.12"
