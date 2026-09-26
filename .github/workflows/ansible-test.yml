@@ -21,6 +21,7 @@ jobs:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 2  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -59,6 +60,7 @@ jobs:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 1  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -180,6 +182,7 @@ jobs:
         working-directory: ansible_collections/community/cassandra
     strategy:
       fail-fast: false  # a failing target must not stop the others uploading their coverage
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -258,6 +261,7 @@ jobs:
         working-directory: ansible_collections/community/cassandra
     strategy:
       fail-fast: false
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -336,6 +340,7 @@ jobs:
         working-directory: ansible_collections/community/cassandra
     strategy:
       fail-fast: false
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
