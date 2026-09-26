@@ -192,7 +192,12 @@ Restarting
 ----------
 
 ``rolling_restart`` drains each node, restarts it and waits until it and the cluster are healthy again before the
-next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching). The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
+next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching).
+
+To move a cluster to another Java, set ``cassandra_java_version`` in the cluster's ``group_vars`` and run
+``update_jdk``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
+It refuses a Java the series does not support, and warns about ``cassandra_jvm<N>_*`` settings meant for the old
+Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
 ``systemctl stop cassandra`` or a reboot outside Ansible is clean too.
 
 
