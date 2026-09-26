@@ -38,3 +38,35 @@ cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout
 # Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
 cassandra_service_wait_for_normal: true
 cassandra_service_wait_timeout: 600  # seconds
+
+# Cluster health check run by the operation playbooks before and after each
+# node: how long to wait for down nodes to come back, and whether to go on
+# anyway (risky: a second replica down can make data unavailable).
+cassandra_service_health_timeout: 600  # seconds
+cassandra_service_health_force: false
+
+# JMX access for the modules and nodetool calls of the operation playbooks
+# (cassandra_jmx_port comes from cassandra_config). Credentials only when
+# remote JMX with authentication is on; prefer the password file.
+cassandra_jmx_username: ""
+cassandra_jmx_password: ""
+cassandra_jmx_password_file: ""
+_cassandra_service_jmx: >-
+  {{ {'port': cassandra_jmx_port | default(7199) | int}
+     | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
+     | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
+               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
+_cassandra_service_nodetool: >-
+  nodetool -p {{ _cassandra_service_jmx.port }}{{ (' -u ' ~ cassandra_jmx_username | quote) if cassandra_jmx_username else '' }}{{
+  (' -pwf ' ~ cassandra_jmx_password_file | quote) if cassandra_jmx_password_file
+  else ((' -pw ' ~ cassandra_jmx_password | quote) if cassandra_jmx_password else '') }}
+
+# Operator confirmation before an operation that asks for one (confirm.yml):
+# true asks, false goes on without asking (non-interactive runs).
+cassandra_operation_confirm: true
+
+# Rolling operations keep a progress file on the controller; resume an
+# interrupted one with -e cassandra_rolling_resume=true.
+cassandra_rolling_resume: false
+cassandra_rolling_progress_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cassandra_rolling"
+cassandra_rolling_progress_days: 30

@@ -1,0 +1,25 @@
+---
+# Prepares a new node with the roles and starts it (it bootstraps into the ring)
+- name: Configure the package repository
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_repository
+
+- name: Install Cassandra
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_install
+
+- name: Tune the OS
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_linux
+
+- name: Write the config
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+
+- name: Open the firewall
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_firewall
+  when: cassandra_manage_firewall | default(false) | bool
+
+- name: Start it and wait until it has joined
+  ansible.builtin.include_tasks: main.yml

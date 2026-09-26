@@ -1,0 +1,61 @@
+---
+# One node of a rolling operation: cluster health, the action
+# (action_<cassandra_service_node_action>.yml), cluster health again. On any
+# failure, prints the summary and stops the whole run: no other node is touched.
+# Nodes listed in the progress file (progress.yml) are skipped. Playbooks that
+# add nodes set cassandra_service_node_checks_before (false: nothing runs on
+# the node yet) and cassandra_service_expected_before/after (ring sizes).
+- name: Skip a node the interrupted run already did
+  ansible.builtin.set_fact:
+    cassandra_op_result: "{{ cassandra_service_node_action }} skipped, done in the interrupted run"
+  when: inventory_hostname in cassandra_progress_done | default([])
+
+- name: "{{ cassandra_service_node_action }} {{ inventory_hostname }}"
+  when: inventory_hostname not in cassandra_progress_done | default([])
+  vars:
+    _cassandra_group_size: "{{ groups[cassandra_hosts | default('cassandra')] | length }}"
+  block:
+    - name: Note the start time
+      ansible.builtin.set_fact:
+        _cassandra_op_start: "{{ now().timestamp() | int }}"
+
+    - name: Check the cluster before touching this node
+      ansible.builtin.include_tasks: cluster_health.yml
+      vars:
+        cassandra_service_health_node_checks: "{{ cassandra_service_node_checks_before | default(true) }}"
+        cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_before | default(_cassandra_group_size) }}"
+
+    - name: Run the action
+      ansible.builtin.include_tasks: "action_{{ cassandra_service_node_action }}.yml"
+
+    - name: Check the cluster with this node back
+      ansible.builtin.include_tasks: cluster_health.yml
+      vars:
+        cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_after | default(_cassandra_group_size) }}"
+
+    - name: Add the node to the progress file
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_progress_file }}"
+        line: "{{ inventory_hostname }}"
+      delegate_to: localhost
+      when: cassandra_progress_file is defined
+
+    - name: Record the result
+      ansible.builtin.set_fact:
+        cassandra_op_result: "{{ cassandra_service_node_action }} done in {{ now().timestamp() | int - _cassandra_op_start | int }}s"
+  rescue:
+    - name: Record the failure
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ cassandra_service_node_action }} FAILED after {{ now().timestamp() | int - _cassandra_op_start | default(now().timestamp()) | int }}s:
+          {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+
+    - name: Print the summary
+      ansible.builtin.include_tasks: summary.yml
+
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: >-
+          Stopped at {{ inventory_hostname }} ({{ ansible_failed_task.name | default('') }}): no other node was touched after it.
+          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
+          (progress: {{ cassandra_progress_file | default('none') }})

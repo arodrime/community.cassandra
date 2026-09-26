@@ -1,0 +1,10 @@
+---
+- name: Drain the node
+  community.cassandra.cassandra_drain:
+  module_defaults:
+    community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
+
+- name: Restart it and wait until it has joined
+  ansible.builtin.include_tasks: main.yml
+  vars:
+    cassandra_service_state: restarted

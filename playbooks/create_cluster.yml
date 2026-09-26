@@ -28,3 +28,15 @@
   serial: 1
   roles:
     - community.cassandra.cassandra_service
+
+- name: Check the new cluster
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Check the whole cluster from one node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_health.yml
+      vars:
+        cassandra_service_health_expected_nodes: "{{ ansible_play_hosts_all | length }}"  # --limit may leave nodes out
+      when: inventory_hostname == ansible_play_hosts[0]

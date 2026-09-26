@@ -1,0 +1,73 @@
+---
+# Progress file of a rolling operation, on the controller: one line per node
+# done. Run it once, in a play without serial, before the rolling play:
+#   include_role: name=community.cassandra.cassandra_service tasks_from=progress.yml
+# A fresh run starts a new file; -e cassandra_rolling_resume=true reuses the
+# latest one of this operation and cluster and skips the nodes it lists.
+- name: Set up the progress file
+  run_once: true
+  delegate_to: localhost
+  vars:
+    _prefix: "{{ cassandra_hosts | default('cassandra') }}-{{ cassandra_service_node_action }}-"
+  block:
+    - name: Ensure the progress dir exists
+      ansible.builtin.file:
+        path: "{{ cassandra_rolling_progress_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Find old progress files
+      ansible.builtin.find:
+        paths: "{{ cassandra_rolling_progress_dir }}"
+        patterns: "*.done"
+        age: "{{ cassandra_rolling_progress_days }}d"
+      register: cassandra_progress_old
+
+    - name: Remove old progress files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ cassandra_progress_old.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Find the progress file to resume
+      ansible.builtin.find:
+        paths: "{{ cassandra_rolling_progress_dir }}"
+        patterns: "{{ _prefix }}*.done"
+      register: cassandra_progress_found
+      when: cassandra_rolling_resume | bool
+
+    - name: Stop if there is nothing to resume
+      ansible.builtin.fail:
+        msg: "No {{ _prefix }}*.done file in {{ cassandra_rolling_progress_dir }} to resume: run without cassandra_rolling_resume"
+      when:
+        - cassandra_rolling_resume | bool
+        - cassandra_progress_found.files | length == 0
+
+    - name: Pick the progress file
+      ansible.builtin.set_fact:
+        cassandra_progress_file: >-
+          {{ (cassandra_progress_found.files | sort(attribute='mtime') | last).path if cassandra_rolling_resume | bool
+             else cassandra_rolling_progress_dir ~ '/' ~ _prefix ~ now(fmt='%Y%m%dT%H%M%S') ~ '.done' }}
+
+    - name: Create the progress file
+      ansible.builtin.file:
+        path: "{{ cassandra_progress_file }}"
+        state: touch
+        mode: "0644"
+      when: not cassandra_rolling_resume | bool
+
+    - name: Read the nodes already done
+      ansible.builtin.set_fact:
+        cassandra_progress_done: "{{ lookup('ansible.builtin.file', cassandra_progress_file).splitlines() | select | list }}"
+
+    - name: Say what is resumed
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('Nothing left to resume: every node is done in ' ~ cassandra_progress_file
+              ~ '. Run without cassandra_rolling_resume to start a new ' ~ cassandra_service_node_action ~ '.')
+             if ansible_play_hosts_all | difference(cassandra_progress_done) | length == 0
+             else ('Resuming ' ~ cassandra_progress_file ~ ': ' ~ cassandra_progress_done | length
+                   ~ ' node(s) already done, skipped: ' ~ cassandra_progress_done | join(', ')) }}
+      when: cassandra_rolling_resume | bool

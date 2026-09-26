@@ -4,6 +4,7 @@
   ansible.builtin.set_fact:
     _cassandra_service_seeds: "{{ _seeds }}"
     _cassandra_service_is_seed: "{{ _seeds | intersect(_mine) | length > 0 }}"
+    _cassandra_service_seed_entry: "{{ _seeds | intersect(_mine) | first | default('') }}"
   vars:
     _seeds: >-
       {{ ((cassandra_seeds | default([])) if cassandra_seeds | default([]) is not string else cassandra_seeds.split(','))

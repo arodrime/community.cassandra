@@ -1,8 +1,9 @@
 ---
 # Checks one cluster (an inventory group) before changing it:
 #   ansible-playbook -i inventory community.cassandra.preflight -e cassandra_hosts=my_cluster
-# Fails on settings that must match across the cluster and on rack layouts
-# the token allocator refuses; warns on seed layouts that are only risky.
+# Fails on settings that must match across the cluster, on rack layouts the
+# token allocator refuses and on mixed Cassandra versions; warns on seed layouts
+# that are only risky.
 - name: Cassandra preflight checks
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
   gather_facts: true
@@ -17,11 +18,13 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: seed_facts.yml
+        public: true
 
     # cassandra_seed_True / cassandra_seed_False, used by the other playbooks
     - name: Group seeds and other nodes
       ansible.builtin.group_by:
         key: "cassandra_seed_{{ _cassandra_service_is_seed | bool }}"
+      changed_when: false
 
     # Role defaults are not visible through hostvars: each node records its own values
     - name: Record this node's settings
@@ -35,6 +38,19 @@
           _cassandra_service_seeds: "{{ _cassandra_service_seeds }}"
           cassandra_dc: "{{ cassandra_dc }}"
           cassandra_rack: "{{ cassandra_rack }}"
+          address: "{{ _address }}"
+          layout:  # for cassandra_seed_layout
+            name: "{{ inventory_hostname }}"
+            address: >-
+              {{ _cassandra_service_seed_entry if _cassandra_service_is_seed
+                 else (_address if _cassandra_service_seeds | select('match', '^[0-9.]+$|.*:') | list else inventory_hostname) }}
+            dc: "{{ cassandra_dc }}"
+            rack: "{{ cassandra_rack }}"
+            seed: "{{ _cassandra_service_is_seed | bool }}"
+      vars:
+        _address: >-
+          {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
+             else ansible_facts['default_ipv4']['address'] | default(inventory_hostname) }}
 
     - name: Settings that must match on every node
       ansible.builtin.assert:
@@ -72,53 +88,96 @@
       when: _hint | string not in ['', 'None']
       run_once: true
 
-    - name: Seeds per datacenter
+    - name: Seed layout
       ansible.builtin.debug:
-        msg: >-
-          WARNING: {{ item }} has {{ _seeds | length }} seed(s){{ (': ' ~ _seeds | join(', ')) if _seeds else '' }}.
-          3 per datacenter, on different racks, is the usual layout.
+        msg: "{{ ['WARNING: ' ~ _layout.problems | join('; ') ~ '.',
+                  'Suggested, in the group_vars of ' ~ _cluster ~ ' (update the inventory first, or the next run reverts it):',
+                  '  cassandra_seeds: ' ~ _layout.suggested | to_json,
+                  'then apply it live: ansible-playbook -i ' ~ ansible_inventory_sources | first
+                    ~ ' community.cassandra.change_seeds -e cassandra_hosts=' ~ _cluster] }}"
       vars:
-        _seeds: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight.cassandra_dc', 'equalto', item)
-             | selectattr('_cassandra_service_is_seed') | map(attribute='inventory_hostname') | list }}
-      loop: "{{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | list }}"
-      when: _seeds | length < 3
+        _cluster: "{{ cassandra_hosts | default('cassandra') }}"
+        _layout: >-
+          {{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'layout']) | list
+             | community.cassandra.cassandra_seed_layout }}
+      when: _layout.problems | length > 0
       run_once: true
 
+    - name: Read the services
+      ansible.builtin.service_facts:
+
     - name: Is Cassandra running here
-      ansible.builtin.command: systemctl is-active cassandra
-      register: cassandra_preflight_active
-      changed_when: false
-      failed_when: false
+      ansible.builtin.set_fact:
+        _cassandra_preflight_running: "{{ ansible_facts.services['cassandra.service'].state | default('') == 'running' }}"
 
     # Once the cluster exists, every seed must be a live member: a stale seed
     # (decommissioned node, old IP) breaks bootstraps
-    - name: Check the seeds against the running cluster
+    - name: Check the running cluster
       run_once: true
       when: _running | length > 0
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
       vars:
         _running: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_preflight_active.stdout', 'equalto', 'active')
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
              | map(attribute='inventory_hostname') | list }}
+        _from: "{{ _running | first | default(inventory_hostname) }}"  # templated even when the block is skipped
       block:
-        - name: Read the ring from a running node
-          ansible.builtin.command: nodetool status
-          register: cassandra_preflight_status
+        # Also waits for a node that is still starting
+        - name: Read the cluster description from a running node
+          ansible.builtin.command: "{{ _cassandra_service_nodetool }} describecluster"
+          register: cassandra_preflight_describe
+          until: cassandra_preflight_describe.rc == 0
+          retries: 12
+          delay: 10
           changed_when: false
-          delegate_to: "{{ _running | first }}"
+          delegate_to: "{{ _from }}"
+          no_log: "{{ cassandra_jmx_password | length > 0 }}"
+
+        # e.g. the package's own instance, started by the install with its default config
+        - name: The running node belongs to this cluster
+          ansible.builtin.assert:
+            that: _name == cassandra_cluster_name
+            fail_msg: >-
+              {{ _from }} runs Cassandra for cluster '{{ _name }}', not '{{ cassandra_cluster_name }}'
+              (the package's default instance, started at install?). Nothing was changed: stop Cassandra there
+              and empty /var/lib/cassandra if it holds no data you need, or fix cassandra_cluster_name.
+            quiet: true
+          vars:
+            _name: "{{ cassandra_preflight_describe.stdout | regex_findall('(?m)^\\s*Name: (.*)$') | first | default('') | trim }}"
+
+        - name: Read the ring from a running node
+          community.cassandra.cassandra_status:
+          register: cassandra_preflight_status
+          delegate_to: "{{ _from }}"
+          failed_when: not cassandra_preflight_status.cluster_status
 
         - name: Every seed is up
           ansible.builtin.assert:
             that: _addr in _up
-            fail_msg: "Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _running | first }})"
+            fail_msg: "Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }})"
             quiet: true
           vars:
             _up: >-
-              {{ cassandra_preflight_status.stdout_lines | select('match', '^UN ') | map('split') | map(attribute=1) | list }}
+              {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
+                 | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}
             _host: >-
-              {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_service_is_seed')
-                 | selectattr('inventory_hostname', 'equalto', item) | list }}
-            _addr: >-
-              {{ (_host[0].cassandra_listen_address if _host and _host[0].cassandra_listen_address | default('localhost') != 'localhost'
-                  else _host[0].ansible_facts.default_ipv4.address) if _host else item }}
+              {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_service_seed_entry', 'equalto', item)
+                 | map(attribute='_cassandra_preflight.address') | list }}
+            _addr: "{{ _host | first | default(item) }}"
           loop: "{{ _cassandra_service_seeds }}"
+
+        # Streaming and schema changes between versions are not supported;
+        # an upgrade in progress sets cassandra_allow_mixed_versions itself
+        - name: One Cassandra version in the cluster
+          ansible.builtin.assert:
+            that: _versions | length <= 1 or cassandra_allow_mixed_versions | default(false) | bool
+            fail_msg: >-
+              The cluster runs several Cassandra versions ({{ _versions | join('; ') }}): an upgrade is not finished.
+              Adding or removing nodes and schema changes are not supported until every node runs the same version.
+              Finish the upgrade first, or set cassandra_allow_mixed_versions: true at your own risk
+              (bootstrap streaming between versions can fail or leave the new node incomplete).
+            quiet: true
+          vars:
+            _section: "{{ (cassandra_preflight_describe.stdout ~ '\\n').split('Database versions:')[1:] | first | default('') }}"
+            _versions: "{{ _section.split('\\n\\n') | first | regex_findall('(?m)^\\s+(\\S+: \\[.*\\])$') }}"
