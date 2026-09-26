@@ -18,6 +18,9 @@ Role Variables
   (default) installs the repository's latest. An installed node is never moved
   to another version by the role (that is an upgrade); on Debian and Ubuntu the
   pinned packages are held (`apt-mark hold`).
+* `cassandra_install_java` (default `true`): `false` when Java is installed
+  by other means (an internal package, the system image); the Cassandra
+  package still needs a Java package that satisfies its dependency.
 * `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
   the default `java` when several JDKs are installed.
 * `cassandra_java_version`: Java installed before Cassandra. Defaults to the

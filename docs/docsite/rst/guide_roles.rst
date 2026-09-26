@@ -283,6 +283,43 @@ running with an older configuration than the one on disk (written by the role, o
 restart): it is restarted too.
 
 
+Restricted networks (air-gapped)
+--------------------------------
+
+The roles reach the network only through the package manager of the hosts, and for these sources:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Source
+     - Used by
+     - Setting
+   * - Cassandra packages, Debian/Ubuntu (``https://debian.cassandra.apache.org``)
+     - ``cassandra_repository``
+     - ``cassandra_repository_deb_url``
+   * - Cassandra packages, RedHat family (``https://redhat.cassandra.apache.org/<series>/``)
+     - ``cassandra_repository``
+     - ``cassandra_repository_rpm_url``
+   * - Apache Cassandra release signing keys
+     - ``cassandra_repository``
+     - none by default: a copy ships with the role; ``cassandra_repository_key_url`` downloads them from a mirror
+       instead, checked against ``cassandra_repository_key_fingerprints``
+   * - python3.11 for cqlsh, Ubuntu 24.04+ with Cassandra 4.x only (deadsnakes PPA)
+     - ``cassandra_install``
+     - ``cassandra_cqlsh_python_repo_uri`` (its signing key ships with the role), ``""`` for the configured repositories
+   * - Java, jemalloc, cassandra-tools, chrony/systemd-timesyncd, firewalld/ufw, python3-debian
+     - the roles
+     - the hosts' own repositories
+
+Without internet access, point the two Cassandra repository settings at a mirror (Artifactory, Nexus, reposync...),
+and make sure the hosts' own repositories (or their mirror) carry the packages of the last row. Where the repositories
+are set up by other means (Satellite/Foreman, the system image), ``cassandra_repository_manage: false`` leaves them
+alone, and ``cassandra_install_java: false`` leaves Java to you (the Cassandra package still needs a Java package
+that satisfies its dependency). Nothing else is downloaded: no tarball, no pip, no git.
+
+The playbooks talk to the nodes only (JMX on 127.0.0.1, CQL on the nodes' addresses, SSH from the controller).
+
+
 JMX access
 ----------
 

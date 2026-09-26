@@ -18,6 +18,10 @@ cassandra_java_versions:
   41x: "11"
   50x: "17"
 cassandra_java_version: "{{ cassandra_java_versions[cassandra_version] | default('17') }}"
+# false: Java is installed by other means (an internal package, the system
+# image); the Cassandra package still needs a Java package that satisfies its
+# dependency
+cassandra_install_java: true
 # Make cassandra_java_version the default java when several JDKs are installed
 cassandra_java_set_default: true
 cassandra_java_package: >-

@@ -26,6 +26,7 @@
     name: "{{ cassandra_java_package }}"
     state: present
   retries: 3
+  when: cassandra_install_java | bool
 
 # Cassandra and nodetool run the default java: with several JDKs installed
 # (e.g. while moving to another Java), it must be this one
@@ -35,7 +36,9 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  when: cassandra_java_set_default | bool
+  when:
+    - cassandra_install_java | bool
+    - cassandra_java_set_default | bool
 
 - name: Make it the default java
   community.general.alternatives:
@@ -47,6 +50,7 @@
          | select('match', '^/\S*java-(1\.)?' ~ cassandra_java_version ~ '[.-]\S*/bin/java ')
          | map('regex_replace', ' .*$', '') | first | default('') }}
   when:
+    - cassandra_install_java | bool
     - cassandra_java_set_default | bool
     - _path != ''
 

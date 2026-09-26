@@ -63,3 +63,10 @@ argument_specs:
             ones added later, runs the same one. Empty installs the repository's latest.
           - An installed node is never moved to another version by this role
             (that is an upgrade). On Debian and Ubuntu the pinned packages are held.
+      cassandra_install_java:
+        type: bool
+        default: true
+        description:
+          - false when Java is installed by other means (an internal package,
+            the system image). The Cassandra package still needs a Java package
+            that satisfies its dependency.
