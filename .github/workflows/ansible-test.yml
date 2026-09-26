@@ -1,12 +1,18 @@
 name: CI
 on:
   pull_request:
+  workflow_dispatch:  # manual full run
   schedule:
     - cron: "0 3 * * *"
 
 env:
   setup_cassandra_version_file: "./tests/integration/targets/setup_cassandra/defaults/main.yml"
   setup_ccm_version_file: "./tests/integration/targets/setup_cassandra_cluster_manager/defaults/main.yml"
+
+# A new push to a pull request cancels its runs still going
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   sanity:
@@ -15,6 +21,7 @@ jobs:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 2  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -53,6 +60,7 @@ jobs:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 1  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -113,10 +121,27 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: ansible_collections/community/cassandra
+          fetch-depth: 0
 
+      # Pull requests test the targets of the modules they change; changes shared by
+      # every module (module_utils, test setup, this workflow...), scheduled and manual runs test all
       - name: Generate module list
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          find tests/integration/targets -type d -maxdepth 1 -not -name 'setup*' | cut -d '/' -f4 | sort | awk NF | jq -sRc 'split("\n") | map(select(length > 0))' > int_test_modules.json
+          all=$(find tests/integration/targets -mindepth 1 -maxdepth 1 -type d -not -name 'setup*' | cut -d '/' -f4 | sort)
+          targets="$all"
+          if [ -n "$BASE_SHA" ]; then
+            changed=$(git diff --name-only "$BASE_SHA" HEAD)
+            if ! echo "$changed" | grep -qE '^(plugins/module_utils/|plugins/doc_fragments/|tests/integration/targets/setup_|tests/coverage\.sh|meta/runtime\.yml|\.github/workflows/ansible-test\.yml|galaxy\.yml)'; then
+              modules=$(echo "$changed" | sed -nE 's#^plugins/modules/([^/]+)\.py$#\1#p')
+              # the targets of the changed modules and of their tests, and the targets that use them
+              targets=$( { echo "$modules"; echo "$changed" | sed -nE 's#^tests/integration/targets/([^/]+)/.*#\1#p'
+                for m in $modules; do grep -rlE "^[[:space:]-]*(community\.cassandra\.)?$m:[[:space:]]*$" tests/integration/targets | cut -d/ -f4; done
+              } | sort -u | grep -Fx -f <(echo "$all") || true)
+            fi
+          fi
+          echo "$targets" | awk NF | jq -sRc 'split("\n") | map(select(length > 0))' > int_test_modules.json
 
       - name: Set output variable
         id: json-list
@@ -125,77 +150,15 @@ jobs:
           echo "modules-to-test=$output" >> $GITHUB_OUTPUT
           echo "$output"
 
-  integration_311x:
-    needs: integration_matrix
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: ansible_collections/community/cassandra
-    strategy:
-      matrix:
-        versions:
-          - python_version: "3.10"
-            ansible_version: "stable-2.16"
-          - python_version: "3.10"
-            ansible_version: "stable-2.17"
-        cassandra_version:
-          - package_version: "311x"
-            tar_version: "3.11.17"
-        test_scenario:
-          - docker_image: "default"
-            python_version: "3.10"
-            ansible_test_options: ""
-        cassandra_module: ${{ fromJson(needs.integration_matrix.outputs.matrix) }}
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v6
-        with:
-          path: ansible_collections/community/cassandra
-
-      - name: Set up Python ${{ matrix.versions.python_version }}
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.versions.python_version }}
-
-      - name: Install ansible-base (${{ matrix.versions.ansible_version }})
-        uses: nick-invision/retry@v4
-        with:
-          timeout_minutes: 3
-          max_attempts: 3
-          command: pip install https://github.com/ansible/ansible/archive/${{ matrix.versions.ansible_version }}.tar.gz --disable-pip-version-check
-
-      - name: Ensure cassandra versions are set to ${{ matrix.cassandra_version.package_version }} | ${{ matrix.cassandra_version.tar_version }}
-        run: |
-          sed -i 's/^cassandra_version:.*/cassandra_version: \"${{ matrix.cassandra_version.package_version }}\"/g' ${{ env.setup_cassandra_version_file }}
-          sed -i 's/^cassandra_version:.*/cassandra_version: \"${{ matrix.cassandra_version.tar_version }}\"/g' ${{ env.setup_ccm_version_file }}
-
-      - name: Install ansible.posix
-        uses: nick-invision/retry@v4
-        with:
-          timeout_minutes: 3
-          max_attempts: 3
-          command: ansible-galaxy collection install ansible.posix -p ansible_collections/
-
-      - name: Run integration tests on Python ${{ matrix.test_scenario.python_version }} | ${{ matrix.test_scenario.docker_image }} | ${{ matrix.versions.ansible_version }} | ${{ matrix.cassandra_module }} | ${{ matrix.cassandra_version.package_version }}
-        run: ansible-test integration --docker ${{ matrix.test_scenario.docker_image }} ${{ matrix.test_scenario.ansible_test_options }} -v --color --retry-on-error --python ${{ matrix.test_scenario.python_version }} --continue-on-error --diff --coverage  ${{ matrix.cassandra_module }}
-
-      - name: Generate coverage report.
-        run: ansible-test coverage xml -v --requirements --group-by command --group-by version
-
-      - uses: codecov/codecov-action@v7.0.0
-        with:
-          fail_ci_if_error: false
-
-      - name: Upload Coverage data
-        run: tests/coverage.sh
-
   integration_40x:
     needs: integration_matrix
+    if: needs.integration_matrix.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -262,11 +225,13 @@ jobs:
 
   integration_41x:
     needs: integration_matrix
+    if: needs.integration_matrix.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"
@@ -333,11 +298,13 @@ jobs:
 
   integration_50x:
     needs: integration_matrix
+    if: needs.integration_matrix.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: ansible_collections/community/cassandra
     strategy:
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         versions:
           - python_version: "3.10"

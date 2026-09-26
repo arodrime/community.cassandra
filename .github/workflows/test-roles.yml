@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 6 * * *"
 
+# A new push to a pull request cancels its runs still going
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   roles_matrix:
@@ -40,6 +45,7 @@ jobs:
         working-directory: ansible_collections/community/cassandra
 
     strategy:
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         python_version:
           - "3.12"
