@@ -1,0 +1,2 @@
+minor_changes:
+  - New decommission_node playbook - removes a live node, refused when a keyspace would lose replicas it needs.

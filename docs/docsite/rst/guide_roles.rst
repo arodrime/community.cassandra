@@ -111,6 +111,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=orders -e cassandra_leaving_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
@@ -152,6 +153,16 @@ another seed answers: seeds don't bootstrap, so it would join without its data. 
 Once the new nodes have joined, the others still hold the data they handed over. ``cleanup`` removes it, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
+
+
+Removing a node
+---------------
+
+``decommission_node`` removes the nodes in ``cassandra_leaving_nodes``, one at a time: each one streams its data to the
+others, then Cassandra is stopped and disabled on it. It refuses a seed (take it out of ``cassandra_seeds`` with
+``change_seeds`` first) and a removal that would leave a datacenter with fewer nodes than a keyspace has replicas
+there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
+authentication is on). Remove the hosts from the inventory afterwards.
 
 
 Restarting

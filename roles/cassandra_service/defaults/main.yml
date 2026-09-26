@@ -51,6 +51,10 @@ cassandra_service_health_force: false
 cassandra_jmx_username: ""
 cassandra_jmx_password: ""
 cassandra_jmx_password_file: ""
+# CQL access for the checks that read the schema (e.g. replication before a
+# decommission), when authentication is on
+cassandra_cql_username: ""
+cassandra_cql_password: ""
 # Where the config Cassandra runs with is, and the checksums it started with
 _cassandra_service_conf_dir: >-
   {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
