@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_firewall - cassandra_firewall_port_sources opens ports to given sources only.
