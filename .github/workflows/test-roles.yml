@@ -45,6 +45,7 @@ jobs:
         working-directory: ansible_collections/community/cassandra
 
     strategy:
+      max-parallel: 3  # fork: leave runners to the other repos of the account
       matrix:
         python_version:
           - "3.12"
