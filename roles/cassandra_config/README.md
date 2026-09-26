@@ -87,6 +87,14 @@ Role Variables
   defaults to `NONE` (5.0 formats and features, right for a new cluster).
   A cluster upgraded from 4.x must set `CASSANDRA_4`, then move through
   `UPGRADING` to `NONE` with rolling restarts.
+* `cassandra_jmx_users`: remote JMX users (with `cassandra_local_jmx: false`),
+  as `{name, password, access}` (`readwrite`, the default, or `readonly`),
+  written to `/etc/cassandra/jmxremote.password` and `.access`, mode `0400`
+  owned by cassandra. Keep the passwords in a vault.
+* `cassandra_cqlsh_credentials`: cqlsh set up for OS users, as
+  `{os_user, username, password}`: `~/.cassandra/cqlshrc` points cqlsh at this
+  node (`cassandra_rpc_address`), and from 4.1 the password goes to
+  `~/.cassandra/credentials`; both mode `0600`.
 * `cassandra_extra_settings`: settings no variable covers, as a dict written
   as-is at the end of `cassandra.yaml` (e.g. `{commitlog_total_space: 8192MiB}`).
   Keys the template already has are refused: set them with their variable.

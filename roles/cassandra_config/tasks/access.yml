@@ -1,0 +1,97 @@
+---
+# Remote JMX with authentication (cassandra_local_jmx: false): its users. The
+# JVM refuses a password file others can read.
+- name: Write the JMX users
+  when: cassandra_jmx_users | length > 0
+  block:
+    - name: Write jmxremote.password
+      ansible.builtin.copy:
+        content: |
+          {% for user in cassandra_jmx_users %}
+          {{ user.name }} {{ user.password }}
+          {% endfor %}
+        dest: /etc/cassandra/jmxremote.password
+        owner: cassandra
+        group: cassandra
+        mode: "0400"
+      no_log: true
+      diff: false
+
+    - name: Write jmxremote.access
+      ansible.builtin.copy:
+        content: |
+          {% for user in cassandra_jmx_users %}
+          {% if user.access | default('readwrite') == 'readwrite' %}
+          {{ user.name }} readwrite \
+              create javax.management.monitor.*,javax.management.timer.* \
+              unregister
+          {% else %}
+          {{ user.name }} readonly
+          {% endif %}
+          {% endfor %}
+        dest: /etc/cassandra/jmxremote.access
+        owner: cassandra
+        group: cassandra
+        mode: "0400"
+
+# cqlsh for OS users: ~/.cassandra/cqlshrc pointing at this node, with the CQL
+# credentials (4.1+: in a separate credentials file, as cqlsh wants)
+- name: Write the cqlsh credentials
+  when: cassandra_cqlsh_credentials | length > 0
+  vars:
+    _home: "{{ ansible_facts.getent_passwd[item.os_user][4] }}"
+  block:
+    - name: Find the users' home directories
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item.os_user }}"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+
+    - name: Create ~/.cassandra
+      ansible.builtin.file:
+        path: "{{ _home }}/.cassandra"
+        state: directory
+        owner: "{{ item.os_user }}"
+        mode: "0700"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+
+    - name: Write ~/.cassandra/cqlshrc
+      ansible.builtin.copy:
+        content: |
+          [authentication]
+          username = {{ item.username }}
+          {% if cassandra_version == '40x' %}
+          password = {{ item.password }}
+          {% else %}
+          credentials = {{ _home }}/.cassandra/credentials
+          {% endif %}
+
+          [connection]
+          hostname = {{ cassandra_rpc_address if cassandra_rpc_address not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+          port = {{ cassandra_native_transport_port }}
+        dest: "{{ _home }}/.cassandra/cqlshrc"
+        owner: "{{ item.os_user }}"
+        mode: "0600"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+      no_log: "{{ cassandra_version == '40x' }}"
+      diff: false
+
+    - name: Write ~/.cassandra/credentials (4.1+)
+      ansible.builtin.copy:
+        content: |
+          [PlainTextAuthProvider]
+          username = {{ item.username }}
+          password = {{ item.password }}
+        dest: "{{ _home }}/.cassandra/credentials"
+        owner: "{{ item.os_user }}"
+        mode: "0600"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      no_log: true
+      diff: false
+      when: cassandra_version != '40x'

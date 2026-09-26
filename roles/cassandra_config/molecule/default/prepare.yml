@@ -16,6 +16,13 @@
         name: cassandra
         system: true
 
+    - name: Create the cassandra user (normally created by the Cassandra package)
+      ansible.builtin.user:
+        name: cassandra
+        group: cassandra
+        system: true
+        create_home: false
+
     - name: Create config dirs (normally created by the Cassandra package)
       ansible.builtin.file:
         path: "{{ item }}"
@@ -33,6 +40,7 @@
         - /tmp/cassandra-confirm
         - /tmp/cassandra-identity
         - /tmp/cassandra-secret
+        - /tmp/cassandra-access
         - /tmp/initialized-node/system
 
     # What the rpm's %post does: /etc/cassandra/conf -> alternatives -> default.conf

@@ -189,6 +189,20 @@
             cassandra_config_force_identity_change: true
             cassandra_rack: rack2
 
+    - name: JMX users and cqlsh credentials
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_conf_dir: /tmp/cassandra-access
+        cassandra_rpm_conf_alternative: ""
+        cassandra_local_jmx: false
+        cassandra_rpc_address: 10.9.9.9
+        cassandra_jmx_users:
+          - {name: monitor, password: Mon1tor-Secret, access: readonly}
+          - {name: admin, password: Adm1n-Secret}
+        cassandra_cqlsh_credentials:
+          - {os_user: root, username: dba, password: Dba-Cql-Secret}
+
     - name: Render with an extra setting that has a variable
       block:
         - name: Run the role, expecting its assert to fail

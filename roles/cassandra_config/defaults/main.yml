@@ -275,3 +275,13 @@ cassandra_config_mode: "0640"
 # partitioner, snitch, dc, rack): changing them breaks it, so the role refuses.
 # true only to follow a documented procedure (e.g. a snitch migration).
 cassandra_config_force_identity_change: false
+
+# Remote JMX users (with cassandra_local_jmx: false), written to
+# /etc/cassandra/jmxremote.password and .access, readable by cassandra only:
+# [{name: ..., password: ..., access: readwrite|readonly}]. Keep the
+# passwords in a vault.
+cassandra_jmx_users: []
+
+# cqlsh set up for OS users (~/.cassandra/cqlshrc, pointing at this node, and
+# the credentials file), mode 0600: [{os_user: root, username: ..., password: ...}]
+cassandra_cqlsh_credentials: []

@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_config - remote JMX users (cassandra_jmx_users) and cqlsh credentials files (cassandra_cqlsh_credentials).

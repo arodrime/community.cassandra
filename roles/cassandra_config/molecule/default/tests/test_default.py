@@ -222,3 +222,29 @@ def test_identity_change_only_when_forced(host):
 
 def test_preview_leaves_no_temp_dir(host):
     assert host.run("ls -d /tmp/*.cassandra_config").rc != 0
+
+
+def test_jmx_users(host):
+    password = host.file("/etc/cassandra/jmxremote.password")
+    access = host.file("/etc/cassandra/jmxremote.access")
+    env = host.file("/tmp/cassandra-access/cassandra-env.sh").content_string
+
+    assert password.mode == 0o400 and password.user == "cassandra"
+    assert host.run("cat /etc/cassandra/jmxremote.password").stdout.split("\n")[:2] == [
+        "monitor Mon1tor-Secret", "admin Adm1n-Secret"]
+    assert access.mode == 0o400
+    assert "monitor readonly" in host.run("cat /etc/cassandra/jmxremote.access").stdout
+    assert "admin readwrite \\" in host.run("cat /etc/cassandra/jmxremote.access").stdout
+    assert '\nJVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"' in env
+    assert "LOCAL_JMX=no" in env
+
+
+def test_cqlsh_credentials(host):
+    cqlshrc = host.file("/root/.cassandra/cqlshrc")
+    credentials = host.file("/root/.cassandra/credentials")
+
+    assert cqlshrc.mode == 0o600 and credentials.mode == 0o600
+    assert "hostname = 10.9.9.9" in cqlshrc.content_string
+    assert "credentials = /root/.cassandra/credentials" in cqlshrc.content_string
+    assert "password" not in cqlshrc.content_string  # 4.1+: only in the credentials file
+    assert "password = Dba-Cql-Secret" in credentials.content_string
