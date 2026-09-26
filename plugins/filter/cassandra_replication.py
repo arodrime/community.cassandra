@@ -7,6 +7,9 @@ cassandra_keyspaces: cqlsh output of
     -> {keyspace: {'class': short class name, 'rf': {dc: n} or {'*': n}}}
 cassandra_replication_problems: keyspaces, {dc: nodes left} -> the keyspaces
     that would have fewer nodes than replicas, as sentences.
+cassandra_replication_alter: keyspaces, dc, {keyspace: rf} to add that dc to
+    those keyspaces, or {} with remove=True to take it out of every keyspace
+    -> ALTER KEYSPACE statements.
 cassandra_rack_down_problems: keyspaces, dc, racks in that dc -> why taking one
     rack of that dc down would lose more than one replica of some data, and
     warnings (RF 2: QUORUM fails with one replica down).
@@ -75,10 +78,39 @@ def cassandra_rack_down_problems(keyspaces, dc, racks):
     return {"problems": problems, "warnings": warnings}
 
 
+def _cql_replication(rf):
+    return "{'class': 'NetworkTopologyStrategy', %s}" % ", ".join("'%s': %d" % (dc, n) for dc, n in sorted(rf.items()))
+
+
+def cassandra_replication_alter(keyspaces, dc, add=None, remove=False):
+    statements = []
+    if remove:
+        for name in sorted(keyspaces):
+            rf = keyspaces[name]["rf"]
+            if dc in rf:
+                rest = dict((d, n) for d, n in rf.items() if d != dc)
+                if not rest:
+                    raise AnsibleFilterError("%s only has replicas in %s: drop it or give it replicas elsewhere first"
+                                             % (name, dc))
+                statements.append('ALTER KEYSPACE "%s" WITH replication = %s;' % (name, _cql_replication(rest)))
+        return statements
+    for name, n in sorted((add or {}).items()):
+        if name not in keyspaces:
+            raise AnsibleFilterError("keyspace %s does not exist" % name)
+        if keyspaces[name]["class"] != "NetworkTopologyStrategy":
+            raise AnsibleFilterError("%s uses %s: switch it to NetworkTopologyStrategy first (ALTER KEYSPACE, then repair)"
+                                     % (name, keyspaces[name]["class"]))
+        rf = dict(keyspaces[name]["rf"], **{dc: int(n)})
+        if rf != keyspaces[name]["rf"]:
+            statements.append('ALTER KEYSPACE "%s" WITH replication = %s;' % (name, _cql_replication(rf)))
+    return statements
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_keyspaces": cassandra_keyspaces,
             "cassandra_replication_problems": cassandra_replication_problems,
             "cassandra_rack_down_problems": cassandra_rack_down_problems,
+            "cassandra_replication_alter": cassandra_replication_alter,
         }

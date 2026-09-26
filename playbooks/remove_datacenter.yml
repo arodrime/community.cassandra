@@ -1,0 +1,117 @@
+---
+# Removes a datacenter from a running cluster: the keyspaces stop keeping
+# replicas there, then its nodes leave one at a time (decommission, nothing
+# left to stream) and Cassandra is stopped and disabled on them.
+#   ansible-playbook -i inventory community.cassandra.remove_datacenter -e cassandra_hosts=my_cluster \
+#     -e cassandra_target_dc=dc3
+# Move that region's clients to another datacenter first: once the keyspaces
+# are altered, reads and writes there fail. Its nodes can't be seeds (take them
+# out with change_seeds first). A keyspace with replicas only there is refused.
+# CQL credentials, when authentication is on: cassandra_cql_username/_password.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Check the datacenter to remove
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  vars:
+    _leaving: >-
+      {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_cassandra_preflight.cassandra_dc', 'equalto', cassandra_target_dc)
+         | map(attribute='inventory_hostname') | list }}
+    _staying: "{{ ansible_play_hosts_all | reject('in', _leaving) | list }}"
+  tasks:
+    - name: The datacenter has nodes, and others stay
+      ansible.builtin.assert:
+        that:
+          - _leaving | length > 0
+          - _staying | length > 0
+          - not _leaving | map('extract', hostvars, '_cassandra_service_is_seed') | select | list
+        fail_msg: >-
+          {{ 'No node declares cassandra_dc=' ~ cassandra_target_dc if _leaving | length == 0
+             else 'Every node is in ' ~ cassandra_target_dc ~ ': nothing would stay.' if _staying | length == 0
+             else 'Seeds in ' ~ cassandra_target_dc ~ ': take them out of cassandra_seeds with change_seeds first.' }}
+        quiet: true
+      run_once: true
+
+    - name: Read the keyspaces' replication
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: keyspaces.yml
+        apply:
+          run_once: true
+      vars:
+        cassandra_keyspaces_from: "{{ _staying[0] }}"
+      run_once: true
+
+    # Fails on a keyspace with replicas only in that datacenter
+    - name: Work out the replication changes
+      ansible.builtin.set_fact:
+        cassandra_remove_dc_alter: >-
+          {{ cassandra_keyspaces | community.cassandra.cassandra_replication_alter(cassandra_target_dc, remove=True) }}
+      run_once: true
+
+    - name: Confirm
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: |-
+          remove_datacenter will run, from {{ _staying[0] }}:
+          {% for statement in cassandra_remove_dc_alter %}
+            {{ statement }}
+          {% endfor %}
+          then remove {{ _leaving | join(', ') }} one at a time. Clients still using {{ cassandra_target_dc }} will fail.
+
+    - name: Change the keyspaces' replication
+      community.cassandra.cassandra_cqlsh:
+        execute: "{{ item }}"
+        cqlsh_host: >-
+          {{ hostvars[_staying[0]].cassandra_rpc_address | default('')
+             if hostvars[_staying[0]].cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+        username: "{{ cassandra_cql_username | default(omit, true) }}"
+        password: "{{ cassandra_cql_password | default(omit, true) }}"
+      delegate_to: "{{ _staying[0] }}"
+      loop: "{{ cassandra_remove_dc_alter }}"
+      run_once: true
+
+    - name: Group the nodes to remove
+      ansible.builtin.group_by:
+        key: cassandra_leaving_dc
+      when: inventory_hostname in _leaving
+      changed_when: false
+
+- name: Remove the datacenter's nodes, one at a time
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_leaving_dc"
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    cassandra_leaving_nodes: cassandra_leaving_dc  # the health check reads the ring from a node that stays
+  tasks:
+    - name: Remove this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: decommission
+        cassandra_service_node_checks_after: false
+        _gone: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
+        cassandra_service_expected_before: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int }}"
+        cassandra_service_expected_after: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int - 1 }}"
+
+- name: Summary
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_leaving_dc"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+
+    - name: Say what is left to do
+      ansible.builtin.debug:
+        msg: >-
+          {{ cassandra_target_dc }} is gone. Remove {{ ansible_play_hosts_all | join(', ') }} from the inventory;
+          their data directories are left in place.
+      run_once: true

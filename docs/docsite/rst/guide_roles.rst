@@ -183,6 +183,20 @@ with its address in ``cassandra_dead_node_address``: ``removenode`` streams its 
 can't finish: data it held alone is lost, repair afterwards.
 
 
+Datacenters
+-----------
+
+``add_datacenter`` adds a datacenter: put its nodes in the cluster's group, all with the new ``cassandra_dc``, then
+run it with them in ``cassandra_new_nodes``, the keyspaces that get replicas there in
+``cassandra_datacenter_replication`` (``{"orders": 3, "system_auth": 3}``; NetworkTopologyStrategy only) and an
+existing datacenter to stream from in ``cassandra_rebuild_source_dc``. The nodes join one at a time without
+streaming, the keyspaces are altered, then each node streams its data (``nodetool rebuild``). Make one node per rack
+of the new datacenter a seed afterwards.
+
+``remove_datacenter`` (``-e cassandra_target_dc=dc3``) alters the keyspaces so they keep no replica there, then
+removes its nodes one at a time. Move that region's clients first, and take its seeds out of ``cassandra_seeds``.
+
+
 Rack maintenance
 ----------------
 
