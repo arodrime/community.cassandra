@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_install - makes the series' Java the default java when several are installed (cassandra_java_set_default).

@@ -49,3 +49,9 @@ argument_specs:
           - Where C(python3.11) comes from on Ubuntu releases that don't ship it
             (the deadsnakes PPA, signed by the key shipped in C(files/deadsnakes.asc)).
             Set to an empty string to rely on the configured repositories.
+      cassandra_java_set_default:
+        type: bool
+        default: true
+        description:
+          - Make O(cassandra_java_version) the default C(java) (alternatives)
+            when several JDKs are installed. Cassandra and nodetool run the default one.
