@@ -192,7 +192,9 @@ Restarting
 ----------
 
 ``rolling_restart`` drains each node, restarts it and waits until it and the cluster are healthy again before the
-next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching).
+next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching). On a big cluster,
+``-e cassandra_rolling_mode=rack`` restarts all the nodes of a rack together, rack by rack, when the replication
+allows losing a rack (see `Rack maintenance`_).
 
 To move a cluster to another Java, set ``cassandra_java_version`` in the cluster's ``group_vars`` and run
 ``update_jdk``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.

@@ -1,0 +1,83 @@
+---
+# One rack of rolling_restart's rack mode, run once: cluster health, then
+# drain, restart and wait for every node of the rack at the same time,
+# progress recorded. Expects cassandra_restart_batch (host names).
+- name: Rack {{ cassandra_restart_batch | join(', ') }}
+  vars:
+    _todo: "{{ cassandra_restart_batch | reject('in', cassandra_progress_done | default([])) | list }}"
+    _jmx: "{{ _cassandra_service_jmx | combine({'port': hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}"
+  when: _todo | length > 0
+  block:
+    - name: Note the start time
+      ansible.builtin.set_fact:
+        _cassandra_restart_start: "{{ now().timestamp() | int }}"
+
+    - name: Check the cluster before the rack
+      ansible.builtin.include_tasks: cluster_health.yml
+
+    - name: Drain the rack's nodes
+      community.cassandra.cassandra_drain:
+      module_defaults:
+        community.cassandra.cassandra_drain: "{{ _jmx }}"
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+      when: cassandra_operation_drain | bool
+
+    - name: Restart them
+      ansible.builtin.systemd_service:
+        name: cassandra
+        state: restarted
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+
+    - name: Wait until they have joined (Mode NORMAL)
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _jmx }}"
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+      register: cassandra_restart_netstats
+      until: cassandra_restart_netstats.mode | default('') == 'NORMAL'
+      retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
+      delay: 10
+
+    - name: Record the config they started with
+      ansible.builtin.include_tasks: config_snapshot.yml
+      args:
+        apply:
+          delegate_to: "{{ cassandra_restarted_node }}"
+      loop: "{{ _todo }}"
+      loop_control:
+        loop_var: cassandra_restarted_node
+
+    - name: Add the rack to the progress file
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_progress_file }}"
+        line: "{{ item }}"
+      delegate_to: localhost
+      loop: "{{ _todo }}"
+      when: cassandra_progress_file is defined
+
+    - name: Record the result
+      ansible.builtin.set_fact:
+        cassandra_op_result: "restart done with its rack in {{ now().timestamp() | int - _cassandra_restart_start | int }}s"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+  rescue:
+    - name: Record the failure
+      ansible.builtin.set_fact:
+        cassandra_op_result: "restart FAILED: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+
+    - name: Print the summary
+      ansible.builtin.include_tasks: summary.yml
+
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: >-
+          Stopped at the rack {{ _todo | join(', ') }}: no later rack was restarted.
+          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
+          (progress: {{ cassandra_progress_file | default('none') }})
