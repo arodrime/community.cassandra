@@ -1,0 +1,2 @@
+minor_changes:
+  - New import_cluster playbook - reads a running cluster into an inventory for the roles (groups, variables, hand edits and drift in a report), without changing anything on the nodes; passwords go to separate files, vaulted when a vault password file is given.
