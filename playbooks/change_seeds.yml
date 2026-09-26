@@ -49,6 +49,11 @@
         _changed: "{{ ansible_play_hosts | map('extract', hostvars) | rejectattr('_cassandra_seeds_old', 'equalto', _new) | map(attribute='inventory_hostname') | list }}"
       when: _changed | length > 0
 
+    - name: Checksum cassandra.yaml before the change
+      ansible.builtin.stat:
+        path: "{{ _file }}"
+      register: cassandra_seeds_file_before
+
     - name: Write the new seed list
       ansible.builtin.replace:
         path: "{{ _file }}"
@@ -78,6 +83,31 @@
           ansible.builtin.command: "{{ _cassandra_service_nodetool }} getseeds"
           register: cassandra_seeds_reloaded
           changed_when: cassandra_seeds_reloaded.stdout != cassandra_seeds_live.stdout
+
+        # The seeds are live: unless cassandra.yaml already had another change
+        # waiting for a restart, it now matches what the node runs (apply_config)
+        - name: Read the config the node started with
+          ansible.builtin.slurp:
+            path: "{{ _cassandra_service_config_snapshot }}"
+          register: cassandra_seeds_snapshot
+          failed_when: false
+
+        - name: Checksum cassandra.yaml after the change
+          ansible.builtin.stat:
+            path: "{{ _file }}"
+          register: cassandra_seeds_file_after
+          when: cassandra_seeds_snapshot.content is defined
+
+        - name: Record the live seeds in it
+          ansible.builtin.copy:
+            content: "{{ _started | combine({_file: cassandra_seeds_file_after.stat.checksum}) | to_nice_json }}"
+            dest: "{{ _cassandra_service_config_snapshot }}"
+            mode: "0644"
+          vars:
+            _started: "{{ cassandra_seeds_snapshot.content | b64decode | from_json }}"
+          when:
+            - cassandra_seeds_snapshot.content is defined
+            - _started[_file] | default('') == cassandra_seeds_file_before.stat.checksum
 
     # Nothing is written here: cassandra_config shows its diffs
     - name: Look for other config differences

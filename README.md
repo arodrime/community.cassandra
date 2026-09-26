@@ -34,6 +34,8 @@ group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 - `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first.
 - `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
+- `apply_config`- Applies the inventory's config: shows every diff, asks once, then writes and restarts only the nodes that need it, one at a time.
+- `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
 - `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
 - `import_cluster`- Reads a running cluster into an inventory for the roles, without changing anything on the nodes.
 

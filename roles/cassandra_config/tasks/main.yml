@@ -279,6 +279,7 @@
       when:
         - cassandra_config_applied.changed
         - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+        - not _cassandra_config_no_restart_warning | default(false)  # apply_config restarts itself
 
 - name: Report
   ansible.builtin.include_role:
