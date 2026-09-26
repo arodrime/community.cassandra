@@ -13,11 +13,40 @@ good idea to mention in this section that the boto package is required.
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including
-any variables that are in defaults/main.yml, vars/main.yml, and any variables
-that can/should be set via parameters to the role. Any variables that are read
-from other roles and/or the global scope (ie. hostvars, group vars, etc.) should
-be mentioned here as well.
+* `cassandra_data_block_device`: block device to apply read-ahead/IO
+  scheduler tuning to, e.g. `/dev/nvme0n1`. Defaults to `""`, which
+  auto-detects it from `cassandra_data_dir` (the Cassandra data directory,
+  no default in this role) via `findmnt` + `lsblk`. Skipped, not guessed, if
+  `cassandra_data_dir` isn't defined or detection is inconclusive - set
+  this explicitly to force a specific device.
+* `cassandra_data_block_devices`: several disks to tune (JBOD data
+  directories, a commitlog disk). Empty (default): `cassandra_data_block_device`,
+  else the disks of the data directories and of `cassandra_commitlog_dir`,
+  auto-detected.
+* `cassandra_data_readahead_kb`: read-ahead in KB applied to
+  `cassandra_data_block_device`'s `queue/read_ahead_kb`. Defaults to `4`
+  (the practical minimum, not `blockdev --setra` sectors) - read-ahead
+  offers no benefit for Cassandra's random-access read path, especially
+  on 5.0+.
+* `cassandra_linux_apply_live`: apply kernel settings (sysctl, swapoff,
+  THP) live, not only persist them. Defaults to `auto`: live everywhere
+  except in containers (`cassandra_linux_container_types`), where `/proc/sys`
+  and `/sys` belong to the host. Set `true` to tune the host from a
+  dedicated privileged container, `false` to only persist.
+* `cassandra_linux_sysctl`: kernel settings (swappiness, max_map_count, TCP
+  keepalive and buffers...), written to `cassandra_linux_sysctl_file`
+  (default `/etc/sysctl.d/60-cassandra.conf`). The same keys are removed from
+  `/etc/sysctl.conf`, which is read last and would win.
+* `cassandra_linux_limits`: limits of the cassandra user, in
+  `/etc/security/limits.d/cassandra.conf`, for tools run by hand as
+  cassandra (the service gets its own from its systemd unit). Same values as
+  the unit by default.
+* `cassandra_sysfs_block_root`: sysfs directory the disk tuning reads and
+  writes. Defaults to `/sys/block`; only meant to be overridden by tests,
+  to point at a fake tree instead of the host's real disks.
+
+The tuning is applied immediately through sysfs, then persisted across
+reboots with a udev rule (`/etc/udev/rules.d/60-cassandra-data-disk.rules`).
 
 Dependencies
 ------------
@@ -56,7 +85,3 @@ The following sources of information were used extensively for this role:
 * https://docs.datastax.com/en/cassandra/3.0/cassandra/install/installRecommendSettings.html
 * https://docs.datastax.com/en/dse/5.1/dse-admin/datastax_enterprise/config/configRecommendedSettings.html
 
-TODO
-----
-
-* Need to check the tasked marked with is_docker tests to ensure they function in a non-docker environment.

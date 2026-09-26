@@ -1,0 +1,83 @@
+---
+# Where a node given to add_node stands, from its data dir, its own host ID
+# (when running) and the ring seen by a node of the cluster. Sets
+# cassandra_new_node_joined (true: UN in the ring under its own host ID,
+# false: never started); any other mix is refused with the reason.
+- name: Where {{ inventory_hostname }} stands
+  vars:
+    _data: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}"
+    _from: >-
+      {{ groups[cassandra_hosts | default('cassandra')]
+         | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)) | first | default('') }}
+    _address: >-
+      {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
+         else ansible_facts['default_ipv4']['address'] }}
+    _ring: >-
+      {{ cassandra_new_node_ring.cluster_status.values() | map(attribute='nodes') | flatten
+         | selectattr('address', 'equalto', _address) | first | default({}) }}
+    _in_ring: "{{ (_ring.status ~ _ring.state) if _ring else 'absent' }}"
+    _has_data: "{{ cassandra_new_node_system.stat.exists }}"
+    _my_id: "{{ cassandra_new_node_info.stdout | default('') | regex_findall('(?m)^ID\\s*:\\s*(\\S+)') | first | default('') }}"
+    _state: >-
+      {{ 'new' if _in_ring == 'absent' and not _has_data
+         else 'orphan' if _in_ring == 'absent'
+         else 'other_host' if _my_id and _my_id != _ring.host_id
+         else 'joined' if _in_ring == 'UN' and _has_data and _my_id
+         else 'replace' if _ring.status == 'D' and not _has_data
+         else 'down' if _ring.status == 'D'
+         else 'other_host' if _in_ring == 'UN'
+         else 'busy' }}
+  block:
+    - name: Need a node of the cluster to read the ring from
+      ansible.builtin.assert:
+        that: _from | length > 0
+        fail_msg: "Every node of {{ cassandra_hosts | default('cassandra') }} is in cassandra_new_nodes: use create_cluster for a new cluster"
+        quiet: true
+
+    - name: Look for this node's system keyspace
+      ansible.builtin.stat:
+        path: "{{ _data }}/system"
+      register: cassandra_new_node_system
+
+    - name: Read this node's host ID
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
+      register: cassandra_new_node_info
+      changed_when: false
+      failed_when: false
+      no_log: "{{ cassandra_jmx_password | length > 0 }}"
+      when: _cassandra_preflight_running | default(false) | bool
+
+    - name: Read the ring from {{ _from }}
+      community.cassandra.cassandra_status:
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      register: cassandra_new_node_ring
+      delegate_to: "{{ _from }}"
+      failed_when: not cassandra_new_node_ring.cluster_status
+
+    - name: Refuse a node that is not simply new or joined
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} ({{ _address }}):
+          {%- if _state == 'orphan' %}
+          has data ({{ _data }}/system) but is not in the ring: an interrupted bootstrap, or data of another cluster.
+          Stop Cassandra, empty its data, commitlog, saved_caches and hints directories, then run add_node again.
+          {%- elif _state == 'other_host' %}
+          the ring has {{ _in_ring }} host ID {{ _ring.host_id }} at this address, but this node
+          {{ ('has host ID ' ~ _my_id) if _my_id else 'does not answer (not running, or JMX unreachable)' }}: the address is used by another node
+          (IP reused, or a replace in progress). Find which machine owns {{ _ring.host_id }} before going on.
+          {%- elif _state == 'replace' %}
+          a dead node with this address is in the ring (DN, host ID {{ _ring.host_id }}). Adding this node would be a
+          replace, not an add: run replace_node (-e cassandra_new_nodes={{ inventory_hostname }}
+          -e cassandra_replace_address={{ _address }}).
+          {%- elif _state == 'down' %}
+          already in the ring (host ID {{ _ring.host_id }}) but down: start it (systemctl start cassandra) and check
+          its logs; add_node is not needed.
+          {%- else %}
+          {{ _in_ring }} in the ring (J joining, L leaving, M moving): wait until it is UN, then run add_node again.
+          {%- endif %}
+      when: _state not in ['new', 'joined']
+
+    - name: Remember whether it joined
+      ansible.builtin.set_fact:
+        cassandra_new_node_joined: "{{ _state == 'joined' }}"

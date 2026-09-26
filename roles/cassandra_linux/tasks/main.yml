@@ -4,60 +4,93 @@
   ansible.builtin.include_vars:
     file: "{{ ansible_facts['os_family'] }}.yml"
 
-- name: Check is_docker.txt file exists
-  ansible.builtin.stat:
-    path: is_docker.txt
-  register: is_docker
+# Persistent settings (sysctl.conf, fstab, THP unit) are always written;
+# applying them live is skipped in containers, where /proc/sys and /sys
+# belong to the host kernel (read-only, or worse, the host's if privileged).
+- name: Decide whether kernel settings are applied live
+  ansible.builtin.set_fact:
+    _cassandra_linux_live: >-
+      {{ (ansible_facts['virtualization_type'] not in cassandra_linux_container_types)
+         if cassandra_linux_apply_live | string | lower == 'auto' else cassandra_linux_apply_live | bool }}
+
+- name: Snapshot the current OS settings (change report)
+  ansible.builtin.include_tasks: snapshot.yml
 
 - name: Disable Swap
   ansible.builtin.command: swapoff -a
   when:
-    - is_docker.stat.exists == False
-    - ansible_swaptotal_mb > 0
+    - _cassandra_linux_live
+    - ansible_facts['swaptotal_mb'] > 0
 
 - name: Remove swap partitions
   ansible.posix.mount:
     path: swap
     state: absent
 
-- name: Ensure Swappiness is 1
-  ansible.builtin.sysctl:
-    name: vm.swappiness
-    value: "1"
-    sysctl_set: yes
-    reload: yes
+# Absent on minimal images
+- name: Directory of the kernel settings file
+  ansible.builtin.file:
+    path: "{{ cassandra_linux_sysctl_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
-- name: Ensure max_map_count is 1048575
+- name: Kernel settings for Cassandra
   ansible.builtin.sysctl:
-    name: vm.max_map_count
-    value: "1048575"
-    sysctl_set: yes
-    reload: yes
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: "{{ cassandra_linux_sysctl_file }}"
+    sysctl_set: "{{ _cassandra_linux_live }}"
+    reload: "{{ _cassandra_linux_live }}"
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+
+# /etc/sysctl.conf is read last: a line left there by an earlier version of
+# the role would win over the file above
+- name: Remove the same settings from /etc/sysctl.conf
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    state: absent
+    sysctl_file: /etc/sysctl.conf
+    reload: false
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  when: cassandra_linux_sysctl_file != '/etc/sysctl.conf'
 
 - name: Install time sync package
   ansible.builtin.package:
-    name: "{{ (ansible_facts['os_family'] == 'Debian') | ternary('systemd-timesyncd', 'chrony') }}"
+    name: "{{ _cassandra_timesync_pkg }}"
     state: present
   retries: 3
+  register: cassandra_timesync_install
 
 - name: Ensure timesync service starts
   ansible.builtin.service:
-    name: "{{ (ansible_facts['os_family'] == 'Debian') | ternary('systemd-timesyncd', 'chronyd') }}"
+    name: "{{ _cassandra_timesync_service }}"
     enabled: yes
     state: started
+  when: not (ansible_check_mode and cassandra_timesync_install is changed)  # not installed yet under --check
+  register: cassandra_timesync_service_result
   tags:
   - molecule-idempotence-notest # Ubuntu 2404 timesyncd issue
 
-- name: Ensure limits are set
+# For what runs as cassandra outside the systemd unit (tools run by hand):
+# the unit sets its own limits, systemd ignores these files
+- name: Limits of the cassandra user
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (community.cassandra.cassandra_linux)
+      {% for name, value in cassandra_linux_limits.items() %}
+      cassandra - {{ name }} {{ value }}
+      {% endfor %}
+    dest: /etc/security/limits.d/cassandra.conf
+    mode: "0644"
+
+- name: Remove the block earlier versions of the role wrote to limits.conf
   ansible.builtin.blockinfile:
     path: /etc/security/limits.conf
-    block: |
-      cassandra - memlock unlimited
-      cassandra - nofile 100000
-      cassandra - nproc 32768
-      cassandra - as unlimited
     marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
-    state: present
+    state: absent
 
 - name: Extra Limit for RH Derived Distros
   ansible.builtin.lineinfile:
@@ -66,48 +99,128 @@
     line: "* - nproc 32768"
     create: yes
   when: ansible_facts['os_family'] == "RedHat"
-
-- name: TCP setting for prevents timeouts and handling many connections
-  ansible.builtin.sysctl:
-    name: "{{ item.key }}"
-    value: "{{ item.value }}"
-    state: present
-    sysctl_file: /etc/sysctl.conf
-    reload: yes
-  with_items:
-    - { key: net.ipv4.tcp_keepalive_time, value: 60 }
-    - { key: net.ipv4.tcp_keepalive_probes, value: 3 }
-    - { key: net.ipv4.tcp_keepalive_intvl, value: 10 }
-    - { key: net.core.rmem_max, value: 16777216 }
-    - { key: net.core.wmem_max, value: 16777216 }
-    - { key: net.core.rmem_default, value: 16777216 }
-    - { key: net.core.wmem_default, value: 16777216 }
-    - { key: net.core.optmem_max, value: 40960 }
-    - { key: net.ipv4.tcp_rmem, value: "4096 87380 16777216" }
-    - { key: net.ipv4.tcp_wmem, value: "4096 65536 16777216" }
-  when:
-    - is_docker.stat.exists == False
-
-- name: Disable zone_reclaim_mode
-  ansible.builtin.sysctl:
-    name: vm.zone_reclaim_mode
-    value: 0
-    state: present
-    sysctl_file: /etc/sysctl.conf
-    reload: yes
-  when:
-    - is_docker.stat.exists == False
+  register: cassandra_linux_nproc
 
 - name: Ensure disable-thp service file exists
   ansible.builtin.copy:
     src: disable-thp.service
     dest: /etc/systemd/system/
+    mode: "0644"
   register: thp
 
-- name: Ensure service to disable THP exists
+- name: Ensure service to disable THP is enabled and started
   ansible.builtin.systemd:
     name: disable-thp
-    daemon-reload: yes
+    daemon_reload: true
     state: started
-    enabled: yes
-  when: thp.changed == True
+    enabled: true
+  when:
+    - _cassandra_linux_live
+    - thp.changed
+    - not ansible_check_mode  # the unit file only exists once really copied
+
+# Resolve the disks to tune into an internal fact (_cassandra_disks, kernel
+# names) rather than overwriting the user vars (a role param outranks set_fact).
+# Explicit: cassandra_data_block_devices (or the single cassandra_data_block_device).
+# Otherwise auto-detected with findmnt + lsblk from the data directories and
+# the commitlog directory, when defined. Skipped, not guessed, if inconclusive.
+- name: Use the explicitly set data disks
+  ansible.builtin.set_fact:
+    _cassandra_disks: >-
+      {{ (cassandra_data_block_devices + ([cassandra_data_block_device] if cassandra_data_block_device else []))
+         | map('basename') | unique | list }}
+  when: cassandra_data_block_devices | length > 0 or cassandra_data_block_device != ""
+
+- name: Auto-detect the disks of the data and commitlog directories
+  when:
+    - cassandra_data_block_devices | length == 0
+    - cassandra_data_block_device == ""
+    - _paths | length > 0
+  vars:
+    _paths: >-
+      {{ ((cassandra_data_file_directories | default([])) + [cassandra_data_dir | default('')]
+          + [cassandra_commitlog_dir | default('')]) | select | unique | list }}
+  block:
+    - name: Find the device backing each directory
+      ansible.builtin.command: "findmnt -n -o SOURCE --target {{ item }}"
+      loop: "{{ _paths }}"
+      register: cassandra_data_findmnt
+      changed_when: false
+      failed_when: false
+
+    - name: Resolve the parent kernel devices (read-ahead and scheduler are whole-disk settings)
+      ansible.builtin.command: "lsblk -no pkname {{ item.stdout | trim }}"
+      loop: "{{ cassandra_data_findmnt.results | selectattr('rc', 'equalto', 0) | selectattr('stdout') | list }}"
+      loop_control:
+        label: "{{ item.stdout | trim }}"
+      register: cassandra_data_pkname
+      changed_when: false
+      failed_when: false
+
+    - name: Keep the disks
+      ansible.builtin.set_fact:
+        _cassandra_disks: >-
+          {%- set out = [] -%}
+          {%- for r in cassandra_data_pkname.results -%}
+          {%-   set _ = out.append(r.stdout | trim if r.rc == 0 and r.stdout | trim else r.item.stdout | trim | basename) -%}
+          {%- endfor -%}
+          {{ out | unique | list }}
+
+- name: Keep the disks that exist under sysfs (skip tuning rather than guess wrong)
+  ansible.builtin.stat:
+    path: "{{ cassandra_sysfs_block_root }}/{{ item }}/queue"
+  loop: "{{ _cassandra_disks | default([]) }}"
+  register: cassandra_data_disk_stat
+
+# Read-ahead is one of the worst default settings for Cassandra's read
+# path (see the role README) - applied immediately via the sysfs queue/
+# attributes, then persisted via udev since a raw sysfs write alone
+# reverts on reboot.
+- name: Disk tuning for the Cassandra disks
+  when:
+    - _tuned | length > 0
+    - _cassandra_linux_live or cassandra_sysfs_block_root != '/sys/block'
+  vars:
+    _tuned: "{{ cassandra_data_disk_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+  block:
+    - name: Read the current read-ahead and IO scheduler (change report)
+      ansible.builtin.shell: >-
+        echo "$(cat {{ cassandra_sysfs_block_root }}/{{ item }}/queue/read_ahead_kb)|$(sed -n 's/.*\[\(.*\)\].*/\1/p' {{ cassandra_sysfs_block_root }}/{{ item }}/queue/scheduler)"
+      loop: "{{ _tuned }}"
+      register: cassandra_data_disk_before
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: Set read-ahead (immediate)
+      ansible.builtin.copy:
+        content: "{{ cassandra_data_readahead_kb }}"
+        dest: "{{ cassandra_sysfs_block_root }}/{{ item }}/queue/read_ahead_kb"
+        unsafe_writes: true
+      loop: "{{ _tuned }}"
+      changed_when: false
+
+    - name: Set IO scheduler to none (immediate)
+      ansible.builtin.copy:
+        content: "none"
+        dest: "{{ cassandra_sysfs_block_root }}/{{ item }}/queue/scheduler"
+        unsafe_writes: true
+      loop: "{{ _tuned }}"
+      changed_when: false
+      failed_when: false  # some virtualized block devices only expose "none" already, or reject the switch
+
+    - name: Ensure the udev rules dir exists (absent on minimal images without udev)
+      ansible.builtin.file:
+        path: /etc/udev/rules.d
+        state: directory
+        mode: "0755"
+
+    - name: Persist read-ahead + IO scheduler via udev rule
+      ansible.builtin.template:
+        src: 60-cassandra-data-disk.rules.j2
+        dest: /etc/udev/rules.d/60-cassandra-data-disk.rules
+        mode: "0644"
+      register: cassandra_data_disk_udev
+
+- name: Report changes
+  ansible.builtin.include_tasks: report.yml

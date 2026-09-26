@@ -1,0 +1,31 @@
+---
+# Read-only: current values, compared with the wanted ones in report.yml
+- name: Read the current OS settings
+  ansible.builtin.shell: |
+    set -u
+    for k in {{ cassandra_linux_sysctl.keys() | map('quote') | join(' ') }}; do
+      live=$(sysctl -n "$k" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')
+      file=$(sed -n "s/^[[:space:]]*$k[[:space:]]*=[[:space:]]*//p" {{ cassandra_linux_sysctl_file | quote }} 2>/dev/null | tail -1)
+      echo "sysctl|$k|${live:-unset}|${file:-unset}"
+    done
+    echo "swap|active|$(swapon --noheadings --show=NAME 2>/dev/null | wc -l)|"
+    echo "swap|fstab|$(grep -Ec '^[^#].*[[:space:]]swap[[:space:]]' /etc/fstab 2>/dev/null)|"
+    echo "thp|enabled|$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null)|"
+    unit=$(systemctl is-enabled disable-thp 2>/dev/null)
+    echo "thp|unit|${unit:-absent}|"
+    echo "timesync|service|$(systemctl is-active {{ _cassandra_timesync_service }} 2>/dev/null)|"
+    for l in {{ cassandra_linux_limits.keys() | join(' ') }}; do
+      echo "limit|$l|$(awk -v l="$l" '$1=="cassandra" && $3==l {v=$4} END {print v}' /etc/security/limits.d/cassandra.conf 2>/dev/null)|"
+    done
+  register: cassandra_linux_snapshot
+  changed_when: false
+  check_mode: false
+
+- name: Keep the snapshot
+  ansible.builtin.set_fact:
+    _cassandra_linux_before: >-
+      {{ dict(cassandra_linux_snapshot.stdout_lines | map('split', '|') | map('batch', 2) | map('first') | map('join', '|')
+              | zip(cassandra_linux_snapshot.stdout_lines | map('split', '|') | map(attribute=2))) }}
+    _cassandra_linux_before_file: >-
+      {{ dict(cassandra_linux_snapshot.stdout_lines | select('match', '^sysctl') | map('split', '|') | map(attribute=1)
+              | zip(cassandra_linux_snapshot.stdout_lines | select('match', '^sysctl') | map('split', '|') | map(attribute=3))) }}

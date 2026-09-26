@@ -4,33 +4,129 @@
   ansible.builtin.include_vars:
     file: "{{ ansible_facts['os_family'] }}.yml"
 
+- name: Read the current firewall state (change report)
+  ansible.builtin.shell: |
+    svc={{ _cassandra_firewall_service }}
+    echo "active|$(systemctl is-active $svc 2>/dev/null)"
+    e=$(systemctl is-enabled $svc 2>/dev/null); [ "$e" = not-found ] && e=absent
+    echo "enabled|$e"
+    {% if ansible_facts['os_family'] == 'RedHat' %}
+    ports=$(firewall-cmd --permanent --list-ports 2>/dev/null || firewall-offline-cmd --list-ports 2>/dev/null)
+    {% else %}
+    ports=$(ufw show added 2>/dev/null | awk '$1=="ufw" && $2=="allow" {print $3}' | tr '\n' ' ')
+    {% endif %}
+    echo "ports|$ports"
+  register: cassandra_firewall_snapshot
+  changed_when: false
+  check_mode: false
+
+- name: Keep the snapshot
+  ansible.builtin.set_fact:
+    _cassandra_firewall_before: "{{ dict(cassandra_firewall_snapshot.stdout_lines | map('split', '|', 1)) }}"
+
 - name: Ensure firewall package is installed
   ansible.builtin.package:
     name: "{{ firewall_packages }}"
     state: present
   retries: 3
+  register: cassandra_firewall_install
 
+# Under --check nothing is installed, so the service and its rules can't be queried
 - name: Ensure firewall service is started
   ansible.builtin.service:
-    name: "{{ (ansible_facts['os_family'] == 'RedHat') | ternary('firewalld', 'ufw') }}"
+    name: "{{ _cassandra_firewall_service }}"
     state: started
     enabled: yes
+  when: not (ansible_check_mode and cassandra_firewall_install is changed)
 
 - name: Ensure ports for cassandra open (RedHat)
-  ansible.builtin.firewalld:
+  ansible.posix.firewalld:
     port: "{{ item }}"
     permanent: yes
     immediate: yes
     state: enabled
   with_items:
-    - "{{ open_ports }}"
-  when: ansible_facts['os_family'] == "RedHat"
+    - "{{ open_ports | reject('in', cassandra_firewall_port_sources) | list }}"
+  when:
+    - ansible_facts['os_family'] == "RedHat"
+    - not (ansible_check_mode and _cassandra_firewall_before.active != 'active')
 
 - name: Ensure ports for cassandra open (Debian)
-  ansible.builtin.ufw:
+  community.general.ufw:
     port: "{{ item | split('/') | first }}"
     proto: "{{ item | split('/') | last }}"
     rule: "allow"
   with_items:
-    - "{{ open_ports }}"
-  when: ansible_facts['os_family'] == "Debian"
+    - "{{ open_ports | reject('in', cassandra_firewall_port_sources) | list }}"
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - not (ansible_check_mode and cassandra_firewall_install is changed)
+
+- name: Ports open to some sources only
+  when:
+    - cassandra_firewall_port_sources | length > 0
+    - not (ansible_check_mode and cassandra_firewall_install is changed)
+  block:
+    - name: Close them to everyone (RedHat)
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: disabled
+      loop: "{{ cassandra_firewall_port_sources | list }}"
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Open them to their sources (RedHat)
+      ansible.posix.firewalld:
+        rich_rule: >-
+          rule family="{{ 'ipv6' if ':' in item.1 else 'ipv4' }}" source address="{{ item.1 }}"
+          port port="{{ item.0.key | split('/') | first }}" protocol="{{ item.0.key | split('/') | last }}" accept
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: "{{ cassandra_firewall_port_sources | dict2items | subelements('value') }}"
+      loop_control:
+        label: "{{ item.0.key }} from {{ item.1 }}"
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Close them to everyone (Debian)
+      community.general.ufw:
+        port: "{{ item | split('/') | first }}"
+        proto: "{{ item | split('/') | last }}"
+        rule: allow
+        delete: true
+      loop: "{{ cassandra_firewall_port_sources | list }}"
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Open them to their sources (Debian)
+      community.general.ufw:
+        rule: allow
+        from_ip: "{{ item.1 }}"
+        to_port: "{{ item.0.key | split('/') | first }}"
+        proto: "{{ item.0.key | split('/') | last }}"
+      loop: "{{ cassandra_firewall_port_sources | dict2items | subelements('value') }}"
+      loop_control:
+        label: "{{ item.0.key }} from {{ item.1 }}"
+      when: ansible_facts['os_family'] == "Debian"
+
+- name: Build the change list
+  ansible.builtin.set_fact:
+    _cassandra_firewall_items: >-
+      {{ ([{'item': 'packages ' ~ (firewall_packages | join(', ')), 'before': 'absent', 'after': 'present'}]
+          if cassandra_firewall_install is changed else [])
+         + ([{'item': _cassandra_firewall_service, 'before': _cassandra_firewall_before.active or 'absent', 'after': 'active'}]
+            if _cassandra_firewall_before.active != 'active' else [])
+         + ([{'item': _cassandra_firewall_service ~ ' at boot', 'before': _cassandra_firewall_before.enabled or 'absent', 'after': 'enabled'}]
+            if _cassandra_firewall_before.enabled != 'enabled' else []) }}
+
+- name: Add the ports to open
+  ansible.builtin.set_fact:
+    _cassandra_firewall_items: "{{ _cassandra_firewall_items + [{'item': 'port ' ~ item, 'before': 'closed', 'after': 'open'}] }}"
+  loop: "{{ open_ports | reject('in', cassandra_firewall_port_sources) | reject('in', _cassandra_firewall_before.ports.split()) | list }}"
+
+- name: Report
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_firewall
+    cassandra_change_report_items: "{{ _cassandra_firewall_items }}"

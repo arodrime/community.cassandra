@@ -1,0 +1,72 @@
+---
+# What this run changed (or, with --check, would change): current -> wanted
+- name: Compare kernel settings
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items | default([])
+         + ([{'item': 'sysctl ' ~ item.key ~ ' (live)', 'before': _cassandra_linux_before['sysctl|' ~ item.key], 'after': item.value | string}]
+            if _cassandra_linux_live and _cassandra_linux_before['sysctl|' ~ item.key] != item.value | string else [])
+         + ([{'item': 'sysctl ' ~ item.key ~ ' (' ~ cassandra_linux_sysctl_file ~ ')', 'before': _cassandra_linux_before_file[item.key], 'after': item.value | string}]
+            if _cassandra_linux_before_file[item.key] != item.value | string else []) }}
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Compare swap, THP, time sync and limits
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items | default([])
+         + ([{'item': 'swap', 'before': 'on', 'after': 'off'}]
+            if _cassandra_linux_live and _cassandra_linux_before['swap|active'] | int > 0 else [])
+         + ([{'item': 'swap entries in /etc/fstab', 'before': _cassandra_linux_before['swap|fstab'] | int, 'after': 0}]
+            if _cassandra_linux_before['swap|fstab'] | int > 0 else [])
+         + ([{'item': 'disable-thp.service', 'before': _cassandra_linux_before['thp|unit'], 'after': 'enabled' if _cassandra_linux_live else 'installed'}]
+            if thp is changed else [])
+         + ([{'item': 'transparent_hugepage', 'before': _cassandra_linux_before['thp|enabled'], 'after': 'never'}]
+            if _cassandra_linux_live and _cassandra_linux_before['thp|enabled'] not in ['never', ''] else [])
+         + ([{'item': 'package ' ~ _cassandra_timesync_pkg, 'before': 'absent', 'after': 'present'}]
+            if cassandra_timesync_install is changed else [])
+         + ([{'item': _cassandra_timesync_service, 'before': _cassandra_linux_before['timesync|service'] or 'inactive', 'after': 'active'}]
+            if (cassandra_timesync_service_result | default({})) is changed
+               or (ansible_check_mode and (cassandra_timesync_service_result | default({})) is skipped
+                   and _cassandra_linux_before['timesync|service'] != 'active') else [])
+         + ([{'item': '/etc/security/limits.d/90-nproc.conf', 'before': 'no "* - nproc 32768"', 'after': '* - nproc 32768'}]
+            if cassandra_linux_nproc is changed else []) }}
+
+- name: Compare the limits of the cassandra user
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items
+         + ([{'item': 'limit cassandra ' ~ item.key, 'before': _cassandra_linux_before['limit|' ~ item.key] or 'unset', 'after': item.value}]
+            if _cassandra_linux_before['limit|' ~ item.key] != item.value | string else []) }}
+  loop: "{{ cassandra_linux_limits | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Compare the disk tuning
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items
+         + ([{'item': 'read_ahead_kb ' ~ item.item, 'before': _disk[0], 'after': cassandra_data_readahead_kb | string}]
+            if _disk[0] != cassandra_data_readahead_kb | string else [])
+         + ([{'item': 'IO scheduler ' ~ item.item, 'before': _disk[1], 'after': 'none'}]
+            if _disk[1] not in ['none', ''] else []) }}
+  vars:
+    _disk: "{{ (item.stdout | default('|')).split('|') }}"
+  loop: "{{ cassandra_data_disk_before.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Compare the udev rule
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items + [{'item': '/etc/udev/rules.d/60-cassandra-data-disk.rules',
+                                    'before': 'absent or different', 'after': 'present'}] }}
+  when: cassandra_data_disk_udev is defined and cassandra_data_disk_udev is changed
+
+- name: Report
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_linux
+    cassandra_change_report_items: "{{ _cassandra_linux_items | default([]) }}"

@@ -1,0 +1,85 @@
+---
+# defaults file for cassandra_service
+cassandra_service_enabled: true
+cassandra_service_state: started
+
+# Restarting a node is a cluster operation: a changed unit only takes effect
+# at the next restart unless this is set. The role handles one node; order
+# nodes in the playbook (serial: 1) when restarting several.
+cassandra_service_restart_on_change: false
+
+# A new node listed in cassandra_seeds is refused when another seed already
+# answers: seeds don't bootstrap, it would join without its data.
+cassandra_service_allow_new_seed: false
+
+cassandra_service_user: cassandra
+cassandra_service_group: cassandra
+# systemd Restart=. "no": a node that died stays down until a human looks
+# (disk/commit failure policies and OOM kill it on purpose). "on-failure"
+# is capped at cassandra_service_start_limit_burst restarts per interval.
+cassandra_service_restart: "no"
+cassandra_service_start_limit_burst: 3
+cassandra_service_start_limit_interval: 1800  # seconds
+cassandra_service_limit_nofile: 1048576
+cassandra_service_limit_nproc: 32768
+cassandra_service_limit_memlock: infinity
+cassandra_service_limit_as: infinity
+cassandra_service_timeout_stop: 180  # seconds, let a busy node flush
+cassandra_service_environment: {}  # extra Environment= lines, e.g. {JAVA_HOME: /usr/lib/jvm/java-17}
+# Tasks (threads) the service may create. systemd's default is 15% of
+# pid_max (can be ~4900): too low for a busy node ("unable to create native thread").
+cassandra_service_tasks_max: infinity
+# Drain the node (nodetool drain) before the JVM gets SIGTERM, so a plain
+# "systemctl stop cassandra" (OS patching, reboot) is clean. Never blocks the
+# stop: after cassandra_service_drain_timeout the JVM is stopped anyway.
+cassandra_service_drain_on_stop: true
+cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout_stop
+
+# Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
+cassandra_service_wait_for_normal: true
+cassandra_service_wait_timeout: 600  # seconds
+
+# Cluster health check run by the operation playbooks before and after each
+# node: how long to wait for down nodes to come back, and whether to go on
+# anyway (risky: a second replica down can make data unavailable).
+cassandra_service_health_timeout: 600  # seconds
+cassandra_service_health_force: false
+
+# JMX access for the modules and nodetool calls of the operation playbooks
+# (cassandra_jmx_port comes from cassandra_config). Credentials only when
+# remote JMX with authentication is on; prefer the password file.
+cassandra_jmx_username: ""
+cassandra_jmx_password: ""
+cassandra_jmx_password_file: ""
+# CQL access for the checks that read the schema (e.g. replication before a
+# decommission), when authentication is on
+cassandra_cql_username: ""
+cassandra_cql_password: ""
+# Where the config Cassandra runs with is, and the checksums it started with
+_cassandra_service_conf_dir: >-
+  {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
+_cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
+_cassandra_service_jmx: >-
+  {{ {'port': cassandra_jmx_port | default(7199) | int}
+     | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
+     | combine({'password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file
+               else ({'password': cassandra_jmx_password} if cassandra_jmx_password else {})) }}
+_cassandra_service_nodetool: >-
+  nodetool -p {{ _cassandra_service_jmx.port }}{{ (' -u ' ~ cassandra_jmx_username | quote) if cassandra_jmx_username else '' }}{{
+  (' -pwf ' ~ cassandra_jmx_password_file | quote) if cassandra_jmx_password_file
+  else ((' -pw ' ~ cassandra_jmx_password | quote) if cassandra_jmx_password else '') }}
+
+# Operator confirmation before an operation that asks for one (confirm.yml):
+# true asks, false goes on without asking (non-interactive runs).
+cassandra_operation_confirm: true
+
+# Rolling restarts drain each node (nodetool drain, with the JMX settings above)
+# before stopping it. The unit drains on stop too (cassandra_service_drain_on_stop):
+# a second drain is harmless.
+cassandra_operation_drain: true
+
+# Rolling operations keep a progress file on the controller; resume an
+# interrupted one with -e cassandra_rolling_resume=true.
+cassandra_rolling_resume: false
+cassandra_rolling_progress_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cassandra_rolling"
+cassandra_rolling_progress_days: 30

@@ -1,0 +1,62 @@
+---
+# Block device backing cassandra_data_dir, e.g. "/dev/nvme0n1". "" (default):
+# auto-detected from cassandra_data_dir's mount point via findmnt + lsblk.
+# cassandra_data_dir has no default here; if it isn't defined, or detection
+# is inconclusive, the tuning is skipped rather than guessed.
+cassandra_data_block_device: ""
+# Several disks (JBOD data directories, a commitlog disk), e.g. ["/dev/nvme0n1",
+# "/dev/nvme1n1"]. [] (default): cassandra_data_block_device, else auto-detected
+# from the data directories (cassandra_data_dir, cassandra_data_file_directories)
+# and cassandra_commitlog_dir.
+cassandra_data_block_devices: []
+
+# Read-ahead in KB for cassandra_data_block_device (written directly to
+# the queue/read_ahead_kb sysfs attribute - not blockdev --setra sectors,
+# so no /512 conversion here). Read-ahead offers no benefit for
+# Cassandra's random-access read path (especially 5.0+) and is one of the
+# worst settings to leave at its default - 4KB is the minimal practical
+# value, effectively disabling it.
+cassandra_data_readahead_kb: 4
+
+# sysfs block root the disk tuning reads and writes. Only meant to be
+# overridden by tests, to point at a fake tree instead of the real disks.
+cassandra_sysfs_block_root: /sys/block
+
+# Apply kernel settings (sysctl, swapoff, THP) live, not just persist them.
+# "auto": live everywhere except containers, where /proc/sys and /sys are
+# the host's. true/false forces it (e.g. true on a dedicated privileged
+# container host that should be tuned from inside).
+cassandra_linux_apply_live: auto
+cassandra_linux_container_types:
+  - docker
+  - podman
+  - container
+  - containerd
+  - lxc
+
+# Kernel settings, applied live unless in a container
+cassandra_linux_sysctl_file: /etc/sysctl.d/60-cassandra.conf
+cassandra_linux_sysctl:
+  vm.swappiness: 1
+  vm.max_map_count: 1048575
+  vm.zone_reclaim_mode: 0
+  # TCP settings to prevent timeouts and handle many connections
+  net.ipv4.tcp_keepalive_time: 60
+  net.ipv4.tcp_keepalive_probes: 3
+  net.ipv4.tcp_keepalive_intvl: 10
+  net.core.rmem_max: 16777216
+  net.core.wmem_max: 16777216
+  net.core.rmem_default: 16777216
+  net.core.wmem_default: 16777216
+  net.core.optmem_max: 40960
+  net.ipv4.tcp_rmem: "4096 87380 16777216"
+  net.ipv4.tcp_wmem: "4096 65536 16777216"
+
+# Limits of the cassandra user (/etc/security/limits.d/cassandra.conf), for
+# tools run by hand as cassandra; the service gets its own from its systemd unit
+# (cassandra_service_limit_*), same values by default
+cassandra_linux_limits:
+  memlock: unlimited
+  nofile: 1048576
+  nproc: 32768
+  as: unlimited

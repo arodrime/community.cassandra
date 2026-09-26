@@ -1,0 +1,11 @@
+---
+edit_on_github:
+  repository: ansible-collections/community.cassandra
+  branch: master
+  path_prefix: ''
+
+extra_links:
+  - description: Submit a bug report
+    url: https://github.com/ansible-collections/community.cassandra/issues/new
+  - description: Request a feature
+    url: https://github.com/ansible-collections/community.cassandra/issues/new

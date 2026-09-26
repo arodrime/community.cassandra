@@ -1,0 +1,76 @@
+---
+# Adds nodes to a running cluster, one at a time. Add them to the cluster's
+# inventory group first (not to cassandra_seeds), then:
+#   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=my_cluster -e cassandra_new_nodes=node7,node8
+# The cluster is checked before and after each node; the run stops at the
+# first problem. Nodes already in the ring are only checked (re-running is safe);
+# a node half added (in the ring without data, data without ring) is refused.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+# Seeds don't bootstrap: a new node listed in cassandra_seeds would join without its data
+- name: Check the new nodes
+  hosts: "{{ cassandra_new_nodes }}"
+  gather_facts: false
+  any_errors_fatal: true  # add none of them if one is refused
+  tasks:
+    - name: Check this node
+      block:
+        - name: A new node can't be a seed
+          ansible.builtin.assert:
+            that: not _cassandra_service_is_seed | bool
+            fail_msg: >-
+              {{ inventory_hostname }} is in cassandra_seeds: seeds don't bootstrap, it would join without
+              its data. Add it as a regular node, then make it a seed with change_seeds.
+            quiet: true
+
+        - name: Find which ones already joined (an interrupted run)
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: new_node_state.yml
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            cassandra_op_result: "add refused: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+
+        - name: Print the summary
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: summary.yml
+          vars:
+            cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: No node was added.
+
+- name: Add the new nodes, one at a time
+  hosts: "{{ cassandra_new_nodes }}"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Add this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: add
+        cassandra_service_node_checks_before: false
+        # not in the ring yet: this node and the ones after it that never joined
+        _pending: >-
+          {{ ansible_play_hosts_all[ansible_play_hosts_all.index(inventory_hostname):]
+             | map('extract', hostvars, 'cassandra_new_node_joined') | reject | list | length }}
+        cassandra_service_expected_before: "{{ groups[cassandra_hosts | default('cassandra')] | length - _pending | int }}"
+        cassandra_service_expected_after: >-
+          {{ groups[cassandra_hosts | default('cassandra')] | length - _pending | int + (0 if cassandra_new_node_joined else 1) }}
+
+- name: Summary
+  hosts: "{{ cassandra_new_nodes }}"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"

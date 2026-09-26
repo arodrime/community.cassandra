@@ -1,0 +1,130 @@
+---
+# Moves a running cluster to the Java set in the inventory
+# (cassandra_java_version, e.g. "17" in the cluster's group_vars), one node at a
+# time: cluster checked, Java installed and made the default, config written,
+# node drained and restarted, cluster checked again. Nodes already running that
+# Java are skipped.
+#   ansible-playbook -i inventory community.cassandra.update_jdk -e cassandra_hosts=my_cluster
+# Refused: a Java the series does not support (4.0/4.1: 8, 11; 5.0: 11, 17).
+# Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Check the Java change
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  vars:
+    _supported: {40x: ["8", "11"], 41x: ["8", "11"], 50x: ["11", "17"]}
+  tasks:
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_install, cassandra_config, cassandra_service]
+
+    - name: The series supports this Java
+      ansible.builtin.assert:
+        that: cassandra_java_version | string in _supported[cassandra_version]
+        fail_msg: >-
+          Cassandra {{ cassandra_version }} runs on Java {{ _supported[cassandra_version] | join(' or ') }},
+          not {{ cassandra_java_version }}.
+        quiet: true
+
+    - name: Read the service
+      ansible.builtin.systemd_service:
+        name: cassandra
+      register: cassandra_jdk_unit
+
+    - name: Read which java the running Cassandra uses
+      ansible.builtin.stat:
+        path: "/proc/{{ cassandra_jdk_unit.status.MainPID | default('0') }}/exe"
+        get_checksum: false
+      register: cassandra_jdk_exe
+      when: cassandra_jdk_unit.status.MainPID | default('0') | int > 0
+
+    - name: Note what this node needs
+      ansible.builtin.set_fact:
+        cassandra_jdk_running: "{{ _running }}"
+        cassandra_jdk_todo: "{{ _running is not search('java-(1\\.)?' ~ cassandra_java_version ~ '[.-]') }}"
+      vars:
+        _running: "{{ cassandra_jdk_exe.stat.lnk_source | default('not running') }}"
+
+    - name: Settings that only apply to another Java
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['WARNING: ' ~ inventory_hostname ~ ' sets ' ~ _other | join(', ') ~ ', which only apply to another Java.'
+              ~ ' Java ' ~ cassandra_java_version ~ ' reads the cassandra_jvm' ~ cassandra_java_version ~ '_* ones'
+              ~ ' (e.g. in group_vars):']
+             + (_other | map('regex_replace', '^cassandra_jvm[0-9]+_', 'cassandra_jvm' ~ cassandra_java_version ~ '_')
+                | zip(_other | map('extract', hostvars[inventory_hostname])) | map('join', ': ') | map('regex_replace', '^', '  ')
+                | list) }}
+      vars:
+        _other: >-
+          {{ hostvars[inventory_hostname] | select('match', '^cassandra_jvm(8|11|17)_')
+             | reject('match', '^cassandra_jvm' ~ cassandra_java_version ~ '_') | list }}
+      when: _other | length > 0
+
+    - name: No CMS on Java 17
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: cassandra_jvm_gc is CMS, which Java 17 does not have: on Java 17 the node runs G1
+          (jvm17-server.options). Check the heap settings for G1.
+      when:
+        - cassandra_java_version | string == '17'
+        - cassandra_jvm_gc == 'CMS'
+
+    - name: Group the nodes to do
+      ansible.builtin.group_by:
+        key: "cassandra_jdk_{{ cassandra_jdk_todo | bool }}"
+      changed_when: false
+
+    - name: Nothing to do on this node
+      ansible.builtin.set_fact:
+        cassandra_op_result: "already on Java {{ cassandra_java_version }}"
+      when: not cassandra_jdk_todo | bool
+
+    - name: Confirm the run
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        _todo: "{{ groups['cassandra_jdk_True'] | default([]) }}"
+        cassandra_confirm_prompt: |-
+          update_jdk will move these nodes to Java {{ cassandra_java_version }}, one at a time (install, config, drain, restart):
+          {% for h in _todo %}
+            {{ h }} (runs {{ hostvars[h].cassandra_jdk_running }})
+          {% endfor %}
+      when: groups['cassandra_jdk_True'] | default([]) | length > 0
+
+- name: Set up the progress file
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_jdk_True"
+  gather_facts: false
+  vars:
+    cassandra_service_node_action: update_jdk
+  tasks:
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: progress.yml
+
+- name: Move to the new Java, one node at a time
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_jdk_True"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Update this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: update_jdk
+
+- name: Summary
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml

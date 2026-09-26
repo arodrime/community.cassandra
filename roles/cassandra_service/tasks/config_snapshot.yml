@@ -1,0 +1,18 @@
+---
+# Records the checksums of the config files the running Cassandra started with,
+# so config_pending.yml can tell a change still to apply by content (a file
+# rewritten with the same content, or a change applied live, is not pending).
+- name: Checksum the config files
+  ansible.builtin.find:
+    paths: "{{ _cassandra_service_conf_dir }}"
+    file_type: file
+    get_checksum: true
+  register: cassandra_config_snapshot_files
+
+- name: Record them
+  ansible.builtin.copy:
+    content: >-
+      {{ dict(cassandra_config_snapshot_files.files | map(attribute='path')
+              | zip(cassandra_config_snapshot_files.files | map(attribute='checksum'))) | to_nice_json }}
+    dest: "{{ _cassandra_service_config_snapshot }}"
+    mode: "0644"

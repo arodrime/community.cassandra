@@ -1,0 +1,357 @@
+.. _ansible_collections.community.cassandra.docsite.guide_roles:
+
+Running Cassandra clusters with the roles
+=========================================
+
+The roles take a Debian, Ubuntu or RedHat family host from a blank system to a
+running Cassandra node, for Cassandra 4.0, 4.1 and 5.0.
+
+.. contents::
+   :local:
+   :depth: 1
+
+
+The roles
+---------
+
+Run them in this order:
+
+1. :ansplugin:`community.cassandra.cassandra_repository#role`: the Apache Cassandra package repository.
+2. :ansplugin:`community.cassandra.cassandra_install#role`: Java for the series, Cassandra, and a cqlsh that works.
+3. :ansplugin:`community.cassandra.cassandra_linux#role`: kernel settings, swap, transparent huge pages, limits, data disk.
+4. :ansplugin:`community.cassandra.cassandra_config#role`: ``cassandra.yaml``, ``cassandra-env.sh``, JVM options,
+   ``cassandra-rackdc.properties`` and ``logback.xml``.
+5. :ansplugin:`community.cassandra.cassandra_firewall#role`: firewalld or ufw.
+6. :ansplugin:`community.cassandra.cassandra_service#role`: systemd unit, start, wait until the node has joined.
+
+Each role handles the host it runs on. Ordering nodes is up to the playbook.
+
+The series is set with ``cassandra_version`` (``40x``, ``41x`` or ``50x``). Set it once for all the roles.
+
+With the default values, the configuration files are the stock ones of the series, apart from the directories the
+deb and rpm packages set themselves. Only what you set changes.
+
+
+Inventory
+---------
+
+Use one group per cluster and one group per datacenter (the playbooks below take the cluster group as
+``cassandra_hosts``). Settings shared by the cluster go in the cluster's
+``group_vars``, the datacenter in the datacenter's, and per node settings in ``host_vars``.
+
+.. code-block:: yaml
+
+    # inventory.yml
+    cassandra:
+      children:
+        orders:
+          children:
+            orders_dc1:
+              hosts:
+                node1:
+                node2:
+                node3:
+            orders_dc2:
+              hosts:
+                node4:
+                node5:
+                node6:
+
+.. code-block:: yaml
+
+    # group_vars/orders.yml
+    cassandra_version: 50x
+    cassandra_cluster_name: orders
+    cassandra_num_tokens: 16
+    cassandra_partitioner: org.apache.cassandra.dht.Murmur3Partitioner
+    cassandra_allocate_tokens_for_local_replication_factor: 3
+    cassandra_storage_compatibility_mode: NONE
+    cassandra_seeds: [10.0.1.11, 10.0.2.11]
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_authenticator: PasswordAuthenticator
+    cassandra_authorizer: CassandraAuthorizer
+    cassandra_heap_size: 8G
+
+    # group_vars/orders_dc1.yml
+    cassandra_dc: dc1
+
+    # host_vars/node1.yml
+    cassandra_listen_address: 10.0.1.11
+    cassandra_rpc_address: 10.0.1.11
+    cassandra_rack: rack1
+
+The seeds are listed explicitly. They are the same list on every node of the cluster, and a good choice of contact
+points for clients too. Pick one node per rack, two or three per datacenter.
+
+With the stock ``allocate_tokens_for_local_replication_factor: 3``, a datacenter needs either one rack or at
+least three.
+
+A node keeps some settings for life: ``cluster_name``, ``num_tokens``, ``partitioner``, the snitch, its datacenter
+and rack, and, on 5.0, ``storage_compatibility_mode`` until an upgrade moves it. Set them explicitly in the inventory,
+as above, rather than relying on the role defaults: a default that changes in a later release of the collection
+must not change what the next node of your cluster gets. ``create_cluster`` refuses to start without them
+(``-e cassandra_accept_default_identity=true`` to go on anyway). ``cassandra_storage_compatibility_mode: NONE`` is
+right for a new 5.0 cluster; a cluster upgraded from 4.x keeps ``CASSANDRA_4`` until its upgrade is complete.
+
+
+Operation playbooks
+-------------------
+
+The collection has playbooks for the usual operations on a cluster. Each one works on one inventory group
+(``-e cassandra_hosts=<group>``) and starts with ``preflight``, which checks that the settings that must match do
+match on every node, that the racks suit the token allocator, and that the seeds are a sensible layout (it suggests
+a seed list when they are not).
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventory community.cassandra.preflight -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=orders -e cassandra_new_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=orders -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=orders -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
+    $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
+    $ ansible-playbook -i node1 community.cassandra.import_cluster
+
+Operations that touch running nodes check the whole cluster before and after each node: every node up and normal,
+gossip and the native transport running, no streams, schema agreement, and the storage and CQL ports answering. A
+node is only touched when the cluster is healthy, and the run stops at the first node that does not come back
+healthy (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same
+checks on its own, changing nothing, and fails when there is a problem, so it can be scheduled.
+
+Risky operations ask for confirmation first (type ``yes``). ``cassandra_operation_confirm: false`` skips the
+question, for runs without a terminal.
+
+Rolling operations record each node done in a progress file on the controller. An interrupted run resumes where it
+stopped with ``-e cassandra_rolling_resume=true``.
+
+
+Creating a cluster
+------------------
+
+``create_cluster`` prepares every node in parallel, then starts the seeds one at a time, then the other nodes, each
+one joined before the next. Running it again on a running cluster starts nothing.
+
+On a new node, :ansplugin:`community.cassandra.cassandra_install#role` doesn't let the package start Cassandra
+with its stock configuration, so the node first starts with its real configuration.
+
+
+Adding a node
+-------------
+
+Add the host to the inventory, in its datacenter's group, without adding it to ``cassandra_seeds``, then:
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=orders -e cassandra_new_nodes=node7
+
+The other nodes are not touched. A node that has never started and is listed in ``cassandra_seeds`` is refused while
+another seed answers: seeds don't bootstrap, so it would join without its data. Add it, then make it a seed.
+
+Once the new nodes have joined, the others still hold the data they handed over. ``cleanup`` removes it, with
+``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
+once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
+
+
+Removing a node
+---------------
+
+``decommission_node`` removes the nodes in ``cassandra_leaving_nodes``, one at a time: each one streams its data to the
+others, then Cassandra is stopped and disabled on it. It refuses a seed (take it out of ``cassandra_seeds`` with
+``change_seeds`` first) and a removal that would leave a datacenter with fewer nodes than a keyspace has replicas
+there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
+authentication is on). Remove the hosts from the inventory afterwards.
+
+
+Replacing a dead node
+---------------------
+
+``replace_node`` starts a blank host in place of a dead node: it takes over the dead node's tokens and streams their
+data from the other replicas (``replace_address_first_boot``). Put the new host in the cluster's group and take the
+dead one out of the inventory (the new host may reuse its address), then run it with the new host in
+``cassandra_new_nodes`` and the dead node's address in ``cassandra_replace_address``. Only a node that is down in the
+ring can be replaced. A dead seed: take it out of ``cassandra_seeds`` with ``change_seeds`` first, replace it, then
+make the new node a seed.
+
+
+When a node is dead for good and will not be replaced, take it out of the inventory and run ``remove_dead_node``
+with its address in ``cassandra_dead_node_address``: ``removenode`` streams its ranges from the other replicas.
+``cassandra_dead_node_method: removenode_force`` finishes a removal that is stuck; ``assassinate`` removes it from gossip without streaming, only when ``removenode``
+can't finish: data it held alone is lost, repair afterwards.
+
+
+Datacenters
+-----------
+
+``add_datacenter`` adds a datacenter: put its nodes in the cluster's group, all with the new ``cassandra_dc``, then
+run it with them in ``cassandra_new_nodes``, the keyspaces that get replicas there in
+``cassandra_datacenter_replication`` (``{"orders": 3, "system_auth": 3}``; NetworkTopologyStrategy only) and an
+existing datacenter to stream from in ``cassandra_rebuild_source_dc``. The nodes join one at a time without
+streaming, the keyspaces are altered, then each node streams its data (``nodetool rebuild``). Make one node per rack
+of the new datacenter a seed afterwards.
+
+``remove_datacenter`` (``-e cassandra_target_dc=dc3``) alters the keyspaces so they keep no replica there, then
+removes its nodes one at a time. Move that region's clients first, and take its seeds out of ``cassandra_seeds``.
+
+
+Rack maintenance
+----------------
+
+``stop_rack`` stops every node of one rack at once (``-e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2``),
+each one drained by its unit. With at least as many racks as replicas in the datacenter, one rack down is one
+replica down: it refuses a keyspace with more replicas in the datacenter than racks, a SimpleStrategy keyspace with
+RF above 1 (it ignores racks), and a node already down elsewhere in the datacenter. With RF 2 it warns that
+(LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster; repair the
+rack's nodes if they were down longer than ``max_hint_window``.
+
+
+Restarting
+----------
+
+``rolling_restart`` drains each node, restarts it and waits until it and the cluster are healthy again before the
+next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching). On a big cluster,
+``-e cassandra_rolling_mode=rack`` restarts all the nodes of a rack together, rack by rack, when the replication
+allows losing a rack (see `Rack maintenance`_).
+
+To move a cluster to another Java, set ``cassandra_java_version`` in the cluster's ``group_vars`` and run
+``update_jdk``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
+It refuses a Java the series does not support, and warns about ``cassandra_jvm<N>_*`` settings meant for the old
+Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
+``systemctl stop cassandra`` or a reboot outside Ansible is clean too.
+
+
+Changing the seeds
+------------------
+
+Change ``cassandra_seeds`` in the inventory first, then run ``change_seeds``. It writes the new list on every node
+and loads it live, no restart needed. Other configuration differences it finds are shown, not applied.
+
+If you replace a seed, update the clients' contact points as well.
+
+
+Upgrading
+---------
+
+Set the target in the cluster's ``group_vars``: ``cassandra_version`` (the series), ``cassandra_package_version``
+(the exact version) and ``cassandra_java_version`` (explicitly: keep the current Java, or change it in the same
+pass). Then run ``upgrade`` once per phase, with ``-e cassandra_upgrade_phase=``:
+
+``preflight``
+    Checks the cluster, the upgrade path (4.0 to 4.1 or 5.0, 4.1 to 5.0, or a newer patch), Java, settings the
+    target series no longer has, disk space, and shows the target configuration. Changes nothing.
+``prepare``
+    After you confirm that backups and repairs are paused and the schema frozen: a snapshot and a copy of the
+    configuration on every node.
+``canary``
+    Upgrades one node (``cassandra_upgrade_canary``, default the first non-seed of the first datacenter). Watch it.
+``rolling``
+    Upgrades the others, datacenter by datacenter, rack by rack, one node at a time. Re-run it to resume: upgraded
+    nodes are skipped.
+``sstables``
+    Rewrites the sstables in the new format, node by node.
+``cleanup``
+    Removes the pre-upgrade snapshots.
+
+From 4.x to 5.0, keep ``cassandra_storage_compatibility_mode: CASSANDRA_4`` until every node runs 5.0: 5.0 nodes
+then keep writing what 4.x nodes can read. Then set ``UPGRADING`` and run ``apply_config``, then ``NONE`` and run
+``apply_config`` again. ``NONE`` is the point of no return.
+
+
+Changing the configuration
+--------------------------
+
+Before writing anything, :ansplugin:`community.cassandra.cassandra_config#role` renders the files into a temporary
+directory on the node and shows a diff against the live files. Passwords are shown as ``****``.
+
+On a node that was already initialized, it then asks for confirmation (type ``yes``), once for all the hosts of the
+batch. Without a terminal to answer, the run fails instead of applying. ``cassandra_config_confirm: false`` applies
+without asking, ``true`` always asks. It refuses outright to change the settings a node keeps for life (see
+`Inventory`_) unless ``cassandra_config_force_identity_change: true``.
+
+Run with ``--check`` to only see the diff. With ``cassandra_change_report_dir`` set, every role also writes what it
+changed, or would change under ``--check``, to that directory on the controller.
+
+The role never restarts Cassandra. When it changed the files of a running node, it says so.
+
+To change the configuration of a running cluster, use ``apply_config`` instead of running the role: it shows the
+diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
+checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
+running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
+restart): it is restarted too.
+
+
+Restricted networks (air-gapped)
+--------------------------------
+
+The roles reach the network only through the package manager of the hosts, and for these sources:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Source
+     - Used by
+     - Setting
+   * - Cassandra packages, Debian/Ubuntu (``https://debian.cassandra.apache.org``)
+     - ``cassandra_repository``
+     - ``cassandra_repository_deb_url``
+   * - Cassandra packages, RedHat family (``https://redhat.cassandra.apache.org/<series>/``)
+     - ``cassandra_repository``
+     - ``cassandra_repository_rpm_url``
+   * - Apache Cassandra release signing keys
+     - ``cassandra_repository``
+     - none by default: a copy ships with the role; ``cassandra_repository_key_url`` downloads them from a mirror
+       instead, checked against ``cassandra_repository_key_fingerprints``
+   * - python3.11 for cqlsh, Ubuntu 24.04+ with Cassandra 4.x only (deadsnakes PPA)
+     - ``cassandra_install``
+     - ``cassandra_cqlsh_python_repo_uri`` (its signing key ships with the role), ``""`` for the configured repositories
+   * - Java, jemalloc, cassandra-tools, chrony/systemd-timesyncd, firewalld/ufw, python3-debian
+     - the roles
+     - the hosts' own repositories
+
+Without internet access, point the two Cassandra repository settings at a mirror (Artifactory, Nexus, reposync...),
+and make sure the hosts' own repositories (or their mirror) carry the packages of the last row. Where the repositories
+are set up by other means (Satellite/Foreman, the system image), ``cassandra_repository_manage: false`` leaves them
+alone, and ``cassandra_install_java: false`` leaves Java to you (the Cassandra package still needs a Java package
+that satisfies its dependency). Nothing else is downloaded: no tarball, no pip, no git.
+
+The playbooks talk to the nodes only (JMX on 127.0.0.1, CQL on the nodes' addresses, SSH from the controller).
+
+
+JMX access
+----------
+
+The playbooks and modules reach each node's JMX on ``127.0.0.1``, port ``cassandra_jmx_port``. With JMX
+authentication, set ``cassandra_jmx_username`` and, preferably, ``cassandra_jmx_password_file`` (a file on the
+nodes); the systemd unit's drain only uses the password file.
+
+To open JMX to remote tools (a repair scheduler, monitoring), set ``cassandra_local_jmx: false`` and list its users
+in ``cassandra_jmx_users``: the role writes ``jmxremote.password`` and ``jmxremote.access``, readable by Cassandra
+only. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
+CQL credentials, for the OS users you list. Playbooks that read the schema over CQL take ``cassandra_cql_username``
+and ``cassandra_cql_password``.
+
+
+Taking over an existing cluster
+-------------------------------
+
+``import_cluster`` reads a running cluster into an inventory for the roles, without changing anything on the nodes.
+Give it any reachable nodes; it finds the others in the ring. It writes ``hosts.yml``, ``group_vars/``,
+``host_vars/`` and a ``report.txt`` listing, per node, the Cassandra and Java versions, drift between nodes and the
+hand edits no variable covers (``cassandra_config`` would revert them).
+
+Passwords found in the configuration go to separate ``secrets.yml`` files: encrypted with ansible-vault when
+``import_cluster_vault_password_file`` is given, otherwise written with mode ``0600`` and the report gives the
+``ansible-vault encrypt`` command to run.
+
+Then check what the roles would change:
+
+.. code-block:: console
+
+    $ ansible-playbook -i orders/hosts.yml community.cassandra.preflight -e cassandra_hosts=orders
+    $ ansible-playbook -i orders/hosts.yml site.yml --check
+
+Repeat until the diff only shows what you intend to change. The confirmation prompt is a last safety net, not a
+replacement for this step.

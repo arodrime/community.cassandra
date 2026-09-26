@@ -1,0 +1,20 @@
+---
+# Drains the node, reboots the host and waits until Cassandra (enabled at boot)
+# has joined again.
+- name: Drain the node
+  community.cassandra.cassandra_drain:
+  module_defaults:
+    community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
+  when: cassandra_operation_drain | bool
+
+- name: Reboot the host
+  ansible.builtin.reboot:
+    msg: "Rolling reboot of the Cassandra cluster ({{ cassandra_hosts | default('cassandra') }})"
+    reboot_timeout: "{{ cassandra_reboot_timeout | default(1800) }}"
+    reboot_command: "{{ cassandra_reboot_command | default(omit) }}"
+    boot_time_command: "{{ cassandra_reboot_boot_time_command | default(omit) }}"
+
+- name: Wait until the node has joined
+  ansible.builtin.include_tasks: main.yml
+  vars:
+    cassandra_service_state: started

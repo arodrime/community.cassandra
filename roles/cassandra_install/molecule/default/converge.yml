@@ -4,3 +4,31 @@
   roles:
     - role: community.cassandra.cassandra_repository
     - role: community.cassandra.cassandra_install
+
+- name: Pinned version
+  hosts: all
+  tasks:
+    - name: Read the installed Cassandra version
+      ansible.builtin.package_facts:
+
+    - name: Pin the installed version (nothing changes, packages held on Debian)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+      vars:
+        cassandra_package_version: "{{ ansible_facts.packages['cassandra'][0].version | regex_replace('^([0-9.]+).*$', '\\1') }}"
+
+    - name: Another version is refused
+      block:
+        - name: Run the role with another version
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_package_version: 5.0.1
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: the role accepted to change the version of an installed node
+      rescue:
+        - name: Check the refusal came from the version check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Refuse to change the version of an installed node'
