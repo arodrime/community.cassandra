@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_config, cassandra_linux - several data directories (cassandra_data_file_directories); the disks of the data and commitlog directories are tuned (cassandra_data_block_devices).

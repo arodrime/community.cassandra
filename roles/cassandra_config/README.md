@@ -70,6 +70,8 @@ Role Variables
   points to it and `default.conf` stays as shipped (`rpm -V` clean, package
   upgrades never touch the live config). Default `/etc/cassandra/ansible.conf`;
   `""` writes into `default.conf` instead.
+* `cassandra_data_file_directories`: `data_file_directories`, one per disk
+  (JBOD). Defaults to `cassandra_data_dir` alone, which should stay first.
 * `cassandra_data_dir`: Cassandra's data directory. Defaults to
   `/var/lib/cassandra/data`. `cassandra_linux` uses the same variable to find
   the data disk.

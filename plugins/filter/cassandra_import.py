@@ -16,6 +16,7 @@ cassandra_config_ignored_vars: variable names, series -> the cassandra_config
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import ast
 import difflib
 import json
 import os
@@ -75,6 +76,11 @@ def _load_role(series, facts):
         for k, v in ctx.items():
             if isinstance(v, str) and "{{" in v:
                 ctx[k] = env.from_string(v).render(**ctx)
+                if ctx[k].startswith(("[", "{")):  # like Ansible, a rendered list/dict is one again
+                    try:
+                        ctx[k] = ast.literal_eval(ctx[k])
+                    except (ValueError, SyntaxError):
+                        pass
     return env, ctx, files
 
 
@@ -297,12 +303,30 @@ def cassandra_config_import(live_files, cassandra_version, facts):
     changed = {k: v for k, v in found.items()
                if str(v).lower() != str(_default(ctx, k)).lower()
                and not (v == "" and _default(ctx, k) in ([], {}))}  # a list/dict variable left empty
+    render_dirs = None
     if "cassandra.yaml" in live_files:
+        # JBOD: the template's single line expands to one line per directory
+        try:
+            dirs = (yaml.safe_load(live_files["cassandra.yaml"]) or {}).get("data_file_directories") or []
+        except yaml.YAMLError:
+            dirs = []
+        if len(dirs) > 1:
+            found["cassandra_data_dir"] = dirs[0]
+            found["cassandra_data_file_directories"] = dirs
+            changed["cassandra_data_dir"] = dirs[0]
+            changed["cassandra_data_file_directories"] = dirs
+        elif dirs and dirs[0] != _default(ctx, "cassandra_data_dir"):
+            # one directory, not the default one: cassandra_data_dir, the list follows it
+            found["cassandra_data_dir"] = changed["cassandra_data_dir"] = dirs[0]
+            render_dirs = dirs
         tpl = _render(env, cassandra_version, "cassandra.yaml", ctx)[0]
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
         if extras:
             changed["cassandra_extra_settings"] = extras
-    hand, normalized = _leftovers(env, cassandra_version, files, dict(ctx, **changed), live_files)
+    render = dict(ctx, **changed)
+    if "cassandra.yaml" in live_files and render_dirs:
+        render["cassandra_data_file_directories"] = render_dirs
+    hand, normalized = _leftovers(env, cassandra_version, files, render, live_files)
     out = dict(changed)
     for key in ALWAYS:
         if key != "cassandra_storage_compatibility_mode" or cassandra_version == "50x":  # 5.0 setting

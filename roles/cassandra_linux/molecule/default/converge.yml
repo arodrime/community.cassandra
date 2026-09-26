@@ -13,13 +13,21 @@
 
     - name: Assert tuning was skipped
       ansible.builtin.assert:
-        that: cassandra_data_disk_stat is skipped or not cassandra_data_disk_stat.stat.exists
+        that: cassandra_data_disk_stat.results | selectattr('stat.exists') | list | length == 0
 
     - name: Run cassandra_linux with an explicit data disk on the fake sysfs tree
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_linux
       vars:
         cassandra_data_block_device: /dev/sdz
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+      tags: molecule-idempotence-notest  # the JBOD run below rewrites the udev rule
+
+    - name: Run cassandra_linux with two disks (JBOD)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_block_devices: [/dev/sdz, /dev/sdy]
         cassandra_sysfs_block_root: /tmp/fake-sys/block
 
     # The role's own swap-removal task never runs in this test scenario

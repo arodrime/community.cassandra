@@ -103,3 +103,9 @@ def test_data_disk_udev_rule(host):
     assert 'KERNEL=="sdz"' in f.content_string
     assert 'ATTR{queue/read_ahead_kb}="4"' in f.content_string
     assert 'ATTR{queue/scheduler}="none"' in f.content_string
+
+
+def test_jbod_disks_tuned(host):
+    assert host.file("/tmp/fake-sys/block/sdy/queue/read_ahead_kb").content_string.strip() == "4"
+    rules = host.file("/etc/udev/rules.d/60-cassandra-data-disk.rules").content_string
+    assert 'KERNEL=="sdz"' in rules and 'KERNEL=="sdy"' in rules

@@ -4,6 +4,11 @@
 # cassandra_data_dir has no default here; if it isn't defined, or detection
 # is inconclusive, the tuning is skipped rather than guessed.
 cassandra_data_block_device: ""
+# Several disks (JBOD data directories, a commitlog disk), e.g. ["/dev/nvme0n1",
+# "/dev/nvme1n1"]. [] (default): cassandra_data_block_device, else auto-detected
+# from the data directories (cassandra_data_dir, cassandra_data_file_directories)
+# and cassandra_commitlog_dir.
+cassandra_data_block_devices: []
 
 # Read-ahead in KB for cassandra_data_block_device (written directly to
 # the queue/read_ahead_kb sysfs attribute - not blockdev --setra sectors,
