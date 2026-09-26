@@ -704,7 +704,7 @@ seed_provider:
     parameters:
       # seeds is actually a comma-delimited list of addresses.
       # Ex: "<ip1>,<ip2>,<ip3>"
-      - seeds: "{{ cassandra_seeds }}"
+      - seeds: "{{ cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(',') }}"
       # If set to "true", SimpleSeedProvider will return all IP addresses for a DNS name,
       # based on the configured name service on the system. Defaults to "false".
       #  resolve_multiple_ip_addresses_per_dns_record: "false"
