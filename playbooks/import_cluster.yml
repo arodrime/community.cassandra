@@ -182,6 +182,10 @@
         _java: >-
           {{ {'cassandra_java_version': _hv.import_cluster_java}
              if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {} }}
+        # the installed version, so nodes added later get the same one
+        _pkg: >-
+          {{ {'cassandra_package_version': _hv.import_cluster_package | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1')}
+             if _read and _hv.import_cluster_package | default('') else {} }}
         _conf: >-
           {{ {'cassandra_conf_dir': _hv.import_cluster_conf_dir}
              if _read and _hv.import_cluster_conf_dir not in ['/etc/cassandra', '/etc/cassandra/conf'] else {} }}
@@ -196,7 +200,7 @@
                else ('Cassandra not running' if _hv.import_cluster_running.rc != 0
                else 'unsupported version ' ~ _hv.import_cluster_version) }}
           vars: >-
-            {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _conf))
+            {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf))
                if _read else {} }}
           hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
           normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
