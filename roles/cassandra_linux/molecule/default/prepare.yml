@@ -35,6 +35,21 @@
       dest: "/tmp/fake-sys/block/{{ item.0 }}/queue/{{ item.1.name }}"
     loop: "{{ ['sdz', 'sdy'] | product([{'name': 'read_ahead_kb', 'value': '128\n'}, {'name': 'scheduler', 'value': '[mq-deadline] none\n'}]) | list }}"
 
+  # sdz: an SSD, sdy: a spinning disk (keeps its scheduler)
+  - name: Seed the fake disks' types
+    ansible.builtin.copy:
+      content: "{{ item.value }}"
+      dest: "/tmp/fake-sys/block/{{ item.disk }}/queue/rotational"
+    loop:
+      - {disk: sdz, value: "0\n"}
+      - {disk: sdy, value: "1\n"}
+
+  # findmnt then resolves it to the container's overlay: not a disk, not tuned
+  - name: Create the data directory
+    ansible.builtin.file:
+      path: /var/lib/cassandra/data
+      state: directory
+
   # UBI repos don't carry chrony (real RHEL does, via subscription): pull it
   # from the matching Rocky BaseOS instead. Test scaffolding only.
   - name: Add Rocky BaseOS repo for chrony on UBI

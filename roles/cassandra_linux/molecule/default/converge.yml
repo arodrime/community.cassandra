@@ -2,8 +2,7 @@
 - name: Converge
   hosts: all
   tasks:
-    # Auto-detection resolves to the container's overlay root, which has no
-    # sysfs entry (the fake root only has sdz): tuning must be skipped.
+    # The data directory is on the container's overlay, not a disk: not tuned
     - name: Run cassandra_linux with an auto-detected, non-tunable data disk
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_linux
@@ -11,9 +10,28 @@
         cassandra_data_dir: /var/lib/cassandra/data
         cassandra_sysfs_block_root: /tmp/fake-sys/block
 
-    - name: Assert tuning was skipped
+    - name: Assert the disk was looked up (also under --check) and not tuned
       ansible.builtin.assert:
-        that: cassandra_data_disk_stat.results | selectattr('stat.exists') | list | length == 0
+        that:
+          - cassandra_data_findmnt.results | map(attribute='stdout') | select | list | length > 0
+          - cassandra_data_disk_stat.results | selectattr('stat.exists') | list | length == 0
+
+    - name: An explicit device that can't be tuned is refused
+      block:
+        - name: Run cassandra_linux with a device missing from sysfs
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_linux
+          vars:
+            cassandra_data_block_device: /dev/sdx
+            cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: a device missing from sysfs was accepted
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that: "'be tuned' in ansible_failed_result.msg"
 
     - name: Run cassandra_linux with an explicit data disk on the fake sysfs tree
       ansible.builtin.include_role:

@@ -1,0 +1,8 @@
+# Managed by Ansible (community.cassandra.cassandra_linux): change the role variables, not this file.
+# After 60-persistent-storage.rules, which sets ID_SERIAL.
+{% for r in cassandra_data_udev_info.results %}
+{%   set serial = r.stdout | default('') | regex_search('^ID_SERIAL=(.+)$', '\\1', multiline=True) | default([''], true) | first %}
+{%   set match = ('ENV{ID_SERIAL}=="' ~ serial ~ '"') if serial else ('KERNEL=="' ~ r.item ~ '"') %}
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", {{ match }}, ATTR{queue/read_ahead_kb}="{{ cassandra_data_readahead_kb | int }}"
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", {{ match }}, ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"
+{% endfor %}

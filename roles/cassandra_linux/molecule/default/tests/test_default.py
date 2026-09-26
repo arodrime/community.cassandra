@@ -96,16 +96,20 @@ def test_data_disk_scheduler(host):
 
 
 def test_data_disk_udev_rule(host):
-    f = host.file("/etc/udev/rules.d/60-cassandra-data-disk.rules")
+    f = host.file("/etc/udev/rules.d/61-cassandra-data-disk.rules")
 
     assert f.exists
     assert f.mode == 0o644
-    assert 'KERNEL=="sdz"' in f.content_string
-    assert 'ATTR{queue/read_ahead_kb}="4"' in f.content_string
-    assert 'ATTR{queue/scheduler}="none"' in f.content_string
+    # no udev serial for the fake disks: matched by name
+    assert 'ENV{DEVTYPE}=="disk", KERNEL=="sdz", ATTR{queue/read_ahead_kb}="4"' in f.content_string
+    assert 'KERNEL=="sdz", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"' in f.content_string
 
 
 def test_jbod_disks_tuned(host):
     assert host.file("/tmp/fake-sys/block/sdy/queue/read_ahead_kb").content_string.strip() == "4"
-    rules = host.file("/etc/udev/rules.d/60-cassandra-data-disk.rules").content_string
+    rules = host.file("/etc/udev/rules.d/61-cassandra-data-disk.rules").content_string
     assert 'KERNEL=="sdz"' in rules and 'KERNEL=="sdy"' in rules
+
+
+def test_spinning_disk_keeps_its_scheduler(host):
+    assert host.file("/tmp/fake-sys/block/sdy/queue/scheduler").content_string.strip() == "[mq-deadline] none"

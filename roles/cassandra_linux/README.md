@@ -18,26 +18,26 @@ Role Variables
   host's time sync alone. Default `true`.
 * `cassandra_offline`: `true` on air-gapped hosts: the time sync package is
   not installed, only started when present. Default `false`.
-* `cassandra_data_block_device`: block device to apply read-ahead/IO
-  scheduler tuning to, e.g. `/dev/nvme0n1`. Defaults to `""`, which
-  auto-detects it from `cassandra_data_dir` (the Cassandra data directory,
-  no default in this role) via `findmnt` + `lsblk`. Skipped, not guessed, if
-  `cassandra_data_dir` isn't defined or detection is inconclusive - set
-  this explicitly to force a specific device.
+* `cassandra_data_block_device`: the disk of the Cassandra data, to tune
+  its read-ahead and IO scheduler, e.g. `/dev/sdb` or `/dev/nvme0n1` (a
+  partition is taken as its disk). Defaults to `""`.
 * `cassandra_data_block_devices`: several disks to tune (JBOD data
-  directories, a commitlog disk). Empty (default): `cassandra_data_block_device`,
-  else the disks of the data directories and of `cassandra_commitlog_dir`,
-  auto-detected.
-* `cassandra_data_readahead_kb`: read-ahead in KB applied to
-  `cassandra_data_block_device`'s `queue/read_ahead_kb`. Defaults to `4`
-  (the practical minimum, not `blockdev --setra` sectors) - read-ahead
-  offers no benefit for Cassandra's random-access read path, especially
-  on 5.0+.
-* `cassandra_linux_apply_live`: apply kernel settings (sysctl, swapoff,
-  THP) live, not only persist them. Defaults to `auto`: live everywhere
-  except in containers (`cassandra_linux_container_types`), where `/proc/sys`
-  and `/sys` belong to the host. Set `true` to tune the host from a
-  dedicated privileged container, `false` to only persist.
+  directories, a commitlog disk). Defaults to `[]`. With neither variable
+  set, the disks are found from the data directories (`cassandra_data_dir`,
+  `cassandra_data_file_directories`) and `cassandra_commitlog_dir` with
+  `findmnt` and `lsblk`; without those either, nothing is tuned. LVM, md
+  RAID and dm-crypt devices are not guessed: the role says so, set the
+  disks. A disk set here that can't be tuned fails the role.
+* `cassandra_data_readahead_kb`: read-ahead in KB for those disks
+  (`queue/read_ahead_kb`, not `blockdev --setra` sectors). Defaults to `4`,
+  the practical minimum: read-ahead brings nothing to Cassandra's random
+  reads and fills the page cache with data it doesn't need.
+* `cassandra_linux_apply_live`: apply the kernel settings (sysctl, swapoff,
+  THP, disk tuning) live, not only persist them. Defaults to `auto`: live
+  everywhere except in containers (Ansible's virtualization facts, and
+  `cassandra_linux_container_types`), where `/proc/sys` and `/sys` belong to
+  the host. Set `true` to tune the host from a dedicated privileged
+  container, `false` to only persist.
 * `cassandra_linux_sysctl`: kernel settings (swappiness, max_map_count, TCP
   keepalive and buffers...), written to `cassandra_linux_sysctl_file`
   (default `/etc/sysctl.d/60-cassandra.conf`). The same keys are removed from
@@ -50,8 +50,12 @@ Role Variables
   writes. Defaults to `/sys/block`; only meant to be overridden by tests,
   to point at a fake tree instead of the host's real disks.
 
-The tuning is applied immediately through sysfs, then persisted across
-reboots with a udev rule (`/etc/udev/rules.d/60-cassandra-data-disk.rules`).
+The read-ahead is set on the disks, and the IO scheduler set to `none` on
+SSD/NVMe disks only (`queue/rotational` 0): spinning disks keep theirs. Both
+are applied immediately through sysfs, then kept across reboots with a udev
+rule (`/etc/udev/rules.d/61-cassandra-data-disk.rules`) matching each disk by
+its serial number (`ID_SERIAL`), or by its name when udev doesn't know one.
+In containers, the disks are not tuned (they are the host's).
 
 Dependencies
 ------------

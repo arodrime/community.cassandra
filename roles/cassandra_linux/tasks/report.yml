@@ -52,9 +52,9 @@
          + ([{'item': 'read_ahead_kb ' ~ item.item, 'before': _disk[0], 'after': cassandra_data_readahead_kb | string}]
             if _disk[0] != cassandra_data_readahead_kb | string else [])
          + ([{'item': 'IO scheduler ' ~ item.item, 'before': _disk[1], 'after': 'none'}]
-            if _disk[1] not in ['none', ''] else []) }}
+            if _disk[2] == '0' and _disk[1] not in ['none', ''] else []) }}
   vars:
-    _disk: "{{ (item.stdout | default('|')).split('|') }}"
+    _disk: "{{ (item.stdout | default('||1')).split('|') }}"
   loop: "{{ cassandra_data_disk_before.results | default([]) | rejectattr('skipped', 'defined') | list }}"
   loop_control:
     label: "{{ item.item }}"
@@ -62,7 +62,7 @@
 - name: Compare the udev rule
   ansible.builtin.set_fact:
     _cassandra_linux_items: >-
-      {{ _cassandra_linux_items + [{'item': '/etc/udev/rules.d/60-cassandra-data-disk.rules',
+      {{ _cassandra_linux_items + [{'item': '/etc/udev/rules.d/61-cassandra-data-disk.rules',
                                     'before': 'absent or different', 'after': 'present'}] }}
   when: cassandra_data_disk_udev is defined and cassandra_data_disk_udev is changed
 

@@ -12,9 +12,11 @@ argument_specs:
         type: str
         default: ""
         description:
-          - Block device of the data disk, for example C(/dev/nvme0n1).
-          - When empty, it is found from O(cassandra_data_dir). The disk
-            tuning is skipped if it can't be found.
+          - Disk of the Cassandra data, for example C(/dev/sdb) or C(/dev/nvme0n1);
+            a partition is taken as its disk. A disk that can't be tuned fails the role.
+          - When empty (and O(cassandra_data_block_devices) too), the disks are found
+            from the data and commitlog directories. LVM, md RAID and dm-crypt are
+            not guessed.
       cassandra_data_dir:
         type: path
         description:
@@ -23,7 +25,8 @@ argument_specs:
         type: int
         default: 4
         description:
-          - Read-ahead of the data disk, in KB.
+          - Read-ahead of the data disks, in KB. The IO scheduler is set to none
+            on SSD/NVMe disks only.
       cassandra_sysfs_block_root:
         type: path
         default: /sys/block
@@ -47,8 +50,9 @@ argument_specs:
         type: raw
         default: auto
         description:
-          - Apply kernel settings live (sysctl, swapoff, THP), not just persist them.
-          - C(auto) applies them everywhere except in containers, where they
+          - Apply kernel settings live (sysctl, swapoff, THP, disk tuning), not just persist them.
+          - C(auto) applies them everywhere except in containers (Ansible's
+            virtualization facts, or O(cassandra_linux_container_types)), where they
             belong to the host. V(true) or V(false) forces it.
       cassandra_linux_container_types:
         type: list

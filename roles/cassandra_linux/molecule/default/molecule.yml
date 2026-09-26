@@ -65,3 +65,19 @@ provisioner:
         ansible_python_interpreter: /usr/bin/python3.12
 verifier:
   name: testinfra
+scenario:
+  # check: converge under --check first, on hosts not configured yet
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - check
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

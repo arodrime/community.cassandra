@@ -1,21 +1,15 @@
 ---
-# Block device backing cassandra_data_dir, e.g. "/dev/nvme0n1". "" (default):
-# auto-detected from cassandra_data_dir's mount point via findmnt + lsblk.
-# cassandra_data_dir has no default here; if it isn't defined, or detection
-# is inconclusive, the tuning is skipped rather than guessed.
+# Disk of the Cassandra data, e.g. "/dev/sdb" or "/dev/nvme0n1" (a partition
+# is taken as its disk). See the README.
 cassandra_data_block_device: ""
-# Several disks (JBOD data directories, a commitlog disk), e.g. ["/dev/nvme0n1",
-# "/dev/nvme1n1"]. [] (default): cassandra_data_block_device, else auto-detected
-# from the data directories (cassandra_data_dir, cassandra_data_file_directories)
-# and cassandra_commitlog_dir.
+# Several disks (JBOD data directories, a commitlog disk). With neither
+# variable set: found from the data and commitlog directories with findmnt +
+# lsblk; LVM/RAID/dm-crypt are not guessed.
 cassandra_data_block_devices: []
 
-# Read-ahead in KB for cassandra_data_block_device (written directly to
-# the queue/read_ahead_kb sysfs attribute - not blockdev --setra sectors,
-# so no /512 conversion here). Read-ahead offers no benefit for
-# Cassandra's random-access read path (especially 5.0+) and is one of the
-# worst settings to leave at its default - 4KB is the minimal practical
-# value, effectively disabling it.
+# Read-ahead in KB for those disks (queue/read_ahead_kb, not blockdev --setra
+# sectors). 4, the practical minimum: read-ahead brings nothing to
+# Cassandra's random reads and fills the page cache with unneeded data.
 cassandra_data_readahead_kb: 4
 
 # sysfs block root the disk tuning reads and writes. Only meant to be
@@ -23,9 +17,10 @@ cassandra_data_readahead_kb: 4
 cassandra_sysfs_block_root: /sys/block
 
 # Apply kernel settings (sysctl, swapoff, THP) live, not just persist them.
-# "auto": live everywhere except containers, where /proc/sys and /sys are
-# the host's. true/false forces it (e.g. true on a dedicated privileged
-# container host that should be tuned from inside).
+# "auto": live everywhere except containers (Ansible's virtualization facts,
+# or a virtualization_type listed below), where /proc/sys and /sys are the
+# host's. true/false forces it (e.g. true on a dedicated privileged container
+# host that should be tuned from inside).
 cassandra_linux_apply_live: auto
 cassandra_linux_container_types:
   - docker
