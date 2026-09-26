@@ -34,6 +34,9 @@ Role Variables
   directory by other means, not a package: made the system `java`, and the
   Cassandra packages installed without a Java package, as with a tarball.
   `import_cluster` sets it for nodes whose running Java is not a package.
+* `cassandra_install_java` (default `true`): `false` when Java is installed
+  by other means (an internal package, the system image); the Cassandra
+  package still needs a Java package that satisfies its dependency.
 * `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
   the default `java` when several JDKs are installed.
 * `cassandra_java_version`: Java installed before Cassandra. Defaults to the

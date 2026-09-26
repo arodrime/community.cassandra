@@ -26,7 +26,9 @@
     name: "{{ cassandra_java_package }}"
     state: present
   retries: 3
-  when: _cassandra_java_home == ''
+  when:
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
 
 - name: Java from a tarball, or already unpacked (cassandra_java_home)
   ansible.builtin.include_tasks: java_tarball.yml
@@ -41,6 +43,7 @@
   failed_when: false
   check_mode: false
   when:
+    - cassandra_install_java | bool
     - _cassandra_java_home == ''
     - cassandra_java_set_default | bool
 
@@ -54,6 +57,7 @@
          | select('match', '^/\S*java-(1\.)?' ~ cassandra_java_version ~ '[.-]\S*/bin/java ')
          | map('regex_replace', ' .*$', '') | first | default('') }}
   when:
+    - cassandra_install_java | bool
     - _cassandra_java_home == ''
     - cassandra_java_set_default | bool
     - _path != ''

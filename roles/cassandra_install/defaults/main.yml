@@ -40,6 +40,10 @@ _cassandra_java_home: >-
      else ((cassandra_java_tarball_dir | regex_replace('/+$', '')) ~ '/'
            ~ (_cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '')))
      if cassandra_java_tarball != '' else '' }}
+# false: Java is installed by other means (an internal package, the system
+# image); the Cassandra package still needs a Java package that satisfies its
+# dependency
+cassandra_install_java: true
 # Make cassandra_java_version the default java when several JDKs are installed
 cassandra_java_set_default: true
 cassandra_java_package: >-

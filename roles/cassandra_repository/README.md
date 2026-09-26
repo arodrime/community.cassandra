@@ -18,6 +18,14 @@ cassandra_version:
       - https://debian.cassandra.apache.org (Debian & Ubuntu)
       - https://redhat.cassandra.apache.org/ (RedHat)
 
+cassandra_repository_manage:
+  - `false` when the repositories are configured by other means (a
+    Satellite/Foreman, the system image): the role then does nothing.
+
+cassandra_repository_deb_url / cassandra_repository_rpm_url:
+  - Where the packages come from: the Apache repositories by default, or a
+    mirror of them for hosts without internet access.
+
 cassandra_repository_key_url:
   - Where the release signing keys come from. Empty (default): the copy of
     https://downloads.apache.org/cassandra/KEYS shipped with the role
