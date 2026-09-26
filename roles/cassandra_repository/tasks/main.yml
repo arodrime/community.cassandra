@@ -95,6 +95,23 @@
     gpgkey: "file://{{ cassandra_rpm_key_path }}"
   when: ansible_facts['os_family'] == "RedHat"
 
+# One series at a time: after a series change (an upgrade), the old series'
+# packages must not come back through its repository
+- name: Remove the repositories of the other series (RedHat)
+  ansible.builtin.yum_repository:
+    name: "cassandra-{{ item }}"
+    state: absent
+  loop: "{{ ['311x', '40x', '41x', '50x'] | reject('equalto', cassandra_version) | list }}"
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Remove the repositories of the other series (Debian & Ubuntu)
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/cassandra-{{ item.0 }}.{{ item.1 }}"
+    state: absent
+  loop: "{{ ['311x', '40x', '41x', '50x'] | reject('equalto', cassandra_version) | product(['list', 'sources']) | list }}"
+  register: _cassandra_repository_old
+  when: ansible_facts['os_family'] == "Debian"
+
 # Earlier versions of the role wrote a one-line .list file
 - name: Remove the one-line Cassandra apt source (Debian & Ubuntu)
   ansible.builtin.file:
@@ -133,4 +150,4 @@
   retries: 3
   when:
     - ansible_facts['os_family'] == "Debian"
-    - _cassandra_repository_apt is changed
+    - _cassandra_repository_apt is changed or _cassandra_repository_old is changed
