@@ -281,6 +281,10 @@
         - ansible_facts.services['cassandra.service'].state | default('') == 'running'
         - not _cassandra_config_no_restart_warning | default(false)  # apply_config restarts itself
 
+- name: JMX users and cqlsh credentials
+  ansible.builtin.include_tasks: access.yml
+  when: cassandra_config_pkg_conf.stat.exists
+
 - name: Report
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_change_report

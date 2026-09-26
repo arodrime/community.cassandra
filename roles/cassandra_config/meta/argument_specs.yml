@@ -1107,3 +1107,20 @@ argument_specs:
           C(endpoint_snitch), C(dc) or C(rack) of a node that already joined a
           cluster. Refused otherwise; only for a documented procedure (e.g. a
           snitch migration).
+      cassandra_jmx_users:
+        type: list
+        elements: dict
+        default: []
+        description:
+        - Remote JMX users (with O(cassandra_local_jmx) false), written to
+          C(/etc/cassandra/jmxremote.password) and C(jmxremote.access), readable
+          by cassandra only. Each item has C(name), C(password) and C(access)
+          (C(readwrite), the default, or C(readonly)). Keep the passwords in a vault.
+      cassandra_cqlsh_credentials:
+        type: list
+        elements: dict
+        default: []
+        description:
+        - cqlsh set up for OS users, mode 0600. Each item has C(os_user),
+          C(username) and C(password). C(~/.cassandra/cqlshrc) points cqlsh at
+          this node; from 4.1 the password is in C(~/.cassandra/credentials).

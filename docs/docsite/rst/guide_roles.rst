@@ -242,6 +242,12 @@ The playbooks and modules reach each node's JMX on ``127.0.0.1``, port ``cassand
 authentication, set ``cassandra_jmx_username`` and, preferably, ``cassandra_jmx_password_file`` (a file on the
 nodes); the systemd unit's drain only uses the password file.
 
+To open JMX to remote tools (a repair scheduler, monitoring), set ``cassandra_local_jmx: false`` and list its users
+in ``cassandra_jmx_users``: the role writes ``jmxremote.password`` and ``jmxremote.access``, readable by Cassandra
+only. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
+CQL credentials, for the OS users you list. Playbooks that read the schema over CQL take ``cassandra_cql_username``
+and ``cassandra_cql_password``.
+
 
 Taking over an existing cluster
 -------------------------------

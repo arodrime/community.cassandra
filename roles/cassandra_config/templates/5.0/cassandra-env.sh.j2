@@ -262,7 +262,7 @@ fi
 # activated for remote connections but they can also be enabled for local only JMX
 ## Basic file based authn & authz
 JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"
-#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"
+{{ '' if cassandra_jmx_users else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"
 ## Custom auth settings which can be used as alternatives to JMX's out of the box auth utilities.
 ## JAAS login modules can be used for authentication by uncommenting these two properties.
 ## Cassandra ships with a LoginModule implementation - org.apache.cassandra.auth.CassandraLoginModule -

@@ -246,7 +246,9 @@ def cassandra_config_import(live_files, cassandra_version, facts):
     for name in files:
         if name in live_files:
             found.update(_import_file(env, cassandra_version, name, ctx, live_files[name].split("\n")))
-    changed = {k: v for k, v in found.items() if str(v).lower() != str(_default(ctx, k)).lower()}
+    changed = {k: v for k, v in found.items()
+               if str(v).lower() != str(_default(ctx, k)).lower()
+               and not (v == "" and _default(ctx, k) in ([], {}))}  # a list/dict variable left empty
     if "cassandra.yaml" in live_files:
         tpl = _render(env, cassandra_version, "cassandra.yaml", ctx)[0]
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
