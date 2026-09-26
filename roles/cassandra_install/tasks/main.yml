@@ -99,13 +99,37 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     - name: Add the deadsnakes PPA (Ubuntu without python3.11)
-      ansible.builtin.apt_repository:
-        repo: "{{ cassandra_cqlsh_python_ppa }}"
-        state: present
       when:
+        - not ansible_check_mode  # deb822_repository needs python3-debian even to compare
         - ansible_facts['distribution'] == 'Ubuntu'
-        - cassandra_cqlsh_python_ppa != ''
+        - cassandra_cqlsh_python_repo_uri != ''
         - "'Candidate: (none)' in cassandra_python311_policy.stdout or cassandra_python311_policy.stdout == ''"
+      block:
+        - name: Install the deadsnakes signing key
+          ansible.builtin.copy:
+            src: deadsnakes.asc
+            dest: /etc/apt/keyrings/deadsnakes.asc
+            mode: "0644"
+
+        - name: Install python3-debian (deb822_repository needs it)
+          ansible.builtin.apt:
+            name: python3-debian
+            state: present
+          retries: 3
+
+        - name: Add the deadsnakes repository
+          ansible.builtin.deb822_repository:
+            name: deadsnakes
+            types: deb
+            uris: "{{ cassandra_cqlsh_python_repo_uri }}"
+            suites: "{{ ansible_facts['distribution_release'] }}"
+            components: main
+            signed_by: /etc/apt/keyrings/deadsnakes.asc
+
+        - name: Update the apt cache
+          ansible.builtin.apt:
+            update_cache: true
+          retries: 3
 
     - name: Install python3.11
       ansible.builtin.package:
