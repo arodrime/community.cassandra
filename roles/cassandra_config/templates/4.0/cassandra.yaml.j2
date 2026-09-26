@@ -237,7 +237,7 @@ partitioner: {{ cassandra_partitioner }}
 # them by partitioning the token ranges.
 # If not set, the default directory is $CASSANDRA_HOME/data/data.
 data_file_directories:
-    - {{ cassandra_data_dir }}
+    - {{ cassandra_data_file_directories | join('\n    - ') }}
 
 # Directory were Cassandra should store the data of the local system keyspaces.
 # By default Cassandra will store the data of the local system keyspaces in the first of the data directories specified

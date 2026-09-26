@@ -1129,3 +1129,10 @@ argument_specs:
         default: true
         description:
         - Keep a timestamped copy of each file the role replaces, next to it.
+      cassandra_data_file_directories:
+        type: list
+        elements: path
+        description:
+        - C(data_file_directories) in C(cassandra.yaml), one per disk (JBOD).
+          Defaults to O(cassandra_data_dir) alone, which should stay the first,
+          as the system keyspaces live there.

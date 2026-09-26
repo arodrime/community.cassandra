@@ -16,6 +16,7 @@ cassandra_config_ignored_vars: variable names, series -> the cassandra_config
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import ast
 import difflib
 import json
 import os
@@ -75,6 +76,11 @@ def _load_role(series, facts):
         for k, v in ctx.items():
             if isinstance(v, str) and "{{" in v:
                 ctx[k] = env.from_string(v).render(**ctx)
+                if ctx[k].startswith(("[", "{")):  # like Ansible, a rendered list/dict is one again
+                    try:
+                        ctx[k] = ast.literal_eval(ctx[k])
+                    except (ValueError, SyntaxError):
+                        pass
     return env, ctx, files
 
 
@@ -253,6 +259,16 @@ def cassandra_config_import(live_files, cassandra_version, facts):
                if str(v).lower() != str(_default(ctx, k)).lower()
                and not (v == "" and _default(ctx, k) in ([], {}))}  # a list/dict variable left empty
     if "cassandra.yaml" in live_files:
+        # JBOD: the template's single line expands to one line per directory
+        try:
+            dirs = (yaml.safe_load(live_files["cassandra.yaml"]) or {}).get("data_file_directories") or []
+        except yaml.YAMLError:
+            dirs = []
+        if len(dirs) > 1:
+            found["cassandra_data_dir"] = dirs[0]
+            found["cassandra_data_file_directories"] = dirs
+            changed["cassandra_data_dir"] = dirs[0]
+            changed["cassandra_data_file_directories"] = dirs
         tpl = _render(env, cassandra_version, "cassandra.yaml", ctx)[0]
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
         if extras:

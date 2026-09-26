@@ -119,80 +119,93 @@
     - thp.changed
     - not ansible_check_mode  # the unit file only exists once really copied
 
-# Resolve the data disk into an internal fact (_cassandra_data_disk, kernel
-# name only) rather than overwriting cassandra_data_block_device: a role param
-# outranks set_fact, so the user var can't be reliably rewritten in place.
-# Auto-detected from cassandra_data_dir via findmnt + lsblk. Skipped, not guessed, if detection is inconclusive.
-- name: Use the explicitly set cassandra_data_block_device
+# Resolve the disks to tune into an internal fact (_cassandra_disks, kernel
+# names) rather than overwriting the user vars (a role param outranks set_fact).
+# Explicit: cassandra_data_block_devices (or the single cassandra_data_block_device).
+# Otherwise auto-detected with findmnt + lsblk from the data directories and
+# the commitlog directory, when defined. Skipped, not guessed, if inconclusive.
+- name: Use the explicitly set data disks
   ansible.builtin.set_fact:
-    _cassandra_data_disk: "{{ cassandra_data_block_device | basename }}"
-  when: cassandra_data_block_device != ""
+    _cassandra_disks: >-
+      {{ (cassandra_data_block_devices + ([cassandra_data_block_device] if cassandra_data_block_device else []))
+         | map('basename') | unique | list }}
+  when: cassandra_data_block_devices | length > 0 or cassandra_data_block_device != ""
 
-- name: Auto-detect the data disk from cassandra_data_dir
+- name: Auto-detect the disks of the data and commitlog directories
   when:
+    - cassandra_data_block_devices | length == 0
     - cassandra_data_block_device == ""
-    - cassandra_data_dir is defined
+    - _paths | length > 0
+  vars:
+    _paths: >-
+      {{ ((cassandra_data_file_directories | default([])) + [cassandra_data_dir | default('')]
+          + [cassandra_commitlog_dir | default('')]) | select | unique | list }}
   block:
-    - name: Find the device backing cassandra_data_dir
-      ansible.builtin.command: "findmnt -n -o SOURCE --target {{ cassandra_data_dir }}"
+    - name: Find the device backing each directory
+      ansible.builtin.command: "findmnt -n -o SOURCE --target {{ item }}"
+      loop: "{{ _paths }}"
       register: cassandra_data_findmnt
       changed_when: false
       failed_when: false
 
-    - name: Resolve the parent kernel device (handles partitions - read-ahead/scheduler are tuned at the whole-disk level)
-      ansible.builtin.command: "lsblk -no pkname {{ cassandra_data_findmnt.stdout | trim }}"
+    - name: Resolve the parent kernel devices (read-ahead and scheduler are whole-disk settings)
+      ansible.builtin.command: "lsblk -no pkname {{ item.stdout | trim }}"
+      loop: "{{ cassandra_data_findmnt.results | selectattr('rc', 'equalto', 0) | selectattr('stdout') | list }}"
+      loop_control:
+        label: "{{ item.stdout | trim }}"
       register: cassandra_data_pkname
       changed_when: false
       failed_when: false
-      when:
-        - cassandra_data_findmnt.rc == 0
-        - cassandra_data_findmnt.stdout | trim != ""
 
-    - name: Set the data disk from the resolved device
+    - name: Keep the disks
       ansible.builtin.set_fact:
-        _cassandra_data_disk: "{{ (cassandra_data_pkname.stdout | trim) if (cassandra_data_pkname.rc == 0 and cassandra_data_pkname.stdout | trim != '') else (cassandra_data_findmnt.stdout | trim | basename) }}"
-      when:
-        - cassandra_data_findmnt.rc == 0
-        - cassandra_data_findmnt.stdout | trim != ""
+        _cassandra_disks: >-
+          {%- set out = [] -%}
+          {%- for r in cassandra_data_pkname.results -%}
+          {%-   set _ = out.append(r.stdout | trim if r.rc == 0 and r.stdout | trim else r.item.stdout | trim | basename) -%}
+          {%- endfor -%}
+          {{ out | unique | list }}
 
-- name: Confirm the data disk exists under sysfs (skip tuning rather than guess wrong)
+- name: Keep the disks that exist under sysfs (skip tuning rather than guess wrong)
   ansible.builtin.stat:
-    path: "{{ cassandra_sysfs_block_root }}/{{ _cassandra_data_disk }}/queue"
+    path: "{{ cassandra_sysfs_block_root }}/{{ item }}/queue"
+  loop: "{{ _cassandra_disks | default([]) }}"
   register: cassandra_data_disk_stat
-  when: _cassandra_data_disk | default('') != ""
 
 # Read-ahead is one of the worst default settings for Cassandra's read
 # path (see the role README) - applied immediately via the sysfs queue/
 # attributes, then persisted via udev since a raw sysfs write alone
 # reverts on reboot.
-- name: Disk tuning for the Cassandra data disk
+- name: Disk tuning for the Cassandra disks
   when:
-    - _cassandra_data_disk | default('') != ""
-    - cassandra_data_disk_stat.stat.exists
+    - _tuned | length > 0
     - _cassandra_linux_live or cassandra_sysfs_block_root != '/sys/block'
   vars:
-    cassandra_data_queue: "{{ cassandra_sysfs_block_root }}/{{ _cassandra_data_disk }}/queue"
+    _tuned: "{{ cassandra_data_disk_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
   block:
     - name: Read the current read-ahead and IO scheduler (change report)
       ansible.builtin.shell: >-
-        echo "$(cat {{ cassandra_data_queue }}/read_ahead_kb)|$(sed -n 's/.*\[\(.*\)\].*/\1/p' {{ cassandra_data_queue }}/scheduler)"
+        echo "$(cat {{ cassandra_sysfs_block_root }}/{{ item }}/queue/read_ahead_kb)|$(sed -n 's/.*\[\(.*\)\].*/\1/p' {{ cassandra_sysfs_block_root }}/{{ item }}/queue/scheduler)"
+      loop: "{{ _tuned }}"
       register: cassandra_data_disk_before
       changed_when: false
       check_mode: false
       failed_when: false
 
-    - name: Set read-ahead on the Cassandra data device (immediate)
+    - name: Set read-ahead (immediate)
       ansible.builtin.copy:
         content: "{{ cassandra_data_readahead_kb }}"
-        dest: "{{ cassandra_data_queue }}/read_ahead_kb"
+        dest: "{{ cassandra_sysfs_block_root }}/{{ item }}/queue/read_ahead_kb"
         unsafe_writes: true
+      loop: "{{ _tuned }}"
       changed_when: false
 
-    - name: Set IO scheduler to none on the Cassandra data device (immediate)
+    - name: Set IO scheduler to none (immediate)
       ansible.builtin.copy:
         content: "none"
-        dest: "{{ cassandra_data_queue }}/scheduler"
+        dest: "{{ cassandra_sysfs_block_root }}/{{ item }}/queue/scheduler"
         unsafe_writes: true
+      loop: "{{ _tuned }}"
       changed_when: false
       failed_when: false  # some virtualized block devices only expose "none" already, or reject the switch
 

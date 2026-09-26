@@ -43,19 +43,26 @@
   loop_control:
     label: "{{ item.key }}"
 
-- name: Compare the data disk tuning
+- name: Compare the disk tuning
   ansible.builtin.set_fact:
     _cassandra_linux_items: >-
       {{ _cassandra_linux_items
-         + ([{'item': 'read_ahead_kb ' ~ _cassandra_data_disk, 'before': _disk[0], 'after': cassandra_data_readahead_kb | string}]
+         + ([{'item': 'read_ahead_kb ' ~ item.item, 'before': _disk[0], 'after': cassandra_data_readahead_kb | string}]
             if _disk[0] != cassandra_data_readahead_kb | string else [])
-         + ([{'item': 'IO scheduler ' ~ _cassandra_data_disk, 'before': _disk[1], 'after': 'none'}]
-            if _disk[1] not in ['none', ''] else [])
-         + ([{'item': '/etc/udev/rules.d/60-cassandra-data-disk.rules', 'before': 'absent or different', 'after': 'present'}]
-            if cassandra_data_disk_udev is changed else []) }}
+         + ([{'item': 'IO scheduler ' ~ item.item, 'before': _disk[1], 'after': 'none'}]
+            if _disk[1] not in ['none', ''] else []) }}
   vars:
-    _disk: "{{ (cassandra_data_disk_before.stdout | default('|')).split('|') }}"
-  when: cassandra_data_disk_before is defined and cassandra_data_disk_before is not skipped
+    _disk: "{{ (item.stdout | default('|')).split('|') }}"
+  loop: "{{ cassandra_data_disk_before.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Compare the udev rule
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items + [{'item': '/etc/udev/rules.d/60-cassandra-data-disk.rules',
+                                    'before': 'absent or different', 'after': 'present'}] }}
+  when: cassandra_data_disk_udev is defined and cassandra_data_disk_udev is changed
 
 - name: Report
   ansible.builtin.include_role:

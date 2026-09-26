@@ -20,6 +20,8 @@ cassandra_config_confirm: auto
 
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data
+# data_file_directories (JBOD: one per disk); the first holds the system keyspaces
+cassandra_data_file_directories: "{{ [cassandra_data_dir] }}"
 
 # ---- cassandra.yaml ----
 cassandra_cluster_name: "Test Cluster"

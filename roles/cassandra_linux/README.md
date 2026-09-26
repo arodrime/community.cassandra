@@ -19,6 +19,10 @@ Role Variables
   no default in this role) via `findmnt` + `lsblk`. Skipped, not guessed, if
   `cassandra_data_dir` isn't defined or detection is inconclusive - set
   this explicitly to force a specific device.
+* `cassandra_data_block_devices`: several disks to tune (JBOD data
+  directories, a commitlog disk). Empty (default): `cassandra_data_block_device`,
+  else the disks of the data directories and of `cassandra_commitlog_dir`,
+  auto-detected.
 * `cassandra_data_readahead_kb`: read-ahead in KB applied to
   `cassandra_data_block_device`'s `queue/read_ahead_kb`. Defaults to `4`
   (the practical minimum, not `blockdev --setra` sectors) - read-ahead

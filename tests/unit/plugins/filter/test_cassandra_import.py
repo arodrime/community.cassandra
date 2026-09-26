@@ -200,3 +200,11 @@ def test_config_vars_the_target_series_ignores():
              "cassandra_seeds", "some_other_var"]
     assert cassandra_config_ignored_vars(names, "41x") == ["cassandra_read_request_timeout_in_ms"]
     assert cassandra_config_ignored_vars(names, "40x") == ["cassandra_read_request_timeout"]
+
+
+def test_jbod_data_directories_read_back():
+    dirs = ["/data1/cassandra", "/data2/cassandra"]
+    out = cassandra_config_import(node_files("50x", cassandra_data_file_directories=dirs), "50x", FACTS)
+    assert out["vars"]["cassandra_data_file_directories"] == dirs
+    assert out["vars"]["cassandra_data_dir"] == "/data1/cassandra"
+    assert out["hand_edits"] == []

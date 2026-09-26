@@ -23,18 +23,17 @@
 
   # Fake sysfs tree for the disk tuning tests: the container is privileged,
   # so the real /sys/block is the host's and must never be written to.
-  - name: Create fake sysfs queue dir
+  - name: Create fake sysfs queue dirs
     ansible.builtin.file:
-      path: /tmp/fake-sys/block/sdz/queue
+      path: "/tmp/fake-sys/block/{{ item }}/queue"
       state: directory
+    loop: [sdz, sdy]
 
   - name: Seed fake sysfs queue attributes with stock-like values
     ansible.builtin.copy:
-      content: "{{ item.value }}"
-      dest: "/tmp/fake-sys/block/sdz/queue/{{ item.name }}"
-    loop:
-      - { name: read_ahead_kb, value: "128\n" }
-      - { name: scheduler, value: "[mq-deadline] none\n" }
+      content: "{{ item.1.value }}"
+      dest: "/tmp/fake-sys/block/{{ item.0 }}/queue/{{ item.1.name }}"
+    loop: "{{ ['sdz', 'sdy'] | product([{'name': 'read_ahead_kb', 'value': '128\n'}, {'name': 'scheduler', 'value': '[mq-deadline] none\n'}]) | list }}"
 
   # UBI repos don't carry chrony (real RHEL does, via subscription): pull it
   # from the matching Rocky BaseOS instead. Test scaffolding only.

@@ -74,3 +74,12 @@ argument_specs:
           - Limits of the cassandra user, in C(/etc/security/limits.d/cassandra.conf),
             for tools run by hand as cassandra. The service gets its own limits from
             its systemd unit (C(cassandra_service_limit_*)).
+      cassandra_data_block_devices:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Several disks to tune (JBOD data directories, a commitlog disk),
+            e.g. C(["/dev/nvme0n1", "/dev/nvme1n1"]). Empty uses
+            O(cassandra_data_block_device), else auto-detects the disks of the
+            data directories and of C(cassandra_commitlog_dir).
