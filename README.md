@@ -35,8 +35,11 @@ group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 - `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
+- `import_cluster`- Reads a running cluster into an inventory for the roles, without changing anything on the nodes.
 
     ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=my_cluster
+
+`import_cluster` takes any reachable nodes (`ansible-playbook -i node1,node2 community.cassandra.import_cluster`) and finds the others in the ring. It writes `hosts.yml` (one group per cluster, then per datacenter and rack), `group_vars/`, `host_vars/` and `report.txt` to `import_cluster_dir` (default `./<cluster name>`). Settings shared by every node go to the cluster group; the others go to the datacenter, rack or node where they are shared, and the report lists them as drift. `cassandra.yaml` settings that have no variable are kept in `cassandra_extra_settings`. Passwords go to separate `secrets.yml` files, encrypted with `import_cluster_vault_password_file` when given, else mode `0600` with the `ansible-vault` command to run. The report also lists, per node, the Cassandra and Java versions and the hand edits nothing can keep, which `cassandra_config` would revert.
 
 #### Modules
 
