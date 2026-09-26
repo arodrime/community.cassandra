@@ -1,0 +1,2 @@
+minor_changes:
+  - New stop_rack and start_rack playbooks - stop or start every node of a rack, refused when a node is down in another rack or when the replication can't lose a rack.

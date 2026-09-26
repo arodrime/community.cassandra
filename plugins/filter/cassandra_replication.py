@@ -7,6 +7,9 @@ cassandra_keyspaces: cqlsh output of
     -> {keyspace: {'class': short class name, 'rf': {dc: n} or {'*': n}}}
 cassandra_replication_problems: keyspaces, {dc: nodes left} -> the keyspaces
     that would have fewer nodes than replicas, as sentences.
+cassandra_rack_down_problems: keyspaces, dc, racks in that dc -> why taking one
+    rack of that dc down would lose more than one replica of some data, and
+    warnings (RF 2: QUORUM fails with one replica down).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -55,9 +58,27 @@ def cassandra_replication_problems(keyspaces, nodes_left):
     return problems
 
 
+def cassandra_rack_down_problems(keyspaces, dc, racks):
+    """NetworkTopologyStrategy puts a DC's replicas on distinct racks when it has
+    at least as many racks as replicas: then one rack down is one replica down."""
+    problems, warnings = [], []
+    for name in sorted(keyspaces):
+        rf = keyspaces[name]["rf"]
+        if "*" in rf and rf["*"] > 1:
+            problems.append("%s uses SimpleStrategy with RF %d, which ignores racks: a rack down can hold "
+                            "several of its replicas" % (name, rf["*"]))
+        elif dc in rf and rf[dc] > racks:
+            problems.append("%s has %d replicas in %s, which has %d rack(s): a rack holds more than one of them"
+                            % (name, rf[dc], dc, racks))
+        elif rf.get(dc) == 2:
+            warnings.append("%s has 2 replicas in %s: with one down, (LOCAL_)QUORUM fails" % (name, dc))
+    return {"problems": problems, "warnings": warnings}
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_keyspaces": cassandra_keyspaces,
             "cassandra_replication_problems": cassandra_replication_problems,
+            "cassandra_rack_down_problems": cassandra_rack_down_problems,
         }
