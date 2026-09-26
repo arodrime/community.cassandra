@@ -59,5 +59,18 @@ argument_specs:
           net.ipv4.tcp_rmem: "4096 87380 16777216"
           net.ipv4.tcp_wmem: "4096 65536 16777216"
         description:
-          - Kernel settings, written to C(/etc/sysctl.conf) and applied live
-            (not from a container, which shares the host kernel).
+          - Kernel settings, written to O(cassandra_linux_sysctl_file) and
+            applied live (not from a container, which shares the host kernel).
+      cassandra_linux_sysctl_file:
+        type: path
+        default: /etc/sysctl.d/60-cassandra.conf
+        description:
+          - Where O(cassandra_linux_sysctl) is written. The same keys are removed
+            from C(/etc/sysctl.conf), which is read last and would win.
+      cassandra_linux_limits:
+        type: dict
+        default: {memlock: unlimited, nofile: 1048576, nproc: 32768, as: unlimited}
+        description:
+          - Limits of the cassandra user, in C(/etc/security/limits.d/cassandra.conf),
+            for tools run by hand as cassandra. The service gets its own limits from
+            its systemd unit (C(cassandra_service_limit_*)).

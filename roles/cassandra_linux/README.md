@@ -29,6 +29,14 @@ Role Variables
   except in containers (`cassandra_linux_container_types`), where `/proc/sys`
   and `/sys` belong to the host. Set `true` to tune the host from a
   dedicated privileged container, `false` to only persist.
+* `cassandra_linux_sysctl`: kernel settings (swappiness, max_map_count, TCP
+  keepalive and buffers...), written to `cassandra_linux_sysctl_file`
+  (default `/etc/sysctl.d/60-cassandra.conf`). The same keys are removed from
+  `/etc/sysctl.conf`, which is read last and would win.
+* `cassandra_linux_limits`: limits of the cassandra user, in
+  `/etc/security/limits.d/cassandra.conf`, for tools run by hand as
+  cassandra (the service gets its own from its systemd unit). Same values as
+  the unit by default.
 * `cassandra_sysfs_block_root`: sysfs directory the disk tuning reads and
   writes. Defaults to `/sys/block`; only meant to be overridden by tests,
   to point at a fake tree instead of the host's real disks.

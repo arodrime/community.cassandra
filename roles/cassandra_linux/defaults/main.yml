@@ -29,7 +29,8 @@ cassandra_linux_container_types:
   - containerd
   - lxc
 
-# Kernel settings (written to /etc/sysctl.conf, applied live unless in a container)
+# Kernel settings, applied live unless in a container
+cassandra_linux_sysctl_file: /etc/sysctl.d/60-cassandra.conf
 cassandra_linux_sysctl:
   vm.swappiness: 1
   vm.max_map_count: 1048575
@@ -45,3 +46,12 @@ cassandra_linux_sysctl:
   net.core.optmem_max: 40960
   net.ipv4.tcp_rmem: "4096 87380 16777216"
   net.ipv4.tcp_wmem: "4096 65536 16777216"
+
+# Limits of the cassandra user (/etc/security/limits.d/cassandra.conf), for
+# tools run by hand as cassandra; the service gets its own from its systemd unit
+# (cassandra_service_limit_*), same values by default
+cassandra_linux_limits:
+  memlock: unlimited
+  nofile: 1048576
+  nproc: 32768
+  as: unlimited

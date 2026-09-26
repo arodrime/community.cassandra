@@ -27,15 +27,35 @@
     path: swap
     state: absent
 
+# Absent on minimal images
+- name: Directory of the kernel settings file
+  ansible.builtin.file:
+    path: "{{ cassandra_linux_sysctl_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Kernel settings for Cassandra
   ansible.builtin.sysctl:
     name: "{{ item.key }}"
     value: "{{ item.value }}"
     state: present
-    sysctl_file: /etc/sysctl.conf
+    sysctl_file: "{{ cassandra_linux_sysctl_file }}"
     sysctl_set: "{{ _cassandra_linux_live }}"
     reload: "{{ _cassandra_linux_live }}"
   loop: "{{ cassandra_linux_sysctl | dict2items }}"
+
+# /etc/sysctl.conf is read last: a line left there by an earlier version of
+# the role would win over the file above
+- name: Remove the same settings from /etc/sysctl.conf
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    state: absent
+    sysctl_file: /etc/sysctl.conf
+    reload: false
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  when: cassandra_linux_sysctl_file != '/etc/sysctl.conf'
 
 - name: Install time sync package
   ansible.builtin.package:
@@ -54,16 +74,23 @@
   tags:
   - molecule-idempotence-notest # Ubuntu 2404 timesyncd issue
 
-- name: Ensure limits are set
+# For what runs as cassandra outside the systemd unit (tools run by hand):
+# the unit sets its own limits, systemd ignores these files
+- name: Limits of the cassandra user
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (community.cassandra.cassandra_linux)
+      {% for name, value in cassandra_linux_limits.items() %}
+      cassandra - {{ name }} {{ value }}
+      {% endfor %}
+    dest: /etc/security/limits.d/cassandra.conf
+    mode: "0644"
+
+- name: Remove the block earlier versions of the role wrote to limits.conf
   ansible.builtin.blockinfile:
     path: /etc/security/limits.conf
-    block: |
-      cassandra - memlock unlimited
-      cassandra - nofile 100000
-      cassandra - nproc 32768
-      cassandra - as unlimited
     marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
-    state: present
+    state: absent
 
 - name: Extra Limit for RH Derived Distros
   ansible.builtin.lineinfile:
