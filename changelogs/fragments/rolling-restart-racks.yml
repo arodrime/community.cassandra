@@ -1,0 +1,2 @@
+minor_changes:
+  - rolling_restart - rack mode (cassandra_rolling_mode) restarts a rack at a time when the replication allows it.
