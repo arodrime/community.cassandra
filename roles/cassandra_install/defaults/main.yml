@@ -4,6 +4,11 @@ cassandra_packages: cassandra
 
 # Cassandra series, same values as cassandra_repository ("40x", "41x", "50x").
 cassandra_version: "50x"
+# Exact Cassandra version (e.g. "5.0.4"), so every node, including the ones
+# added later, runs the same one. "" installs the repository's latest. An
+# installed node is never moved to another version by this role (that is an
+# upgrade); on Debian and Ubuntu the pinned packages are also held.
+cassandra_package_version: ""
 
 # Java installed before Cassandra, so the package's Java dependency is
 # already met and no other JVM gets pulled in. Defaults to the version

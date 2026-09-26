@@ -59,3 +59,10 @@ def test_cassandra_not_started_by_package(host):
 def test_no_cqlsh_python_override_on_50x(host):
     # 5.0's cqlsh supports the system python3: no wrapper installed
     assert not host.file("/usr/local/bin/cqlsh").exists
+
+
+def test_pinned_packages_held_on_debian(host):
+    if host.system_info.distribution not in ("debian", "ubuntu"):
+        return
+    held = host.run("apt-mark showhold").stdout.split()
+    assert "cassandra" in held

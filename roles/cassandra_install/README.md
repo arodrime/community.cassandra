@@ -13,6 +13,13 @@ Role Variables
 
 * `cassandra_version`: Cassandra series, same values as `cassandra_repository`
   (`40x`, `41x`, `50x`). Default `50x`.
+* `cassandra_package_version`: exact Cassandra version (e.g. `5.0.4`), so
+  every node, including the ones added later, runs the same one. Empty
+  (default) installs the repository's latest. An installed node is never moved
+  to another version by the role (that is an upgrade); on Debian and Ubuntu the
+  pinned packages are held (`apt-mark hold`).
+* `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
+  the default `java` when several JDKs are installed.
 * `cassandra_java_version`: Java installed before Cassandra. Defaults to the
   series' version from `cassandra_java_versions` (11 for 4.x, 17 for 5.0).
 * `cassandra_java_package`: package name, derived from the OS and

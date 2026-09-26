@@ -55,3 +55,11 @@ argument_specs:
         description:
           - Make O(cassandra_java_version) the default C(java) (alternatives)
             when several JDKs are installed. Cassandra and nodetool run the default one.
+      cassandra_package_version:
+        type: str
+        default: ""
+        description:
+          - Exact Cassandra version (e.g. C(5.0.4)), so every node, including the
+            ones added later, runs the same one. Empty installs the repository's latest.
+          - An installed node is never moved to another version by this role
+            (that is an upgrade). On Debian and Ubuntu the pinned packages are held.
