@@ -42,6 +42,7 @@ group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 - `decommission_node`- Removes the nodes in `cassandra_leaving_nodes`, one at a time; refuses seeds and a datacenter left with fewer nodes than replicas.
 - `replace_node`- Replaces a dead node (`cassandra_replace_address`) by a blank host (`cassandra_new_nodes`), which takes over its tokens and data.
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.
+- `remove_dead_node`- Last resort for a dead node that will not be replaced: `removenode` (or `assassinate`).
 - `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
 - `import_cluster`- Reads a running cluster into an inventory for the roles, without changing anything on the nodes.
 
