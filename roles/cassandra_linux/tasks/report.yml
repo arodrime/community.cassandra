@@ -6,7 +6,7 @@
       {{ _cassandra_linux_items | default([])
          + ([{'item': 'sysctl ' ~ item.key ~ ' (live)', 'before': _cassandra_linux_before['sysctl|' ~ item.key], 'after': item.value | string}]
             if _cassandra_linux_live and _cassandra_linux_before['sysctl|' ~ item.key] != item.value | string else [])
-         + ([{'item': 'sysctl ' ~ item.key ~ ' (/etc/sysctl.conf)', 'before': _cassandra_linux_before_file[item.key], 'after': item.value | string}]
+         + ([{'item': 'sysctl ' ~ item.key ~ ' (' ~ cassandra_linux_sysctl_file ~ ')', 'before': _cassandra_linux_before_file[item.key], 'after': item.value | string}]
             if _cassandra_linux_before_file[item.key] != item.value | string else []) }}
   loop: "{{ cassandra_linux_sysctl | dict2items }}"
   loop_control:
@@ -38,8 +38,8 @@
     _cassandra_linux_items: >-
       {{ _cassandra_linux_items
          + ([{'item': 'limit cassandra ' ~ item.key, 'before': _cassandra_linux_before['limit|' ~ item.key] or 'unset', 'after': item.value}]
-            if _cassandra_linux_before['limit|' ~ item.key] != item.value else []) }}
-  loop: "{{ _cassandra_limits | dict2items }}"
+            if _cassandra_linux_before['limit|' ~ item.key] != item.value | string else []) }}
+  loop: "{{ cassandra_linux_limits | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
 

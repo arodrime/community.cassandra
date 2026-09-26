@@ -46,3 +46,20 @@
       gpgcheck: false
       includepkgs: chrony
     when: ansible_facts['distribution'] == 'RedHat'
+
+  # What earlier versions of the role wrote (the role moves it to drop-in files)
+  - name: Old sysctl line
+    ansible.builtin.lineinfile:
+      path: /etc/sysctl.conf
+      line: vm.swappiness=60
+      create: true
+      mode: "0644"
+
+  - name: Old limits block
+    ansible.builtin.blockinfile:
+      path: /etc/security/limits.conf
+      block: |
+        cassandra - nofile 100000
+      marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+      create: true
+      mode: "0644"

@@ -16,7 +16,7 @@ def test_hosts_file(host):
 
 
 def sysctl_conf(host):
-    return host.file("/etc/sysctl.conf").content_string
+    return host.file("/etc/sysctl.d/60-cassandra.conf").content_string
 
 
 def test_swappiness_persisted(host):
@@ -60,10 +60,12 @@ def test_time_sync_package_installed(host):
 
 def test_limit_file(host):
 
-    f = host.file("/etc/security/limits.conf")
+    f = host.file("/etc/security/limits.d/cassandra.conf")
 
     assert f.exists
-    assert "cassandra" in f.content_string
+    assert "cassandra - nofile 1048576" in f.content_string
+    assert "ANSIBLE MANAGED BLOCK" not in host.file("/etc/security/limits.conf").content_string
+    assert "vm.swappiness" not in host.file("/etc/sysctl.conf").content_string
 
     # Extra check for RH based system
     if host.system_info.distribution == "redhat" \

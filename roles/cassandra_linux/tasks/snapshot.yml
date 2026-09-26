@@ -5,7 +5,7 @@
     set -u
     for k in {{ cassandra_linux_sysctl.keys() | map('quote') | join(' ') }}; do
       live=$(sysctl -n "$k" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')
-      file=$(sed -n "s/^[[:space:]]*$k[[:space:]]*=[[:space:]]*//p" /etc/sysctl.conf 2>/dev/null | tail -1)
+      file=$(sed -n "s/^[[:space:]]*$k[[:space:]]*=[[:space:]]*//p" {{ cassandra_linux_sysctl_file | quote }} 2>/dev/null | tail -1)
       echo "sysctl|$k|${live:-unset}|${file:-unset}"
     done
     echo "swap|active|$(swapon --noheadings --show=NAME 2>/dev/null | wc -l)|"
@@ -14,8 +14,8 @@
     unit=$(systemctl is-enabled disable-thp 2>/dev/null)
     echo "thp|unit|${unit:-absent}|"
     echo "timesync|service|$(systemctl is-active {{ _cassandra_timesync_service }} 2>/dev/null)|"
-    for l in {{ _cassandra_limits.keys() | join(' ') }}; do
-      echo "limit|$l|$(awk -v l="$l" '$1=="cassandra" && $3==l {v=$4} END {print v}' /etc/security/limits.conf 2>/dev/null)|"
+    for l in {{ cassandra_linux_limits.keys() | join(' ') }}; do
+      echo "limit|$l|$(awk -v l="$l" '$1=="cassandra" && $3==l {v=$4} END {print v}' /etc/security/limits.d/cassandra.conf 2>/dev/null)|"
     done
   register: cassandra_linux_snapshot
   changed_when: false
