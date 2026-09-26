@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_decommission - did nothing when the JMX host (default 127.0.0.1) was not the node's address in the ring; the node is now checked by its own mode (nodetool netstats). A decommission in progress (LEAVING) is left alone and any mode other than NORMAL is refused. A failed decommission (DECOMMISSION_FAILED) makes the module fail and is never retried; once its cause is understood, running nodetool decommission by hand resumes it, as long as the node has not been restarted.
