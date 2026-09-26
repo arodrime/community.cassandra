@@ -161,7 +161,9 @@ other series derive theirs from it and print the defaults to add:
     python3 tools/gen_templates.py 5.0 <cassandra-5.0.x>/conf roles/cassandra_config/templates/5.0
     python3 tools/gen_templates.py 4.1 <cassandra-4.1.x>/conf roles/cassandra_config/templates/4.1 <cassandra-5.0.x>/conf/cassandra.yaml
 
-A new series also needs its file list in `vars/main.yml`.
+A new series also needs its file list in `vars/main.yml`. The full procedure
+(stock fixtures, defaults, argument specs, template release) is in
+`tools/README.md`.
 
 Dependencies
 ------------
