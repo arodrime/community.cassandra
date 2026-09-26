@@ -92,7 +92,7 @@
 
     - name: Refuse to change the version of an installed node
       ansible.builtin.assert:
-        that: _installed == '' or _installed == cassandra_package_version
+        that: _installed == '' or _installed == cassandra_package_version or _cassandra_install_upgrade | default(false)
         fail_msg: >-
           {{ inventory_hostname }} has Cassandra {{ _installed }}, the inventory asks for {{ cassandra_package_version }}.
           This role never changes the version of an installed node: that is an upgrade (drain, stop, package,
@@ -105,6 +105,11 @@
 
 - name: Install Cassandra Packages
   when: not ansible_check_mode or cassandra_install_available.rc == 0
+  vars:
+    _cassandra_install_names: >-
+      {{ cassandra_packages if cassandra_package_version == ''
+         else cassandra_packages | map('regex_replace', '$',
+              ('=' if ansible_facts['os_family'] == 'Debian' else '-') ~ cassandra_package_version) | list }}
   block:
     - name: Block service starts during package install (Debian)
       ansible.builtin.copy:
@@ -118,13 +123,12 @@
 
     - name: Install Cassandra Packages
       ansible.builtin.package:
-        name: >-
-          {{ cassandra_packages if cassandra_package_version == ''
-             else cassandra_packages | map('regex_replace', '$',
-                  ('=' if ansible_facts['os_family'] == 'Debian' else '-') ~ cassandra_package_version) | list }}
+        name: "{{ _cassandra_install_names }}"
         state: present
       retries: 3
-      when: _cassandra_java_home == '' or ansible_facts['os_family'] == 'Debian'
+      when:
+        - not (_cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian')
+        - _cassandra_java_home == '' or ansible_facts['os_family'] == 'Debian'
 
     # The RedHat packages depend on a Java package: with Java from a tarball
     # they are installed without their dependencies, plus the ones Cassandra
@@ -133,7 +137,10 @@
       when:
         - _cassandra_java_home != ''
         - ansible_facts['os_family'] == 'RedHat'
-        - "'cassandra' not in _cassandra_install_before"
+        - >-
+          'cassandra' not in _cassandra_install_before
+          or (_cassandra_install_upgrade | default(false)
+              and _cassandra_install_before['cassandra'][0].version != cassandra_package_version)
       vars:
         _rpms: /var/tmp/cassandra-rpms
       block:
@@ -153,9 +160,7 @@
         # downloaded (not installed), so the repositories must offer one
         - name: Download the Cassandra packages
           ansible.builtin.dnf:
-            name: >-
-              {{ cassandra_packages if cassandra_package_version == ''
-                 else cassandra_packages | map('regex_replace', '$', '-' ~ cassandra_package_version) | list }}
+            name: "{{ _cassandra_install_names }}"
             download_only: true
             download_dir: "{{ _rpms }}"
           retries: 3
@@ -189,6 +194,16 @@
             path: "{{ _rpms }}"
             state: absent
           changed_when: false
+
+
+    # The upgrade playbook, node stopped: the pinned packages are held
+    - name: Upgrade the Cassandra packages (Debian)
+      ansible.builtin.apt:
+        name: "{{ _cassandra_install_names }}"
+        state: present
+        allow_change_held_packages: true
+      retries: 3
+      when: _cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian'
 
     - name: Hold the pinned packages (Debian)
       ansible.builtin.dpkg_selections:

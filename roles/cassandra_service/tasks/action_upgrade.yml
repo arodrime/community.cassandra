@@ -1,0 +1,46 @@
+---
+# One node of the upgrade: drain and stop, the target series' repository and
+# package, its config, start, wait until joined, check the version it runs.
+- name: Drain the node
+  community.cassandra.cassandra_drain:
+  module_defaults:
+    community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
+
+- name: Stop Cassandra
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: stopped
+
+- name: Add the target series' repository
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_repository
+
+- name: Install the target version
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_install
+  vars:
+    _cassandra_install_upgrade: true
+
+- name: Write the target series' config
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+  vars:
+    cassandra_config_confirm: false  # previewed by the preflight phase, confirmed by the prepare phase
+    _cassandra_config_no_restart_warning: true
+
+- name: Start it and wait until it has joined
+  ansible.builtin.include_tasks: main.yml
+  vars:
+    cassandra_service_state: started
+
+- name: Read the version it runs
+  ansible.builtin.command: "{{ _cassandra_service_nodetool }} version"
+  register: cassandra_upgrade_version
+  changed_when: false
+
+- name: Check it runs the target version
+  ansible.builtin.assert:
+    that: >-
+      cassandra_upgrade_version.stdout is search('ReleaseVersion: ' ~ cassandra_package_version | regex_escape ~ '$', multiline=True)
+    fail_msg: "{{ inventory_hostname }} runs {{ cassandra_upgrade_version.stdout | trim }}, not {{ cassandra_package_version }}"
+    quiet: true
