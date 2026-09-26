@@ -177,6 +177,17 @@ ring can be replaced. A dead seed: take it out of ``cassandra_seeds`` with ``cha
 make the new node a seed.
 
 
+Rack maintenance
+----------------
+
+``stop_rack`` stops every node of one rack at once (``-e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2``),
+each one drained by its unit. With at least as many racks as replicas in the datacenter, one rack down is one
+replica down: it refuses a keyspace with more replicas in the datacenter than racks, a SimpleStrategy keyspace with
+RF above 1 (it ignores racks), and a node already down elsewhere in the datacenter. With RF 2 it warns that
+(LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster; repair the
+rack's nodes if they were down longer than ``max_hint_window``.
+
+
 Restarting
 ----------
 

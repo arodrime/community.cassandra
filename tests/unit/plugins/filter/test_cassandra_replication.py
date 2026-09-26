@@ -6,6 +6,7 @@ import pytest
 from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_replication import (
     cassandra_keyspaces,
+    cassandra_rack_down_problems,
     cassandra_replication_problems,
 )
 
@@ -45,3 +46,18 @@ def test_too_few_nodes_in_a_dc_and_in_the_cluster():
 def test_not_json():
     with pytest.raises(AnsibleFilterError):
         cassandra_keyspaces(" {not json")
+
+
+def test_rack_down_safe_with_three_racks():
+    out = cassandra_rack_down_problems(cassandra_keyspaces(CQLSH), "dc1", 3)
+    assert out["problems"] == ["system_traces uses SimpleStrategy with RF 2, which ignores racks: "
+                               "a rack down can hold several of its replicas"]
+    assert out["warnings"] == []
+
+
+def test_rack_down_too_few_racks_and_rf2_warning():
+    keyspaces = {"orders": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3, "dc2": 2}}}
+    assert cassandra_rack_down_problems(keyspaces, "dc1", 2)["problems"] == [
+        "orders has 3 replicas in dc1, which has 2 rack(s): a rack holds more than one of them"]
+    assert cassandra_rack_down_problems(keyspaces, "dc2", 3) == {
+        "problems": [], "warnings": ["orders has 2 replicas in dc2: with one down, (LOCAL_)QUORUM fails"]}
