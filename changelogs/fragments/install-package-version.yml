@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_install - cassandra_package_version pins the Cassandra version (held on Debian/Ubuntu); the role never changes the version of an installed node.

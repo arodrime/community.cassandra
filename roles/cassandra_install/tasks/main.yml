@@ -75,6 +75,26 @@
   check_mode: false
   when: ansible_check_mode
 
+- name: Check the installed version against cassandra_package_version
+  when: cassandra_package_version != ""
+  block:
+    - name: Read the installed packages
+      ansible.builtin.package_facts:
+      check_mode: false
+
+    - name: Refuse to change the version of an installed node
+      ansible.builtin.assert:
+        that: _installed == '' or _installed == cassandra_package_version
+        fail_msg: >-
+          {{ inventory_hostname }} has Cassandra {{ _installed }}, the inventory asks for {{ cassandra_package_version }}.
+          This role never changes the version of an installed node: that is an upgrade (drain, stop, package,
+          config, start, one node at a time). Set cassandra_package_version to {{ _installed }} to keep it.
+        quiet: true
+      vars:
+        _installed: >-
+          {{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('')
+             | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
+
 - name: Install Cassandra Packages
   when: not ansible_check_mode or cassandra_install_available.rc == 0
   block:
@@ -90,9 +110,21 @@
 
     - name: Install Cassandra Packages
       ansible.builtin.package:
-        name: "{{ cassandra_packages }}"
+        name: >-
+          {{ cassandra_packages if cassandra_package_version == ''
+             else cassandra_packages | map('regex_replace', '$',
+                  ('=' if ansible_facts['os_family'] == 'Debian' else '-') ~ cassandra_package_version) | list }}
         state: present
       retries: 3
+
+    - name: Hold the pinned packages (Debian)
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: "{{ cassandra_packages }}"
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - cassandra_package_version != ""
   always:
     - name: Remove the temporary policy-rc.d (Debian)
       ansible.builtin.file:
