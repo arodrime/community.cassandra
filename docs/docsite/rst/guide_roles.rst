@@ -192,7 +192,7 @@ Restarting
 ----------
 
 ``rolling_restart`` drains each node, restarts it and waits until it and the cluster are healthy again before the
-next one. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
+next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching). The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
 ``systemctl stop cassandra`` or a reboot outside Ansible is clean too.
 
 
