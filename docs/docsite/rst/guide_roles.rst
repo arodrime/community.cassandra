@@ -110,6 +110,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
@@ -147,6 +148,10 @@ Add the host to the inventory, in its datacenter's group, without adding it to `
 
 The other nodes are not touched. A node that has never started and is listed in ``cassandra_seeds`` is refused while
 another seed answers: seeds don't bootstrap, so it would join without its data. Add it, then make it a seed.
+
+Once the new nodes have joined, the others still hold the data they handed over. ``cleanup`` removes it, with
+``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
+once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
 
 
 Restarting
