@@ -34,7 +34,10 @@ Role Variables
   is clean. Default `true`. The drain never blocks the stop: after
   `cassandra_service_drain_timeout` (120 s, kept 10 s below
   `cassandra_service_timeout_stop`) or on error, the JVM is stopped anyway.
-  Needs local JMX without authentication.
+  With JMX authentication, it needs `cassandra_jmx_username` and
+  `cassandra_jmx_password_file` (the unit file is world-readable, so an inline
+  `cassandra_jmx_password` is never written there: the drain then fails and
+  the node is stopped without it).
 * `cassandra_service_tasks_max`: systemd `TasksMax=`. Default `infinity`:
   systemd's own default (15% of `pid_max`) can be low enough to make a busy
   node fail with "unable to create native thread".

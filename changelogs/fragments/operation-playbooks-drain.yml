@@ -1,0 +1,3 @@
+minor_changes:
+  - create_cluster - the cluster identity (name, seeds, datacenters) must be set explicitly.
+  - cassandra_service - the node is drained before it stops (cassandra_service_drain_on_stop), using JMX credentials when JMX authentication is on.

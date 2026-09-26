@@ -128,7 +128,8 @@
 
     - name: Wait for the node to be joined (Mode NORMAL)
       community.cassandra.cassandra_netstats:
-        port: "{{ cassandra_jmx_port | default(7199) }}"
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
       register: cassandra_service_netstats
       until: cassandra_service_netstats.mode | default('') == 'NORMAL'
       retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"

@@ -65,6 +65,11 @@ _cassandra_service_nodetool: >-
 # true asks, false goes on without asking (non-interactive runs).
 cassandra_operation_confirm: true
 
+# Rolling restarts drain each node (nodetool drain, with the JMX settings above)
+# before stopping it. The unit drains on stop too (cassandra_service_drain_on_stop):
+# a second drain is harmless.
+cassandra_operation_drain: true
+
 # Rolling operations keep a progress file on the controller; resume an
 # interrupted one with -e cassandra_rolling_resume=true.
 cassandra_rolling_resume: false

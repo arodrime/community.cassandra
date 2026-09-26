@@ -43,9 +43,9 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
     if binary is not None and not binary.get("is_up"):
         problems.append("the native transport (CQL) is not running on %s" % node)
     if netstats is not None:
-        if netstats.get("rc") != 0:
-            problems.append("nodetool netstats failed on %s: %s" % (node, (netstats.get("stderr") or netstats.get("stdout") or "").strip()))
-        elif "Not sending any streams" not in netstats.get("stdout", ""):
+        if netstats.get("failed") or "streaming" not in netstats:
+            problems.append("nodetool netstats failed on %s: %s" % (node, _error(netstats)))
+        elif netstats["streaming"]:
             problems.append("streams in progress on %s (nodetool netstats)" % node)
     if schema is not None and schema.get("failed"):
         problems.append("schema disagreement: %s" % schema.get("msg", ""))

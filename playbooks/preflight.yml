@@ -8,6 +8,28 @@
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
   gather_facts: true
   tasks:
+    # An unreachable host would silently be left out of the rest of the run
+    - name: Every node answers
+      ansible.builtin.assert:
+        that: _unreachable | length == 0 or cassandra_allow_down_nodes | default(false) | bool
+        fail_msg: >-
+          {{ _unreachable | join(', ') }} did not answer: the playbook stops here, nothing was done. Restart it first (the server, then Cassandra). If the server can't be recovered, replace
+          the node (replace_node); removing it for good (remove_dead_node) is the rare last resort.
+          -e cassandra_allow_down_nodes=true goes on without it (the cluster health checks then need
+          cassandra_service_health_force too).
+        quiet: true
+      vars:
+        _unreachable: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
+      run_once: true
+
+    - name: Going on without the nodes that did not answer
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ ansible_play_hosts_all | difference(ansible_play_hosts) | join(', ') }} did not answer, going on
+          without them (cassandra_allow_down_nodes). Fewer replicas are up: QUORUM reads and writes may fail.
+      run_once: true
+      when: ansible_play_hosts_all | difference(ansible_play_hosts) | length > 0
+
     - name: Load the cassandra_config defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config
@@ -155,7 +177,12 @@
         - name: Every seed is up
           ansible.builtin.assert:
             that: _addr in _up
-            fail_msg: "Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }})"
+            fail_msg: >-
+              Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
+              {{ ('A new node can\'t be a seed (seeds don\'t bootstrap, it would join without its data): add it as a'
+                  ~ ' regular node, then make it a seed with change_seeds.') if _host and _addr not in _all
+                 else 'Bring it back up, or take it out of cassandra_seeds (change_seeds) if it is gone.' if _addr in _all
+                 else 'It is not a node of this cluster: check cassandra_seeds.' }}
             quiet: true
           vars:
             _up: >-
@@ -165,6 +192,9 @@
               {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_service_seed_entry', 'equalto', item)
                  | map(attribute='_cassandra_preflight.address') | list }}
             _addr: "{{ _host | first | default(item) }}"
+            _all: >-
+              {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
+                 | map(attribute='address') | list }}
           loop: "{{ _cassandra_service_seeds }}"
 
         # Streaming and schema changes between versions are not supported;

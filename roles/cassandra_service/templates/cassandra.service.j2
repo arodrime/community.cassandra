@@ -21,7 +21,9 @@ Environment="{{ name }}={{ value }}"
 ExecStart=/usr/sbin/cassandra -f
 {% if cassandra_service_drain_on_stop %}
 # Flush and stop accepting writes first; "-": a failed or timed out drain does not block the stop
-ExecStop=-/usr/bin/timeout -k 10 {{ cassandra_service_drain_timeout }} /usr/bin/nodetool -p {{ cassandra_jmx_port | default(7199) }} drain
+# JMX with authentication: user and password FILE only (this unit is world-readable)
+ExecStop=-/usr/bin/timeout -k 10 {{ cassandra_service_drain_timeout }} /usr/bin/nodetool -p {{ cassandra_jmx_port | default(7199) }}{{
+  (' -u ' ~ cassandra_jmx_username ~ ' -pwf ' ~ cassandra_jmx_password_file) if cassandra_jmx_username and cassandra_jmx_password_file else '' }} drain
 {% endif %}
 # JVM exit status on SIGTERM
 SuccessExitStatus=143
