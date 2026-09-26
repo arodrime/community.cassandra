@@ -177,6 +177,15 @@ ring can be replaced. A dead seed: take it out of ``cassandra_seeds`` with ``cha
 make the new node a seed.
 
 
+When a node is dead for good and will not be replaced, take it out of the inventory and run ``remove_dead_node``
+with its address in ``cassandra_dead_node_address``: ``removenode`` streams its ranges from the other replicas.
+``cassandra_dead_node_method: removenode_force`` finishes a removal of that node that is stuck: only when the ring
+shows it ``DL`` (dead, being removed), and never while another node is leaving, since ``nodetool removenode force``
+finishes every pending removal or decommission; it checks the node is gone afterwards, and does nothing when the node
+is already out of the ring. ``assassinate`` removes it from gossip without streaming, only when ``removenode`` can't
+finish: data it held alone is lost, repair afterwards.
+
+
 Rack maintenance
 ----------------
 
