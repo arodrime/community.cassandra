@@ -68,8 +68,8 @@
           (IP reused, or a replace in progress). Find which machine owns {{ _ring.host_id }} before going on.
           {%- elif _state == 'replace' %}
           a dead node with this address is in the ring (DN, host ID {{ _ring.host_id }}). Adding this node would be a
-          replace, not an add: start it with -Dcassandra.replace_address_first_boot={{ _address }}, or remove the dead
-          node first (nodetool removenode {{ _ring.host_id }}).
+          replace, not an add: run replace_node (-e cassandra_new_nodes={{ inventory_hostname }}
+          -e cassandra_replace_address={{ _address }}).
           {%- elif _state == 'down' %}
           already in the ring (host ID {{ _ring.host_id }}) but down: start it (systemctl start cassandra) and check
           its logs; add_node is not needed.

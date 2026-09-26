@@ -1,0 +1,128 @@
+---
+# Replaces a dead node by a blank host, which takes over its tokens and
+# streams their data from the replicas (replace_address_first_boot):
+#   ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=my_cluster \
+#     -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.0.14
+# In the inventory, put the new host in the cluster's group and take the dead
+# one out (the new host may reuse its address). The dead node must be down
+# (DN) in the ring and the new host blank. A dead seed: take it out of
+# cassandra_seeds with change_seeds first, replace it, then make the new node
+# a seed with change_seeds.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Check the replacement
+  hosts: "{{ cassandra_new_nodes }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    _from: >-
+      {{ groups[cassandra_hosts | default('cassandra')] | reject('in', ansible_play_hosts_all) | first | default('') }}
+  tasks:
+    - name: Load the cassandra_service defaults (JMX access)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Check this node
+      block:
+        - name: One replacement at a time
+          ansible.builtin.assert:
+            that:
+              - ansible_play_hosts_all | length == 1
+              - cassandra_replace_address | default('') | length > 0
+            fail_msg: >-
+              Replace one node per run: one host in cassandra_new_nodes, the dead node's address in
+              cassandra_replace_address.
+            quiet: true
+
+        - name: The replacement can't be a seed
+          ansible.builtin.assert:
+            that: not _cassandra_service_is_seed | bool
+            fail_msg: >-
+              {{ inventory_hostname }} is in cassandra_seeds: seeds don't bootstrap, it would take the dead node's
+              tokens without its data. Take it out of cassandra_seeds, replace, then make it a seed with change_seeds.
+            quiet: true
+
+        - name: Look for data on the new host
+          ansible.builtin.stat:
+            path: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}/system"
+          register: cassandra_replace_system
+
+        - name: The new host is blank
+          ansible.builtin.assert:
+            that: not cassandra_replace_system.stat.exists
+            fail_msg: "{{ inventory_hostname }} has data ({{ cassandra_data_dir | default('/var/lib/cassandra/data') }}/system): a replacement starts blank."
+            quiet: true
+
+        - name: Read the ring from {{ _from }}
+          community.cassandra.cassandra_status:
+            down: 10000  # read it whatever the state of the nodes
+          module_defaults:
+            community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+          delegate_to: "{{ _from }}"
+          register: cassandra_replace_ring
+          failed_when: cassandra_replace_ring.cluster_status is not defined
+
+        - name: The node to replace is dead
+          ansible.builtin.assert:
+            that: _dead.status | default('') == 'D'
+            fail_msg: >-
+              {{ cassandra_replace_address | default('(not set)') }} is {{ (_dead.status ~ _dead.state) if _dead else 'not in the ring' }}
+              (seen from {{ _from }}): only a dead (DN) node can be replaced.
+              {{ 'A live node leaves with decommission_node.' if _dead else '' }}
+            quiet: true
+          vars:
+            _dead: >-
+              {{ cassandra_replace_ring.cluster_status.values() | map(attribute='nodes') | flatten
+                 | selectattr('address', 'equalto', cassandra_replace_address) | first | default({}) }}
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            cassandra_op_result: "replace refused: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+
+        - name: Print the summary
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: summary.yml
+          vars:
+            cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: Nothing was replaced.
+
+    - name: Confirm the replacement
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: |-
+          replace_node will start {{ inventory_hostname }} in place of the dead node {{ cassandra_replace_address | default('(not set)') }}:
+          it takes over its tokens and streams their data from the other replicas (this can take hours).
+
+- name: Replace the node
+  hosts: "{{ cassandra_new_nodes }}"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Replace
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: replace
+        cassandra_service_node_checks_before: false  # not running yet
+        cassandra_service_health_down_ok: ["{{ cassandra_replace_address | default('(not set)') }}"]
+
+- name: Summary
+  hosts: "{{ cassandra_new_nodes }}"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"

@@ -38,6 +38,7 @@ group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
 - `cleanup`- Runs `nodetool cleanup` node by node, rack by rack, DC by DC or everywhere at once, checking the cluster before each batch.
 - `decommission_node`- Removes the nodes in `cassandra_leaving_nodes`, one at a time; refuses seeds and a datacenter left with fewer nodes than replicas.
+- `replace_node`- Replaces a dead node (`cassandra_replace_address`) by a blank host (`cassandra_new_nodes`), which takes over its tokens and data.
 - `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
 - `import_cluster`- Reads a running cluster into an inventory for the roles, without changing anything on the nodes.
 
