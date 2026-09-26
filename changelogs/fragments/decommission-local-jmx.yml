@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_decommission - did nothing with the default JMX host 127.0.0.1; the node is now checked by its own mode (nodetool netstats).
