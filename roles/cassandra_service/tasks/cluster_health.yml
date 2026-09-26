@@ -14,8 +14,11 @@
       {{ cassandra_service_health_expected_nodes | default(groups[cassandra_hosts | default('cassandra')] | length) | int }}
     _cassandra_health_peer: >-
       {{ groups[cassandra_hosts | default('cassandra')]
-         | reject('in', [inventory_hostname] + (query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
-                                                if cassandra_new_nodes | default('') | length > 0 else []))
+         | reject('in', [inventory_hostname]
+                        + (query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
+                           if cassandra_new_nodes | default('') | length > 0 else [])
+                        + (query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)
+                           if cassandra_leaving_nodes | default('') | length > 0 else []))
          | first | default(inventory_hostname) }}
 
 - name: Read the cluster state

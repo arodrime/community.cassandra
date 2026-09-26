@@ -177,3 +177,15 @@ argument_specs:
         default: 30
         description:
           - Progress files older than this are removed.
+      cassandra_cql_username:
+        type: str
+        default: ""
+        description:
+          - CQL user for the checks that read the schema (e.g. the keyspaces'
+            replication before a decommission), when authentication is on.
+      cassandra_cql_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password of O(cassandra_cql_username).
