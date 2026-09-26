@@ -248,3 +248,8 @@ def test_cqlsh_credentials(host):
     assert "credentials = /root/.cassandra/credentials" in cqlshrc.content_string
     assert "password" not in cqlshrc.content_string  # 4.1+: only in the credentials file
     assert "password = Dba-Cql-Secret" in credentials.content_string
+
+
+def test_replaced_file_backed_up(host):
+    # the password change replaced cassandra.yaml of an existing config
+    assert host.run("ls /tmp/cassandra-secret/cassandra.yaml.*~").rc == 0

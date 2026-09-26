@@ -7,3 +7,8 @@ _cassandra_config_files:
           cassandra-rackdc.properties, logback.xml]
   "4.0": [cassandra.yaml, cassandra-env.sh, jvm-server.options, jvm8-server.options, jvm11-server.options,
           cassandra-rackdc.properties, logback.xml]
+# Stock release each series' templates come from (tools/gen_templates.py)
+_cassandra_config_template_versions:
+  "5.0": 5.0.9
+  "4.1": 4.1.12
+  "4.0": 4.0.21

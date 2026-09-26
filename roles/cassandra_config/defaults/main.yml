@@ -270,6 +270,8 @@ cassandra_log_console: false
 cassandra_config_owner: root
 cassandra_config_group: cassandra
 cassandra_config_mode: "0640"
+# Keep a timestamped copy of each file the role replaces, next to it (to roll back)
+cassandra_config_backup: true
 
 # Settings a node keeps for life once it has joined (cluster_name, num_tokens,
 # partitioner, snitch, dc, rack): changing them breaks it, so the role refuses.
