@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_config - cassandra.yaml is checked to be valid YAML before it replaces the current one, when PyYAML is on the node.

@@ -136,7 +136,7 @@
         - name: Diff them against the live files
           ansible.builtin.command:
             argv:
-              - "{{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined else ansible_python_interpreter | default('/usr/bin/python3') }}"
+              - "{{ _cassandra_config_python }}"
               - -c
               - |
                 import difflib, os, re, sys
@@ -161,7 +161,7 @@
         - name: Compare the settings a joined node must keep
           ansible.builtin.command:
             argv:
-              - "{{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined else ansible_python_interpreter | default('/usr/bin/python3') }}"
+              - "{{ _cassandra_config_python }}"
               - -c
               - |
                 import json, os, re, sys
@@ -260,6 +260,15 @@
         - not ansible_check_mode
         - _cassandra_config_ask | bool
 
+    # PyYAML is not an Ansible requirement on the nodes: validate when it is there
+    - name: Look for PyYAML on the node
+      ansible.builtin.command:
+        argv: ["{{ _cassandra_config_python }}", -c, import yaml]
+      register: cassandra_config_pyyaml
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
     - name: Template Cassandra config files
       ansible.builtin.template:
         src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
@@ -268,6 +277,9 @@
         group: "{{ cassandra_config_group }}"
         mode: "{{ cassandra_config_mode }}"
         backup: "{{ cassandra_config_backup }}"
+        validate: >-
+          {{ (_cassandra_config_python ~ ' -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" %s')
+             if cassandra_config_file == 'cassandra.yaml' and cassandra_config_pyyaml.rc == 0 else omit }}
       diff: false  # shown above, with secrets masked
       loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
       loop_control:
