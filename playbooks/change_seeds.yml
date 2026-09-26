@@ -1,6 +1,7 @@
 ---
-# Applies a new cassandra_seeds list to every node of a cluster: the new
-# cassandra.yaml is shown and confirmed, then reloaded live (no restart).
+# Applies a new cassandra_seeds list to every node of a cluster, live (no
+# restart): only the seeds line of cassandra.yaml changes. Other differences
+# between the inventory and the nodes' config are shown, not applied.
 #   ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=my_cluster
 # The preflight check refuses seeds that are not up members of the cluster.
 - name: Preflight
@@ -8,5 +9,97 @@
 
 - name: Update the seed list
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
-  roles:
-    - community.cassandra.cassandra_config
+  gather_facts: false
+  vars:
+    _file: "{{ cassandra_conf_dir }}/cassandra.yaml"
+    _new: "{{ cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(',') }}"  # as the template writes it
+  tasks:
+    - name: Load the cassandra_config defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Load the cassandra_service defaults (JMX access)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Read the current seed list
+      ansible.builtin.slurp:
+        src: "{{ _file }}"
+      register: cassandra_seeds_yaml
+
+    - name: Keep the current seed list
+      ansible.builtin.set_fact:
+        _cassandra_seeds_old: >-
+          {{ cassandra_seeds_yaml.content | b64decode | regex_findall('(?m)^\s*- seeds:\s*"?([^"\n]*)"?') | first | default('') }}
+
+    - name: Confirm the new seed list
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: |-
+          Seeds in cassandra.yaml, reloaded live (no restart):
+          {% for h in _changed %}
+            {{ h }}: {{ hostvars[h]._cassandra_seeds_old }} -> {{ _new }}
+          {% endfor %}
+        _changed: "{{ ansible_play_hosts | map('extract', hostvars) | rejectattr('_cassandra_seeds_old', 'equalto', _new) | map(attribute='inventory_hostname') | list }}"
+      when: _changed | length > 0
+
+    - name: Write the new seed list
+      ansible.builtin.replace:
+        path: "{{ _file }}"
+        regexp: '^(\s*- seeds:\s*).*$'
+        replace: '\g<1>"{{ _new }}"'
+
+    # Reloaded even when the file was already right: an earlier run may have
+    # written it and stopped before the reload. Changed only if the live list moves.
+    - name: Reload the seeds on the running node
+      when:
+        - _cassandra_preflight_running | bool
+        - not ansible_check_mode
+      block:
+        - name: Read the live seed list
+          ansible.builtin.command: "{{ _cassandra_service_nodetool }} getseeds"
+          register: cassandra_seeds_live
+          changed_when: false
+
+        - name: Reload the seeds
+          community.cassandra.cassandra_reload:
+            reload: seeds
+          module_defaults:
+            community.cassandra.cassandra_reload: "{{ _cassandra_service_jmx }}"
+          changed_when: false
+
+        - name: Read the reloaded seed list
+          ansible.builtin.command: "{{ _cassandra_service_nodetool }} getseeds"
+          register: cassandra_seeds_reloaded
+          changed_when: cassandra_seeds_reloaded.stdout != cassandra_seeds_live.stdout
+
+    # Nothing is written here: cassandra_config shows its diffs
+    - name: Look for other config differences
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        apply:
+          check_mode: true
+      vars:
+        cassandra_config_confirm: false
+        cassandra_config_reload_seeds: false
+
+    - name: Say how to apply the other differences
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: the config of {{ _drift | join(', ') }} differs from the inventory beyond the seeds (diffs above),
+          not applied by change_seeds. Apply it with the cassandra_config role, e.g.
+          ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.create_cluster
+          -e cassandra_hosts={{ cassandra_hosts | default('cassandra') }} (it starts nothing on a running cluster),
+          then restart the nodes with community.cassandra.rolling_restart.
+      vars:
+        _drift: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_config_changes', 'defined')
+             | rejectattr('_cassandra_config_changes', 'equalto', []) | map(attribute='inventory_hostname') | list }}
+      when: _drift | length > 0
+      run_once: true
