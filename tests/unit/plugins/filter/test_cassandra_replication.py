@@ -7,6 +7,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_replication import (
     cassandra_keyspaces,
     cassandra_rack_down_problems,
+    cassandra_replication_alter,
     cassandra_replication_problems,
 )
 
@@ -61,3 +62,21 @@ def test_rack_down_too_few_racks_and_rf2_warning():
         "orders has 3 replicas in dc1, which has 2 rack(s): a rack holds more than one of them"]
     assert cassandra_rack_down_problems(keyspaces, "dc2", 3) == {
         "problems": [], "warnings": ["orders has 2 replicas in dc2: with one down, (LOCAL_)QUORUM fails"]}
+
+
+def test_alter_add_dc():
+    keyspaces = cassandra_keyspaces(CQLSH)
+    assert cassandra_replication_alter(keyspaces, "dc3", add={"orders": 2}) == [
+        "ALTER KEYSPACE \"orders\" WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3, 'dc2': 2, 'dc3': 2};"]
+    assert cassandra_replication_alter(keyspaces, "dc2", add={"orders": 2}) == []  # already so
+    with pytest.raises(AnsibleFilterError, match="SimpleStrategy"):
+        cassandra_replication_alter(keyspaces, "dc3", add={"system_traces": 1})
+
+
+def test_alter_remove_dc():
+    keyspaces = cassandra_keyspaces(CQLSH)
+    assert cassandra_replication_alter(keyspaces, "dc2", remove=True) == [
+        "ALTER KEYSPACE \"orders\" WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3};"]
+    only_dc2 = {"logs": {"class": "NetworkTopologyStrategy", "rf": {"dc2": 1}}}
+    with pytest.raises(AnsibleFilterError, match="only has replicas in dc2"):
+        cassandra_replication_alter(only_dc2, "dc2", remove=True)
