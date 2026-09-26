@@ -1,0 +1,50 @@
+---
+# Whether the running Cassandra still has to pick up a config change: the
+# files differ from the ones it started with (checksums recorded by
+# config_snapshot.yml at each start), or, on a node started before that was
+# recorded, were written after the JVM started. Sets cassandra_config_restart_pending.
+- name: Checksum the config files
+  ansible.builtin.find:
+    paths: "{{ _cassandra_service_conf_dir }}"
+    file_type: file
+    get_checksum: true
+  register: cassandra_pending_files
+
+- name: Read the checksums recorded at the last start
+  ansible.builtin.slurp:
+    path: "{{ _cassandra_service_config_snapshot }}"
+  register: cassandra_pending_snapshot
+  failed_when: false
+
+- name: Read when the JVM started (no checksums recorded)
+  when: cassandra_pending_snapshot.content is not defined
+  block:
+    - name: Read the service
+      ansible.builtin.systemd_service:
+        name: cassandra
+      register: cassandra_pending_unit
+      check_mode: false
+
+    - name: Read the JVM process
+      ansible.builtin.stat:
+        path: "/proc/{{ cassandra_pending_unit.status.MainPID | default('0') }}"
+        get_checksum: false
+      register: cassandra_pending_proc
+      when: cassandra_pending_unit.status.MainPID | default('0') | int > 0
+
+- name: Note whether a restart is pending
+  ansible.builtin.set_fact:
+    cassandra_config_restart_pending: "{{ _changed | length > 0 }}"
+    cassandra_config_newer_files: "{{ _changed }}"
+  vars:
+    _started: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+    _changed: >-
+      {%- set out = [] -%}
+      {%- for f in cassandra_pending_files.files -%}
+      {%-   if cassandra_pending_snapshot.content is defined -%}
+      {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
+      {%-   elif f.mtime > cassandra_pending_proc.stat.ctime | default(0) -%}
+      {%-     set _ = out.append(f.path | basename) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out | sort }}

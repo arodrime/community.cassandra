@@ -1,0 +1,106 @@
+---
+# Applies the inventory's config to a running cluster. Every node's diff is
+# shown first and the whole run is confirmed once; then the nodes are done one
+# at a time: cluster checked, config written, node drained and restarted,
+# cluster checked again. Only the nodes whose config changes, or whose running
+# Cassandra is older than its config files (written by cassandra_config, which
+# never restarts, or by a run stopped before the restart), are touched.
+# Stops at the first problem.
+#   ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=my_cluster
+# Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Find what each node needs
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    # Check mode: shows the diffs, writes nothing
+    - name: Compare the config
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        public: true  # cassandra_conf_dir for the next task
+        apply:
+          check_mode: true
+      vars:
+        cassandra_config_confirm: false
+        cassandra_config_reload_seeds: false
+        cassandra_change_report_dir: ""  # the real run reports
+        _cassandra_config_no_restart_warning: true
+
+    - name: Look for a restart still pending
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: config_pending.yml
+
+    - name: Note what this node needs
+      ansible.builtin.set_fact:
+        cassandra_apply_config_todo: >-
+          {{ (_cassandra_config_changes | default([]) | length > 0) or cassandra_config_restart_pending | bool }}
+        cassandra_apply_config_reason: >-
+          {{ ((_cassandra_config_changes | default([])) | join(', ') ~ ' to change')
+             if _cassandra_config_changes | default([]) | length > 0
+             else ('restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' newer than the running Cassandra)') }}
+
+    - name: Group the nodes to do
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"
+      changed_when: false
+
+    - name: Nothing to do on this node
+      ansible.builtin.set_fact:
+        cassandra_op_result: nothing to apply
+      when: not cassandra_apply_config_todo | bool
+
+    - name: Say there is nothing to apply
+      ansible.builtin.debug:
+        msg: The running config of every node already matches the inventory, nothing to do.
+      run_once: true
+      when: _todo | length == 0
+
+    - name: Confirm the run
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: |-
+          apply_config will write the config and drain + restart these nodes, one at a time (diffs above):
+          {% for h in _todo %}
+            {{ h }}: {{ hostvars[h].cassandra_apply_config_reason }}
+          {% endfor %}
+      when: _todo | length > 0
+  vars:
+    _todo: >-
+      {%- set out = [] -%}{%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | default(false) | bool -%}{%-          set _ = out.append(h) -%}{%- endfor -%}{{ out }}
+
+- name: Set up the progress file
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_apply_config_True"
+  gather_facts: false
+  vars:
+    cassandra_service_node_action: apply_config
+  tasks:
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: progress.yml
+
+- name: Apply the config, one node at a time
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_apply_config_True"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Apply the config on this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: apply_config
+
+- name: Summary
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml

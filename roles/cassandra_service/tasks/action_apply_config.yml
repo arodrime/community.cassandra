@@ -1,0 +1,12 @@
+---
+# Confirmed once for the whole run by the apply_config playbook
+- name: Write the config
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+  vars:
+    cassandra_config_confirm: false
+    cassandra_config_reload_seeds: false  # the restart loads them
+    _cassandra_config_no_restart_warning: true
+
+- name: Drain and restart the node
+  ansible.builtin.include_tasks: action_restart.yml

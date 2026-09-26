@@ -108,13 +108,16 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=orders -e cassandra_new_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
 Operations that touch running nodes check the whole cluster before and after each node: every node up and normal,
 gossip and the native transport running, no streams, schema agreement, and the storage and CQL ports answering. A
 node is only touched when the cluster is healthy, and the run stops at the first node that does not come back
-healthy (``cassandra_service_health_force: true`` goes on anyway, at your own risk).
+healthy (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same
+checks on its own, changing nothing, and fails when there is a problem, so it can be scheduled.
 
 Risky operations ask for confirmation first (type ``yes``). ``cassandra_operation_confirm: false`` skips the
 question, for runs without a terminal.
@@ -177,8 +180,13 @@ without asking, ``true`` always asks. It refuses outright to change the settings
 Run with ``--check`` to only see the diff. With ``cassandra_change_report_dir`` set, every role also writes what it
 changed, or would change under ``--check``, to that directory on the controller.
 
-The role never restarts Cassandra. When it changed the files of a running node, it says so: apply the change with
-``rolling_restart``.
+The role never restarts Cassandra. When it changed the files of a running node, it says so.
+
+To change the configuration of a running cluster, use ``apply_config`` instead of running the role: it shows the
+diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
+checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
+running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
+restart): it is restarted too.
 
 
 JMX access

@@ -1,0 +1,47 @@
+---
+# Read-only health report of a cluster, changing nothing: from every node, the
+# ring (every node up and normal, none joining/leaving/moving), gossip, native
+# transport, streams, schema agreement and the storage and CQL ports. Fails
+# (non-zero exit) when there is a problem, so it can be scheduled.
+#   ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=my_cluster
+- name: Cluster health
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: true
+  gather_subset: [network]
+  tasks:
+    - name: Load the cassandra_config defaults (ports)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Check the cluster from this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_health.yml
+      vars:
+        cassandra_service_health_report_only: true
+        cassandra_service_health_timeout: 5  # a report: no waiting for down nodes
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {% set out = [] %}
+          {% for h in ansible_play_hosts_all %}
+          {%   set problems = hostvars[h].cassandra_health_problems | default(['unreachable']) %}
+          {%   set _ = out.append(h ~ ': ' ~ ('OK' if problems | length == 0 else problems | join('; '))) %}
+          {% endfor %}
+          {{ out }}
+      run_once: true
+
+    - name: Fail on problems
+      ansible.builtin.assert:
+        that: _unhealthy | length == 0
+        fail_msg: "Cluster not healthy: see the report above ({{ _unhealthy | join(', ') }})"
+        success_msg: "Cluster healthy: {{ ansible_play_hosts_all | length }} node(s) checked"
+      vars:
+        _unhealthy: >-
+          {{ ansible_play_hosts_all | reject('in', ansible_play_hosts) | list
+             + (ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_health_problems')
+                | map(attribute='inventory_hostname') | list) }}
+      run_once: true

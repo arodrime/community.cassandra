@@ -6,6 +6,8 @@
 # Expects the cluster's inventory group in cassandra_hosts (default 'cassandra').
 # cassandra_service_health_node_checks: false checks from the other node only
 # (this node has no Cassandra running yet, e.g. before it is added).
+# cassandra_service_health_report_only: true only sets cassandra_health_problems
+# (no wait, no failure), for read-only reports.
 - name: Work out the node count and a second node to check from
   ansible.builtin.set_fact:
     _cassandra_health_expected: >-
@@ -115,6 +117,7 @@
   when:
     - cassandra_health_problems | length > 0
     - not cassandra_service_health_force | bool
+    - not cassandra_service_health_report_only | default(false) | bool
 
 - name: Go on despite the problems (cassandra_service_health_force)
   ansible.builtin.debug:
@@ -125,3 +128,4 @@
   when:
     - cassandra_health_problems | length > 0
     - cassandra_service_health_force | bool
+    - not cassandra_service_health_report_only | default(false) | bool

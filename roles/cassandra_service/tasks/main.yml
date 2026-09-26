@@ -151,6 +151,7 @@
           {{ 'restarted' if cassandra_service_state == 'restarted'
                             or (cassandra_service_restart_on_change and cassandra_service_unit is changed)
              else 'started' }}
+      register: cassandra_service_started
 
     - name: Wait for the node to be joined (Mode NORMAL)
       community.cassandra.cassandra_netstats:
@@ -162,6 +163,13 @@
       delay: 10
       when:
         - cassandra_service_wait_for_normal
+        - not ansible_check_mode
+
+    # the config this start used, to tell later changes still to apply (apply_config)
+    - name: Record the config Cassandra started with
+      ansible.builtin.include_tasks: config_snapshot.yml
+      when:
+        - cassandra_service_started is changed
         - not ansible_check_mode
 
 - name: Report
