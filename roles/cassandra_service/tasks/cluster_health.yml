@@ -22,6 +22,7 @@
     community.cassandra.cassandra_statusgossip: "{{ _cassandra_service_jmx }}"
     community.cassandra.cassandra_statusbinary: "{{ _cassandra_service_jmx }}"
     community.cassandra.cassandra_schema: "{{ _cassandra_service_jmx }}"
+    community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
   vars:
     _node_checks: "{{ cassandra_service_health_node_checks | default(true) | bool }}"
   block:
@@ -79,11 +80,9 @@
 
     # Bootstraps, decommissions and moves elsewhere show in the ring (UJ/UL/UM)
     - name: Check for streams on this node
-      ansible.builtin.command: "{{ _cassandra_service_nodetool }} netstats"
+      community.cassandra.cassandra_netstats:
       register: cassandra_health_netstats
-      changed_when: false
       failed_when: false
-      no_log: "{{ cassandra_jmx_password | length > 0 }}"
       when: _node_checks
 
     - name: Check schema agreement (same answer from any node)
@@ -108,7 +107,11 @@
 
 - name: Stop on an unhealthy cluster
   ansible.builtin.fail:
-    msg: "{{ ['Cluster not healthy, nothing more is done:'] + cassandra_health_problems }}"
+    msg: >-
+      {{ ['Cluster not healthy, nothing more is done:'] + cassandra_health_problems
+         + (['A node is down: restart it first (the server, then Cassandra). If the server can\'t be recovered, replace'
+             ~ ' the node (replace_node); removing it for good (remove_dead_node) is the rare last resort.']
+            if cassandra_health_problems | select('search', ' is D[NLJM],') | list else []) }}
   when:
     - cassandra_health_problems | length > 0
     - not cassandra_service_health_force | bool

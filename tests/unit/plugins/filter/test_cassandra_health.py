@@ -4,7 +4,7 @@ __metaclass__ = type
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_problems
 
 UP = {"is_up": True}
-IDLE = {"rc": 0, "stdout": "Mode: NORMAL\nNot sending any streams.\n"}
+IDLE = {"mode": "NORMAL", "streaming": False}
 AGREED = {"failed": False}
 
 
@@ -69,7 +69,7 @@ def test_node_level_checks():
     ring = [node("10.0.0.1")]
     out = problems([view("n1", *ring)], expected=1,
                    gossip={"is_up": False}, binary={}, schema={"failed": True, "msg": "2 schema versions"},
-                   netstats={"rc": 0, "stdout": "Mode: NORMAL\nReceiving 3 files"})
+                   netstats={"mode": "NORMAL", "streaming": True})
     assert out == [
         "gossip is not running on n1",
         "the native transport (CQL) is not running on n1",
@@ -79,5 +79,6 @@ def test_node_level_checks():
 
 
 def test_netstats_failure_is_not_reported_as_streams():
-    out = problems([view("n1", node("10.0.0.1"))], expected=1, netstats={"rc": 1, "stdout": "", "stderr": "connection refused\n"})
-    assert out == ["nodetool netstats failed on n1: connection refused"]
+    out = problems([view("n1", node("10.0.0.1"))], expected=1,
+                   netstats={"failed": True, "msg": "netstats command failed", "stderr": "connection refused\n"})
+    assert out == ["nodetool netstats failed on n1: netstats command failed (connection refused)"]

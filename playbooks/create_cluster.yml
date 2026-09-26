@@ -7,6 +7,42 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
+# A cluster keeps these for life: a role default that changes in a later
+# release must not silently change what the next node of this cluster gets
+- name: Refuse an identity left to the role defaults
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Load the cassandra_config defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    # Role defaults are not in hostvars: what is there came from the inventory or -e
+    - name: Check the identity settings come from the inventory
+      ansible.builtin.assert:
+        that: _missing | length == 0 or cassandra_accept_default_identity | default(false) | bool
+        fail_msg: |-
+          Left to the role defaults on {{ inventory_hostname }}: set them in the inventory (group_vars of the
+          cluster, dc and rack per host), or -e cassandra_accept_default_identity=true. Current values:
+          {% for name in _missing %}
+            {{ name }}: {{ lookup('ansible.builtin.vars', name) | to_json }}
+          {% endfor %}
+        quiet: true
+      vars:
+        _names:
+          - cassandra_cluster_name
+          - cassandra_version
+          - cassandra_num_tokens
+          - cassandra_partitioner
+          - cassandra_endpoint_snitch
+          - cassandra_allocate_tokens_for_local_replication_factor
+          - cassandra_dc
+          - cassandra_rack
+        _all: "{{ _names + (['cassandra_storage_compatibility_mode'] if cassandra_version == '50x' else []) }}"
+        _missing: "{{ _all | reject('in', hostvars[inventory_hostname]) | list }}"
+
 - name: Prepare the nodes
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
   roles:
