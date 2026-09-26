@@ -8,6 +8,9 @@ cassandra_config_import: a node's config files -> cassandra_config variables,
 cassandra_inventory_layout: every node's variables -> inventory groups,
     group_vars, host_vars, drift between nodes and the report.
 cassandra_inventory_files: that layout -> the files to write, passwords apart.
+cassandra_config_ignored_vars: variable names, series -> the cassandra_config
+    variables among them that series' templates don't use (e.g. 4.0 names after
+    an upgrade to 4.1).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -392,6 +395,28 @@ def cassandra_inventory_files(layout):
     return files
 
 
+def cassandra_config_ignored_vars(names, cassandra_version):
+    if cassandra_version not in SERIES:
+        raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
+    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
+        role_vars = set(yaml.safe_load(f))
+    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
+        files = yaml.safe_load(f)["_cassandra_config_files"][SERIES[cassandra_version]]
+    used = set()
+    for name in files:
+        with open(os.path.join(ROLE, "templates", SERIES[cassandra_version], name + ".j2")) as f:
+            used.update(re.findall(r"\b(cassandra_\w+)", f.read()))
+    # variables other variables' defaults are built from count as used
+    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
+        for value in yaml.safe_load(f).values():
+            used.update(re.findall(r"\b(cassandra_\w+)", str(value)))
+    tasks_dir = os.path.join(ROLE, "tasks")
+    for name in os.listdir(tasks_dir):
+        with open(os.path.join(tasks_dir, name)) as f:
+            used.update(re.findall(r"\b(cassandra_\w+)", f.read()))
+    return sorted(n for n in names if n in role_vars and n not in used)
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -399,4 +424,5 @@ class FilterModule(object):
             "cassandra_config_import": cassandra_config_import,
             "cassandra_inventory_layout": cassandra_inventory_layout,
             "cassandra_inventory_files": cassandra_inventory_files,
+            "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
         }

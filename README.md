@@ -44,6 +44,7 @@ group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.
 - `remove_dead_node`- Last resort for a dead node that will not be replaced: `removenode` (or `assassinate`).
 - `add_datacenter` / `remove_datacenter`- Adds a datacenter (join without streaming, replication, rebuild), or removes one (replication, then its nodes leave).
+- `upgrade`- Upgrades the cluster in phases (preflight, prepare, canary, rolling, sstables, cleanup) to the version in the inventory.
 - `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
 - `import_cluster`- Reads a running cluster into an inventory for the roles, without changing anything on the nodes.
 

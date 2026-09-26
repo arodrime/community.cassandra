@@ -12,6 +12,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_config_import,
     cassandra_inventory_layout,
     cassandra_ring_nodes,
+    cassandra_config_ignored_vars,
     cassandra_inventory_files,
 )
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
@@ -192,3 +193,10 @@ def test_report_masks_passwords():
     assert "pw1" not in report and "hand1" not in report
     assert "n1: ****" in report
     assert "keystore_password: ****" in report
+
+
+def test_config_vars_the_target_series_ignores():
+    names = ["cassandra_read_request_timeout_in_ms", "cassandra_read_request_timeout", "cassandra_heap_size",
+             "cassandra_seeds", "some_other_var"]
+    assert cassandra_config_ignored_vars(names, "41x") == ["cassandra_read_request_timeout_in_ms"]
+    assert cassandra_config_ignored_vars(names, "40x") == ["cassandra_read_request_timeout"]

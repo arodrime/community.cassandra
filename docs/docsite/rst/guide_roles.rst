@@ -232,6 +232,34 @@ and loads it live, no restart needed. Other configuration differences it finds a
 If you replace a seed, update the clients' contact points as well.
 
 
+Upgrading
+---------
+
+Set the target in the cluster's ``group_vars``: ``cassandra_version`` (the series), ``cassandra_package_version``
+(the exact version) and ``cassandra_java_version`` (explicitly: keep the current Java, or change it in the same
+pass). Then run ``upgrade`` once per phase, with ``-e cassandra_upgrade_phase=``:
+
+``preflight``
+    Checks the cluster, the upgrade path (4.0 to 4.1 or 5.0, 4.1 to 5.0, or a newer patch), Java, settings the
+    target series no longer has, disk space, and shows the target configuration. Changes nothing.
+``prepare``
+    After you confirm that backups and repairs are paused and the schema frozen: a snapshot and a copy of the
+    configuration on every node.
+``canary``
+    Upgrades one node (``cassandra_upgrade_canary``, default the first non-seed of the first datacenter). Watch it.
+``rolling``
+    Upgrades the others, datacenter by datacenter, rack by rack, one node at a time. Re-run it to resume: upgraded
+    nodes are skipped.
+``sstables``
+    Rewrites the sstables in the new format, node by node.
+``cleanup``
+    Removes the pre-upgrade snapshots.
+
+From 4.x to 5.0, keep ``cassandra_storage_compatibility_mode: CASSANDRA_4`` until every node runs 5.0: 5.0 nodes
+then keep writing what 4.x nodes can read. Then set ``UPGRADING`` and run ``apply_config``, then ``NONE`` and run
+``apply_config`` again. ``NONE`` is the point of no return.
+
+
 Changing the configuration
 --------------------------
 
