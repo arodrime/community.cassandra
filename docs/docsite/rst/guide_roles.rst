@@ -112,6 +112,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=orders -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=orders -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
     $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
@@ -163,6 +164,17 @@ others, then Cassandra is stopped and disabled on it. It refuses a seed (take it
 ``change_seeds`` first) and a removal that would leave a datacenter with fewer nodes than a keyspace has replicas
 there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). Remove the hosts from the inventory afterwards.
+
+
+Replacing a dead node
+---------------------
+
+``replace_node`` starts a blank host in place of a dead node: it takes over the dead node's tokens and streams their
+data from the other replicas (``replace_address_first_boot``). Put the new host in the cluster's group and take the
+dead one out of the inventory (the new host may reuse its address), then run it with the new host in
+``cassandra_new_nodes`` and the dead node's address in ``cassandra_replace_address``. Only a node that is down in the
+ring can be replaced. A dead seed: take it out of ``cassandra_seeds`` with ``change_seeds`` first, replace it, then
+make the new node a seed.
 
 
 Restarting

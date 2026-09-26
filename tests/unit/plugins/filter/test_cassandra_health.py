@@ -82,3 +82,9 @@ def test_netstats_failure_is_not_reported_as_streams():
     out = problems([view("n1", node("10.0.0.1"))], expected=1,
                    netstats={"failed": True, "msg": "netstats command failed", "stderr": "connection refused\n"})
     assert out == ["nodetool netstats failed on n1: netstats command failed (connection refused)"]
+
+
+def test_expected_down_node_is_not_a_problem():
+    ring = [node("10.0.0.1"), node("10.0.0.2", status="D")]
+    assert problems([view("n1", *ring)], expected=2, down_ok=["10.0.0.2"]) == []
+    assert problems([view("n1", *ring)], expected=2, down_ok=["10.0.0.9"]) == ["10.0.0.2 (r1) is DN, seen from n1"]

@@ -6,6 +6,7 @@
 # Expects the cluster's inventory group in cassandra_hosts (default 'cassandra').
 # cassandra_service_health_node_checks: false checks from the other node only
 # (this node has no Cassandra running yet, e.g. before it is added).
+# cassandra_service_health_down_ok: addresses expected down (a dead node being replaced).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
 # (no wait, no failure), for read-only reports.
 - name: Work out the node count and a second node to check from
@@ -35,6 +36,7 @@
       community.cassandra.cassandra_status:
         poll: "{{ [cassandra_service_health_timeout | int // 10, 1] | max }}"
         interval: 10
+        down: "{{ cassandra_service_health_down_ok | default([]) | length }}"
       register: cassandra_health_self
       changed_when: false
       failed_when: false
@@ -44,6 +46,7 @@
       community.cassandra.cassandra_status:
         poll: "{{ [cassandra_service_health_timeout | int // 10, 1] | max }}"
         interval: 10
+        down: "{{ cassandra_service_health_down_ok | default([]) | length }}"
       register: cassandra_health_peer
       delegate_to: "{{ _cassandra_health_peer }}"
       changed_when: false
@@ -108,7 +111,8 @@
                  binary=cassandra_health_binary if _node_checks else None,
                  netstats=cassandra_health_netstats if _node_checks else None,
                  schema=cassandra_health_schema,
-                 ports=cassandra_health_ports if _node_checks else None) }}
+                 ports=cassandra_health_ports if _node_checks else None,
+                 down_ok=cassandra_service_health_down_ok | default([])) }}
 
 - name: Stop on an unhealthy cluster
   ansible.builtin.fail:
