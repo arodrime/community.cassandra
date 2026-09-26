@@ -1,0 +1,161 @@
+---
+# Adds a datacenter to a running cluster:
+#   ansible-playbook -i inventory community.cassandra.add_datacenter -e cassandra_hosts=my_cluster \
+#     -e cassandra_new_nodes=my_cluster_dc3 -e cassandra_rebuild_source_dc=dc1 \
+#     -e '{"cassandra_datacenter_replication": {"orders": 3, "system_auth": 3}}'
+# Put the new nodes in the cluster's inventory group first, all declaring the
+# new cassandra_dc. They join one at a time without streaming (auto_bootstrap:
+# false), then the keyspaces in cassandra_datacenter_replication get that many
+# replicas in the new datacenter (they must use NetworkTopologyStrategy), then
+# each new node streams its data from cassandra_rebuild_source_dc (nodetool
+# rebuild). Keyspaces not listed get no replica there. Afterwards, make one
+# node per rack of the new datacenter a seed (change_seeds), and point the
+# clients of that region at it. CQL credentials, when authentication is on:
+# cassandra_cql_username/_password.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Check the new datacenter
+  hosts: "{{ cassandra_new_nodes }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    _new_dc: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }}"
+    _existing: "{{ groups[cassandra_hosts | default('cassandra')] | reject('in', ansible_play_hosts_all) | list }}"
+  tasks:
+    - name: Load the cassandra_service defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Read the ring from {{ _existing[0] | default('') }}
+      community.cassandra.cassandra_status:
+        down: 10000
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      delegate_to: "{{ _existing[0] }}"
+      run_once: true
+      register: cassandra_new_dc_ring
+      failed_when: cassandra_new_dc_ring.cluster_status is not defined
+
+    - name: Read the keyspaces' replication
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: keyspaces.yml
+        apply:
+          run_once: true
+      vars:
+        cassandra_keyspaces_from: "{{ _existing[0] }}"
+      run_once: true
+
+    - name: Check the request
+      ansible.builtin.assert:
+        that:
+          - _existing | length > 0
+          - ansible_play_hosts_all | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | list == [_new_dc]
+          - _new_dc not in cassandra_new_dc_ring.cluster_status
+          - cassandra_rebuild_source_dc | default('') in cassandra_new_dc_ring.cluster_status
+          - not ansible_play_hosts_all | map('extract', hostvars, '_cassandra_service_is_seed') | select | list
+        fail_msg: >-
+          The new nodes must all declare the same, new cassandra_dc ({{ _new_dc }}{{ ', already in the ring'
+          if _new_dc in cassandra_new_dc_ring.cluster_status else '' }}), none of them a seed yet (they don't
+          bootstrap: make them seeds with change_seeds afterwards), and cassandra_rebuild_source_dc must be an
+          existing datacenter ({{ cassandra_new_dc_ring.cluster_status | list | join(', ') }}).
+        quiet: true
+      run_once: true
+
+    # Fails on a keyspace that is not NetworkTopologyStrategy or does not exist
+    - name: Work out the replication changes
+      ansible.builtin.set_fact:
+        cassandra_new_dc_alter: >-
+          {{ cassandra_keyspaces | community.cassandra.cassandra_replication_alter(_new_dc,
+               add=cassandra_datacenter_replication | default({})) }}
+      run_once: true
+
+    - name: Confirm
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: |-
+          add_datacenter will add {{ _new_dc }} ({{ ansible_play_hosts_all | join(', ') }}), then run:
+          {% for statement in cassandra_new_dc_alter %}
+            {{ statement }}
+          {% endfor %}
+          then stream each new node's data from {{ cassandra_rebuild_source_dc }} (this can take hours).
+
+- name: Start the new nodes, one at a time, without streaming
+  hosts: "{{ cassandra_new_nodes }}"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    # Computed first: a var can't be defined from itself (recursive template)
+    - name: Add auto_bootstrap false to the settings
+      ansible.builtin.set_fact:
+        _cassandra_new_dc_settings: "{{ cassandra_extra_settings | default({}) | combine({'auto_bootstrap': false}) }}"
+
+    - name: Add this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: add
+        cassandra_service_node_checks_before: false
+        cassandra_extra_settings: "{{ _cassandra_new_dc_settings }}"
+        _done: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
+        cassandra_service_expected_before: >-
+          {{ groups[cassandra_hosts | default('cassandra')] | length - ansible_play_hosts_all | length + _done | int }}
+        cassandra_service_expected_after: >-
+          {{ groups[cassandra_hosts | default('cassandra')] | length - ansible_play_hosts_all | length + _done | int + 1 }}
+
+- name: Give the datacenter its replicas and data
+  hosts: "{{ cassandra_new_nodes }}"
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Load the cassandra_service defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Change the keyspaces' replication
+      community.cassandra.cassandra_cqlsh:
+        execute: "{{ item }}"
+        cqlsh_host: >-
+          {{ cassandra_rpc_address | default('')
+             if cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+        username: "{{ cassandra_cql_username | default(omit, true) }}"
+        password: "{{ cassandra_cql_password | default(omit, true) }}"
+      loop: "{{ cassandra_new_dc_alter }}"
+      run_once: true
+
+    - name: Stream this node's data from {{ cassandra_rebuild_source_dc }}
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} rebuild -- {{ cassandra_rebuild_source_dc | quote }}"
+      async: "{{ cassandra_rebuild_timeout | default(86400) }}"
+      poll: 30
+      throttle: 1  # one stream source load at a time
+      changed_when: true
+
+    - name: Write the config without auto_bootstrap (read at the first start only)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_config_confirm: false
+        _cassandra_config_no_restart_warning: true
+
+    - name: Check the cluster
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_health.yml
+        apply:
+          run_once: true
+      run_once: true
+
+    - name: Say what is left to do
+      ansible.builtin.debug:
+        msg: >-
+          {{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }} is up with its data. Make one node
+          per rack of it a seed (cassandra_seeds, then change_seeds), and point that region's clients at it.
+      run_once: true

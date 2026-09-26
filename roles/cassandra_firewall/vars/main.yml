@@ -1,0 +1,2 @@
+---
+_cassandra_firewall_service: "{{ (ansible_facts['os_family'] == 'RedHat') | ternary('firewalld', 'ufw') }}"

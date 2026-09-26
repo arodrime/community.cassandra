@@ -6,18 +6,36 @@ Configures a repository for Cassandra on Debian and RedHat based platforms.
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should
-be mentioned here. For instance, if the role uses the EC2 module, it may be a
-good idea to mention in this section that the boto package is required.
+ansible-core 2.15 or later (the apt repository is written with
+`ansible.builtin.deb822_repository`).
 
 Role Variables
 --------------
 
 cassandra_version:
-  - Which version of Cassandra to install, e.g. "50x", "41x", "40x", "311x".
+  - Which version of Cassandra to install, e.g. "50x", "41x", "40x".
   - See the distribution names available at:
       - https://debian.cassandra.apache.org (Debian & Ubuntu)
       - https://redhat.cassandra.apache.org/ (RedHat)
+
+cassandra_repository_manage:
+  - `false` when the repositories are configured by other means (a
+    Satellite/Foreman, the system image): the role then does nothing.
+
+cassandra_repository_deb_url / cassandra_repository_rpm_url:
+  - Where the packages come from: the Apache repositories by default, or a
+    mirror of them for hosts without internet access.
+
+cassandra_repository_key_url:
+  - Where the release signing keys come from. Empty (default): the copy of
+    https://downloads.apache.org/cassandra/KEYS shipped with the role
+    (`files/KEYS`), so nothing is downloaded.
+  - A URL (e.g. a local mirror) is downloaded instead, and every key it holds
+    must be listed in `cassandra_repository_key_fingerprints` (primary key
+    fingerprints, defaults to the keys of the shipped copy).
+
+cassandra_apt_keyring_path / cassandra_rpm_key_path:
+  - Where the keys are installed (Debian & Ubuntu / RedHat).
 
 Dependencies
 ------------

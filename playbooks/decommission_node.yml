@@ -1,0 +1,139 @@
+---
+# Removes nodes from a running cluster, one at a time: each one streams its
+# data to the others (nodetool decommission), then Cassandra is stopped and
+# disabled on it. The cluster is checked before and after each node; the run
+# stops at the first problem.
+#   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=my_cluster -e cassandra_leaving_nodes=node7
+# Refused: a seed (take it out of cassandra_seeds with change_seeds first), and
+# a datacenter left with fewer nodes than a keyspace has replicas there
+# (cassandra_decommission_force: true goes on, at the cost of those replicas).
+# CQL credentials, when authentication is on: cassandra_cql_username/_password.
+# Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Check the nodes to remove
+  hosts: "{{ cassandra_leaving_nodes }}"
+  gather_facts: false
+  any_errors_fatal: true  # remove none of them if one is refused
+  vars:
+    _cluster: "{{ groups[cassandra_hosts | default('cassandra')] }}"
+    _leaving: "{{ ansible_play_hosts_all }}"
+    _staying: "{{ _cluster | reject('in', _leaving) | list }}"
+  tasks:
+    - name: Check this node
+      block:
+        - name: A node to remove is in the cluster
+          ansible.builtin.assert:
+            that: inventory_hostname in _cluster
+            fail_msg: "{{ inventory_hostname }} is not in the inventory group {{ cassandra_hosts | default('cassandra') }}"
+            quiet: true
+
+        - name: A seed can't be removed
+          ansible.builtin.assert:
+            that: not _cassandra_service_is_seed | bool
+            fail_msg: >-
+              {{ inventory_hostname }} is in cassandra_seeds: remove it from the list and apply it with
+              change_seeds first, or the other nodes keep contacting a node that is gone.
+            quiet: true
+
+        - name: Read the keyspaces' replication from a node that stays
+          community.cassandra.cassandra_cqlsh:
+            execute: "SELECT JSON keyspace_name, replication FROM system_schema.keyspaces;"
+            transform: raw
+            cqlsh_host: >-
+              {{ hostvars[_staying[0]].cassandra_rpc_address | default('')
+                 if hostvars[_staying[0]].cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0']
+                 else '127.0.0.1' }}
+            username: "{{ cassandra_cql_username | default(omit, true) }}"
+            password: "{{ cassandra_cql_password | default(omit, true) }}"
+            debug: true
+          delegate_to: "{{ _staying[0] }}"
+          run_once: true
+          register: cassandra_decommission_keyspaces
+          changed_when: false
+
+        - name: Every datacenter keeps enough nodes for its replicas
+          ansible.builtin.assert:
+            that: _problems | length == 0 or cassandra_decommission_force | default(false) | bool
+            fail_msg: >-
+              {{ ['Removing ' ~ _leaving | join(', ') ~ ' leaves too few nodes:'] + _problems
+                 + ['Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:'
+                    ~ ' those replicas are then lost, and QUORUM can fail.'] }}
+            quiet: true
+          vars:
+            _nodes_left: >-
+              {%- set out = {} -%}{%- for h in _staying -%}{%- set dc = hostvars[h]._cassandra_preflight.cassandra_dc -%}{%-                  set _ = out.update({dc: out.get(dc, 0) + 1}) -%}{%- endfor -%}{{ out }}
+            _problems: >-
+              {{ cassandra_decommission_keyspaces.out | default('') | community.cassandra.cassandra_keyspaces
+                 | community.cassandra.cassandra_replication_problems(_nodes_left) }}
+          run_once: true
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            cassandra_op_result: "decommission refused: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+
+        - name: Print the summary
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: summary.yml
+          vars:
+            cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: No node was removed.
+
+    - name: Confirm the removal
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: |-
+          decommission_node will remove {{ _leaving | join(', ') }} from the cluster, one at a time: each one streams
+          its data to the other nodes (this can take hours), then Cassandra is stopped and disabled on it.
+
+- name: Set up the progress file
+  hosts: "{{ cassandra_leaving_nodes }}"
+  gather_facts: false
+  vars:
+    cassandra_service_node_action: decommission
+  tasks:
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: progress.yml
+
+- name: Remove the nodes, one at a time
+  hosts: "{{ cassandra_leaving_nodes }}"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Remove this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: decommission
+        cassandra_service_node_checks_after: false  # stopped: checked from another node
+        # the nodes before this one are gone
+        _gone: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
+        cassandra_service_expected_before: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int }}"
+        cassandra_service_expected_after: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int - 1 }}"
+
+- name: Summary
+  hosts: "{{ cassandra_leaving_nodes }}"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+    - name: Say what is left to do
+      ansible.builtin.debug:
+        msg: >-
+          Remove {{ ansible_play_hosts_all | join(', ') }} from the inventory. Their data directories are
+          left in place; wipe them before reusing the hosts.
+      run_once: true

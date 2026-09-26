@@ -13,11 +13,11 @@ good idea to mention in this section that the boto package is required.
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including
-any variables that are in defaults/main.yml, vars/main.yml, and any variables
-that can/should be set via parameters to the role. Any variables that are read
-from other roles and/or the global scope (ie. hostvars, group vars, etc.) should
-be mentioned here as well.
+* `open_ports`: ports open to everyone (SSH, JMX, storage, TLS storage, CQL).
+* `cassandra_firewall_port_sources`: ports open only to some sources instead,
+  e.g. JMX for a remote repair scheduler:
+  `{"7199/tcp": ["10.0.9.0/24", "10.0.10.5"]}`. A port listed here is closed to
+  the others even when it is in `open_ports`.
 
 Dependencies
 ------------

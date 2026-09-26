@@ -1,0 +1,72 @@
+---
+argument_specs:
+  main:
+    short_description: Install Apache Cassandra and the Java it needs.
+    description:
+      - Installs the Java version the series is built for, then Cassandra.
+      - On Debian and Ubuntu, Cassandra is not started by the package install.
+      - Makes sure cqlsh runs with a Python it supports.
+    options:
+      cassandra_packages:
+        type: raw
+        default: cassandra
+        description:
+          - Package or list of packages to install. The OS vars add C(cassandra-tools).
+      cassandra_version:
+        type: str
+        default: 50x
+        description:
+          - Release series, same values as for C(cassandra_repository).
+      cassandra_java_versions:
+        type: dict
+        default: {40x: "11", 41x: "11", 50x: "17"}
+        description:
+          - Java version for each series.
+      cassandra_java_version:
+        type: str
+        description:
+          - Java version to install. Defaults to the series' entry in O(cassandra_java_versions).
+      cassandra_java_package:
+        type: str
+        description:
+          - Java package name. Derived from the OS and O(cassandra_java_version).
+      cassandra_cqlsh_python:
+        type: str
+        default: ""
+        description:
+          - Python interpreter used by cqlsh.
+          - When empty, C(python3) is used if the series' cqlsh supports it,
+            otherwise C(python3.11) is installed next to it and cqlsh is pointed at it.
+      cassandra_cqlsh_python_supported:
+        type: dict
+        default: {40x: ["3.6", "3.11"], 41x: ["3.6", "3.11"], 50x: ["3.8", "3.13"]}
+        description:
+          - Python versions supported by cqlsh, as C([min, max]) for each series.
+      cassandra_cqlsh_python_repo_uri:
+        type: str
+        default: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
+        description:
+          - Where C(python3.11) comes from on Ubuntu releases that don't ship it
+            (the deadsnakes PPA, signed by the key shipped in C(files/deadsnakes.asc)).
+            Set to an empty string to rely on the configured repositories.
+      cassandra_java_set_default:
+        type: bool
+        default: true
+        description:
+          - Make O(cassandra_java_version) the default C(java) (alternatives)
+            when several JDKs are installed. Cassandra and nodetool run the default one.
+      cassandra_package_version:
+        type: str
+        default: ""
+        description:
+          - Exact Cassandra version (e.g. C(5.0.4)), so every node, including the
+            ones added later, runs the same one. Empty installs the repository's latest.
+          - An installed node is never moved to another version by this role
+            (that is an upgrade). On Debian and Ubuntu the pinned packages are held.
+      cassandra_install_java:
+        type: bool
+        default: true
+        description:
+          - false when Java is installed by other means (an internal package,
+            the system image). The Cassandra package still needs a Java package
+            that satisfies its dependency.

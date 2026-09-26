@@ -1,0 +1,9 @@
+---
+# Rewrites this node's sstables in the running version's format (after an upgrade)
+- name: Rewrite the sstables
+  community.cassandra.cassandra_upgradesstables:
+    num_jobs: "{{ cassandra_upgrade_sstables_jobs | default(2) }}"
+  module_defaults:
+    community.cassandra.cassandra_upgradesstables: "{{ _cassandra_service_jmx }}"
+  async: "{{ cassandra_upgrade_sstables_timeout | default(86400) }}"
+  poll: 30

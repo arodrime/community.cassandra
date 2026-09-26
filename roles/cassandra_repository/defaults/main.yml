@@ -1,7 +1,21 @@
 ---
-cassandra_version: "41x"
+cassandra_version: "50x"
+# false: the repositories are configured by other means, the role does nothing
+cassandra_repository_manage: true
+# Where the packages come from: the Apache repositories, or a mirror of them
+# (Artifactory, Nexus, reposync...) for hosts without internet access
+cassandra_repository_deb_url: https://debian.cassandra.apache.org
+cassandra_repository_rpm_url: "https://redhat.cassandra.apache.org/{{ cassandra_version }}/"
 debian_packages:
   - apt-transport-https
   - curl
   - gnupg
+  - python3-debian
 cassandra_apt_keyring_path: /etc/apt/keyrings/apache-cassandra.asc
+cassandra_rpm_key_path: /etc/pki/rpm-gpg/apache-cassandra.asc
+# Signing keys of the Apache Cassandra releases. "" = the copy shipped with
+# the role (files/KEYS); a URL (e.g. a mirror) is downloaded instead, and
+# must hold only keys whose fingerprint is in this list (default: the keys
+# of the shipped copy).
+cassandra_repository_key_url: ""
+cassandra_repository_key_fingerprints: "{{ _cassandra_repository_shipped_fingerprints }}"

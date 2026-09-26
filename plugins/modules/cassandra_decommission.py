@@ -16,8 +16,7 @@ requirements:
   - nodetool
 description:
     - Deactivates a node by streaming its data to another node.
-    - Uses the nodetool ring command to determine if the node is still in the cluster.
-    - To ensure correct function of this module please use the ip address of the node in the host parameter.
+    - A node whose mode (nodetool netstats) is already DECOMMISSIONED is left as it is.
 
 extends_documentation_fragment:
   - community.cassandra.nodetool_module_options
@@ -68,7 +67,9 @@ def main():
 
     result = {}
 
-    cmd = "ring"
+    # A decommissioned node says so in netstats. (The JMX host, often
+    # 127.0.0.1, is not the node's address in the ring.)
+    cmd = "netstats"
 
     rc = None
     out = ''
@@ -87,7 +88,8 @@ def main():
             result['stderr'] = err
 
     if rc == 0:
-        if module.params['host'] in out:  # host is still in ring
+        mode = [line.split(":", 1)[1].strip() for line in out.splitlines() if line.startswith("Mode:")]
+        if mode[:1] != ["DECOMMISSIONED"]:
             cmd = "decommission"
             n = NodeToolCommandSimple(module, cmd)
             if not module.check_mode:

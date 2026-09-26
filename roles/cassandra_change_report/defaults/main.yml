@@ -1,0 +1,4 @@
+---
+# Controller directory for change reports ("" = don't write any).
+# Each run writes <dir>/<UTC timestamp>/<host>-<role>.yml.
+cassandra_change_report_dir: ""

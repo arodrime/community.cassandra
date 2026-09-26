@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  author: Alain Rodriguez
+  description: Internal helper for the other roles - shows what changes (before -> after) and writes it to a YAML report on the controller.
+  platforms:
+    - name: RedHat
+      versions:
+      - all
+    - name: Debian
+      versions:
+      - all
+    - name: Ubuntu
+      versions:
+      - all
+
+  galaxy_tags:
+    - cassandra

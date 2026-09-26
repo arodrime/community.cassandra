@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: Alain Rodriguez
+  description: Run Cassandra under a native systemd unit, start it and wait for the node to join.
+  platforms:
+    - name: RedHat
+      versions:
+      - all
+    - name: Debian
+      versions:
+      - all
+    - name: Ubuntu
+      versions:
+      - all
+
+  galaxy_tags:
+    - cassandra
+    - database

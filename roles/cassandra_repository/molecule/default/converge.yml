@@ -3,3 +3,45 @@
   hosts: all
   roles:
     - role: community.cassandra.cassandra_repository
+
+- name: Signing keys downloaded from a URL
+  hosts: all
+  tasks:
+    - name: Put a copy of the keys where a URL can reach it
+      ansible.builtin.copy:
+        src: ../../files/KEYS
+        dest: /tmp/KEYS
+        mode: "0644"
+
+    - name: Known keys are accepted
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_repository
+      vars:
+        cassandra_repository_key_url: file:///tmp/KEYS
+
+    - name: Unknown keys are refused
+      block:
+        - name: Run the role with an empty fingerprint list
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_repository
+          vars:
+            cassandra_repository_key_url: file:///tmp/KEYS
+            cassandra_repository_key_fingerprints: []
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: unknown keys were accepted
+      rescue:
+        - name: Check the refusal came from the fingerprint check
+          ansible.builtin.assert:
+            that: "'unknown keys' in ansible_failed_result.msg"
+
+- name: Repositories managed by other means
+  hosts: all
+  tasks:
+    - name: Run the role for another series, without managing the repositories
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_repository
+      vars:
+        cassandra_repository_manage: false
+        cassandra_version: 40x

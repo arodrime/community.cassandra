@@ -16,10 +16,41 @@ If you like this collection please give us a rating on [Ansible Galaxy](https://
 
 These roles prepare servers with Debian-based and RHEL-based distributions to run Cassandra.
 
+- `cassandra_change_report`- Used by the other roles: show and record what they change (before -> after), also under `--check`.
+- `cassandra_config`- Template Cassandra's configuration files from stock defaults.
 - `cassandra_firewall`- Manage the firewall on Cassandra nodes.
 - `cassandra_install`- Install Cassandra.
 - `cassandra_linux`- Configure Linux OS Settings for Cassandra.
 - `cassandra_repository`- Configures a package repository for Cassandra on Debian and RedHat based platforms.
+- `cassandra_service`- Run Cassandra under a systemd unit, start it and wait for the node to join.
+
+#### Playbooks
+
+Operations on a cluster, described by one inventory group (`cassandra_hosts`,
+default `cassandra`; per-cluster settings such as `cassandra_seeds` in its
+group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
+
+- `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds).
+- `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first.
+- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time.
+- `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
+- `rolling_reboot`- Same, rebooting the hosts (OS patching).
+- `update_jdk`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
+- `apply_config`- Applies the inventory's config: shows every diff, asks once, then writes and restarts only the nodes that need it, one at a time.
+- `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
+- `cleanup`- Runs `nodetool cleanup` node by node, rack by rack, DC by DC or everywhere at once, checking the cluster before each batch.
+- `decommission_node`- Removes the nodes in `cassandra_leaving_nodes`, one at a time; refuses seeds and a datacenter left with fewer nodes than replicas.
+- `replace_node`- Replaces a dead node (`cassandra_replace_address`) by a blank host (`cassandra_new_nodes`), which takes over its tokens and data.
+- `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.
+- `remove_dead_node`- Last resort for a dead node that will not be replaced: `removenode` (or `assassinate`).
+- `add_datacenter` / `remove_datacenter`- Adds a datacenter (join without streaming, replication, rebuild), or removes one (replication, then its nodes leave).
+- `upgrade`- Upgrades the cluster in phases (preflight, prepare, canary, rolling, sstables, cleanup) to the version in the inventory.
+- `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
+- `import_cluster`- Reads a running cluster into an inventory for the roles, without changing anything on the nodes.
+
+    ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=my_cluster
+
+`import_cluster` takes any reachable nodes (`ansible-playbook -i node1,node2 community.cassandra.import_cluster`) and finds the others in the ring. It writes `hosts.yml` (one group per cluster, then per datacenter and rack), `group_vars/`, `host_vars/` and `report.txt` to `import_cluster_dir` (default `./<cluster name>`). Settings shared by every node go to the cluster group; the others go to the datacenter, rack or node where they are shared, and the report lists them as drift. `cassandra.yaml` settings that have no variable are kept in `cassandra_extra_settings`. Passwords go to separate `secrets.yml` files, encrypted with `import_cluster_vault_password_file` when given, else mode `0600` with the `ansible-vault` command to run. The report also lists, per node, the Cassandra and Java versions and the hand edits nothing can keep, which `cassandra_config` would revert.
 
 #### Modules
 
@@ -45,6 +76,7 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 - `cassandra_invalidatecache`- Invalidates the various caches on the Cassandra node.
 - `cassandra_keyspace`- Manage keyspaces on your Cassandra cluster.
 - `cassandra_maxhintwindow`- Set the specified max hint window in ms.
+- `cassandra_netstats`- Returns the mode of the node and whether it is streaming.
 - `cassandra_reload`-  Reloads various objects into the local node.
 - `cassandra_removenode`- Removes a node by the given host id from the cluster.
 - `cassandra_role`- Manage roles on your Cassandra Cluster.
@@ -85,7 +117,7 @@ If the chosen consistency level is not supported, by either read or write, then 
 * 5.0.X
 * 4.1.X
 * 4.0.X
-* 3.11.X
+* ~~3.11.X~~ Dropped on 25.09.2026.
 * ~~2.2.X~~ Dropped on 21.10.2021.
 
 ## GitHub workflow

@@ -1,0 +1,71 @@
+---
+# One batch of the cleanup playbook, run once: cluster health, nodetool
+# cleanup on every node of the batch at the same time, progress recorded.
+# Expects cassandra_cleanup_batch (host names) and cassandra_cleanup_jobs.
+- name: Batch {{ cassandra_cleanup_batch | join(', ') }}
+  vars:
+    _todo: "{{ cassandra_cleanup_batch | reject('in', cassandra_progress_done | default([])) | list }}"
+  when: _todo | length > 0
+  block:
+    - name: Note the start time
+      ansible.builtin.set_fact:
+        _cassandra_cleanup_start: "{{ now().timestamp() | int }}"
+
+    - name: Check the cluster before the batch
+      ansible.builtin.include_tasks: cluster_health.yml
+
+    - name: Start the cleanups
+      community.cassandra.cassandra_cleanup:
+        num_jobs: "{{ cassandra_cleanup_jobs }}"
+      module_defaults:
+        community.cassandra.cassandra_cleanup: >-
+          {{ _cassandra_service_jmx | combine({'port': hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+      async: "{{ cassandra_cleanup_timeout }}"
+      poll: 0
+      register: cassandra_cleanup_jobs_started
+
+    - name: Wait for the cleanups
+      ansible.builtin.async_status:
+        jid: "{{ item.ansible_job_id }}"
+      delegate_to: "{{ item.item }}"
+      loop: "{{ cassandra_cleanup_jobs_started.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: cassandra_cleanup_job
+      until: cassandra_cleanup_job.finished
+      retries: "{{ (cassandra_cleanup_timeout | int / 30) | int }}"
+      delay: 30
+
+    - name: Add the batch to the progress file
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_progress_file }}"
+        line: "{{ item }}"
+      delegate_to: localhost
+      loop: "{{ _todo }}"
+      when: cassandra_progress_file is defined
+
+    - name: Record the result
+      ansible.builtin.set_fact:
+        cassandra_op_result: "cleanup done in {{ now().timestamp() | int - _cassandra_cleanup_start | int }}s"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+  rescue:
+    - name: Record the failure
+      ansible.builtin.set_fact:
+        cassandra_op_result: "cleanup FAILED: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+
+    - name: Print the summary
+      ansible.builtin.include_tasks: summary.yml
+
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: >-
+          Stopped at the batch {{ _todo | join(', ') }}: no later batch was started.
+          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
+          (progress: {{ cassandra_progress_file | default('none') }})
