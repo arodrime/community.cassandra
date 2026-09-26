@@ -95,6 +95,8 @@ Role Variables
   `{os_user, username, password}`: `~/.cassandra/cqlshrc` points cqlsh at this
   node (`cassandra_rpc_address`), and from 4.1 the password goes to
   `~/.cassandra/credentials`; both mode `0600`.
+* `cassandra_config_backup` (default `true`): keep a timestamped copy of
+  each file the role replaces, next to it, to roll back.
 * `cassandra_extra_settings`: settings no variable covers, as a dict written
   as-is at the end of `cassandra.yaml` (e.g. `{commitlog_total_space: 8192MiB}`).
   Keys the template already has are refused: set them with their variable.

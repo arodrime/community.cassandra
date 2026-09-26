@@ -1124,3 +1124,8 @@ argument_specs:
         - cqlsh set up for OS users, mode 0600. Each item has C(os_user),
           C(username) and C(password). C(~/.cassandra/cqlshrc) points cqlsh at
           this node; from 4.1 the password is in C(~/.cassandra/credentials).
+      cassandra_config_backup:
+        type: bool
+        default: true
+        description:
+        - Keep a timestamped copy of each file the role replaces, next to it.

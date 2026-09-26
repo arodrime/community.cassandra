@@ -52,6 +52,24 @@
 - name: Configure
   when: cassandra_config_pkg_conf.stat.exists
   block:
+    # Templates come from the stock files of one release per series: a later
+    # release may accept settings they don't have (cassandra_extra_settings)
+    - name: Read the installed Cassandra version
+      ansible.builtin.package_facts:
+      check_mode: false
+
+    - name: Say when Cassandra is newer than the templates
+      ansible.builtin.debug:
+        msg: >-
+          Cassandra {{ _installed }} is newer than {{ _templates }}, the release the {{ _cassandra_config_series }}
+          templates come from: settings it added are not variables, set them with cassandra_extra_settings.
+      vars:
+        _installed: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') | regex_replace('^([0-9.]+).*$', '\\1') }}"
+        _templates: "{{ _cassandra_config_template_versions[_cassandra_config_series] }}"
+      when:
+        - _installed != ''
+        - _installed is version(_templates, '>')
+
     - name: Set up the RPM conf dir alternative
       when:
         - ansible_facts['os_family'] == 'RedHat'
@@ -249,6 +267,7 @@
         owner: "{{ cassandra_config_owner }}"
         group: "{{ cassandra_config_group }}"
         mode: "{{ cassandra_config_mode }}"
+        backup: "{{ cassandra_config_backup }}"
       diff: false  # shown above, with secrets masked
       loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
       loop_control:

@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_config - backs up the files it replaces (cassandra_config_backup), and says when the installed Cassandra is newer than its templates.
