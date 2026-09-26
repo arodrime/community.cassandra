@@ -23,9 +23,10 @@ Role Variables
   then `python3.11` is installed next to it and cqlsh is pointed at it
   (`/usr/local/bin/cqlsh` wrapper, `CQLSH_PYTHON` in `/etc/profile.d`).
   The system `python3` is never changed.
-* `cassandra_cqlsh_python_ppa`: where python3.11 comes from on Ubuntu releases
-  that don't ship it (default `ppa:deadsnakes/ppa`; empty to rely on the
-  configured repositories).
+* `cassandra_cqlsh_python_repo_uri`: where python3.11 comes from on Ubuntu
+  releases that don't ship it (default: the deadsnakes PPA, signed by the key
+  shipped in `files/deadsnakes.asc`; empty to rely on the configured
+  repositories).
 
 jemalloc is installed when available (Debian/Ubuntu, and RHEL-family with EPEL
 or Amazon Linux), and `cassandra-tools` on RHEL-family systems.

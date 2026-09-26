@@ -26,5 +26,6 @@ cassandra_cqlsh_python_supported:  # [min, max]
   40x: ["3.6", "3.11"]  # bundled six/driver break on 3.12
   41x: ["3.6", "3.11"]
   50x: ["3.8", "3.13"]  # bin/cqlsh refuses 3.6/3.7
-# Ubuntu releases without python3.11 (24.04+); "" to rely on configured repos
-cassandra_cqlsh_python_ppa: "ppa:deadsnakes/ppa"
+# deadsnakes PPA, added on Ubuntu releases without python3.11 (24.04+), signed
+# by the key shipped with the role; "" to rely on the configured repos
+cassandra_cqlsh_python_repo_uri: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
