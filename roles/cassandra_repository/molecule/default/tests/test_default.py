@@ -86,3 +86,14 @@ def test_debian_apt_search(host):
 
         assert cmd.rc == 0
         assert "debian.cassandra.apache.org" in cmd.stdout
+
+
+def test_only_the_current_series_repository(host):
+    cassandra_version = get_cassandra_version(host)
+    for series in ("311x", "40x", "41x", "50x"):
+        if series == cassandra_version:
+            continue
+        if is_redhat(host):
+            assert not host.file("/etc/yum.repos.d/cassandra-{0}.repo".format(series)).exists
+        else:
+            assert not host.file("/etc/apt/sources.list.d/cassandra-{0}.sources".format(series)).exists
