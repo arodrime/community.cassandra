@@ -4,7 +4,7 @@
 - name: List the packages this role manages
   ansible.builtin.set_fact:
     _cassandra_install_new: >-
-      {{ ([cassandra_java_package] + ([cassandra_packages] | flatten)
+      {{ (([cassandra_java_package] if _cassandra_java_home == '' else []) + ([cassandra_packages] | flatten)
           + ([('libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc')]
              if ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout | default('') != '' else [])
           + (['python3.11'] if _cassandra_cqlsh_python == '/usr/bin/python3.11' else []))

@@ -108,7 +108,13 @@
         for p in FragmentPath SourcePath Restart UnitFileState; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
         done
-        echo "java=$($(readlink -f /proc/$pid/exe) -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
+        bin=$(readlink -f /proc/$pid/exe)
+        echo "java=$($bin -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
+        echo "javabin=$bin"
+        # the package the running java comes from, empty when none (a tarball)
+        pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
+        echo "javapkg=$pkg"
+        echo "sysjava=$([ -e /usr/bin/java ] && readlink -f /usr/bin/java)"
       register: import_cluster_running
       changed_when: false
       failed_when: false
@@ -119,6 +125,10 @@
         import_cluster_version: "{{ _kv.version }}"
         import_cluster_series: "{{ _kv.version.split('.')[:2] | join('') ~ 'x' }}"
         import_cluster_java: "{{ _kv.java.split('.')[1] if _kv.java.startswith('1.') else _kv.java }}"
+        # not from a package: the directory above bin/java
+        import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
+        import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
+        import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
         import_cluster_conf_dir: >-
           {{ _kv.config | dirname if _kv.config is match('/')
@@ -207,8 +217,17 @@
           {{ _host if _host != item.address
              else (_hv.ansible_facts.hostname | default(item.address)) }}
         _java: >-
-          {{ {'cassandra_java_version': _hv.import_cluster_java}
-             if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {} }}
+          {{ ({'cassandra_java_version': _hv.import_cluster_java}
+              if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {})
+             | combine({'cassandra_java_home': _hv.import_cluster_java_home}
+                       if _read and _hv.import_cluster_java_home | default('') != '' else {})
+             | combine({'cassandra_java_package': _hv.import_cluster_java_package}
+                       if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {}) }}
+        # the package cassandra_install would install for that Java (its default)
+        _java_package: >-
+          {{ ('openjdk-' ~ _hv.import_cluster_java | default('') ~ '-jre-headless') if _hv.ansible_facts.os_family | default('') == 'Debian'
+             else ('java-' ~ _hv.import_cluster_java | default('') ~ '-amazon-corretto-headless') if _hv.ansible_facts.distribution | default('') == 'Amazon'
+             else ('java-' ~ _hv.import_cluster_java | default('') ~ '-openjdk-headless') }}
         # the installed version, so nodes added later get the same one
         _pkg: >-
           {{ {'cassandra_package_version': _hv.import_cluster_package | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1')}
@@ -238,7 +257,13 @@
           notes:
             - "{{ _versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?') }}"
             - "{{ _started }}"
-        _versions: "{{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?') }}"
+        _versions: >-
+          {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
+             ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')
+             ~ ((', but /usr/bin/java is ' ~ (_hv.import_cluster_system_java or 'missing')
+                 ~ ': the roles will point it at the running Java')
+                if _hv.import_cluster_java_home | default('')
+                   and _hv.import_cluster_system_java | default('') != _hv.import_cluster_java_home ~ '/bin/java' else '') }}
         _started: >-
           {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
              ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')

@@ -26,6 +26,11 @@
     name: "{{ cassandra_java_package }}"
     state: present
   retries: 3
+  when: _cassandra_java_home == ''
+
+- name: Java from a tarball, or already unpacked (cassandra_java_home)
+  ansible.builtin.include_tasks: java_tarball.yml
+  when: _cassandra_java_home != ''
 
 # Cassandra and nodetool run the default java: with several JDKs installed
 # (e.g. while moving to another Java), it must be this one
@@ -35,7 +40,9 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  when: cassandra_java_set_default | bool
+  when:
+    - _cassandra_java_home == ''
+    - cassandra_java_set_default | bool
 
 - name: Make it the default java
   community.general.alternatives:
@@ -47,6 +54,7 @@
          | select('match', '^/\S*java-(1\.)?' ~ cassandra_java_version ~ '[.-]\S*/bin/java ')
          | map('regex_replace', ' .*$', '') | first | default('') }}
   when:
+    - _cassandra_java_home == ''
     - cassandra_java_set_default | bool
     - _path != ''
 
@@ -116,6 +124,71 @@
                   ('=' if ansible_facts['os_family'] == 'Debian' else '-') ~ cassandra_package_version) | list }}
         state: present
       retries: 3
+      when: _cassandra_java_home == '' or ansible_facts['os_family'] == 'Debian'
+
+    # The RedHat packages depend on a Java package: with Java from a tarball
+    # they are installed without their dependencies, plus the ones Cassandra
+    # runs with. (Debian: a local package provides Java, see java_tarball.yml.)
+    - name: Install the Cassandra packages without a Java package (cassandra_java_home)
+      when:
+        - _cassandra_java_home != ''
+        - ansible_facts['os_family'] == 'RedHat'
+        - "'cassandra' not in _cassandra_install_before"
+      vars:
+        _rpms: /var/tmp/cassandra-rpms
+      block:
+        - name: Install what Cassandra needs besides Java
+          ansible.builtin.package:
+            name: [procps-ng, python3, shadow-utils]
+            state: present
+          retries: 3
+
+        - name: Start from an empty download directory
+          ansible.builtin.file:
+            path: "{{ _rpms }}"
+            state: absent
+          changed_when: false
+
+        # download_only resolves the dependencies too: a Java package is
+        # downloaded (not installed), so the repositories must offer one
+        - name: Download the Cassandra packages
+          ansible.builtin.dnf:
+            name: >-
+              {{ cassandra_packages if cassandra_package_version == ''
+                 else cassandra_packages | map('regex_replace', '$', '-' ~ cassandra_package_version) | list }}
+            download_only: true
+            download_dir: "{{ _rpms }}"
+          retries: 3
+          changed_when: false
+
+        - name: Find them among the downloads
+          ansible.builtin.find:
+            paths: "{{ _rpms }}"
+            patterns: "{{ cassandra_packages | map('regex_replace', '$', '-[0-9]*.rpm') | list }}"
+          register: cassandra_install_rpms
+          when: not ansible_check_mode
+
+        - name: Every package was downloaded
+          ansible.builtin.assert:
+            that: cassandra_install_rpms.files | length == cassandra_packages | length
+            fail_msg: >-
+              Downloaded {{ cassandra_install_rpms.files | map(attribute='path') | map('basename') | join(', ') or 'nothing' }}
+              for {{ cassandra_packages | join(', ') }}.
+            quiet: true
+          when: not ansible_check_mode
+
+        - name: Install them without their Java dependency
+          ansible.builtin.command:
+            argv: "{{ ['rpm', '-U', '--nodeps', '--oldpackage'] + cassandra_install_rpms.files | map(attribute='path') | list }}"
+          changed_when: true
+          when: not ansible_check_mode
+
+      always:
+        - name: Remove the downloaded packages
+          ansible.builtin.file:
+            path: "{{ _rpms }}"
+            state: absent
+          changed_when: false
 
     - name: Hold the pinned packages (Debian)
       ansible.builtin.dpkg_selections:

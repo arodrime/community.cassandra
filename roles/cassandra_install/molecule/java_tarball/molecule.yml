@@ -1,0 +1,43 @@
+---
+# Java from a tarball: a blank host gets Java from the tarball and the
+# Cassandra packages without any Java package.
+driver:
+  name: docker
+platforms:
+  - name: ubuntu2404
+    image: geerlingguy/docker-ubuntu2404-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: rockylinux9
+    image: geerlingguy/docker-rockylinux9-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: rhel810
+    groups: [rhel8]
+    image: registry.access.redhat.com/ubi8/ubi-init:8.10
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      # platform-python 3.6 is below ansible-core's target minimum (3.9)
+      rhel8:
+        ansible_python_interpreter: /usr/bin/python3.12
+verifier:
+  name: testinfra

@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_install - Java from a tarball (cassandra_java_tarball) or already unpacked (cassandra_java_home) instead of a package; import_cluster sets cassandra_java_home for nodes whose Java is not a package, and records a non-default Java package name.

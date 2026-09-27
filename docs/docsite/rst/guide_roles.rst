@@ -202,6 +202,24 @@ It refuses a Java the series does not support, and warns about ``cassandra_jvm<N
 Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
 ``systemctl stop cassandra`` or a reboot outside Ansible is clean too.
 
+Where Java comes as a JDK tarball rather than a package, give it in ``cassandra_java_tarball``, a URL or a file on the
+controller, with ``cassandra_java_version`` naming its major version:
+
+.. code-block:: yaml
+
+   cassandra_java_tarball: https://mirror.example.com/java/jdk-17.0.12_linux-x64_bin.tar.gz
+   cassandra_java_tarball_checksum: "sha256:..."
+   cassandra_java_version: "17"
+
+It is unpacked into ``/opt/cassandra-java/<tarball name>`` (``cassandra_java_tarball_dir``) and made the system
+``java``. The Cassandra packages depend on Java: on Debian/Ubuntu, a small local package (``cassandra-java-tarball``)
+declares the tarball's Java to apt, and the packages install normally. On the RedHat family they are installed
+without their dependencies (``rpm --nodeps``), plus the ones Cassandra needs to run: ``dnf check`` then reports the
+Java dependency as missing, and a plain ``dnf upgrade`` that finds a newer Cassandra would install a Java package to
+satisfy it (the tarball stays the system ``java``): exclude the cassandra packages from routine upgrades
+(``excludepkgs``, versionlock).
+``update_jdk`` moves a cluster to a new tarball the same way as to a new package.
+
 
 Changing the seeds
 ------------------
@@ -250,6 +268,9 @@ Taking over an existing cluster
 Give it any reachable nodes; it finds the others in the ring. It writes ``hosts.yml``, ``group_vars/``,
 ``host_vars/`` and a ``report.txt`` listing, per node, the Cassandra and Java versions, drift between nodes and the
 hand edits no variable covers (``cassandra_config`` would revert them).
+
+A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
+roles then keep that Java and install no Java package.
 
 Passwords found in the configuration go to separate ``secrets.yml`` files: encrypted with ansible-vault when
 ``import_cluster_vault_password_file`` is given, otherwise written with mode ``0600`` and the report gives the

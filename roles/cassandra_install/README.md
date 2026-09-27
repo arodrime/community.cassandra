@@ -18,6 +18,22 @@ Role Variables
   (default) installs the repository's latest. An installed node is never moved
   to another version by the role (that is an upgrade); on Debian and Ubuntu the
   pinned packages are held (`apt-mark hold`).
+* `cassandra_java_tarball` (default `""`): Java from a tarball (a JDK or JRE
+  `.tar.gz`) instead of a package: a URL downloaded by the
+  nodes (`cassandra_java_tarball_checksum` recommended, credentials in
+  `cassandra_java_tarball_username`/`_password`), or a file on the controller.
+  It is unpacked into `cassandra_java_tarball_dir/<tarball name>` (default
+  `/opt/cassandra-java`) and made the system `java`, which the cassandra script
+  and nodetool run. The Cassandra packages are then installed without a Java
+  package: on Debian/Ubuntu a local `cassandra-java-tarball` package provides
+  the Java they depend on; on the RedHat family they are installed with
+  `rpm --nodeps` (plus procps-ng, python3 and shadow-utils).
+  `cassandra_java_version` must still name its major version; `update_jdk`
+  moves the nodes to a new tarball.
+* `cassandra_java_home` (default `""`): Java already unpacked in this
+  directory by other means, not a package: made the system `java`, and the
+  Cassandra packages installed without a Java package, as with a tarball.
+  `import_cluster` sets it for nodes whose running Java is not a package.
 * `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
   the default `java` when several JDKs are installed.
 * `cassandra_java_version`: Java installed before Cassandra. Defaults to the

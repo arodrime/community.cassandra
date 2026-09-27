@@ -49,6 +49,48 @@ argument_specs:
           - Where C(python3.11) comes from on Ubuntu releases that don't ship it
             (the deadsnakes PPA, signed by the key shipped in C(files/deadsnakes.asc)).
             Set to an empty string to rely on the configured repositories.
+      cassandra_java_tarball:
+        type: str
+        default: ""
+        description:
+          - Java from a tarball (a JDK or JRE C(.tar.gz)) instead of a package. A URL,
+            downloaded by the nodes, or a file on the controller.
+          - It is unpacked into O(cassandra_java_tarball_dir)C(/<tarball name>) and made the
+            system C(java) (alternatives), which the cassandra script and nodetool run.
+            The Cassandra packages are then installed without a Java package. On Debian/Ubuntu,
+            a local C(cassandra-java-tarball) package provides the Java they depend on; on the
+            RedHat family they are installed without their dependencies (C(rpm --nodeps)),
+            plus the ones they need to run (procps-ng, python3, shadow-utils).
+          - O(cassandra_java_version) must still name its major version.
+      cassandra_java_home:
+        type: path
+        default: ""
+        description:
+          - Java already unpacked in this directory by other means, not a package. It is
+            made the system C(java), and the Cassandra packages are installed without a
+            Java package, as with O(cassandra_java_tarball).
+          - import_cluster sets it for nodes whose running Java is not a package.
+      cassandra_java_tarball_checksum:
+        type: str
+        default: ""
+        description:
+          - Checksum of the tarball, for example C(sha256:0123...). Recommended for a URL.
+      cassandra_java_tarball_dir:
+        type: path
+        default: /opt/cassandra-java
+        description:
+          - Where the tarballs are unpacked, each in its own directory.
+      cassandra_java_tarball_username:
+        type: str
+        default: ""
+        description:
+          - User for the tarball URL.
+      cassandra_java_tarball_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password or token for the tarball URL.
       cassandra_java_set_default:
         type: bool
         default: true

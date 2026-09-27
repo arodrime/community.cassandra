@@ -18,6 +18,28 @@ cassandra_java_versions:
   41x: "11"
   50x: "17"
 cassandra_java_version: "{{ cassandra_java_versions[cassandra_version] | default('17') }}"
+# Java from a tarball (a JDK or JRE .tar.gz) instead of a package: a URL
+# (downloaded by the nodes) or a file on the controller. It
+# is unpacked into cassandra_java_tarball_dir/<tarball name> and made the
+# system java; the Cassandra packages are then installed without their Java
+# dependency. cassandra_java_version must still name its major version.
+cassandra_java_tarball: ""
+# e.g. "sha256:0123..." (recommended for a URL)
+cassandra_java_tarball_checksum: ""
+cassandra_java_tarball_dir: /opt/cassandra-java
+# Credentials for the URL
+cassandra_java_tarball_username: ""
+cassandra_java_tarball_password: ""
+_cassandra_java_tarball_name: "{{ cassandra_java_tarball | urlsplit('path') | basename }}"
+# Java already unpacked there by other means (not a package): made the system
+# java, and the Cassandra packages installed without a Java package, as with
+# a tarball. import_cluster sets it for nodes whose Java is not a package.
+cassandra_java_home: ""
+_cassandra_java_home: >-
+  {{ cassandra_java_home | regex_replace('/+$', '') if cassandra_java_home != ''
+     else ((cassandra_java_tarball_dir | regex_replace('/+$', '')) ~ '/'
+           ~ (_cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '')))
+     if cassandra_java_tarball != '' else '' }}
 # Make cassandra_java_version the default java when several JDKs are installed
 cassandra_java_set_default: true
 cassandra_java_package: >-
