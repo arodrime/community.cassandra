@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_linux - the data disk tuning also runs in check mode and on partitions, sets the none IO scheduler on SSD/NVMe only, matches the disks by serial number in the udev rule, and fails on a disk set explicitly that can't be tuned.

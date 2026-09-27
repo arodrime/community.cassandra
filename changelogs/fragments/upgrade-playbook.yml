@@ -1,0 +1,2 @@
+minor_changes:
+  - New upgrade playbook - moves a cluster to the next series in phases (preflight, prepare, canary, rolling, sstables, cleanup).

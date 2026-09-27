@@ -1,0 +1,2 @@
+minor_changes:
+  - All roles - meta/argument_specs.yml documents and validates every role variable.

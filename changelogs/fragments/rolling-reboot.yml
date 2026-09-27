@@ -1,0 +1,2 @@
+minor_changes:
+  - New rolling_reboot playbook - reboots the nodes one at a time, the cluster checked between them.

@@ -1,0 +1,13 @@
+---
+- name: All roles on a single node
+  hosts: all
+  vars:
+    cassandra_heap_size: 256M
+    cassandra_server_keystore_password: Report-Secret-Pw  # must never reach a report
+  roles:
+    - community.cassandra.cassandra_repository
+    - community.cassandra.cassandra_install
+    - community.cassandra.cassandra_linux
+    - community.cassandra.cassandra_config
+    - community.cassandra.cassandra_firewall
+    - community.cassandra.cassandra_service

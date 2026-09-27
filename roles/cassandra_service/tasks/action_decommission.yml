@@ -1,0 +1,15 @@
+---
+# Streams this node's data to the others and leaves the ring, then Cassandra
+# is stopped and disabled so it never rejoins. Can take hours on a big node.
+- name: Decommission the node
+  community.cassandra.cassandra_decommission:
+  module_defaults:
+    community.cassandra.cassandra_decommission: "{{ _cassandra_service_jmx }}"
+  async: "{{ cassandra_decommission_timeout | default(86400) }}"
+  poll: 30
+
+- name: Stop and disable Cassandra
+  ansible.builtin.include_tasks: main.yml
+  vars:
+    cassandra_service_state: stopped
+    cassandra_service_enabled: false

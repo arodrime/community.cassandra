@@ -6,9 +6,8 @@ Configures a repository for Cassandra on Debian and RedHat based platforms.
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should
-be mentioned here. For instance, if the role uses the EC2 module, it may be a
-good idea to mention in this section that the boto package is required.
+ansible-core 2.15 or later (the apt repository is written with
+`ansible.builtin.deb822_repository`).
 
 Role Variables
 --------------
@@ -18,6 +17,37 @@ cassandra_version:
   - See the distribution names available at:
       - https://debian.cassandra.apache.org (Debian & Ubuntu)
       - https://redhat.cassandra.apache.org/ (RedHat)
+
+cassandra_offline:
+  - `true` on air-gapped hosts, nothing is downloaded: sets the default of
+    `cassandra_repository_manage` to `false` (see the guide's air-gapped section).
+
+cassandra_repository_username / cassandra_repository_password:
+  - Credentials for a mirror that needs them to read: an account and its
+    password, or a service account and its token. Used for the repository and
+    for `cassandra_repository_key_url`. On RedHat they go in the yum repository
+    file (then mode 0600), on Debian/Ubuntu in
+    `/etc/apt/auth.conf.d/cassandra.conf` (0600). Keep the password in a vault.
+
+cassandra_repository_manage:
+  - `false` when the repositories are configured by other means (a
+    Satellite/Foreman, the system image): the role then does nothing.
+    Defaults to `true`, `false` with `cassandra_offline`.
+
+cassandra_repository_deb_url / cassandra_repository_rpm_url:
+  - Where the packages come from: the Apache repositories by default, or a
+    mirror of them for hosts without internet access.
+
+cassandra_repository_key_url:
+  - Where the release signing keys come from. Empty (default): the copy of
+    https://downloads.apache.org/cassandra/KEYS shipped with the role
+    (`files/KEYS`), so nothing is downloaded.
+  - A URL (e.g. a local mirror) is downloaded instead, and every key it holds
+    must be listed in `cassandra_repository_key_fingerprints` (primary key
+    fingerprints, defaults to the keys of the shipped copy).
+
+cassandra_apt_keyring_path / cassandra_rpm_key_path:
+  - Where the keys are installed (Debian & Ubuntu / RedHat).
 
 Dependencies
 ------------

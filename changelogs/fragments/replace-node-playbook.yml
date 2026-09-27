@@ -1,0 +1,2 @@
+minor_changes:
+  - New replace_node playbook - a blank host takes the place of a dead node (replace_address_first_boot).

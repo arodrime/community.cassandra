@@ -1,0 +1,10 @@
+---
+- name: Summary
+  ansible.builtin.debug:
+    msg: >-
+      {% set out = [] %}
+      {% for h in cassandra_service_summary_hosts | default(groups[cassandra_hosts | default('cassandra')]) %}
+      {%   set _ = out.append(h ~ ': ' ~ hostvars[h].cassandra_op_result | default('not reached')) %}
+      {% endfor %}
+      {{ out }}
+  run_once: true

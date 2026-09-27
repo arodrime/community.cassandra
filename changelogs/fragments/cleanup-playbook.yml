@@ -1,0 +1,2 @@
+minor_changes:
+  - New cleanup playbook - nodetool cleanup node by node, or a rack at a time.

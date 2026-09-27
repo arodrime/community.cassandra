@@ -1,0 +1,2 @@
+minor_changes:
+  - import_cluster - records the log directory and the restart policy of the existing systemd unit, and reports how Cassandra is started today.

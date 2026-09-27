@@ -1,0 +1,5 @@
+---
+# No-op: lets playbooks load this role's defaults
+# (include_role: tasks_from: defaults.yml, public: true)
+- name: Load cassandra_config defaults
+  ansible.builtin.meta: noop

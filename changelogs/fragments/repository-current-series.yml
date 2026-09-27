@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_repository - removes the repositories of the other series, so that packages of an old series can't come back after an upgrade.

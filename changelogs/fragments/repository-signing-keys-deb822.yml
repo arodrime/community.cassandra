@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_repository - the Apache Cassandra signing keys ship with the role (checked against cassandra_repository_key_fingerprints when downloaded from cassandra_repository_key_url), and apt sources are written in the deb822 format (the old one-line .list file is removed).

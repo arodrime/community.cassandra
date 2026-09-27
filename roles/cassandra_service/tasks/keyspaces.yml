@@ -1,0 +1,24 @@
+---
+# Reads every keyspace's replication over CQL, from cassandra_keyspaces_from
+# (a node that is up; default this one). Run it once. Sets cassandra_keyspaces:
+# {keyspace: {class, rf}}. CQL credentials, when authentication is on:
+# cassandra_cql_username/_password.
+- name: Read the keyspaces' replication from {{ _from }}
+  community.cassandra.cassandra_cqlsh:
+    execute: "SELECT JSON keyspace_name, replication FROM system_schema.keyspaces;"
+    transform: raw
+    cqlsh_host: >-
+      {{ hostvars[_from].cassandra_rpc_address | default('')
+         if hostvars[_from].cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+    username: "{{ cassandra_cql_username | default(omit, true) }}"
+    password: "{{ cassandra_cql_password | default(omit, true) }}"
+    debug: true
+  delegate_to: "{{ _from }}"
+  register: cassandra_keyspaces_cqlsh
+  changed_when: false
+  vars:
+    _from: "{{ cassandra_keyspaces_from | default(inventory_hostname) }}"
+
+- name: Keep the replication
+  ansible.builtin.set_fact:
+    cassandra_keyspaces: "{{ cassandra_keyspaces_cqlsh.out | default('') | community.cassandra.cassandra_keyspaces }}"

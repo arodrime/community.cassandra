@@ -1,0 +1,5 @@
+---
+# chrony is kept where it is already installed (it may carry the site's NTP servers)
+_cassandra_timesync_pkg: "{{ 'chrony' if ansible_facts['os_family'] != 'Debian' or _cassandra_chrony_present else 'systemd-timesyncd' }}"
+_cassandra_timesync_service: >-
+  {{ 'chronyd' if ansible_facts['os_family'] != 'Debian' else 'chrony' if _cassandra_chrony_present else 'systemd-timesyncd' }}

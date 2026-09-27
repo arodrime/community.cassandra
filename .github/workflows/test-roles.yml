@@ -110,7 +110,12 @@ jobs:
           command: cd ansible_collections/community/cassandra && ansible-galaxy collection install community-cassandra-*.tar.gz
 
       - name: Run molecule test for ${{ matrix.cassandra_role }}
-        run: molecule test
+        # the default scenario, then the role's other docker scenarios (virtualbox needs a VM)
+        run: |
+          molecule test
+          for scenario in $(ls molecule | grep -vxE 'default|virtualbox'); do
+            molecule test -s "$scenario"
+          done
         working-directory: ansible_collections/community/cassandra/roles/${{ matrix.cassandra_role }}
         env:
           ANSIBLE_ALLOW_BROKEN_CONDITIONALS: 1  # need for  TASK [Set async_dir for HOME env]

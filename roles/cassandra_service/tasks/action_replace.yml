@@ -1,0 +1,22 @@
+---
+# Prepares a blank node and starts it in place of a dead one: it takes over the
+# dead node's tokens and streams their data from the replicas. The replace
+# flag is only in the unit for that first start.
+# Computed first: a var can't be defined from itself (recursive template)
+- name: Add the replace flag to the unit environment
+  ansible.builtin.set_fact:
+    _cassandra_service_replace_environment: >-
+      {{ cassandra_service_environment | combine({'JVM_EXTRA_OPTS':
+         (cassandra_service_environment.JVM_EXTRA_OPTS | default('') ~ ' -Dcassandra.replace_address_first_boot='
+          ~ cassandra_replace_address) | trim}) }}
+
+- name: Prepare the node and start it as the replacement
+  ansible.builtin.include_tasks: action_add.yml
+  vars:
+    cassandra_service_environment: "{{ _cassandra_service_replace_environment }}"
+    cassandra_service_wait_timeout: "{{ cassandra_replace_timeout | default(86400) }}"
+
+- name: Take the replace flag out of the unit (no restart)
+  ansible.builtin.include_tasks: main.yml
+  vars:
+    cassandra_service_restart_on_change: false

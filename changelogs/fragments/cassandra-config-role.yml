@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_config - new role writing Cassandra's configuration files for 4.0, 4.1 and 5.0 from variables, identical to the stock files by default; it shows the diff and asks before changing a running node.

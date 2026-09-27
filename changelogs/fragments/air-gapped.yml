@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_repository - repository URLs for mirrors (cassandra_repository_deb_url, cassandra_repository_rpm_url), and cassandra_repository_manage false to leave the repositories to other means; cassandra_install_java false leaves Java to other means.

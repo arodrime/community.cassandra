@@ -1,5 +1,90 @@
 ---
+# First, and only in the first converge: the runs below take the credentials away
+- name: Repository with credentials
+  hosts: all
+  tasks:
+    - name: Credentials, checked by the tasks below
+      tags: molecule-idempotence-notest
+      block:
+        - name: Run the role with credentials
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_repository
+          vars:
+            cassandra_repository_username: reader
+            cassandra_repository_password: s3cret-token
+
+        - name: Read where the credentials went
+          ansible.builtin.stat:
+            path: "{{ '/etc/apt/auth.conf.d/cassandra.conf' if ansible_facts['os_family'] == 'Debian'
+                      else '/etc/yum.repos.d/cassandra-50x.repo' }}"
+          register: cassandra_repository_creds_file
+
+        - name: Read them
+          ansible.builtin.slurp:
+            src: "{{ cassandra_repository_creds_file.stat.path }}"
+          register: cassandra_repository_creds
+
+        - name: The credentials are there, readable by root only
+          ansible.builtin.assert:
+            that:
+              - cassandra_repository_creds_file.stat.mode == '0600'
+              - "'reader' in _content and 's3cret-token' in _content"
+          vars:
+            _content: "{{ cassandra_repository_creds.content | b64decode }}"
+
 - name: Converge
   hosts: all
   roles:
     - role: community.cassandra.cassandra_repository
+
+- name: Signing keys downloaded from a URL
+  hosts: all
+  tasks:
+    - name: Put a copy of the keys where a URL can reach it
+      ansible.builtin.copy:
+        src: ../../files/KEYS
+        dest: /tmp/KEYS
+        mode: "0644"
+
+    - name: Known keys are accepted
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_repository
+      vars:
+        cassandra_repository_key_url: file:///tmp/KEYS
+
+    - name: Unknown keys are refused
+      block:
+        - name: Run the role with an empty fingerprint list
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_repository
+          vars:
+            cassandra_repository_key_url: file:///tmp/KEYS
+            cassandra_repository_key_fingerprints: []
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: unknown keys were accepted
+      rescue:
+        - name: Check the refusal came from the fingerprint check
+          ansible.builtin.assert:
+            that: "'unknown keys' in ansible_failed_result.msg"
+
+- name: Repositories managed by other means
+  hosts: all
+  tasks:
+    - name: Run the role for another series, without managing the repositories
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_repository
+      vars:
+        cassandra_repository_manage: false
+        cassandra_version: 40x
+
+- name: Offline mode
+  hosts: all
+  tasks:
+    - name: Run the role offline for another series (no repository touched)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_repository
+      vars:
+        cassandra_offline: true
+        cassandra_version: 41x

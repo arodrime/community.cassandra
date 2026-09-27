@@ -1,0 +1,129 @@
+---
+# Restarts every node of a cluster, one at a time: checks the cluster, drains
+# the node, restarts it, waits until it has joined, checks the cluster again.
+# Stops at the first problem, without touching the next node.
+#   ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=my_cluster
+# Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
+# -e cassandra_rolling_mode=rack restarts all the nodes of a rack together,
+# rack by rack: faster on big clusters, and only allowed when every datacenter
+# has at least as many racks as any keyspace has replicas there (then a rack
+# down is one replica down; stop_rack explains the checks).
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Set up the progress file
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  vars:
+    cassandra_service_node_action: restart
+  tasks:
+    - name: Check the mode
+      ansible.builtin.assert:
+        that: cassandra_rolling_mode | default('node') in ['node', 'rack']
+        fail_msg: "cassandra_rolling_mode must be node or rack (got {{ cassandra_rolling_mode | default('node') }})"
+        quiet: true
+      run_once: true
+
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: progress.yml
+
+- name: Rolling restart
+  hosts: "{{ cassandra_hosts | default('cassandra') if cassandra_rolling_mode | default('node') == 'node' else 'localhost:!localhost' }}"
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Restart this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: restart
+
+- name: Rolling restart, one rack at a time
+  hosts: "{{ cassandra_hosts | default('cassandra') if cassandra_rolling_mode | default('node') == 'rack' else 'localhost:!localhost' }}"
+  gather_facts: true
+  gather_subset: [network]
+  any_errors_fatal: true
+  tasks:
+    - name: Load the cassandra_service defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Read the keyspaces' replication
+      community.cassandra.cassandra_cqlsh:
+        execute: "SELECT JSON keyspace_name, replication FROM system_schema.keyspaces;"
+        transform: raw
+        cqlsh_host: >-
+          {{ cassandra_rpc_address | default('')
+             if cassandra_rpc_address | default('') not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+        username: "{{ cassandra_cql_username | default(omit, true) }}"
+        password: "{{ cassandra_cql_password | default(omit, true) }}"
+        debug: true
+      run_once: true
+      register: cassandra_restart_keyspaces
+      changed_when: false
+
+    - name: A rack down is one replica down in every datacenter
+      ansible.builtin.assert:
+        that: _problems | length == 0 or cassandra_rack_force | default(false) | bool
+        fail_msg: >-
+          {{ ['A rack at a time would take down more than one replica of some data:'] + _problems
+             + ['Use the default mode (one node at a time), or cassandra_rack_force: true at the risk of failed'
+                ~ ' reads and writes while each rack restarts.'] }}
+        quiet: true
+      vars:
+        _keyspaces: "{{ cassandra_restart_keyspaces.out | default('') | community.cassandra.cassandra_keyspaces }}"
+        _problems: >-
+          {%- set out = [] -%}
+          {%- for dc in ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique -%}
+          {%-   set racks = ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight')
+                           | selectattr('cassandra_dc', 'equalto', dc) | map(attribute='cassandra_rack') | unique | list -%}
+          {%-   set _ = out.extend((_keyspaces | community.cassandra.cassandra_rack_down_problems(dc, racks | length)).problems) -%}
+          {%- endfor -%}
+          {{ out | unique }}
+      run_once: true
+
+    - name: Work out the racks
+      ansible.builtin.set_fact:
+        _cassandra_restart_batches: >-
+          {%- set batches = {} -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   set key = p.cassandra_dc ~ '/' ~ p.cassandra_rack -%}
+          {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
+          {%- endfor -%}
+          {{ batches.values() | list }}
+      run_once: true
+
+    - name: Restart the racks
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: restart_batch.yml
+        apply:
+          run_once: true
+      loop: "{{ _cassandra_restart_batches }}"
+      loop_control:
+        loop_var: cassandra_restart_batch
+        label: "{{ cassandra_restart_batch | join(', ') }}"
+      run_once: true
+
+    - name: Check the cluster after the last rack
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_health.yml
+        apply:
+          run_once: true
+      run_once: true
+
+- name: Summary
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml

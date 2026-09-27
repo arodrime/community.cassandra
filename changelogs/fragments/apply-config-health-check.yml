@@ -1,0 +1,2 @@
+minor_changes:
+  - New playbooks apply_config (writes the configuration, restarts only the nodes that need it, one at a time) and health_check (read-only cluster check).

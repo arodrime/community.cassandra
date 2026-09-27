@@ -1,0 +1,46 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+    cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+    cassandra_java_version: "17"
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install
+
+# An imported node: Java already there, reached through a link, and a
+# /usr/bin/java made by hand. The role must leave both alone.
+- name: Java already unpacked (cassandra_java_home)
+  hosts: all
+  vars:
+    _home: /opt/cassandra-java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1
+  tasks:
+    - name: A link to the Java directory
+      ansible.builtin.file:
+        src: "{{ _home }}"
+        dest: /opt/current-java
+        state: link
+
+    - name: A /usr/bin/java made by hand
+      ansible.builtin.file:
+        src: "{{ _home }}/bin/java"
+        dest: /usr/bin/java
+        state: link
+        force: true
+
+    - name: Run the role with that Java
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+      vars:
+        cassandra_java_home: /opt/current-java
+        cassandra_java_version: "17"
+
+    - name: Read /usr/bin/java
+      ansible.builtin.stat:
+        path: /usr/bin/java
+      register: cassandra_test_java
+
+    - name: It is still the hand-made link
+      ansible.builtin.assert:
+        that: cassandra_test_java.stat.lnk_target == _home ~ '/bin/java'

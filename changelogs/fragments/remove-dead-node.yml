@@ -1,0 +1,2 @@
+minor_changes:
+  - New remove_dead_node playbook - removes a dead node from the ring (removenode, removenode force, or assassinate as a last resort).

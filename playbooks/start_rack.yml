@@ -1,0 +1,54 @@
+---
+# Starts every node of one rack (stopped by stop_rack), waits until each one
+# has joined, then checks the whole cluster:
+#   ansible-playbook -i inventory community.cassandra.start_rack -e cassandra_hosts=my_cluster \
+#     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
+# Run a repair of the rack's nodes afterwards if they were down longer than
+# max_hint_window (3 hours by default): hints stop being kept after that.
+- name: Find the rack's nodes
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Load the cassandra_config defaults (dc and rack)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Group the rack's nodes
+      ansible.builtin.group_by:
+        key: cassandra_target_rack_nodes
+      when:
+        - cassandra_dc == cassandra_target_dc
+        - cassandra_rack == cassandra_target_rack
+      changed_when: false
+
+    - name: The rack has nodes
+      ansible.builtin.assert:
+        that: groups['cassandra_target_rack_nodes'] | default([]) | length > 0
+        fail_msg: "No node declares cassandra_dc={{ cassandra_target_dc | default('(not set)') }} and cassandra_rack={{ cassandra_target_rack | default('(not set)') }}"
+        quiet: true
+      run_once: true
+
+- name: Start the rack
+  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_target_rack_nodes"
+  gather_facts: true
+  gather_subset: [network]
+  any_errors_fatal: true
+  tasks:
+    - name: Start Cassandra and wait until the node has joined
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+      vars:
+        cassandra_service_state: started
+
+- name: Check the cluster
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: true
+  gather_subset: [network]
+  tasks:
+    - name: Check the whole cluster from one node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_health.yml
+      when: inventory_hostname == ansible_play_hosts[0]

@@ -1,0 +1,3 @@
+minor_changes:
+  - cassandra_install - installs the Java the series needs (11 for 4.0/4.1, 17 for 5.0; cassandra_java_version), and python3.11 for cqlsh where the system python3 is outside the range cqlsh supports.
+  - cassandra_install - on Debian/Ubuntu, the package no longer starts Cassandra with the stock configuration before the node is configured.

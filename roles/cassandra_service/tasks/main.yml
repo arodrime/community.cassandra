@@ -1,0 +1,189 @@
+---
+# Status only: nothing is started or changed here
+- name: Read the current service state (change report)
+  ansible.builtin.systemd_service:
+    name: cassandra
+  register: cassandra_service_snapshot
+  failed_when: false
+  check_mode: false
+
+- name: Keep the snapshot
+  ansible.builtin.set_fact:
+    _cassandra_service_before:
+      active: "{{ _status.ActiveState | default('') }}"
+      enabled: "{{ 'absent' if _status.LoadState | default('not-found') == 'not-found' else _status.UnitFileState | default('') }}"
+      unit: >-
+        {{ _status.FragmentPath | default('', true)
+           or (('SysV ' ~ _status.SourcePath) if _status.SourcePath | default('', true) else '') }}
+    # under --check on a host without Cassandra there is no unit to act on yet
+    _cassandra_service_act: "{{ not (ansible_check_mode and _status.LoadState | default('not-found') == 'not-found') }}"
+  vars:
+    _status: "{{ cassandra_service_snapshot.status | default({}) }}"
+
+- name: Leave time for the drain within the stop timeout
+  ansible.builtin.assert:
+    that: cassandra_service_drain_timeout | int + 10 < cassandra_service_timeout_stop | int
+    fail_msg: >-
+      cassandra_service_drain_timeout ({{ cassandra_service_drain_timeout }}) + 10 must be below
+      cassandra_service_timeout_stop ({{ cassandra_service_timeout_stop }}), or systemd kills the JVM mid-drain.
+    quiet: true
+  when: cassandra_service_drain_on_stop
+
+# Same name as the package's init script: systemd prefers a native unit
+# over the SysV-generated one, so service/systemctl both use this.
+- name: Install the cassandra systemd unit
+  ansible.builtin.template:
+    src: cassandra.service.j2
+    dest: /etc/systemd/system/cassandra.service
+    mode: "0644"
+  register: cassandra_service_unit
+
+# The package's init script can leave the unit "active (exited)" with no JVM
+# (e.g. Cassandra died after a SysV start): systemd then sees nothing to start.
+- name: Read the unit state
+  ansible.builtin.systemd_service:
+    name: cassandra
+    daemon_reload: true
+  register: cassandra_service_unit_state
+  changed_when: false
+
+- name: Look for a running Cassandra JVM
+  ansible.builtin.command: pgrep -f org.apache.cassandra.service.CassandraDaemon
+  register: cassandra_service_jvm
+  changed_when: false
+  failed_when: cassandra_service_jvm.rc > 1
+  when:
+    - cassandra_service_unit_state.status.ActiveState == 'active'
+    - cassandra_service_unit_state.status.MainPID | int == 0
+
+- name: Reset a unit left active with no Cassandra running
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: stopped
+  when: cassandra_service_jvm.rc | default(0) == 1
+
+# Taking over a node started by the init script: its JVM is not the unit's
+# main process. Stopping it is a restart, which this role never does alone.
+- name: Warn that a Cassandra started by the init script keeps running
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Cassandra runs under the package's init script; the native unit
+      takes over at the next restart (e.g. the rolling_restart playbook).
+  when: cassandra_service_jvm.rc | default(1) == 0
+
+- name: Enable cassandra at boot
+  ansible.builtin.systemd_service:
+    name: cassandra
+    enabled: "{{ cassandra_service_enabled }}"
+    daemon_reload: true
+  when: _cassandra_service_act
+
+- name: Stop cassandra
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: stopped
+  when:
+    - cassandra_service_state == 'stopped'
+    - _cassandra_service_act
+
+- name: Start or restart this node
+  when:
+    - cassandra_service_state in ['started', 'restarted']
+    - _cassandra_service_act
+  block:
+    - name: Check whether this node was already initialized
+      ansible.builtin.stat:
+        path: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}/system"
+      register: cassandra_service_initialized
+
+    - name: Work out whether this node is a seed
+      ansible.builtin.include_tasks: seed_facts.yml
+
+    # Only for a node that has never started: a cluster being created has no seed up yet.
+    # Probes the storage port cassandra.yaml gets (a seed's own "host:port" wins);
+    # internode TLS uses that same port since 4.0.
+    - name: Look for other seeds already up
+      ansible.builtin.wait_for:
+        host: "{{ item | regex_replace(':[0-9]+$', '') }}"
+        port: "{{ item | regex_search(':([0-9]+)$', '\\1') | default([cassandra_storage_port | default(7000)], true) | first }}"
+        timeout: 3
+      loop: "{{ _others }}"
+      register: cassandra_service_seeds_up
+      failed_when: false  # a seed that does not answer sets msg (timeout)
+      vars:
+        _mine: "{{ [inventory_hostname, ansible_host | default('')] + ansible_facts['all_ipv4_addresses'] | default([]) }}"
+        _others: >-
+          {{ ((cassandra_seeds | default([])) if cassandra_seeds | default([]) is not string else cassandra_seeds.split(','))
+             | map('trim') | select | reject('regex', '^(' ~ (_mine | select | map('regex_escape') | join('|')) ~ ')(:[0-9]+)?$')
+             | list }}
+      when:
+        - _cassandra_service_is_seed | bool
+        - not cassandra_service_initialized.stat.exists
+        - not cassandra_service_allow_new_seed
+
+    # Seeds this same run started for the first time (a cluster being created,
+    # e.g. with serial: 1) don't count as an existing cluster
+    - name: Refuse to join an existing cluster as a seed
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} is a new node listed in cassandra_seeds, but the cluster already exists
+          ({{ _existing | join(', ') }} answering). Seeds don't bootstrap, so it would join without its data:
+          remove it from cassandra_seeds, start it, and make it a seed later if needed
+          (cassandra_service_allow_new_seed: true overrides this check).
+      vars:
+        _created_hosts: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_service_initialized', 'defined')
+             | rejectattr('cassandra_service_initialized.stat.exists') | list }}
+        _created_now: >-
+          {{ (_created_hosts | map(attribute='inventory_hostname') | list)
+             + (_created_hosts | map(attribute='ansible_host', default='') | list)
+             + (_created_hosts | map(attribute='ansible_facts.all_ipv4_addresses', default=[]) | flatten) }}
+        _existing: >-
+          {{ cassandra_service_seeds_up.results | default([]) | rejectattr('skipped', 'defined')
+             | rejectattr('msg', 'defined')
+             | map(attribute='item') | map('regex_replace', ':[0-9]+$', '') | reject('in', _created_now) | list }}
+      when: _existing | length > 0
+
+    - name: Start or restart cassandra
+      ansible.builtin.systemd_service:
+        name: cassandra
+        state: >-
+          {{ 'restarted' if cassandra_service_state == 'restarted'
+                            or (cassandra_service_restart_on_change and cassandra_service_unit is changed)
+             else 'started' }}
+      register: cassandra_service_started
+
+    - name: Wait for the node to be joined (Mode NORMAL)
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+      register: cassandra_service_netstats
+      until: cassandra_service_netstats.mode | default('') == 'NORMAL'
+      retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
+      delay: 10
+      when:
+        - cassandra_service_wait_for_normal
+        - not ansible_check_mode
+
+    # the config this start used, to tell later changes still to apply (apply_config)
+    - name: Record the config Cassandra started with
+      ansible.builtin.include_tasks: config_snapshot.yml
+      when:
+        - cassandra_service_started is changed
+        - not ansible_check_mode
+
+- name: Report
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_service
+    _want_active: "{{ 'inactive' if cassandra_service_state == 'stopped' else 'active' }}"
+    cassandra_change_report_items: >-
+      {{ ([{'item': '/etc/systemd/system/cassandra.service',
+            'before': (_cassandra_service_before.unit or 'absent') if '/etc/systemd/system/' not in _cassandra_service_before.unit else 'different',
+            'after': 'native unit'}]
+          if cassandra_service_unit is changed else [])
+         + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown', 'after': 'restarted' if cassandra_service_state == 'restarted' else _want_active}]
+            if cassandra_service_state == 'restarted' or _cassandra_service_before.active != _want_active else [])
+         + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': 'enabled' if cassandra_service_enabled else 'disabled'}]
+            if (_cassandra_service_before.enabled == 'enabled') != (cassandra_service_enabled | bool) else []) }}

@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_linux - kernel settings go to /etc/sysctl.d/60-cassandra.conf (cassandra_linux_sysctl) and limits to /etc/security/limits.d/cassandra.conf (cassandra_linux_limits); the same settings are removed from /etc/sysctl.conf and limits.conf.

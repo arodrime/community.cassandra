@@ -1,48 +1,75 @@
 cassandra_install
 =================
 
-A brief description of the role goes here.
+Installs Apache Cassandra from the repository set up by `cassandra_repository`,
+with the Java version the series is built for.
 
-Requirements
-------------
-
-Any pre-requisites that may not be covered by Ansible itself or the role should
-be mentioned here. For instance, if the role uses the EC2 module, it may be a
-good idea to mention in this section that the boto package is required.
+On Debian/Ubuntu, the package would start Cassandra with its stock config as
+soon as it is installed; a temporary `policy-rc.d` prevents that, so the node
+only starts once it is configured.
 
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including
-any variables that are in defaults/main.yml, vars/main.yml, and any variables
-that can/should be set via parameters to the role. Any variables that are read
-from other roles and/or the global scope (ie. hostvars, group vars, etc.) should
-be mentioned here as well.
+* `cassandra_offline`: `true` on air-gapped hosts: nothing is downloaded, Java
+  and the Cassandra packages are checked instead of installed, and the role
+  stops with the list of what is missing (see the guide's air-gapped section).
+  The Python cqlsh may need and jemalloc only give a warning. Default `false`.
+* `cassandra_version`: Cassandra series, same values as `cassandra_repository`
+  (`40x`, `41x`, `50x`). Default `50x`.
+* `cassandra_package_version`: exact Cassandra version (e.g. `5.0.4`), so
+  every node, including the ones added later, runs the same one. Empty
+  (default) installs the repository's latest. An installed node is never moved
+  to another version by the role (that is an upgrade); on Debian and Ubuntu the
+  pinned packages are held (`apt-mark hold`).
+* `cassandra_java_tarball` (default `""`): Java from a tarball (a JDK or JRE
+  `.tar.gz`) instead of a package: a URL downloaded by the
+  nodes (`cassandra_java_tarball_checksum` recommended, credentials in
+  `cassandra_java_tarball_username`/`_password`), or a file on the controller.
+  It is unpacked into `cassandra_java_tarball_dir/<tarball name>` (default
+  `/opt/cassandra-java`) and made the system `java`, which the cassandra script
+  and nodetool run. The Cassandra packages are then installed without a Java
+  package: on Debian/Ubuntu a local `cassandra-java-tarball` package provides
+  the Java they depend on; on the RedHat family they are installed with
+  `rpm --nodeps` (plus procps-ng, python3 and shadow-utils).
+  `cassandra_java_version` must still name its major version; `update_jdk`
+  moves the nodes to a new tarball.
+* `cassandra_java_home` (default `""`): Java already unpacked in this
+  directory by other means, not a package: made the system `java`, and the
+  Cassandra packages installed without a Java package, as with a tarball.
+  `import_cluster` sets it for nodes whose running Java is not a package.
+* `cassandra_install_java` (default `true`): `false` when Java is installed
+  by other means (an internal package, the system image); the Cassandra
+  package still needs a Java package that satisfies its dependency.
+* `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
+  the default `java` when several JDKs are installed.
+* `cassandra_java_version`: Java installed before Cassandra. Defaults to the
+  series' version from `cassandra_java_versions` (11 for 4.x, 17 for 5.0).
+* `cassandra_java_package`: package name, derived from the OS and
+  `cassandra_java_version`.
+* `cassandra_cqlsh_python`: Python used by cqlsh. Empty (default): `python3`,
+  unless it is outside the range the series' cqlsh supports
+  (`cassandra_cqlsh_python_supported`: 3.6-3.11 for 4.x, 3.8-3.13 for 5.0);
+  then `python3.11` is installed next to it and cqlsh is pointed at it
+  (`/usr/local/bin/cqlsh` wrapper, `CQLSH_PYTHON` in `/etc/profile.d`).
+  The system `python3` is never changed.
+* `cassandra_cqlsh_python_repo_uri`: where python3.11 comes from on Ubuntu
+  releases that don't ship it (default: the deadsnakes PPA, signed by the key
+  shipped in `files/deadsnakes.asc`; empty to rely on the configured
+  repositories).
 
-Dependencies
-------------
-
-A list of other roles hosted on Galaxy should go here, plus any details in
-regards to parameters that may need to be set for other roles, or variables that
-are used from other roles.
+jemalloc is installed when available (Debian/Ubuntu, and RHEL-family with EPEL
+or Amazon Linux), and `cassandra-tools` on RHEL-family systems.
 
 Example Playbook
 ----------------
 
-Including an example of how to use your role (for instance, with variables
-passed in as parameters) is always nice for users too:
-
-    - hosts: servers
+    - hosts: cassandra
       roles:
-         - { role: cassandra_install, x: 42 }
+        - community.cassandra.cassandra_repository
+        - community.cassandra.cassandra_install
 
 License
 -------
 
 BSD
-
-Author Information
-------------------
-
-An optional section for the role authors to include contact information, or a
-website (HTML is not allowed).

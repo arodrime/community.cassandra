@@ -1,0 +1,2 @@
+minor_changes:
+  - New add_datacenter and remove_datacenter playbooks.

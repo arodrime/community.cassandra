@@ -1,0 +1,81 @@
+---
+argument_specs:
+  main:
+    short_description: Configure the Apache Cassandra package repository.
+    description:
+      - Adds the Apache Cassandra apt or yum repository for one release series.
+    options:
+      cassandra_version:
+        type: str
+        default: 50x
+        description:
+          - Release series of the repository, for example C(40x), C(41x) or C(50x).
+      debian_packages:
+        type: list
+        elements: str
+        default: [apt-transport-https, curl, gnupg, python3-debian]
+        description:
+          - Packages needed to add the repository on Debian and Ubuntu.
+      cassandra_apt_keyring_path:
+        type: path
+        default: /etc/apt/keyrings/apache-cassandra.asc
+        description:
+          - Where the repository signing key is stored on Debian and Ubuntu.
+      cassandra_rpm_key_path:
+        type: path
+        default: /etc/pki/rpm-gpg/apache-cassandra.asc
+        description:
+          - Where the signing keys are installed on RedHat.
+      cassandra_repository_key_url:
+        type: str
+        default: ""
+        description:
+          - Where the release signing keys come from. Empty uses the copy of
+            U(https://downloads.apache.org/cassandra/KEYS) shipped with the role,
+            so nothing is downloaded.
+          - A URL (e.g. a local mirror) is downloaded instead; every key it holds
+            must be in O(cassandra_repository_key_fingerprints).
+      cassandra_repository_key_fingerprints:
+        type: list
+        elements: str
+        description:
+          - Primary key fingerprints accepted from O(cassandra_repository_key_url).
+            Defaults to the keys of the shipped copy.
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts, nothing is downloaded. Here it only sets the default
+            of O(cassandra_repository_manage) to V(false).
+      cassandra_repository_manage:
+        type: bool
+        description:
+          - V(false) when the repositories are configured by other means (a
+            Satellite/Foreman, the system image, an internal mirror already set up),
+            so the role does nothing.
+          - Defaults to V(true), V(false) with O(cassandra_offline).
+      cassandra_repository_username:
+        type: str
+        default: ""
+        description:
+          - User for a mirror that needs credentials to read (an account, or a service
+            account with a token as O(cassandra_repository_password)). Used for the
+            repository and for O(cassandra_repository_key_url).
+          - On RedHat the credentials go in the yum repository file (then mode 0600),
+            on Debian/Ubuntu in C(/etc/apt/auth.conf.d/cassandra.conf) (0600).
+      cassandra_repository_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password or token for O(cassandra_repository_username). Keep it in a vault.
+      cassandra_repository_deb_url:
+        type: str
+        default: https://debian.cassandra.apache.org
+        description:
+          - Cassandra apt repository (Debian, Ubuntu), or a mirror of it.
+      cassandra_repository_rpm_url:
+        type: str
+        description:
+          - Cassandra yum/dnf repository (RedHat family), or a mirror of it.
+            Defaults to C(https://redhat.cassandra.apache.org/<cassandra_version>/).
