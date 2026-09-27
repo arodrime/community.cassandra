@@ -97,3 +97,13 @@ def test_only_the_current_series_repository(host):
             assert not host.file("/etc/yum.repos.d/cassandra-{0}.repo".format(series)).exists
         else:
             assert not host.file("/etc/apt/sources.list.d/cassandra-{0}.sources".format(series)).exists
+
+
+def test_no_credentials_left(host):
+    # the converge ends without credentials: the ones of its first run are gone
+    if is_debian(host):
+        assert not host.file("/etc/apt/auth.conf.d/cassandra.conf").exists
+    else:
+        f = host.file("/etc/yum.repos.d/cassandra-{0}.repo".format(get_cassandra_version(host)))
+        assert f.mode == 0o644
+        assert "password" not in f.content_string

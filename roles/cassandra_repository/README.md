@@ -22,6 +22,13 @@ cassandra_offline:
   - `true` on air-gapped hosts, nothing is downloaded: sets the default of
     `cassandra_repository_manage` to `false` (see the guide's air-gapped section).
 
+cassandra_repository_username / cassandra_repository_password:
+  - Credentials for a mirror that needs them to read: an account and its
+    password, or a service account and its token. Used for the repository and
+    for `cassandra_repository_key_url`. On RedHat they go in the yum repository
+    file (then mode 0600), on Debian/Ubuntu in
+    `/etc/apt/auth.conf.d/cassandra.conf` (0600). Keep the password in a vault.
+
 cassandra_repository_manage:
   - `false` when the repositories are configured by other means (a
     Satellite/Foreman, the system image): the role then does nothing.

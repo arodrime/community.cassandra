@@ -54,6 +54,21 @@ argument_specs:
             Satellite/Foreman, the system image, an internal mirror already set up),
             so the role does nothing.
           - Defaults to V(true), V(false) with O(cassandra_offline).
+      cassandra_repository_username:
+        type: str
+        default: ""
+        description:
+          - User for a mirror that needs credentials to read (an account, or a service
+            account with a token as O(cassandra_repository_password)). Used for the
+            repository and for O(cassandra_repository_key_url).
+          - On RedHat the credentials go in the yum repository file (then mode 0600),
+            on Debian/Ubuntu in C(/etc/apt/auth.conf.d/cassandra.conf) (0600).
+      cassandra_repository_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password or token for O(cassandra_repository_username). Keep it in a vault.
       cassandra_repository_deb_url:
         type: str
         default: https://debian.cassandra.apache.org

@@ -307,8 +307,9 @@ restart): it is restarted too.
 Restricted networks (air-gapped)
 --------------------------------
 
-The roles download nothing themselves, apart from the signing keys when ``cassandra_repository_key_url`` is set:
-packages come through the hosts' package manager, from the sources below.
+The roles download nothing themselves, apart from the signing keys when ``cassandra_repository_key_url`` is set and
+a Java tarball given as a URL (``cassandra_java_tarball``): packages come through the hosts' package manager, from
+the sources below.
 Two setups are covered.
 
 **Internal mirror** (Artifactory, Nexus, reposync...): the hosts reach a mirror of the Cassandra repositories and of
@@ -320,6 +321,11 @@ their OS repositories. Point the roles at it:
    cassandra_repository_rpm_url: "https://mirror.example.com/cassandra-redhat/{{ cassandra_version }}/"
    # Ubuntu 24.04+ with Cassandra 4.x only: python3.11 for cqlsh, "" if the OS mirror has it
    cassandra_cqlsh_python_repo_uri: https://mirror.example.com/deadsnakes
+
+A mirror that needs credentials to read (an account, or a service account and its token) takes them in
+``cassandra_repository_username`` and ``cassandra_repository_password`` (keep the password in a vault). A Java
+tarball on the same host (``cassandra_java_tarball``, see Java above) uses them too, unless
+``cassandra_java_tarball_username``/``_password`` are set; a tarball elsewhere gets no credentials.
 
 The RPM URL keeps ``{{ cassandra_version }}``: the upgrade playbook moves it to the next series. A mirror that signs
 the repository with its own key needs that key's fingerprint added to ``cassandra_repository_key_fingerprints`` and
@@ -333,7 +339,8 @@ nothing must be downloaded. One switch:
    cassandra_offline: true
 
 The roles then touch no repository, install nothing, and check instead that every package below is installed: a
-host missing one fails, with the list of what to add. jemalloc and the Python cqlsh may need are optional (a warning), and so is time sync (a
+host missing one fails, with the list of what to add. A Java tarball (``cassandra_java_tarball``) is then given as a
+file on the controller, or already unpacked on the hosts. jemalloc and the Python cqlsh may need are optional (a warning), and so is time sync (a
 warning, or ``cassandra_linux_timesync: false`` when the hosts' time sync is managed by other means). The Debian
 package holds of ``cassandra_package_version`` are not set offline, and the ``upgrade`` playbook refuses to run (it
 installs the new packages: use a mirror).

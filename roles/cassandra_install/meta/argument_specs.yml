@@ -82,15 +82,15 @@ argument_specs:
           - Where the tarballs are unpacked, each in its own directory.
       cassandra_java_tarball_username:
         type: str
-        default: ""
         description:
-          - User for the tarball URL.
+          - User for the tarball URL. Defaults to O(cassandra_repository_username) when the
+            tarball is on the same host as the Cassandra repository, else none.
       cassandra_java_tarball_password:
         type: str
-        default: ""
         no_log: true
         description:
-          - Password or token for the tarball URL.
+          - Password or token for the tarball URL. Defaults to O(cassandra_repository_password)
+            when the tarball is on the same host as the Cassandra repository, else none.
       cassandra_java_set_default:
         type: bool
         default: true
