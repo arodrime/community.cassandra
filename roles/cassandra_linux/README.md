@@ -13,6 +13,11 @@ good idea to mention in this section that the boto package is required.
 Role Variables
 --------------
 
+* `cassandra_linux_timesync`: install and start time sync (chrony, kept when
+  already installed, or systemd-timesyncd on Debian/Ubuntu). `false` leaves the
+  host's time sync alone. Default `true`.
+* `cassandra_offline`: `true` on air-gapped hosts: the time sync package is
+  not installed, only started when present. Default `false`.
 * `cassandra_data_block_device`: block device to apply read-ahead/IO
   scheduler tuning to, e.g. `/dev/nvme0n1`. Defaults to `""`, which
   auto-detects it from `cassandra_data_dir` (the Cassandra data directory,

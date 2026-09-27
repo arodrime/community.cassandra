@@ -60,3 +60,12 @@ cassandra_linux_limits:
   nofile: 1048576
   nproc: 32768
   as: unlimited
+
+# Install and start time sync (chrony, or systemd-timesyncd on Debian/Ubuntu
+# when chrony is not installed). false: the host's time sync is left alone,
+# e.g. managed by other means with the site's NTP servers.
+cassandra_linux_timesync: true
+
+# Download nothing (see the air-gapped section of the guide): the time sync
+# package is not installed, only started when present.
+cassandra_offline: false

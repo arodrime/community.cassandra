@@ -29,6 +29,20 @@ argument_specs:
         default: /sys/block
         description:
           - sysfs block root used for the disk tuning. Only meant for tests.
+      cassandra_linux_timesync:
+        type: bool
+        default: true
+        description:
+          - Install and start time sync. chrony (kept where already installed), or
+            systemd-timesyncd on Debian/Ubuntu without chrony.
+          - V(false) leaves the host's time sync alone, for example when it is
+            managed by other means with the site's NTP servers.
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts, nothing is downloaded. The time sync package is not
+            installed, only started when present (a warning otherwise).
       cassandra_linux_apply_live:
         type: raw
         default: auto

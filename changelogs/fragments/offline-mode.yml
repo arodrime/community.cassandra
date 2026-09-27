@@ -1,0 +1,2 @@
+minor_changes:
+  - All roles - cassandra_offline for hosts without network - nothing is downloaded, the packages are checked instead of installed; cassandra_linux_timesync can leave time sync alone, and an installed chrony is kept.

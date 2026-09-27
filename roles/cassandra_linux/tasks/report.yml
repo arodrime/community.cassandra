@@ -29,7 +29,9 @@
          + ([{'item': _cassandra_timesync_service, 'before': _cassandra_linux_before['timesync|service'] or 'inactive', 'after': 'active'}]
             if (cassandra_timesync_service_result | default({})) is changed
                or (ansible_check_mode and (cassandra_timesync_service_result | default({})) is skipped
-                   and _cassandra_linux_before['timesync|service'] != 'active') else [])
+                   and _cassandra_linux_before['timesync|service'] != 'active'
+                   and cassandra_linux_timesync | bool
+                   and not (cassandra_offline | bool and cassandra_timesync_unit.rc | default(1) != 0)) else [])
          + ([{'item': '/etc/security/limits.d/90-nproc.conf', 'before': 'no "* - nproc 32768"', 'after': '* - nproc 32768'}]
             if cassandra_linux_nproc is changed else []) }}
 

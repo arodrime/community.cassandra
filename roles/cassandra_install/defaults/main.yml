@@ -62,3 +62,8 @@ cassandra_cqlsh_python_supported:  # [min, max]
 # deadsnakes PPA, added on Ubuntu releases without python3.11 (24.04+), signed
 # by the key shipped with the role; "" to rely on the configured repos
 cassandra_cqlsh_python_repo_uri: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
+
+# Download nothing (air-gapped hosts): Java and the Cassandra packages are
+# checked, not installed, and the role stops with the list of what is missing
+# (the cqlsh Python and jemalloc: a warning). See the guide's air-gapped section.
+cassandra_offline: false

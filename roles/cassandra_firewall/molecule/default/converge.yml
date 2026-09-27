@@ -6,3 +6,12 @@
       vars:
         cassandra_firewall_port_sources:
           7199/tcp: [10.0.9.0/24]
+
+- name: Offline mode (firewall installed by the play above)
+  hosts: all
+  roles:
+    - role: community.cassandra.cassandra_firewall
+      vars:
+        cassandra_offline: true
+        cassandra_firewall_port_sources:
+          7199/tcp: [10.0.9.0/24]

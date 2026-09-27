@@ -105,6 +105,14 @@ argument_specs:
             ones added later, runs the same one. Empty installs the repository's latest.
           - An installed node is never moved to another version by this role
             (that is an upgrade). On Debian and Ubuntu the pinned packages are held.
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts, nothing is downloaded. Java (with O(cassandra_install_java))
+            and the Cassandra packages are checked instead of installed, and the role
+            stops with the list of what is missing. The Python cqlsh may need and
+            jemalloc are optional (a warning when missing).
       cassandra_install_java:
         type: bool
         default: true

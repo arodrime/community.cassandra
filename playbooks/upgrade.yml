@@ -38,6 +38,23 @@
         public: true
       loop: [cassandra_install, cassandra_config, cassandra_service]
 
+    - name: An upgrade downloads the new packages
+      ansible.builtin.assert:
+        that: _offline | length == 0
+        fail_msg: >-
+          cassandra_offline is set on {{ _offline | join(', ') }}: an upgrade installs the new Cassandra packages,
+          which needs a repository (an internal mirror is enough: see the guide's air-gapped section). Nothing was done.
+        quiet: true
+      vars:
+        _offline: >-
+          {%- set out = [] -%}
+          {%- for host in ansible_play_hosts_all if hostvars[host].cassandra_offline | default(false) | bool -%}
+          {%-   set _ = out.append(host) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+      when: _phase in ['prepare', 'canary', 'rolling']
+
     - name: Check the phase
       ansible.builtin.assert:
         that: _phase in ['preflight', 'prepare', 'canary', 'rolling', 'sstables', 'cleanup']

@@ -11,6 +11,10 @@ only starts once it is configured.
 Role Variables
 --------------
 
+* `cassandra_offline`: `true` on air-gapped hosts: nothing is downloaded, Java
+  and the Cassandra packages are checked instead of installed, and the role
+  stops with the list of what is missing (see the guide's air-gapped section).
+  The Python cqlsh may need and jemalloc only give a warning. Default `false`.
 * `cassandra_version`: Cassandra series, same values as `cassandra_repository`
   (`40x`, `41x`, `50x`). Default `50x`.
 * `cassandra_package_version`: exact Cassandra version (e.g. `5.0.4`), so

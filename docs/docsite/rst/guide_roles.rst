@@ -307,38 +307,79 @@ restart): it is restarted too.
 Restricted networks (air-gapped)
 --------------------------------
 
-The roles reach the network only through the package manager of the hosts, and for these sources:
+The roles download nothing themselves, apart from the signing keys when ``cassandra_repository_key_url`` is set:
+packages come through the hosts' package manager, from the sources below.
+Two setups are covered.
+
+**Internal mirror** (Artifactory, Nexus, reposync...): the hosts reach a mirror of the Cassandra repositories and of
+their OS repositories. Point the roles at it:
+
+.. code-block:: yaml
+
+   cassandra_repository_deb_url: https://mirror.example.com/cassandra-debian
+   cassandra_repository_rpm_url: "https://mirror.example.com/cassandra-redhat/{{ cassandra_version }}/"
+   # Ubuntu 24.04+ with Cassandra 4.x only: python3.11 for cqlsh, "" if the OS mirror has it
+   cassandra_cqlsh_python_repo_uri: https://mirror.example.com/deadsnakes
+
+The RPM URL keeps ``{{ cassandra_version }}``: the upgrade playbook moves it to the next series. A mirror that signs
+the repository with its own key needs that key's fingerprint added to ``cassandra_repository_key_fingerprints`` and
+the key itself in ``cassandra_repository_key_url``.
+
+**No network at all**: the packages are already on the hosts (system image, or installed by other means), and
+nothing must be downloaded. One switch:
+
+.. code-block:: yaml
+
+   cassandra_offline: true
+
+The roles then touch no repository, install nothing, and check instead that every package below is installed: a
+host missing one fails, with the list of what to add. jemalloc and the Python cqlsh may need are optional (a warning), and so is time sync (a
+warning, or ``cassandra_linux_timesync: false`` when the hosts' time sync is managed by other means). The Debian
+package holds of ``cassandra_package_version`` are not set offline, and the ``upgrade`` playbook refuses to run (it
+installs the new packages: use a mirror).
+
+Packages the roles need:
 
 .. list-table::
    :header-rows: 1
 
-   * - Source
-     - Used by
-     - Setting
-   * - Cassandra packages, Debian/Ubuntu (``https://debian.cassandra.apache.org``)
-     - ``cassandra_repository``
-     - ``cassandra_repository_deb_url``
-   * - Cassandra packages, RedHat family (``https://redhat.cassandra.apache.org/<series>/``)
-     - ``cassandra_repository``
-     - ``cassandra_repository_rpm_url``
-   * - Apache Cassandra release signing keys
-     - ``cassandra_repository``
-     - none by default: a copy ships with the role; ``cassandra_repository_key_url`` downloads them from a mirror
-       instead, checked against ``cassandra_repository_key_fingerprints``
-   * - python3.11 for cqlsh, Ubuntu 24.04+ with Cassandra 4.x only (deadsnakes PPA)
-     - ``cassandra_install``
-     - ``cassandra_cqlsh_python_repo_uri`` (its signing key ships with the role), ``""`` for the configured repositories
-   * - Java, jemalloc, cassandra-tools, chrony/systemd-timesyncd, firewalld/ufw, python3-debian
-     - the roles
-     - the hosts' own repositories
+   * - What
+     - Debian/Ubuntu
+     - RedHat family
+   * - Cassandra (from its repository or mirror)
+     - ``cassandra``, ``cassandra-tools``
+     - ``cassandra``, ``cassandra-tools``
+   * - Java: 11 for 4.0/4.1, 17 for 5.0 (``cassandra_java_versions``)
+     - ``openjdk-<N>-jre-headless``
+     - ``java-<N>-openjdk-headless`` (``java-<N>-amazon-corretto-headless`` on Amazon Linux)
+   * - Python for cqlsh, only when the system ``python3`` is outside cqlsh's range (4.x: 3.6-3.11, 5.0: 3.8-3.13),
+       e.g. Ubuntu 24.04 with 4.x, RHEL 8 with 5.0
+     - ``python3.11`` (deadsnakes on Ubuntu 24.04+)
+     - ``python3.11``
+   * - Time sync (``cassandra_linux``, optional in offline mode)
+     - ``systemd-timesyncd``, or ``chrony`` (kept when installed)
+     - ``chrony``
+   * - Firewall (``cassandra_firewall``, when used)
+     - ``ufw``
+     - ``firewalld``, ``python3-firewall``
+   * - Memory allocator (optional)
+     - ``libjemalloc2``
+     - ``jemalloc`` (EPEL; base repositories on Amazon Linux)
+   * - Package facts (read by the roles; installed on demand when online)
+     - ``python3-apt``
+     - none
+   * - Repository setup (``cassandra_repository``, not used offline)
+     - ``apt-transport-https``, ``curl``, ``gnupg``, ``python3-debian``
+     - none
 
-Without internet access, point the two Cassandra repository settings at a mirror (Artifactory, Nexus, reposync...),
-and make sure the hosts' own repositories (or their mirror) carry the packages of the last row. Where the repositories
-are set up by other means (Satellite/Foreman, the system image), ``cassandra_repository_manage: false`` leaves them
-alone, and ``cassandra_install_java: false`` leaves Java to you (the Cassandra package still needs a Java package
-that satisfies its dependency). Nothing else is downloaded: no tarball, no pip, no git.
+Time sync keeps the servers configured in chrony or systemd-timesyncd: on air-gapped hosts, configure the site's NTP
+servers there (or set ``cassandra_linux_timesync: false`` and manage time sync yourself).
 
-The playbooks talk to the nodes only (JMX on 127.0.0.1, CQL on the nodes' addresses, SSH from the controller).
+On the controller, the collection needs ``community.general`` and ``ansible.posix``: install them from files
+(``ansible-galaxy collection install *.tar.gz``) or from a private Galaxy/Automation Hub. The playbooks talk to the
+nodes only (JMX on 127.0.0.1, CQL on the nodes' addresses, SSH from the controller). The ``cassandra_keyspace``,
+``cassandra_role`` and ``cassandra_table`` modules need the Python ``cassandra-driver`` on the nodes they run on;
+the roles and playbooks don't use them.
 
 
 JMX access

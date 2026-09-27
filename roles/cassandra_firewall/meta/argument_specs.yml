@@ -5,6 +5,12 @@ argument_specs:
     description:
       - Uses firewalld on RedHat family systems and ufw on Debian and Ubuntu.
     options:
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts, nothing is downloaded. The firewall package
+            (firewalld or ufw) is checked instead of installed.
       open_ports:
         type: list
         elements: str

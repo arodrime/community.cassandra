@@ -16,11 +16,20 @@
     _local: "/var/tmp/{{ _cassandra_java_tarball_name }}"
     _from_url: "{{ cassandra_java_tarball is match('https?://') }}"
   block:
+    - name: The tarball can't be downloaded offline
+      ansible.builtin.assert:
+        that: not (cassandra_offline | bool and _from_url)
+        fail_msg: >-
+          cassandra_offline downloads nothing, and {{ _cassandra_java_home }} is not unpacked on {{ inventory_hostname }}:
+          give cassandra_java_tarball as a file on the controller, or unpack it there first.
+        quiet: true
+
     - name: Install tar
       ansible.builtin.package:
         name: tar
         state: present
       retries: 3
+      when: not cassandra_offline | bool
 
     - name: Download the Java tarball
       ansible.builtin.get_url:

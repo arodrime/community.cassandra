@@ -18,9 +18,14 @@ cassandra_version:
       - https://debian.cassandra.apache.org (Debian & Ubuntu)
       - https://redhat.cassandra.apache.org/ (RedHat)
 
+cassandra_offline:
+  - `true` on air-gapped hosts, nothing is downloaded: sets the default of
+    `cassandra_repository_manage` to `false` (see the guide's air-gapped section).
+
 cassandra_repository_manage:
   - `false` when the repositories are configured by other means (a
     Satellite/Foreman, the system image): the role then does nothing.
+    Defaults to `true`, `false` with `cassandra_offline`.
 
 cassandra_repository_deb_url / cassandra_repository_rpm_url:
   - Where the packages come from: the Apache repositories by default, or a

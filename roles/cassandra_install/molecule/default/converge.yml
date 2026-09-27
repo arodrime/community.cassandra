@@ -1,4 +1,26 @@
 ---
+- name: Offline mode on a host without the packages
+  hosts: all
+  tasks:
+    - name: Nothing is installed, the missing packages are listed
+      tags: molecule-idempotence-notest  # installed by the next play
+      block:
+        - name: Run the role offline
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_offline: true
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: offline mode accepted a host without Cassandra
+      rescue:
+        - name: Check the refusal lists the Cassandra packages
+          ansible.builtin.assert:
+            that:
+              - "'cassandra_offline downloads nothing' in ansible_failed_result.msg"
+              - "'cassandra, cassandra-tools' in ansible_failed_result.msg"
+
 - name: Converge
   hosts: all
   roles:
@@ -32,3 +54,12 @@
         - name: Check the refusal came from the version check
           ansible.builtin.assert:
             that: ansible_failed_task.name == 'Refuse to change the version of an installed node'
+
+- name: Offline mode on an installed host
+  hosts: all
+  tasks:
+    - name: Run the role offline (checks only)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+      vars:
+        cassandra_offline: true

@@ -29,6 +29,7 @@
   when:
     - cassandra_install_java | bool
     - _cassandra_java_home == ''
+    - not cassandra_offline | bool
 
 - name: Java from a tarball, or already unpacked (cassandra_java_home)
   ansible.builtin.include_tasks: java_tarball.yml
@@ -85,7 +86,9 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  when: ansible_check_mode
+  when:
+    - ansible_check_mode
+    - not cassandra_offline | bool
 
 - name: Check the installed version against cassandra_package_version
   when: cassandra_package_version != ""
@@ -108,7 +111,9 @@
              | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1') }}
 
 - name: Install Cassandra Packages
-  when: not ansible_check_mode or cassandra_install_available.rc == 0
+  when:
+    - not cassandra_offline | bool
+    - not ansible_check_mode or cassandra_install_available.rc == 0
   vars:
     _cassandra_install_names: >-
       {{ cassandra_packages if cassandra_package_version == ''
@@ -234,14 +239,18 @@
   register: cassandra_jemalloc_query
   changed_when: false
   check_mode: false  # read-only
-  when: ansible_facts['os_family'] == 'RedHat'
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - not cassandra_offline | bool
 
 - name: Install jemalloc
   ansible.builtin.package:
     name: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
     state: present
   retries: 3
-  when: ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout != ''
+  when:
+    - not cassandra_offline | bool
+    - ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout != ''
 
 # cqlsh only runs on some Python versions (4.x: 3.6-3.11, 5.0: 3.8-3.13):
 # when python3 is outside that range, install python3.11 next to it for cqlsh.
@@ -262,8 +271,50 @@
                   and cassandra_python3_version.stdout is version(cassandra_cqlsh_python_supported[cassandra_version][1], '<='))
       else '/usr/bin/python3.11' }}
 
+# cassandra_offline: nothing is downloaded, everything must be installed already
+- name: Check the packages are installed (offline)
+  when: cassandra_offline | bool
+  block:
+    - name: Read the installed packages
+      ansible.builtin.package_facts:
+      check_mode: false
+
+    - name: Every package Cassandra needs is installed
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          cassandra_offline downloads nothing, and {{ inventory_hostname }} lacks {{ _missing | join(', ') }}:
+          install them from your image or internal mirror first (the guide lists the packages per OS and series).
+        quiet: true
+      vars:
+        _needed: >-
+          {{ ([cassandra_java_package] if cassandra_install_java | bool and _cassandra_java_home == '' else [])
+             + cassandra_packages + (['tar'] if cassandra_java_tarball != '' else []) }}
+        _missing: "{{ _needed | reject('in', ansible_facts['packages']) | list }}"
+
+    - name: Say python3.11 is missing (cqlsh only)
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }} has no python3.11, which cqlsh needs here (its python3 is outside the
+          versions cqlsh supports): Cassandra runs, cqlsh won't until python3.11 is installed from your image or mirror.
+          cqlsh is left as it is (not pointed at the missing python3.11).
+      when:
+        - _cassandra_cqlsh_python == '/usr/bin/python3.11'
+        - "'python3.11' not in ansible_facts['packages']"
+
+    - name: Say jemalloc is missing (optional)
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} has no jemalloc ({{ _jemalloc }}): Cassandra runs without it, with the glibc
+          allocator. Install it from your image or mirror to use it.
+      vars:
+        _jemalloc: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
+      when: _jemalloc not in ansible_facts['packages']
+
 - name: Install python3.11 for cqlsh
-  when: _cassandra_cqlsh_python == '/usr/bin/python3.11'
+  when:
+    - _cassandra_cqlsh_python == '/usr/bin/python3.11'
+    - not cassandra_offline | bool
   block:
     - name: Check whether the distro repos have python3.11 (Ubuntu)
       ansible.builtin.command: apt-cache policy python3.11
@@ -392,6 +443,9 @@
   when:
     - _cassandra_cqlsh_python != ''
     - item.dest != '/etc/sudoers.d/cqlsh' or cassandra_visudo.stat.exists
+    # offline without python3.11: leave cqlsh as it is rather than point it at nothing
+    - not (cassandra_offline | bool and _cassandra_cqlsh_python == '/usr/bin/python3.11'
+           and 'python3.11' not in ansible_facts['packages'] | default({}))
 
 - name: Remove the cqlsh Python pointers when not needed
   ansible.builtin.file:

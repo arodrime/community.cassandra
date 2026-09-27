@@ -13,6 +13,8 @@ good idea to mention in this section that the boto package is required.
 Role Variables
 --------------
 
+* `cassandra_offline`: `true` on air-gapped hosts: firewalld or ufw is
+  checked instead of installed. Default `false`.
 * `open_ports`: ports open to everyone (SSH, JMX, storage, TLS storage, CQL).
 * `cassandra_firewall_port_sources`: ports open only to some sources instead,
   e.g. JMX for a remote repair scheduler:

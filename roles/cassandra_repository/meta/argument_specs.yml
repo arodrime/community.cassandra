@@ -41,12 +41,19 @@ argument_specs:
         description:
           - Primary key fingerprints accepted from O(cassandra_repository_key_url).
             Defaults to the keys of the shipped copy.
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts, nothing is downloaded. Here it only sets the default
+            of O(cassandra_repository_manage) to V(false).
       cassandra_repository_manage:
         type: bool
-        default: true
         description:
-          - false when the repositories are configured by other means (a
-            Satellite/Foreman, the system image), so the role does nothing.
+          - V(false) when the repositories are configured by other means (a
+            Satellite/Foreman, the system image, an internal mirror already set up),
+            so the role does nothing.
+          - Defaults to V(true), V(false) with O(cassandra_offline).
       cassandra_repository_deb_url:
         type: str
         default: https://debian.cassandra.apache.org

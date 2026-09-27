@@ -30,6 +30,31 @@
         cassandra_data_block_devices: [/dev/sdz, /dev/sdy]
         cassandra_sysfs_block_root: /tmp/fake-sys/block
 
+    - name: Run cassandra_linux leaving time sync alone
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_linux_timesync: false
+
+    - name: Assert time sync was not touched
+      ansible.builtin.assert:
+        that:
+          - cassandra_timesync_install is skipped
+          # not even registered in the idempotence run (molecule-idempotence-notest)
+          - "cassandra_timesync_service_result | default({'skipped': true}) is skipped"
+
+    - name: Run cassandra_linux offline (time sync installed by the runs above)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_offline: true
+
+    - name: Assert nothing was installed and the time sync service was found
+      ansible.builtin.assert:
+        that:
+          - cassandra_timesync_install is skipped
+          - cassandra_timesync_unit.rc == 0 or ansible_check_mode  # not installed yet under molecule's check step
+
     # The role's own swap-removal task never runs in this test scenario
     # (always skipped), so it never actually proved ansible.posix.mount
     # resolves. This does, directly.
