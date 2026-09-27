@@ -103,6 +103,11 @@
         [ -n "$pid" ] || exit 3
         echo "config=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)"
         echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
+        echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
+        # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
+        for p in FragmentPath SourcePath Restart UnitFileState; do
+          echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
+        done
         echo "java=$($(readlink -f /proc/$pid/exe) -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
       register: import_cluster_running
       changed_when: false
@@ -118,6 +123,11 @@
         import_cluster_conf_dir: >-
           {{ _kv.config | dirname if _kv.config is match('/')
              else ('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
+        import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
+        import_cluster_unit:
+          file: "{{ _kv.unit_SourcePath | default('') or _kv.unit_FragmentPath | default('') }}"
+          restart: "{{ _kv.unit_Restart | default('') }}"
+          boot: "{{ _kv.unit_UnitFileState | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
       when: import_cluster_running.rc | default(1) == 0
@@ -200,8 +210,12 @@
           {{ {'cassandra_java_version': _hv.import_cluster_java}
              if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {} }}
         _conf: >-
-          {{ {'cassandra_conf_dir': _hv.import_cluster_conf_dir}
-             if _read and _hv.import_cluster_conf_dir not in ['/etc/cassandra', '/etc/cassandra/conf'] else {} }}
+          {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
+              if _read and _hv.import_cluster_conf_dir not in ['/etc/cassandra', '/etc/cassandra/conf'] else {})
+             | combine({'cassandra_log_dir': _hv.import_cluster_log_dir}
+                       if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
+             | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
+                       if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {}) }}
         _node:
           name: "{{ _name }}"
           ansible_host: "{{ item.address if _host == item.address else (_hv.ansible_host | default('')) }}"
@@ -219,7 +233,13 @@
           normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
           notes:
             - "{{ _versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?') }}"
+            - "{{ _started }}"
         _versions: "{{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?') }}"
+        _started: >-
+          {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
+             ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
+             ~ ', at boot: ' ~ (_hv.import_cluster_unit.boot | default('') or '?')
+             ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy)' }}
         _install: >-
           {{ ('package ' ~ _hv.import_cluster_package) if _hv.import_cluster_package | default('')
              else 'NOT a package install: cassandra_install would install the package next to it' }}
