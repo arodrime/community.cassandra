@@ -14,6 +14,7 @@
   hosts: all
   gather_facts: true
   gather_subset: [network]
+  become: true  # nodetool reads the JMX password file (cassandra's, 0400)
   tasks:
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
@@ -172,6 +173,7 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  become: false  # the files are the user's, whatever -b asks for the nodes
   vars:
     _given: "{{ hostvars[groups['all'][0]]['import_cluster_given'] }}"
     _ring: >-

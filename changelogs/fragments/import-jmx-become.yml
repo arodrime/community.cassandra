@@ -1,0 +1,3 @@
+bugfixes:
+  - import_cluster - with remote JMX authentication, the ring was read without become, so nodetool could not read the JMX password file (cassandra's, 0400) and the import stopped with "nodetool status failed on every given node".
+  - import_cluster - run with ``-b`` (become), it also used sudo on the controller to write the inventory, and failed there ("a password is required").
