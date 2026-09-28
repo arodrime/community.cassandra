@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_config - the seed reload on a running node (nodetool reloadseeds) now logs in with cassandra_jmx_username and cassandra_jmx_password_file/cassandra_jmx_password; with remote JMX authentication it failed ("Credentials required").

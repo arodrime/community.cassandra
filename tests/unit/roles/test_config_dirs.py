@@ -50,3 +50,9 @@ def on_unmounted(missing, unmounted):
 ])
 def test_refused_on_unmounted_disk(missing, unmounted, refused):
     assert on_unmounted(missing, unmounted) == refused
+
+
+def test_seed_reload_logs_in_to_jmx():
+    # remote JMX with authentication: nodetool reloadseeds needs the login too
+    reload = task("Reload the seed list on the running node")["community.cassandra.cassandra_reload"]
+    assert {"username", "password_file", "password"} <= set(reload)

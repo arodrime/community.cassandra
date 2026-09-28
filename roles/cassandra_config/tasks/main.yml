@@ -361,6 +361,10 @@
       community.cassandra.cassandra_reload:
         reload: seeds
         port: "{{ cassandra_jmx_port }}"
+        # remote JMX with authentication: the login of cassandra_service
+        username: "{{ cassandra_jmx_username | default(omit, true) }}"
+        password_file: "{{ cassandra_jmx_password_file | default(omit, true) }}"
+        password: "{{ omit if cassandra_jmx_password_file | default('') else cassandra_jmx_password | default(omit, true) }}"
       when:
         - cassandra_config_reload_seeds
         - cassandra_config_applied.changed
