@@ -111,6 +111,7 @@
         cassandra_confirm_prompt: |-
           replace_node will start {{ inventory_hostname }} in place of the dead node {{ cassandra_replace_address | default('(not set)') }}:
           it takes over its tokens and streams their data from the other replicas (this can take hours).
+          {{ _cassandra_session_warning }}
 
 - name: Replace the node
   hosts: "{{ cassandra_new_nodes }}"

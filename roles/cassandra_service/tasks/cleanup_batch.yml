@@ -26,17 +26,12 @@
       poll: 0
       register: cassandra_cleanup_jobs_started
 
-    - name: Wait for the cleanups
-      ansible.builtin.async_status:
-        jid: "{{ item.ansible_job_id }}"
-      delegate_to: "{{ item.item }}"
-      loop: "{{ cassandra_cleanup_jobs_started.results }}"
-      loop_control:
-        label: "{{ item.item }}"
-      register: cassandra_cleanup_job
-      until: cassandra_cleanup_job.finished
-      retries: "{{ (cassandra_cleanup_timeout | int / 30) | int }}"
-      delay: 30
+    - name: Start following the cleanups
+      ansible.builtin.set_fact:
+        _cassandra_stream_state: {}
+
+    - name: Follow the cleanups
+      ansible.builtin.include_tasks: cleanup_wait.yml
 
     - name: Add the batch to the progress file
       ansible.builtin.lineinfile:

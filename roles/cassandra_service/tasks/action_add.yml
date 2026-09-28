@@ -31,16 +31,14 @@
   vars:
     cassandra_service_wait_for_normal: false  # the bootstrap is waited for below
 
-# A bootstrap streams the node's share of the data: hours on big nodes. The wait
-# stops early when the bootstrap failed (5.0: Mode JOINING_FAILED) or Cassandra
-# stopped (JMX refuses the connection). Stopping to wait leaves the node as it
-# is: running add_node again waits for the same bootstrap.
+# A bootstrap streams the node's share of the data: hours on big nodes. The
+# wait goes on as long as the streams make progress (stream_wait.yml). Stopping
+# to wait leaves the node as it is: running add_node again waits for the same
+# bootstrap.
 - name: Wait for the bootstrap
   when:
     - cassandra_service_wait_for_normal
     - not ansible_check_mode
-  vars:
-    _timeout: "{{ _cassandra_join_timeout | default(cassandra_service_join_timeout) | int }}"
   module_defaults:
     community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
   block:
@@ -55,36 +53,23 @@
       retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
       delay: 10
 
-    - name: Wait for the node to be joined (Mode NORMAL)
-      community.cassandra.cassandra_netstats:
-      register: cassandra_service_netstats
-      until: >-
-        cassandra_service_netstats.mode | default('') in ['NORMAL', 'JOINING_FAILED']
-        or 'Connection refused' in cassandra_service_netstats.stderr | default('')
-      retries: "{{ [(_timeout | int / 30) | int, 1] | max }}"
-      delay: 30
-      # out of retries the task fails whatever failed_when says: ignored, so the next task explains
-      failed_when: false
-      ignore_errors: true
+    - name: Start following the bootstrap
+      ansible.builtin.set_fact:
+        _cassandra_stream_state: {}
 
-    - name: Stop on a bootstrap that did not end
-      ansible.builtin.fail:
-        msg: >-
-          {{ inventory_hostname }}:
-          {%- if cassandra_service_netstats.mode | default('') == 'JOINING_FAILED' %}
-          the bootstrap failed (Mode JOINING_FAILED): see why in its system.log.
-          {%- elif 'Connection refused' in cassandra_service_netstats.stderr | default('') %}
-          Cassandra stopped during the bootstrap: see why in its system.log.
-          {%- else %}
-          still {{ cassandra_service_netstats.mode | default('not answering') }} after {{ _timeout }}s, nothing was
-          stopped. If nodetool netstats still shows streams, {{ _then }} If its system.log shows that the bootstrap
-          failed (4.x stays JOINING then), start over.
-          {%- endif %}
-          Once fixed, to start over: stop Cassandra, empty its data, commitlog, saved_caches and hints directories,
-          then {{ _over }}
+    - name: Follow the bootstrap
+      ansible.builtin.include_tasks: stream_wait.yml
       vars:
-        _then: "{{ _cassandra_join_then | default('run add_node again to wait for it.') }}"
-        _over: >-
-          {{ _cassandra_join_over | default('wait until it is gone from nodetool status (seen from another node),'
-                                            ~ ' then run add_node again.') }}
-      when: cassandra_service_netstats.mode | default('') != 'NORMAL'
+        _cassandra_stream_what: "{{ _cassandra_join_what | default('bootstrap') }}"
+        _cassandra_stream_operations: [Bootstrap]
+        _cassandra_stream_from: ["{{ inventory_hostname }}"]
+        _cassandra_stream_join: true
+        _cassandra_stream_peers: >-
+          {{ groups[cassandra_hosts | default('cassandra')]
+             | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_new_nodes | default(inventory_hostname)))
+             | list }}
+        _cassandra_stream_advice: >-
+          {{ _cassandra_join_then | default('if nodetool netstats on it still shows streams, run add_node again to go on waiting.') }}
+          To start over instead (a bootstrap that failed): stop Cassandra, empty its data, commitlog, saved_caches and
+          hints directories, wait until it is gone from nodetool status (seen from another node), then
+          {{ _cassandra_join_over | default('run add_node again.') }}

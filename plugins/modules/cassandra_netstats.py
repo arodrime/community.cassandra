@@ -52,6 +52,28 @@ streams:
   returned: success
   type: list
   elements: str
+sessions:
+  description:
+    - The stream sessions, one per session and direction, with their progress.
+    - C(files) lists the files nodetool shows for the session (those started), with the
+      C(keyspace.table) they belong to when their path shows it.
+  returned: success
+  type: list
+  elements: dict
+  sample:
+    - operation: Bootstrap
+      plan_id: 9a3f2c10-6b1e-11ef-8b1a-3d7c1c0a1b2c
+      peer: 10.0.0.1
+      direction: receiving
+      files_total: 12
+      files_done: 3
+      bytes_total: 104857600
+      bytes_done: 26214400
+      files:
+        - path: /var/lib/cassandra/data/ks/t-5a1c3b2e8d9f4a6b7c8d9e0f1a2b3c4d/nb-1-big-Data.db
+          table: ks.t
+          done: 8738133
+          total: 8738133
 stdout:
   description: Raw output of the nodetool netstats command.
   returned: success
@@ -68,19 +90,12 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats as parse_sessions
 
 
 def parse_netstats(stdout):
     """mode, and the stream session lines between the mode line and the read repair statistics."""
-    mode, streams = "", []
-    for line in stdout.splitlines():
-        if line.startswith("Mode:"):
-            mode = line.split(":", 1)[1].strip()
-            continue
-        if line.startswith(("Read Repair Statistics", "Pool Name")):
-            break
-        if mode and line.strip() and line.strip() != "Not sending any streams.":
-            streams.append(line)
+    mode, streams, dummy = parse_sessions(stdout)
     return mode, streams
 
 
@@ -104,11 +119,12 @@ def main():
     if rc != 0:
         module.fail_json(name=cmd, msg="netstats command failed", **result)
 
-    mode, streams = parse_netstats(out)
+    mode, streams, sessions = parse_sessions(out)
     result['stdout'] = out
     result['mode'] = mode
     result['streams'] = streams
     result['streaming'] = len(streams) > 0
+    result['sessions'] = sessions
 
     module.exit_json(**result)
 

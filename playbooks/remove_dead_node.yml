@@ -147,6 +147,7 @@
           {% else %}
           ASSASSINATE: no streaming. Data only this node held is LOST; run a full repair afterwards.
           {% endif %}
+          {{ _cassandra_session_warning }}
 
     - name: Remove it (removenode, from {{ ansible_play_hosts[0] }})
       community.cassandra.cassandra_removenode:
@@ -157,8 +158,33 @@
         _dead: >-
           {{ cassandra_dead_ring.cluster_status.values() | map(attribute='nodes') | flatten
              | selectattr('address', 'equalto', cassandra_dead_node_address) | first }}
-      async: "{{ cassandra_decommission_timeout | default(86400) }}"
-      poll: 30
+      async: "{{ cassandra_decommission_timeout | default(_cassandra_stream_async) }}"
+      poll: 0
+      register: cassandra_removenode_job
+      run_once: true
+      when: _method == 'removenode'
+
+    - name: Start following the removal
+      ansible.builtin.set_fact:
+        _cassandra_stream_state: {}
+      run_once: true
+      when: _method == 'removenode'
+
+    # The nodes that take over its ranges stream them from the other replicas
+    - name: Follow the removal
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: stream_wait.yml
+        apply:
+          run_once: true
+      vars:
+        _cassandra_stream_what: removenode of {{ cassandra_dead_node_address }}
+        _cassandra_stream_operations: [Restore replica count]
+        _cassandra_stream_from: "{{ ansible_play_hosts }}"
+        _cassandra_stream_job: {jid: "{{ cassandra_removenode_job.ansible_job_id }}", host: "{{ ansible_play_hosts[0] }}"}
+        _cassandra_stream_advice: >-
+          nodetool removenode status and nodetool netstats on the nodes; once the streams are over or stuck for good,
+          run this again with -e cassandra_dead_node_method=removenode_force (then a repair).
       run_once: true
       when: _method == 'removenode'
 

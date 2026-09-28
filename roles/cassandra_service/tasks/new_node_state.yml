@@ -19,12 +19,14 @@
     _in_ring: "{{ (_ring.status ~ _ring.state) if _ring else 'absent' }}"
     _has_data: "{{ cassandra_new_node_system.stat.exists }}"
     _my_id: "{{ cassandra_new_node_info.stdout | default('') | regex_findall('(?m)^ID\\s*:\\s*(\\S+)') | first | default('') }}"
+    # 5.0.0 to 5.0.4: nodetool can't answer on a bootstrapping node (CASSANDRA-19902)
+    _no_mbean: "{{ 'InstanceNotFoundException' in cassandra_new_node_info.stderr | default('') }}"
     _state: >-
       {{ 'new' if _in_ring == 'absent' and not _has_data
          else 'orphan' if _in_ring == 'absent'
          else 'other_host' if _my_id and _my_id != _ring.host_id
          else 'joined' if _in_ring == 'UN' and _has_data and _my_id
-         else 'joining' if _in_ring == 'UJ' and _has_data and _my_id
+         else 'joining' if _in_ring == 'UJ' and _has_data and (_my_id or _no_mbean)
          else 'replace' if _in_ring == 'DN' and not _has_data
          else 'down' if _ring.status == 'D'
          else 'other_host' if _in_ring == 'UN'

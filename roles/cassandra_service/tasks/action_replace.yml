@@ -14,8 +14,10 @@
   ansible.builtin.include_tasks: action_add.yml
   vars:
     cassandra_service_environment: "{{ _cassandra_service_replace_environment }}"
-    _cassandra_join_timeout: "{{ cassandra_replace_timeout | default(cassandra_service_join_timeout) }}"
-    _cassandra_join_then: wait until it is UN in nodetool status (replace_node does not wait again for a replacement it started).
+    _cassandra_join_what: replacement
+    _cassandra_join_then: >-
+      if nodetool netstats on it still shows streams, wait until it is UN in nodetool status
+      (replace_node does not wait again for a replacement it started).
     _cassandra_join_over: run replace_node again.
 
 - name: Take the replace flag out of the unit (no restart)

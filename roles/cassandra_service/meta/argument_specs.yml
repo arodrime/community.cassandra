@@ -114,17 +114,27 @@ argument_specs:
         default: 600
         description:
           - "How long to wait for a started node to reach C(Mode: NORMAL), in seconds."
-          - For a node being added or replaced, how long to wait for it to answer on JMX.
-      cassandra_service_join_timeout:
+          - For a node being added or replaced, how long to wait for it to answer on JMX (then
+            the bootstrap is waited for as long as it makes progress, see C(cassandra_stream_stall_checks)).
+      cassandra_stream_check_interval:
         type: int
-        default: 86400
+        default: 300
         description:
-          - "How long the C(add_node) and C(replace_node) playbooks wait for a new node's bootstrap
-            to end (C(Mode: NORMAL)), in seconds. A bootstrap streams the node's share of the data
-            and can take hours."
-          - "The wait stops early when the bootstrap failed (C(Mode: JOINING_FAILED), Cassandra 5.0)
-            or Cassandra stopped. A run that stops waiting leaves the node bootstrapping; running
-            C(add_node) again waits for it again."
+          - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
+            C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter)).
+            Each check reads C(nodetool netstats) and prints one progress line.
+      cassandra_stream_stall_checks:
+        type: int
+        default: 3
+        description:
+          - A streaming operation fails only after this many checks in a row without any progress in
+            C(nodetool netstats) (no byte or file streamed, no session started or ended). Nothing is
+            stopped then; the node stays as it is.
+      cassandra_stream_max_time:
+        type: int
+        default: 0
+        description:
+          - Optional limit, in seconds, on the whole streaming operation. C(0) (default) sets none.
       cassandra_service_tasks_max:
         type: str
         default: infinity

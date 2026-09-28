@@ -1,0 +1,18 @@
+Mode: JOINING
+Bootstrap 950b5840-bb81-11f1-a97b-371e6e35e306
+    /172.29.0.4
+        Receiving 2 files, 158151511 bytes total. Already received 1 files (50.00%), 10872197 bytes total (6.87%)
+            keyspace1/standard1-0 10864965/158144279 bytes (6%) received from idx:0/172.29.0.4
+            e2e/t-0 7232/7232 bytes (100%) received from idx:0/172.29.0.4
+    /172.29.0.3
+        Receiving 2 files, 137813054 bytes total. Already received 1 files (50.00%), 10558319 bytes total (7.66%)
+            keyspace1/standard1-0 10551087/137805822 bytes (7%) received from idx:0/172.29.0.3
+            e2e/t-0 7232/7232 bytes (100%) received from idx:0/172.29.0.3
+Read Repair Statistics:
+Attempted: 0
+Mismatch (Blocking): 0
+Mismatch (Background): 0
+Pool Name                    Active   Pending      Completed   Dropped
+Large messages                  n/a         0              0         0
+Small messages                  n/a         0              2         0
+Gossip messages                 n/a         0            234         0

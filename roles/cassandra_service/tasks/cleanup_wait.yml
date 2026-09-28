@@ -1,0 +1,82 @@
+---
+# Waits for the cleanups of a batch (cleanup_batch.yml) as long as they make
+# progress: every cassandra_stream_check_interval seconds, reads nodetool
+# compactionstats on the batch's nodes, prints one progress line (bytes
+# cleaned by the running Cleanup tasks), and fails only after
+# cassandra_stream_stall_checks checks in a row without progress. Includes
+# itself until every cleanup job has ended. Run once; expects
+# cassandra_cleanup_jobs_started (the async jobs) and _cassandra_stream_state
+# reset to {} before the first include.
+- name: Read the cleanups
+  ansible.builtin.command: "{{ _cassandra_service_nodetool }} compactionstats"
+  delegate_to: "{{ item.item }}"
+  loop: "{{ cassandra_cleanup_jobs_started.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: cassandra_cleanup_read
+  changed_when: false
+  failed_when: false
+  no_log: "{{ cassandra_jmx_password | length > 0 }}"
+
+- name: Check the jobs
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  delegate_to: "{{ item.item }}"
+  loop: "{{ cassandra_cleanup_jobs_started.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: cassandra_cleanup_job
+  ignore_errors: true  # a failed job is reported below
+
+- name: Work out the progress
+  ansible.builtin.set_fact:
+    _cassandra_stream_state: >-
+      {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
+           now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int) }}
+  vars:
+    _views: >-
+      {{ cassandra_cleanup_read.results | zip(cassandra_cleanup_jobs_started.results | map(attribute='item'))
+         | map('community.cassandra.cassandra_cleanup_view') | list }}
+
+- name: Progress of the cleanups
+  ansible.builtin.debug:
+    msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state.line }}  ({{ _left | length }} of {{ _all | length }} nodes still cleaning)"
+  vars:
+    _all: "{{ cassandra_cleanup_job.results }}"
+    _left: "{{ _all | rejectattr('finished', 'equalto', 1) | list }}"
+
+- name: Where it stands
+  ansible.builtin.set_fact:
+    _cassandra_cleanup_status: >-
+      {{ 'failed' if _ended | selectattr('failed', 'defined') | selectattr('failed') | list
+         else 'failed' if cassandra_cleanup_job.results | rejectattr('finished', 'defined') | list
+         else 'done' if _ended | length == cassandra_cleanup_job.results | length
+         else 'stalled' if _cassandra_stream_state.stalled
+         else 'going' }}
+  vars:
+    _ended: "{{ cassandra_cleanup_job.results | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
+
+- name: Stop when a cleanup failed or stopped moving
+  ansible.builtin.fail:
+    msg: >-
+      {% if _cassandra_cleanup_status == 'failed' %}
+      Cleanup failed or can't be followed on
+      {{ cassandra_cleanup_job.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.item') | join(', ') }}
+      {{- cassandra_cleanup_job.results | rejectattr('finished', 'defined') | map(attribute='item.item') | join(', ') }}:
+      {{ cassandra_cleanup_job.results | selectattr('failed', 'defined') | selectattr('failed')
+         | map(attribute='msg', default='') | join('; ') }} (see system.log there).
+      {% else %}
+      no cleanup progress in {{ cassandra_stream_stall_checks }} checks in a row, {{ cassandra_stream_check_interval }}s apart
+      (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
+      {% endif %}
+      Last progress: {{ _cassandra_stream_state.line }}
+  when: _cassandra_cleanup_status in ['failed', 'stalled']
+
+- name: Wait before the next check
+  ansible.builtin.pause:
+    seconds: "{{ cassandra_stream_check_interval | int }}"
+  when: _cassandra_cleanup_status == 'going'
+
+- name: Check again
+  ansible.builtin.include_tasks: cleanup_wait.yml
+  when: _cassandra_cleanup_status == 'going'

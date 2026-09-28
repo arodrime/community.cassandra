@@ -92,6 +92,7 @@
         cassandra_confirm_prompt: |-
           decommission_node will remove {{ _leaving | join(', ') }} from the cluster, one at a time: each one streams
           its data to the other nodes (this can take hours), then Cassandra is stopped and disabled on it.
+          {{ _cassandra_session_warning }}
 
 - name: Set up the progress file
   hosts: "{{ cassandra_leaving_nodes }}"

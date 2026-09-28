@@ -46,10 +46,30 @@ cassandra_new_node_min_free_gb: 0
 # Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
 cassandra_service_wait_for_normal: true
 cassandra_service_wait_timeout: 600  # seconds
-# How long add_node and replace_node wait for a new node's bootstrap (it
-# streams the node's share of the data: hours on big nodes). A run that stops
-# waiting leaves the node bootstrapping: running add_node again waits again.
-cassandra_service_join_timeout: 86400  # seconds
+
+# Streaming operations (add_node, replace_node, decommission_node,
+# remove_dead_node, add_datacenter's rebuild) are waited for as long as they
+# make progress: every cassandra_stream_check_interval seconds nodetool
+# netstats is read and a progress line printed; the run fails only after
+# cassandra_stream_stall_checks checks in a row with nothing streamed (no
+# byte, no file, no session started or ended). No overall limit
+# unless cassandra_stream_max_time is set (seconds, 0: none).
+cassandra_stream_check_interval: 300  # seconds
+cassandra_stream_stall_checks: 3
+cassandra_stream_max_time: 0  # seconds, 0: no limit
+# add_node: the cleanup of the nodes that handed data over. none: print the
+# command; one: run it one node at a time; rack, dc: the nodes of a rack, of a
+# datacenter together, one batch after the other; all: every node at once.
+cassandra_add_node_cleanup: none
+
+# Confirmation prompts of long operations warn when the controller's shell is
+# not inside tmux or screen (a lost SSH session would stop the run)
+_cassandra_session_warning: >-
+  {{ '' if lookup('ansible.builtin.env', 'TMUX') or lookup('ansible.builtin.env', 'STY')
+     else 'WARNING: this run is not inside tmux or screen: if the SSH session to this machine drops, the run stops'
+          ~ ' (the operation itself goes on, unwatched). Run it inside tmux or screen.' }}
+# the lifetime of the background job of a decommission, removenode or rebuild
+_cassandra_stream_async: "{{ cassandra_stream_max_time | int if cassandra_stream_max_time | int > 0 else 2592000 }}"
 
 # Cluster health check run by the operation playbooks before and after each
 # node: how long to wait for down nodes to come back, and whether to go on

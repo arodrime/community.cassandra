@@ -5,8 +5,25 @@
   community.cassandra.cassandra_decommission:
   module_defaults:
     community.cassandra.cassandra_decommission: "{{ _cassandra_service_jmx }}"
-  async: "{{ cassandra_decommission_timeout | default(86400) }}"
-  poll: 30
+  async: "{{ cassandra_decommission_timeout | default(_cassandra_stream_async) }}"
+  poll: 0
+  register: cassandra_decommission_job
+
+- name: Start following the decommission
+  ansible.builtin.set_fact:
+    _cassandra_stream_state: {}
+
+- name: Follow the decommission
+  ansible.builtin.include_tasks: stream_wait.yml
+  when: not ansible_check_mode
+  vars:
+    _cassandra_stream_what: decommission
+    _cassandra_stream_operations: [Unbootstrap]
+    _cassandra_stream_from: ["{{ inventory_hostname }}"]
+    _cassandra_stream_job: {jid: "{{ cassandra_decommission_job.ansible_job_id }}", host: "{{ inventory_hostname }}"}
+    _cassandra_stream_advice: >-
+      the node is still LEAVING: check nodetool netstats and system.log on it. Nothing else was touched;
+      don't start another decommission meanwhile.
 
 - name: Stop and disable Cassandra
   ansible.builtin.include_tasks: main.yml

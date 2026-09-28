@@ -61,6 +61,7 @@
             {{ statement }}
           {% endfor %}
           then remove {{ _leaving | join(', ') }} one at a time. Clients still using {{ cassandra_target_dc }} will fail.
+          {{ _cassandra_session_warning }}
 
     - name: Change the keyspaces' replication
       community.cassandra.cassandra_cqlsh:
