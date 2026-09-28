@@ -1,0 +1,5 @@
+bugfixes:
+  - import_cluster - a node whose config could not be turned into variables failed with its error fully hidden (no_log), and was then reported as having an unsupported version. It now says which step failed and why, without the values, and the report gives that reason.
+  - import_cluster - an unexpected error in the import filters no longer quotes its message, which could show a value read from the config (ansible-core 2.19 displays templating errors even under no_log). The error names the error type and where it happened instead (and the file, for the config import).
+  - import_cluster - a node of an unsupported version (3.11) failed the import instead of being listed as not read.
+  - import_cluster - a node whose cassandra.yaml could not be read was imported with the role defaults (cluster name, seeds...). It now fails with the reason.

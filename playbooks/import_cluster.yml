@@ -184,18 +184,49 @@
       register: import_cluster_jmx_slurp
       failed_when: false
       no_log: true
-      when: import_cluster_slurp.results is defined
+      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
 
-    - name: Turn them into cassandra_config variables
-      no_log: true
-      ansible.builtin.set_fact:
-        import_cluster_config: "{{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts) }}"
-      vars:
-        _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
-        _live: >-
-          {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
-                  | zip(_slurped | selectattr('content', 'defined') | map(attribute='content') | map('b64decode'))) }}
-      when: import_cluster_series is defined and import_cluster_slurp.results is defined
+    # no_log hides the error too: the rescue says what failed, without the values
+    # a skipped loop registers results too: the series, not them, says it was read
+    - name: Read this node's config
+      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      block:
+        # without it the role defaults would be imported (cluster name, seeds...)
+        - name: Check cassandra.yaml was read
+          ansible.builtin.assert:
+            that: _yaml.content is defined
+            fail_msg: "{{ _yaml.msg | default('cannot read ' ~ import_cluster_conf_dir ~ '/cassandra.yaml') }}"
+            quiet: true
+          vars:
+            _yaml: "{{ import_cluster_slurp.results | selectattr('item', 'equalto', 'cassandra.yaml') | first | default({}) }}"
+
+        - name: Turn them into cassandra_config variables
+          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+          ansible.builtin.set_fact:
+            import_cluster_config: "{{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts) }}"
+          vars:
+            _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
+            _live: >-
+              {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
+                      | zip(_slurped | selectattr('content', 'defined') | map(attribute='content') | map('b64decode'))) }}
+      rescue:
+        # for the report: the node is listed as not read, with this reason
+        - name: Keep why for the report
+          ansible.builtin.set_fact:
+            import_cluster_error: >-
+              "{{ ansible_failed_task.name | default('?') }}" failed{{ (': ' ~ _why) if _why else '' }}
+          vars:
+            _why: >-
+              {{ ansible_failed_result.msg | default('?') if ansible_failed_task.name | default('') == 'Check cassandra.yaml was read'
+                 else ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}
+
+        - name: Say what failed on this node
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: {{ import_cluster_error }}{{ '' if ansible_failed_task.name | default('') == 'Check cassandra.yaml was read'
+              else '. Its error is above.' if import_cluster_debug | default(false) | bool
+              else '. The rest of the error is hidden (the config holds passwords):'
+                   ~ ' rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
 
 - name: Write the inventory
   hosts: localhost
@@ -321,7 +352,8 @@
               reason: >-
                 {{ 'unreachable' if _hv.import_cluster_running.rc is not defined
                    else ('Cassandra not running' if _hv.import_cluster_running.rc != 0
-                   else 'unsupported version ' ~ _hv.import_cluster_version) }}
+                   else (_hv.import_cluster_error if _hv.import_cluster_error is defined
+                   else 'unsupported version ' ~ _hv.import_cluster_version)) }}
               vars: >-
                 {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx))
                    if _read else {} }}
@@ -361,9 +393,12 @@
         - name: Say how to see the error
           ansible.builtin.fail:
             msg: >-
-              "{{ ansible_failed_task.name | default('?') }}" failed{{ ': its error is above.'
-              if import_cluster_debug | default(false) | bool else ', its error is hidden (the variables hold passwords).'
+              "{{ ansible_failed_task.name | default('?') }}" failed{{ (' (' ~ _why ~ ')') if _why else '' }}{{ ': its error is above.'
+              if import_cluster_debug | default(false) | bool else ', the rest of its error is hidden (the variables hold passwords).'
               ~ ' Rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+          vars:
+            # the ring nodes it failed on, and what of the error shows no value
+            _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
     - name: Pick the output dir
       ansible.builtin.set_fact:

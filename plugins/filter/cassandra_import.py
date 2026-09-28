@@ -12,6 +12,11 @@ cassandra_unit_environment: systemctl's Environment of a unit -> dict.
 cassandra_config_ignored_vars: variable names, series -> the cassandra_config
     variables among them that series' templates don't use (e.g. 4.0 names after
     an upgrade to 4.1).
+cassandra_import_error: a failed task's result -> why it failed, without the
+    values (the import's no_log tasks hold passwords).
+
+Their unexpected errors do not quote the error message, which may show a value
+read from the config (a password): its type and where it happened only.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -19,15 +24,18 @@ __metaclass__ = type
 
 import ast
 import difflib
+import functools
 import json
 import os
 import re
 import shlex
+import sys
+import traceback
 
 import jinja2
 import yaml
 
-from ansible.errors import AnsibleFilterError
+from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.parsing.convert_bool import boolean
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
@@ -56,6 +64,10 @@ IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 MISSING = object()
 TOP_KEY = re.compile(r"^(?:\{\{[^}]*\}\})?([a-z0-9_]+):")  # active top-level key, maybe behind a toggle
 EXTRA_HEADER = "# Settings no variable covers (cassandra_extra_settings)"
+# The undefined errors naming a field or a variable, nothing else of the data.
+# Jinja words a missing dict key (d[key]) the same way: nothing here or in the
+# playbook may index a dict with a key read from the nodes.
+MISSING_NAME = re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'\s*$|^'(\w+)' is undefined\s*$")
 
 
 def cassandra_ring_nodes(cluster_status):
@@ -326,16 +338,49 @@ def cassandra_unit_environment(text):
     return dict(w.split("=", 1) for w in words if "=" in w)
 
 
+def _undefined(exc):
+    """A missing variable or field of the nodes' data (Ansible's lazy
+    templating), whose message names it and shows no value."""
+    source = getattr(exc, "source", None)  # 2.19+: the marker behind the error
+    return (isinstance(exc, (AnsibleUndefinedVariable, jinja2.exceptions.UndefinedError))
+            and (source is None or type(source).__name__ == "UndefinedMarker")
+            and bool(MISSING_NAME.search(str(exc))))
+
+
+def _hidden(name, where):
+    """The error being handled, without its message (it may quote a value)."""
+    frames = [f for f in traceback.extract_tb(sys.exc_info()[2])
+              if os.path.basename(f[0]).startswith("cassandra_import.py")]
+    at = " in %s(), line %d" % (frames[-1][2], frames[-1][1]) if frames else ""
+    return AnsibleFilterError("%s: %s%s%s (message hidden: it may show a value read from the nodes)"
+                              % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
+
+
 def cassandra_config_import(live_files, cassandra_version, facts):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized'}."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
+    where = ["the role defaults"]
+    try:
+        return _config_import(live_files, cassandra_version, facts, where)
+    except AnsibleFilterError:
+        raise
+    except Exception as exc:  # pylint: disable=broad-except
+        if _undefined(exc):
+            raise
+        error = _hidden("cassandra_config_import", where[0])
+    raise error  # out of the except block: no chained message either
+
+
+def _config_import(live_files, cassandra_version, facts, where):
     env, ctx, files = _load_role(cassandra_version, facts)
     found = {}
     for name in files:
         if name in live_files:
+            where[0] = name
             found.update(_import_file(env, cassandra_version, name, ctx, live_files[name].split("\n")))
+    where[0] = "cassandra.yaml"
     changed = {k: v for k, v in found.items()
                if str(v).lower() != str(_default(ctx, k)).lower()
                and not (v == "" and _default(ctx, k) in ([], {}))}  # a list/dict variable left empty
@@ -361,6 +406,7 @@ def cassandra_config_import(live_files, cassandra_version, facts):
             changed["cassandra_extra_settings"] = extras
     # remote JMX users (the role writes /etc/cassandra/jmxremote.password and .access), only
     # when the JVM reads both files there and each user's rights are in it
+    where[0] = "jmxremote.password"
     jmx_note = []
     if live_files.get("jmxremote.password"):
         users = _jmx_users(live_files["jmxremote.password"], live_files.get("jmxremote.access"))
@@ -370,6 +416,7 @@ def cassandra_config_import(live_files, cassandra_version, facts):
             jmx_note = ["jmxremote.password: its users NOT imported (not every user has plain password and"
                         " readwrite/readonly rights in /etc/cassandra/jmxremote.access, the file cassandra-env.sh"
                         " points at): set cassandra_jmx_users by hand"]
+    where[0] = "comparing the files with the role's"
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
@@ -424,6 +471,23 @@ def _show(key, value):
     return json.dumps(value, sort_keys=True, default=str)
 
 
+def _values_hidden(func):
+    """func, raising its unexpected errors without their message."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except AnsibleFilterError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            if _undefined(exc):
+                raise
+            error = _hidden(func.__name__, "")
+        raise error
+    return wrapper
+
+
+@_values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, dc, rack, ansible_host?, read: bool, reason?, vars,
     hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars', 'report'}."""
@@ -498,6 +562,7 @@ def _split_secrets(variables):
     return public, secrets
 
 
+@_values_hidden
 def cassandra_inventory_files(layout):
     """[{path, content, secret}] for hosts.yml, group_vars/<group>/ and
     host_vars/<host>/: main.yml, and secrets.yml for variables named like
@@ -536,6 +601,42 @@ def cassandra_config_ignored_vars(names, cassandra_version):
     return sorted(n for n in names if n in role_vars and n not in used)
 
 
+# Parts of an error message that show no value: this filter's own messages,
+# and the name of a missing field or variable
+SAFE_REASONS = [
+    (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files): [^\n]*?\(message hidden: "
+                r"it may show a value read from the nodes\))"), r"\1"),
+    (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
+    (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
+    (re.compile(r"(?:^|: )'(\w+)' is undefined(?:\.|$)"), r"undefined variable '\1'"),
+]
+
+
+def _safe_reason(msg):
+    for regex, template in SAFE_REASONS:
+        match = regex.search(msg)
+        if match:
+            return match.expand(template)
+    return ""
+
+
+def cassandra_import_error(result, label="address"):
+    """A failed task's result (ansible_failed_result) -> why it failed, for the
+    import's no_log tasks: the failed loop items (their `label` key) and what
+    of the error shows no value, else ''."""
+    out = []
+    for res in (result or {}).get("results") or [result or {}]:
+        if not isinstance(res, dict) or not boolean(res.get("failed", False), strict=False):
+            continue
+        item = res.get("item")
+        where = item.get(label) if isinstance(item, dict) and label else None
+        why = _safe_reason(str(res.get("msg", "")))
+        text = ("%s: %s" % (where, why or "failed") if where else why)
+        if text and text not in out:
+            out.append(text)
+    return "; ".join(out)
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -545,4 +646,5 @@ class FilterModule(object):
             "cassandra_inventory_files": cassandra_inventory_files,
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
             "cassandra_unit_environment": cassandra_unit_environment,
+            "cassandra_import_error": cassandra_import_error,
         }

@@ -5,6 +5,8 @@ import os
 
 import pytest
 
+from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4,
     _load_role,
@@ -16,9 +18,11 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_config_ignored_vars,
     cassandra_inventory_files,
     cassandra_unit_environment,
+    cassandra_import_error,
     _jmx_users,
     _same_setting,
 )
+from ansible_collections.community.cassandra.plugins.filter import cassandra_import
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
@@ -330,3 +334,69 @@ def test_remote_jmx_read_back(series):
     out = cassandra_config_import(node_files(series, cassandra_local_jmx=False), series, FACTS)
     assert out["vars"]["cassandra_local_jmx"] is False
     assert "else" not in out["vars"]
+
+
+def test_unexpected_error_hides_its_message(monkeypatch):
+    # its message may quote a config line: only the file, the type and where
+    def boom(*args):
+        raise ValueError("keystore_password: hunter2")
+    monkeypatch.setattr(cassandra_import, "_import_file", boom)
+    with pytest.raises(AnsibleFilterError) as err:
+        cassandra_config_import({"cassandra.yaml": "keystore_password: hunter2"}, "41x", FACTS)
+    msg = str(err.value)
+    assert "hunter2" not in msg
+    assert msg.startswith("cassandra_config_import: cassandra.yaml, ValueError in _config_import(), line ")
+    assert err.value.__context__ is None and err.value.__cause__ is None
+    assert cassandra_import_error({"failed": True, "msg": "templating failed: " + msg}) == msg
+
+
+def test_layout_error_hides_its_message():
+    with pytest.raises(AnsibleFilterError) as err:
+        cassandra_inventory_layout([{"name": "n1", "dc": "dc1", "rack": "r1", "read": True, "vars": "hunter2"}], "c")
+    assert "hunter2" not in str(err.value)
+    assert str(err.value).startswith("cassandra_inventory_layout: AttributeError in ")
+
+
+def test_import_error_keeps_what_shows_no_value():
+    # ansible-core 2.19+: a loop's failed items; 2.16: the task's message only
+    loop = {"failed": True, "msg": "One or more items failed", "results": [
+        {"failed": False, "item": {"address": "10.0.0.1"}},
+        {"failed": True, "item": {"address": "10.0.0.2", "dc": "dc1"},
+         "msg": "Error while resolving value for '_nodes': object of type 'dict' has no attribute 'heap'"},
+        {"failed": True, "item": {"address": "10.0.0.3"}, "msg": "could not convert string to float: 'hunter2'"}]}
+    assert cassandra_import_error(loop) == "10.0.0.2: missing field 'heap'; 10.0.0.3: failed"
+    old = {"failed": True, "msg": "The task includes an option with an undefined variable. The error was: "
+                                  "'ansible.vars.hostvars.HostVarsVars object' has no attribute 'import_cluster_given'"}
+    assert cassandra_import_error(old) == "missing field 'import_cluster_given'"
+    assert cassandra_import_error({"failed": True, "msg": "'_given' is undefined"}) == "undefined variable '_given'"
+    assert cassandra_import_error({"failed": True, "msg": "invalid literal for int(): 'hunter2'"}) == ""
+    assert cassandra_import_error({"censored": "hidden"}) == ""
+    assert cassandra_import_error(None) == ""
+
+
+def test_missing_field_error_goes_through():
+    # a missing field of the nodes' data (lazy templating) names the field, not a value
+    with pytest.raises(AnsibleUndefinedVariable):
+        cassandra_inventory_layout([{"name": "n1", "dc": "dc1", "rack": "r1", "read": True,
+                                     "vars": _Missing()}], "c")
+
+
+class _Missing(dict):
+    def __iter__(self):
+        raise AnsibleUndefinedVariable("'dict object' has no attribute 'heap'")
+
+
+def test_other_undefined_errors_stay_hidden():
+    # jinja's "has no element <key>" quotes a key of the data: hidden
+    class Element(dict):
+        def __iter__(self):
+            raise AnsibleUndefinedVariable("'dict object' has no element 'hunter2'")
+    with pytest.raises(AnsibleFilterError) as err:
+        cassandra_inventory_layout([{"name": "n1", "dc": "dc1", "rack": "r1", "read": True, "vars": Element()}], "c")
+    assert "hunter2" not in str(err.value)
+
+
+def test_safe_reasons_only_match_the_error_shapes():
+    # a value shaped like the error text is not picked up
+    assert cassandra_import_error({"failed": True, "msg": "bad value: pw has no attribute 'hunter2' here"}) == ""
+    assert cassandra_import_error({"failed": True, "msg": "bad value: x 'hunter2' is undefined here"}) == ""
