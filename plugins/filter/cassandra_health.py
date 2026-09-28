@@ -18,11 +18,12 @@ def _error(result):
 
 
 def cassandra_health_problems(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
-                              down_ok=None):
+                              down_ok=None, joining_ok=None):
     """views: [{'from': host, 'result': cassandra_status result}]; the others
     are this node's registered results (ports: a wait_for loop over
     {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
-    node being replaced). Returns a list of problems."""
+    node being replaced). joining_ok: addresses expected up and joining (a
+    bootstrap still running). Returns a list of problems."""
     problems = []
     for view in views:
         result = view["result"]
@@ -32,6 +33,8 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
         nodes = _nodes(result["cluster_status"])
         for n in nodes:
             if n["status"] == "D" and n["address"] in (down_ok or []):
+                continue
+            if n["status"] + n["state"] == "UJ" and n["address"] in (joining_ok or []):
                 continue
             if n["status"] != "U" or n["state"] != "N":
                 problems.append("%s (%s) is %s%s, seen from %s" % (n["address"], n["rack"], n["status"], n["state"], view["from"]))

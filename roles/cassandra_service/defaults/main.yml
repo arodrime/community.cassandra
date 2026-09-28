@@ -46,6 +46,10 @@ cassandra_new_node_min_free_gb: 0
 # Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
 cassandra_service_wait_for_normal: true
 cassandra_service_wait_timeout: 600  # seconds
+# How long add_node and replace_node wait for a new node's bootstrap (it
+# streams the node's share of the data: hours on big nodes). A run that stops
+# waiting leaves the node bootstrapping: running add_node again waits again.
+cassandra_service_join_timeout: 86400  # seconds
 
 # Cluster health check run by the operation playbooks before and after each
 # node: how long to wait for down nodes to come back, and whether to go on

@@ -113,7 +113,18 @@ argument_specs:
         type: int
         default: 600
         description:
-          - How long to wait for the node to join, in seconds.
+          - "How long to wait for a started node to reach C(Mode: NORMAL), in seconds."
+          - For a node being added or replaced, how long to wait for it to answer on JMX.
+      cassandra_service_join_timeout:
+        type: int
+        default: 86400
+        description:
+          - "How long the C(add_node) and C(replace_node) playbooks wait for a new node's bootstrap
+            to end (C(Mode: NORMAL)), in seconds. A bootstrap streams the node's share of the data
+            and can take hours."
+          - "The wait stops early when the bootstrap failed (C(Mode: JOINING_FAILED), Cassandra 5.0)
+            or Cassandra stopped. A run that stops waiting leaves the node bootstrapping; running
+            C(add_node) again waits for it again."
       cassandra_service_tasks_max:
         type: str
         default: infinity

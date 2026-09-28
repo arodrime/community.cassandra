@@ -1,0 +1,4 @@
+minor_changes:
+  - cassandra_service - new ``cassandra_service_join_timeout`` (default 86400 seconds), how long ``add_node`` and ``replace_node`` wait for a new node's bootstrap; the wait stops early when the bootstrap fails (5.0 ``Mode JOINING_FAILED``) or Cassandra stops.
+bugfixes:
+  - add_node - a node's bootstrap was waited for only ``cassandra_service_wait_timeout`` (600 seconds), and a run again then refused the node still joining; it now waits up to ``cassandra_service_join_timeout``, and a run again waits for a bootstrap still in progress.

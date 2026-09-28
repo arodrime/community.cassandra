@@ -165,6 +165,13 @@ tarball and the Medusa pip index answer with their credentials, and when the rep
 warning), its own Cassandra ports are free and Cassandra is not running there. A source that does not answer at all
 is only a warning: the package managers and pip may go through a proxy of their own. ``-e cassandra_new_node_checks=false`` skips these checks.
 
+Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook waits up to
+``cassandra_service_join_timeout`` (86400 seconds by default). If the run stops before the node has joined (timeout,
+lost SSH session), the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the
+bootstrap in progress. The wait stops early when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode:
+JOINING_FAILED``). To start a failed bootstrap over, stop Cassandra on the node, empty its data, commitlog,
+saved_caches and hints directories, wait until it is gone from ``nodetool status``, and run ``add_node`` again.
+
 Once the new nodes have joined, the others still hold the data they handed over. ``cleanup`` removes it, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.

@@ -45,6 +45,18 @@ Role Variables
   `{JAVA_HOME: /usr/lib/jvm/java-17-openjdk}`.
 * `cassandra_service_wait_for_normal` (default `true`) and
   `cassandra_service_wait_timeout` (seconds, default 600).
+* `cassandra_service_join_timeout`: how long `add_node` and `replace_node`
+  wait for a new node's bootstrap, in seconds. Default 86400 (a day): the
+  bootstrap streams the node's share of the data, hours on big nodes. The
+  wait stops early when the bootstrap failed (`Mode: JOINING_FAILED`, 5.0) or
+  Cassandra stopped. A run that stops waiting leaves the node bootstrapping:
+  `add_node` run again waits for it again (a node still `UJ` under its own
+  host ID). On 4.0 and 4.1 a failed bootstrap stays `JOINING`: the wait goes
+  on to the timeout, watch `nodetool netstats` and the node's `system.log`.
+  On 5.0.0 to 5.0.4, nodetool does not answer on a bootstrapping node
+  (CASSANDRA-19902): a failure only shows at the timeout, and a run again
+  refuses the node until it is `UN`; watch its `system.log`.
+  `replace_node` also takes `cassandra_replace_timeout`.
 
 * `cassandra_service_allow_new_seed`: a node that never started and is
   listed in `cassandra_seeds` is refused when another seed already answers

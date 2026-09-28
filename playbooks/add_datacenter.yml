@@ -103,6 +103,10 @@
         cassandra_service_node_action: add
         cassandra_service_node_checks_before: false
         cassandra_extra_settings: "{{ _cassandra_new_dc_settings }}"
+        # no bootstrap (auto_bootstrap false): the node joins in minutes
+        _cassandra_join_timeout: "{{ cassandra_service_wait_timeout | default(600) }}"
+        _cassandra_join_then: wait until it is UN in nodetool status.
+        _cassandra_join_over: run add_datacenter again.
         _done: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
         cassandra_service_expected_before: >-
           {{ groups[cassandra_hosts | default('cassandra')] | length - ansible_play_hosts_all | length + _done | int }}

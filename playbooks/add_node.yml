@@ -3,8 +3,10 @@
 # inventory group first (not to cassandra_seeds), then:
 #   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=my_cluster -e cassandra_new_nodes=node7,node8
 # The cluster is checked before and after each node; the run stops at the
-# first problem. Nodes already in the ring are only checked (re-running is safe);
-# a node half added (in the ring without data, data without ring) is refused.
+# first problem. Nodes already in the ring are only checked (re-running is safe),
+# a node still bootstrapping (an earlier run that stopped waiting) is waited for
+# again; a node half added (in the ring without data, data without ring) is refused.
+# A bootstrap can take hours: the wait is cassandra_service_join_timeout (1 day).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
@@ -40,6 +42,22 @@
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
             tasks_from: new_node_state.yml
+
+        # Cassandra starts no bootstrap while another one runs: this node would fail to start
+        - name: A still bootstrapping node goes before the new ones
+          ansible.builtin.assert:
+            that: cassandra_new_node_state != 'new' or _joining_after | length == 0
+            fail_msg: >-
+              {{ _joining_after | join(', ') }} still bootstrapping (an earlier run): put
+              {{ 'it' if _joining_after | length == 1 else 'them' }} before {{ inventory_hostname }} in cassandra_new_nodes,
+              so add_node waits for it before starting a new node.
+            quiet: true
+          vars:
+            _joining_after: >-
+              {{ ansible_play_hosts_all[ansible_play_hosts_all.index(inventory_hostname) + 1:]
+                 | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
+                 | selectattr('cassandra_new_node_state', 'equalto', 'joining')
+                 | map(attribute='inventory_hostname') | list }}
       rescue:
         - name: Record the refusal
           ansible.builtin.set_fact:
@@ -68,13 +86,21 @@
       vars:
         cassandra_service_node_action: add
         cassandra_service_node_checks_before: false
-        # not in the ring yet: this node and the ones after it that never joined
+        # not in the ring yet: this node and the ones after it that never started
         _pending: >-
           {{ ansible_play_hosts_all[ansible_play_hosts_all.index(inventory_hostname):]
-             | map('extract', hostvars, 'cassandra_new_node_joined') | reject | list | length }}
+             | map('extract', hostvars, 'cassandra_new_node_state') | select('equalto', 'new') | list | length }}
         cassandra_service_expected_before: "{{ groups[cassandra_hosts | default('cassandra')] | length - _pending | int }}"
         cassandra_service_expected_after: >-
-          {{ groups[cassandra_hosts | default('cassandra')] | length - _pending | int + (0 if cassandra_new_node_joined else 1) }}
+          {{ groups[cassandra_hosts | default('cassandra')] | length - _pending | int + (1 if cassandra_new_node_state == 'new' else 0) }}
+        # bootstraps an earlier run started (UJ, waited for in turn): not a problem around the
+        # nodes before them (a new node never comes before them, see above)
+        _joining: >-
+          {{ ansible_play_hosts_all[ansible_play_hosts_all.index(inventory_hostname):]
+             | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'equalto', 'joining')
+             | map(attribute='cassandra_new_node_address') | list }}
+        cassandra_service_joining_before: "{{ _joining }}"
+        cassandra_service_joining_after: "{{ _joining | reject('equalto', cassandra_new_node_address) | list }}"
 
 - name: Summary
   hosts: "{{ cassandra_new_nodes }}"

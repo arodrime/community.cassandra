@@ -88,3 +88,14 @@ def test_expected_down_node_is_not_a_problem():
     ring = [node("10.0.0.1"), node("10.0.0.2", status="D")]
     assert problems([view("n1", *ring)], expected=2, down_ok=["10.0.0.2"]) == []
     assert problems([view("n1", *ring)], expected=2, down_ok=["10.0.0.9"]) == ["10.0.0.2 (r1) is DN, seen from n1"]
+
+
+def test_expected_joining_node_is_not_a_problem():
+    ring = [node("10.0.0.1"), node("10.0.0.2", state="J")]
+    assert problems([view("n1", *ring)], expected=2, joining_ok=["10.0.0.2"]) == []
+    assert problems([view("n1", *ring)], expected=2, joining_ok=["10.0.0.9"]) == ["10.0.0.2 (r1) is UJ, seen from n1"]
+    # only joining: the same node down or leaving is still a problem
+    for status, state in (("D", "J"), ("U", "L"), ("D", "N")):
+        down = [node("10.0.0.1"), node("10.0.0.2", status=status, state=state)]
+        assert problems([view("n1", *down)], expected=2, joining_ok=["10.0.0.2"]) == [
+            "10.0.0.2 (r1) is %s%s, seen from n1" % (status, state)]
