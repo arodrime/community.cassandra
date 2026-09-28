@@ -400,3 +400,13 @@ def test_safe_reasons_only_match_the_error_shapes():
     # a value shaped like the error text is not picked up
     assert cassandra_import_error({"failed": True, "msg": "bad value: pw has no attribute 'hunter2' here"}) == ""
     assert cassandra_import_error({"failed": True, "msg": "bad value: x 'hunter2' is undefined here"}) == ""
+
+
+def test_password_in_a_value_is_a_secret():
+    # the unit's Environment, imported as cassandra_service_environment
+    env = {"LOCAL_JMX": "no", "JVM_EXTRA_OPTS": "-Djavax.net.ssl.keyStorePassword=xyz -Dx=1"}
+    files = cassandra_inventory_files({"group_vars": {"c": {"cassandra_service_environment": env,
+                                                            "cassandra_cluster_name": "Prod"}},
+                                       "host_vars": {}})
+    assert [f["path"] for f in files] == ["group_vars/c/main.yml", "group_vars/c/secrets.yml"]
+    assert "xyz" not in files[0]["content"] and "xyz" in files[1]["content"]

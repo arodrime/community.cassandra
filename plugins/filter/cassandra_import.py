@@ -552,6 +552,8 @@ def _secret(key, value):
         return any(_secret(k, v) for k, v in value.items())
     if isinstance(value, list):
         return bool(SECRET.search(key)) or any(_secret(key, v) for v in value if isinstance(v, dict))
+    if isinstance(value, str) and SECRET_VALUE.search(value):
+        return True  # e.g. a unit's JVM_EXTRA_OPTS=-Djavax.net.ssl.keyStorePassword=...
     return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
 
 

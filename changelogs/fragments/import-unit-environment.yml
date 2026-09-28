@@ -1,3 +1,3 @@
 bugfixes:
-  - import_cluster - the rest of the systemd unit's Environment (e.g. LOCAL_JMX=no, a heap not imported as variables) is kept as cassandra_service_environment, and an EnvironmentFile is reported; cassandra_service's unit dropped them (remote JMX turned off at the next restart).
+  - import_cluster - the rest of the systemd unit's Environment (e.g. LOCAL_JMX=no, a heap not imported as variables) is kept as cassandra_service_environment, and an EnvironmentFile is reported; cassandra_service's unit dropped them (remote JMX turned off at the next restart); a value holding a password puts it in secrets.yml.
   - import_cluster - the JMX login written to the inventory is read on the given nodes (-e or their inventory), not on the controller; an unreachable given node is listed when no node answered.
