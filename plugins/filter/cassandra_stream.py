@@ -25,7 +25,8 @@ def _duration(seconds):
     return "%dm%02ds" % (seconds // 60, seconds % 60)
 
 
-def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, width=20):
+def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4,
+                              width=20):
     """views: the results of cassandra_netstats looped over hosts (item: the
     host, then the module's return values); state: what
     the previous call returned (None the first time); now: epoch seconds.
@@ -36,7 +37,8 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     total, done, gone), tables ({keyspace.table: 'done'|'streaming'}),
     progressed (since the previous call), last_progress, idle_checks (calls in
     a row without progress), stalled (stall_checks calls in a row without
-    progress), sessions (sessions in netstats now),
+    progress while some session has bytes left, stall_checks * quiet_factor
+    otherwise), transferring, sessions (sessions in netstats now),
     answered (at least one view answered), bytes_done/bytes_total, line (one
     readable line)."""
     state = state or {}
@@ -85,6 +87,12 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
     idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + 1
+    # Nothing left to transfer in netstats (no session yet, or every one at 100%): phases
+    # that show no bytes (ring delay, schema, the write path of tables with views or CDC,
+    # index builds, hints of a decommission, a task queued behind other compactions) get
+    # quiet_factor times more checks before counting as stalled.
+    transferring = any(streams[k]["done"] < streams[k]["total"] for k in current)
+    limit = int(stall_checks) * (1 if transferring else int(quiet_factor))
     total = sum(s["total"] for s in streams.values())
     done = sum(s["done"] for s in streams.values())
     pct = int(100 * done / total) if total else 0
@@ -99,18 +107,17 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     if not answered:
         parts.append("(no answer from nodetool netstats)")
     elif not streams:
-        parts.append("(no stream session yet)")
+        parts.append("(nothing in progress yet)")
     else:
         parts.append("%d session%s" % (len(current), "" if len(current) == 1 else "s"))
     if now_files:
         parts.append("now: " + ", ".join(sorted(set(now_files))[:3]))
     if idle_checks:
-        parts.append("NO PROGRESS for %s (%d check%s)" % (_duration(now - last_progress), idle_checks,
-                                                          "" if idle_checks == 1 else "s"))
+        parts.append("NO PROGRESS for %s (%d/%d checks)" % (_duration(now - last_progress), idle_checks, limit))
     return {
         "start": start, "start_done": start_done, "streams": streams, "tables": tables, "progressed": progressed,
         "last_progress": last_progress, "idle_checks": idle_checks,
-        "stalled": idle_checks >= int(stall_checks), "sessions": len(current),
+        "stalled": idle_checks >= limit, "sessions": len(current), "transferring": transferring,
         "answered": answered, "bytes_done": done, "bytes_total": total, "line": "  ".join(parts),
     }
 
@@ -128,19 +135,30 @@ def _load_bytes(load):
         return None
 
 
+def _user_keyspaces(keyspaces):
+    return dict((name, ks) for name, ks in (keyspaces or {}).items() if not name.startswith("system"))
+
+
+def _ring_wide(keyspaces):
+    """A user keyspace placed around the whole ring, whatever the datacenters
+    (SimpleStrategy...): unknown replication counts as one."""
+    return keyspaces is None or any(ks.get("class") != "NetworkTopologyStrategy" and ks.get("rf")
+                                    for ks in _user_keyspaces(keyspaces).values())
+
+
 def _rack_aware(keyspaces, dc, racks):
-    """True when every user keyspace with replicas in dc (NetworkTopologyStrategy)
-    has as many replicas there as dc has racks: each rack holds a full copy."""
-    if keyspaces is None or racks < 2:
+    """True when every user keyspace has NetworkTopologyStrategy, and those with
+    replicas in dc have as many there as dc has racks: each rack holds a full copy."""
+    if racks < 2 or _ring_wide(keyspaces):
         return False
-    rfs = [ks["rf"][dc] for name, ks in keyspaces.items()
-           if not name.startswith("system") and ks.get("class") == "NetworkTopologyStrategy" and ks["rf"].get(dc)]
+    rfs = [ks["rf"][dc] for ks in _user_keyspaces(keyspaces).values() if ks["rf"].get(dc)]
     return bool(rfs) and all(rf == racks for rf in rfs)
 
 
 def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=None):
-    """What adding new_nodes ([{host, address, dc, rack, in_ring}]; in_ring:
-    already joining or joined, from an earlier run) to
+    """What adding new_nodes ([{host, address, dc, rack, in_ring, state}];
+    in_ring: already in the ring from an earlier run, state: new, joining or
+    joined) to
     the ring in cluster_status (cassandra_status) means. hosts: {address:
     inventory name} of the nodes in the ring; keyspaces: cassandra_keyspaces
     (None: unknown). Returns racks ({dc: {rack: nodes after}}), warnings
@@ -150,6 +168,10 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
     when only the new nodes' racks hand over data, else 'dc'})."""
     hosts = hosts or {}
     racks, warnings, estimate, cleanup, scope = {}, [], [], {}, {}
+    # the nodes that receive data in this run are not cleaned; the ones that joined in
+    # an earlier run are, when others join after them
+    adding = [n for n in new_nodes if n.get("state", "new" if not n.get("in_ring") else "joined") != "joined"]
+    added = set(n.get("address") for n in (adding if adding else new_nodes))
     for dc in sorted(set(n["dc"] for n in new_nodes)):
         ring = (cluster_status.get(dc) or {}).get("nodes", [])
         after = {}
@@ -167,8 +189,7 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
                 "(e.g. 1/%d against 1/%d), so they carry more data and load." % (
                     dc, counts, min(after.values()), max(after.values())))
         aware = _rack_aware(keyspaces, dc, len(after))
-        loads = [(n, _load_bytes(n.get("load"))) for n in ring
-                 if n["status"] + n["state"] == "UN" and n["address"] not in set(m.get("address") for m in new_nodes)]
+        loads = [(n, _load_bytes(n.get("load"))) for n in ring if n["status"] + n["state"] == "UN" and n["address"] not in added]
         for n in [n for n in new_nodes if n["dc"] == dc and not n.get("in_ring")]:
             source = [b for m, b in loads if not aware or m["rack"] == n["rack"]]
             nodes_after = after[n["rack"]] if aware else sum(after.values())
@@ -179,10 +200,16 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
         scope[dc] = "rack" if aware else "dc"
         new_racks = set(n["rack"] for n in new_nodes if n["dc"] == dc)
         # the nodes up and normal now (not the ones joining) that hand over ranges
-        added = set(n.get("address") for n in new_nodes)
         cleanup[dc] = [hosts.get(n["address"], n["address"]) for n in ring
                        if n["status"] + n["state"] == "UN" and n["address"] not in added
                        and (not aware or n["rack"] in new_racks)]
+    if _ring_wide(keyspaces) and keyspaces is not None:
+        # replicas placed around the whole ring: every datacenter hands data over
+        for dc in cluster_status:
+            if dc not in cleanup:
+                scope[dc] = "dc"
+                cleanup[dc] = [hosts.get(n["address"], n["address"]) for n in cluster_status[dc].get("nodes", [])
+                               if n["status"] + n["state"] == "UN" and n["address"] not in added]
     return {"racks": racks, "warnings": warnings, "estimate": estimate, "cleanup": cleanup, "scope": scope}
 
 

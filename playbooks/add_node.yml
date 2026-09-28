@@ -120,7 +120,7 @@
       vars:
         _new_info: >-
           [{% for h in ansible_play_hosts_all %}{"host": {{ h | to_json }}, "dc": {{ hostvars[h]._cassandra_preflight.cassandra_dc | to_json }},
-           "rack": {{ hostvars[h]._cassandra_preflight.cassandra_rack | to_json }}, "in_ring": {{ (h not in _new) | to_json }},
+           "rack": {{ hostvars[h]._cassandra_preflight.cassandra_rack | to_json }}, "in_ring": {{ (h not in _new) | to_json }}, "state": {{ hostvars[h].cassandra_new_node_state | to_json }},
            "address": {{ hostvars[h]._cassandra_preflight.address | to_json }}}
            {{- '' if loop.last else ',' }}{% endfor %}]
         _hosts: >-

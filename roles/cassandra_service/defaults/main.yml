@@ -52,7 +52,9 @@ cassandra_service_wait_timeout: 600  # seconds
 # make progress: every cassandra_stream_check_interval seconds nodetool
 # netstats is read and a progress line printed; the run fails only after
 # cassandra_stream_stall_checks checks in a row with nothing streamed (no
-# byte, no file, no session started or ended). No overall limit
+# byte, no file, no session started or ended), 4 times as many while nothing
+# is left to transfer (before the first session, index or view builds after
+# the streams, hints of a decommission, a cleanup queued behind compactions). No overall limit
 # unless cassandra_stream_max_time is set (seconds, 0: none).
 cassandra_stream_check_interval: 300  # seconds
 cassandra_stream_stall_checks: 3
@@ -61,6 +63,10 @@ cassandra_stream_max_time: 0  # seconds, 0: no limit
 # command; one: run it one node at a time; rack, dc: the nodes of a rack, of a
 # datacenter together, one batch after the other; all: every node at once.
 cassandra_add_node_cleanup: none
+
+# checks per include level of the progress waits: Ansible nests every include
+# one level deeper and fails past ~200 levels (24 x 150 checks: 300 h at 300 s)
+_cassandra_stream_round_size: 24
 
 # Confirmation prompts of long operations warn when the controller's shell is
 # not inside tmux or screen (a lost SSH session would stop the run)

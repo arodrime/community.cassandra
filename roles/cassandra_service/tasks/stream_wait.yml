@@ -4,7 +4,10 @@
 # data streams, prints one progress line, and fails only after
 # cassandra_stream_stall_checks checks in a row without any byte or file
 # streamed (or after cassandra_stream_max_time,
-# when set). Includes itself until done. The caller sets:
+# when set). Rounds of _cassandra_stream_round_size checks (stream_check.yml, one
+# flat loop), then includes itself for the next round until done: one include
+# level per round, not per check (Ansible nests every include one level deeper).
+# The caller sets:
 #   _cassandra_stream_what: what is waited for, for the messages (e.g. "bootstrap of node7")
 #   _cassandra_stream_operations: netstats session operations to follow (e.g. ['Bootstrap'])
 #   _cassandra_stream_from: hosts whose netstats show the streams
@@ -14,109 +17,17 @@
 #     node's nodetool can't answer during its bootstrap (5.0.0 to 5.0.4, CASSANDRA-19902)
 #   _cassandra_stream_advice: what to check when it stalls
 # and resets _cassandra_stream_state to {} before the first include.
-- name: Read the streams
-  community.cassandra.cassandra_netstats:
-  module_defaults:
-    community.cassandra.cassandra_netstats: >-
-      {{ _cassandra_service_jmx | combine({'port': hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
-  delegate_to: "{{ item }}"
-  loop: "{{ _cassandra_stream_from }}"
-  register: cassandra_stream_read
-  failed_when: false
-
-# This node's netstats, when it is one of them (a bootstrap: its mode says when it is over)
-- name: Keep this node's answer
+- name: Start a round of checks
   ansible.builtin.set_fact:
-    _cassandra_stream_self: >-
-      {{ cassandra_stream_read.results | selectattr('item', 'equalto', inventory_hostname) | first | default({}) }}
-    _cassandra_stream_blind: >-
-      {{ 'InstanceNotFoundException' in (cassandra_stream_read.results | selectattr('item', 'equalto', inventory_hostname)
-                                         | first | default({})).stderr | default('') }}
+    _cassandra_stream_status: going
 
-- name: Read the streams from the other side
-  community.cassandra.cassandra_netstats:
-  module_defaults:
-    community.cassandra.cassandra_netstats: >-
-      {{ _cassandra_service_jmx | combine({'port': hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
-  delegate_to: "{{ item }}"
-  loop: "{{ _cassandra_stream_peers | default([]) }}"
-  register: cassandra_stream_read_peers
-  failed_when: false
-  when: _cassandra_stream_blind | bool
+- name: Check the progress, every {{ cassandra_stream_check_interval }}s
+  ansible.builtin.include_tasks: stream_check.yml
+  loop: "{{ range(_cassandra_stream_round_size | int) | list }}"
+  loop_control:
+    loop_var: _cassandra_stream_round
+    label: "{{ _cassandra_stream_round + 1 }}"
 
-- name: Check the job
-  ansible.builtin.async_status:
-    jid: "{{ _cassandra_stream_job.jid }}"
-  delegate_to: "{{ _cassandra_stream_job.host }}"
-  register: cassandra_stream_job_status
-  ignore_errors: true  # a failed job is reported below
-  when: _cassandra_stream_job is defined
-
-- name: Work out the progress
-  ansible.builtin.set_fact:
-    _cassandra_stream_state: >-
-      {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
-           now=now().timestamp() | int, operations=_cassandra_stream_operations,
-           peer=(_address if _blind else None), stall_checks=cassandra_stream_stall_checks | int) }}
-  vars:
-    _blind: "{{ _cassandra_stream_blind | bool }}"
-    _address: >-
-      {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
-         else ansible_facts['default_ipv4']['address'] | default('') }}
-    _views: "{{ cassandra_stream_read_peers.results if _blind else cassandra_stream_read.results }}"
-
-- name: Progress of the {{ _cassandra_stream_what }}
-  ansible.builtin.debug:
-    msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state.line }}{{ _mode }}"
-  vars:
-    _mode: "{{ ('  mode ' ~ _cassandra_stream_self.mode) if _cassandra_stream_self.mode | default('') else '' }}"
-
-- name: Where it stands
-  ansible.builtin.set_fact:
-    _cassandra_stream_status: >-
-      {{ 'done' if (_join and _self_mode == 'NORMAL') or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
-         else 'job_failed' if _job and _job_status.finished | default(0) | int == 1
-         else 'job_lost' if _job and _job_status.failed | default(false)
-         else 'join_failed' if _join and _self_mode == 'JOINING_FAILED'
-         else 'stopped' if _join and 'Connection refused' in _cassandra_stream_self.stderr | default('')
-         else 'stalled' if _cassandra_stream_state.stalled
-         else 'too_long' if cassandra_stream_max_time | int > 0
-                            and now().timestamp() | int - _cassandra_stream_state.start | int >= cassandra_stream_max_time | int
-         else 'going' }}
-  vars:
-    _join: "{{ _cassandra_stream_join | default(false) | bool }}"
-    _job: "{{ _cassandra_stream_job is defined }}"
-    _job_status: "{{ cassandra_stream_job_status | default({}) }}"
-    _self_mode: "{{ _cassandra_stream_self.mode | default('') }}"
-
-- name: Stop when it failed or stopped moving
-  ansible.builtin.fail:
-    msg: >-
-      {{ inventory_hostname }}, {{ _cassandra_stream_what }}:
-      {%- if _cassandra_stream_status == 'job_failed' %}
-      failed: {{ [cassandra_stream_job_status.msg | default('')] | flatten | join(' ') }} {{ cassandra_stream_job_status.stderr | default('') }}
-      {%- elif _cassandra_stream_status == 'job_lost' %}
-      the job running it can't be read ({{ cassandra_stream_job_status.msg | default('') }}): check the node (nodetool netstats, system.log).
-      {%- elif _cassandra_stream_status == 'join_failed' %}
-      the bootstrap failed (Mode JOINING_FAILED): see why in its system.log. {{ _cassandra_stream_advice | default('') }}
-      {%- elif _cassandra_stream_status == 'stopped' %}
-      Cassandra stopped during the bootstrap: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
-      {%- elif _cassandra_stream_status == 'stalled' %}
-      no streaming progress in {{ cassandra_stream_stall_checks }} checks in a row, {{ cassandra_stream_check_interval }}s
-      apart (cassandra_stream_stall_checks, cassandra_stream_check_interval). Nothing was
-      stopped: {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
-      {%- else %}
-      still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:
-      {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
-      {%- endif %}
-      Last progress: {{ _cassandra_stream_state.line }}
-  when: _cassandra_stream_status not in ['done', 'going']
-
-- name: Wait before the next check
-  ansible.builtin.pause:
-    seconds: "{{ cassandra_stream_check_interval | int }}"
-  when: _cassandra_stream_status == 'going'
-
-- name: Check again
+- name: Next round of checks
   ansible.builtin.include_tasks: stream_wait.yml
   when: _cassandra_stream_status == 'going'

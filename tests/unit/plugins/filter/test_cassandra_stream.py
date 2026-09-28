@@ -36,7 +36,7 @@ def test_stall_after_checks_in_a_row_without_bytes():
     views = [read("n4", session("10.0.0.1", 10, 100))]
     s = cassandra_stream_progress(views, None, now=0, stall_checks=3)
     s = cassandra_stream_progress(views, s, now=300, stall_checks=3)
-    assert not s["progressed"] and not s["stalled"] and "NO PROGRESS for 5m00s (1 check)" in s["line"]
+    assert not s["progressed"] and not s["stalled"] and "NO PROGRESS for 5m00s (1/3 checks)" in s["line"]
     s = cassandra_stream_progress(views, s, now=600, stall_checks=3)
     assert not s["stalled"] and s["idle_checks"] == 2
     # one more byte resets the count
@@ -56,8 +56,8 @@ def test_finished_session_counts_as_done_and_as_progress():
 
 def test_no_session_yet_then_no_answer():
     s = cassandra_stream_progress([read("n4")], None, now=0)
-    assert "(no stream session yet)" in s["line"] and s["bytes_total"] == 0
-    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=100, stall_checks=1)
+    assert "(nothing in progress yet)" in s["line"] and s["bytes_total"] == 0
+    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=100, stall_checks=1, quiet_factor=1)
     assert not s["answered"] and s["stalled"] and "(no answer from nodetool netstats)" in s["line"]
 
 
@@ -121,7 +121,8 @@ def test_joining_node_not_counted_twice_and_not_cleaned():
 
 def test_run_again_after_the_join_excludes_the_new_node():
     ring = {"dc1": {"nodes": [node("10.0.0.1", "r1"), node("10.0.0.7", "r1", load="50.0 GiB")]}}
-    plan = cassandra_add_node_plan(ring, [{"host": "n7", "address": "10.0.0.7", "dc": "dc1", "rack": "r1", "in_ring": True}],
+    plan = cassandra_add_node_plan(ring, [{"host": "n7", "address": "10.0.0.7", "dc": "dc1", "rack": "r1", "in_ring": True,
+                                           "state": "joined"}],
                                    hosts={"10.0.0.1": "n1"})
     assert plan["cleanup"] == {"dc1": ["n1"]} and plan["racks"] == {"dc1": {"r1": 2}} and plan["estimate"] == []
 
@@ -173,3 +174,30 @@ def test_cleanup_progress_line_and_failed_read():
     assert views[1]["failed"]
     s = cassandra_stream_progress(views, None, now=0, operations=["Cleanup"])
     assert s["bytes_total"] == 4194304 and "now: orders.items (on n1)" in s["line"]
+
+
+def test_quiet_phases_get_more_checks():
+    # every session at 100% (e.g. views written through the write path) or none yet
+    for views in ([read("n4", session("10.0.0.1", 100, 100))], [read("n4")]):
+        s = cassandra_stream_progress(views, None, now=0, stall_checks=3, quiet_factor=4)
+        for i in range(1, 12):
+            s = cassandra_stream_progress(views, s, now=i * 300, stall_checks=3, quiet_factor=4)
+        assert not s["transferring"] and s["idle_checks"] == 11 and not s["stalled"]
+        s = cassandra_stream_progress(views, s, now=12 * 300, stall_checks=3, quiet_factor=4)
+        assert s["stalled"] and "(12/12 checks)" in s["line"]
+
+
+def test_simple_strategy_user_keyspace_cleans_every_dc():
+    keyspaces = dict(NTS3, legacy={"class": "SimpleStrategy", "rf": {"*": 3}})
+    plan = cassandra_add_node_plan(RING, [{"host": "n7", "dc": "dc1", "rack": "r1"}],
+                                   hosts=dict(HOSTS, **{"10.1.0.1": "m1"}), keyspaces=keyspaces)
+    assert plan["scope"] == {"dc1": "dc", "dc2": "dc"}
+    assert plan["cleanup"] == {"dc1": ["n1", "n2", "n3", "n4", "n5", "n6"], "dc2": ["m1"]}
+
+
+def test_node_joined_in_an_earlier_run_is_cleaned_when_another_joins_after():
+    ring = {"dc1": {"nodes": [node("10.0.0.1", "r1"), node("10.0.0.7", "r1")]}}
+    new = [{"host": "n7", "address": "10.0.0.7", "dc": "dc1", "rack": "r1", "in_ring": True, "state": "joined"},
+           {"host": "n8", "address": "10.0.0.8", "dc": "dc1", "rack": "r1", "state": "new"}]
+    plan = cassandra_add_node_plan(ring, new, hosts={"10.0.0.1": "n1", "10.0.0.7": "n7"})
+    assert plan["cleanup"] == {"dc1": ["n1", "n7"]} and plan["racks"] == {"dc1": {"r1": 3}}

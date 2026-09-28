@@ -4,3 +4,4 @@ minor_changes:
   - cassandra_netstats - returns the stream sessions with their progress (``sessions``).
 bugfixes:
   - add_node - a node's bootstrap was waited for only ``cassandra_service_wait_timeout`` (600 seconds), and a run again then refused the node still joining; the bootstrap is now waited for as long as it makes progress, and a run again waits for a bootstrap still in progress.
+  - rolling operations (decommission_node, rolling_restart, cleanup...) - the progress file on the controller was written with ``become`` when the play used it (``-b``), asking for a sudo password on the controller; it is now written as the controller user.

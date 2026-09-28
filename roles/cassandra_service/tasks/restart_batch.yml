@@ -55,6 +55,7 @@
         path: "{{ cassandra_progress_file }}"
         line: "{{ item }}"
       delegate_to: localhost
+      become: false  # the controller: no sudo there
       loop: "{{ _todo }}"
       when: cassandra_progress_file is defined
 

@@ -45,6 +45,7 @@
         path: "{{ cassandra_progress_file }}"
         line: "{{ inventory_hostname }}"
       delegate_to: localhost
+      become: false  # the controller: no sudo there
       when: cassandra_progress_file is defined
 
     - name: Record the result

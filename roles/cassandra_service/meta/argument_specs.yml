@@ -116,6 +116,16 @@ argument_specs:
           - "How long to wait for a started node to reach C(Mode: NORMAL), in seconds."
           - For a node being added or replaced, how long to wait for it to answer on JMX (then
             the bootstrap is waited for as long as it makes progress, see C(cassandra_stream_stall_checks)).
+      cassandra_add_node_cleanup:
+        type: str
+        default: none
+        choices: [none, one, rack, dc, all]
+        description:
+          - What the C(add_node) playbook does, after the add, about the cleanup of the nodes that handed
+            data over (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
+            replicas as racks there). C(none) prints the command; C(one) runs it one node at a time;
+            C(rack) and C(dc) clean the nodes of a rack, of a datacenter together, one batch after the other;
+            C(all) cleans them all at once. The cluster is checked before each batch.
       cassandra_stream_check_interval:
         type: int
         default: 300
