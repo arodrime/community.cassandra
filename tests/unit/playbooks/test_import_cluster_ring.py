@@ -2,7 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # import_cluster reading the ring: nodetool must read the JMX password file
-# (cassandra's, 0400), and a failure must say why.
+# (cassandra's, 0400), a failure must say why, and the nodes found in the
+# ring (add_host) must not hide the given ones.
 
 import os
 
@@ -34,12 +35,6 @@ def test_nodetool_runs_with_become():
             assert play.get("become") is True, play["name"]
 
 
-def test_inventory_written_without_become():
-    # run with -b for the nodes: sudo on the controller would fail (password) or write root's files
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
-    assert write.get("become") is False
-
-
 def test_failure_shows_each_node_error():
     stop = task("Stop if no node answered")
     hostvars = {
@@ -52,3 +47,18 @@ def test_failure_shows_each_node_error():
     errors = templar.template(trust_as_template(stop["vars"]["_errors"]))
     assert errors == ["n1: Unable to determine Cassandra version:  error: ******** (Permission denied)",
                       "n2: unreachable"]
+
+
+def test_given_nodes_found_when_a_discovered_node_comes_first():
+    # add_host puts the nodes found in the ring in groups['all'], maybe first;
+    # only the given ones have import_cluster_given
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    hostvars = {"10.0.0.2": {}, "node1": {"import_cluster_given": ["node1"]}}
+    templar = Templar(loader=DataLoader(), variables={"groups": {"all": ["10.0.0.2", "node1"]}, "hostvars": hostvars})
+    assert templar.template(trust_as_template(write["vars"]["_given"])) == ["node1"]
+
+
+def test_inventory_written_without_become():
+    # run with -b for the nodes: sudo on the controller would fail (password) or write root's files
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    assert write.get("become") is False

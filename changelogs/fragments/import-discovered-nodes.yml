@@ -1,0 +1,3 @@
+bugfixes:
+  - import_cluster - failed writing the inventory ("Match the ring with the hosts") when a node found in the ring (not given) came first in the inventory.
+  - import_cluster - an error while building the inventory, hidden because the variables hold passwords, now says so and how to see it (``-e import_cluster_debug=true``).

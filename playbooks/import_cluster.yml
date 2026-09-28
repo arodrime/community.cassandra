@@ -197,7 +197,8 @@
   gather_facts: false
   become: false  # the files are the user's, whatever -b asks for the nodes
   vars:
-    _given: "{{ hostvars[groups['all'][0]]['import_cluster_given'] }}"
+    # set on the given nodes only (not on the ones add_host found)
+    _given: "{{ groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined') | map(attribute='import_cluster_given') | first }}"
     _ring: >-
       {{ _given | map('extract', hostvars) | map(attribute='import_cluster_ring.cluster_status', default={})
          | select | first | default({}) | community.cassandra.cassandra_ring_nodes }}
@@ -233,108 +234,118 @@
         3. See what the roles would change, changing nothing:
            ansible-playbook -i {{ _dir }}/hosts.yml <your site playbook> --check --diff -e cassandra_hosts={{ _layout.cluster_group }}
   tasks:
-    - name: Match the ring with the hosts
-      no_log: true
-      ansible.builtin.set_fact:
-        _nodes: "{{ _nodes | default([]) + [_node] }}"
-      loop: "{{ _ring }}"
-      loop_control:
-        label: "{{ item.address }}"
-      vars:
-        # the given host with that address (interface facts, else its default or connection address)
-        _host: >-
-          {%- set found = [] -%}
-          {%- for h in _given -%}
-          {%-   set addrs = (hostvars[h].ansible_facts.all_ipv4_addresses | default([]))
-                            + [hostvars[h].ansible_facts.default_ipv4.address | default(''), hostvars[h].ansible_host | default('')] -%}
-          {%-   if item.address in addrs -%}{%- set _ = found.append(h) -%}{%- endif -%}
-          {%- endfor -%}
-          {{ found | first | default(item.address) }}
-        _hv: "{{ hostvars[_host] | default({}) }}"
-        _read: "{{ _hv.import_cluster_config is defined }}"
-        _name: >-
-          {{ _host if _host != item.address
-             else (_hv.ansible_facts.hostname | default(item.address)) }}
-        _java: >-
-          {{ ({'cassandra_java_version': _hv.import_cluster_java}
-              if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {})
-             | combine({'cassandra_java_home': _hv.import_cluster_java_home}
-                       if _read and _hv.import_cluster_java_home | default('') != '' else {})
-             | combine({'cassandra_java_package': _hv.import_cluster_java_package}
-                       if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {}) }}
-        # the package cassandra_install would install for that Java (its default)
-        _java_package: >-
-          {{ ('openjdk-' ~ _hv.import_cluster_java | default('') ~ '-jre-headless') if _hv.ansible_facts.os_family | default('') == 'Debian'
-             else ('java-' ~ _hv.import_cluster_java | default('') ~ '-amazon-corretto-headless') if _hv.ansible_facts.distribution | default('') == 'Amazon'
-             else ('java-' ~ _hv.import_cluster_java | default('') ~ '-openjdk-headless') }}
-        # the installed version, so nodes added later get the same one
-        _pkg: >-
-          {{ {'cassandra_package_version': _hv.import_cluster_package | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1')}
-             if _read and _hv.import_cluster_package | default('') else {} }}
-        _conf: >-
-          {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
-              if _read and _hv.import_cluster_conf_dir not in ['/etc/cassandra', '/etc/cassandra/conf'] else {})
-             | combine({'cassandra_log_dir': _hv.import_cluster_log_dir}
-                       if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
-             | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
-                       if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
-             | combine(_unit_heap) }}
-        # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
-        # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE
-        _unit_heap: >-
-          {{ {} if not _read else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
-              if _hv.import_cluster_unit.heap | default('') != ''
-                 and _hv.import_cluster_config.vars.cassandra_heap_size | default('') == ''
-                 and not (_hv.import_cluster_series == '50x' and _hv.import_cluster_unit.cms | default(false) | bool) else {})
-             | combine({'cassandra_heap_newsize': _hv.import_cluster_unit.newsize}
-                       if _hv.import_cluster_unit.newsize | default('') != '' and _hv.import_cluster_series != '50x'
-                          and _hv.import_cluster_config.vars.cassandra_heap_newsize | default('') == '' else {}) }}
-        _node:
-          name: "{{ _name }}"
-          ansible_host: "{{ item.address if _host == item.address else (_hv.ansible_host | default('')) }}"
-          dc: "{{ item.dc }}"
-          rack: "{{ item.rack }}"
-          read: "{{ _read }}"
-          reason: >-
-            {{ 'unreachable' if _hv.import_cluster_running.rc is not defined
-               else ('Cassandra not running' if _hv.import_cluster_running.rc != 0
-               else 'unsupported version ' ~ _hv.import_cluster_version) }}
-          vars: >-
-            {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx))
-               if _read else {} }}
-          hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
-          normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
-          notes:
-            - "{{ _versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?') }}"
-            - "{{ _started }}"
-        _versions: >-
-          {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
-             ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')
-             ~ ((', but /usr/bin/java is ' ~ (_hv.import_cluster_system_java or 'missing')
-                 ~ ': the roles will point it at the running Java')
-                if _hv.import_cluster_java_home | default('')
-                   and _hv.import_cluster_system_java | default('') != _hv.import_cluster_java_home ~ '/bin/java' else '') }}
-        _started: >-
-          {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
-             ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
-             ~ ', at boot: ' ~ (_hv.import_cluster_unit.boot | default('') or '?')
-             ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy'
-             ~ ((', and its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
-             ~ ((', NOT its MAX_HEAP_SIZE=' ~ _hv.import_cluster_unit.heap
-                 ~ (': cassandra-env.sh sets the heap' if _hv.import_cluster_config.vars.cassandra_heap_size | default('')
-                    else ': CMS on 5.0, whose config has no HEAP_NEWSIZE (the automatic heap applies)'))
-                if _hv.import_cluster_unit.heap | default('') and 'cassandra_heap_size' not in _unit_heap else '') ~ ')' }}
-        _install: >-
-          {{ ('package ' ~ _hv.import_cluster_package) if _hv.import_cluster_package | default('')
-             else 'NOT a package install: cassandra_install would install the package next to it' }}
+    # no_log: the variables hold the passwords read from the config
+    - name: Build the inventory
+      block:
+        - name: Match the ring with the hosts
+          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+          ansible.builtin.set_fact:
+            _nodes: "{{ _nodes | default([]) + [_node] }}"
+          loop: "{{ _ring }}"
+          loop_control:
+            label: "{{ item.address }}"
+          vars:
+            # the given host with that address (interface facts, else its default or connection address)
+            _host: >-
+              {%- set found = [] -%}
+              {%- for h in _given -%}
+              {%-   set addrs = (hostvars[h].ansible_facts.all_ipv4_addresses | default([]))
+                                + [hostvars[h].ansible_facts.default_ipv4.address | default(''), hostvars[h].ansible_host | default('')] -%}
+              {%-   if item.address in addrs -%}{%- set _ = found.append(h) -%}{%- endif -%}
+              {%- endfor -%}
+              {{ found | first | default(item.address) }}
+            _hv: "{{ hostvars[_host] | default({}) }}"
+            _read: "{{ _hv.import_cluster_config is defined }}"
+            _name: >-
+              {{ _host if _host != item.address
+                 else (_hv.ansible_facts.hostname | default(item.address)) }}
+            _java: >-
+              {{ ({'cassandra_java_version': _hv.import_cluster_java}
+                  if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {})
+                 | combine({'cassandra_java_home': _hv.import_cluster_java_home}
+                           if _read and _hv.import_cluster_java_home | default('') != '' else {})
+                 | combine({'cassandra_java_package': _hv.import_cluster_java_package}
+                           if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {}) }}
+            # the package cassandra_install would install for that Java (its default)
+            _java_package: >-
+              {{ ('openjdk-' ~ _hv.import_cluster_java | default('') ~ '-jre-headless') if _hv.ansible_facts.os_family | default('') == 'Debian'
+                 else ('java-' ~ _hv.import_cluster_java | default('') ~ '-amazon-corretto-headless') if _hv.ansible_facts.distribution | default('') == 'Amazon'
+                 else ('java-' ~ _hv.import_cluster_java | default('') ~ '-openjdk-headless') }}
+            # the installed version, so nodes added later get the same one
+            _pkg: >-
+              {{ {'cassandra_package_version': _hv.import_cluster_package | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1')}
+                 if _read and _hv.import_cluster_package | default('') else {} }}
+            _conf: >-
+              {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
+                  if _read and _hv.import_cluster_conf_dir not in ['/etc/cassandra', '/etc/cassandra/conf'] else {})
+                 | combine({'cassandra_log_dir': _hv.import_cluster_log_dir}
+                           if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
+                 | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
+                           if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
+                 | combine(_unit_heap) }}
+            # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
+            # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE
+            _unit_heap: >-
+              {{ {} if not _read else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
+                  if _hv.import_cluster_unit.heap | default('') != ''
+                     and _hv.import_cluster_config.vars.cassandra_heap_size | default('') == ''
+                     and not (_hv.import_cluster_series == '50x' and _hv.import_cluster_unit.cms | default(false) | bool) else {})
+                 | combine({'cassandra_heap_newsize': _hv.import_cluster_unit.newsize}
+                           if _hv.import_cluster_unit.newsize | default('') != '' and _hv.import_cluster_series != '50x'
+                              and _hv.import_cluster_config.vars.cassandra_heap_newsize | default('') == '' else {}) }}
+            _node:
+              name: "{{ _name }}"
+              ansible_host: "{{ item.address if _host == item.address else (_hv.ansible_host | default('')) }}"
+              dc: "{{ item.dc }}"
+              rack: "{{ item.rack }}"
+              read: "{{ _read }}"
+              reason: >-
+                {{ 'unreachable' if _hv.import_cluster_running.rc is not defined
+                   else ('Cassandra not running' if _hv.import_cluster_running.rc != 0
+                   else 'unsupported version ' ~ _hv.import_cluster_version) }}
+              vars: >-
+                {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx))
+                   if _read else {} }}
+              hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
+              normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
+              notes:
+                - "{{ _versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?') }}"
+                - "{{ _started }}"
+            _versions: >-
+              {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
+                 ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')
+                 ~ ((', but /usr/bin/java is ' ~ (_hv.import_cluster_system_java or 'missing')
+                     ~ ': the roles will point it at the running Java')
+                    if _hv.import_cluster_java_home | default('')
+                       and _hv.import_cluster_system_java | default('') != _hv.import_cluster_java_home ~ '/bin/java' else '') }}
+            _started: >-
+              {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
+                 ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
+                 ~ ', at boot: ' ~ (_hv.import_cluster_unit.boot | default('') or '?')
+                 ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy'
+                 ~ ((', and its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
+                 ~ ((', NOT its MAX_HEAP_SIZE=' ~ _hv.import_cluster_unit.heap
+                     ~ (': cassandra-env.sh sets the heap' if _hv.import_cluster_config.vars.cassandra_heap_size | default('')
+                        else ': CMS on 5.0, whose config has no HEAP_NEWSIZE (the automatic heap applies)'))
+                    if _hv.import_cluster_unit.heap | default('') and 'cassandra_heap_size' not in _unit_heap else '') ~ ')' }}
+            _install: >-
+              {{ ('package ' ~ _hv.import_cluster_package) if _hv.import_cluster_package | default('')
+                 else 'NOT a package install: cassandra_install would install the package next to it' }}
 
-    - name: Lay out groups and variables
-      no_log: true
-      ansible.builtin.set_fact:
-        _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout(_cluster_name) }}"
-      vars:
-        _cluster_name: >-
-          {{ _nodes | selectattr('read') | map(attribute='vars.cassandra_cluster_name') | first | default('cassandra') }}
+        - name: Lay out groups and variables
+          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+          ansible.builtin.set_fact:
+            _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout(_cluster_name) }}"
+          vars:
+            _cluster_name: >-
+              {{ _nodes | selectattr('read') | map(attribute='vars.cassandra_cluster_name') | first | default('cassandra') }}
+      rescue:
+        - name: Say how to see the error
+          ansible.builtin.fail:
+            msg: >-
+              "{{ ansible_failed_task.name | default('?') }}" failed{{ ': its error is above.'
+              if import_cluster_debug | default(false) | bool else ', its error is hidden (the variables hold passwords).'
+              ~ ' Rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
 
     - name: Pick the output dir
       ansible.builtin.set_fact:
