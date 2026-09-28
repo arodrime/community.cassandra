@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_install - with both cassandra_java_home (e.g. from import_cluster) and cassandra_java_tarball (for new nodes) set, a Java already in cassandra_java_home is kept (one the role left half unpacked is still unpacked again); it was emptied and unpacked again, under the running node.

@@ -8,10 +8,27 @@
     path: "{{ _cassandra_java_home }}/.unpacked"
   register: cassandra_java_tarball_done
 
+# A Java given by its directory (cassandra_java_home, e.g. imported) that is
+# already there, and not left half unpacked by this role (.unpacking), was
+# installed by other means: kept, the tarball is for the nodes without it (new
+# nodes). Emptying it would pull the running node's Java.
+- name: Look for a Java already in cassandra_java_home
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/bin/java"
+  register: cassandra_java_home_present
+  when: cassandra_java_home != ""
+
+- name: Look for an unpack left half done
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacking"
+  register: cassandra_java_tarball_started
+  when: cassandra_java_home != ""
+
 - name: Unpack the Java tarball
   when:
     - cassandra_java_tarball != ""
     - not cassandra_java_tarball_done.stat.exists
+    - not (cassandra_java_home_present.stat.exists | default(false)) or cassandra_java_tarball_started.stat.exists | default(false)
   vars:
     _local: "/var/tmp/{{ _cassandra_java_tarball_name }}"
     _from_url: "{{ cassandra_java_tarball is match('https?://') }}"
@@ -61,6 +78,12 @@
         mode: "0755"
       loop: [absent, directory]
 
+    - name: Mark the unpack started
+      ansible.builtin.copy:
+        content: "{{ cassandra_java_tarball }}\n"
+        dest: "{{ _cassandra_java_home }}/.unpacking"
+        mode: "0644"
+
     # Under --check nothing was downloaded or created
     - name: Unpack Java
       ansible.builtin.unarchive:
@@ -77,6 +100,11 @@
         content: "{{ cassandra_java_tarball }}\n"
         dest: "{{ _cassandra_java_home }}/.unpacked"
         mode: "0644"
+
+    - name: Remove the started mark
+      ansible.builtin.file:
+        path: "{{ _cassandra_java_home }}/.unpacking"
+        state: absent
 
   always:
     - name: Remove the tarball

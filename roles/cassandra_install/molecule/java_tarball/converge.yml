@@ -44,3 +44,76 @@
     - name: It is still the hand-made link
       ansible.builtin.assert:
         that: cassandra_test_java.stat.lnk_target == _home ~ '/bin/java'
+
+# An imported node with a tarball set for the new nodes (cassandra_java_tarball
+# next to the imported cassandra_java_home): its Java, unpacked by hand (no
+# .unpacked mark), must not be emptied and unpacked again.
+- name: Java already there, tarball set for new nodes
+  hosts: all
+  vars:
+    _home: /opt/cassandra-java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1
+  tasks:
+    - name: Unpacked by hand (mark moved away), with a file of the site
+      ansible.builtin.shell: mv {{ _home }}/.unpacked /root/.unpacked && touch {{ _home }}/site-file
+      changed_when: false
+
+    - name: Run the role with the tarball and that Java
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+      vars:
+        cassandra_java_home: /opt/current-java
+        cassandra_java_tarball: https://mirror.invalid/java/jdk.tar.gz  # never downloaded
+        cassandra_java_version: "17"
+
+    - name: Read the site's file
+      ansible.builtin.stat:
+        path: "{{ _home }}/site-file"
+      register: cassandra_test_site_file
+
+    - name: The Java directory was kept
+      ansible.builtin.assert:
+        that: cassandra_test_site_file.stat.exists
+
+    - name: Back as the first play left it
+      ansible.builtin.shell: mv /root/.unpacked {{ _home }}/.unpacked && rm {{ _home }}/site-file
+      changed_when: false
+
+# The same, but the role's own unpack was cut short (its .unpacking mark left,
+# bin/java already there): unpacked again. Once, the redo is a change.
+- name: Unpack left half done, redone
+  hosts: all
+  vars:
+    _home: /opt/cassandra-java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1
+  tasks:
+    - name: Tested already (idempotence run)
+      ansible.builtin.stat:
+        path: /root/half-unpack-tested
+      register: cassandra_test_half_done
+
+    - name: Test it
+      when: not cassandra_test_half_done.stat.exists
+      block:
+        - name: Cut short after bin/java
+          ansible.builtin.shell: >-
+            mv {{ _home }}/.unpacked {{ _home }}/.unpacking && rm -rf {{ _home }}/lib && touch {{ _home }}/site-file
+            /root/half-unpack-tested
+          changed_when: false
+
+        - name: Run the role with the tarball and that Java
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_java_home: "{{ _home }}"
+            cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+            cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+            cassandra_java_version: "17"
+
+        - name: Read the directory
+          ansible.builtin.stat:
+            path: "{{ _home }}/{{ item }}"
+          loop: [site-file, lib, .unpacked, .unpacking]
+          register: cassandra_test_redone
+
+        - name: Unpacked again, whole, and marked done
+          ansible.builtin.assert:
+            that: cassandra_test_redone.results | map(attribute='stat.exists') | list == [false, true, true, false]
