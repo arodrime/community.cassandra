@@ -1,7 +1,15 @@
 ---
-cassandra_version: "41x"
+cassandra_version: "50x"
 debian_packages:
   - apt-transport-https
   - curl
   - gnupg
+  - python3-debian
 cassandra_apt_keyring_path: /etc/apt/keyrings/apache-cassandra.asc
+cassandra_rpm_key_path: /etc/pki/rpm-gpg/apache-cassandra.asc
+# Signing keys of the Apache Cassandra releases. "" = the copy shipped with
+# the role (files/KEYS); a URL (e.g. a mirror) is downloaded instead, and
+# must hold only keys whose fingerprint is in this list (default: the keys
+# of the shipped copy).
+cassandra_repository_key_url: ""
+cassandra_repository_key_fingerprints: "{{ _cassandra_repository_shipped_fingerprints }}"

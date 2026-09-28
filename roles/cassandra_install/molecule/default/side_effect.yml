@@ -1,0 +1,20 @@
+---
+- name: Side effect
+  hosts: all
+  tasks:
+    - name: Leave the policy-rc.d of an interrupted run (Debian)
+      ansible.builtin.copy:
+        content: "#!/bin/sh\n# Managed by Ansible (cassandra_install), removed after the install\nexit 101\n"
+        dest: /usr/sbin/policy-rc.d
+        mode: "0755"
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install a cqlsh by hand in /usr/local/bin
+      ansible.builtin.copy:
+        content: "#!/bin/sh\n# installed by hand\nexec /usr/bin/cqlsh \"$@\"\n"
+        dest: /usr/local/bin/cqlsh
+        mode: "0755"
+
+    - name: Run the role again
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
