@@ -1,0 +1,2 @@
+bugfixes:
+  - import_cluster - a heap set in the systemd unit (Environment=MAX_HEAP_SIZE, HEAP_NEWSIZE) is imported as cassandra_heap_size/cassandra_heap_newsize (not on 5.0 with CMS, whose config has no HEAP_NEWSIZE); cassandra_service replaces that unit, and new nodes got the automatic heap.

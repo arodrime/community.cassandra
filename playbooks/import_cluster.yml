@@ -104,8 +104,9 @@
         echo "config=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)"
         echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
+        echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
         # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
-        for p in FragmentPath SourcePath Restart UnitFileState; do
+        for p in FragmentPath SourcePath Restart UnitFileState Environment; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
         done
         bin=$(readlink -f /proc/$pid/exe)
@@ -138,6 +139,10 @@
           file: "{{ _kv.unit_SourcePath | default('') or _kv.unit_FragmentPath | default('') }}"
           restart: "{{ _kv.unit_Restart | default('') }}"
           boot: "{{ _kv.unit_UnitFileState | default('') }}"
+          # the heap set in the unit (Environment=MAX_HEAP_SIZE=...), lost when cassandra_service replaces it
+          heap: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)MAX_HEAP_SIZE=(\\S+)') | first | default('') }}"
+          newsize: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)HEAP_NEWSIZE=(\\S+)') | first | default('') }}"
+          cms: "{{ _kv.cms | default('0') != '0' }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
       when: import_cluster_running.rc | default(1) == 0
@@ -243,7 +248,18 @@
              | combine({'cassandra_log_dir': _hv.import_cluster_log_dir}
                        if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
              | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
-                       if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {}) }}
+                       if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
+             | combine(_unit_heap) }}
+        # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
+        # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE
+        _unit_heap: >-
+          {{ {} if not _read else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
+              if _hv.import_cluster_unit.heap | default('') != ''
+                 and _hv.import_cluster_config.vars.cassandra_heap_size | default('') == ''
+                 and not (_hv.import_cluster_series == '50x' and _hv.import_cluster_unit.cms | default(false) | bool) else {})
+             | combine({'cassandra_heap_newsize': _hv.import_cluster_unit.newsize}
+                       if _hv.import_cluster_unit.newsize | default('') != '' and _hv.import_cluster_series != '50x'
+                          and _hv.import_cluster_config.vars.cassandra_heap_newsize | default('') == '' else {}) }}
         _node:
           name: "{{ _name }}"
           ansible_host: "{{ item.address if _host == item.address else (_hv.ansible_host | default('')) }}"
@@ -273,7 +289,12 @@
           {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
              ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
              ~ ', at boot: ' ~ (_hv.import_cluster_unit.boot | default('') or '?')
-             ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy)' }}
+             ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy'
+             ~ ((', and its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
+             ~ ((', NOT its MAX_HEAP_SIZE=' ~ _hv.import_cluster_unit.heap
+                 ~ (': cassandra-env.sh sets the heap' if _hv.import_cluster_config.vars.cassandra_heap_size | default('')
+                    else ': CMS on 5.0, whose config has no HEAP_NEWSIZE (the automatic heap applies)'))
+                if _hv.import_cluster_unit.heap | default('') and 'cassandra_heap_size' not in _unit_heap else '') ~ ')' }}
         _install: >-
           {{ ('package ' ~ _hv.import_cluster_package) if _hv.import_cluster_package | default('')
              else 'NOT a package install: cassandra_install would install the package next to it' }}
