@@ -9,7 +9,10 @@
 # variables: encrypted with ansible-vault when import_cluster_vault_password_file
 # (and optionally import_cluster_vault_id) is given, else written 0600 for you
 # to encrypt. JMX access: the cassandra_service variables (cassandra_jmx_port,
-# cassandra_jmx_username, cassandra_jmx_password_file...).
+# cassandra_jmx_username, cassandra_jmx_password_file...), written to the
+# inventory too; -b when only root can read the JMX password file.
+# An error while writing the inventory is hidden (the variables hold
+# passwords): -e import_cluster_debug=true shows it.
 - name: Find the cluster from the given nodes
   hosts: all
   gather_facts: true
@@ -24,7 +27,7 @@
 
     - name: Remember the given nodes (add_host extends the play)
       ansible.builtin.set_fact:
-        import_cluster_given: "{{ ansible_play_hosts }}"
+        import_cluster_given: "{{ ansible_play_hosts_all }}"  # unreachable ones too, for the errors
       run_once: true
 
     - name: Read the ring
@@ -70,7 +73,7 @@
           {%- set out = [] -%}
           {%- for h in import_cluster_given -%}
           {%-   set r = hostvars[h].import_cluster_ring | default({}) -%}
-          {%-   set _ = out.append(h ~ ': ' ~ ('unreachable' if r.unreachable | default(false)
+          {%-   set _ = out.append(h ~ ': ' ~ ('unreachable' if r == {}
                                               else (r.msg | default('no result') ~ ' ' ~ (r.stderr | default('')).splitlines() | first | default(''))
                                                    | trim | truncate(400))) -%}
           {%- endfor -%}
@@ -120,7 +123,7 @@
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
         # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
-        for p in FragmentPath SourcePath Restart UnitFileState Environment; do
+        for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
         done
         bin=$(readlink -f /proc/$pid/exe)
@@ -157,6 +160,9 @@
           heap: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)MAX_HEAP_SIZE=(\\S+)') | first | default('') }}"
           newsize: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)HEAP_NEWSIZE=(\\S+)') | first | default('') }}"
           cms: "{{ _kv.cms | default('0') != '0' }}"
+          # everything else the unit sets (e.g. LOCAL_JMX=no), and the files it reads variables from
+          env: "{{ _kv.unit_Environment | default('') | community.cassandra.cassandra_unit_environment }}"
+          env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
       when: import_cluster_running.rc | default(1) == 0
@@ -204,10 +210,14 @@
          | select | first | default({}) | community.cassandra.cassandra_ring_nodes }}
     _java_default: {40x: "11", 41x: "11", 50x: "17"}
     # the JMX login given for the import, which every later run needs too
+    # (-e, or the given nodes' own inventory: read on the first of them)
     _jmx: >-
-      {{ ({'cassandra_jmx_username': cassandra_jmx_username} if cassandra_jmx_username | default('') else {})
-         | combine({'cassandra_jmx_password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file | default('') else {})
-         | combine({'cassandra_jmx_password': cassandra_jmx_password} if cassandra_jmx_password | default('') else {}) }}
+      {%- set h = hostvars[_given | first] -%}
+      {%- set out = {} -%}
+      {%- for k in ['cassandra_jmx_username', 'cassandra_jmx_password_file', 'cassandra_jmx_password'] -%}
+      {%-   if h[k] | default('') -%}{%- set _ = out.update({k: h[k]}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
     _vault: "{{ import_cluster_vault_password_file | default('') != '' }}"
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
@@ -282,7 +292,16 @@
                            if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
                  | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
                            if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
-                 | combine(_unit_heap) }}
+                 | combine(_unit_heap)
+                 | combine({'cassandra_service_environment': _unit_env} if _unit_env else {}) }}
+            # the rest of the unit's Environment, kept in cassandra_service's unit
+            _unit_env: >-
+              {{ {} if not _read else _hv.import_cluster_unit.env | default({}) | dict2items
+                 | rejectattr('key', 'in', (['MAX_HEAP_SIZE'] if 'cassandra_heap_size' in _unit_heap else [])
+                                           + (['HEAP_NEWSIZE'] if 'cassandra_heap_newsize' in _unit_heap else []))
+                 | rejectattr('key', 'equalto', 'CASSANDRA_LOG_DIR' if _hv.import_cluster_unit.env.CASSANDRA_LOG_DIR | default('')
+                                                == _hv.import_cluster_log_dir | default('') else '')
+                 | items2dict }}
             # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
             # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE
             _unit_heap: >-
@@ -323,11 +342,10 @@
                  ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
                  ~ ', at boot: ' ~ (_hv.import_cluster_unit.boot | default('') or '?')
                  ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy'
-                 ~ ((', and its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
-                 ~ ((', NOT its MAX_HEAP_SIZE=' ~ _hv.import_cluster_unit.heap
-                     ~ (': cassandra-env.sh sets the heap' if _hv.import_cluster_config.vars.cassandra_heap_size | default('')
-                        else ': CMS on 5.0, whose config has no HEAP_NEWSIZE (the automatic heap applies)'))
-                    if _hv.import_cluster_unit.heap | default('') and 'cassandra_heap_size' not in _unit_heap else '') ~ ')' }}
+                 ~ ((', its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
+                 ~ ((', its Environment ' ~ _unit_env.keys() | join(', ') ~ ' as cassandra_service_environment') if _unit_env else '')
+                 ~ ((', NOT its EnvironmentFile ' ~ _hv.import_cluster_unit.env_files ~ ': put what it sets in cassandra_service_environment')
+                    if _hv.import_cluster_unit.env_files | default('') else '') ~ ')' }}
             _install: >-
               {{ ('package ' ~ _hv.import_cluster_package) if _hv.import_cluster_package | default('')
                  else 'NOT a package install: cassandra_install would install the package next to it' }}

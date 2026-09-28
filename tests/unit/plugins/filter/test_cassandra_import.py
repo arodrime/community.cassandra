@@ -15,6 +15,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_ring_nodes,
     cassandra_config_ignored_vars,
     cassandra_inventory_files,
+    cassandra_unit_environment,
     _jmx_users,
     _same_setting,
 )
@@ -300,6 +301,15 @@ def test_encryption_optional_read_back(optional):
 ])
 def test_jmx_users_parsed(password_file, access_file, users):
     assert _jmx_users(password_file, access_file) == users
+
+
+@pytest.mark.parametrize("text, env", [
+    ("CASSANDRA_LOG_DIR=/data/log MAX_HEAP_SIZE=512M", {"CASSANDRA_LOG_DIR": "/data/log", "MAX_HEAP_SIZE": "512M"}),
+    ('LOCAL_JMX=no "JVM_EXTRA_OPTS=-Da=1 -Db=2"', {"LOCAL_JMX": "no", "JVM_EXTRA_OPTS": "-Da=1 -Db=2"}),
+    ("", {}),
+])
+def test_unit_environment(text, env):
+    assert cassandra_unit_environment(text) == env
 
 
 def test_list_under_a_secret_name_is_a_secret():

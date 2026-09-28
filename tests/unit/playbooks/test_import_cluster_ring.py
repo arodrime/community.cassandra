@@ -40,7 +40,7 @@ def test_failure_shows_each_node_error():
     hostvars = {
         "n1": {"import_cluster_ring": {"failed": True, "msg": "Unable to determine Cassandra version: ",
                                        "stderr": "error: ******** (Permission denied)\n-- StackTrace --\n..."}},
-        "n2": {"import_cluster_ring": {"unreachable": True}},
+        "n2": {},  # unreachable: the task never ran there
     }
     variables = {"import_cluster_given": ["n1", "n2"], "hostvars": hostvars}
     templar = Templar(loader=DataLoader(), variables=variables)

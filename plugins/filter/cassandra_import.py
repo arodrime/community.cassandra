@@ -8,6 +8,7 @@ cassandra_config_import: a node's config files -> cassandra_config variables,
 cassandra_inventory_layout: every node's variables -> inventory groups,
     group_vars, host_vars, drift between nodes and the report.
 cassandra_inventory_files: that layout -> the files to write, passwords apart.
+cassandra_unit_environment: systemctl's Environment of a unit -> dict.
 cassandra_config_ignored_vars: variable names, series -> the cassandra_config
     variables among them that series' templates don't use (e.g. 4.0 names after
     an upgrade to 4.1).
@@ -21,6 +22,7 @@ import difflib
 import json
 import os
 import re
+import shlex
 
 import jinja2
 import yaml
@@ -315,6 +317,15 @@ def _jmx_access_file_on(env_sh):
                      env_sh or "", re.M) is not None
 
 
+def cassandra_unit_environment(text):
+    """systemctl show -p Environment --value -> {name: value} (quoted entries kept whole)."""
+    try:
+        words = shlex.split(text or "")
+    except ValueError:
+        words = (text or "").split()
+    return dict(w.split("=", 1) for w in words if "=" in w)
+
+
 def cassandra_config_import(live_files, cassandra_version, facts):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized'}."""
@@ -533,4 +544,5 @@ class FilterModule(object):
             "cassandra_inventory_layout": cassandra_inventory_layout,
             "cassandra_inventory_files": cassandra_inventory_files,
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
+            "cassandra_unit_environment": cassandra_unit_environment,
         }
