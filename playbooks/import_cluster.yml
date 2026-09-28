@@ -170,16 +170,25 @@
       no_log: true  # keystore passwords
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
 
+    # remote JMX users, where cassandra_config writes them
+    - name: Read the JMX users
+      ansible.builtin.slurp:
+        path: "/etc/cassandra/{{ item }}"
+      loop: [jmxremote.password, jmxremote.access]
+      register: import_cluster_jmx_slurp
+      failed_when: false
+      no_log: true
+      when: import_cluster_slurp.results is defined
+
     - name: Turn them into cassandra_config variables
       no_log: true
       ansible.builtin.set_fact:
         import_cluster_config: "{{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts) }}"
       vars:
+        _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
         _live: >-
-          {{ dict(import_cluster_slurp.results | selectattr('content', 'defined')
-                  | map(attribute='item')
-                  | zip(import_cluster_slurp.results | selectattr('content', 'defined')
-                        | map(attribute='content') | map('b64decode'))) }}
+          {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
+                  | zip(_slurped | selectattr('content', 'defined') | map(attribute='content') | map('b64decode'))) }}
       when: import_cluster_series is defined and import_cluster_slurp.results is defined
 
 - name: Write the inventory
@@ -193,6 +202,11 @@
       {{ _given | map('extract', hostvars) | map(attribute='import_cluster_ring.cluster_status', default={})
          | select | first | default({}) | community.cassandra.cassandra_ring_nodes }}
     _java_default: {40x: "11", 41x: "11", 50x: "17"}
+    # the JMX login given for the import, which every later run needs too
+    _jmx: >-
+      {{ ({'cassandra_jmx_username': cassandra_jmx_username} if cassandra_jmx_username | default('') else {})
+         | combine({'cassandra_jmx_password_file': cassandra_jmx_password_file} if cassandra_jmx_password_file | default('') else {})
+         | combine({'cassandra_jmx_password': cassandra_jmx_password} if cassandra_jmx_password | default('') else {}) }}
     _vault: "{{ import_cluster_vault_password_file | default('') != '' }}"
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
@@ -286,7 +300,7 @@
                else ('Cassandra not running' if _hv.import_cluster_running.rc != 0
                else 'unsupported version ' ~ _hv.import_cluster_version) }}
           vars: >-
-            {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf))
+            {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx))
                if _read else {} }}
           hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
           normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"

@@ -1,0 +1,2 @@
+minor_changes:
+  - import_cluster - imports the remote JMX users (/etc/cassandra/jmxremote.password and .access) as cassandra_jmx_users, in secrets.yml, and writes the JMX login given for the import (cassandra_jmx_username, cassandra_jmx_password_file, cassandra_jmx_password) into the inventory, so new nodes get the same JMX access and later runs log in.

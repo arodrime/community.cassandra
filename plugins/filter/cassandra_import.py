@@ -290,6 +290,22 @@ def _leftovers(env, series, files, ctx, live_files):
     return hand, normalized
 
 
+def _jmx_users(password_file, access_file):
+    """cassandra_jmx_users from jmxremote.password and jmxremote.access."""
+    access = {}
+    for line in re.sub(r"\\\n", " ", access_file or "").split("\n"):
+        words = line.split("#")[0].split()
+        if len(words) >= 2:
+            access[words[0]] = words[1]
+    users = []
+    for line in (password_file or "").split("\n"):
+        words = line.split("#")[0].split()
+        if len(words) >= 2:
+            users.append({"name": words[0], "password": words[1],
+                          "access": "readwrite" if access.get(words[0]) == "readwrite" else "readonly"})
+    return users
+
+
 def cassandra_config_import(live_files, cassandra_version, facts):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized'}."""
@@ -323,6 +339,10 @@ def cassandra_config_import(live_files, cassandra_version, facts):
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
         if extras:
             changed["cassandra_extra_settings"] = extras
+    # remote JMX users (the role writes /etc/cassandra/jmxremote.password and .access)
+    users = _jmx_users(live_files.get("jmxremote.password"), live_files.get("jmxremote.access"))
+    if users and found.get("cassandra_local_jmx") is False:
+        changed["cassandra_jmx_users"] = users
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
@@ -438,7 +458,9 @@ def cassandra_inventory_layout(nodes, cluster_name):
 def _secret(key, value):
     if isinstance(value, dict):
         return any(_secret(k, v) for k, v in value.items())
-    return bool(SECRET.search(key))
+    if isinstance(value, list):
+        return any(_secret(key, v) for v in value if isinstance(v, dict))
+    return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
 
 
 def _split_secrets(variables):

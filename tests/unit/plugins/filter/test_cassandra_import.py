@@ -246,6 +246,34 @@ def test_one_data_directory_elsewhere_read_back():
     assert out["hand_edits"] == []
 
 
+def test_remote_jmx_users_read_back():
+    # remote JMX with authentication: its users go to secrets.yml, the files match
+    users = [{"name": "ops", "password": "s3cret", "access": "readwrite"},
+             {"name": "mon", "password": "m0n", "access": "readonly"}]
+    files = node_files("50x", cassandra_local_jmx=False, cassandra_jmx_users=users)
+    files["jmxremote.password"] = "# by hand\nops s3cret\nmon m0n\n"
+    files["jmxremote.access"] = "ops readwrite \\\n    create javax.management.monitor.* \\\n    unregister\nmon readonly\n"
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert out["hand_edits"] == []
+    assert out["vars"]["cassandra_local_jmx"] is False
+    assert out["vars"]["cassandra_jmx_users"] == users
+    layout = cassandra_inventory_files({"group_vars": {"c": out["vars"]}, "host_vars": {}})
+    assert "s3cret" not in layout[0]["content"] and "s3cret" in layout[1]["content"]
+
+
+def test_jmx_users_left_with_local_jmx():
+    files = node_files("50x")
+    files["jmxremote.password"] = "ops s3cret\n"
+    assert "cassandra_jmx_users" not in cassandra_config_import(files, "50x", FACTS)["vars"]
+
+
+def test_password_file_path_is_not_a_secret():
+    files = cassandra_inventory_files({"group_vars": {"c": {"cassandra_jmx_username": "ops",
+                                                            "cassandra_jmx_password_file": "/etc/cassandra/jmx.pw"}},
+                                       "host_vars": {}})
+    assert [f["path"] for f in files] == ["group_vars/c/main.yml"]
+
+
 @pytest.mark.parametrize("series", ["40x", "41x", "50x"])
 def test_remote_jmx_read_back(series):
     # LOCAL_JMX=no: cassandra_local_jmx false (it once came out as a variable named "else")
