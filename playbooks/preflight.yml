@@ -154,6 +154,7 @@
           delay: 10
           changed_when: false
           delegate_to: "{{ _from }}"
+          check_mode: false  # read-only; --check needs it too
           no_log: "{{ cassandra_jmx_password | length > 0 }}"
 
         # e.g. the package's own instance, started by the install with its default config
@@ -179,7 +180,7 @@
             that: _addr in _up
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
-              {{ ('A new node can\'t be a seed (seeds don\'t bootstrap, it would join without its data): add it as a'
+              {{ ("A new node can't be a seed (seeds don't bootstrap, it would join without its data): add it as a"
                   ~ ' regular node, then make it a seed with change_seeds.') if _host and _addr not in _all
                  else 'Bring it back up, or take it out of cassandra_seeds (change_seeds) if it is gone.' if _addr in _all
                  else 'It is not a node of this cluster: check cassandra_seeds.' }}

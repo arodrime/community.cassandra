@@ -118,7 +118,7 @@
   ansible.builtin.fail:
     msg: >-
       {{ ['Cluster not healthy, nothing more is done:'] + cassandra_health_problems
-         + (['A node is down: restart it first (the server, then Cassandra). If the server can\'t be recovered, replace'
+         + (["A node is down: restart it first (the server, then Cassandra). If the server can't be recovered, replace"
              ~ ' the node (replace_node); removing it for good (remove_dead_node) is the rare last resort.']
             if cassandra_health_problems | select('search', ' is D[NLJM],') | list else []) }}
   when:

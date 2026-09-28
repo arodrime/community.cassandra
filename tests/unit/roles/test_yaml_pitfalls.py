@@ -98,6 +98,21 @@ def test_no_doubled_backslash_in_templates(path):
     assert bad == []
 
 
+@pytest.mark.parametrize("path", FILES, ids=ids)
+def test_no_escaped_quote_in_templates(path):
+    # ansible-core before 2.19 doubles the backslashes of a template before
+    # Jinja reads it: 'can\'t' becomes 'can\\'t', the string ends there and the
+    # task fails with a syntax error (seen on 2.16). Put the text between the
+    # other quotes instead: "can't".
+    with open(path, encoding="utf-8") as f:
+        pairs = [pair for doc in yaml.compose_all(f, Loader=Loader) if doc is not None for pair in scalars(doc)]
+    bad = ["line %d: %s" % (node.start_mark.line + 1, m.group(0).strip()[:80])
+           for key, node in pairs if isinstance(node.value, str)
+           for m in re.finditer(r"{{.*?}}|{%.*?%}", node.value, re.S)
+           if re.search(r"\\['\"]", m.group(0))]
+    assert bad == []
+
+
 def jinja_code(template):
     """The Jinja code of a template, without what can't be a variable read."""
     code = " ".join(a + " " + b for a, b in re.findall(r"{{(.*?)}}|{%(.*?)%}", template, re.S))

@@ -1,0 +1,3 @@
+bugfixes:
+  - preflight - the seed check failed with a template error on ansible-core before 2.19 (escaped quote in its message), stopping add_node and every playbook that runs preflight; same fix in the cluster health message.
+  - preflight - under --check, the cluster name was not read and the check refused the cluster ("runs Cassandra for cluster ''").
