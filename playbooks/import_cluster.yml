@@ -61,7 +61,20 @@
     - name: Stop if no node answered
       ansible.builtin.assert:
         that: import_cluster_given | map('extract', hostvars) | map(attribute='import_cluster_ring.cluster_status', default={}) | select | list | length > 0
-        fail_msg: nodetool status failed on every given node, is Cassandra running?
+        fail_msg: >-
+          {{ ['nodetool status failed on every given node. Is Cassandra running, and the JMX access right'
+              ~ ' (cassandra_jmx_port, cassandra_jmx_username, cassandra_jmx_password_file or _password)?'] + _errors }}
+      vars:
+        # "Read the ring" shows ok whatever happened: each node's error
+        _errors: >-
+          {%- set out = [] -%}
+          {%- for h in import_cluster_given -%}
+          {%-   set r = hostvars[h].import_cluster_ring | default({}) -%}
+          {%-   set _ = out.append(h ~ ': ' ~ ('unreachable' if r.unreachable | default(false)
+                                              else (r.msg | default('no result') ~ ' ' ~ (r.stderr | default('')).splitlines() | first | default(''))
+                                                   | trim | truncate(400))) -%}
+          {%- endfor -%}
+          {{ out }}
       run_once: true
 
 - name: Read every node
