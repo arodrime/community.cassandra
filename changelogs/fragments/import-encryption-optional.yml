@@ -1,0 +1,2 @@
+bugfixes:
+  - "import_cluster - ``optional: false`` of the server/client encryption options was not read (reported as a hand edit, and cassandra_config would have commented it out)."

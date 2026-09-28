@@ -118,7 +118,7 @@ def _read_line(tpl, live, ctx=None):
         elif re.fullmatch(r"%s or '[^']*'" % V, e):
             values[re.fullmatch(r"%s or '[^']*'" % V, e).group(1)] = _value(cap)
         elif re.fullmatch(r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", e):
-            values[e.split()[3]] = cap == "true"
+            values[e.split()[2]] = cap == "true"
         elif re.fullmatch(r"'yes' if (\w+) else 'no'", e):
             found[e.split()[2]] = cap == "yes"
         elif re.fullmatch(r"(\w+) if \w+ is string else .*", e):

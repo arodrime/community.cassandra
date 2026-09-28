@@ -280,3 +280,13 @@ def test_remote_jmx_read_back(series):
     out = cassandra_config_import(node_files(series, cassandra_local_jmx=False), series, FACTS)
     assert out["vars"]["cassandra_local_jmx"] is False
     assert "else" not in out["vars"]
+
+
+@pytest.mark.parametrize("optional", [False, True])
+def test_encryption_optional_read_back(optional):
+    # 'true' if X == '' else (X | string | lower): it once came out as a variable named "=="
+    files = node_files("41x", cassandra_server_encryption_optional=optional)
+    out = cassandra_config_import(files, "41x", FACTS)
+    assert "==" not in out["vars"]
+    assert out["hand_edits"] == []
+    assert out["vars"].get("cassandra_server_encryption_optional", True) is optional
