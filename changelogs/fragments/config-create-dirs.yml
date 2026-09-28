@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_config - creates the data, commitlog, saved_caches, hints and log directories that don't exist yet, owned by the service user (their missing parents root-owned, 0755 whatever the umask; existing ones are left as they are; nothing is created on a mount point of /etc/fstab that is not mounted); a new node with directories off the package defaults (e.g. from import_cluster) failed to start.

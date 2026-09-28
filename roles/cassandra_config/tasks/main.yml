@@ -286,6 +286,72 @@
         loop_var: cassandra_config_file
       register: cassandra_config_applied
 
+    # The package creates the stock directories only: others (a data disk, a
+    # log dir) must exist, owned by the service user, before the node first
+    # starts. Existing ones are left as they are; missing parents are made
+    # root-owned, 0755.
+    - name: Look for the Cassandra directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: >-
+        {{ (cassandra_data_file_directories + [cassandra_commitlog_dir, cassandra_saved_caches_dir,
+            cassandra_hints_dir, cassandra_log_dir]) | select | unique | list }}
+      register: cassandra_config_dirs
+
+    # A disk in /etc/fstab that did not mount (e.g. nofail, after a reboot)
+    # leaves an empty mount point: the dirs made there would land on the root
+    # filesystem, and the node would start on empty dirs
+    - name: Find the fstab mount points not mounted
+      ansible.builtin.shell: |
+        set -o pipefail
+        command -v mountpoint >/dev/null || exit 0
+        findmnt --fstab --noheadings --output TARGET | while read -r t; do
+          case "$t" in /?*) mountpoint -q "$t" || echo "$t";; esac
+        done
+      args:
+        executable: /bin/bash
+      register: cassandra_config_unmounted
+      changed_when: false
+      failed_when: false  # no findmnt: nothing to compare with
+      check_mode: false
+      when: cassandra_config_dirs.results | rejectattr('stat.exists') | list | length > 0
+
+    - name: Refuse to create them on a disk that is not mounted
+      ansible.builtin.assert:
+        that: _on_unmounted | length == 0
+        fail_msg: >-
+          {{ _on_unmounted | join(', ') }}: missing, on a mount point of /etc/fstab that is not mounted.
+          Mount it first; nothing is created there.
+        quiet: true
+      vars:
+        _on_unmounted: >-
+          {%- set out = [] -%}
+          {%- for d in cassandra_config_dirs.results | rejectattr('stat.exists') | map(attribute='item') -%}
+          {%-   for t in cassandra_config_unmounted.stdout_lines | default([]) -%}
+          {%-     if d == t or d.startswith(t ~ '/') -%}{%- set _ = out.append(d ~ ' (' ~ t ~ ')') -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Create the parents of the missing ones
+      ansible.builtin.command:
+        argv: [sh, -c, 'umask 022 && mkdir -p "$1"', sh, "{{ item.item | dirname }}"]  # 0755 whatever the umask
+        creates: "{{ item.item | dirname }}"
+      loop: "{{ cassandra_config_dirs.results | rejectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item | dirname }}"
+
+    - name: Create the missing ones
+      ansible.builtin.file:
+        path: "{{ item.item }}"
+        state: directory
+        owner: "{{ cassandra_service_user | default('cassandra') }}"
+        group: "{{ cassandra_service_group | default('cassandra') }}"
+        mode: "0750"
+      loop: "{{ cassandra_config_dirs.results | rejectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+
     - name: Check whether Cassandra is running
       ansible.builtin.service_facts:
       when: cassandra_config_applied.changed

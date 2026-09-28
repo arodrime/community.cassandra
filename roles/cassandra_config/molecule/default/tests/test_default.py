@@ -253,3 +253,14 @@ def test_cqlsh_credentials(host):
 def test_replaced_file_backed_up(host):
     # the password change replaced cassandra.yaml of an existing config
     assert host.run("ls /tmp/cassandra-secret/cassandra.yaml.*~").rc == 0
+
+
+def test_missing_data_dir_created(host):
+    # "Render with overrides" sets /data/cassandra/data, which no package creates:
+    # a new node could not start without it
+    data = host.file("/data/cassandra/data")
+    assert data.is_directory and data.user == "cassandra" and data.group == "cassandra" and data.mode == 0o750
+    # its missing parents: root's, open to other tools (a log dir under /var/log/apps...)
+    for parent in ("/data", "/data/cassandra"):
+        d = host.file(parent)
+        assert d.is_directory and d.user == "root" and d.mode == 0o755
