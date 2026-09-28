@@ -1,0 +1,2 @@
+bugfixes:
+  - add_node, add_datacenter, replace_node - under --check, the cluster check after the node failed (nothing is started under --check), and the run stopped there.
