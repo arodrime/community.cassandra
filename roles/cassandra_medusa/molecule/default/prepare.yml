@@ -1,0 +1,31 @@
+---
+# UBI 8 only ships platform-python 3.6, below ansible-core's target minimum
+- name: Bootstrap Python on RHEL 8
+  hosts: "*rhel810"  # local test runs prefix the container names
+  gather_facts: false
+  tasks:
+    - name: Install python3.12
+      ansible.builtin.raw: test -x /usr/bin/python3.12 || dnf -y install python3.12
+      changed_when: false
+
+    # UBI 8 has no python3 of its own: installing python3.12 made it python3.
+    # Without it, as on a RHEL 8 without the python36 module, the role takes
+    # its python3.11 path.
+    - name: No python3 command
+      ansible.builtin.raw: alternatives --remove python3 /usr/bin/python3.12; rm -f /usr/bin/python3
+      changed_when: false
+
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Update the apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # The Cassandra package creates it on a real node
+    - name: Create the cassandra user
+      ansible.builtin.user:
+        name: cassandra
+        system: true
+        create_home: false

@@ -21,6 +21,7 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 - `cassandra_firewall`- Manage the firewall on Cassandra nodes.
 - `cassandra_install`- Install Cassandra.
 - `cassandra_linux`- Configure Linux OS Settings for Cassandra.
+- `cassandra_medusa`- Install Cassandra Medusa (backups) with pip and write its `medusa.ini` (optional: `cassandra_medusa_enabled`).
 - `cassandra_repository`- Configures a package repository for Cassandra on Debian and RedHat based platforms.
 - `cassandra_service`- Run Cassandra under a systemd unit, start it and wait for the node to join.
 

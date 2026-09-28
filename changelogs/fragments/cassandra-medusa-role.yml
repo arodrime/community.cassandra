@@ -1,0 +1,4 @@
+minor_changes:
+  - cassandra_medusa - new role installing Cassandra Medusa (backups) with pip in a virtualenv (or into a system Python without one), from PyPI or a mirror, and writing its medusa.ini from variables.
+  - create_cluster, add_node, replace_node, add_datacenter - apply the cassandra_medusa role to the nodes when cassandra_medusa_enabled is true (default false).
+  - import_cluster - finds Cassandra Medusa on the nodes and imports its version, virtualenv path and medusa.ini settings (secrets to secrets.yml), setting cassandra_medusa_enabled.

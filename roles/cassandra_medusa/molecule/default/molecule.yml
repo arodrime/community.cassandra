@@ -1,0 +1,69 @@
+---
+driver:
+  name: docker
+platforms:
+  - name: rhel810
+    image: registry.access.redhat.com/ubi8/ubi-init:8.10
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: ubuntu2404
+    image: geerlingguy/docker-ubuntu2404-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      all:
+        # a virtualenv path of its own (as imported from existing nodes), in the login PATH
+        cassandra_medusa_venv: /opt/cassandra-virtual
+        cassandra_medusa_profile_d: true
+        cassandra_medusa_storage_provider: s3_compatible
+        cassandra_medusa_bucket_name: backups
+        cassandra_medusa_host: s3.example.com
+        cassandra_medusa_port: 443
+        cassandra_medusa_secure: true
+        cassandra_medusa_prefix: orders
+        cassandra_medusa_s3_access_key_id: AKIAEXAMPLE
+        cassandra_medusa_s3_secret_access_key: s3-secret/example
+        # the collection's logins, which Medusa's default to
+        cassandra_cql_username: medusa
+        cassandra_cql_password: cql-secret
+        cassandra_jmx_username: cassops
+        cassandra_jmx_password_file: /etc/cassandra/jmxremote.password
+        cassandra_medusa_extra_settings:
+          checks:
+            enable_md5_checks: "true"
+    host_vars:
+      # platform-python 3.6 is below ansible-core's target minimum (3.9);
+      # the role still picks python3.11 for Medusa there (python3 is 3.6)
+      rhel810:
+        ansible_python_interpreter: /usr/bin/python3.12
+verifier:
+  name: testinfra
+scenario:
+  # check: converge under --check first, on hosts without Medusa
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - check
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

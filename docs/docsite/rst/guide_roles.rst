@@ -24,6 +24,8 @@ Run them in this order:
 5. :ansplugin:`community.cassandra.cassandra_firewall#role`: firewalld or ufw.
 6. :ansplugin:`community.cassandra.cassandra_service#role`: systemd unit, start, wait until the node has joined.
 
+Optional: :ansplugin:`community.cassandra.cassandra_medusa#role` installs Cassandra Medusa for backups (see `Backups`_).
+
 Each role handles the host it runs on. Ordering nodes is up to the playbook.
 
 The series is set with ``cassandra_version`` (``40x``, ``41x`` or ``50x``). Set it once for all the roles.
@@ -403,6 +405,41 @@ CQL credentials, for the OS users you list. Playbooks that read the schema over 
 and ``cassandra_cql_password``.
 
 
+Backups
+-------
+
+:ansplugin:`community.cassandra.cassandra_medusa#role` installs `Cassandra Medusa
+<https://github.com/thelastpickle/cassandra-medusa>`_ with pip, in its own virtualenv, and writes
+``/etc/medusa/medusa.ini``. With ``cassandra_medusa_enabled: true`` in the inventory, ``create_cluster`` applies it
+to every node, and ``add_node``, ``replace_node`` and ``add_datacenter`` to the new nodes, before they start.
+
+.. code-block:: yaml
+
+    # group_vars/orders.yml
+    cassandra_medusa_enabled: true
+    cassandra_medusa_version: 0.30.1
+    cassandra_medusa_pip_index_url: https://mirror.example.com/artifactory/api/pypi/pypi/simple
+    cassandra_medusa_pip_username: svc-cassandra
+    cassandra_medusa_storage_provider: s3_compatible
+    cassandra_medusa_host: s3.example.com
+    cassandra_medusa_port: 443
+    cassandra_medusa_bucket_name: cassandra-backups
+    cassandra_medusa_prefix: orders
+
+    # group_vars/orders/secrets.yml (vault)
+    cassandra_medusa_pip_password: ...
+    cassandra_medusa_s3_access_key_id: ...
+    cassandra_medusa_s3_secret_access_key: ...
+
+Medusa reaches Cassandra with the collection's logins (``cassandra_cql_username``, ``cassandra_jmx_username`` and
+``cassandra_jmx_password_file``...) unless its own are set. Each ``medusa.ini`` setting has a variable, and
+``cassandra_medusa_extra_settings`` takes any other. Medusa 0.30 runs on Python 3.10 to 3.12: on RHEL 8 and 9 the
+role installs ``python3.11`` for it (``python3.11`` and ``python3.11-pip``, from the OS repositories or their mirror).
+
+The role schedules no backup: run ``medusa backup`` from cron or a systemd timer, or ``medusa backup-cluster`` from
+one node.
+
+
 Taking over an existing cluster
 -------------------------------
 
@@ -413,6 +450,15 @@ hand edits no variable covers (``cassandra_config`` would revert them).
 
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
 roles then keep that Java and install no Java package.
+
+When a node has Cassandra Medusa (``medusa`` in the PATH or in a virtualenv under ``/opt``, and
+``/etc/medusa/medusa.ini``), its version and settings are imported and ``cassandra_medusa_enabled`` is set, so
+nodes added later get the same Medusa, in the same virtualenv path (``cassandra_medusa_venv``), or without a
+virtualenv when the nodes' Medusa is in a system Python (``cassandra_medusa_venv: ""`` and that Python). A
+virtualenv put in the PATH by a login profile of the ``cassandra`` user, of root or of the system
+(``source <venv>/bin/activate``, files owned by root or ``cassandra``) is found too; the report names that file, which the roles
+leave alone: new nodes get ``/usr/local/bin/medusa``, and ``cassandra_medusa_profile_d: true`` adds the virtualenv to
+every login shell's PATH. A Medusa installed by a package is not managed (the report says so).
 
 Passwords found in the configuration go to separate ``secrets.yml`` files: encrypted with ansible-vault when
 ``import_cluster_vault_password_file`` is given, otherwise written with mode ``0600`` and the report gives the

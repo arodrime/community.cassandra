@@ -228,6 +228,148 @@
               else '. The rest of the error is hidden (the config holds passwords):'
                    ~ ' rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
 
+    # Cassandra Medusa (backups): its install and /etc/medusa/medusa.ini
+    - name: Look for Medusa
+      ansible.builtin.shell: |
+        ini=/etc/medusa/medusa.ini
+        [ -f "$ini" ] && echo "ini=yes" && stat --printf 'ini_owner=%U\nini_group=%G\nini_mode=%a\n' "$ini"
+        # sudo's PATH may lack /usr/local/bin (RHEL)
+        bin=$(PATH=$PATH:/usr/local/bin command -v medusa 2>/dev/null)
+        # a virtualenv put in the PATH by a login profile (source <venv>/bin/activate, or <venv>/bin in PATH):
+        # the cassandra user's, the system's and root's, from files owned by root or cassandra only (this runs as root)
+        home=$(getent passwd cassandra | cut -d: -f6)
+        trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }
+        pvenv= pairs=
+        # the file cassandra_medusa_profile_d writes is the role's, not a user's: not reported
+        [ -f /etc/profile.d/cassandra-medusa.sh ] && echo "profile_d=yes"
+        for f in ${home:+$home/.bash_profile $home/.bashrc $home/.profile} /etc/profile /etc/bashrc /etc/bash.bashrc \
+                 /etc/profile.d/*.sh /root/.bash_profile /root/.bashrc /root/.profile; do
+          [ -f "$f" ] && trusted "$f" || continue
+          # ~ and $HOME: the home the file is in
+          case $f in /root/*) h=/root ;; /etc/*) h= ;; *) h=$home ;; esac
+          lines=$(grep -v '^[[:space:]]*#' "$f" | { if [ -n "$h" ]; then sed 's#\(~\|\$HOME\|\${HOME}\)/#'"$h"'/#g'; else cat; fi; })
+          set -f  # the words found are paths, not patterns
+          for d in $(printf "%s\n" "$lines" | grep -oE "/[^[:space:]:\"'=;]+/bin/activate" | sed 's#/bin/activate$##') \
+                   $(printf "%s\n" "$lines" | grep 'PATH=' | grep -oE "/[^[:space:]:\"'=;\$]+/bin" | sed 's#/bin$##'); do
+            if [ -x "$d/bin/medusa" ] && [ -f "$d/pyvenv.cfg" ] && trusted "$d" && trusted "$d/bin/medusa"; then
+              pvenv=${pvenv:-$d}
+              [ "$f" = /etc/profile.d/cassandra-medusa.sh ] || pairs="$pairs $f|$d"
+              break
+            fi
+          done
+          set +f
+        done
+        real=
+        for c in "$bin" "${pvenv:+$pvenv/bin/medusa}" /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa /usr/share/cassandra-medusa/bin/medusa; do
+          [ -n "$c" ] && [ -x "$c" ] && { real=$(readlink -f "$c"); break; }
+        done
+        [ -n "$real" ] || exit 0
+        echo "bin=$real"
+        # the Python of the script (a virtualenv's python is a link: not resolved)
+        set -- $(sed -n '1s/^#! *//p' "$real")
+        py=${1:-}; [ "${py##*/}" = env ] && py=${2:-}
+        # pip's sh launcher for a long Python path: '''exec' /path/python "$0" "$@" (quoted with a space)
+        if [ "${py##*/}" = sh ]; then
+          py=$(sed -n "2s/^'''exec' \"\([^\"]*\)\".*/\1/p" "$real")
+          [ -n "$py" ] || py=$(sed -n "2s/^'''exec' \([^ ]*\) .*/\1/p" "$real")
+        fi
+        # its virtualenv: the one it is in, else the one of its Python (a full path only)
+        venv=$(dirname "$(dirname "$real")")
+        if [ ! -f "$venv/pyvenv.cfg" ]; then
+          case $py in /*) venv=$(dirname "$(dirname "$py")") ;; *) venv= ;; esac
+        fi
+        if [ -n "$venv" ] && [ -f "$venv/pyvenv.cfg" ]; then
+          echo "venv=$venv"
+          py=$venv/bin/python
+          [ -L "$bin" ] && [ "$(readlink -f "$bin")" = "$(readlink -f "$venv/bin/medusa")" ] && echo "link_dir=$(dirname "$bin")"
+          # the profiles that put this virtualenv in the PATH
+          profiles=
+          for p in $pairs; do
+            [ "$(readlink -f "${p#*|}")" = "$(readlink -f "$venv")" ] || continue
+            case " $profiles " in *" ${p%%|*} "*) ;; *) profiles="$profiles ${p%%|*}" ;; esac
+          done
+          [ -n "$profiles" ] && echo "profile=${profiles# }"
+        else
+          echo "python=$py"
+        fi
+        # run as root: only a script and a Python owned by root or cassandra
+        if trusted "$real" && trusted "$(readlink -f "$py")"; then
+          echo "version=$("$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null)"
+        else
+          echo "untrusted=yes"
+        fi
+        pkg=$(rpm -qf --qf '%{NAME}\n' "$real" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$real" 2>/dev/null | cut -d: -f1) || pkg=
+        echo "package=$pkg"
+      register: import_cluster_medusa_found
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: import_cluster_config is defined
+
+    # no_log: medusa.ini and the S3 credentials file hold secrets
+    - name: Read the Medusa config
+      when: _found.ini | default('') == 'yes'
+      vars:
+        _found: "{{ dict(import_cluster_medusa_found.stdout_lines | default([]) | map('split', '=', 1)) }}"
+      block:
+        - name: Read medusa.ini
+          ansible.builtin.slurp:
+            path: /etc/medusa/medusa.ini
+          register: import_cluster_medusa_ini
+          no_log: true
+
+        - name: Read its S3 credentials file
+          ansible.builtin.slurp:
+            path: "{{ _key_file }}"
+          register: import_cluster_medusa_key_file
+          failed_when: false
+          no_log: true
+          when: _key_file != ''
+          vars:
+            _key_file: >-
+              {{ (import_cluster_medusa_ini.content | b64decode | community.cassandra.cassandra_medusa_ini).storage.key_file
+                 | default('') }}
+
+        - name: Read its owner and mode
+          ansible.builtin.stat:
+            path: "{{ import_cluster_medusa_key_file.source }}"
+          register: import_cluster_medusa_key_stat
+          when: import_cluster_medusa_key_file.content is defined
+
+        - name: Turn them into cassandra_medusa variables
+          ansible.builtin.set_fact:
+            import_cluster_medusa: >-
+              {{ import_cluster_medusa_ini.content | b64decode | community.cassandra.cassandra_medusa_import(
+                   import_cluster_medusa_key_file.content | default('') | b64decode,
+                   _found | combine({'key_owner': _key.pw_name | default(''), 'key_group': _key.gr_name | default(''),
+                                     'key_mode': _key.mode | default('')})) }}
+          vars:
+            _key: "{{ import_cluster_medusa_key_stat.stat | default({}) }}"
+          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+      rescue:
+        - name: Keep why for the report
+          ansible.builtin.set_fact:
+            import_cluster_medusa:
+              vars: {}
+              notes:
+                - >-
+                  Medusa: medusa.ini NOT imported, "{{ ansible_failed_task.name | default('?') }}" failed
+                  {{- (': ' ~ _why) if _why else '' }}
+          vars:
+            _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
+
+    - name: Note a Medusa without medusa.ini
+      ansible.builtin.set_fact:
+        import_cluster_medusa:
+          vars: {}
+          notes:
+            - "Medusa {{ _found.version | default('') or '?' }} in {{ _found.bin }}, but no /etc/medusa/medusa.ini: NOT imported"
+      vars:
+        _found: "{{ dict(import_cluster_medusa_found.stdout_lines | default([]) | map('split', '=', 1)) }}"
+      when:
+        - _found.bin is defined
+        - _found.ini | default('') != 'yes'
+
 - name: Write the inventory
   hosts: localhost
   connection: local
@@ -355,13 +497,14 @@
                    else (_hv.import_cluster_error if _hv.import_cluster_error is defined
                    else 'unsupported version ' ~ _hv.import_cluster_version)) }}
               vars: >-
-                {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx))
+                {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx,
+                                                             _hv.import_cluster_medusa.vars | default({})))
                    if _read else {} }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
-              notes:
-                - "{{ _versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?') }}"
-                - "{{ _started }}"
+              notes: >-
+                {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
+                   + _hv.import_cluster_medusa.notes | default([]) }}
             _versions: >-
               {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
                  ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')

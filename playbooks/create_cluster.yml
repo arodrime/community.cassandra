@@ -52,6 +52,8 @@
     - community.cassandra.cassandra_config
     - role: community.cassandra.cassandra_firewall
       when: cassandra_manage_firewall | default(false) | bool
+    - role: community.cassandra.cassandra_medusa
+      when: cassandra_medusa_enabled | default(false) | bool
 
 - name: Start the seeds, one at a time
   hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_seed_True"

@@ -1,0 +1,101 @@
+{#- Modelled on Medusa's medusa-example.ini. s(section, key, value) writes
+    "key = value", or nothing when value is "" (Medusa's default applies);
+    booleans in lower case (Medusa compares nodetool_ssl with "true");
+    a key also in cassandra_medusa_extra_settings is written from there.
+    import_cluster reads this file to map the keys to the variables. -#}
+{%- macro s(section, key, value) -%}
+{%- if value | string != '' and key not in cassandra_medusa_extra_settings[section] | default({}) -%}
+{{ key }} = {{ value | string | lower if value is boolean else value }}
+{% endif -%}
+{%- endmacro -%}
+{%- macro extras(section) -%}
+{%- for key, value in (cassandra_medusa_extra_settings[section] | default({})).items() -%}
+{{ key }} = {{ value | string | lower if value is boolean else value }}
+{% endfor -%}
+{%- endmacro -%}
+; Managed by Ansible (community.cassandra.cassandra_medusa)
+; Modelled on Medusa's medusa-example.ini:
+; a setting left out here takes Medusa's default.
+
+[cassandra]
+; Only used by restores: how Medusa stops and starts Cassandra
+; (Medusa's default: sudo service cassandra stop/start)
+{{ s('cassandra', 'stop_cmd', cassandra_medusa_stop_cmd) -}}
+{{ s('cassandra', 'start_cmd', cassandra_medusa_start_cmd) -}}
+{{ s('cassandra', 'config_file', cassandra_medusa_cassandra_config_file) -}}
+{{ s('cassandra', 'cql_username', cassandra_medusa_cql_username) -}}
+{{ s('cassandra', 'cql_password', cassandra_medusa_cql_password) -}}
+{{ s('cassandra', 'nodetool_username', cassandra_medusa_nodetool_username) -}}
+{{ s('cassandra', 'nodetool_password', cassandra_medusa_nodetool_password if cassandra_medusa_nodetool_password_file == '' else '') -}}
+{{ s('cassandra', 'nodetool_password_file_path', cassandra_medusa_nodetool_password_file) -}}
+{{ s('cassandra', 'nodetool_host', cassandra_medusa_nodetool_host) -}}
+{{ s('cassandra', 'nodetool_port', cassandra_medusa_nodetool_port) -}}
+{{ s('cassandra', 'nodetool_executable', cassandra_medusa_nodetool_executable) -}}
+; Adds '--ssl' to nodetool; nodetool-ssl.properties is expected in its usual place
+{{ s('cassandra', 'nodetool_ssl', cassandra_medusa_nodetool_ssl) -}}
+{{ s('cassandra', 'sstableloader_bin', cassandra_medusa_sstableloader_bin) -}}
+; Client SSL of sstableloader: truststore and keystore, with their passwords
+{{ s('cassandra', 'sstableloader_ts', cassandra_medusa_sstableloader_truststore) -}}
+{{ s('cassandra', 'sstableloader_tspw', cassandra_medusa_sstableloader_truststore_password) -}}
+{{ s('cassandra', 'sstableloader_ks', cassandra_medusa_sstableloader_keystore) -}}
+{{ s('cassandra', 'sstableloader_kspw', cassandra_medusa_sstableloader_keystore_password) -}}
+; Disabling this can help when fqdn resolving gives different domain names for local and remote nodes
+{{ s('cassandra', 'resolve_ip_addresses', cassandra_medusa_resolve_ip_addresses) -}}
+; When true, almost all commands executed by Medusa are prefixed with `sudo`
+{{ s('cassandra', 'use_sudo', cassandra_medusa_use_sudo) -}}
+{{ extras('cassandra') }}
+[storage]
+; local, s3, s3_compatible, s3_rgw, google_storage, azure_blobs or ibm_storage
+{{ s('storage', 'storage_provider', cassandra_medusa_storage_provider) -}}
+; Storage class for the uploads (default: the provider's standard one)
+{{ s('storage', 'storage_class', cassandra_medusa_storage_class) -}}
+{{ s('storage', 'bucket_name', cassandra_medusa_bucket_name) -}}
+; AWS credentials file (S3), or JSON key file of a service account (GCS)
+{{ s('storage', 'key_file', cassandra_medusa_key_file) -}}
+; Path of the local storage bucket (used only with the 'local' storage provider)
+{{ s('storage', 'base_path', cassandra_medusa_base_path) -}}
+; Any prefix used for multitenancy in the same bucket
+{{ s('storage', 'prefix', cassandra_medusa_prefix) -}}
+; Name of this node in the backups (default: computed)
+{{ s('storage', 'fqdn', cassandra_medusa_fqdn) -}}
+; Days before backups are purged, and backups kept: 0 purges nothing
+{{ s('storage', 'max_backup_age', cassandra_medusa_max_backup_age) -}}
+{{ s('storage', 'max_backup_count', cassandra_medusa_max_backup_count) -}}
+{{ s('storage', 'transfer_max_bandwidth', cassandra_medusa_transfer_max_bandwidth) -}}
+; Number of files uploaded or downloaded in parallel
+{{ s('storage', 'concurrent_transfers', cassandra_medusa_concurrent_transfers) -}}
+; Size above which S3 uploads use multipart
+{{ s('storage', 'multi_part_upload_threshold', cassandra_medusa_multi_part_upload_threshold) -}}
+; GC grace period for backed up files. Prevents race conditions between purge and running backups
+{{ s('storage', 'backup_grace_period_in_days', cassandra_medusa_backup_grace_period_in_days) -}}
+{{ s('storage', 'use_sudo_for_restore', cassandra_medusa_use_sudo_for_restore) -}}
+{{ s('storage', 'api_profile', cassandra_medusa_api_profile) -}}
+; Object storage endpoint (s3_compatible)
+{{ s('storage', 'host', cassandra_medusa_host) -}}
+{{ s('storage', 'port', cassandra_medusa_port) -}}
+{{ s('storage', 'secure', cassandra_medusa_secure) -}}
+{{ s('storage', 'ssl_verify', cassandra_medusa_ssl_verify) -}}
+{{ s('storage', 'region', cassandra_medusa_region) -}}
+; auto, path or virtual
+{{ s('storage', 's3_addressing_style', cassandra_medusa_s3_addressing_style) -}}
+{{ extras('storage') }}
+[monitoring]
+{{ s('monitoring', 'monitoring_provider', cassandra_medusa_monitoring_provider) -}}
+{{ extras('monitoring') }}
+[ssh]
+{{ extras('ssh') }}
+[checks]
+{{ extras('checks') }}
+[logging]
+; File logging, off by default
+{{ s('logging', 'enabled', cassandra_medusa_logging_enabled) -}}
+{{ s('logging', 'file', cassandra_medusa_logging_file) -}}
+{{ s('logging', 'level', cassandra_medusa_logging_level) -}}
+{{ s('logging', 'format', cassandra_medusa_logging_format) -}}
+{{ s('logging', 'maxBytes', cassandra_medusa_logging_max_bytes) -}}
+{{ s('logging', 'backupCount', cassandra_medusa_logging_backup_count) -}}
+{{ extras('logging') }}
+[grpc]
+{{ extras('grpc') }}
+[kubernetes]
+{{ extras('kubernetes') }}

@@ -1,0 +1,359 @@
+---
+argument_specs:
+  main:
+    short_description: Install Cassandra Medusa and write its medusa.ini.
+    description:
+      - Installs Cassandra Medusa (backups to S3, S3-compatible storage, GCS, Azure or a local path) with pip,
+        in its own virtualenv, from PyPI or a mirror of it, and writes C(/etc/medusa/medusa.ini).
+      - The playbooks of the collection apply it when C(cassandra_medusa_enabled) is true.
+      - Schedules no backup.
+      - "In medusa.ini, a setting set to C(\"\") is left out: Medusa's default applies. The file is only
+        rewritten when its settings change (comments, order and spacing don't count)."
+    options:
+      cassandra_medusa_version:
+        type: str
+        default: 0.30.1
+        description:
+          - Medusa version to install. An installed one of another version is replaced by it.
+      cassandra_medusa_venv:
+        type: path
+        default: /opt/cassandra-medusa
+        description:
+          - The virtualenv Medusa is installed in.
+          - C("") for none, pip then installs into the system site-packages of the Python (see
+            C(cassandra_medusa_python)), and C(medusa) is where pip puts it (C(/usr/local/bin)). Refused on a
+            Python the system manages (PEP 668, e.g. Debian 12, Ubuntu 23.04 and later).
+      cassandra_medusa_link_dir:
+        type: str
+        default: /usr/local/bin
+        description:
+          - Where C(medusa) is linked to, C("") for no link. A C(medusa) there that is not a link is left alone.
+          - Not used without a virtualenv.
+      cassandra_medusa_profile_d:
+        type: bool
+        default: false
+        description:
+          - Write C(/etc/profile.d/cassandra-medusa.sh), which puts the virtualenv's C(bin) in the PATH of login
+            shells. Users' own profiles are never edited. Not used without a virtualenv.
+      cassandra_medusa_python:
+        type: str
+        default: ""
+        description:
+          - Python of a new virtualenv, or the one Medusa is installed into without a virtualenv. When empty, C(python3) if Medusa supports its version,
+            else C(python3.11), installed on the RedHat family (e.g. RHEL 8 and 9). An existing virtualenv keeps its own.
+      cassandra_medusa_python_supported:
+        type: list
+        elements: str
+        default: ["3.10", "3.12"]
+        description:
+          - Lowest and highest Python version the Medusa version supports.
+      cassandra_medusa_pip_index_url:
+        type: str
+        default: ""
+        description:
+          - PyPI mirror to install from (C(PIP_INDEX_URL)), e.g. an Artifactory or Nexus PyPI proxy. C("") for pip's default.
+      cassandra_medusa_pip_username:
+        type: str
+        default: ""
+        description:
+          - Login for the mirror.
+      cassandra_medusa_pip_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password or token for the mirror. Keep it in a vault.
+      cassandra_medusa_pip_cert:
+        type: str
+        description:
+          - CA bundle pip checks the index's certificate with (C(PIP_CERT)). Defaults to the system's bundle, so that
+            a mirror whose certificate comes from an internal CA the hosts trust works. C("") for pip's own.
+      cassandra_medusa_pip_extra_args:
+        type: list
+        elements: str
+        default: []
+        description:
+          - More C(pip install) arguments, e.g. C(["--cert", "/etc/pki/tls/certs/mirror.pem"]).
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts. The packages the virtualenv needs are checked instead of installed, and Medusa must
+            already be in the virtualenv, unless O(cassandra_medusa_pip_index_url) is a mirror the hosts reach.
+      cassandra_medusa_config_owner:
+        type: str
+        default: cassandra
+        description:
+          - Owner of medusa.ini (and by default of the S3 credentials file).
+      cassandra_medusa_config_group:
+        type: str
+        default: cassandra
+        description:
+          - Their group, and the group of a new C(/etc/medusa).
+      cassandra_medusa_config_mode:
+        type: str
+        default: "0600"
+        description:
+          - Their mode (they hold secrets).
+      cassandra_medusa_key_file_owner:
+        type: str
+        description:
+          - Owner of the S3 credentials file. Defaults to O(cassandra_medusa_config_owner).
+      cassandra_medusa_key_file_group:
+        type: str
+        description:
+          - Its group. Defaults to O(cassandra_medusa_config_group).
+      cassandra_medusa_key_file_mode:
+        type: str
+        description:
+          - Its mode. Defaults to O(cassandra_medusa_config_mode).
+      cassandra_medusa_stop_cmd:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(stop_cmd), used by restores."
+      cassandra_medusa_start_cmd:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(start_cmd), used by restores."
+      cassandra_medusa_cassandra_config_file:
+        type: str
+        description:
+          - "[cassandra] C(config_file). Defaults to C(cassandra.yaml) in C(cassandra_conf_dir)."
+      cassandra_medusa_cql_username:
+        type: str
+        description:
+          - "[cassandra] C(cql_username). Defaults to C(cassandra_cql_username)."
+      cassandra_medusa_cql_password:
+        type: str
+        no_log: true
+        description:
+          - "[cassandra] C(cql_password). Defaults to C(cassandra_cql_password)."
+      cassandra_medusa_nodetool_username:
+        type: str
+        description:
+          - "[cassandra] C(nodetool_username). Defaults to C(cassandra_jmx_username)."
+      cassandra_medusa_nodetool_password:
+        type: str
+        no_log: true
+        description:
+          - "[cassandra] C(nodetool_password), written only without a password file. Defaults to C(cassandra_jmx_password)."
+      cassandra_medusa_nodetool_password_file:
+        type: str
+        description:
+          - "[cassandra] C(nodetool_password_file_path). Defaults to C(cassandra_jmx_password_file)."
+      cassandra_medusa_nodetool_host:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(nodetool_host)."
+      cassandra_medusa_nodetool_port:
+        type: raw
+        description:
+          - "[cassandra] C(nodetool_port). Defaults to C(cassandra_jmx_port), else 7199."
+      cassandra_medusa_nodetool_executable:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(nodetool_executable)."
+      cassandra_medusa_nodetool_ssl:
+        type: raw
+        default: ""
+        description:
+          - "[cassandra] C(nodetool_ssl)."
+      cassandra_medusa_sstableloader_bin:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(sstableloader_bin)."
+      cassandra_medusa_sstableloader_truststore:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(sstableloader_ts)."
+      cassandra_medusa_sstableloader_truststore_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - "[cassandra] C(sstableloader_tspw)."
+      cassandra_medusa_sstableloader_keystore:
+        type: str
+        default: ""
+        description:
+          - "[cassandra] C(sstableloader_ks)."
+      cassandra_medusa_sstableloader_keystore_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - "[cassandra] C(sstableloader_kspw)."
+      cassandra_medusa_resolve_ip_addresses:
+        type: raw
+        default: true
+        description:
+          - "[cassandra] C(resolve_ip_addresses)."
+      cassandra_medusa_use_sudo:
+        type: raw
+        default: ""
+        description:
+          - "[cassandra] C(use_sudo)."
+      cassandra_medusa_storage_provider:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(storage_provider): C(s3), C(s3_compatible), C(local), C(google_storage), C(azure_blobs)... Required."
+      cassandra_medusa_storage_class:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(storage_class)."
+      cassandra_medusa_bucket_name:
+        type: str
+        default: cassandra_backups
+        description:
+          - "[storage] C(bucket_name)."
+      cassandra_medusa_s3_access_key_id:
+        type: str
+        default: ""
+        description:
+          - S3 access key, written with the secret key to O(cassandra_medusa_key_file) in the AWS credentials format,
+            under the profile O(cassandra_medusa_api_profile) or C(default).
+      cassandra_medusa_s3_secret_access_key:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - S3 secret key. Keep it in a vault.
+      cassandra_medusa_key_file:
+        type: str
+        description:
+          - "[storage] C(key_file). Defaults to C(/etc/medusa/credentials) with S3 keys, else C(\"\")
+            (e.g. an instance role). A file of your own, e.g. a GCS key, is not written by the role."
+      cassandra_medusa_base_path:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(base_path), where the C(local) provider writes. Required with it."
+      cassandra_medusa_prefix:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(prefix), to share a bucket between clusters."
+      cassandra_medusa_fqdn:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(fqdn), this node's name in the backups."
+      cassandra_medusa_max_backup_age:
+        type: raw
+        default: 0
+        description:
+          - "[storage] C(max_backup_age), in days (0 purges none by age)."
+      cassandra_medusa_max_backup_count:
+        type: raw
+        default: 0
+        description:
+          - "[storage] C(max_backup_count) (0 purges none by count)."
+      cassandra_medusa_transfer_max_bandwidth:
+        type: str
+        default: 50MB/s
+        description:
+          - "[storage] C(transfer_max_bandwidth)."
+      cassandra_medusa_concurrent_transfers:
+        type: raw
+        default: 1
+        description:
+          - "[storage] C(concurrent_transfers)."
+      cassandra_medusa_multi_part_upload_threshold:
+        type: raw
+        default: 20MB
+        description:
+          - "[storage] C(multi_part_upload_threshold)."
+      cassandra_medusa_backup_grace_period_in_days:
+        type: raw
+        default: 10
+        description:
+          - "[storage] C(backup_grace_period_in_days)."
+      cassandra_medusa_use_sudo_for_restore:
+        type: raw
+        default: true
+        description:
+          - "[storage] C(use_sudo_for_restore)."
+      cassandra_medusa_api_profile:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(api_profile)."
+      cassandra_medusa_host:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(host), the endpoint of an C(s3_compatible) storage (required with it), e.g. C(s3.example.com)."
+      cassandra_medusa_port:
+        type: raw
+        default: ""
+        description:
+          - "[storage] C(port)."
+      cassandra_medusa_secure:
+        type: raw
+        default: ""
+        description:
+          - "[storage] C(secure), HTTPS to the storage (Medusa's default: true)."
+      cassandra_medusa_ssl_verify:
+        type: raw
+        default: ""
+        description:
+          - "[storage] C(ssl_verify) (Medusa's default: false)."
+      cassandra_medusa_region:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(region)."
+      cassandra_medusa_s3_addressing_style:
+        type: str
+        default: ""
+        description:
+          - "[storage] C(s3_addressing_style): C(auto), C(path) or C(virtual)."
+      cassandra_medusa_monitoring_provider:
+        type: str
+        default: ""
+        description:
+          - "[monitoring] C(monitoring_provider)."
+      cassandra_medusa_logging_enabled:
+        type: raw
+        default: ""
+        description:
+          - "[logging] C(enabled): file logging."
+      cassandra_medusa_logging_file:
+        type: str
+        default: ""
+        description:
+          - "[logging] C(file)."
+      cassandra_medusa_logging_level:
+        type: str
+        default: ""
+        description:
+          - "[logging] C(level)."
+      cassandra_medusa_logging_format:
+        type: str
+        default: ""
+        description:
+          - "[logging] C(format)."
+      cassandra_medusa_logging_max_bytes:
+        type: raw
+        default: ""
+        description:
+          - "[logging] C(maxBytes)."
+      cassandra_medusa_logging_backup_count:
+        type: raw
+        default: ""
+        description:
+          - "[logging] C(backupCount)."
+      cassandra_medusa_extra_settings:
+        type: dict
+        default: {}
+        description:
+          - "Any other medusa.ini setting, per section, e.g. C({checks: {enable_md5_checks: \"true\"}}).
+            A key also set by a variable is taken from here."

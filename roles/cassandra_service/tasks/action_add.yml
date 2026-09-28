@@ -21,5 +21,10 @@
     name: community.cassandra.cassandra_firewall
   when: cassandra_manage_firewall | default(false) | bool
 
+- name: Install Cassandra Medusa (backups)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_medusa
+  when: cassandra_medusa_enabled | default(false) | bool
+
 - name: Start it and wait until it has joined
   ansible.builtin.include_tasks: main.yml

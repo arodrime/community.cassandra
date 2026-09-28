@@ -4,6 +4,7 @@ __metaclass__ = type
 import os
 
 import pytest
+import yaml
 
 from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 
@@ -410,3 +411,15 @@ def test_password_in_a_value_is_a_secret():
                                        "host_vars": {}})
     assert [f["path"] for f in files] == ["group_vars/c/main.yml", "group_vars/c/secrets.yml"]
     assert "xyz" not in files[0]["content"] and "xyz" in files[1]["content"]
+
+
+def test_medusa_keys_are_secrets_and_empty_values_are_not():
+    files = cassandra_inventory_files({"group_vars": {"c": {
+        "cassandra_medusa_s3_access_key_id": "AKIA",
+        "cassandra_medusa_extra_settings": {"storage": {"sse_c_key": "k"}},
+        "cassandra_medusa_cql_password": "",
+        "cassandra_medusa_bucket_name": "b"}}, "host_vars": {}})
+    by_path = {f["path"]: yaml.safe_load(f["content"]) for f in files}
+    assert sorted(by_path["group_vars/c/secrets.yml"]) == ["cassandra_medusa_extra_settings",
+                                                           "cassandra_medusa_s3_access_key_id"]
+    assert sorted(by_path["group_vars/c/main.yml"]) == ["cassandra_medusa_bucket_name", "cassandra_medusa_cql_password"]

@@ -47,7 +47,7 @@ SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 ALWAYS = ["cassandra_cluster_name", "cassandra_seeds", "cassandra_endpoint_snitch", "cassandra_num_tokens",
           "cassandra_partitioner", "cassandra_allocate_tokens_for_local_replication_factor",
           "cassandra_storage_compatibility_mode"]
-SECRET = re.compile(r"password|passwd|secret", re.I)
+SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key", re.I)  # sse_c_key, access_key: Medusa's
 # Same masking as cassandra_config's diff preview
 SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
 
@@ -59,7 +59,7 @@ def _mask(line):
 ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
              "cassandra_broadcast_address", "cassandra_broadcast_rpc_address"]
 # Per node by nature: not reported as drift
-PER_NODE = ADDRESSES + ["cassandra_initial_token"]
+PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn"]
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 MISSING = object()
 TOP_KEY = re.compile(r"^(?:\{\{[^}]*\}\})?([a-z0-9_]+):")  # active top-level key, maybe behind a toggle
@@ -552,6 +552,8 @@ def _secret(key, value):
         return any(_secret(k, v) for k, v in value.items())
     if isinstance(value, list):
         return bool(SECRET.search(key)) or any(_secret(key, v) for v in value if isinstance(v, dict))
+    if value == "":
+        return False  # e.g. a password variable set to "" to leave it out
     if isinstance(value, str) and SECRET_VALUE.search(value):
         return True  # e.g. a unit's JVM_EXTRA_OPTS=-Djavax.net.ssl.keyStorePassword=...
     return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
