@@ -244,3 +244,11 @@ def test_one_data_directory_elsewhere_read_back():
     assert out["vars"]["cassandra_data_dir"] == "/data/c1/cassandra/data"
     assert "cassandra_data_file_directories" not in out["vars"]
     assert out["hand_edits"] == []
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+def test_remote_jmx_read_back(series):
+    # LOCAL_JMX=no: cassandra_local_jmx false (it once came out as a variable named "else")
+    out = cassandra_config_import(node_files(series, cassandra_local_jmx=False), series, FACTS)
+    assert out["vars"]["cassandra_local_jmx"] is False
+    assert "else" not in out["vars"]

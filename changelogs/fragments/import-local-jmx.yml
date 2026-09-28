@@ -1,0 +1,2 @@
+bugfixes:
+  - "import_cluster - LOCAL_JMX=no in cassandra-env.sh was imported as a variable named ``else`` instead of ``cassandra_local_jmx: false``."

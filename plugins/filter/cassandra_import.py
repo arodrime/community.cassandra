@@ -120,7 +120,7 @@ def _read_line(tpl, live, ctx=None):
         elif re.fullmatch(r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", e):
             values[e.split()[3]] = cap == "true"
         elif re.fullmatch(r"'yes' if (\w+) else 'no'", e):
-            found[e.split()[3]] = cap == "yes"
+            found[e.split()[2]] = cap == "yes"
         elif re.fullmatch(r"(\w+) if \w+ is string else .*", e):
             found[e.split()[0]] = cap
         elif re.fullmatch(r"\(' ' \+ (\w+)\) if \w+ else ''", e):
