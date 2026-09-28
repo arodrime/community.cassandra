@@ -203,8 +203,8 @@ def _default(ctx, key):
 def _same_setting(name, role, node):
     """True when the node line means the same as the role's: commented-out
     stock value the role writes explicitly, or YAML-equal (quoting, spacing)."""
-    if node.lstrip("#").strip() == role.strip():
-        return True
+    if name.endswith(".yaml") and node.lstrip("#").strip() == role.strip():
+        return True  # elsewhere (env.sh, jvm options) a commented line is a switched-off one
     if name.endswith(".yaml") and ":" in role and not role.lstrip().startswith("#"):
         try:
             return yaml.safe_load(role) == yaml.safe_load(node)
@@ -290,20 +290,29 @@ def _leftovers(env, series, files, ctx, live_files):
     return hand, normalized
 
 
+def _jmx_lines(text):
+    """The lines of a JMX password/access file, without comment lines: # or !
+    only at the start of a line (a # further on belongs to the password)."""
+    text = re.sub(r"\\\n", " ", text or "")  # access lines go on after a backslash
+    return [line.split() for line in text.split("\n") if line.strip() and not line.lstrip().startswith(("#", "!"))]
+
+
 def _jmx_users(password_file, access_file):
-    """cassandra_jmx_users from jmxremote.password and jmxremote.access."""
-    access = {}
-    for line in re.sub(r"\\\n", " ", access_file or "").split("\n"):
-        words = line.split("#")[0].split()
-        if len(words) >= 2:
-            access[words[0]] = words[1]
+    """cassandra_jmx_users from jmxremote.password and jmxremote.access, None
+    when they can't be read back as the role writes them (e.g. hashed passwords)."""
+    access = dict((words[0], words[1]) for words in _jmx_lines(access_file) if len(words) >= 2)
     users = []
-    for line in (password_file or "").split("\n"):
-        words = line.split("#")[0].split()
-        if len(words) >= 2:
-            users.append({"name": words[0], "password": words[1],
-                          "access": "readwrite" if access.get(words[0]) == "readwrite" else "readonly"})
+    for words in _jmx_lines(password_file):
+        if len(words) != 2 or access.get(words[0]) not in ("readwrite", "readonly"):
+            return None
+        users.append({"name": words[0], "password": words[1], "access": access[words[0]]})
     return users
+
+
+def _jmx_access_file_on(env_sh):
+    """cassandra-env.sh points the JVM at /etc/cassandra/jmxremote.access (where the role writes it)."""
+    return re.search(r"^\s*JVM_OPTS=.*-Dcom\.sun\.management\.jmxremote\.access\.file=/etc/cassandra/jmxremote\.access\b",
+                     env_sh or "", re.M) is not None
 
 
 def cassandra_config_import(live_files, cassandra_version, facts):
@@ -339,14 +348,22 @@ def cassandra_config_import(live_files, cassandra_version, facts):
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
         if extras:
             changed["cassandra_extra_settings"] = extras
-    # remote JMX users (the role writes /etc/cassandra/jmxremote.password and .access)
-    users = _jmx_users(live_files.get("jmxremote.password"), live_files.get("jmxremote.access"))
-    if users and found.get("cassandra_local_jmx") is False:
-        changed["cassandra_jmx_users"] = users
+    # remote JMX users (the role writes /etc/cassandra/jmxremote.password and .access), only
+    # when the JVM reads both files there and each user's rights are in it
+    jmx_note = []
+    if live_files.get("jmxremote.password"):
+        users = _jmx_users(live_files["jmxremote.password"], live_files.get("jmxremote.access"))
+        if users and "jmxremote.access" in live_files and _jmx_access_file_on(live_files.get("cassandra-env.sh")):
+            changed["cassandra_jmx_users"] = users
+        else:
+            jmx_note = ["jmxremote.password: its users NOT imported (not every user has plain password and"
+                        " readwrite/readonly rights in /etc/cassandra/jmxremote.access, the file cassandra-env.sh"
+                        " points at): set cassandra_jmx_users by hand"]
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
     hand, normalized = _leftovers(env, cassandra_version, files, render, live_files)
+    hand += jmx_note
     out = dict(changed)
     for key in ALWAYS:
         if key != "cassandra_storage_compatibility_mode" or cassandra_version == "50x":  # 5.0 setting
@@ -459,7 +476,7 @@ def _secret(key, value):
     if isinstance(value, dict):
         return any(_secret(k, v) for k, v in value.items())
     if isinstance(value, list):
-        return any(_secret(key, v) for v in value if isinstance(v, dict))
+        return bool(SECRET.search(key)) or any(_secret(key, v) for v in value if isinstance(v, dict))
     return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
 
 

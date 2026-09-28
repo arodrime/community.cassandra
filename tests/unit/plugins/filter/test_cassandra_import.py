@@ -15,6 +15,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_ring_nodes,
     cassandra_config_ignored_vars,
     cassandra_inventory_files,
+    _jmx_users,
+    _same_setting,
 )
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 
@@ -261,10 +263,48 @@ def test_remote_jmx_users_read_back():
     assert "s3cret" not in layout[0]["content"] and "s3cret" in layout[1]["content"]
 
 
-def test_jmx_users_left_with_local_jmx():
-    files = node_files("50x")
+def test_jmx_users_not_imported_without_the_access_file():
+    # stock cassandra-env.sh: the access.file line commented out, the rights elsewhere
+    # (e.g. the JDK's own jmxremote.access): importing them as readonly would lock the user out
+    files = node_files("50x", cassandra_local_jmx=False)
     files["jmxremote.password"] = "ops s3cret\n"
-    assert "cassandra_jmx_users" not in cassandra_config_import(files, "50x", FACTS)["vars"]
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert "cassandra_jmx_users" not in out["vars"]
+    assert any("users NOT imported" in line for line in out["hand_edits"])
+
+
+def test_commented_line_same_setting_in_yaml_only():
+    # a commented stock value in cassandra.yaml is the default; a commented JVM_OPTS line is off
+    line = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"'
+    assert not _same_setting("cassandra-env.sh", line, "#" + line)
+    assert _same_setting("cassandra.yaml", "num_tokens: 16", "# num_tokens: 16")
+
+
+@pytest.mark.parametrize("optional", [False, True])
+def test_encryption_optional_read_back(optional):
+    # 'true' if X == '' else (X | string | lower): it once came out as a variable named "=="
+    files = node_files("41x", cassandra_server_encryption_optional=optional)
+    out = cassandra_config_import(files, "41x", FACTS)
+    assert "==" not in out["vars"]
+    assert out["hand_edits"] == []
+    assert out["vars"].get("cassandra_server_encryption_optional", True) is optional
+
+
+@pytest.mark.parametrize("password_file, access_file, users", [
+    # a # inside a password is part of it; comment lines are skipped
+    ("# comment\nops Pa#ss\n", "ops readwrite\n", [{"name": "ops", "password": "Pa#ss", "access": "readwrite"}]),
+    # hashed passwords (jmxremote.password.toHashes): not read back
+    ("ops c2FsdA== aGFzaA== SHA3-512\n", "ops readwrite\n", None),
+    # a user without rights in the file
+    ("ops s3cret\n", "", None),
+])
+def test_jmx_users_parsed(password_file, access_file, users):
+    assert _jmx_users(password_file, access_file) == users
+
+
+def test_list_under_a_secret_name_is_a_secret():
+    files = cassandra_inventory_files({"group_vars": {"c": {"cassandra_old_passwords": ["a", "b"]}}, "host_vars": {}})
+    assert [f["path"] for f in files] == ["group_vars/c/secrets.yml"]
 
 
 def test_password_file_path_is_not_a_secret():
@@ -280,13 +320,3 @@ def test_remote_jmx_read_back(series):
     out = cassandra_config_import(node_files(series, cassandra_local_jmx=False), series, FACTS)
     assert out["vars"]["cassandra_local_jmx"] is False
     assert "else" not in out["vars"]
-
-
-@pytest.mark.parametrize("optional", [False, True])
-def test_encryption_optional_read_back(optional):
-    # 'true' if X == '' else (X | string | lower): it once came out as a variable named "=="
-    files = node_files("41x", cassandra_server_encryption_optional=optional)
-    out = cassandra_config_import(files, "41x", FACTS)
-    assert "==" not in out["vars"]
-    assert out["hand_edits"] == []
-    assert out["vars"].get("cassandra_server_encryption_optional", True) is optional
