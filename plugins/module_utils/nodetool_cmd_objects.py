@@ -37,6 +37,10 @@ class NodeToolCmd(object):
         self.cassandra_version = module.params['cassandra_version']
         if self.host is None:
             self.host = socket.getfqdn()
+        # nodetool takes a password only with a user: without one it would run
+        # without credentials and fail with "Credentials required"
+        if self.username is None and (self.password is not None or self.password_file is not None):
+            module.fail_json(msg="password or password_file is set without username: nodetool needs the JMX user too")
         if self.cassandra_version is None:
             (rc, out, err) = self.nodetool_cmd("version")
             if rc == 0:
