@@ -43,6 +43,8 @@
 
     - name: Where it stands
       ansible.builtin.set_fact:
+        # kept as a fact: the skipped tasks of the next checks overwrite registered results
+        _cassandra_cleanup_jobs: "{{ cassandra_cleanup_job.results }}"
         _cassandra_cleanup_status: >-
           {{ 'failed' if _ended | selectattr('failed', 'defined') | selectattr('failed') | list
              else 'failed' if cassandra_cleanup_job.results | rejectattr('finished', 'defined') | list
@@ -51,22 +53,6 @@
              else 'going' }}
       vars:
         _ended: "{{ cassandra_cleanup_job.results | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
-
-    - name: Stop when a cleanup failed or stopped moving
-      ansible.builtin.fail:
-        msg: >-
-          {% if _cassandra_cleanup_status == 'failed' %}
-          Cleanup failed or can't be followed on
-          {{ cassandra_cleanup_job.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.item') | join(', ') }}
-          {{- cassandra_cleanup_job.results | rejectattr('finished', 'defined') | map(attribute='item.item') | join(', ') }}:
-          {{ cassandra_cleanup_job.results | selectattr('failed', 'defined') | selectattr('failed')
-             | map(attribute='msg', default='') | join('; ') }} (see system.log there).
-          {% else %}
-          no cleanup progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s apart
-          (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
-          {% endif %}
-          Last progress: {{ _cassandra_stream_state.line }}
-      when: _cassandra_cleanup_status in ['failed', 'stalled']
 
     - name: Wait before the next check
       ansible.builtin.pause:

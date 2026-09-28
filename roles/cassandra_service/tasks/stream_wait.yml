@@ -28,6 +28,30 @@
     loop_var: _cassandra_stream_round
     label: "{{ _cassandra_stream_round + 1 }}"
 
+# Outside the checks' block: its condition (still going) would skip it
+- name: Stop when it failed or stopped moving
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}, {{ _cassandra_stream_what }}:
+      {%- if _cassandra_stream_status == 'job_failed' %}
+      failed: {{ [_cassandra_stream_job_result.msg | default('')] | flatten | join(' ') }} {{ _cassandra_stream_job_result.stderr | default('') }}
+      {%- elif _cassandra_stream_status == 'job_lost' %}
+      the job running it can't be read ({{ _cassandra_stream_job_result.msg | default('') }}): check the node (nodetool netstats, system.log).
+      {%- elif _cassandra_stream_status == 'join_failed' %}
+      the bootstrap failed (Mode JOINING_FAILED): see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      {%- elif _cassandra_stream_status == 'stopped' %}
+      Cassandra stopped during the bootstrap: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      {%- elif _cassandra_stream_status == 'stalled' %}
+      no streaming progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s
+      apart (cassandra_stream_stall_checks, 4 times as many while nothing is left to transfer). Nothing was
+      stopped: {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
+      {%- else %}
+      still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:
+      {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
+      {%- endif %}
+      Last progress: {{ _cassandra_stream_state.line }}
+  when: _cassandra_stream_status not in ['done', 'going']
+
 - name: Next round of checks
   ansible.builtin.include_tasks: stream_wait.yml
   when: _cassandra_stream_status == 'going'

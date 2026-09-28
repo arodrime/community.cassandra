@@ -19,6 +19,23 @@
     loop_var: _cassandra_stream_round
     label: "{{ _cassandra_stream_round + 1 }}"
 
+# Outside the checks' block: its condition (still going) would skip it
+- name: Stop when a cleanup failed or stopped moving
+  ansible.builtin.fail:
+    msg: >-
+      {% if _cassandra_cleanup_status == 'failed' %}
+      Cleanup failed or can't be followed on
+      {{ _cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.item') | join(', ') }}
+      {{- _cassandra_cleanup_jobs | rejectattr('finished', 'defined') | map(attribute='item.item') | join(', ') }}:
+      {{ _cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed')
+         | map(attribute='msg', default='') | join('; ') }} (see system.log there).
+      {% else %}
+      no cleanup progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s apart
+      (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
+      {% endif %}
+      Last progress: {{ _cassandra_stream_state.line }}
+  when: _cassandra_cleanup_status in ['failed', 'stalled']
+
 - name: Next round of checks
   ansible.builtin.include_tasks: cleanup_wait.yml
   when: _cassandra_cleanup_status == 'going'

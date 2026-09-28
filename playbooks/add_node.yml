@@ -119,10 +119,13 @@
              | community.cassandra.cassandra_add_node_plan(_new_info, hosts=_hosts, keyspaces=cassandra_keyspaces | default(none)) }}
       vars:
         _new_info: >-
-          [{% for h in ansible_play_hosts_all %}{"host": {{ h | to_json }}, "dc": {{ hostvars[h]._cassandra_preflight.cassandra_dc | to_json }},
-           "rack": {{ hostvars[h]._cassandra_preflight.cassandra_rack | to_json }}, "in_ring": {{ (h not in _new) | to_json }}, "state": {{ hostvars[h].cassandra_new_node_state | to_json }},
-           "address": {{ hostvars[h]._cassandra_preflight.address | to_json }}}
-           {{- '' if loop.last else ',' }}{% endfor %}]
+          {%- set l = [] -%}
+          {%- for h in ansible_play_hosts_all -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   set _ = l.append({'host': h, 'address': p.address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
+                                  'in_ring': h not in _new, 'state': hostvars[h].cassandra_new_node_state}) -%}
+          {%- endfor -%}
+          {{ l }}
         _hosts: >-
           {{ dict(_existing | map('extract', hostvars, ['_cassandra_preflight', 'address']) | zip(_existing)) }}
       run_once: true

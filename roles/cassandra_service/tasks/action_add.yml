@@ -52,6 +52,9 @@
         or 'InstanceNotFoundException' in cassandra_service_netstats.stderr | default('')
       retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
       delay: 10
+      failed_when: >-
+        cassandra_service_netstats.mode | default('') | length == 0
+        and 'InstanceNotFoundException' not in cassandra_service_netstats.stderr | default('')
 
     - name: Start following the bootstrap
       ansible.builtin.set_fact:

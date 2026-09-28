@@ -80,7 +80,7 @@ stdout:
   type: str
 stderr:
   description: Error output of the nodetool command.
-  returned: when debug is true
+  returned: when debug is true, or on failure
   type: str
 '''
 
@@ -117,7 +117,8 @@ def main():
         result['stderr'] = err
 
     if rc != 0:
-        module.fail_json(name=cmd, msg="netstats command failed", **result)
+        # stderr tells a stopped node (Connection refused) from others
+        module.fail_json(name=cmd, msg="netstats command failed", **dict(result, stderr=err))
 
     mode, streams, sessions = parse_sessions(out)
     result['stdout'] = out
