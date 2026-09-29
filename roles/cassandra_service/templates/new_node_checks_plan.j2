@@ -1,0 +1,128 @@
+{#- What tasks/new_node_checks.yml checks on this host, from the inventory and
+    the roles' defaults, as JSON: the directories, the packages (installed, or
+    available), the URLs, the ports to reach and its own ports, plus the
+    problems and facts found on the way. Same choices as the roles: Java and
+    Cassandra (cassandra_install), cqlsh's Python (cassandra_install),
+    Medusa's Python and pip index (cassandra_medusa). -#}
+{%- set offline = cassandra_offline | bool -%}
+{%- set debian = ansible_facts['os_family'] == 'Debian' -%}
+{%- set py3 = (cassandra_new_node_python3.stdout | default('') | trim) if cassandra_new_node_python3.rc | default(1) == 0 else '' -%}
+{%- set have = dict(cassandra_new_node_paths.results | map(attribute='item') | zip(cassandra_new_node_paths.results | map(attribute='stat.exists'))) -%}
+{%- set problems = [] -%}{%- set info = [] -%}{%- set packages = [] -%}{%- set urls = [] -%}{%- set reach = [] -%}{%- set dirs = [] -%}
+
+{#- Access -#}
+{%- set uid = cassandra_new_node_uid.stdout | default('') | trim -%}
+{%- if uid != '0' -%}
+{%-   set _ = problems.append('Ansible runs as user ID ' ~ uid ~ ', not root: the roles install packages; run with --become (-b)') -%}
+{%- endif -%}
+{%- set _ = info.append('Ansible: ' ~ (ansible_facts['python']['executable'] | default('python')) ~ ' ' ~ (ansible_facts['python_version'] | default('?')) ~ (', as root' if uid == '0' else '')) -%}
+
+{#- Directories -#}
+{%- for d in [cassandra_data_file_directories] | flatten -%}
+{%-   set _ = dirs.append({'kind': 'data', 'path': d}) -%}
+{%- endfor -%}
+{%- set _ = dirs.extend([{'kind': 'commitlog', 'path': cassandra_commitlog_dir}, {'kind': 'hints', 'path': cassandra_hints_dir},
+                         {'kind': 'saved_caches', 'path': cassandra_saved_caches_dir}]) -%}
+
+{#- Java -#}
+{%- if cassandra_install_java | bool and _cassandra_java_home == '' -%}
+{%-   set _ = packages.append({'name': cassandra_java_package, 'why': 'Java', 'mode': 'installed' if offline else 'either'}) -%}
+{%- endif -%}
+{%- set java_there = have.get(_cassandra_java_home ~ '/.unpacked', false)
+                     or (cassandra_java_home != '' and have.get(_cassandra_java_home ~ '/bin/java', false)) -%}
+{%- if cassandra_java_tarball is match('https?://') and not java_there -%}
+{%-   if offline -%}
+{%-     set _ = problems.append('cassandra_offline downloads nothing, and the Java tarball is not unpacked in ' ~ _cassandra_java_home ~ ': give cassandra_java_tarball as a file on the controller, or unpack it there first') -%}
+{%-   else -%}
+{%-     set _ = urls.append({'name': 'Java tarball', 'url': cassandra_java_tarball, 'method': 'HEAD', 'auth': 'java'}) -%}
+{%-   endif -%}
+{%- endif -%}
+
+{#- Cassandra: from the repository the role adds, from repositories set up by other means, or installed already (offline) -#}
+{%- if cassandra_repository_manage | bool -%}
+{%-   if debian -%}
+{%-     set _ = urls.append({'name': 'Cassandra repository', 'auth': 'repository',
+                             'url': (cassandra_repository_deb_url | regex_replace('/+$', '')) ~ '/dists/' ~ cassandra_version ~ '/InRelease'}) -%}
+{%-   else -%}
+{%-     set _ = urls.append({'name': 'Cassandra repository', 'auth': 'repository',
+                             'url': (cassandra_repository_rpm_url | regex_replace('/+$', '')) ~ '/repodata/repomd.xml'}) -%}
+{%-   endif -%}
+{%-   if cassandra_repository_key_url != '' -%}
+{%-     set _ = urls.append({'name': 'Cassandra signing keys', 'auth': 'repository', 'url': cassandra_repository_key_url}) -%}
+{%-   endif -%}
+{%- endif -%}
+{%- if offline or not cassandra_repository_manage | bool -%}
+{%-   set _ = packages.append({'name': 'cassandra', 'why': 'Cassandra', 'mode': 'installed' if offline else 'either',
+                               'version': cassandra_package_version}) -%}
+{%- endif -%}
+
+{#- cqlsh's Python: python3 when the series' cqlsh supports it, else python3.11 -#}
+{%- set range = cassandra_cqlsh_python_supported[cassandra_version] | default([]) -%}
+{%- if cassandra_cqlsh_python != '' -%}
+{%-   if not have.get(cassandra_cqlsh_python, false) -%}
+{%-     set _ = problems.append('cassandra_cqlsh_python ' ~ cassandra_cqlsh_python ~ ' does not exist: cqlsh would not run') -%}
+{%-   endif -%}
+{%- elif not py3 -%}
+{%-   set _ = info.append('python3: not installed yet, the Cassandra package brings it (cqlsh runs on it when it fits)') -%}
+{%- elif range and not (py3 is version(range[0], '>=') and py3 is version(range[1], '<=')) -%}
+{%-   if have.get('/usr/bin/python3.11', false) -%}
+{%-     set _ = info.append('cqlsh: python3 ' ~ py3 ~ ' does not fit, runs on /usr/bin/python3.11') -%}
+{%-   else -%}
+{%-     set _ = packages.append({'name': 'python3.11', 'why': 'cqlsh, python3 ' ~ py3 ~ ' is outside ' ~ range | join('-'),
+                                 'mode': 'warn' if offline else 'either',
+                                 'fallback': 'the deadsnakes PPA' if ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != '' else ''}) -%}
+{%-   endif -%}
+{%- else -%}
+{%-   set _ = info.append('cqlsh: python3 ' ~ py3) -%}
+{%- endif -%}
+
+{#- Medusa's Python: a new virtualenv (an existing one keeps its own), or pip into the system Python -#}
+{%- if cassandra_medusa_enabled | default(false) | bool -%}
+{%-   set mrange = cassandra_medusa_python_supported -%}
+{%-   if cassandra_medusa_venv != '' and have.get(cassandra_medusa_venv ~ '/bin/python', false) -%}
+{%-     set _ = info.append('Medusa: virtualenv ' ~ cassandra_medusa_venv ~ ' already there') -%}
+{%-   else -%}
+{%-     set mode = 'installed' if offline else 'either' -%}
+{%-     if cassandra_medusa_python != '' -%}
+{%-       if not have.get(cassandra_medusa_python, false) -%}
+{%-         set _ = problems.append('cassandra_medusa_python ' ~ cassandra_medusa_python ~ ' does not exist') -%}
+{%-       endif -%}
+{%-     elif not py3 -%}
+{%-       set _ = info.append('Medusa: python3 not installed yet, its Python is chosen at install') -%}
+{%-     elif py3 is version(mrange[0], '>=') and py3 is version(mrange[1], '<=') -%}
+{%-       if cassandra_medusa_venv == '' -%}
+{%-         set _ = packages.append({'name': 'python3-pip', 'why': 'Medusa', 'mode': mode}) -%}
+{%-       elif debian -%}
+{%-         set _ = packages.append({'name': 'python3-venv', 'why': 'Medusa virtualenv', 'mode': mode}) -%}
+{%-       endif -%}
+{%-     elif not debian -%}
+{%-       for p in ['python3.11', 'python3.11-pip'] -%}
+{%-         set _ = packages.append({'name': p, 'why': 'Medusa, python3 ' ~ py3 ~ ' is outside ' ~ mrange | join('-'), 'mode': mode}) -%}
+{%-       endfor -%}
+{%-     else -%}
+{%-       set _ = problems.append('Medusa ' ~ cassandra_medusa_version ~ ' runs on Python ' ~ mrange | join(' to ') ~ ', python3 here is ' ~ py3 ~ ': set cassandra_medusa_python to such an interpreter (installed by other means)') -%}
+{%-     endif -%}
+{%-     if not (offline and cassandra_medusa_pip_index_url == '') -%}
+{%-       set _ = urls.append({'name': 'Medusa pip index', 'auth': 'pip', 'ca_path': cassandra_medusa_pip_cert,
+                               'url': (cassandra_medusa_pip_index_url or 'https://pypi.org/simple') | regex_replace('/+$', '') ~ '/cassandra-medusa/',
+                               'match': '(?i)cassandra[-_]medusa-' ~ (cassandra_medusa_version | string | regex_escape) ~ '[.-]',
+                               'what': 'cassandra-medusa ' ~ cassandra_medusa_version}) -%}
+{%-     endif -%}
+{%-   endif -%}
+{%- endif -%}
+
+{#- Network: the seeds' ports from here, and this host's own ports -#}
+{%- set legacy_ssl = cassandra_legacy_ssl_storage_port_enabled | bool and cassandra_internode_encryption != 'none' -%}
+{%- for seed in (_cassandra_service_seeds | default([]))[:2] -%}
+{%-   set _ = reach.append({'name': 'storage', 'host': seed, 'port': cassandra_storage_port | int}) -%}
+{%-   if legacy_ssl -%}
+{%-     set _ = reach.append({'name': 'SSL storage', 'host': seed, 'port': cassandra_ssl_storage_port | int}) -%}
+{%-   endif -%}
+{%-   if cassandra_start_native_transport | bool -%}
+{%-     set _ = reach.append({'name': 'native (CQL)', 'host': seed, 'port': cassandra_native_transport_port | int}) -%}
+{%-   endif -%}
+{%- endfor -%}
+{%- set own_ports = [{'name': 'storage', 'port': cassandra_storage_port | int}, {'name': 'native (CQL)', 'port': cassandra_native_transport_port | int},
+                     {'name': 'JMX', 'port': cassandra_jmx_port | int}] + ([{'name': 'SSL storage', 'port': cassandra_ssl_storage_port | int}] if legacy_ssl else []) -%}
+
+{{ {'problems': problems, 'info': info, 'dirs': dirs, 'packages': packages, 'urls': urls, 'reach': reach, 'own_ports': own_ports} | to_json }}

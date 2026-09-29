@@ -35,6 +35,14 @@ cassandra_service_tasks_max: infinity
 cassandra_service_drain_on_stop: true
 cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout_stop
 
+# add_node and replace_node check the new hosts before installing anything
+# (root access, directories and their mounts, Pythons, packages and their
+# sources, network, no Cassandra there yet) and stop with every problem
+# found. false skips these checks.
+cassandra_new_node_checks: true
+# Minimum free space (GiB) on each data directory's file system, 0 = no minimum
+cassandra_new_node_min_free_gb: 0
+
 # Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
 cassandra_service_wait_for_normal: true
 cassandra_service_wait_timeout: 600  # seconds

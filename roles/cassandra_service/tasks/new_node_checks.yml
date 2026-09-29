@@ -1,0 +1,220 @@
+---
+# Checks a host before add_node or replace_node installs anything on it, and
+# stops once with every problem found: root access, the Cassandra directories
+# (mounted where fstab or systemd expects, empty, free space), the Pythons of
+# cqlsh and Medusa, the packages and where they come from, the network to the
+# seeds, its own ports free, no Cassandra running. Read-only, also under
+# --check. Runs after the preflight play (its facts and ring). A host already
+# in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
+# checks it next). cassandra_new_node_checks: false skips them all.
+- name: Load the defaults of the roles the node gets
+  ansible.builtin.include_role:
+    name: "community.cassandra.{{ item }}"
+    tasks_from: defaults.yml
+    public: true
+  loop: [cassandra_config, cassandra_install, cassandra_repository, cassandra_medusa]
+
+- name: Check the host before installing anything
+  when: cassandra_new_node_checks | bool
+  block:
+    - name: Is this host in the ring already
+      ansible.builtin.set_fact:
+        _cassandra_new_node_check_it: >-
+          {{ not (_cassandra_new_node_skip_in_ring | default(false) | bool and _address in _ring) }}
+      vars:
+        _address: "{{ _cassandra_preflight.address | default(inventory_hostname) }}"
+        _ring: >-
+          {{ (cassandra_preflight_status.cluster_status | default({}) or {}).values() | map(attribute='nodes') | flatten
+             | map(attribute='address') | list }}
+
+    - name: Gather what the checks need
+      when: _cassandra_new_node_check_it | bool
+      vars:
+        _dirs: "{{ [cassandra_data_file_directories] | flatten + [cassandra_commitlog_dir, cassandra_hints_dir, cassandra_saved_caches_dir] }}"
+      block:
+        - name: Read the user Ansible runs as
+          ansible.builtin.command: id -u
+          register: cassandra_new_node_uid
+          changed_when: false
+          check_mode: false  # read-only
+
+        - name: Look for the Cassandra directories
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: cassandra_new_node_dir_stat
+          loop: "{{ _dirs }}"
+
+        - name: List what they hold
+          ansible.builtin.find:
+            paths: "{{ cassandra_new_node_dir_stat.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
+                       | map(attribute='item') | list }}"
+            file_type: any
+            hidden: true
+          register: cassandra_new_node_found
+          when: cassandra_new_node_dir_stat.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir') | list | length > 0
+
+        - name: Read /etc/fstab
+          ansible.builtin.slurp:
+            src: /etc/fstab
+          register: cassandra_new_node_fstab
+          failed_when: false
+
+        - name: List the systemd mount units
+          ansible.builtin.command: systemctl list-unit-files --type=mount --no-legend --no-pager
+          register: cassandra_new_node_mount_units
+          changed_when: false
+          failed_when: false
+          check_mode: false  # read-only
+
+        - name: List the listening ports
+          ansible.builtin.command: ss -ltn
+          register: cassandra_new_node_ss
+          changed_when: false
+          failed_when: false
+          check_mode: false  # read-only
+
+        - name: Get the system python3 version
+          ansible.builtin.command: python3 -c "import sys; print('%d.%d' % sys.version_info[:2])"
+          register: cassandra_new_node_python3
+          changed_when: false
+          failed_when: false
+          check_mode: false  # read-only
+
+        - name: Look for the Pythons, Java and Medusa already there
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: cassandra_new_node_paths
+          loop: >-
+            {{ ['/usr/bin/python3.11', cassandra_cqlsh_python, cassandra_medusa_python,
+                (cassandra_medusa_venv ~ '/bin/python') if cassandra_medusa_venv != '' else '',
+                (_cassandra_java_home ~ '/.unpacked') if _cassandra_java_home != '' else '',
+                (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != '' else ''] | select | unique | list }}
+
+        - name: Read the installed packages
+          ansible.builtin.package_facts:
+          check_mode: false  # read-only
+
+        - name: Work out what to check
+          ansible.builtin.set_fact:
+            _cassandra_new_node_plan: "{{ lookup('ansible.builtin.template', 'new_node_checks_plan.j2') | from_json }}"
+
+        - name: Look for the apt package lists (Debian)
+          ansible.builtin.find:
+            paths: /var/lib/apt/lists
+            patterns: "*_Packages*"
+          register: cassandra_new_node_apt_lists
+          when: ansible_facts['os_family'] == 'Debian'
+
+        - name: Ask the repositories for the packages
+          ansible.builtin.command:
+            argv: >-
+              {{ (['apt-cache', 'policy'] if ansible_facts['os_family'] == 'Debian'
+                  else ['dnf', '-q', 'repoquery', '--showduplicates', '--qf', '%{name} %{version}\n'])
+                 + _cassandra_new_node_plan.packages | map(attribute='name') | list }}
+          register: cassandra_new_node_repoquery
+          changed_when: false
+          failed_when: false
+          check_mode: false  # read-only
+          when: _cassandra_new_node_plan.packages | rejectattr('mode', 'in', ['installed', 'warn']) | list | length > 0
+
+        # Credentials by source, not in the loop items (shown in the output)
+        - name: Reach the package sources
+          ansible.builtin.uri:
+            url: "{{ item.url }}"
+            method: "{{ item.method | default('GET') }}"
+            url_username: "{{ _auth[item.auth][0] | default(omit, true) }}"
+            url_password: "{{ _auth[item.auth][1] | default(omit, true) }}"
+            force_basic_auth: "{{ _auth[item.auth][0] | default('') != '' }}"
+            ca_path: "{{ item.ca_path | default(omit, true) }}"
+            return_content: "{{ item.match is defined }}"
+            timeout: 20
+          register: cassandra_new_node_urls
+          failed_when: false
+          check_mode: false  # read-only
+          no_log: "{{ _auth.values() | map('last') | select | list | length > 0 }}"
+          loop: "{{ _cassandra_new_node_plan.urls }}"
+          loop_control:
+            label: "{{ item.name }}"
+          vars:
+            _auth:
+              none: ["", ""]
+              repository: ["{{ cassandra_repository_username }}", "{{ cassandra_repository_password }}"]
+              java: ["{{ cassandra_java_tarball_username }}", "{{ cassandra_java_tarball_password }}"]
+              pip: ["{{ cassandra_medusa_pip_username }}", "{{ cassandra_medusa_pip_password }}"]
+
+        - name: Reach the seeds
+          ansible.builtin.wait_for:
+            host: "{{ item.host }}"
+            port: "{{ item.port }}"
+            timeout: 5
+          register: cassandra_new_node_reach
+          failed_when: false
+          check_mode: false  # read-only
+          loop: "{{ _cassandra_new_node_plan.reach }}"
+          loop_control:
+            label: "{{ item.name }} {{ item.host }}:{{ item.port }}"
+
+        - name: Put the findings together
+          ansible.builtin.set_fact:
+            cassandra_new_node_check: >-
+              {{ {'problems': _all | map(attribute='problems') | flatten,
+                  'warnings': _all | map(attribute='warnings') | flatten,
+                  'info': _all | map(attribute='info') | flatten} }}
+          vars:
+            _dirs_result: >-
+              {{ _cassandra_new_node_plan.dirs | community.cassandra.cassandra_new_node_dirs(
+                   ansible_facts['mounts'] | default([]),
+                   fstab=(cassandra_new_node_fstab.content | default('') | b64decode),
+                   unit_files=cassandra_new_node_mount_units.stdout | default(''),
+                   found=cassandra_new_node_found.files | default([]) | map(attribute='path') | list,
+                   min_free_gb=cassandra_new_node_min_free_gb) }}
+            _all:
+              - "{{ {'problems': _cassandra_new_node_plan.problems, 'warnings': [], 'info': _cassandra_new_node_plan.info} }}"
+              - "{{ _dirs_result }}"
+              - >-
+                {{ cassandra_preflight_status.cluster_status | default({})
+                   | community.cassandra.cassandra_new_node_load(_cassandra_preflight.cassandra_dc | default(cassandra_dc),
+                       _cassandra_preflight.cassandra_rack | default(cassandra_rack), _dirs_result.data_free,
+                       address=_cassandra_preflight.address | default(''))
+                   if cassandra_preflight_status.cluster_status | default({}) else {'problems': [], 'warnings': [], 'info': []} }}
+              - >-
+                {{ _cassandra_new_node_plan.packages | community.cassandra.cassandra_new_node_packages(
+                     ansible_facts['packages'] | default({}), cassandra_new_node_repoquery.stdout | default(''),
+                     os_family=ansible_facts['os_family'],
+                     query_ok=cassandra_new_node_repoquery.rc | default(0) == 0
+                              and (ansible_facts['os_family'] != 'Debian'
+                                   or cassandra_new_node_apt_lists.matched | default(0) > 0)) }}
+              - "{{ cassandra_new_node_urls | community.cassandra.cassandra_new_node_urls }}"
+              - >-
+                {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,
+                     ss_output=cassandra_new_node_ss.stdout if cassandra_new_node_ss.rc | default(1) == 0 else none,
+                     running=_cassandra_preflight_running | default(false)) }}
+
+        - name: What {{ inventory_hostname }} has
+          ansible.builtin.debug:
+            msg: "{{ cassandra_new_node_check.info + cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING: ') | list }}"
+
+    - name: Every problem found
+      ansible.builtin.debug:
+        msg: "{{ _lines }}"
+      run_once: true
+      when: _lines | length > 0
+      vars:
+        _lines: >-
+          {%- set l = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_new_node_check is defined -%}
+          {%-   for p in hostvars[h].cassandra_new_node_check.problems -%}{%- set _ = l.append(h ~ ': ' ~ p) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ l }}
+
+    - name: Stop before installing anything
+      ansible.builtin.fail:
+        msg: >-
+          {{ _hosts | join(', ') }} {{ 'is' if _hosts | length == 1 else 'are' }} not ready (the problems are listed above):
+          nothing was installed. Fix them and run again, or skip these checks with -e cassandra_new_node_checks=false.
+      run_once: true
+      when: _hosts | length > 0
+      vars:
+        _hosts: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_new_node_check', 'defined')
+             | rejectattr('cassandra_new_node_check.problems', 'equalto', []) | map(attribute='inventory_hostname') | list }}

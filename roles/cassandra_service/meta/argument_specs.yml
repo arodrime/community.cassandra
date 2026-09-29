@@ -32,6 +32,20 @@ argument_specs:
           - Start a node that never started even when it is listed in
             C(cassandra_seeds) and another seed already answers. Seeds don't
             bootstrap, so such a node would join without its data.
+      cassandra_new_node_checks:
+        type: bool
+        default: true
+        description:
+          - C(add_node) and C(replace_node) check the new hosts before installing anything (root access,
+            the Cassandra directories and their mounts, free space, the Pythons of cqlsh and Medusa, the
+            packages and their sources, the seeds' ports, no Cassandra there yet) and stop with every
+            problem found. V(false) skips these checks.
+      cassandra_new_node_min_free_gb:
+        type: int
+        default: 0
+        description:
+          - Minimum free space, in GiB, on the file system of each data directory of a new host. V(0)
+            checks none, the free space is only shown.
       cassandra_service_user:
         type: str
         default: cassandra

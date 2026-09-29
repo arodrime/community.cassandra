@@ -1,0 +1,2 @@
+minor_changes:
+  - add_node, replace_node - check the new hosts before installing anything and stop with every problem found at once (root access, directories mounted where expected and empty, free space against the load of the rack, the packages and Pythons needed, the package sources with their credentials, the seeds' ports, the host's own ports free, no Cassandra running); ``cassandra_new_node_checks=false`` skips them, ``cassandra_new_node_min_free_gb`` sets a minimum free space.

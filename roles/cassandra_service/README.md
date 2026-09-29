@@ -49,6 +49,15 @@ Role Variables
 * `cassandra_service_allow_new_seed`: a node that never started and is
   listed in `cassandra_seeds` is refused when another seed already answers
   (seeds don't bootstrap: it would join without its data). Default `false`.
+* `cassandra_new_node_checks`: `add_node` and `replace_node` check the new
+  hosts before installing anything (root access, the Cassandra directories
+  mounted where fstab or a systemd mount unit expects and empty, free space
+  against the load of the other nodes, the Pythons of cqlsh and Medusa, the
+  packages or the sources they come from, the seeds' ports, the host's own
+  ports free, no Cassandra running) and stop with every problem found.
+  Default `true`; `false` skips them.
+* `cassandra_new_node_min_free_gb`: minimum free space (GiB) on each data
+  directory's file system of a new host. Default `0` (none).
 
 Config changes made by `cassandra_config` never restart the node either.
 

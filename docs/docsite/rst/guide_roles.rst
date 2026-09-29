@@ -153,6 +153,16 @@ Add the host to the inventory, in its datacenter's group, without adding it to `
 The other nodes are not touched. A node that has never started and is listed in ``cassandra_seeds`` is refused while
 another seed answers: seeds don't bootstrap, so it would join without its data. Add it, then make it a seed.
 
+Before installing anything, ``add_node`` and ``replace_node`` check the new hosts and stop with every problem found at
+once: Ansible runs as root; the data, commitlog, hints and saved_caches directories are empty and on the file system
+``/etc/fstab`` or an enabled systemd mount unit expects (not on the root file system because a disk is not mounted),
+with their free space shown, a warning when the nodes of the same rack hold more than half of it on average, and
+``cassandra_new_node_min_free_gb`` as a minimum; Java, Cassandra (at ``cassandra_package_version``) and the Pythons of
+cqlsh and Medusa are installed, or available from the configured repositories (installed already with
+``cassandra_offline``); the Cassandra repository, the Java tarball and the Medusa pip index answer with their
+credentials; the storage and native ports of two seeds answer from the new host, its own Cassandra ports are free and
+Cassandra is not running there. ``-e cassandra_new_node_checks=false`` skips these checks.
+
 Once the new nodes have joined, the others still hold the data they handed over. ``cleanup`` removes it, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
