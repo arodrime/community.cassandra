@@ -12,6 +12,8 @@
 # is already out of the ring), or assassinate (removes it from gossip without
 # streaming: only when removenode can't finish; data it held alone is lost,
 # repair after).
+# Run again after an interruption: a removal still in progress on the node
+# that runs it is waited for again, a node already out of the ring is done.
 # CQL credentials, when authentication is on: cassandra_cql_username/_password.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
@@ -21,8 +23,10 @@
   gather_facts: false
   vars:
     _method: "{{ cassandra_dead_node_method | default('removenode') }}"
-    # removenode_force on a node already out of the ring: nothing to do
-    _nothing_to_do: "{{ _method == 'removenode_force' and cassandra_dead_node | default({}) == {} }}"
+    # removenode(_force) on a node already out of the ring: nothing to do
+    _nothing_to_do: "{{ _method in ['removenode', 'removenode_force'] and cassandra_dead_node | default({}) == {} }}"
+    # removenode: an earlier run's removal still in progress on this node is waited for again
+    _resume: "{{ _method == 'removenode' and cassandra_dead_removal | default('start') == 'resume' }}"
   tasks:
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
@@ -62,8 +66,38 @@
              | map(attribute='address') | list }}
       run_once: true
 
+    - name: Read the removals in progress on {{ ansible_play_hosts[0] }}
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} removenode status"
+      register: cassandra_dead_removal_status
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only; --check needs it too
+      no_log: "{{ cassandra_jmx_password | length > 0 }}"
+      run_once: true
+      when: _method == 'removenode'
+
+    - name: Keep where the removal stands
+      ansible.builtin.set_fact:
+        cassandra_dead_removal: >-
+          {{ cassandra_dead_ring | community.cassandra.cassandra_removal_state(cassandra_dead_node_address,
+               cassandra_dead_removal_status.stdout | default('')) }}
+      run_once: true
+
+    - name: No other removal in progress on {{ ansible_play_hosts[0] }}
+      ansible.builtin.assert:
+        that: cassandra_dead_removal != 'busy'
+        fail_msg: >-
+          {{ ansible_play_hosts[0] }} is already removing a node ({{ cassandra_dead_removal_status.stdout | default('') | trim }})
+          {%- if cassandra_dead_leaving_others %} and other nodes are leaving ({{ cassandra_dead_leaving_others | join(', ') }}){% endif %}:
+          wait for it to finish (nodetool removenode status), then run this again.
+        quiet: true
+      run_once: true
+      when: _method == 'removenode'
+
     - name: The node is dead
-      when: _method != 'removenode_force'
+      when:
+        - _method != 'removenode_force'
+        - not _nothing_to_do | bool
       ansible.builtin.assert:
         that: _dead.status | default('') == 'D'
         fail_msg: >-
@@ -140,7 +174,9 @@
       vars:
         cassandra_confirm_prompt: |-
           remove_dead_node will take {{ cassandra_dead_node_address | default('(not set)') }} out of the ring with {{ _method }}.
-          {% if _method == 'removenode' %}
+          {% if _resume | bool %}
+          Its removal started earlier is still in progress on {{ ansible_play_hosts[0] }}: waited for again.
+          {% elif _method == 'removenode' %}
           Its ranges are streamed from the other replicas (this can take hours).
           {% elif _method == 'removenode_force' %}
           FORCE: finishes the pending removal without waiting for the streams left: run a repair afterwards.
@@ -163,13 +199,18 @@
       poll: 0
       register: cassandra_removenode_job
       run_once: true
-      when: _method == 'removenode'
+      when:
+        - _method == 'removenode'
+        - not _resume | bool
+        - not _nothing_to_do | bool
 
     - name: Start following the removal
       ansible.builtin.set_fact:
         _cassandra_stream_state: {}
       run_once: true
-      when: _method == 'removenode'
+      when:
+        - _method == 'removenode'
+        - not _nothing_to_do | bool
 
     # The nodes that take over its ranges stream them from the other replicas
     - name: Follow the removal
@@ -182,12 +223,18 @@
         _cassandra_stream_what: removenode of {{ cassandra_dead_node_address }}
         _cassandra_stream_operations: [Restore replica count]
         _cassandra_stream_from: "{{ ansible_play_hosts }}"
-        _cassandra_stream_job: {jid: "{{ cassandra_removenode_job.ansible_job_id }}", host: "{{ ansible_play_hosts[0] }}"}
+        # none when resuming: done once no removal is left on that node
+        _cassandra_stream_job: >-
+          {{ {'jid': cassandra_removenode_job.ansible_job_id, 'host': ansible_play_hosts[0]}
+             if cassandra_removenode_job.ansible_job_id is defined else {} }}
+        _cassandra_stream_removal_on: "{{ ansible_play_hosts[0] if _resume | bool else '' }}"
         _cassandra_stream_advice: >-
           nodetool removenode status and nodetool netstats on the nodes; once the streams are over or stuck for good,
           run this again with -e cassandra_dead_node_method=removenode_force (then a repair).
       run_once: true
-      when: _method == 'removenode'
+      when:
+        - _method == 'removenode'
+        - not _nothing_to_do | bool
 
     - name: Finish a stuck removal (removenode force, from {{ ansible_play_hosts[0] }})
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} removenode force"

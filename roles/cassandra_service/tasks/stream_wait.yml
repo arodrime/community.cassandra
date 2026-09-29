@@ -12,7 +12,10 @@
 #   _cassandra_stream_operations: netstats session operations to follow (e.g. ['Bootstrap'])
 #   _cassandra_stream_from: hosts whose netstats show the streams
 #   _cassandra_stream_join: true: done when this node is NORMAL (bootstrap, replace)
+#   _cassandra_stream_leave: true: done when this node is DECOMMISSIONED (decommission)
 #   _cassandra_stream_job: {'jid': ..., 'host': ...}: done when this async job ends
+#   _cassandra_stream_removal_on: host whose nodetool removenode status says when
+#     a removenode an earlier run started is over (no job to follow)
 #   _cassandra_stream_peers: hosts to read instead, from the other side, when this
 #     node's nodetool can't answer during its bootstrap (5.0.0 to 5.0.4, CASSANDRA-19902)
 #   _cassandra_stream_advice: what to check when it stalls
@@ -39,8 +42,11 @@
       the job running it can't be read ({{ _cassandra_stream_job_result.msg | default('') }}): check the node (nodetool netstats, system.log).
       {%- elif _cassandra_stream_status == 'join_failed' %}
       the bootstrap failed (Mode JOINING_FAILED): see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      {%- elif _cassandra_stream_status == 'leave_failed' %}
+      the decommission failed (Mode DECOMMISSION_FAILED): see why in its system.log. Once fixed, nodetool decommission
+      on it resumes it (the ranges already streamed are skipped), or restart Cassandra on it to cancel it (it comes back UN).
       {%- elif _cassandra_stream_status == 'stopped' %}
-      Cassandra stopped during the bootstrap: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
       {%- elif _cassandra_stream_status == 'stalled' %}
       no streaming progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s
       apart (cassandra_stream_stall_checks, 4 times as many while nothing is left to transfer). Nothing was

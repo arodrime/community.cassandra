@@ -43,7 +43,19 @@
       ignore_errors: true  # a failed job is reported below
       ignore_unreachable: true
       no_log: "{{ cassandra_jmx_password | length > 0 }}"  # a shell job's command line carries it
-      when: _cassandra_stream_job is defined
+      when: _cassandra_stream_job.jid | default('') | length > 0
+
+    # removenode resumed (no job to follow): over once that node has no removal left
+    - name: Check the removal
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} removenode status"
+      delegate_to: "{{ _cassandra_stream_removal_on | default(inventory_hostname, true) }}"
+      register: cassandra_stream_removal
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only
+      ignore_unreachable: true
+      no_log: "{{ cassandra_jmx_password | length > 0 }}"
+      when: _cassandra_stream_removal_on | default('') | length > 0
 
     - name: Work out the progress
       ansible.builtin.set_fact:
@@ -74,18 +86,24 @@
           {{ dict(cassandra_stream_job_status | default({}) | dict2items
                   | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
         _cassandra_stream_status: >-
-          {{ 'done' if (_join and _self_mode == 'NORMAL') or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
+          {{ 'done' if (_join and _self_mode == 'NORMAL') or (_leave and _self_mode == 'DECOMMISSIONED')
+                      or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
+                      or (_removal and _removal_status.rc | default(1) == 0 and 'Removing token' not in _removal_status.stdout | default(''))
              else 'job_failed' if _job and _job_status.finished | default(0) | int == 1
              else 'job_lost' if _job and _job_status.failed | default(false)
              else 'join_failed' if _join and _self_mode == 'JOINING_FAILED'
-             else 'stopped' if _join and 'Connection refused' in _cassandra_stream_self.stderr | default('')
+             else 'leave_failed' if _leave and _self_mode == 'DECOMMISSION_FAILED'
+             else 'stopped' if (_join or _leave) and 'Connection refused' in _cassandra_stream_self.stderr | default('')
              else 'stalled' if _cassandra_stream_state.stalled
              else 'too_long' if cassandra_stream_max_time | int > 0
                                 and now().timestamp() | int - _cassandra_stream_state.start | int >= cassandra_stream_max_time | int
              else 'going' }}
       vars:
         _join: "{{ _cassandra_stream_join | default(false) | bool }}"
-        _job: "{{ _cassandra_stream_job is defined }}"
+        _job: "{{ _cassandra_stream_job.jid | default('') | length > 0 }}"
+        _leave: "{{ _cassandra_stream_leave | default(false) | bool }}"
+        _removal: "{{ _cassandra_stream_removal_on | default('') | length > 0 }}"
+        _removal_status: "{{ cassandra_stream_removal | default({}) }}"
         _job_status: "{{ cassandra_stream_job_status | default({}) }}"
         _self_mode: "{{ _cassandra_stream_self.mode | default('') }}"
 

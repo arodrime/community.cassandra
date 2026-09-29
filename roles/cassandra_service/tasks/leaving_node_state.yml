@@ -1,0 +1,56 @@
+---
+# Where a node given to decommission_node stands, from its own mode (nodetool
+# netstats) and the ring seen by a node that stays. Sets cassandra_leaving_node:
+# {state, in_ring, reason}, state normal (the usual checks decide), leaving (a
+# decommission an earlier run started, waited for again) or decommissioned
+# (gone from the ring: Cassandra stopped and disabled there); a failed or
+# unclear decommission is refused with the reason (an operator's call).
+- name: Where {{ inventory_hostname }} stands
+  vars:
+    _from: >-
+      {{ groups[cassandra_hosts | default('cassandra')]
+         | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)) | first | default('') }}
+    # the address the other nodes see this node by
+    _address: >-
+      {{ (cassandra_extra_settings | default({})).broadcast_address
+         | default(_cassandra_preflight.address | default(cassandra_listen_address
+                   if cassandra_listen_address | default('') not in ['', 'localhost']
+                   else ansible_facts['default_ipv4']['address'] | default(''), true), true) }}
+  module_defaults:
+    community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+  block:
+    - name: Read this node's mode
+      community.cassandra.cassandra_netstats:
+      register: cassandra_leaving_netstats
+      failed_when: false
+
+    - name: Read the ring from {{ _from }}
+      community.cassandra.cassandra_status:
+      module_defaults:
+        community.cassandra.cassandra_status: >-
+          {{ _cassandra_service_jmx | combine({'port': hostvars[_from].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
+      register: cassandra_leaving_ring
+      delegate_to: "{{ _from }}"
+      failed_when: false
+      when: _from | length > 0
+
+    - name: Remember where it stands
+      ansible.builtin.set_fact:
+        cassandra_leaving_node: >-
+          {{ cassandra_leaving_netstats | community.cassandra.cassandra_leaving_state(cassandra_leaving_ring, _address) }}
+        cassandra_leaving_node_address: "{{ _address }}"
+
+    - name: Refuse a decommission that needs an operator
+      ansible.builtin.fail:
+        msg: "{{ inventory_hostname }} ({{ _address }}): {{ cassandra_leaving_node.reason }}"
+      when: cassandra_leaving_node.state == 'failed'
+
+    - name: Say what is left to do on it
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} ({{ _address }}):
+          {{ ('already decommissioned' ~ ((' (' ~ cassandra_leaving_node.reason ~ ')') if cassandra_leaving_node.reason else '')
+              ~ ', Cassandra is only stopped and disabled there')
+             if cassandra_leaving_node.state == 'decommissioned'
+             else 'decommission already in progress (an earlier run), waited for again' }}
+      when: cassandra_leaving_node.state in ['leaving', 'decommissioned']

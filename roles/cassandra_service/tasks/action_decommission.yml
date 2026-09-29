@@ -1,6 +1,12 @@
 ---
 # Streams this node's data to the others and leaves the ring, then Cassandra
 # is stopped and disabled so it never rejoins. Can take hours on a big node.
+# cassandra_leaving_node (leaving_node_state.yml): a decommission an earlier
+# run started is only waited for, one already over only stopped and disabled.
+- name: Where the node stands
+  ansible.builtin.set_fact:
+    _cassandra_leave_state: "{{ (cassandra_leaving_node | default({})).state | default('normal') }}"
+
 - name: Decommission the node
   community.cassandra.cassandra_decommission:
     debug: true  # nodetool's stderr in the result: the reason of a failure
@@ -9,6 +15,7 @@
   async: "{{ cassandra_decommission_timeout | default(_cassandra_stream_async) }}"
   poll: 0
   register: cassandra_decommission_job
+  when: _cassandra_leave_state == 'normal'
 
 - name: Start following the decommission
   ansible.builtin.set_fact:
@@ -16,15 +23,23 @@
 
 - name: Follow the decommission
   ansible.builtin.include_tasks: stream_wait.yml
-  when: not ansible_check_mode
+  when:
+    - not ansible_check_mode
+    - _cassandra_leave_state != 'decommissioned'
   vars:
     _cassandra_stream_what: decommission
     _cassandra_stream_operations: [Unbootstrap]
     _cassandra_stream_from: ["{{ inventory_hostname }}"]
-    _cassandra_stream_job: {jid: "{{ cassandra_decommission_job.ansible_job_id }}", host: "{{ inventory_hostname }}"}
+    _cassandra_stream_leave: true
+    # none when resuming: the mode says when it is over
+    _cassandra_stream_job: >-
+      {{ {'jid': cassandra_decommission_job.ansible_job_id, 'host': inventory_hostname}
+         if cassandra_decommission_job.ansible_job_id is defined else {} }}
     _cassandra_stream_advice: >-
       the node is still LEAVING: check nodetool netstats and system.log on it. Nothing else was touched;
-      don't start another decommission meanwhile.
+      don't start another decommission meanwhile. On 4.0 and 4.1 a failed decommission stays LEAVING with no
+      stream (system.log: "Error while decommissioning"): nodetool decommission on it resumes it, or restart
+      Cassandra on it to cancel it (it comes back UN).
 
 - name: Stop and disable Cassandra
   ansible.builtin.include_tasks: main.yml

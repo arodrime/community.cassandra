@@ -198,7 +198,10 @@ Removing a node
 others, then Cassandra is stopped and disabled on it. It refuses a seed (take it out of ``cassandra_seeds`` with
 ``change_seeds`` first) and a removal that would leave a datacenter with fewer nodes than a keyspace has replicas
 there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
-authentication is on). Remove the hosts from the inventory afterwards.
+authentication is on). Remove the hosts from the inventory afterwards. Run again after an interruption, a node
+still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
+decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
+the operator: ``nodetool decommission`` on the node resumes it, restarting Cassandra on it cancels it.
 
 
 Replacing a dead node
@@ -218,7 +221,8 @@ with its address in ``cassandra_dead_node_address``: ``removenode`` streams its 
 shows it ``DL`` (dead, being removed), and never while another node is leaving, since ``nodetool removenode force``
 finishes every pending removal or decommission; it checks the node is gone afterwards, and does nothing when the node
 is already out of the ring. ``assassinate`` removes it from gossip without streaming, only when ``removenode`` can't
-finish: data it held alone is lost, repair afterwards.
+finish: data it held alone is lost, repair afterwards. Run again after an interruption, ``removenode`` waits for the
+removal still in progress, and does nothing when the node is already out of the ring.
 
 
 Datacenters

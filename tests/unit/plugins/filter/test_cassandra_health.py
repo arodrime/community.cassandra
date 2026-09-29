@@ -1,7 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_health_problems
+from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
+    cassandra_health_problems, cassandra_leaving_state, cassandra_removal_state)
 
 UP = {"is_up": True}
 IDLE = {"mode": "NORMAL", "streaming": False}
@@ -99,3 +100,106 @@ def test_expected_joining_node_is_not_a_problem():
         down = [node("10.0.0.1"), node("10.0.0.2", status=status, state=state)]
         assert problems([view("n1", *down)], expected=2, joining_ok=["10.0.0.2"]) == [
             "10.0.0.2 (r1) is %s%s, seen from n1" % (status, state)]
+
+
+def test_leaving_node_expected_by_the_caller():
+    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", state="L")]
+    assert problems([view("n2", *ring)], leaving_ok=["10.0.0.3"]) == []
+    # only UL: down while leaving is still a problem
+    ring[2] = node("10.0.0.3", status="D", state="L")
+    assert problems([view("n2", *ring)], leaving_ok=["10.0.0.3"]) == ["10.0.0.3 (r1) is DL, seen from n2"]
+    # another node leaving is not
+    ring[2] = node("10.0.0.3", state="L")
+    assert problems([view("n2", *ring)], leaving_ok=["10.0.0.2"]) == ["10.0.0.3 (r1) is UL, seen from n2"]
+
+
+def ring_result(*nodes):
+    return {"cluster_status": {"dc1": {"nodes": list(nodes)}}}
+
+
+FULL = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3", state="L"))
+GONE = ring_result(node("10.0.0.1"), node("10.0.0.2"))
+
+
+def leaving(mode, ring, **netstats):
+    netstats.update({"mode": mode} if mode else {})
+    return cassandra_leaving_state(netstats, ring, "10.0.0.3")
+
+
+def test_leaving_state_normal_node():
+    ring = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3"))
+    assert leaving("NORMAL", ring) == {"state": "normal", "in_ring": True, "reason": ""}
+
+
+def test_leaving_state_decommission_in_progress():
+    assert leaving("LEAVING", FULL) == {"state": "leaving", "in_ring": True, "reason": ""}
+
+
+def test_leaving_state_announcing_it_left():
+    # streams over, LEFT announced: gone from the others' ring, mode still LEAVING for ~30s
+    assert leaving("LEAVING", GONE) == {"state": "leaving", "in_ring": False, "reason": ""}
+
+
+def test_leaving_state_decommissioned():
+    assert leaving("DECOMMISSIONED", GONE) == {"state": "decommissioned", "in_ring": False, "reason": ""}
+
+
+def test_leaving_state_decommissioned_but_still_in_the_ring():
+    out = leaving("DECOMMISSIONED", FULL)
+    assert out["state"] == "failed"
+    assert "still UL in the ring" in out["reason"]
+
+
+def test_leaving_state_decommission_failed():
+    out = leaving("DECOMMISSION_FAILED", FULL)
+    assert out["state"] == "failed"
+    assert "DECOMMISSION_FAILED" in out["reason"]
+    assert "nodetool decommission on it resumes it" in out["reason"]
+
+
+def test_leaving_state_not_running_and_gone():
+    # decommissioned, then stopped (by hand, or a run that got that far): only stop and disable are left
+    out = leaving(None, GONE, failed=True, msg="nodetool error", stderr="Connection refused")
+    assert out == {"state": "decommissioned", "in_ring": False,
+                   "reason": "not in the ring and its nodetool does not answer (nodetool error (Connection refused))"}
+
+
+def test_leaving_state_not_answering_for_another_reason():
+    # JMX refusing the login, or a node down under another address: never taken as decommissioned
+    assert leaving(None, GONE, failed=True, msg="nodetool error", stderr="Authentication failed")["state"] == "normal"
+    ring = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.9", status="D"))
+    assert leaving(None, ring, failed=True, msg="nodetool error", stderr="Connection refused")["state"] == "normal"
+
+
+def test_leaving_state_left_to_the_health_check():
+    # not answering but in the ring (down), or no ring to compare with: the health check reports it
+    assert leaving(None, FULL, failed=True, msg="boom")["state"] == "normal"
+    assert leaving("LEAVING", {"msg": "nodetool status failed"})["state"] == "normal"
+    assert leaving("LEAVING", {"cluster_status": None})["state"] == "normal"
+    # a NORMAL node the ring does not know (wrong address): the ring count check reports it
+    assert leaving("NORMAL", GONE) == {"state": "normal", "in_ring": False, "reason": ""}
+
+
+REMOVING = "RemovalStatus: Removing token (-42). Waiting for replication confirmation from [/10.0.0.2]."
+IDLE_REMOVAL = "RemovalStatus: No token removals in process."
+
+
+def test_removal_state():
+    dl = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D", state="L"))
+    dn = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D"))
+    assert cassandra_removal_state(dn, "10.0.0.4", IDLE_REMOVAL) == "start"
+    assert cassandra_removal_state(dn, "10.0.0.4") == "start"
+    # died while leaving, nobody removing it: removenode again
+    assert cassandra_removal_state(dl, "10.0.0.4", IDLE_REMOVAL) == "start"
+    assert cassandra_removal_state(dl, "10.0.0.4", REMOVING) == "resume"
+    assert cassandra_removal_state(GONE, "10.0.0.4", IDLE_REMOVAL) == "absent"
+    assert cassandra_removal_state({"cluster_status": None}, "10.0.0.4") == "unknown"
+
+
+def test_removal_state_busy_with_another_node():
+    # the coordinator removes something while this node is only DN: another node
+    dn = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D"))
+    assert cassandra_removal_state(dn, "10.0.0.4", REMOVING) == "busy"
+    # two nodes leaving: the removal in progress may be the other one's
+    two = ring_result(node("10.0.0.1"), node("10.0.0.5", status="D", state="L"), node("10.0.0.4", status="D", state="L"))
+    assert cassandra_removal_state(two, "10.0.0.4", REMOVING) == "busy"
