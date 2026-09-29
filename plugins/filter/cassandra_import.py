@@ -61,11 +61,10 @@ IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, 
                          "allocate_tokens_for_local_replication_factor",),
                      "cassandra_storage_compatibility_mode": ("storage_compatibility_mode",)}
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
-# A plain "key: value" line (maybe a list item), and its value templated
-PLAIN_LINE = re.compile(r"^(\s*(?:- +)?)([a-z0-9_]+): *(.*?)\s*$")
-SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key", re.I)  # sse_c_key, access_key: Medusa's
+SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material", re.I)  # sse_c_key, access_key: Medusa's
 # Same masking as cassandra_config's diff preview
-SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
+SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret|private_key)[\w.-]*\s*[:=]\s*)"
+                          r"(\"[^\"]*\"?|'[^']*'?|\S.*?(?=\s+#|$))", re.M)
 
 
 def _mask(line):
@@ -138,32 +137,17 @@ def _render(env, series, name, ctx):
 
 
 def _value(cap):
-    parsed = yaml.safe_load(cap) if cap not in ("", "yes", "no", "on", "off") else cap
-    return parsed if isinstance(parsed, (int, float, bool)) else cap
-
-
-def _as_template_writes(tpl, live):
-    """The live line of a plain YAML setting rewritten with the template line's
-    indentation and quoting (e.g. seeds: a,b for - seeds: "{{ ... }}", or a
-    trailing comment dropped), else the live line as it is (e.g. a quoted value
-    under an unquoted template: read with its quotes, as before)."""
-    t, n = PLAIN_LINE.match(tpl), PLAIN_LINE.match(live)
-    if not (t and n) or t.group(2) != n.group(2) or ("-" in t.group(1)) != ("-" in n.group(1)) \
-            or not t.group(3).lstrip("'\"").startswith("{{"):
-        return live
-    quote = t.group(3)[0] if t.group(3)[0] in "'\"" else ""
-    if n.group(3).startswith(("'", '"')):
-        if not quote:
-            return live
-        try:
-            value = yaml.safe_load("v: " + n.group(3))["v"]
-        except yaml.YAMLError:
-            return live
-    else:
-        value = re.sub(r"\s+#.*$", "", n.group(3))  # as written (e.g. 0700, yes stay text), comment dropped
-    if not isinstance(value, str) or not value or set(value) & set("'\"\\"):
-        return live  # quotes would need escaping: left as it is
-    return "%s%s: %s%s%s" % (t.group(1), t.group(2), quote, value, quote)
+    """A number or true/false written as such, else the text as it is: Cassandra
+    reads a text setting as text (a password 0123 is not 83, nor 1_000 1000)."""
+    try:
+        parsed = yaml.safe_load(cap) if cap not in ("", "yes", "no", "on", "off") else cap
+    except yaml.YAMLError:
+        return cap
+    if isinstance(parsed, bool):
+        return parsed if cap in ("true", "false") else cap
+    if isinstance(parsed, (int, float)) and repr(parsed) == cap:
+        return parsed
+    return cap
 
 
 def _read_line(tpl, live, ctx=None):
@@ -172,7 +156,7 @@ def _read_line(tpl, live, ctx=None):
     parts = EXPR.split(tpl)
     exprs = parts[1::2]
     pattern = "".join(re.escape(p) if i % 2 == 0 else "(.*?)" for i, p in enumerate(parts))
-    m = re.fullmatch(pattern, _as_template_writes(tpl, live)) or re.fullmatch(pattern, live)
+    m = re.fullmatch(pattern, live)
     if not m:
         return None
     found, flags, values, gc = {}, {}, {}, {}
@@ -242,29 +226,174 @@ def _import_file(env, series, name, ctx, live):
             if "{{" not in t or not key:
                 continue
             key = key.group(1)
-            line = "%s=%s" % (key, node_kv[key]) if key in node_kv else "# " + r.lstrip("# ")
+            value = node_kv.get(key)
+            if value is not None and value.lower() in ("true", "false"):
+                value = value.lower()  # Java's Boolean.parseBoolean
+            line = "%s=%s" % (key, value) if key in node_kv else "# " + r.lstrip("# ")
             if line == r.strip():
                 continue  # as the role writes it: nothing to read
             got = _read_line(t, line, ctx)
             if got is not None:
                 found.update(got)
         return found
-    live = _align(rendered, live)
+    live = _align(rendered, _canonical(name, rendered, live))
     found = {}
+    tail = [t for t in tpl[-2:] if "| join(" in t]
+    extra = []  # JVM options the node sets that no variable covers: the file's extra options list
     ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
     for op, i1, i2, j1, j2 in ops:
-        if op == "replace":
-            for i, j in zip(range(i1, i2), range(j1, j2)):
-                got = _read_line(tpl[i], live[j], ctx) if "{{" in tpl[i] else None
+        if op in ("replace", "insert"):
+            for k, j in enumerate(range(j1, j2)):
+                i = i1 + k if op == "replace" and i1 + k < i2 else None
+                got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
                 if got is not None:
                     found.update(got)
-        elif op == "insert" and i1 >= len(rendered) - 2:
-            # lines appended after the last one: the file's extra options list
-            tail = [t for t in tpl[-2:] if "| join(" in t]
-            extra = [line for line in live[j1:j2] if line]
-            if tail and extra:
-                found[re.search(r"\((\w+) \| join", tail[0]).group(1)] = extra
+                elif name.endswith(".options") and live[j].startswith("-"):
+                    # bin/cassandra passes on the lines starting with '-', the last of an option counts:
+                    # at the end of the file, it has the same effect (unless a later line sets it again)
+                    if not any(_option_key(later) == _option_key(live[j]) for later in live[j + 1:]
+                               if later.startswith("-")):
+                        extra.append(live[j])
+                elif op == "insert" and i1 >= len(rendered) - 2 and live[j]:
+                    extra.append(live[j])  # lines appended after the last one
+    if tail and extra:
+        found[re.search(r"\((\w+) \| join", tail[0]).group(1)] = extra
+    if name.endswith(".yaml"):
+        # top-level settings by their key, wherever the node has them (lines
+        # added or moved by hand shift the ones below out of place)
+        found.update(_import_by_key(tpl, live, ctx))
     return found
+
+
+# true/false as Cassandra's SnakeYAML (YAML 1.1) reads them
+YAML_BOOLS = {"true": "true", "yes": "true", "on": "true", "false": "false", "no": "false", "off": "false"}
+YAML_KEY = re.compile(r"^(\s*)(- )?([a-z0-9_]+):(?:[ \t]+(.*))?$")
+SHELL_SET = re.compile(r"^(\s*)(\w+)=(.*)$")
+
+
+def _style(value):
+    value = value.strip()
+    return value[0] if value[:1] in ("'", '"') else ""
+
+
+def _canonical(name, rendered, live):
+    """The node's lines, each simple setting written the way the role writes
+    that setting (its quoting, no comment after it, true/false in lower case),
+    so that reading them against the template does not depend on how they
+    were written; a top-level cassandra.yaml key set twice: the last one counts
+    (as for Cassandra), the others are commented out."""
+    if name.endswith(".yaml"):
+        styles, bools = {}, set()
+        for r in rendered:
+            m = YAML_KEY.match(re.sub(r"^#\s?", "", r))
+            if m and m.group(4):
+                styles.setdefault((m.group(1), m.group(2) or "", m.group(3)), _style(m.group(4)))
+                if m.group(4).strip() in ("true", "false"):  # a boolean setting (| lower)
+                    bools.add((m.group(1), m.group(2) or "", m.group(3)))
+        out = []
+        for line in live:
+            m = YAML_KEY.match(line)
+            where = m and (m.group(1), m.group(2) or "", m.group(3))
+            if m and m.group(4) is None and where in styles:
+                line = line.rstrip() + " "  # no value (null): read as the template's empty one
+            elif m and m.group(4) and where in styles:
+                try:  # its text, quotes and comment out (not a number PyYAML would make of it: 0123 is not 83)
+                    value = yaml.load("v: " + m.group(4), Loader=yaml.BaseLoader)["v"]
+                except (yaml.YAMLError, TypeError):
+                    value = None
+                text = _yaml_text(value, styles[where]) if isinstance(value, str) else None
+                # yes/on/TRUE, quoted or not, are true for a boolean setting only (text elsewhere)
+                if isinstance(value, str) and where in bools and value.lower() in YAML_BOOLS:
+                    line = "%s%s%s: %s" % (m.group(1), m.group(2) or "", m.group(3), YAML_BOOLS[value.lower()])
+                elif text is not None:
+                    line = "%s%s%s: %s" % (m.group(1), m.group(2) or "", m.group(3), text)
+                # else: as it is (the role's quoting could not write it the same)
+            out.append(line)
+        last = {}
+        for i, line in enumerate(out):
+            m = YAML_KEY.match(line)
+            if m and not m.group(1) and not m.group(2):
+                if m.group(3) in last:
+                    out[last[m.group(3)]] = "# " + out[last[m.group(3)]]
+                last[m.group(3)] = i
+        return out
+    if name.endswith(".sh"):
+        styles = {}
+        for r in rendered:
+            m = SHELL_SET.match(re.sub(r"^#\s?", "", r))
+            if m:
+                styles.setdefault((m.group(1), m.group(2)), _style(m.group(3)))
+        out = []
+        for line in live:
+            m = SHELL_SET.match(line)
+            if m and (m.group(1), m.group(2)) in styles and not re.search(r"[$`]", m.group(3)):
+                try:
+                    words = shlex.split(m.group(3), comments=True)
+                except ValueError:
+                    words = []
+                quote = styles[(m.group(1), m.group(2))]
+                if len(words) == 1 and re.match(r"^[\w./:@%+,=-]*$" if quote != '"' else r'^[^"$`\\]*$', words[0]):
+                    line = "%s%s=%s" % (m.group(1), m.group(2), ('"%s"' % words[0]) if quote == '"' else words[0])
+            elif m and m.group(1) and ("", m.group(2)) in styles and (m.group(1), m.group(2)) not in styles:
+                line = line.lstrip()  # the role's own line before 2.x: " JVM_OPTS=..." (rmi hostname)
+            out.append(line)
+        return out
+    return live
+
+
+def _option_key(line):
+    """The JVM option a line sets (-XX:+Foo and -XX:-Foo: Foo; -Dx=1: -Dx; -Xmx4G: -Xmx)."""
+    word = line.split()[0] if line.split() else ""
+    m = (re.match(r"^-XX:[+-]?(\w+)", word) or re.match(r"^(-D[^=]+)", word)
+         or re.match(r"^(-X(?:mx|ms|mn|ss))", word))
+    return m.group(1) if m else line.strip()
+
+
+def _yaml_text(value, quote):
+    """value written in the template's quoting, so that YAML reads it back as
+    the same text; None when that quoting cannot (a ' in '...', or plain text
+    YAML would read as something else: '*x', 's #x', 'yes', '0123')."""
+    if quote == "'":
+        return None if "'" in value else "'%s'" % value
+    if quote == '"':
+        return None if re.search(r'["\\]', value) else '"%s"' % value
+    try:
+        same = yaml.load("v: " + value, Loader=yaml.BaseLoader)["v"] == value and \
+            yaml.safe_load("v: " + value)["v"] == _value(value)
+    except (yaml.YAMLError, TypeError):
+        same = False
+    return value if same and value.lower() not in YAML_BOOLS and value not in ("", "~", "null") else None
+
+
+def _import_by_key(tpl, live, ctx):
+    """The values of the template's top-level cassandra.yaml settings, each
+    read from the node's line with that key."""
+    lines = dict((m.group(3), line) for m, line in ((YAML_KEY.match(line), line) for line in live)
+                 if m and not m.group(1) and not m.group(2))
+    found = {}
+    for t in tpl:
+        m = TOP_KEY.match(t)
+        if "{{" not in t or not m or m.group(1) not in lines:
+            continue
+        got = _read_line(t, lines[m.group(1)], ctx)
+        if got is not None:
+            found.update(got)
+    return found
+
+
+# cassandra.yaml directory settings: their variable, and the dir under the storage dir
+STORAGE_DIRS = {"data_file_directories": ("cassandra_data_dir", "data"),
+                "commitlog_directory": ("cassandra_commitlog_dir", "commitlog"),
+                "saved_caches_directory": ("cassandra_saved_caches_dir", "saved_caches"),
+                "hints_directory": ("cassandra_hints_dir", "hints")}
+
+
+def _same_value(value, default):
+    """The same as the role default: true/false in any case, else exactly
+    (a password Cassandra is not cassandra)."""
+    def norm(v):
+        return str(v).lower() if isinstance(v, bool) or str(v).lower() in ("true", "false") else str(v)
+    return norm(value) == norm(default)
 
 
 def _default(ctx, key):
@@ -311,16 +440,18 @@ def _without_extras(rendered, live, extras):
 
 
 def _properties(lines):
-    """The settings of a key=value (or key: value) file, comments and blank lines left out."""
+    """The settings of a key=value (or key: value) file, comments and blank
+    lines left out; a value keeps its trailing spaces, as for Java's Properties
+    (prefer_local=true followed by a space is not true)."""
     out = {}
     for line in lines:
-        line = line.strip()
-        if not line or line.startswith(("#", "!")):
+        line = line.lstrip()
+        if not line.strip() or line.startswith(("#", "!")):
             continue
         key, sep, value = line.partition("=")
         if not sep:
             key, sep, value = line.partition(":")
-        out[key.strip()] = value.strip()
+        out[key.strip()] = value.lstrip()
     return out
 
 
@@ -420,15 +551,19 @@ def _hidden(name, where):
                               % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
 
 
-def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""):
+def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir=""):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized'}.
-    conf_target: the resolved dir the node reads its config from."""
+    conf_target: the resolved dir the node reads its config from; storage_dir:
+    the JVM's -Dcassandra.storagedir."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
+    # Java's Properties ends a line at \r\n, \r or \n (the other files: as their programs read them)
+    live_files = dict((k, re.sub(r"\r\n?", "\n", v) if k.endswith(".properties") and isinstance(v, str) else v)
+                      for k, v in live_files.items())
     try:
-        return _config_import(live_files, cassandra_version, facts, where, conf_target)
+        return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
@@ -438,19 +573,41 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     raise error  # out of the except block: no chained message either
 
 
-def _config_import(live_files, cassandra_version, facts, where, conf_target=""):
+def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir=""):
     env, ctx, files = _load_role(cassandra_version, facts)
-    found = {}
+    found, from_shell = {}, set()
     for name in files:
         if name in live_files:
             where[0] = name
-            found.update(_import_file(env, cassandra_version, name, ctx, live_files[name].split("\n")))
+            got = _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
+            found.update(got)
+            if name.endswith(".sh"):
+                from_shell.update(got)
     where[0] = "cassandra.yaml"
     if "cassandra.yaml" in live_files:
         found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
     changed = {k: v for k, v in found.items()
-               if str(v).lower() != str(_default(ctx, k)).lower()
-               and not (v == "" and _default(ctx, k) in ([], {}))}  # a list/dict variable left empty
+               if not _same_value(v, _default(ctx, k))
+               and not (v == "" and _default(ctx, k) in ([], {}))  # a list/dict variable left empty
+               # a number the node does not give as one (e.g. JMX_PORT="${JMX_PORT:-7299}"): not a value
+               # for the variable, left to the report (the role would write the default)
+               and not (isinstance(_default(ctx, k), int) and not isinstance(_default(ctx, k), bool)
+                        and not isinstance(v, int))
+               # a shell expansion (CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"): not a value either,
+               # unless the variable is one (cassandra_heap_dump_dir: $CASSANDRA_LOG_DIR)
+               and not (k in from_shell and isinstance(v, str) and re.search(r"[$`]", v)
+                        and not re.search(r"[$`]", str(_default(ctx, k))))}
+    if storage_dir and "cassandra.yaml" in live_files:
+        # directories cassandra.yaml leaves out: under the JVM's -Dcassandra.storagedir
+        # (a tarball's is $CASSANDRA_HOME/data), where the role writes its defaults
+        try:
+            data = yaml.safe_load(live_files["cassandra.yaml"]) or {}
+        except yaml.YAMLError:
+            data = {}
+        for key, (var, sub) in STORAGE_DIRS.items():
+            path = "%s/%s" % (storage_dir.rstrip("/"), sub)
+            if isinstance(data, dict) and data.get(key) is None and var not in changed and path != _default(ctx, var):
+                found[var] = changed[var] = path
     render_dirs = None
     if "cassandra.yaml" in live_files:
         # JBOD: the template's single line expands to one line per directory
@@ -526,8 +683,10 @@ def _identity(text, series):
     Fails, naming them, when a mandatory one isn't there."""
     try:
         conf = _as_text(yaml.compose(text))
-    except yaml.YAMLError:
-        conf = None
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)  # the line only: its text may hold a password
+        raise AnsibleFilterError("cassandra_config_import: cassandra.yaml is not valid YAML%s"
+                                 % (" (line %d)" % (mark.line + 1) if mark else ""))
     found, missing = {}, []
     for var, path in list(IDENTITY.items()) + list(IDENTITY_OPTIONAL.items()):
         value = conf
@@ -660,7 +819,7 @@ def _differences(keys, read, dcg, rackg):
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
     vars, hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars',
-    'differences', 'report'}. Nodes sharing a name are named by their address instead."""
+    'differences', 'report', 'names' (address -> name in hosts.yml)}. Nodes sharing a name are named by their address instead."""
     cluster = _slug(cluster_name)
     names = [n["name"] for n in nodes]
     shared = sorted({name for name in names if names.count(name) > 1})
@@ -746,7 +905,8 @@ def cassandra_inventory_layout(nodes, cluster_name):
             report += ["    " + _mask(line) for line in n["normalized"]]
         report.append("")
     return {"cluster_group": cluster, "hosts": hosts, "group_vars": group_vars,
-            "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report)}
+            "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
+            "names": dict((n["address"], n["name"]) for n in nodes if n.get("address"))}
 
 
 def _secret(key, value):
@@ -845,11 +1005,34 @@ def _block(key):
     return "Other"
 
 
+class Unsafe(str):
+    """A value read from a node that looks like a template (a password with
+    {{, {% or {#): written !unsafe, so Ansible uses it as it is."""
+
+
+class Dumper(yaml.SafeDumper):
+    pass
+
+
+Dumper.add_representer(Unsafe, lambda dumper, value: dumper.represent_scalar("!unsafe", str(value), style="'"))
+TEMPLATE_MARK = re.compile(r"\{\{|\{%|\{#")
+
+
+def _unsafe(value):
+    if isinstance(value, dict):
+        return dict((k, _unsafe(v)) for k, v in value.items())
+    if isinstance(value, list):
+        return [_unsafe(v) for v in value]
+    if isinstance(value, str) and TEMPLATE_MARK.search(value) and value not in (IPV4, HOSTNAME):
+        return Unsafe(value)
+    return value
+
+
 def _vars_yaml(variables):
     """variables as YAML, grouped by subject (BLOCKS): a comment line per block,
     a blank line between blocks. Each key is dumped on its own, the same way
     a whole dict would be (same values and quoting)."""
-    data = json.loads(json.dumps(variables, default=str))
+    data = _unsafe(json.loads(json.dumps(variables, default=str)))
     grouped = {}
     for key in data:
         grouped.setdefault(_block(key), []).append(key)
@@ -859,8 +1042,8 @@ def _vars_yaml(variables):
         if not keys:
             continue
         keys.sort(key=lambda k: (order.index(k), "") if k in order else (len(order), k))
-        out.append("# %s\n" % title + "".join(yaml.safe_dump({k: data[k]}, default_flow_style=False, sort_keys=True)
-                                              for k in keys))
+        out.append("# %s\n" % title + "".join(yaml.dump({k: data[k]}, Dumper=Dumper, default_flow_style=False,
+                                                        sort_keys=True) for k in keys))
     return "\n".join(out)
 
 
@@ -916,6 +1099,7 @@ SAFE_REASONS = [
                 r"it may show a value read from the nodes\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
+    (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
     (re.compile(r"(?:^|: )'(\w+)' is undefined(?:\.|$)"), r"undefined variable '\1'"),
 ]

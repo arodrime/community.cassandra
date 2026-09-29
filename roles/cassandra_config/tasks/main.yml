@@ -141,8 +141,9 @@
               - |
                 import difflib, json, os, re, sys
                 live, new = sys.argv[1], sys.argv[2]
-                a = open(live).read().splitlines(True) if os.path.exists(live) else []
-                b = open(new).read().splitlines(True)
+                import io  # newline="": a \r stays in the text (bash reads X=8G\r as "8G\r")
+                a = io.open(live, newline="").read().splitlines(True) if os.path.exists(live) else []
+                b = io.open(new, newline="").read().splitlines(True)
                 d = list(difflib.unified_diff(a, b, live + " (live)", "(new)"))
                 # values of password/secret keys never reach the output
                 secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
@@ -150,11 +151,41 @@
                 def settings(lines):
                     text = "".join(lines)
                     if live.endswith(".yaml"):
-                        try:
-                            import yaml
-                            return yaml.safe_load(text)
-                        except ImportError:
-                            pass
+                        import yaml  # none on the node: compared on the controller (exit 3)
+                        return yaml.safe_load(text)
+                    if live.endswith(".sh"):
+                        # a plain assignment (NAME=word, quoted or not, maybe a trailing comment) as its name and
+                        # value; any other line as its text, indentation out; a file where a line goes on to the
+                        # next (open quote, heredoc, backslash) or with a \r: its text as it is
+                        import shlex
+                        if "\r" in text or "<<" in text:
+                            return text
+                        plain = re.compile(r"^\s*(export\s+)?([A-Za-z_]\w*)=(?:\"([\w./:@%+,=-]*)\"|'([\w./:@%+,=-]*)'|([\w./:@%+,=-]*))"
+                                           r"(?:\s+#.*)?\s*$")
+                        out = []
+                        for s in text.split("\n"):
+                            if not s.strip() or s.lstrip().startswith("#"):
+                                continue
+                            try:
+                                shlex.split(s, comments=True)
+                            except ValueError:
+                                return text
+                            if s.endswith("\\") or re.search(r"\S#", s):  # a # in a word is no comment for bash
+                                return text
+                            m = plain.match(s)
+                            out.append([m.group(1) or "", m.group(2), "".join(g or "" for g in m.groups()[2:5])] if m else s.strip())
+                        return out
+                    if live.endswith(".options"):
+                        # what bin/cassandra passes: the lines starting with '-', in their order, but for the
+                        # system properties (-Dkey=value, each key once: their order changes nothing)
+                        if "\r" in text:
+                            return text
+                        opts = [s.rstrip(" \t") for s in text.split("\n") if s.startswith("-")]
+                        props = [s for s in opts if re.match(r"^-D[^=\s]+(=\S*)?$", s)]
+                        keys = [p.split("=")[0] for p in props]
+                        if len(set(keys)) < len(keys):
+                            return opts
+                        return [s for s in opts if s not in props] + sorted(props)
                     if live.endswith(".xml"):
                         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
                     elif live.endswith(".properties"):
@@ -165,6 +196,8 @@
                 try:
                     # json: 1, 1.0 and true are not the same setting
                     same = bool(a) and json.dumps(settings(a), sort_keys=True, default=str) == json.dumps(settings(b), sort_keys=True, default=str)
+                except ImportError:
+                    sys.exit(3 if d else 0)
                 except Exception:
                     same = False
                 sys.exit(0 if not d else 2 if same else 1)
@@ -176,7 +209,18 @@
           register: cassandra_config_preview
           check_mode: false
           changed_when: false
-          failed_when: cassandra_config_preview.rc not in [0, 1, 2]  # 1 = files differ, 2 = same settings
+          failed_when: cassandra_config_preview.rc not in [0, 1, 2, 3]  # 1 = files differ, 2 = same settings, 3 = no PyYAML
+
+        # cassandra.yaml on a node without PyYAML: its settings compared on the controller
+        - name: Read the files the node could not compare
+          ansible.builtin.slurp:
+            src: "{{ item.1 }}/{{ item.0 }}"
+          loop: >-
+            {{ cassandra_config_preview.results | selectattr('rc', 'equalto', 3) | map(attribute='cassandra_config_file')
+               | product([cassandra_conf_dir, cassandra_config_tmp.path]) | list }}
+          register: cassandra_config_yaml_files
+          no_log: true  # passwords
+          check_mode: false
         # Top-level keys and rackdc properties: plain text, no YAML parser needed on the node
         - name: Compare the settings a joined node must keep
           ansible.builtin.command:
@@ -254,7 +298,19 @@
       vars:
         _kept: >-
           {{ [] if cassandra_config_normalize | bool or not cassandra_config_initialized.stat.exists
-             else cassandra_config_preview.results | selectattr('rc', 'equalto', 2) | map(attribute='cassandra_config_file') | list }}
+             else cassandra_config_preview.results | selectattr('rc', 'equalto', 2) | map(attribute='cassandra_config_file') | list
+                  + _same_on_controller }}
+        _same_on_controller: >-
+          {%- set out = [] -%}
+          {%- set got = cassandra_config_yaml_files.results | default([]) | selectattr('content', 'defined') | list -%}
+          {%- for f in got | map(attribute='item') | map('first') | unique -%}
+          {%-   set texts = got | selectattr('item', 'equalto', [f, cassandra_conf_dir]) | map(attribute='content') | list
+                  + got | selectattr('item', 'equalto', [f, cassandra_config_tmp.path]) | map(attribute='content') | list -%}
+          {%-   if texts | length == 2 and texts[0] | b64decode | community.cassandra.cassandra_same_yaml(texts[1] | b64decode) -%}
+          {%-     set _ = out.append(f) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
 
     - name: Show the config changes
       ansible.builtin.debug:

@@ -114,15 +114,28 @@ def test_heap_of_a_kept_unit_stays_in_it():
     assert unit_heap({}) == {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "2G"}
 
 
-def conf(boot, read=True):
-    hv = {"import_cluster_conf_dir": "/etc/cassandra/conf", "import_cluster_log_dir": "",
-          "import_cluster_unit": {"restart": "", "boot": boot}}
-    return render(MATCH["_conf"], _hv=hv, _read=read, _unit_heap={}, _unit_env={})
+def conf(boot, read=True, conf_dir="/etc/cassandra/conf", os_family="RedHat"):
+    hv = {"import_cluster_conf_dir": conf_dir, "import_cluster_log_dir": "",
+          "import_cluster_unit": {"restart": "", "boot": boot}, "ansible_facts": {"os_family": os_family}}
+    defaults = render(MATCH["_default_conf_dirs"], _hv=hv)
+    return render(MATCH["_conf"], _hv=hv, _read=read, _unit_heap={}, _unit_env={}, _default_conf_dirs=defaults)
 
 
 def test_boot_setting_imported():
     assert conf("disabled") == {"cassandra_service_enabled": False}
     assert conf("enabled") == {}
+
+
+@pytest.mark.parametrize("conf_dir, os_family, imported", [
+    ("/etc/cassandra/conf", "RedHat", False),
+    ("/etc/cassandra", "Debian", False),
+    # the other family's dir: not where cassandra_config writes by default
+    ("/etc/cassandra/conf", "Debian", True),
+    ("/etc/cassandra", "RedHat", True),
+    ("/etc/cassandra", "", False),  # no facts: either
+])
+def test_conf_dir_imported_when_not_the_role_default(conf_dir, os_family, imported):
+    assert ("cassandra_conf_dir" in conf("enabled", conf_dir=conf_dir, os_family=os_family)) == imported
 
 
 def test_node_not_read_is_left_as_it_is():

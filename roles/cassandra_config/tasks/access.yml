@@ -4,22 +4,8 @@
 - name: Write the JMX users
   when: cassandra_jmx_users | length > 0
   vars:
-    _cassandra_jmx_password_content: |
-      {% for user in cassandra_jmx_users %}
-      {{ user.name }} {{ user.password }}
-      {% endfor %}
-    _cassandra_jmx_access_content: |
-      {% for user in cassandra_jmx_users %}
-      {% if user.access | default('readwrite') == 'readwrite' and user.create_unregister | default(true) | bool %}
-      {{ user.name }} readwrite \
-          create javax.management.monitor.*,javax.management.timer.* \
-          unregister
-      {% elif user.access | default('readwrite') == 'readwrite' %}
-      {{ user.name }} readwrite
-      {% else %}
-      {{ user.name }} readonly
-      {% endif %}
-      {% endfor %}
+    _cassandra_jmx_password_content: "{{ lookup('ansible.builtin.template', 'jmxremote.password.j2') }}"
+    _cassandra_jmx_access_content: "{{ lookup('ansible.builtin.template', 'jmxremote.access.j2') }}"
   block:
     # Like the config files: on a node already initialized, files with the same
     # users and rights (other comments, spacing or order) are left as they are

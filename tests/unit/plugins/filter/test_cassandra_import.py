@@ -130,6 +130,9 @@ def test_properties_compared_by_settings():
     files["cassandra-rackdc.properties"] = "dc=dc1\nrack=r1\nprefer_local=true\n"
     out = cassandra_config_import(files, "50x", FACTS)
     assert out["vars"]["cassandra_prefer_local"] is True
+    files["cassandra-rackdc.properties"] = "dc=dc1\r\nrack=r1\r\nprefer_local=true\r\n"  # CRLF, as Java reads it
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert out["vars"]["cassandra_prefer_local"] is True
     assert not [h for h in out["hand_edits"] if "rackdc" in h]
     files["cassandra-rackdc.properties"] = "dc=dc1\nrack=r1\ndc_suffix=_x\n"
     out = cassandra_config_import(files, "50x", FACTS)
@@ -518,7 +521,10 @@ def test_inventory_files_same_values_as_a_plain_dump(variables):
     files = cassandra_inventory_files({"group_vars": {"c": variables}, "host_vars": {}})
     content = "".join(f["content"] for f in files if f["path"] == "group_vars/c/main.yml")
     plain = yaml.safe_dump(variables, default_flow_style=False, sort_keys=True)
-    assert yaml.safe_load(content) == yaml.safe_load(plain) == variables
+    # a value that looks like a template is written !unsafe (Ansible's loader knows the tag)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import Loader
+    assert yaml.load(content, Loader=Loader) == yaml.safe_load(plain) == variables
+    assert ("!unsafe '" in content) == ("cassandra_extra_settings" in variables)
     assert "\n\n\n" not in content and not content.startswith("\n") and content.endswith("\n")
 
 
@@ -635,7 +641,8 @@ def test_layout_no_marker_without_a_switch():
     assert "cassandra_log_dir: \"/var/log/cassandra\", as this node has it" in out["report"]
 
 
-ACCESS_TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks", "access.yml")
+ACCESS_TEMPLATE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "templates",
+                               "jmxremote.access.j2")
 
 
 @pytest.mark.parametrize("access", [
@@ -652,8 +659,8 @@ def test_jmx_access_written_back_as_imported(access):
     except ImportError:
         def trust_as_template(template):
             return template
-    with open(ACCESS_TASKS) as f:
-        content = yaml.safe_load(f)[0]["vars"]["_cassandra_jmx_access_content"]
+    with open(ACCESS_TEMPLATE) as f:
+        content = f.read()
     users = _jmx_users("ops s3cret\nmon m0n\n", access)
     assert Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(trust_as_template(content)) == access
 
@@ -755,8 +762,10 @@ def test_identity_not_read_fails(series, drop, name):
 
 
 def test_identity_of_a_file_that_is_not_yaml_fails():
-    with pytest.raises(AnsibleFilterError, match="cannot read cluster_name, num_tokens, partitioner, endpoint_snitch, seeds"):
+    with pytest.raises(AnsibleFilterError, match=r"cassandra.yaml is not valid YAML \(line 2\)$") as err:
         cassandra_config_import({"cassandra.yaml": "cluster_name: [\n"}, "40x", FACTS)
+    assert cassandra_import_error({"failed": True, "msg": str(err.value)}) == \
+        "cassandra_config_import: cassandra.yaml is not valid YAML (line 2)"
 
 
 def test_storage_compatibility_mode_absent_is_cassandra_4():
@@ -765,23 +774,9 @@ def test_storage_compatibility_mode_absent_is_cassandra_4():
         "cassandra_storage_compatibility_mode"] == "CASSANDRA_4"
 
 
-@pytest.mark.parametrize("tpl, live, expected", [
-    ('    - seeds: "{{ s }}"', "        - seeds: a,b  # c", '    - seeds: "a,b"'),
-    ("x: {{ v }}", "x: 0700", "x: 0700"),  # as written, not read as octal
-    ("x: {{ v }}", "x: yes", "x: yes"),  # as written, not a bool
-    ("x: {{ v }}", 'x: "a" # c', 'x: "a" # c'),  # quoted under an unquoted template: as it is
-    ("x: '{{ v }}'", "x: \"it's\"", "x: \"it's\""),  # would need escaping: as it is
-    ("x: {{ v }}", "x: [a, b]", "x: [a, b]"),  # a list: left as it is
-    ("x: {{ v }}", "y: 1", "y: 1"),  # another key
-    ("- x: {{ v }}", "x: 1", "x: 1"),  # not a list item
-])
-def test_as_template_writes(tpl, live, expected):
-    assert cassandra_import._as_template_writes(tpl, live) == expected
-
-
 @pytest.mark.parametrize("line, value", [
     ("concurrent_reads: 64  # tuned", 64),
-    ('concurrent_reads: "64"', '"64"'),  # kept quoted: written back as the node has it
+    ('concurrent_reads: "64"', 64),  # the number SnakeYAML gives the int setting, not the text "64"
 ])
 def test_other_setting_read_however_written(line, value):
     live = re.sub(r"^concurrent_reads:.*$", line, stock_yaml("41x"), flags=re.M)
@@ -792,6 +787,12 @@ def test_num_tokens_absent_is_one():
     live = re.sub(r"^num_tokens:.*$", "# num_tokens: 16\ninitial_token: -9223372036854775808", stock_yaml("41x"),
                   flags=re.M)
     assert cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"]["cassandra_num_tokens"] == 1
+
+
+def test_invalid_yaml_said_so_without_values():
+    live = re.sub(r"^cluster_name:.*$", "cluster_name: a: s3cret", stock_yaml("41x"), flags=re.M)
+    with pytest.raises(AnsibleFilterError, match=r"cassandra.yaml is not valid YAML \(line \d+\)$"):
+        cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)
 
 
 @pytest.mark.parametrize("name, seeds", [("0123", "010"), ("1_000", "10.0.0.1"), ("12:30", "10.0.0.1")])

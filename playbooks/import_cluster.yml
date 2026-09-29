@@ -134,6 +134,7 @@
         echo "config=$cfg"
         echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
+        echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
         echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
         # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
         for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles; do
@@ -180,6 +181,7 @@
           {{ _kv.config | dirname if _kv.config is match('/')
              else ('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
+        import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node
         import_cluster_keep: >-
@@ -223,6 +225,18 @@
       no_log: true
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
 
+    # the unit cassandra_service wrote (its mark): the self-check compares it with the one it would write
+    - name: Read the unit
+      ansible.builtin.slurp:
+        path: "{{ import_cluster_unit.file }}"
+      register: import_cluster_unit_slurp
+      failed_when: false
+      no_log: true  # its Environment may hold a password
+      when:
+        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+        - "'cassandra_service_unit_manage' not in import_cluster_keep"
+        - import_cluster_unit.file != ''
+
     # no_log hides the error too: the rescue says what failed, without the values
     # a skipped loop registers results too: the series, not them, says it was read
     - name: Read this node's config
@@ -242,7 +256,8 @@
           ansible.builtin.set_fact:
             import_cluster_config: >-
               {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
-                                                                     import_cluster_conf_target | default('')) }}
+                                                                     import_cluster_conf_target | default(''),
+                                                                     import_cluster_storage_dir | default('')) }}
           vars:
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
@@ -434,7 +449,45 @@
     _vault: "{{ import_cluster_vault_password_file | default('') != '' }}"
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
+    # not one node read: nothing checked, nothing valid
+    _self_check_ok: >-
+      {{ _self_check_error is not defined and _self_check | default({}) | length > 0
+         and _self_check | dict2items | map(attribute='value.differences') | select | list | length == 0 }}
+    _unchecked: >-
+      {%- set out = [] -%}
+      {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
+      {{ out }}
     _report: |-
+      {% if _self_check_ok | bool %}
+      SELF-CHECK PASSED: with these variables, the roles write the config of the {{ _self_check | length }} node(s) read
+      as it is today (cassandra.yaml, cassandra-env.sh, the jvm options, rackdc, logback, and the JMX users, the unit and
+      medusa.ini when the roles manage them: compared setting by setting, as Cassandra, the JVM, bash and systemd read
+      them; their content, not their owner or mode).
+      {% else %}
+      SELF-CHECK FAILED: THIS INVENTORY IS NOT VALID. With it, the roles would change the settings below on the
+      nodes (the import misread them, or no variable covers them). Fix the variables (or the nodes) before any run.
+      {% if _self_check_error is defined %}
+        {{ _self_check_error }}
+      {% endif %}
+      {% if _self_check | default({}) | length == 0 %}
+        No node was read: nothing was checked.
+      {% endif %}
+      {% for name, check in _self_check | default({}) | dictsort if check.differences %}
+        == {{ name }}
+      {% for line in check.differences %}
+          {{ line }}
+      {% endfor %}
+      {% endfor %}
+      {% endif %}
+      {% if _unchecked %}
+      NOT CHECKED (not read): {{ _unchecked | join(', ') }}: the roles would give them the group variables unchecked.
+      {% endif %}
+      {% for name, check in _self_check | default({}) | dictsort if check.notes %}
+      {% for line in check.notes %}
+        {{ name }}: {{ line }}
+      {% endfor %}
+      {% endfor %}
+
       {{ _layout.report }}
       {% if _secrets %}
       PASSWORDS found in the config, in {{ _secrets | join(', ') }}:
@@ -503,7 +556,7 @@
                  if _read and _hv.import_cluster_package | default('') else {} }}
             _conf: >-
               {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
-                  if _read and _hv.import_cluster_conf_dir not in ['/etc/cassandra', '/etc/cassandra/conf'] else {})
+                  if _read and _hv.import_cluster_conf_dir not in _default_conf_dirs else {})
                  | combine({'cassandra_log_dir': _hv.import_cluster_log_dir}
                            if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
                  | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
@@ -512,6 +565,11 @@
                            if _read and _hv.import_cluster_unit.boot | default('') == 'disabled' else {})
                  | combine(_unit_heap)
                  | combine({'cassandra_service_environment': _unit_env} if _unit_env else {}) }}
+            # cassandra_config's default (without facts: either)
+            _default_conf_dirs: >-
+              {{ ['/etc/cassandra/conf'] if _hv.ansible_facts.os_family | default('') == 'RedHat'
+                 else ['/etc/cassandra'] if _hv.ansible_facts.os_family | default('') != ''
+                 else ['/etc/cassandra', '/etc/cassandra/conf'] }}
             # a kept unit that sets CASSANDRA_LOG_DIR: this node's cassandra-env.sh keeps its own fallback
             # (new nodes get the log dir in cassandra-env.sh, the dir made by cassandra_config)
             _env_log_dir: >-
@@ -544,6 +602,7 @@
             _node:
               name: "{{ _name }}"
               address: "{{ item.address }}"
+              host: "{{ _host }}"
               hostname: "{{ _hv.ansible_facts.hostname | default('') }}"
               # the address from the ring, whatever name the host was given or found by
               ansible_host: "{{ item.address if import_cluster_set_ansible_host | default(true) | bool else '' }}"
@@ -613,6 +672,46 @@
             # the ring nodes it failed on, and what of the error shows no value
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
+    # Each node read: what the roles would write with the inventory's variables
+    # (read back from the files about to be written, over the roles' defaults,
+    # with the node's facts), against the node's files, setting by setting
+    - name: Self-check
+      block:
+        - name: Render what the roles would write, and compare with the nodes' files
+          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+          ansible.builtin.set_fact:
+            _self_check: "{{ _self_check | default({}) | combine({_name: _result}) }}"
+          loop: "{{ _nodes }}"
+          loop_control:
+            label: "{{ item.address }}"
+          when: item.read | bool
+          vars:
+            _hv: "{{ hostvars[item.host] }}"
+            _name: "{{ _layout.names[item.address] }}"
+            _slurped: >-
+              {{ _hv.import_cluster_slurp.results + _hv.import_cluster_jmx_slurp.results | default([])
+                 + ([_hv.import_cluster_unit_slurp | combine({'item': 'cassandra.service'})]
+                    if _hv.import_cluster_unit_slurp.content is defined else [])
+                 + ([_hv.import_cluster_medusa_ini | combine({'item': 'medusa.ini'})]
+                    if _hv.import_cluster_medusa_ini.content is defined else []) }}
+            _live: >-
+              {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
+                      | zip(_slurped | selectattr('content', 'defined') | map(attribute='content') | map('b64decode'))) }}
+            _result: >-
+              {{ _files | community.cassandra.cassandra_import_self_check(_layout.hosts, _name, _hv.ansible_facts, _live,
+                                                                          _hv.import_cluster_unit.env | default({}),
+                                                                          _hv.import_cluster_storage_dir | default(''),
+                                                                          _hv.import_cluster_java | default(''),
+                                                                          _hv.import_cluster_conf_dir) }}
+      rescue:
+        - name: Keep why for the report
+          ansible.builtin.set_fact:
+            _self_check_error: >-
+              the self-check could not run ("{{ ansible_failed_task.name | default('?') }}" failed{{ (': ' ~ _why) if _why else '' }}):
+              nothing says the variables reproduce the nodes
+          vars:
+            _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
+
     # made absolute here, on the controller: the modules would take a relative
     # path from their own working directory, not the one the playbook was run from
     - name: Pick the output dir
@@ -640,7 +739,8 @@
 
     - name: Write hosts.yml
       ansible.builtin.copy:
-        content: "{{ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false) }}"
+        content: "{{ ('' if _self_check_ok | bool else '# NOT VALID: the import self-check failed, see report.txt\n')
+                     ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false) }}"
         dest: "{{ _dir }}/hosts.yml"
         mode: "0644"
 
@@ -672,3 +772,13 @@
     - name: Show the differences between nodes
       ansible.builtin.debug:
         msg: "{{ _layout.differences.split('\n') }}"
+
+    - name: Stop on a failed self-check
+      ansible.builtin.fail:
+        msg: >-
+          SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
+          roles would change settings on the nodes. See SELF-CHECK in {{ _dir }}/report.txt.
+          (-e import_cluster_strict=false: the same inventory and report, without this failure)
+      when:
+        - not _self_check_ok | bool
+        - import_cluster_strict | default(true) | bool

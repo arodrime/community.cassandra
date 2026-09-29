@@ -36,11 +36,11 @@ EXTRA = """{% if cassandra_extra_settings %}
 REF_TEMPLATE = os.path.join(HERE, "..", "roles", "cassandra_config", "templates", REF_SERIES, "cassandra.yaml.j2")
 
 
-def opt(var, commented, active, example):
-    # Commented in stock; uncommented with the var's value once it is set,
-    # otherwise left as is (stock example value included).
+def opt(var, commented, active, example, off="#"):
+    # Commented in stock (with `off`); uncommented with the var's value once it
+    # is set, otherwise left as is (stock example value included).
     value = "{{ %s or '%s' }}" % (var, example)
-    return (commented, "{{ '' if %s else '#' }}%s" % (var, active.replace("@", value)))
+    return (commented, "{{ '' if %s else '%s' }}%s" % (var, off, active.replace("@", value)))
 
 
 def jvm_var(n):
@@ -132,7 +132,7 @@ ENV_COMMON = [
     ('    CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"', '    CASSANDRA_LOG_DIR={{ cassandra_log_dir }}'),
     opt("cassandra_jmx_rmi_hostname",
         '# JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<public name>"',
-        ' JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=@"', "<public name>"),
+        'JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=@"', "<public name>", off="# "),
     ("    LOCAL_JMX=yes", "    LOCAL_JMX={{ 'yes' if cassandra_local_jmx else 'no' }}"),
     ('JMX_PORT="7199"', 'JMX_PORT="{{ cassandra_jmx_port }}"'),
 ]
