@@ -3,8 +3,8 @@
 #   ansible-playbook -i node1,node2 community.cassandra.import_cluster
 # Any reachable nodes will do: the others are found with nodetool status.
 # Writes hosts.yml, group_vars/, host_vars/ and report.txt to
-# import_cluster_dir (default ./<cluster name>), which must not exist yet
-# unless import_cluster_force is true.
+# import_cluster_dir (default ./<cluster name>; a relative path is from the
+# current dir), which must not exist yet unless import_cluster_force is true.
 # Passwords found in the config go to secrets.yml files next to the other
 # variables: encrypted with ansible-vault when import_cluster_vault_password_file
 # (and optionally import_cluster_vault_id) is given, else written 0600 for you
@@ -543,9 +543,13 @@
             # the ring nodes it failed on, and what of the error shows no value
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
+    # made absolute here, on the controller: the modules would take a relative
+    # path from their own working directory, not the one the playbook was run from
     - name: Pick the output dir
       ansible.builtin.set_fact:
-        _dir: "{{ import_cluster_dir | default(lookup('env', 'PWD') ~ '/' ~ _layout.cluster_group) }}"
+        _dir: "{{ _given_dir if _given_dir is abs else _given_dir | realpath }}"
+      vars:
+        _given_dir: "{{ import_cluster_dir | default(_layout.cluster_group, true) | expanduser }}"
 
     - name: Check the output dir
       ansible.builtin.stat:
@@ -574,7 +578,7 @@
     - name: Write group_vars and host_vars
       ansible.builtin.copy:
         content: >-
-          {{ item.content | ansible.builtin.vault(lookup('ansible.builtin.file', import_cluster_vault_password_file),
+          {{ item.content | ansible.builtin.vault(lookup('ansible.builtin.file', import_cluster_vault_password_file | expanduser | realpath),
                                                     vault_id=import_cluster_vault_id | default('default'))
              if item.secret and _vault else item.content }}
         dest: "{{ _dir }}/{{ item.path }}"
