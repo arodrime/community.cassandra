@@ -26,11 +26,11 @@
     - name: Report
       ansible.builtin.debug:
         msg: >-
-          {% set out = [] %}
-          {% for h in ansible_play_hosts_all %}
-          {%   set problems = hostvars[h].cassandra_health_problems | default(['unreachable']) %}
-          {%   set _ = out.append(h ~ ': ' ~ ('OK' if problems | length == 0 else problems | join('; '))) %}
-          {% endfor %}
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all -%}
+          {%-   set problems = hostvars[h].cassandra_health_problems | default(['unreachable']) -%}
+          {%-   set _ = out.append(h ~ ': ' ~ ('OK' if problems | length == 0 else problems | join('; '))) -%}
+          {%- endfor -%}
           {{ out }}
       run_once: true
 
