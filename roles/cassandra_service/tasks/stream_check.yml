@@ -80,19 +80,14 @@
                        else ansible_facts['default_ipv4']['address'] | default(''), true), true) }}
         _views: "{{ cassandra_stream_read_peers.results if _blind else cassandra_stream_read.results }}"
 
-    - name: Progress of the {{ _cassandra_stream_what }}
-      ansible.builtin.debug:
-        msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state.line }}{{ _mode }}"
-      vars:
-        _mode: "{{ ('  mode ' ~ _cassandra_stream_self.mode) if _cassandra_stream_self.mode | default('') else '' }}"
-
     - name: Where it stands
       ansible.builtin.set_fact:
         # kept as facts: the skipped tasks of the next checks overwrite registered results
         _cassandra_stream_job_result: >-
           {{ dict(cassandra_stream_job_status | default({}) | dict2items
                   | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
-        _cassandra_stream_status: >-
+        # the block's condition reads _cassandra_stream_status: set after the progress line
+        _cassandra_stream_now: >-
           {{ 'done' if (_join and _self_mode == 'NORMAL') or (_leave and _self_mode == 'DECOMMISSIONED')
                       or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
                       or (_removal and _removal_status.rc | default(1) == 0 and 'Removing token' not in _removal_status.stdout | default(''))
@@ -113,6 +108,18 @@
         _removal_status: "{{ cassandra_stream_removal | default({}) }}"
         _job_status: "{{ cassandra_stream_job_status | default({}) }}"
         _self_mode: "{{ _cassandra_stream_self.mode | default('') }}"
+
+    # Once it has ended, no no-progress count on the last line
+    - name: Progress of the {{ _cassandra_stream_what }}
+      ansible.builtin.debug:
+        msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state[_line] }}{{ _mode }}"
+      vars:
+        _mode: "{{ ('  mode ' ~ _cassandra_stream_self.mode) if _cassandra_stream_self.mode | default('') else '' }}"
+        _line: "{{ 'line_done' if _cassandra_stream_now == 'done' else 'line' }}"
+
+    - name: Keep where it stands
+      ansible.builtin.set_fact:
+        _cassandra_stream_status: "{{ _cassandra_stream_now }}"
 
     - name: Wait before the next check
       ansible.builtin.pause:

@@ -70,6 +70,8 @@ def test_stall_after_checks_in_a_row_without_bytes():
     assert not s["progressed"] and not s["stalled"] and "NO PROGRESS for 5m00s (1/3 checks)" in s["line"]
     s = cassandra_stream_progress(views, s, now=600, stall_checks=3)
     assert not s["stalled"] and s["idle_checks"] == 2
+    # the line once it has ended (DECOMMISSIONED, NORMAL...): no no-progress count
+    assert "NO PROGRESS" not in s["line_done"] and s["line"].startswith(s["line_done"] + "  NO PROGRESS for 10m00s")
     # one more byte resets the count
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=900, stall_checks=3)
     assert s["progressed"] and s["idle_checks"] == 0

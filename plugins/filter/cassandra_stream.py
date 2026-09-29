@@ -86,7 +86,8 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     otherwise), transferring, sessions (sessions in netstats now),
     answered (at least one view answered), bytes_done/bytes_total, samples
     (time and bytes done of the last checks, for the rate), line (one readable
-    line: bar, bytes, rate, ETA from the rate over the last 3 checks...).
+    line: bar, bytes, rate, ETA from the rate over the last 3 checks...),
+    line_done (the line without the no-progress count, once it has ended).
     eta_label: what the time left is called on the line."""
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
@@ -164,6 +165,8 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
         parts.append("%d session%s" % (len(current), "" if len(current) == 1 else "s"))
     if now_files:
         parts.append("now: " + ", ".join(sorted(set(now_files))[:3]))
+    # without it: the line once the operation has ended (nothing left to progress)
+    line_done = "  ".join(parts)
     if idle_checks:
         parts.append("NO PROGRESS for %s (%d/%d checks)" % (_duration(now - last_progress), idle_checks, limit))
     return {
@@ -171,6 +174,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
         "last_progress": last_progress, "idle_checks": idle_checks,
         "stalled": idle_checks >= limit, "sessions": len(current), "transferring": transferring,
         "answered": bool(answered), "bytes_done": done, "bytes_total": total, "samples": samples, "line": "  ".join(parts),
+        "line_done": line_done,
     }
 
 

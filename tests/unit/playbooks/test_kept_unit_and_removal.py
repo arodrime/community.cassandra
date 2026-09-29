@@ -203,3 +203,17 @@ def test_streams_left_by_removenode_force_are_not_a_failure():
     warn = next(t for t in REMOVE["tasks"] if t["name"] == "Go on despite the problems (removenode_force, cassandra_service_health_force)")
     assert true(warn["when"], cassandra_health_problems=["10.0.0.2 (r1) is DN, seen from n1"],
                 **dict(variables, cassandra_service_health_force=True))
+
+
+def test_last_progress_line_without_no_progress_once_done():
+    # the block runs while _cassandra_stream_status is 'going': it is set after the progress line,
+    # which shows line_done (no "NO PROGRESS ... mode DECOMMISSIONED") once the operation has ended
+    block = load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
+    names = [t["name"] for t in block]
+    where, keep = block[names.index("Where it stands")], block[names.index("Keep where it stands")]
+    progress = next(t for t in block if t["name"].startswith("Progress of the"))
+    assert names.index("Where it stands") < block.index(progress) < names.index("Keep where it stands")
+    assert "_cassandra_stream_status" not in where["ansible.builtin.set_fact"]
+    assert keep["ansible.builtin.set_fact"]["_cassandra_stream_status"] == "{{ _cassandra_stream_now }}"
+    for now, line in (("done", "line_done"), ("going", "line"), ("stalled", "line")):
+        assert render(progress["vars"]["_line"], _cassandra_stream_now=now) == line
