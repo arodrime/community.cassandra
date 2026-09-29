@@ -150,16 +150,17 @@
           {{ (hostvars[_existing[0]].cassandra_preflight_describe.stdout | default('') ~ '\n').split('Database versions:')[1:]
              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
         _cleanup: "{{ cassandra_add_node_cleanup | default('none') }}"
+        _medusa: "{{ cassandra_medusa_enabled | default(false) | bool }}"
         _summary: |-
             add_node on cluster '{{ _p.cassandra_cluster_name }}'{{ (' (running ' ~ _running ~ ')') if _running else '' }}:
             {% for h in _new %}
-              {{ h }} ({{ hostvars[h]._cassandra_preflight.address }}): datacenter {{ hostvars[h]._cassandra_preflight.cassandra_dc }}, rack {{ hostvars[h]._cassandra_preflight.cassandra_rack }}{% for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) %}, about {{ (e.bytes / 1073741824) | round(1) }} GiB to stream ({{ e.basis }}){% endfor %}
+              {{ h }} ({{ hostvars[h]._cassandra_preflight.address }}): datacenter {{ hostvars[h]._cassandra_preflight.cassandra_dc }}, rack {{ hostvars[h]._cassandra_preflight.cassandra_rack }}{% for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) %}, about {{ (e.bytes / 1073741824) | round(1) }} GiB to stream ({{ e.basis }}){% endfor %}{% if _medusa %}, Medusa fqdn {{ hostvars[h].cassandra_medusa_fqdn | default(((hostvars[h].ansible_facts.hostname | default(h)) ~ '.' ~ cassandra_medusa_fqdn_domain) if cassandra_medusa_fqdn_domain | default('') else '', true) or '(Medusa works it out)' }}{% endif %}
 
             {% endfor %}
             {% if _joining %}
               still bootstrapping, waited for first: {{ _joining | join(', ') }}
             {% endif %}
-            Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }}, Java {{ cassandra_java_tarball | default('', true) or ('package, version ' ~ (cassandra_java_version | default('of the series'))) }}{{ (', Medusa ' ~ ('on' if cassandra_medusa_enabled | bool else 'off')) if cassandra_medusa_enabled is defined else '' }}
+            Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }}, Java {{ cassandra_java_tarball | default('', true) or ('package, version ' ~ (cassandra_java_version | default('of the series'))) }}, Medusa {{ ('on (' ~ ((cassandra_medusa_version | default('') ~ ' ') if cassandra_medusa_version | default('') else '') ~ 'in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa') or 'the system Python') ~ ')') if _medusa else 'off' }}
             {% if _new %}
             One node at a time; each one streams its share of the data (hours on big nodes), with a progress line
             every {{ cassandra_stream_check_interval }}s; the run stops after {{ cassandra_stream_stall_checks }} checks in a row without progress.
