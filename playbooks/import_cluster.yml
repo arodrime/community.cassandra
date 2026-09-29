@@ -415,6 +415,7 @@
   gather_facts: false
   become: false  # the files are the user's, whatever -b asks for the nodes
   vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
     # set on the given nodes only (not on the ones add_host found)
     _given: "{{ groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined') | map(attribute='import_cluster_given') | first }}"
     _ring: >-

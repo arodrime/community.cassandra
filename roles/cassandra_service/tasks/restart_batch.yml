@@ -57,6 +57,8 @@
         line: "{{ item }}"
       delegate_to: localhost
       become: false  # the controller: no sudo there
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
       loop: "{{ _todo }}"
       when: cassandra_progress_file is defined
 

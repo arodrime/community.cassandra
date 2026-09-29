@@ -7,6 +7,9 @@
 - name: Check the cluster's group
   hosts: localhost
   gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
   tasks:
     - name: Check the cluster's group
       ansible.builtin.include_role:

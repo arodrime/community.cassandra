@@ -33,6 +33,8 @@
         mode: "0700"  # reports show config diffs
       delegate_to: localhost
       become: false
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
       check_mode: false
       changed_when: false  # a report is not a change to the host
 
@@ -42,6 +44,7 @@
         content: "{{ report | to_nice_yaml(indent=2, width=200, sort_keys=false) }}"
         mode: "0600"
       vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
         report:
           host: "{{ inventory_hostname }}"
           role: "{{ cassandra_change_report_role }}"

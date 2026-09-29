@@ -48,6 +48,8 @@
         line: "{{ inventory_hostname }}"
       delegate_to: localhost
       become: false  # the controller: no sudo there
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
       when: cassandra_progress_file is defined
 
     - name: Record the result

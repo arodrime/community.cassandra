@@ -9,8 +9,30 @@
   delegate_to: localhost
   become: false  # the controller: no sudo there
   vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
     _prefix: "{{ cassandra_hosts | default('cassandra') }}-{{ cassandra_service_node_action }}-"
   block:
+    # A run that became root on the controller leaves a dir the user cannot write
+    - name: Check the progress dir
+      ansible.builtin.stat:
+        path: "{{ cassandra_rolling_progress_dir }}"
+        follow: true  # a link to a dir is fine
+      register: cassandra_progress_dir_stat
+
+    - name: Stop if the progress dir is not usable
+      ansible.builtin.fail:
+        msg: >-
+          {{ cassandra_rolling_progress_dir }}
+          {%- if not _st.isdir %} is not a directory: remove it or set cassandra_rolling_progress_dir.
+          {%- else %} is not writable by {{ lookup('ansible.builtin.pipe', 'id -un') }} (owner {{ _st.pw_name }}, mode {{ _st.mode }}),
+          left by a run with become on the controller: sudo chown -R {{ lookup('ansible.builtin.pipe', 'id -un') }}: {{ cassandra_rolling_progress_dir }}
+          (or set cassandra_rolling_progress_dir).{% endif %}
+      vars:
+        _st: "{{ cassandra_progress_dir_stat.stat }}"
+      when:
+        - _st.exists
+        - not (_st.isdir and _st.readable and _st.writeable and _st.executable)
+
     - name: Ensure the progress dir exists
       ansible.builtin.file:
         path: "{{ cassandra_rolling_progress_dir }}"
@@ -51,6 +73,22 @@
         cassandra_progress_file: >-
           {{ (cassandra_progress_found.files | sort(attribute='mtime') | last).path if cassandra_rolling_resume | bool
              else cassandra_rolling_progress_dir ~ '/' ~ _prefix ~ now(fmt='%Y%m%dT%H%M%S') ~ '.done' }}
+
+    - name: Check the progress file to resume
+      ansible.builtin.stat:
+        path: "{{ cassandra_progress_file }}"
+      register: cassandra_progress_file_stat
+      when: cassandra_rolling_resume | bool
+
+    - name: Stop if the progress file to resume is not writable
+      ansible.builtin.fail:
+        msg: >-
+          {{ cassandra_progress_file }} is not writable by {{ lookup('ansible.builtin.pipe', 'id -un') }}
+          (owner {{ cassandra_progress_file_stat.stat.pw_name }}), left by a run with become on the controller:
+          sudo chown {{ lookup('ansible.builtin.pipe', 'id -un') }}: {{ cassandra_progress_file }}
+      when:
+        - cassandra_rolling_resume | bool
+        - not (cassandra_progress_file_stat.stat.readable and cassandra_progress_file_stat.stat.writeable)
 
     - name: Create the progress file
       ansible.builtin.file:
