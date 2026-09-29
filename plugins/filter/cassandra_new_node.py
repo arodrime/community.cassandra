@@ -118,9 +118,8 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
             free = m.get("size_available")
             if kind == "data" and free is not None:
                 data_mounts[on] = free
-            info.append("%s %s: on %s (%s %s)%s" % (kind, path, on, m.get("fstype", "?"), m.get("device", "?"),
-                                                  ", %s free of %s" % (_gib(free), _gib(m.get("size_total", 0)))
-                                                  if free is not None else ""))
+            space = ", %s free of %s" % (_gib(free), _gib(m.get("size_total", 0))) if free is not None else ""
+            info.append("%s %s: on %s (%s %s)%s" % (kind, path, on, m.get("fstype", "?"), m.get("device", "?"), space))
             if kind == "data" and float(min_free_gb or 0) > 0 and free is not None and free < float(min_free_gb) * GIB:
                 problems.append("data directory %s: %s free on %s, cassandra_new_node_min_free_gb asks for %s GiB"
                                 % (path, _gib(free), on, min_free_gb))
@@ -290,8 +289,8 @@ def cassandra_new_node_urls(results):
         elif not 200 <= status < 400 and status != 405 and item.get("soft"):
             warnings.append("%s: %s answers HTTP %s (pip may use another index, from /etc/pip.conf)" % (name, url, status))
         elif not 200 <= status < 400 and status != 405:  # 405: the method is refused, the server answers
-            problems.append("%s: %s answers HTTP %s%s" % (name, url, status,
-                                                        ": check the credentials" if status in (401, 403) else ""))
+            hint = ": check the credentials" if status in (401, 403) else ""
+            problems.append("%s: %s answers HTTP %s%s" % (name, url, status, hint))
         elif item.get("match") and not re.search(item["match"], r.get("content", "")):
             problems.append("%s: %s has no %s" % (name, url, item.get("what", item["match"])))
         else:
