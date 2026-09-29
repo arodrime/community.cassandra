@@ -274,7 +274,8 @@ def test_remote_jmx_users_read_back():
              {"name": "mon", "password": "m0n", "access": "readonly"}]
     files = node_files("50x", cassandra_local_jmx=False, cassandra_jmx_users=users)
     files["jmxremote.password"] = "# by hand\nops s3cret\nmon m0n\n"
-    files["jmxremote.access"] = "ops readwrite \\\n    create javax.management.monitor.* \\\n    unregister\nmon readonly\n"
+    files["jmxremote.access"] = ("ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n"
+                                 "    unregister\nmon readonly\n")
     out = cassandra_config_import(files, "50x", FACTS)
     assert out["hand_edits"] == []
     assert out["vars"]["cassandra_local_jmx"] is False
@@ -312,11 +313,16 @@ def test_encryption_optional_read_back(optional):
 
 @pytest.mark.parametrize("password_file, access_file, users", [
     # a # inside a password is part of it; comment lines are skipped
-    ("# comment\nops Pa#ss\n", "ops readwrite\n", [{"name": "ops", "password": "Pa#ss", "access": "readwrite"}]),
+    # (a readwrite line without the create and unregister rights the role adds: kept so)
+    ("# comment\nops Pa#ss\n", "ops readwrite\n",
+     [{"name": "ops", "password": "Pa#ss", "access": "readwrite", "create_unregister": False}]),
     # hashed passwords (jmxremote.password.toHashes): not read back
     ("ops c2FsdA== aGFzaA== SHA3-512\n", "ops readwrite\n", None),
     # a user without rights in the file
     ("ops s3cret\n", "", None),
+    # rights the role can't write back (it would widen them): not imported
+    ("ops s3cret\n", "ops readwrite unregister\n", None),
+    ("ops s3cret\n", "ops readwrite create javax.management.monitor.* unregister\n", None),
 ])
 def test_jmx_users_parsed(password_file, access_file, users):
     assert _jmx_users(password_file, access_file) == users
@@ -560,3 +566,76 @@ def test_secret_in_a_list_of_strings():
     assert "S3cr3t" not in out["report"]
     files = cassandra_inventory_files(out)
     assert [f["path"] for f in files if "S3cr3t" in f["content"]] == ["host_vars/n1/secrets.yml"]
+
+
+@pytest.mark.parametrize("facts, target, alternative", [
+    # the RPM's config edited in place: the role writes there too, no move to its own conf dir
+    ({"os_family": "RedHat"}, "/etc/cassandra/default.conf", ""),
+    ({"os_family": "RedHat"}, "/opt/cassandra/conf", ""),
+    # already the role's
+    ({"os_family": "RedHat"}, "/etc/cassandra/ansible.conf", None),
+    ({"os_family": "RedHat"}, "", None),
+    ({"os_family": "Debian"}, "/etc/cassandra", None),
+])
+def test_rpm_conf_dir_kept_where_the_node_reads_it(facts, target, alternative):
+    facts = dict(FACTS, **facts)
+    out = cassandra_config_import(node_files("50x", facts), "50x", facts, target)
+    assert out["vars"].get("cassandra_rpm_conf_alternative") == alternative
+
+
+def test_layout_what_is_left_as_it_is_goes_to_each_node():
+    # same on every node, but a node added later must get the roles' setup: host_vars only
+    keep = {"cassandra_linux_manage": False, "cassandra_service_unit_manage": False}
+    nodes = [dict(node("n1", "dc1", "r1", cassandra_num_tokens=4), keep=keep),
+             dict(node("n2", "dc1", "r1", cassandra_num_tokens=4), keep=keep),
+             node("n3", "dc1", "r1", cassandra_num_tokens=4)]
+    out = cassandra_inventory_layout(nodes, "c")
+    assert out["group_vars"]["c"] == {"cassandra_num_tokens": 4}
+    assert out["host_vars"] == {"n1": keep, "n2": keep}
+    assert "none" in out["differences"]
+    assert "LEFT AS IT IS" in out["report"]
+    assert "the OS settings (kernel, limits, THP, swap, time sync, disks) (cassandra_linux_manage: false)" in out["report"]
+    files = cassandra_inventory_files(out)
+    n1 = next(f for f in files if f["path"] == "host_vars/n1/main.yml")
+    assert n1["content"].startswith("# Left as it is on this node (set up another way)\n")
+    assert yaml.safe_load(n1["content"]) == keep
+
+
+def test_layout_left_as_it_is_on_every_node_stays_per_node():
+    keep = {"cassandra_linux_manage": False}
+    nodes = [dict(node(n, "dc1", "r1", cassandra_num_tokens=4), keep=keep) for n in ("n1", "n2")]
+    nodes.append(dict(node("n3", "dc1", "r1"), read=False, reason="unreachable", keep=keep))
+    out = cassandra_inventory_layout(nodes, "c")
+    assert out["group_vars"]["c"] == {"cassandra_num_tokens": 4}
+    assert out["host_vars"] == {"n1": keep, "n2": keep, "n3": keep}
+    assert "The roles leave their setup as it is" in out["report"]
+
+
+def test_layout_value_kept_on_a_node_is_reported():
+    keep = {"cassandra_service_unit_manage": False, "cassandra_log_dir": "/var/log/cassandra"}
+    out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep)], "c")
+    assert out["host_vars"] == {"n1": keep}
+    assert "cassandra_log_dir: \"/var/log/cassandra\", as this node has it" in out["report"]
+
+
+ACCESS_TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks", "access.yml")
+
+
+@pytest.mark.parametrize("access", [
+    # the role's own lines
+    "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n    unregister\nmon readonly\n",
+    # plain readwrite, written by hand: written back so
+    "ops readwrite\nmon readonly\n",
+])
+def test_jmx_access_written_back_as_imported(access):
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:
+        def trust_as_template(template):
+            return template
+    with open(ACCESS_TASKS) as f:
+        content = yaml.safe_load(f)[0]["vars"]["_cassandra_jmx_access_content"]
+    users = _jmx_users("ops s3cret\nmon m0n\n", access)
+    assert Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(trust_as_template(content)) == access

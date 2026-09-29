@@ -110,7 +110,8 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     """found: {venv, python, version, link_dir, package, bin, profile, profile_d, ini_owner, ini_group,
     ini_mode, key_owner, key_group, key_mode}
     (what import_cluster read on the node, "" when unknown).
-    -> {'vars': cassandra_medusa variables, 'notes': [report lines]}"""
+    -> {'vars': cassandra_medusa variables, 'notes': [report lines], 'keep': the ones for this node
+    only (host_vars: new nodes get the role's)}"""
     found = found or {}
     try:
         sections = _parse(ini_text)
@@ -162,6 +163,7 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
             out["cassandra_medusa_key_file_" + name] = key
 
     version, venv, package = found.get("version", ""), found.get("venv", ""), found.get("package", "")
+    keep = {}
     where = venv or found.get("bin", "")
     if package:
         notes.insert(0, "Medusa %s installed by the package %s, which the role does not manage (it installs"
@@ -179,7 +181,9 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
             out["cassandra_medusa_link_dir"] = link_dir
         notes.insert(0, "Medusa %s in %s, medusa.ini imported (cassandra_medusa_enabled: true)" % (version, where))
         if venv and not link_dir:
-            notes.append("Medusa: no %s/medusa link to it: the roles add one (cassandra_medusa_link_dir: '' for none)"
+            # none on this node: kept so (host_vars), new nodes get the role's
+            keep["cassandra_medusa_link_dir"] = ""
+            notes.append("Medusa: no %s/medusa link to it: none added on this node, new nodes get one"
                          % defaults["cassandra_medusa_link_dir"])
         if found.get("profile_d") == "yes":
             out["cassandra_medusa_profile_d"] = True
@@ -200,7 +204,7 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     else:
         notes.insert(0, "Medusa: medusa.ini imported, but no Medusa install found (%s):"
                         " cassandra_medusa_enabled left false" % (where or "no medusa binary"))
-    return {"vars": out, "notes": notes}
+    return {"vars": out, "notes": notes, "keep": keep}
 
 
 class FilterModule(object):

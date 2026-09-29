@@ -55,6 +55,40 @@
       run_once: true
       when: _phase in ['prepare', 'canary', 'rolling']
 
+    # Where the repositories are not managed by the roles (e.g. a node import_cluster
+    # found set up another way), the upgrade adds none: the target must be there already
+    - name: Look for the target packages in the repositories the roles don't manage
+      ansible.builtin.shell: >-
+        {% if ansible_facts['os_family'] == 'Debian' %}
+        apt-cache madison cassandra | awk -F'|' -v v={{ cassandra_package_version | quote }} '{gsub(/ /, "", $2)} $2 == v || index($2, v "-") == 1 {f=1} END {exit !f}'
+        {% else %}
+        dnf -q repoquery 'cassandra-{{ cassandra_package_version }}' 2>/dev/null | grep -q .
+        {% endif %}
+      register: cassandra_upgrade_available
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - _phase in ['preflight', 'prepare', 'canary', 'rolling']
+        - not cassandra_repository_manage | default(true) | bool
+        - not cassandra_offline | default(false) | bool
+
+    - name: The target packages are available
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          cassandra_repository_manage is false on {{ _missing | join(', ') }} (repositories set up another way, e.g.
+          found so by import_cluster) and they have no cassandra {{ cassandra_package_version }}: add the target
+          series' repository there, or remove cassandra_repository_manage from their host_vars so that the upgrade
+          adds it. Nothing was done.
+        quiet: true
+      vars:
+        _missing: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_available', 'defined')
+             | selectattr('cassandra_upgrade_available.rc', 'defined') | rejectattr('cassandra_upgrade_available.rc', 'equalto', 0)
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+
     - name: Check the phase
       ansible.builtin.assert:
         that: _phase in ['preflight', 'prepare', 'canary', 'rolling', 'sstables', 'cleanup']

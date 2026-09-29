@@ -130,7 +130,8 @@
           tr '\0' '\n' < /proc/$p/cmdline | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
         done
         [ -n "$pid" ] || exit 3
-        echo "config=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)"
+        cfg=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)
+        echo "config=$cfg"
         echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
@@ -138,6 +139,8 @@
         for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
         done
+        # the unit of an init script is "generated": is-enabled asks the init system
+        echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
         bin=$(readlink -f /proc/$pid/exe)
         echo "java=$($bin -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
         echo "javabin=$bin"
@@ -145,6 +148,19 @@
         pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
         echo "javapkg=$pkg"
         echo "sysjava=$([ -e /usr/bin/java ] && readlink -f /usr/bin/java)"
+        # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
+        case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
+        echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
+        # what the roles set up has their mark; the rest was set up another way, and is left as it is
+        grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
+          && echo "own_unit=yes"
+        { [ -f /etc/sysctl.d/60-cassandra.conf ] || grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf; } \
+          && echo "own_os=yes"
+        grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
+        for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
+          [ -e "$f" ] && { echo "own_repo=yes"; break; }
+        done
+        exit 0
       register: import_cluster_running
       changed_when: false
       failed_when: false
@@ -164,10 +180,19 @@
           {{ _kv.config | dirname if _kv.config is match('/')
              else ('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
+        import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
+        # set up another way (no mark of the roles): the roles leave it as it is on this node
+        import_cluster_keep: >-
+          {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
+                          {'cassandra_linux_manage': false} if _kv.own_os is not defined else {},
+                          {'cassandra_cqlsh_python_manage': false} if _kv.own_cqlsh is not defined else {},
+                          {'cassandra_service_unit_manage': false} if _kv.own_unit is not defined else {}) }}
         import_cluster_unit:
           file: "{{ _kv.unit_SourcePath | default('') or _kv.unit_FragmentPath | default('') }}"
           restart: "{{ _kv.unit_Restart | default('') }}"
-          boot: "{{ _kv.unit_UnitFileState | default('') }}"
+          boot: >-
+            {{ _kv.unit_IsEnabled | default('') if _kv.unit_UnitFileState | default('') in ['', 'generated']
+               else _kv.unit_UnitFileState }}
           # the heap set in the unit (Environment=MAX_HEAP_SIZE=...), lost when cassandra_service replaces it
           heap: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)MAX_HEAP_SIZE=(\\S+)') | first | default('') }}"
           newsize: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)HEAP_NEWSIZE=(\\S+)') | first | default('') }}"
@@ -215,7 +240,9 @@
         - name: Turn them into cassandra_config variables
           no_log: "{{ not import_cluster_debug | default(false) | bool }}"
           ansible.builtin.set_fact:
-            import_cluster_config: "{{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts) }}"
+            import_cluster_config: >-
+              {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
+                                                                     import_cluster_conf_target | default('')) }}
           vars:
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
@@ -480,8 +507,19 @@
                            if _read and _hv.import_cluster_log_dir | default('') not in ['', '/var/log/cassandra'] else {})
                  | combine({'cassandra_service_restart': _hv.import_cluster_unit.restart}
                            if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
+                 | combine({'cassandra_service_enabled': false}
+                           if _read and _hv.import_cluster_unit.boot | default('') == 'disabled' else {})
                  | combine(_unit_heap)
                  | combine({'cassandra_service_environment': _unit_env} if _unit_env else {}) }}
+            # a kept unit that sets CASSANDRA_LOG_DIR: this node's cassandra-env.sh keeps its own fallback
+            # (new nodes get the log dir in cassandra-env.sh, the dir made by cassandra_config)
+            _env_log_dir: >-
+              {{ {'cassandra_log_dir': _hv.import_cluster_config.vars.cassandra_log_dir | default('/var/log/cassandra')}
+                 if _read and 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
+                    and _hv.import_cluster_unit.env.CASSANDRA_LOG_DIR | default('') != ''
+                    and _conf.cassandra_log_dir | default('') not in ['', _hv.import_cluster_config.vars.cassandra_log_dir
+                                                                           | default('/var/log/cassandra')]
+                 else {} }}
             # the rest of the unit's Environment, kept in cassandra_service's unit
             _unit_env: >-
               {{ {} if not _read else _hv.import_cluster_unit.env | default({}) | dict2items
@@ -491,9 +529,11 @@
                                                 == _hv.import_cluster_log_dir | default('') else '')
                  | items2dict }}
             # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
-            # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE
+            # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE. A unit
+            # kept as it is keeps it (cassandra-env.sh unchanged, the same in new nodes' unit)
             _unit_heap: >-
-              {{ {} if not _read else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
+              {{ {} if not _read or 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
+                 else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
                   if _hv.import_cluster_unit.heap | default('') != ''
                      and _hv.import_cluster_config.vars.cassandra_heap_size | default('') == ''
                      and not (_hv.import_cluster_series == '50x' and _hv.import_cluster_unit.cms | default(false) | bool) else {})
@@ -518,6 +558,11 @@
                 {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx,
                                                              _hv.import_cluster_medusa.vars | default({})))
                    if _read else {} }}
+              # a node not read is an existing node too: nothing of it is taken over
+              keep: >-
+                {{ (_hv.import_cluster_keep | default({}) | combine(_env_log_dir, _hv.import_cluster_medusa.keep | default({})) if _read
+                    else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
+                          'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               notes: >-
@@ -538,7 +583,9 @@
               {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
                  ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
                  ~ ', at boot: ' ~ (_hv.import_cluster_unit.boot | default('') or '?')
-                 ~ ' (cassandra_service replaces it with its own unit, keeping the restart policy'
+                 ~ (' (kept on this node; new nodes get the unit of cassandra_service, with the restart policy'
+                    if 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
+                    else ' (cassandra_service replaces it with its own unit, keeping the restart policy')
                  ~ ((', its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
                  ~ ((', its Environment ' ~ _unit_env.keys() | join(', ') ~ ' as cassandra_service_environment') if _unit_env else '')
                  ~ ((', NOT its EnvironmentFile ' ~ _hv.import_cluster_unit.env_files ~ ': put what it sets in cassandra_service_environment')

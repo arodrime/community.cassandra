@@ -76,3 +76,84 @@ def test_jmx_login_from_the_given_node(given_vars, jmx):
     # -e or the given node's own inventory: read on it, not on localhost
     hostvars = {"node1": given_vars}
     assert render(WRITE["_jmx"], _given=["node1"], hostvars=hostvars) == jmx
+
+
+WORK_OUT = task("Work out the series and the conf dir")["ansible.builtin.set_fact"]
+
+
+@pytest.mark.parametrize("marks, keep", [
+    # set up by the roles (a cluster they built): nothing left aside
+    ({"own_repo": "yes", "own_os": "yes", "own_cqlsh": "yes", "own_unit": "yes"}, {}),
+    # set up by hand: the roles leave each part as it is on this node
+    ({}, {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
+          "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}),
+    ({"own_os": "yes", "own_repo": "yes"}, {"cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}),
+])
+def test_what_the_roles_leave_as_it_is(marks, keep):
+    assert render(WORK_OUT["import_cluster_keep"], _kv=marks) == keep
+
+
+def test_where_the_config_really_is():
+    assert render(WORK_OUT["import_cluster_conf_target"], _kv={"conftarget": "/etc/cassandra/default.conf"}) \
+        == "/etc/cassandra/default.conf"
+    assert render(WORK_OUT["import_cluster_conf_target"], _kv={}) == ""
+
+
+KEEP_UNIT = {"cassandra_service_unit_manage": False}
+
+
+def unit_heap(keep):
+    hv = {"import_cluster_unit": {"heap": "8G", "newsize": "2G", "cms": False}, "import_cluster_series": "41x",
+          "import_cluster_config": {"vars": {}}, "import_cluster_keep": keep}
+    return render(MATCH["_unit_heap"], _hv=hv, _read=True)
+
+
+def test_heap_of_a_kept_unit_stays_in_it():
+    # cassandra-env.sh left as it is; new nodes get it through cassandra_service_environment
+    assert unit_heap(KEEP_UNIT) == {}
+    assert unit_heap({}) == {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "2G"}
+
+
+def conf(boot, read=True):
+    hv = {"import_cluster_conf_dir": "/etc/cassandra/conf", "import_cluster_log_dir": "",
+          "import_cluster_unit": {"restart": "", "boot": boot}}
+    return render(MATCH["_conf"], _hv=hv, _read=read, _unit_heap={}, _unit_env={})
+
+
+def test_boot_setting_imported():
+    assert conf("disabled") == {"cassandra_service_enabled": False}
+    assert conf("enabled") == {}
+
+
+def test_node_not_read_is_left_as_it_is():
+    keep = render(MATCH["_node"]["keep"], _hv={}, _read=False)
+    assert keep == {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
+                    "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}
+
+
+@pytest.mark.parametrize("keep, env, config_vars, expected", [
+    # the kept unit sets the log dir: this node's cassandra-env.sh keeps its stock fallback
+    (KEEP_UNIT, {"CASSANDRA_LOG_DIR": "/data/log"}, {}, {"cassandra_log_dir": "/var/log/cassandra"}),
+    (KEEP_UNIT, {"CASSANDRA_LOG_DIR": "/data/log"}, {"cassandra_log_dir": "/data/log"}, {}),
+    # the role's unit: cassandra-env.sh gets the log dir
+    ({}, {"CASSANDRA_LOG_DIR": "/data/log"}, {}, {}),
+    (KEEP_UNIT, {}, {}, {}),
+])
+def test_log_dir_of_a_kept_unit(keep, env, config_vars, expected):
+    hv = {"import_cluster_keep": keep, "import_cluster_unit": {"env": env}, "import_cluster_config": {"vars": config_vars}}
+    assert render(MATCH["_env_log_dir"], _hv=hv, _read=True, _conf={"cassandra_log_dir": "/data/log"}) == expected
+
+
+@pytest.mark.parametrize("kv, boot", [
+    ({"unit_UnitFileState": "enabled", "unit_IsEnabled": "enabled"}, "enabled"),
+    # the package's init script: systemd only has a generated unit, the init system answers
+    ({"unit_UnitFileState": "generated", "unit_IsEnabled": "disabled"}, "disabled"),
+    ({"unit_UnitFileState": "", "unit_IsEnabled": ""}, ""),
+])
+def test_boot_setting_read(kv, boot):
+    assert render(WORK_OUT["import_cluster_unit"]["boot"], _kv=kv) == boot
+
+
+def test_medusa_kept_on_the_node():
+    hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
+    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}) == {"cassandra_medusa_link_dir": ""}

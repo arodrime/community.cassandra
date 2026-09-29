@@ -502,6 +502,20 @@ change the ``fqdn`` of an existing ``medusa.ini`` unless ``cassandra_medusa_fqdn
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
 roles then keep that Java and install no Java package.
 
+What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
+the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python and the systemd unit (or init script)
+Cassandra is started by. A part that has no mark of the roles (their repository file, sysctl file or ``Managed by
+Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
+``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
+``cassandra_service_unit_manage``), never in ``group_vars``: nodes added later get the roles' full setup. Remove a
+line to let the role take that part over, after a ``--check --diff``; a host rebuilt under the same name must lose
+them. The upgrade playbook stops before touching a node whose repositories are not managed and lack the target
+version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
+already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
+unregister rights keeps them that way, and ``cassandra_config`` leaves a file (the JMX users' files too) alone on an
+initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
+the roles change nothing on the imported nodes.
+
 When a node has Cassandra Medusa (``medusa`` in the PATH or in a virtualenv under ``/opt``, and
 ``/etc/medusa/medusa.ini``), its version and settings are imported and ``cassandra_medusa_enabled`` is set, so
 nodes added later get the same Medusa, in the same virtualenv path (``cassandra_medusa_venv``), or without a

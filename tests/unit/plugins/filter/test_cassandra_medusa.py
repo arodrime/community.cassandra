@@ -211,12 +211,14 @@ def test_import_secrets_go_to_secrets_yml():
 
 def test_import_venv_from_a_login_profile():
     """A virtualenv of its own, activated from a login profile, without a link:
-    new nodes get the same path, plus the default link; the profile is reported."""
+    new nodes get the same path, plus the default link (not this node); the profile is reported."""
     found = dict(FOUND, venv="/srv/tools/cassandra-virtual", link_dir="", profile="/home/ops/.bash_profile",
                  bin="/srv/tools/cassandra-virtual/bin/medusa")
     imported = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, found)
     assert imported["vars"]["cassandra_medusa_venv"] == "/srv/tools/cassandra-virtual"
     assert "cassandra_medusa_link_dir" not in imported["vars"]
+    # no link added on this node (host_vars), new nodes get the default one
+    assert imported["keep"] == {"cassandra_medusa_link_dir": ""}
     assert imported["notes"][0] == ("Medusa 0.30.1 in /srv/tools/cassandra-virtual, medusa.ini imported"
                                     " (cassandra_medusa_enabled: true)")
     assert "no /usr/local/bin/medusa link" in imported["notes"][1]

@@ -62,6 +62,16 @@ ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
              "cassandra_broadcast_address", "cassandra_broadcast_rpc_address", "cassandra_jmx_rmi_hostname"]
 # Per node by nature: not reported as drift
 PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn"]
+# The rights the role gives a readwrite JMX user besides readwrite
+JMX_CREATE_UNREGISTER = ["create", "javax.management.monitor.*,javax.management.timer.*", "unregister"]
+# What the roles leave as it is on a node set up another way (host_vars only:
+# a node added later gets it from the roles)
+KEEP = {
+    "cassandra_repository_manage": "the package repositories",
+    "cassandra_cqlsh_python_manage": "cqlsh's Python (python3.11, cqlshlib link, wrapper)",
+    "cassandra_linux_manage": "the OS settings (kernel, limits, THP, swap, time sync, disks)",
+    "cassandra_service_unit_manage": "the systemd unit (or init script) Cassandra is started by",
+}
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 HOSTNAME = "{{ ansible_facts['hostname'] }}"
 MISSING = object()
@@ -317,12 +327,19 @@ def _jmx_lines(text):
 def _jmx_users(password_file, access_file):
     """cassandra_jmx_users from jmxremote.password and jmxremote.access, None
     when they can't be read back as the role writes them (e.g. hashed passwords)."""
-    access = dict((words[0], words[1]) for words in _jmx_lines(access_file) if len(words) >= 2)
+    rights = dict((words[0], words[1:]) for words in _jmx_lines(access_file) if len(words) >= 2)
+    access = dict((name, words[0]) for name, words in rights.items())
     users = []
     for words in _jmx_lines(password_file):
         if len(words) != 2 or access.get(words[0]) not in ("readwrite", "readonly"):
             return None
-        users.append({"name": words[0], "password": words[1], "access": access[words[0]]})
+        user = {"name": words[0], "password": words[1], "access": access[words[0]]}
+        extra = rights[words[0]][1:]
+        if user["access"] == "readwrite" and not extra:
+            user["create_unregister"] = False  # the role's readwrite line adds them
+        elif user["access"] == "readwrite" and extra != JMX_CREATE_UNREGISTER:
+            return None  # other rights: the role would change them
+        users.append(user)
     return users
 
 
@@ -359,14 +376,15 @@ def _hidden(name, where):
                               % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
 
 
-def cassandra_config_import(live_files, cassandra_version, facts):
+def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""):
     """cassandra_config variables that render a node's files, and what the
-    role would still change: {'vars', 'hand_edits', 'normalized'}."""
+    role would still change: {'vars', 'hand_edits', 'normalized'}.
+    conf_target: the resolved dir the node reads its config from."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
     try:
-        return _config_import(live_files, cassandra_version, facts, where)
+        return _config_import(live_files, cassandra_version, facts, where, conf_target)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
@@ -376,7 +394,7 @@ def cassandra_config_import(live_files, cassandra_version, facts):
     raise error  # out of the except block: no chained message either
 
 
-def _config_import(live_files, cassandra_version, facts, where):
+def _config_import(live_files, cassandra_version, facts, where, conf_target=""):
     env, ctx, files = _load_role(cassandra_version, facts)
     found = {}
     for name in files:
@@ -429,6 +447,11 @@ def _config_import(live_files, cassandra_version, facts, where):
     for key in ALWAYS:
         if key != "cassandra_storage_compatibility_mode" or cassandra_version == "50x":  # 5.0 setting
             out[key] = found.get(key, ctx.get(key))
+    # RPM: the config stays where the node reads it (e.g. default.conf), rather
+    # than moving to the role's own alternative conf dir
+    if (facts.get("os_family") == "RedHat" and conf_target
+            and conf_target != ctx.get("cassandra_rpm_conf_alternative")):
+        out["cassandra_rpm_conf_alternative"] = ""
     if isinstance(out.get("cassandra_seeds"), str):
         out["cassandra_seeds"] = [s.strip() for s in out["cassandra_seeds"].split(",") if s.strip()]
     ipv4 = (facts.get("default_ipv4") or {}).get("address")
@@ -602,17 +625,30 @@ def cassandra_inventory_layout(nodes, cluster_name):
     if unread:
         report.append("NOT READ (in the inventory, but not imported):")
         report += ["  %s: %s" % (n["name"], n.get("reason", "unreachable")) for n in unread]
+        if any(n.get("keep") for n in unread):
+            report.append("  The roles leave their setup as it is (host_vars: %s false)" % ", ".join(KEEP))
         report.append("")
+    for n in nodes:
+        if n.get("keep"):
+            host_vars.setdefault(n["name"], {}).update(n["keep"])
     for n in read:
         report.append("== %s" % n["name"])
         report += ["  " + note for note in n.get("notes", [])]
+        if n.get("keep"):
+            report.append("  Set up another way, LEFT AS IT IS by the roles on this node (host_vars/%s/main.yml;"
+                          " remove a line to let the role take it over, after --check --diff; a host"
+                          " rebuilt under this name must lose them):" % n["name"])
+            report += ["    %s (%s: false)" % (KEEP[k], k) for k in KEEP if k in n["keep"]]
+            report += ["    %s: %s, as this node has it" % (k, _show(k, v))
+                       for k, v in sorted(n["keep"].items()) if k not in KEEP]
         if n["hand_edits"]:
             report.append("  HAND EDITS no variable covers (cassandra_config would revert them):")
             report += ["    " + _mask(line) for line in n["hand_edits"]]
         else:
             report.append("  No hand edit left: cassandra_config would not change the config.")
         if n["normalized"]:
-            report.append("  Normalized by the role, same setting (no effect):")
+            report.append("  Same setting, written another way by the role (no effect; on an initialized node, a"
+                          " file whose settings are all the same is left as it is):")
             report += ["    " + _mask(line) for line in n["normalized"]]
         report.append("")
     return {"cluster_group": cluster, "hosts": hosts, "group_vars": group_vars,
@@ -646,7 +682,7 @@ BLOCKS = [
         "cassandra_java_home", "cassandra_java_package", "cassandra_java_tarball", "cassandra_java_tarball_checksum",
         "cassandra_java_tarball_dir", "cassandra_install_java", "cassandra_java_set_default"]),
     ("Directories", [
-        "cassandra_conf_dir", "cassandra_data_dir", "cassandra_data_file_directories", "cassandra_commitlog_dir",
+        "cassandra_conf_dir", "cassandra_rpm_conf_alternative", "cassandra_data_dir", "cassandra_data_file_directories", "cassandra_commitlog_dir",
         "cassandra_hints_dir", "cassandra_saved_caches_dir", "cassandra_cdc_raw_dir", "cassandra_log_dir",
         "cassandra_heap_dump_dir"]),
     ("Network & ports", [
@@ -675,6 +711,7 @@ BLOCKS = [
         "cassandra_medusa_python", "cassandra_medusa_storage_provider", "cassandra_medusa_bucket_name",
         "cassandra_medusa_region", "cassandra_medusa_host", "cassandra_medusa_port", "cassandra_medusa_base_path",
         "cassandra_medusa_prefix", "cassandra_medusa_key_file", "cassandra_medusa_fqdn"]),
+    ("Left as it is on this node (set up another way)", list(KEEP)),
     ("Other", []),
 ]
 BLOCK_PATTERNS = [
