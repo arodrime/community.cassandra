@@ -90,26 +90,55 @@ REMOVING = "RemovalStatus: Removing token (-42). Waiting for replication confirm
 DL_RING = {"cluster_status": {"dc1": {"nodes": [
     {"address": "10.0.0.1", "status": "U", "state": "N"}, {"address": "10.0.0.2", "status": "U", "state": "N"},
     {"address": "10.0.0.4", "status": "D", "state": "L"}]}}}
+DN_RING = {"cluster_status": {"dc1": {"nodes": [
+    {"address": "10.0.0.1", "status": "U", "state": "N"}, {"address": "10.0.0.2", "status": "U", "state": "N"},
+    {"address": "10.0.0.4", "status": "D", "state": "N"}]}}}
+TOKENS = {"stdout": "10.0.0.1  r1  Up  Normal  1 MiB  ?  7\n10.0.0.4  r1  Down  Leaving  1 MiB  ?  -42\n"}
 
 
 def test_removal_status_read_on_every_node():
     assert "run_once" not in READ
 
 
+def keep(hostvars):
+    return render(KEEP["ansible.builtin.set_fact"]["cassandra_dead_removal"], ansible_play_hosts=["n1", "n2"],
+                  hostvars=hostvars, cassandra_dead_ring=DL_RING, cassandra_dead_node_address="10.0.0.4")
+
+
 def test_removal_found_on_the_second_node():
-    hostvars = {"n1": {"cassandra_dead_removal_status": {"stdout": "RemovalStatus: No removals in process."}},
-                "n2": {"cassandra_dead_removal_status": {"stdout": REMOVING}}}
-    state = render(KEEP["ansible.builtin.set_fact"]["cassandra_dead_removal"], ansible_play_hosts=["n1", "n2"],
-                   hostvars=hostvars, cassandra_dead_ring=DL_RING, cassandra_dead_node_address="10.0.0.4")
-    assert state == {"state": "resume", "on": "n2"}
+    hostvars = {"n1": {"cassandra_dead_removal_status": {"stdout": "RemovalStatus: No removals in process."},
+                       "cassandra_dead_tokens": TOKENS},
+                "n2": {"cassandra_dead_removal_status": {"stdout": REMOVING}, "cassandra_dead_tokens": {"skipped": True}}}
+    assert keep(hostvars) == {"state": "resume", "on": "n2", "reason": ""}
+    # a removal of another node on n2 (a token 10.0.0.4 does not have): not waited for as this one's
+    hostvars["n2"]["cassandra_dead_removal_status"]["stdout"] = REMOVING.replace("-42", "7")
+    assert keep(hostvars)["state"] == "busy"
+
+
+def test_tokens_also_read_on_the_coordinator():
+    # nodetool ring failed on n1: n2, which removes the node, lists its tokens
+    task = next(t for t in REMOVE["tasks"] if t["name"] == "Read the tokens of the ring")
+    assert "run_once" not in task
+    when = task["when"][1]
+    assert true(when, inventory_hostname="n2", ansible_play_hosts=["n1", "n2"],
+                cassandra_dead_removal_status={"stdout": REMOVING})
+    assert not true(when, inventory_hostname="n2", ansible_play_hosts=["n1", "n2"],
+                    cassandra_dead_removal_status={"stdout": "RemovalStatus: No token removals in process."})
+    assert true(when, inventory_hostname="n1", ansible_play_hosts=["n1", "n2"], cassandra_dead_removal_status={})
+    hostvars = {"n1": {"cassandra_dead_removal_status": {"stdout": ""}, "cassandra_dead_tokens": {"rc": 1, "stdout": ""}},
+                "n2": {"cassandra_dead_removal_status": {"stdout": REMOVING}, "cassandra_dead_tokens": TOKENS}}
+    assert keep(hostvars) == {"state": "resume", "on": "n2", "reason": ""}
 
 
 def test_removal_status_skipped_or_unanswered():
-    hostvars = {"n1": {"cassandra_dead_removal_status": {"skipped": True}},
-                "n2": {"cassandra_dead_removal_status": {"rc": 1, "stdout": ""}}}
-    state = render(KEEP["ansible.builtin.set_fact"]["cassandra_dead_removal"], ansible_play_hosts=["n1", "n2"],
-                   hostvars=hostvars, cassandra_dead_ring=DL_RING, cassandra_dead_node_address="10.0.0.4")
-    assert state == {"state": "orphan", "on": ""}
+    hostvars = {"n1": {"cassandra_dead_removal_status": {"skipped": True}, "cassandra_dead_tokens": {"skipped": True}},
+                "n2": {"cassandra_dead_removal_status": {"rc": 1, "stdout": ""}, "cassandra_dead_tokens": {"skipped": True}}}
+    assert keep(hostvars) == {"state": "orphan", "on": "", "reason": ""}
+
+
+def test_force_result_not_checked_in_check_mode():
+    task = next(t for t in REMOVE["tasks"] if t["name"] == "It is out of the ring (removenode_force)")
+    assert "not ansible_check_mode" in " ".join(task["when"])
 
 
 def test_removal_checked_with_the_coordinator_jmx():
@@ -142,13 +171,35 @@ def test_new_node_check_passes_the_import_marker():
     assert "allow=cassandra_new_node_allow_kept_setup" in kept
 
 
-def test_force_refused_while_the_first_node_does_not_show_dl_yet():
-    task = next(t for t in REMOVE["tasks"] if t["name"] == "A removal of it is in progress, and only that one (removenode_force)")
-    msg = render(task["ansible.builtin.assert"]["fail_msg"], cassandra_dead_node_address="10.0.0.4",
-                 cassandra_dead_node={"status": "D", "state": "N"}, cassandra_dead_removal={"state": "orphan", "on": ""},
-                 cassandra_dead_leaving_others=[], ansible_play_hosts=["n1", "n2"])
-    assert msg.startswith("10.0.0.4 is being removed (gossip), but n1 does not show it DL yet")
-    msg = render(task["ansible.builtin.assert"]["fail_msg"], cassandra_dead_node_address="10.0.0.4",
-                 cassandra_dead_node={"status": "D", "state": "N"}, cassandra_dead_removal={"state": "start", "on": ""},
-                 cassandra_dead_leaving_others=[], ansible_play_hosts=["n1", "n2"])
-    assert "no removal of it is in progress" in msg
+def test_force_runs_on_the_coordinator_not_the_first_node():
+    # n2 coordinates the removal: n1 shows the node DN (forcing there does nothing), n2 shows it DL
+    choose = next(t for t in REMOVE["tasks"] if t["name"] == "Choose the node that forces it")
+    hostvars = {"n1": {"cassandra_dead_force_ring": DN_RING}, "n2": {"cassandra_dead_force_ring": DL_RING}}
+    target = render(choose["ansible.builtin.set_fact"]["cassandra_dead_force"], ansible_play_hosts=["n1", "n2"],
+                    hostvars=hostvars, cassandra_dead_node_address="10.0.0.4",
+                    cassandra_dead_removal={"state": "resume", "on": "n2", "reason": ""})
+    assert target == {"on": "n2", "reason": ""}
+    for name in ("Finish a stuck removal (removenode force, on the node chosen above)", "Read the ring after removenode force"):
+        task = next(t for t in REMOVE["tasks"] if t["name"] == name)
+        assert "run_once" not in task
+        assert "inventory_hostname == cassandra_dead_force.on" in task["when"]
+    for method in ("removenode", "removenode_force"):
+        assert true(READ["when"], _method=method)
+
+
+def test_streams_left_by_removenode_force_are_not_a_failure():
+    # e2e: after removenode force, the removal's streams still ran and the final check failed on them
+    check = next(t for t in REMOVE["tasks"] if t["name"] == "Check the cluster without it")
+    assert render(check["vars"]["cassandra_service_health_report_only"], _method="removenode_force") is True
+    assert render(check["vars"]["cassandra_service_health_report_only"], _method="removenode") is False
+    stop = next(t for t in REMOVE["tasks"] if t["name"] == "Stop on an unhealthy cluster (removenode_force)")
+    variables = dict(stop["vars"], _method="removenode_force", cassandra_service_health_force=False, ansible_check_mode=False)
+    streams = ["streams in progress on n1 (nodetool netstats)"]
+    assert not true(stop["when"], cassandra_health_problems=streams, **variables)
+    assert true(stop["when"], cassandra_health_problems=streams + ["10.0.0.2 (r1) is DN, seen from n1"], **variables)
+    # --check: removenode force did not run, the node is still there
+    assert not true(stop["when"], cassandra_health_problems=["10.0.0.4 (r3) is DL, seen from n1"],
+                    **dict(variables, ansible_check_mode=True))
+    warn = next(t for t in REMOVE["tasks"] if t["name"] == "Go on despite the problems (removenode_force, cassandra_service_health_force)")
+    assert true(warn["when"], cassandra_health_problems=["10.0.0.2 (r1) is DN, seen from n1"],
+                **dict(variables, cassandra_service_health_force=True))
