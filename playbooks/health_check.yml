@@ -4,6 +4,15 @@
 # transport, streams, schema agreement and the storage and CQL ports. Fails
 # (non-zero exit) when there is a problem, so it can be scheduled.
 #   ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=my_cluster
+- name: Check the cluster's group
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check the cluster's group
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: hosts_check.yml
+
 - name: Cluster health
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
   gather_facts: true

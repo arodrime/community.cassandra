@@ -1,0 +1,29 @@
+---
+# Run on localhost before any play on the cluster's group: a group name that
+# is not in the inventory (-e cassandra_host=... for cassandra_hosts) would
+# otherwise run on no host, or on the default group, or stop later on a raw
+# template error. A run with --limit skips localhost, so this check too.
+- name: Variables close to the playbooks' own
+  ansible.builtin.debug:
+    msg: "WARNING: {{ item.key }} is set: did you mean {{ item.value }}?"
+  loop: "{{ query('ansible.builtin.varnames', '^cas+andra_') | community.cassandra.cassandra_close_names(_known) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    # the variables the playbooks are run with (-e)
+    _known: [cassandra_hosts, cassandra_new_nodes, cassandra_leaving_nodes, cassandra_target_dc, cassandra_target_rack,
+             cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
+             cassandra_dead_node_address, cassandra_dead_node_new_removal, cassandra_replace_address,
+             cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
+             cassandra_allow_down_nodes, cassandra_accept_default_identity]
+
+- name: The cluster's group is in the inventory
+  ansible.builtin.assert:
+    that: groups[_name] | default([]) | length > 0
+    fail_msg: >-
+      cassandra_hosts: group '{{ _name }}' {{ 'has no host' if _name in groups else 'not found in the inventory' }}
+      (groups: {{ groups | list | reject('in', ['all', 'ungrouped']) | sort | join(', ') }})
+      {%- if cassandra_hosts is not defined %}; cassandra_hosts is not set, '{{ _name }}' is its default{% endif %}.
+    quiet: true
+  vars:
+    _name: "{{ cassandra_hosts | default('cassandra') }}"

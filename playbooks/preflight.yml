@@ -4,6 +4,15 @@
 # Fails on settings that must match across the cluster, on rack layouts the
 # token allocator refuses and on mixed Cassandra versions; warns on seed layouts
 # that are only risky.
+- name: Check the cluster's group
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check the cluster's group
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: hosts_check.yml
+
 - name: Cassandra preflight checks
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
   gather_facts: true
