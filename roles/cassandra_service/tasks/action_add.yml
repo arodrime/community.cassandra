@@ -73,6 +73,7 @@
              | list }}
         _cassandra_stream_advice: >-
           {{ _cassandra_join_then | default('if nodetool netstats on it still shows streams, run add_node again to go on waiting.') }}
-          To start over instead (a bootstrap that failed): stop Cassandra, empty its data, commitlog, saved_caches and
+          JOINING with no stream left is a failed bootstrap on 4.0 and 4.1 (see system.log): nodetool bootstrap resume
+          on it retries the missing ranges. To start over instead (a bootstrap that failed): stop Cassandra, empty its data, commitlog, saved_caches and
           hints directories, wait until it is gone from nodetool status (seen from another node), then
           {{ _cassandra_join_over | default('run add_node again.') }}

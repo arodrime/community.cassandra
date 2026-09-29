@@ -25,8 +25,9 @@
     msg: >-
       {% if _cassandra_cleanup_status == 'failed' %}
       Cleanup failed or can't be followed on
-      {{ _cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.item') | join(', ') }}
-      {{- _cassandra_cleanup_jobs | rejectattr('finished', 'defined') | map(attribute='item.item') | join(', ') }}:
+      {{ (_cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.item') | list
+          + _cassandra_cleanup_jobs | rejectattr('unreachable', 'defined') | rejectattr('finished', 'defined')
+            | map(attribute='item.item') | list) | unique | join(', ') }}:
       {{ _cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed')
          | map(attribute='msg', default='') | join('; ') }} (see system.log there).
       {% else %}

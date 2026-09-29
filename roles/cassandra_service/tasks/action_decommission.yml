@@ -3,6 +3,7 @@
 # is stopped and disabled so it never rejoins. Can take hours on a big node.
 - name: Decommission the node
   community.cassandra.cassandra_decommission:
+    debug: true  # nodetool's stderr in the result: the reason of a failure
   module_defaults:
     community.cassandra.cassandra_decommission: "{{ _cassandra_service_jmx }}"
   async: "{{ cassandra_decommission_timeout | default(_cassandra_stream_async) }}"

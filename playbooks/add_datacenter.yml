@@ -173,6 +173,7 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: stream_wait.yml
+      when: not ansible_check_mode  # the rebuild did not run
       vars:
         _cassandra_stream_what: rebuild
         _cassandra_stream_operations: [Rebuild]

@@ -65,8 +65,10 @@ cassandra_stream_max_time: 0  # seconds, 0: no limit
 cassandra_add_node_cleanup: none
 
 # checks per include level of the progress waits: Ansible nests every include
-# one level deeper and fails past ~200 levels (24 x 150 checks: 300 h at 300 s)
-_cassandra_stream_round_size: 24
+# one level deeper and fails past ~150 levels. A round covers 6 hours (a month
+# in 150 rounds) with 24 to 120 checks: the checks left once it ends are
+# skipped one by one (60 s: 12.5 days)
+_cassandra_stream_round_size: "{{ [24, [120, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
 
 # Confirmation prompts of long operations warn when the controller's shell is
 # not inside tmux or screen (a lost SSH session would stop the run)
@@ -75,7 +77,8 @@ _cassandra_session_warning: >-
      else 'WARNING: this run is not inside tmux or screen: if the SSH session to this machine drops, the run stops'
           ~ ' (the operation itself goes on, unwatched). Run it inside tmux or screen.' }}
 # the lifetime of the background job of a decommission, removenode or rebuild
-_cassandra_stream_async: "{{ cassandra_stream_max_time | int if cassandra_stream_max_time | int > 0 else 2592000 }}"
+# (outlives cassandra_stream_max_time: the wait reports it, the job is not killed)
+_cassandra_stream_async: "{{ cassandra_stream_max_time | int + 86400 if cassandra_stream_max_time | int > 0 else 2592000 }}"
 
 # Cluster health check run by the operation playbooks before and after each
 # node: how long to wait for down nodes to come back, and whether to go on

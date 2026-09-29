@@ -4,7 +4,10 @@
   when: _cassandra_cleanup_status == 'going'
   block:
     - name: Read the cleanups
-      ansible.builtin.command: "{{ _cassandra_service_nodetool }} compactionstats"
+      ansible.builtin.command: "{{ _cassandra_service_nodetool | regex_replace('^nodetool -p [0-9]+', 'nodetool -p ' ~ _port) }} compactionstats"
+      vars:
+        # each node's own JMX port (delegated tasks see this host's variables)
+        _port: "{{ hostvars[item.item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int }}"
       delegate_to: "{{ item.item }}"
       loop: "{{ cassandra_cleanup_jobs_started.results }}"
       loop_control:
@@ -12,6 +15,7 @@
       register: cassandra_cleanup_read
       changed_when: false
       failed_when: false
+      ignore_unreachable: true  # a node not answering once is a check without an answer
       no_log: "{{ cassandra_jmx_password | length > 0 }}"
 
     - name: Check the jobs
@@ -23,6 +27,7 @@
         label: "{{ item.item }}"
       register: cassandra_cleanup_job
       ignore_errors: true  # a failed job is reported below
+      ignore_unreachable: true  # read again at the next check
 
     - name: Work out the progress
       ansible.builtin.set_fact:
@@ -47,12 +52,13 @@
         _cassandra_cleanup_jobs: "{{ cassandra_cleanup_job.results }}"
         _cassandra_cleanup_status: >-
           {{ 'failed' if _ended | selectattr('failed', 'defined') | selectattr('failed') | list
-             else 'failed' if cassandra_cleanup_job.results | rejectattr('finished', 'defined') | list
+             else 'failed' if _reached | rejectattr('finished', 'defined') | list
              else 'done' if _ended | length == cassandra_cleanup_job.results | length
              else 'stalled' if _cassandra_stream_state.stalled
              else 'going' }}
       vars:
-        _ended: "{{ cassandra_cleanup_job.results | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
+        _reached: "{{ cassandra_cleanup_job.results | rejectattr('unreachable', 'defined') | list }}"
+        _ended: "{{ _reached | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
 
     - name: Wait before the next check
       ansible.builtin.pause:

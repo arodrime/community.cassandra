@@ -12,6 +12,7 @@
       loop: "{{ _cassandra_stream_from }}"
       register: cassandra_stream_read
       failed_when: false
+      ignore_unreachable: true  # a node not answering once is a check without an answer
 
     # This node's netstats, when it is one of them (a bootstrap: its mode says when it is over)
     - name: Keep this node's answer
@@ -31,6 +32,7 @@
       loop: "{{ _cassandra_stream_peers | default([]) }}"
       register: cassandra_stream_read_peers
       failed_when: false
+      ignore_unreachable: true  # e.g. the dead node of a replace, still in the inventory
       when: _cassandra_stream_blind | bool
 
     - name: Check the job
@@ -39,6 +41,8 @@
       delegate_to: "{{ _cassandra_stream_job.host | default(inventory_hostname) }}"
       register: cassandra_stream_job_status
       ignore_errors: true  # a failed job is reported below
+      ignore_unreachable: true
+      no_log: "{{ cassandra_jmx_password | length > 0 }}"  # a shell job's command line carries it
       when: _cassandra_stream_job is defined
 
     - name: Work out the progress
@@ -49,9 +53,12 @@
                peer=(_address if _blind else None), stall_checks=cassandra_stream_stall_checks | int) }}
       vars:
         _blind: "{{ _cassandra_stream_blind | bool }}"
+        # the address the other nodes see this node by in their netstats
         _address: >-
-          {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
-             else ansible_facts['default_ipv4']['address'] | default('') }}
+          {{ (cassandra_extra_settings | default({})).broadcast_address
+             | default(_cassandra_preflight.address | default(cassandra_listen_address
+                       if cassandra_listen_address | default('') not in ['', 'localhost']
+                       else ansible_facts['default_ipv4']['address'] | default(''), true), true) }}
         _views: "{{ cassandra_stream_read_peers.results if _blind else cassandra_stream_read.results }}"
 
     - name: Progress of the {{ _cassandra_stream_what }}
@@ -63,7 +70,9 @@
     - name: Where it stands
       ansible.builtin.set_fact:
         # kept as facts: the skipped tasks of the next checks overwrite registered results
-        _cassandra_stream_job_result: "{{ cassandra_stream_job_status | default({}) }}"
+        _cassandra_stream_job_result: >-
+          {{ dict(cassandra_stream_job_status | default({}) | dict2items
+                  | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
         _cassandra_stream_status: >-
           {{ 'done' if (_join and _self_mode == 'NORMAL') or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
              else 'job_failed' if _job and _job_status.finished | default(0) | int == 1

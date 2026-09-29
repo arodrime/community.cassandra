@@ -174,7 +174,7 @@ and a run not inside ``tmux`` or ``screen`` on the controller (a lost SSH sessio
 Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints a progress line
 every ``cassandra_stream_check_interval`` seconds (300 by default), with the percentage, bytes and tables streamed and
 an ETA, and waits as long as the streams make progress: it stops only after ``cassandra_stream_stall_checks`` checks
-in a row (3) with nothing streamed. If the run stops before the node has joined (a stall, a lost SSH session), the node
+in a row (3) with nothing streamed (4 times as many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session), the node
 goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress. The wait
 also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a failed
 bootstrap over, stop Cassandra on the node, empty its data, commitlog, saved_caches and hints directories, wait until

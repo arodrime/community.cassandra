@@ -17,7 +17,6 @@
     cassandra_service_node_action: cleanup
     cassandra_cleanup_mode: sequential
     cassandra_cleanup_jobs: 2
-    cassandra_cleanup_timeout: 86400  # seconds, per batch
   tasks:
     - name: Check the mode
       ansible.builtin.assert:

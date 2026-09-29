@@ -1,0 +1,17 @@
+Mode: JOINING
+Bootstrap 69710470-bb9d-11f1-aadd-cddfdc575e56
+    /192.168.0.2
+        Receiving 5 files, 96183376 bytes total. Already received 3 files (60.00%), 47132521 bytes total (49.00%)
+            ks/orders-2 9365964/9365964 bytes (100%) received from idx:0/192.168.0.2
+            ks/items-0 14893548/41522906 bytes (35%) received from idx:0/192.168.0.2
+            ks/items-1 6467667/6467667 bytes (100%) received from idx:0/192.168.0.2
+            ks/orders-1 1451165/1451165 bytes (100%) received from idx:0/192.168.0.2
+            ks/orders-0 14954177/37375674 bytes (40%) received from idx:0/192.168.0.2
+Read Repair Statistics:
+Attempted: 0
+Mismatch (Blocking): 0
+Mismatch (Background): 0
+Pool Name                    Active   Pending      Completed   Dropped
+Large messages                  n/a         0              0         0
+Small messages                  n/a         0              1         0
+Gossip messages                 n/a         0            315         0

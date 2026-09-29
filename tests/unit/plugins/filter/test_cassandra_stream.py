@@ -1,10 +1,24 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import os
+
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
     cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress)
 
 GIB = 1024 ** 3
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES_DIR, name)) as f:
+        return f.read()
+
+
+def netstats_view(host, name):
+    mode, lines, sessions = parse_netstats(fixture(name))
+    return {"item": host, "mode": mode, "sessions": sessions}
 
 
 def session(peer, done, total, op="Bootstrap", plan="p1", direction="receiving", files=None):
@@ -113,9 +127,13 @@ def test_rf_not_the_rack_count_or_unknown_means_the_whole_dc():
 
 def test_joining_node_not_counted_twice_and_not_cleaned():
     ring = {"dc1": {"nodes": [node("10.0.0.1", "r1"), node("10.0.0.2", "r1"), node("10.0.0.7", "r1", state="J")]}}
-    plan = cassandra_add_node_plan(ring, [{"host": "n7", "dc": "dc1", "rack": "r1", "in_ring": True}],
-                                   hosts={"10.0.0.1": "n1", "10.0.0.2": "n2"})
+    new = [{"host": "n7", "address": "10.0.0.7", "dc": "dc1", "rack": "r1", "in_ring": True, "state": "joining"}]
+    plan = cassandra_add_node_plan(ring, new, hosts={"10.0.0.1": "n1", "10.0.0.2": "n2"})
     assert plan["racks"] == {"dc1": {"r1": 3}} and plan["estimate"] == []
+    assert plan["cleanup"] == {"dc1": ["n1", "n2"]}
+    # seen UN already (it joined between the checks): still not cleaned, nor counted as a source
+    ring["dc1"]["nodes"][2] = node("10.0.0.7", "r1", load="1.0 GiB")
+    plan = cassandra_add_node_plan(ring, new, hosts={"10.0.0.1": "n1", "10.0.0.2": "n2"})
     assert plan["cleanup"] == {"dc1": ["n1", "n2"]}
 
 
@@ -201,3 +219,63 @@ def test_node_joined_in_an_earlier_run_is_cleaned_when_another_joins_after():
            {"host": "n8", "address": "10.0.0.8", "dc": "dc1", "rack": "r1", "state": "new"}]
     plan = cassandra_add_node_plan(ring, new, hosts={"10.0.0.1": "n1", "10.0.0.7": "n7"})
     assert plan["cleanup"] == {"dc1": ["n1", "n7"]} and plan["racks"] == {"dc1": {"r1": 3}}
+
+
+def test_a_host_that_does_not_answer_keeps_its_sessions():
+    views = [read("n1", session("10.0.0.7", 10, 100, op="Restore replica count")),
+             read("n2", session("10.0.0.8", 10, 100, op="Restore replica count"))]
+    s = cassandra_stream_progress(views, None, now=0, stall_checks=3)
+    for now in (300, 600):
+        s = cassandra_stream_progress([views[0], {"item": "n2", "failed": True, "msg": "x"}], s, now=now, stall_checks=3)
+        assert not s["progressed"] and (s["bytes_done"], s["bytes_total"]) == (20, 200)
+    s = cassandra_stream_progress([views[0], {"item": "n2", "failed": True, "msg": "x"}], s, now=900, stall_checks=3)
+    assert s["stalled"]
+
+
+def test_nothing_answers_then_a_bigger_total_is_progress():
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 10, 100))], None, now=0)
+    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=300)
+    assert not s["progressed"] and not s["answered"] and s["streams"]["n4|p1|10.0.0.1|receiving"]["gone"] is False
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 10, 120))], s, now=600)
+    assert s["progressed"] and s["bytes_total"] == 120
+
+
+def test_eta_from_the_bytes_streamed_since_the_first_check():
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 40, 100))], None, now=0)
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 70, 100))], s, now=300)
+    assert s["start_done"] == 40 and "ETA ~5m00s" in s["line"]
+
+
+def test_nodes_added_in_the_same_run_clean_up_for_the_later_ones():
+    new = [{"host": "n7", "address": "10.0.0.7", "dc": "dc1", "rack": "r1", "state": "new"},
+           {"host": "n8", "address": "10.0.0.8", "dc": "dc1", "rack": "r1", "state": "new"},
+           {"host": "n9", "address": "10.0.0.9", "dc": "dc1", "rack": "r2", "state": "new"}]
+    plan = cassandra_add_node_plan(RING, new, hosts=HOSTS, keyspaces=NTS3)
+    assert plan["scope"] == {"dc1": "rack"}
+    # rack-aware: n7 hands over to n8 (same rack), n8 to nobody, n9 is the last one of r2
+    assert plan["cleanup"]["dc1"] == ["n1", "n2", "n4", "n5", "n7"]
+    plan = cassandra_add_node_plan(RING, new, hosts=HOSTS, keyspaces=None)
+    assert plan["cleanup"]["dc1"] == ["n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8"]
+
+
+def test_real_compactionstats_40_41_50():
+    # captured during nodetool cleanup (compaction throughput 1 MiB/s): two Cleanup tasks each
+    for version, tasks in (("40", [(0, 76376336), (1897868, 18048231)]),
+                           ("41", [(1354216, 2427880), (627036, 18782813)]),
+                           ("50", [(566099, 8139280), (503493, 38163184)])):
+        view = cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_%s_cleanup.txt" % version)}, "n1"))
+        assert [(s["bytes_done"], s["bytes_total"], s["files"][0]["table"]) for s in view["sessions"]] == [
+            (d, t, "ks.orders") for d, t in tasks], version
+        s = cassandra_stream_progress([view], None, now=0, operations=["Cleanup"])
+        assert "2 sessions" in s["line"] and "now: ks.orders (on n1)" in s["line"]
+
+
+def test_real_40_41_bootstrap_progress_between_two_checks():
+    for version in ("40", "41"):
+        s = cassandra_stream_progress([netstats_view("n2", "nodetool_netstats_%s_bootstrap_receiving_early.txt" % version)],
+                                      None, now=0, operations=["Bootstrap"])
+        assert s["progressed"] and s["transferring"] and s["sessions"] == 1
+        s = cassandra_stream_progress([netstats_view("n2", "nodetool_netstats_%s_bootstrap_receiving_late.txt" % version)],
+                                      s, now=300, operations=["Bootstrap"])
+        assert s["progressed"] and s["idle_checks"] == 0 and not s["stalled"]
+        assert s["line"].startswith("[#########-----------]  4") and "/91." in s["line"] and "MiB" in s["line"] and "ETA ~" in s["line"]

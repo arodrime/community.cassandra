@@ -46,13 +46,13 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     tables = dict(state.get("tables") or {})
     start = state.get("start", now)
     progressed = False
-    answered = False
+    answered = set()
     current = set()
     now_files = []
     for result in views:
         if result.get("failed") or result.get("skipped") or "sessions" not in result:
             continue
-        answered = True
+        answered.add(str(result.get("item", "")))
         for s in result["sessions"]:
             if operations and s["operation"] not in operations:
                 continue
@@ -76,8 +76,9 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
                     tables.setdefault(f["table"], "done")
     if answered:
         for key, stream in streams.items():
-            if key not in current and not stream["gone"]:
-                # a finished session leaves netstats: count it as fully streamed
+            if key not in current and not stream["gone"] and key.split("|", 1)[0] in answered:
+                # a finished session leaves netstats: count it as fully streamed (not when its
+                # host did not answer this time)
                 stream.update(gone=True, done=stream["total"])
                 progressed = True
         streaming_now = set(n.split(" ", 1)[0] for n in now_files)
@@ -118,7 +119,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
         "start": start, "start_done": start_done, "streams": streams, "tables": tables, "progressed": progressed,
         "last_progress": last_progress, "idle_checks": idle_checks,
         "stalled": idle_checks >= limit, "sessions": len(current), "transferring": transferring,
-        "answered": answered, "bytes_done": done, "bytes_total": total, "line": "  ".join(parts),
+        "answered": bool(answered), "bytes_done": done, "bytes_total": total, "line": "  ".join(parts),
     }
 
 
@@ -203,6 +204,11 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
         cleanup[dc] = [hosts.get(n["address"], n["address"]) for n in ring
                        if n["status"] + n["state"] == "UN" and n["address"] not in added
                        and (not aware or n["rack"] in new_racks)]
+        # a node added in this run hands ranges over to the ones added after it in its
+        # datacenter (its rack when each rack holds a full copy): those get a cleanup too
+        mine = [n for n in adding if n["dc"] == dc]
+        cleanup[dc] += [n["host"] for i, n in enumerate(mine)
+                        if any(not aware or m["rack"] == n["rack"] for m in mine[i + 1:])]
     if _ring_wide(keyspaces) and keyspaces is not None:
         # replicas placed around the whole ring: every datacenter hands data over
         for dc in cluster_status:

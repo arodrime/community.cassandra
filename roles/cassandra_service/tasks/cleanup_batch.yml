@@ -22,7 +22,7 @@
           {{ _cassandra_service_jmx | combine({'port': hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
       delegate_to: "{{ item }}"
       loop: "{{ _todo }}"
-      async: "{{ cassandra_cleanup_timeout }}"
+      async: "{{ cassandra_cleanup_timeout | default(_cassandra_stream_async) }}"
       poll: 0
       register: cassandra_cleanup_jobs_started
 
@@ -63,5 +63,9 @@
       ansible.builtin.fail:
         msg: >-
           Stopped at the batch {{ _todo | join(', ') }}: no later batch was started.
+          {% if cassandra_progress_file is defined %}
           Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
-          (progress: {{ cassandra_progress_file | default('none') }})
+          (progress: {{ cassandra_progress_file }})
+          {% else %}
+          Once fixed, clean up this batch and the ones after it with the cleanup playbook (--limit those nodes).
+          {% endif %}

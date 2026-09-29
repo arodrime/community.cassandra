@@ -53,12 +53,21 @@ Role Variables
   `14:05 [########------------]  41%  290.4/710.2 GiB  tables: 12 done, 2 streaming  ETA ~3h10m  2 sessions  now: orders.items (from 10.0.0.3)`.
   The run fails only after `cassandra_stream_stall_checks` checks in a row
   (default 3) with nothing streamed: no byte or file, no session started or
-  ended. Nothing is stopped then. No overall limit unless
+  ended; 4 times as many while nothing is left to transfer (before the first
+  session, index or view builds after the streams). Nothing is stopped then.
+  Entire-SSTable streaming (4.0+) counts a file only once whole: with very
+  big SSTables, raise `cassandra_stream_stall_checks`. No overall limit unless
   `cassandra_stream_max_time` (seconds) is set. The bootstrap wait also stops
   when Cassandra stops or, on 5.0, when the bootstrap fails
   (`Mode: JOINING_FAILED`). On 5.0.0 to 5.0.4 nodetool does not answer on a
   bootstrapping node (CASSANDRA-19902): its progress is read from the other
-  nodes' side (their sending sessions to it).
+  nodes' side (their sending sessions to it). On 4.0 and 4.1 a failed
+  bootstrap leaves the node JOINING with no stream: the wait then ends as a
+  stall, see `system.log` (`nodetool bootstrap resume` retries it).
+* `cassandra_add_node_cleanup` (default `none`): after `add_node`, the
+  cleanup of the nodes that handed data over. `none` prints the command,
+  `one` runs it one node at a time, `rack` and `dc` the nodes of a rack, of a
+  datacenter together, batch after batch, `all` every node at once.
 
 * `cassandra_service_allow_new_seed`: a node that never started and is
   listed in `cassandra_seeds` is refused when another seed already answers

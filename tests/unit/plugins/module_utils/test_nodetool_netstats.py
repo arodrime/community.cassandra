@@ -93,3 +93,27 @@ def test_real_50_bootstrap_sending():
     assert [(s["operation"], s["peer"], s["direction"], s["bytes_done"]) for s in sessions] == [
         ("Bootstrap", "172.29.0.5", "sending", 8789056)]
     assert [f["table"] for f in sessions[0]["files"]] == ["e2e.t", "keyspace1.standard1"]
+
+
+def test_real_40_and_41_bootstrap_receiving():
+    # 4.0.x and 4.1.11: "N bytes" sizes, received files named keyspace/table-N, entire SSTable
+    # components (system_auth) under their full path
+    for name, files_done, bytes_done, tables in (
+            ("40_bootstrap_receiving_early", 0, 25632576, {"ks.items"}),
+            ("40_bootstrap_receiving_late", 8, 47859601, {"ks.items", "system_auth.roles"}),
+            ("41_bootstrap_receiving_early", 0, 7049187, {"ks.items", "ks.orders"}),
+            ("41_bootstrap_receiving_late", 3, 47132521, {"ks.items", "ks.orders"})):
+        mode, lines, sessions = parse_netstats(load_fixture("nodetool_netstats_%s.txt" % name))
+        assert mode == "JOINING"
+        assert [(s["operation"], s["peer"], s["direction"], s["files_done"], s["bytes_done"]) for s in sessions] == [
+            ("Bootstrap", "192.168.0.2", "receiving", files_done, bytes_done)]
+        assert set(f["table"] for f in sessions[0]["files"]) == tables
+
+
+def test_real_40_and_41_bootstrap_sending():
+    for name, peer_total, bytes_done in (("40", 95740912, 42624463), ("41", 96183376, 89245977)):
+        mode, lines, sessions = parse_netstats(load_fixture("nodetool_netstats_%s_bootstrap_sending.txt" % name))
+        assert mode == "NORMAL"
+        assert [(s["peer"], s["direction"], s["bytes_total"], s["bytes_done"]) for s in sessions] == [
+            ("192.168.0.3", "sending", peer_total, bytes_done)]
+        assert set(f["table"] for f in sessions[0]["files"]) <= {"ks.items", "ks.orders"}

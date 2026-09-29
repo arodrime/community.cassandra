@@ -1,0 +1,16 @@
+concurrent compactors                2                                                                
+pending tasks                        2                                                                
+ks                                   orders          2                                                
+compactions completed                6                                                                
+data compacted                       163395312                                                        
+compressed data compacted            160712950                                                        
+compactions aborted                  0                                                                
+compactions reduced                  0                                                                
+sstables dropped from compaction     0                                                                
+15 minute rate                       0.31/minute                                                      
+mean rate                            70.37/hour                                                       
+compaction throughput (MiB/s)        1.0                                                              
+id                                   compaction type keyspace table  completed total    unit  progress
+a02ebb00-bb9e-11f1-af49-69f6c7c7ff1e Cleanup         ks       orders 566099    8139280  bytes 6.96%   
+a02ee210-bb9e-11f1-af49-69f6c7c7ff1e Cleanup         ks       orders 503493    38163184 bytes 1.32%   
+active compaction remaining time     0h00m43s                                                         

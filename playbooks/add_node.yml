@@ -143,9 +143,9 @@
       ansible.builtin.debug:
         msg: "{{ _summary.split('\n') | reject('equalto', '') | list }}"
       run_once: true
-      when: _new | length > 0
+      when: _new | length > 0 or cassandra_add_node_cleanup | default('none') != 'none'
       vars:
-        _p: "{{ hostvars[_new[0]]._cassandra_preflight }}"
+        _p: "{{ hostvars[(_new + ansible_play_hosts_all) | first]._cassandra_preflight }}"
         _running: >-
           {{ (hostvars[_existing[0]].cassandra_preflight_describe.stdout | default('') ~ '\n').split('Database versions:')[1:]
              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
@@ -160,8 +160,12 @@
               still bootstrapping, waited for first: {{ _joining | join(', ') }}
             {% endif %}
             Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }}, Java {{ cassandra_java_tarball | default('', true) or ('package, version ' ~ (cassandra_java_version | default('of the series'))) }}{{ (', Medusa ' ~ ('on' if cassandra_medusa_enabled | bool else 'off')) if cassandra_medusa_enabled is defined else '' }}
+            {% if _new %}
             One node at a time; each one streams its share of the data (hours on big nodes), with a progress line
             every {{ cassandra_stream_check_interval }}s; the run stops after {{ cassandra_stream_stall_checks }} checks in a row without progress.
+            {% else %}
+            No node to add ({{ ansible_play_hosts_all | join(', ') }} already in the ring).
+            {% endif %}
             Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
               'one': 'one node at a time', 'rack': 'the nodes of a rack together, rack after rack',
               'dc': 'the nodes of a datacenter together', 'all': 'every node at once (heavy I/O everywhere)'}[_cleanup] }}
@@ -175,9 +179,9 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: confirm.yml
-      when: _new | length > 0
+      when: _new | length > 0 or cassandra_add_node_cleanup | default('none') != 'none'
       vars:
-        cassandra_confirm_prompt: "add_node: go on with the add shown above?"
+        cassandra_confirm_prompt: "add_node: go on with the {{ 'add' if _new else 'cleanup' }} shown above?"
 
 - name: Add the new nodes, one at a time
   hosts: "{{ cassandra_new_nodes }}"
@@ -235,7 +239,6 @@
     _mode: "{{ cassandra_add_node_cleanup | default('none') }}"
     cassandra_service_node_action: cleanup
     cassandra_cleanup_jobs: 2
-    cassandra_cleanup_timeout: 86400  # seconds, per batch
   tasks:
     - name: Say which cleanups to run
       ansible.builtin.debug:

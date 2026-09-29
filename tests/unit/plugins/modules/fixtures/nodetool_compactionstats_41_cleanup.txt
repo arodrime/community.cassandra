@@ -1,0 +1,7 @@
+pending tasks: 2
+- ks.orders: 2
+
+id                                   compaction type keyspace table  completed total    unit  progress
+ac76ea50-bb9d-11f1-9033-1fa027256eec Cleanup         ks       orders 1354216   2427880  bytes 55.78%  
+ac771160-bb9d-11f1-9033-1fa027256eec Cleanup         ks       orders 627036    18782813 bytes 3.34%   
+Active compaction remaining time :   0h00m18s

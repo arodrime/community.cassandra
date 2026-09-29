@@ -152,6 +152,7 @@
     - name: Remove it (removenode, from {{ ansible_play_hosts[0] }})
       community.cassandra.cassandra_removenode:
         host_id: "{{ _dead.host_id }}"
+        debug: true  # nodetool's stderr in the result: the reason of a failure
       module_defaults:
         community.cassandra.cassandra_removenode: "{{ _cassandra_service_jmx }}"
       vars:
