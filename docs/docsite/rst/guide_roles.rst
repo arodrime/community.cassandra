@@ -157,11 +157,13 @@ Before installing anything, ``add_node`` and ``replace_node`` check the new host
 once: Ansible runs as root; the data, commitlog, hints and saved_caches directories are empty and on the file system
 ``/etc/fstab`` or an enabled systemd mount unit expects (not on the root file system because a disk is not mounted),
 with their free space shown, a warning when the nodes of the same rack hold more than half of it on average, and
-``cassandra_new_node_min_free_gb`` as a minimum; Java, Cassandra (at ``cassandra_package_version``) and the Pythons of
-cqlsh and Medusa are installed, or available from the configured repositories (installed already with
-``cassandra_offline``); the Cassandra repository, the Java tarball and the Medusa pip index answer with their
-credentials; the storage and native ports of two seeds answer from the new host, its own Cassandra ports are free and
-Cassandra is not running there. ``-e cassandra_new_node_checks=false`` skips these checks.
+``cassandra_new_node_min_free_gb`` as a minimum; Java and the Pythons of cqlsh and Medusa are installed, or available
+from the configured repositories (installed already with ``cassandra_offline``); the Cassandra repository, the Java
+tarball and the Medusa pip index answer with their credentials, and when the repositories are set up by other means
+(``cassandra_repository_manage: false``, ``cassandra_offline``) Cassandra is available or installed at
+``cassandra_package_version``; the storage port of two seeds answers from the new host (their native port too, or a
+warning), its own Cassandra ports are free and Cassandra is not running there. A source that does not answer at all
+is only a warning: the package managers and pip may go through a proxy of their own. ``-e cassandra_new_node_checks=false`` skips these checks.
 
 Once the new nodes have joined, the others still hold the data they handed over. ``cleanup`` removes it, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at

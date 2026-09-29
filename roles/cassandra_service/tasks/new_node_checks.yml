@@ -46,12 +46,15 @@
 
         - name: List what they hold
           ansible.builtin.find:
-            paths: "{{ cassandra_new_node_dir_stat.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
-                       | map(attribute='item') | list }}"
+            paths: "{{ _there }}"
             file_type: any
             hidden: true
           register: cassandra_new_node_found
-          when: cassandra_new_node_dir_stat.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir') | list | length > 0
+          when: _there | length > 0
+          vars:  # directories, or links to one
+            _there: >-
+              {{ cassandra_new_node_dir_stat.results | selectattr('stat.exists') | rejectattr('stat.isreg')
+                 | map(attribute='item') | list }}
 
         - name: Read /etc/fstab
           ansible.builtin.slurp:
@@ -90,8 +93,11 @@
                 (_cassandra_java_home ~ '/.unpacked') if _cassandra_java_home != '' else '',
                 (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != '' else ''] | select | unique | list }}
 
+        # Fails on a Debian host without python3-apt: the package checks then only warn
         - name: Read the installed packages
           ansible.builtin.package_facts:
+          register: cassandra_new_node_package_facts
+          failed_when: false
           check_mode: false  # read-only
 
         - name: Work out what to check
@@ -121,17 +127,20 @@
         - name: Reach the package sources
           ansible.builtin.uri:
             url: "{{ item.url }}"
-            method: "{{ item.method | default('GET') }}"
+            headers: "{{ item.headers | default({}) }}"
             url_username: "{{ _auth[item.auth][0] | default(omit, true) }}"
             url_password: "{{ _auth[item.auth][1] | default(omit, true) }}"
             force_basic_auth: "{{ _auth[item.auth][0] | default('') != '' }}"
             ca_path: "{{ item.ca_path | default(omit, true) }}"
             return_content: "{{ item.match is defined }}"
             timeout: 20
-          register: cassandra_new_node_urls
+          register: cassandra_new_node_url_results
           failed_when: false
           check_mode: false  # read-only
-          no_log: "{{ _auth.values() | map('last') | select | list | length > 0 }}"
+          # a password, or credentials or a signature in a URL
+          no_log: >-
+            {{ _auth.values() | map('last') | select | list | length > 0
+               or _cassandra_new_node_plan.urls | map(attribute='url') | select('search', '@|[?]') | list | length > 0 }}
           loop: "{{ _cassandra_new_node_plan.urls }}"
           loop_control:
             label: "{{ item.name }}"
@@ -156,7 +165,7 @@
 
         - name: Put the findings together
           ansible.builtin.set_fact:
-            cassandra_new_node_check: >-
+            _cassandra_new_node_check: >-
               {{ {'problems': _all | map(attribute='problems') | flatten,
                   'warnings': _all | map(attribute='warnings') | flatten,
                   'info': _all | map(attribute='info') | flatten} }}
@@ -176,15 +185,17 @@
                    | community.cassandra.cassandra_new_node_load(_cassandra_preflight.cassandra_dc | default(cassandra_dc),
                        _cassandra_preflight.cassandra_rack | default(cassandra_rack), _dirs_result.data_free,
                        address=_cassandra_preflight.address | default(''))
-                   if cassandra_preflight_status.cluster_status | default({}) else {'problems': [], 'warnings': [], 'info': []} }}
+                   if cassandra_preflight_status.cluster_status | default({}) and _dirs_result.data_free > 0
+                   else {'problems': [], 'warnings': [], 'info': []} }}
               - >-
                 {{ _cassandra_new_node_plan.packages | community.cassandra.cassandra_new_node_packages(
-                     ansible_facts['packages'] | default({}), cassandra_new_node_repoquery.stdout | default(''),
+                     ansible_facts['packages'] if cassandra_new_node_package_facts.ansible_facts is defined else none,
+                     cassandra_new_node_repoquery.stdout | default(''),
                      os_family=ansible_facts['os_family'],
                      query_ok=cassandra_new_node_repoquery.rc | default(0) == 0
                               and (ansible_facts['os_family'] != 'Debian'
                                    or cassandra_new_node_apt_lists.matched | default(0) > 0)) }}
-              - "{{ cassandra_new_node_urls | community.cassandra.cassandra_new_node_urls }}"
+              - "{{ cassandra_new_node_url_results | community.cassandra.cassandra_new_node_urls }}"
               - >-
                 {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,
                      ss_output=cassandra_new_node_ss.stdout if cassandra_new_node_ss.rc | default(1) == 0 else none,
@@ -192,7 +203,7 @@
 
         - name: What {{ inventory_hostname }} has
           ansible.builtin.debug:
-            msg: "{{ cassandra_new_node_check.info + cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING: ') | list }}"
+            msg: "{{ _cassandra_new_node_check.info + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING: ') | list }}"
 
     - name: Every problem found
       ansible.builtin.debug:
@@ -202,8 +213,8 @@
       vars:
         _lines: >-
           {%- set l = [] -%}
-          {%- for h in ansible_play_hosts if hostvars[h].cassandra_new_node_check is defined -%}
-          {%-   for p in hostvars[h].cassandra_new_node_check.problems -%}{%- set _ = l.append(h ~ ': ' ~ p) -%}{%- endfor -%}
+          {%- for h in ansible_play_hosts if hostvars[h]._cassandra_new_node_check is defined -%}
+          {%-   for p in hostvars[h]._cassandra_new_node_check.problems -%}{%- set _ = l.append(h ~ ': ' ~ p) -%}{%- endfor -%}
           {%- endfor -%}
           {{ l }}
 
@@ -216,5 +227,5 @@
       when: _hosts | length > 0
       vars:
         _hosts: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_new_node_check', 'defined')
-             | rejectattr('cassandra_new_node_check.problems', 'equalto', []) | map(attribute='inventory_hostname') | list }}
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_new_node_check', 'defined')
+             | rejectattr('_cassandra_new_node_check.problems', 'equalto', []) | map(attribute='inventory_hostname') | list }}

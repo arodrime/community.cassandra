@@ -21,6 +21,8 @@ __metaclass__ = type
 import os
 import re
 
+from ansible.module_utils.six.moves.urllib.parse import urlsplit, urlunsplit
+
 GIB = 1024 ** 3
 UNITS = {"bytes": 1, "b": 1, "kib": 1024, "kb": 1024, "mib": 1024 ** 2, "mb": 1024 ** 2,
          "gib": GIB, "gb": GIB, "tib": 1024 ** 4, "tb": 1024 ** 4, "pib": 1024 ** 5, "pb": 1024 ** 5}
@@ -84,8 +86,8 @@ def _unit_mounts(unit_files):
 
 
 def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, min_free_gb=0):
-    """dirs: [{'kind': 'data', 'path'}] (kinds: data, commitlog, hints,
-    saved_caches); mounts: ansible_facts['mounts']; found: the paths found in
+    """dirs: [{'kind': 'data', 'path', 'real'}] (kinds: data, commitlog, hints,
+    saved_caches; real: the link's target when path is a link); mounts: ansible_facts['mounts']; found: the paths found in
     them (find, not recursive). A dir whose expected mount (fstab or enabled
     mount unit) is not mounted would land on the file system below it.
     Adds 'data_free': the bytes free on the data directories' file systems."""
@@ -94,16 +96,22 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
     expected.update(_fstab_mounts(fstab))
     expected.pop("/", None)
     paths = [_norm(d["path"]) for d in dirs]
-    problems, info, data_mounts = [], [], {}
+    problems, warnings, info, data_mounts = [], [], [], {}
+    if not actual:
+        warnings.append("no mount in the facts: the directories' file systems and free space are not checked")
     found = [_norm(p) for p in found or []]
     for d in dirs:
         path, kind = _norm(d["path"]), d["kind"]
-        on = _mount_of(path, actual)
-        want = _mount_of(path, expected)
-        if want and (on is None or len(want) > len(on)):
-            problems.append("%s directory %s: %s (%s) is not mounted, it would go to %s"
-                            % (kind, path, want, expected[want], on or "the root file system"))
-        if on is None:
+        real = _norm(d.get("real") or path)
+        on = _mount_of(real, actual)
+        want = _mount_of(real, expected)
+        if actual and want and (on is None or len(want) > len(on)):
+            problems.append("%s directory %s%s: %s (%s) is not mounted, it would go to %s"
+                            % (kind, path, " (%s)" % real if real != path else "", want, expected[want],
+                               on or "the root file system"))
+        if not actual:
+            pass
+        elif on is None:
             info.append("%s %s: mount not found" % (kind, path))
         else:
             m = actual[on]
@@ -123,7 +131,7 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
             names = sorted(os.path.basename(p) for p in held)
             problems.append("%s directory %s is not empty (%s%s): a new node starts empty. Move the data away, or empty it"
                             " if it is not needed" % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
-    result = _result(problems, info=info)
+    result = _result(problems, warnings, info)
     result["data_free"] = sum(data_mounts.values())
     return result
 
@@ -185,7 +193,8 @@ def _version_ok(versions, wanted):
 def cassandra_new_node_packages(needs, installed, query="", os_family="RedHat", query_ok=True):
     """needs: [{'name', 'why', 'mode', 'version'}], mode 'installed' (offline:
     must be there), 'either' (installed or available) or 'warn' (offline, only
-    worth a warning); installed: ansible_facts['packages']; query_ok: false
+    worth a warning); installed: ansible_facts['packages'] (None: unknown, then only
+    warnings); query_ok: false
     when the repositories could not be read (then only a warning)."""
     available = _available(query, os_family)
     problems, warnings, info = [], [], []
@@ -193,7 +202,9 @@ def cassandra_new_node_packages(needs, installed, query="", os_family="RedHat", 
         name, why, mode, version = need["name"], need["why"], need.get("mode", "either"), need.get("version", "")
         what = "%s%s (%s)" % (name, (" " + version) if version else "", why)
         have = [p.get("version", "") for p in (installed or {}).get(name, [])]
-        if have and _version_ok(have, version):
+        if installed is None and mode != "either":
+            warnings.append("%s: could not read the installed packages (python3-apt missing?)" % what)
+        elif have and _version_ok(have, version):
             info.append("%s: installed" % what)
         elif have:
             problems.append("%s: %s installed" % (what, ", ".join(have)))
@@ -233,7 +244,10 @@ def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False
                         " (e.g. the package's own instance), stop it and empty its directories")
     for r in (reached or {}).get("results", []):
         item = r.get("item", {})
-        if r.get("failed") or r.get("msg"):  # failed_when: false drops 'failed', a timeout leaves its msg
+        if r.get("msg") and item.get("optional"):
+            warnings.append("can't reach %s port %s of %s from here (the nodes don't need it, clients do)"
+                            % (item.get("name"), item.get("port"), item.get("host")))
+        elif r.get("msg"):  # a timeout (the task's failed_when: false drops 'failed')
             problems.append("can't reach %s port %s of %s from here: check the address and the firewalls between the nodes"
                             % (item.get("name"), item.get("port"), item.get("host")))
         else:
@@ -248,26 +262,39 @@ def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False
     return _result(problems, warnings, info)
 
 
+def _shown(url):
+    """A URL without its credentials or query (a signature)"""
+    try:
+        parts = urlsplit(url or "")
+        host = parts.hostname or ""
+        port = parts.port
+    except ValueError:
+        return "(the URL)"
+    if not parts.netloc:
+        return url
+    return urlunsplit((parts.scheme, host + (":%d" % port if port else ""), parts.path, "", ""))
+
+
 def cassandra_new_node_urls(results):
     """results: a uri loop result over {'name', 'url', 'match'} items (match:
-    a regex the page must hold, e.g. the version wanted)."""
-    problems, info = [], []
+    a regex the page must hold, e.g. the version wanted). No answer at all
+    only warns: the package managers may go through a proxy of their own."""
+    problems, warnings, info = [], [], []
     for r in (results or {}).get("results", []):
         item = r.get("item", {})
-        status = r.get("status", -1)
-        if r.get("skipped"):
-            continue
-        if not 200 <= int(status) < 400 and int(status) != 405:  # 405: HEAD not allowed, the server answers
-            if int(status) > 0:
-                problems.append("%s: %s answers HTTP %s%s" % (item.get("name"), item.get("url"), status,
-                                                            ": check the credentials" if int(status) in (401, 403) else ""))
-            else:
-                problems.append("%s: %s not reached (%s)" % (item.get("name"), item.get("url"), r.get("msg", "no answer")))
+        status = int(r.get("status", -1))
+        name, url = item.get("name"), _shown(item.get("url"))
+        if status <= 0:
+            warnings.append("%s: no answer from %s (a proxy set only for the package manager or pip is not used by"
+                            " this check)" % (name, url))
+        elif not 200 <= status < 400 and status != 405:  # 405: the method is refused, the server answers
+            problems.append("%s: %s answers HTTP %s%s" % (name, url, status,
+                                                        ": check the credentials" if status in (401, 403) else ""))
         elif item.get("match") and not re.search(item["match"], r.get("content", "")):
-            problems.append("%s: %s has no %s" % (item.get("name"), item.get("url"), item.get("what", item["match"])))
+            problems.append("%s: %s has no %s" % (name, url, item.get("what", item["match"])))
         else:
-            info.append("%s: %s reached" % (item.get("name"), item.get("url")))
-    return _result(problems, info=info)
+            info.append("%s: %s reached" % (name, url))
+    return _result(problems, warnings, info)
 
 
 class FilterModule(object):

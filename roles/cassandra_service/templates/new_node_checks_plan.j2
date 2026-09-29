@@ -18,11 +18,13 @@
 {%- set _ = info.append('Ansible: ' ~ (ansible_facts['python']['executable'] | default('python')) ~ ' ' ~ (ansible_facts['python_version'] | default('?')) ~ (', as root' if uid == '0' else '')) -%}
 
 {#- Directories -#}
-{%- for d in [cassandra_data_file_directories] | flatten -%}
-{%-   set _ = dirs.append({'kind': 'data', 'path': d}) -%}
+{#- a link's target decides the file system -#}
+{%- set real = dict(cassandra_new_node_dir_stat.results | map(attribute='item')
+                    | zip(cassandra_new_node_dir_stat.results | map(attribute='stat.lnk_source', default=''))) -%}
+{%- set kinds = ([['data']] * ([cassandra_data_file_directories] | flatten | length)) | flatten + ['commitlog', 'hints', 'saved_caches'] -%}
+{%- for k, d in kinds | zip([cassandra_data_file_directories] | flatten + [cassandra_commitlog_dir, cassandra_hints_dir, cassandra_saved_caches_dir]) -%}
+{%-   set _ = dirs.append({'kind': k, 'path': d, 'real': real.get(d) or d}) -%}
 {%- endfor -%}
-{%- set _ = dirs.extend([{'kind': 'commitlog', 'path': cassandra_commitlog_dir}, {'kind': 'hints', 'path': cassandra_hints_dir},
-                         {'kind': 'saved_caches', 'path': cassandra_saved_caches_dir}]) -%}
 
 {#- Java -#}
 {%- if cassandra_install_java | bool and _cassandra_java_home == '' -%}
@@ -34,7 +36,7 @@
 {%-   if offline -%}
 {%-     set _ = problems.append('cassandra_offline downloads nothing, and the Java tarball is not unpacked in ' ~ _cassandra_java_home ~ ': give cassandra_java_tarball as a file on the controller, or unpack it there first') -%}
 {%-   else -%}
-{%-     set _ = urls.append({'name': 'Java tarball', 'url': cassandra_java_tarball, 'method': 'HEAD', 'auth': 'java'}) -%}
+{%-     set _ = urls.append({'name': 'Java tarball', 'url': cassandra_java_tarball, 'headers': {'Range': 'bytes=0-0'}, 'auth': 'java'}) -%}
 {%-   endif -%}
 {%- endif -%}
 
@@ -55,10 +57,17 @@
 {%-   set _ = packages.append({'name': 'cassandra', 'why': 'Cassandra', 'mode': 'installed' if offline else 'either',
                                'version': cassandra_package_version}) -%}
 {%- endif -%}
+{%- if offline and cassandra_java_tarball != '' and not java_there -%}
+{%-   set _ = packages.append({'name': 'tar', 'why': 'Java tarball', 'mode': 'installed'}) -%}
+{%- endif -%}
 
 {#- cqlsh's Python: python3 when the series' cqlsh supports it, else python3.11 -#}
 {%- set range = cassandra_cqlsh_python_supported[cassandra_version] | default([]) -%}
-{%- if cassandra_cqlsh_python != '' -%}
+{%- set py311_need = {'name': 'python3.11', 'mode': 'warn' if offline else 'either',
+                      'fallback': 'the deadsnakes PPA' if ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != '' else ''} -%}
+{%- if cassandra_cqlsh_python == '/usr/bin/python3.11' and not have.get('/usr/bin/python3.11', false) -%}
+{%-   set _ = packages.append(dict(py311_need, why='cqlsh, cassandra_cqlsh_python')) -%}
+{%- elif cassandra_cqlsh_python != '' -%}
 {%-   if not have.get(cassandra_cqlsh_python, false) -%}
 {%-     set _ = problems.append('cassandra_cqlsh_python ' ~ cassandra_cqlsh_python ~ ' does not exist: cqlsh would not run') -%}
 {%-   endif -%}
@@ -68,9 +77,7 @@
 {%-   if have.get('/usr/bin/python3.11', false) -%}
 {%-     set _ = info.append('cqlsh: python3 ' ~ py3 ~ ' does not fit, runs on /usr/bin/python3.11') -%}
 {%-   else -%}
-{%-     set _ = packages.append({'name': 'python3.11', 'why': 'cqlsh, python3 ' ~ py3 ~ ' is outside ' ~ range | join('-'),
-                                 'mode': 'warn' if offline else 'either',
-                                 'fallback': 'the deadsnakes PPA' if ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != '' else ''}) -%}
+{%-     set _ = packages.append(dict(py311_need, why='cqlsh, python3 ' ~ py3 ~ ' is outside ' ~ range | join('-'))) -%}
 {%-   endif -%}
 {%- else -%}
 {%-   set _ = info.append('cqlsh: python3 ' ~ py3) -%}
@@ -83,7 +90,11 @@
 {%-     set _ = info.append('Medusa: virtualenv ' ~ cassandra_medusa_venv ~ ' already there') -%}
 {%-   else -%}
 {%-     set mode = 'installed' if offline else 'either' -%}
-{%-     if cassandra_medusa_python != '' -%}
+{%-     if cassandra_medusa_python == '/usr/bin/python3.11' and not debian -%}
+{%-       for p in ['python3.11', 'python3.11-pip'] -%}
+{%-         set _ = packages.append({'name': p, 'why': 'Medusa, cassandra_medusa_python', 'mode': mode}) -%}
+{%-       endfor -%}
+{%-     elif cassandra_medusa_python != '' -%}
 {%-       if not have.get(cassandra_medusa_python, false) -%}
 {%-         set _ = problems.append('cassandra_medusa_python ' ~ cassandra_medusa_python ~ ' does not exist') -%}
 {%-       endif -%}
@@ -91,7 +102,8 @@
 {%-       set _ = info.append('Medusa: python3 not installed yet, its Python is chosen at install') -%}
 {%-     elif py3 is version(mrange[0], '>=') and py3 is version(mrange[1], '<=') -%}
 {%-       if cassandra_medusa_venv == '' -%}
-{%-         set _ = packages.append({'name': 'python3-pip', 'why': 'Medusa', 'mode': mode}) -%}
+{#-         none needed when the system Python has Medusa already -#}
+{%-         set _ = packages.append({'name': 'python3-pip', 'why': 'Medusa', 'mode': 'warn' if offline else mode}) -%}
 {%-       elif debian -%}
 {%-         set _ = packages.append({'name': 'python3-venv', 'why': 'Medusa virtualenv', 'mode': mode}) -%}
 {%-       endif -%}
@@ -102,7 +114,9 @@
 {%-     else -%}
 {%-       set _ = problems.append('Medusa ' ~ cassandra_medusa_version ~ ' runs on Python ' ~ mrange | join(' to ') ~ ', python3 here is ' ~ py3 ~ ': set cassandra_medusa_python to such an interpreter (installed by other means)') -%}
 {%-     endif -%}
-{%-     if not (offline and cassandra_medusa_pip_index_url == '') -%}
+{%-     if offline and cassandra_medusa_pip_index_url == '' and cassandra_medusa_venv != '' -%}
+{%-       set _ = problems.append('cassandra_offline downloads nothing, and Medusa is not in ' ~ cassandra_medusa_venv ~ ': install it from your image, or set cassandra_medusa_pip_index_url to a PyPI mirror the host reaches') -%}
+{%-     elif not (offline and cassandra_medusa_pip_index_url == '') -%}
 {%-       set _ = urls.append({'name': 'Medusa pip index', 'auth': 'pip', 'ca_path': cassandra_medusa_pip_cert,
                                'url': (cassandra_medusa_pip_index_url or 'https://pypi.org/simple') | regex_replace('/+$', '') ~ '/cassandra-medusa/',
                                'match': '(?i)cassandra[-_]medusa-' ~ (cassandra_medusa_version | string | regex_escape) ~ '[.-]',
@@ -113,13 +127,18 @@
 
 {#- Network: the seeds' ports from here, and this host's own ports -#}
 {%- set legacy_ssl = cassandra_legacy_ssl_storage_port_enabled | bool and cassandra_internode_encryption != 'none' -%}
-{%- for seed in (_cassandra_service_seeds | default([]))[:2] -%}
-{%-   set _ = reach.append({'name': 'storage', 'host': seed, 'port': cassandra_storage_port | int}) -%}
+{#- the seeds as listed, with their port when one is given -#}
+{%- set seeds = ((cassandra_seeds.split(',') if cassandra_seeds is string else cassandra_seeds) | map('trim') | select | list)[:2] -%}
+{%- for entry in seeds -%}
+{%-   set seed = entry | regex_replace(':[0-9]+$', '') -%}
+{%-   set _ = reach.append({'name': 'storage', 'host': seed,
+                            'port': (entry | regex_search(':([0-9]+)$', '\\1') or [cassandra_storage_port]) | first | int}) -%}
 {%-   if legacy_ssl -%}
 {%-     set _ = reach.append({'name': 'SSL storage', 'host': seed, 'port': cassandra_ssl_storage_port | int}) -%}
 {%-   endif -%}
 {%-   if cassandra_start_native_transport | bool -%}
-{%-     set _ = reach.append({'name': 'native (CQL)', 'host': seed, 'port': cassandra_native_transport_port | int}) -%}
+{#-     clients' port: firewalls may keep it to the application hosts -#}
+{%-     set _ = reach.append({'name': 'native (CQL)', 'host': seed, 'port': cassandra_native_transport_port | int, 'optional': true}) -%}
 {%-   endif -%}
 {%- endfor -%}
 {%- set own_ports = [{'name': 'storage', 'port': cassandra_storage_port | int}, {'name': 'native (CQL)', 'port': cassandra_native_transport_port | int},

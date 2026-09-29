@@ -13,7 +13,9 @@ DIRS = [{"kind": "data", "path": "/var/lib/cassandra/data"}, {"kind": "commitlog
         {"kind": "hints", "path": "/var/lib/cassandra/hints"},
         {"kind": "saved_caches", "path": "/var/lib/cassandra/saved_caches"}]
 FSTAB = """# comment
+#/dev/sdd1 /var/lib/cassandra/data xfs defaults 0 0
 UUID=abc / xfs defaults 0 0
+/dev/sde1 /var/lib/cassandra/hints swap sw 0 0
 /dev/sdb1 /var/lib/cassandra xfs defaults,noatime 0 0
 /dev/sdc1 /mnt/spare ext4 noauto 0 0
 /swapfile none swap sw 0 0
@@ -43,6 +45,12 @@ def test_systemd_mount_unit_expected():
     units = "var-lib-cassandra.mount enabled enabled\ndata\\x2dold.mount disabled enabled\n-.mount generated -\n"
     out = cassandra_new_node_dirs(DIRS, [ROOT], unit_files=units)
     assert "var-lib-cassandra.mount (systemd)" in out["problems"][0]
+    # root expected by a unit, facts without it: not a problem
+    out = cassandra_new_node_dirs([{"kind": "data", "path": "/srv/d"}], [DATA], unit_files=units)
+    assert out["problems"] == []
+    for state in ("generated", "linked", "enabled-runtime", "linked-runtime"):
+        out = cassandra_new_node_dirs(DIRS[:1], [ROOT], unit_files="var-lib-cassandra.mount %s -\n" % state)
+        assert len(out["problems"]) == 1, state
     # a disabled unit is not expected mounted
     out = cassandra_new_node_dirs([{"kind": "data", "path": "/data-old/d"}], [ROOT], unit_files=units)
     assert out["problems"] == []
@@ -73,6 +81,10 @@ def test_jbod_free_space_counted_once_per_file_system():
     d1 = {"mount": "/d1", "size_available": 10 * GIB, "size_total": 20 * GIB}
     d2 = {"mount": "/d2", "size_available": 5 * GIB, "size_total": 20 * GIB}
     assert cassandra_new_node_dirs(dirs, [ROOT, d1, d2])["data_free"] == 15 * GIB
+    # the other directories' file systems don't count
+    other = [{"kind": "commitlog", "path": "/d3/cl"}]
+    d3 = {"mount": "/d3", "size_available": 7 * GIB, "size_total": 20 * GIB}
+    assert cassandra_new_node_dirs(dirs + other, [ROOT, d1, d2, d3])["data_free"] == 15 * GIB
 
 
 def test_non_empty_dirs():
@@ -205,6 +217,7 @@ SS = """State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process
 LISTEN 0      4096       0.0.0.0:22        0.0.0.0:*
 LISTEN 0      50     127.0.0.1:7199       0.0.0.0:*
 LISTEN 0      4096          [::]:9042          [::]:*
+ESTAB  0      0      10.0.0.5:7000      10.0.0.1:41234
 """
 PORTS = [{"name": "storage", "port": 7000}, {"name": "native (CQL)", "port": 9042}, {"name": "JMX", "port": 7199}]
 
@@ -235,12 +248,55 @@ def test_urls():
         {"item": {"name": "Medusa pip index", "url": "https://p/cassandra-medusa/", "match": "cassandra[-_]medusa-0\\.30\\.1[.-]",
                   "what": "cassandra-medusa 0.30.1"}, "status": 200, "content": "cassandra_medusa-0.29.0.tar.gz"},
         {"item": {"name": "Other", "url": "https://x/"}, "status": -1, "msg": "Request failed: <urlopen error timed out>"},
-        {"item": {"name": "HEAD refused", "url": "https://y/"}, "status": 405}]}
+        {"item": {"name": "Method refused", "url": "https://y/"}, "status": 405},
+        {"item": {"name": "Tarball part", "url": "https://z/jdk.tgz"}, "status": 206}]}
     out = cassandra_new_node_urls(results)
     assert out["problems"] == [
         "Java tarball: https://m/jdk.tgz answers HTTP 401: check the credentials",
-        "Medusa pip index: https://p/cassandra-medusa/ has no cassandra-medusa 0.30.1",
-        "Other: https://x/ not reached (Request failed: <urlopen error timed out>)"]
-    assert out["info"] == ["Cassandra repository: https://m/repodata/repomd.xml reached", "HEAD refused: https://y/ reached"]
+        "Medusa pip index: https://p/cassandra-medusa/ has no cassandra-medusa 0.30.1"]
+    assert out["warnings"] == ["Other: no answer from https://x/ (a proxy set only for the package manager or pip is not"
+                               " used by this check)"]
+    assert out["info"] == ["Cassandra repository: https://m/repodata/repomd.xml reached", "Method refused: https://y/ reached",
+                           "Tarball part: https://z/jdk.tgz reached"]
     ok = {"results": [dict(results["results"][2], content="cassandra_medusa-0.30.1-py3-none-any.whl")]}
     assert cassandra_new_node_urls(ok)["problems"] == []
+
+
+def test_urls_never_show_credentials_or_signatures():
+    results = {"results": [
+        {"item": {"name": "pip", "url": "https://bob:s3cret@mirror:8443/simple/cassandra-medusa/"}, "status": 404},
+        {"item": {"name": "Java", "url": "https://bucket.s3/jdk.tgz?X-Amz-Signature=abc"}, "status": 200}]}
+    out = cassandra_new_node_urls(results)
+    assert out["problems"] == ["pip: https://mirror:8443/simple/cassandra-medusa/ answers HTTP 404"]
+    assert out["info"] == ["Java: https://bucket.s3/jdk.tgz reached"]
+
+
+def test_link_target_decides_the_file_system():
+    dirs = [{"kind": "data", "path": "/var/lib/cassandra/data", "real": "/data/cassandra/data"}]
+    disk = {"mount": "/data", "device": "/dev/sdb1", "fstype": "xfs", "size_available": 900 * GIB, "size_total": 1000 * GIB}
+    out = cassandra_new_node_dirs(dirs, [ROOT, disk], fstab="/dev/sdb1 /data xfs defaults 0 0\n", min_free_gb=500)
+    assert out["problems"] == [] and out["data_free"] == 900 * GIB
+    out = cassandra_new_node_dirs(dirs, [ROOT], fstab="/dev/sdb1 /data xfs defaults 0 0\n")
+    assert out["problems"][0].startswith("data directory /var/lib/cassandra/data (/data/cassandra/data): /data")
+
+
+def test_no_mount_facts_only_warns():
+    out = cassandra_new_node_dirs(DIRS, [], fstab=FSTAB, min_free_gb=10)
+    assert out["problems"] == [] and out["info"] == []
+    assert out["warnings"][0].startswith("no mount in the facts")
+
+
+def test_unknown_installed_packages_only_warn():
+    needs = [{"name": "cassandra", "why": "Cassandra", "mode": "installed"},
+             {"name": "python3.11", "why": "cqlsh", "mode": "either"}]
+    out = cassandra_new_node_packages(needs, None, DNF, "RedHat")
+    assert out["problems"] == []
+    assert out["warnings"] == ["cassandra (Cassandra): could not read the installed packages (python3-apt missing?)"]
+    assert out["info"] == ["python3.11 (cqlsh): available"]
+
+
+def test_native_port_of_the_seeds_only_warns():
+    reached = {"results": [{"item": {"name": "native (CQL)", "host": "s1", "port": 9042, "optional": True},
+                            "msg": "Timeout when waiting for s1:9042"}]}
+    out = cassandra_new_node_network(reached, [], "")
+    assert out["problems"] == [] and "clients do" in out["warnings"][0]
