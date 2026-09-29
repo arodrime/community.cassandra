@@ -227,7 +227,7 @@ finishes every pending removal or decommission; it checks the node is gone after
 is already out of the ring. ``assassinate`` removes it from gossip without streaming, only when ``removenode`` can't
 finish: data it held alone is lost, repair afterwards. Run again after an interruption, ``removenode`` waits for the
 removal still in progress, whichever node of the run coordinates it, and does nothing when the node is already out of
-the ring. A node shown ``DL`` that no node of the run is removing (a removal coordinated from outside
+the ring. A node being removed (its gossip state, or ``DL``) that no node of the run is removing (a removal coordinated from outside
 ``cassandra_hosts``, or whose coordinator restarted) is refused rather than removed a second time:
 ``-e cassandra_dead_node_new_removal=true`` starts a ``removenode`` once none runs anywhere.
 

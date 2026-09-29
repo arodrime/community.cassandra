@@ -212,6 +212,46 @@ def test_removal_dl_with_no_coordinator_in_the_run():
     assert removal(dl, n1=IDLE_REMOVAL, n2="") == {"state": "orphan", "on": ""}
 
 
+# nodetool gossipinfo on a node that does not coordinate the removal (5.0.7): it shows the node DN in its status
+GOSSIP_REMOVING = """/10.0.0.1
+  generation:1790684482
+  STATUS_WITH_PORT:76:NORMAL,-1112067028005469869
+/10.0.0.4
+  generation:1790685004
+  heartbeat:2147483647
+  HOST_ID:3:93a85637-b80c-4d14-9d9e-f041a120f498
+  STATUS_WITH_PORT:588:removing,93a85637-b80c-4d14-9d9e-f041a120f498
+  INTERNAL_ADDRESS_AND_PORT:9:10.0.0.4:7000
+  REMOVAL_COORDINATOR:590:REMOVER,04d1969e-5b13-433d-a198-cf9e5288a55c
+/10.0.0.40
+  STATUS:12:NORMAL,42
+"""
+
+
+def test_removal_seen_from_a_node_that_does_not_coordinate_it():
+    # the first node shows the dead node DN (only the coordinator shows DL): its gossip says "removing"
+    dn = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D"))
+    status = {"n1": IDLE_REMOVAL, "n2": REMOVING}
+    assert cassandra_removal_state(dn, "10.0.0.4", status, gossip=GOSSIP_REMOVING) == {"state": "resume", "on": "n2"}
+    # coordinated from outside the run (or its coordinator restarted): not started again
+    idle = {"n1": IDLE_REMOVAL, "n2": IDLE_REMOVAL}
+    assert cassandra_removal_state(dn, "10.0.0.4", idle, gossip=GOSSIP_REMOVING) == {"state": "orphan", "on": ""}
+    # gossip of other nodes only (10.0.0.40 is not 10.0.0.4), or with the port in the header
+    assert cassandra_removal_state(dn, "10.0.0.40", idle, gossip=GOSSIP_REMOVING)["state"] == "absent"
+    other = ring_result(node("10.0.0.1"), node("10.0.0.40", status="D"))
+    assert cassandra_removal_state(other, "10.0.0.40", idle, gossip=GOSSIP_REMOVING)["state"] == "start"
+    for header in ("/10.0.0.4:7000", "node4.example/10.0.0.4"):
+        gossip = GOSSIP_REMOVING.replace("/10.0.0.4\n", header + "\n")
+        assert cassandra_removal_state(dn, "10.0.0.4", idle, gossip=gossip)["state"] == "orphan"
+    v6 = ring_result(node("10.0.0.1"), node("0:0:0:0:0:0:0:4", status="D"))
+    for header in ("/[0:0:0:0:0:0:0:4]:7000", "/0:0:0:0:0:0:0:4"):
+        gossip = GOSSIP_REMOVING.replace("/10.0.0.4\n", header + "\n")
+        assert cassandra_removal_state(v6, "0:0:0:0:0:0:0:4", idle, gossip=gossip)["state"] == "orphan"
+    # removed already (no more "removing"): not a removal in progress
+    removed = GOSSIP_REMOVING.replace("removing,", "removed,")
+    assert cassandra_removal_state(dn, "10.0.0.4", idle, gossip=removed)["state"] == "start"
+
+
 def test_removal_state_busy_with_another_node():
     # a node removes something while this node is only DN: another node
     dn = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D"))

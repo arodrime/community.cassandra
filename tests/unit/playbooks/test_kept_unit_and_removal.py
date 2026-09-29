@@ -140,3 +140,15 @@ def test_new_node_check_passes_the_import_marker():
     kept = [e for e in task["vars"]["_all"] if "cassandra_new_node_kept_setup" in e][0]
     assert "imported=cassandra_imported_host | default(false)" in kept
     assert "allow=cassandra_new_node_allow_kept_setup" in kept
+
+
+def test_force_refused_while_the_first_node_does_not_show_dl_yet():
+    task = next(t for t in REMOVE["tasks"] if t["name"] == "A removal of it is in progress, and only that one (removenode_force)")
+    msg = render(task["ansible.builtin.assert"]["fail_msg"], cassandra_dead_node_address="10.0.0.4",
+                 cassandra_dead_node={"status": "D", "state": "N"}, cassandra_dead_removal={"state": "orphan", "on": ""},
+                 cassandra_dead_leaving_others=[], ansible_play_hosts=["n1", "n2"])
+    assert msg.startswith("10.0.0.4 is being removed (gossip), but n1 does not show it DL yet")
+    msg = render(task["ansible.builtin.assert"]["fail_msg"], cassandra_dead_node_address="10.0.0.4",
+                 cassandra_dead_node={"status": "D", "state": "N"}, cassandra_dead_removal={"state": "start", "on": ""},
+                 cassandra_dead_leaving_others=[], ansible_play_hosts=["n1", "n2"])
+    assert "no removal of it is in progress" in msg

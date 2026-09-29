@@ -8,6 +8,8 @@ cassandra_removal_state: where a dead node given to remove_dead_node stands."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import re
+
 
 def _nodes(cluster_status):
     return [n for dc in cluster_status.values() for n in dc.get("nodes", [])]
@@ -105,17 +107,34 @@ def cassandra_leaving_state(netstats, ring, address):
     return {"state": "normal", "in_ring": in_ring, "reason": ""}
 
 
-def cassandra_removal_state(ring, address, removal_status):
+def _gossip_removing(gossip, address):
+    """True when nodetool gossipinfo shows the node at address being removed
+    (STATUS removing,<host id>). The other nodes' nodetool status shows it DN,
+    only the coordinator shows it DL."""
+    block, found = [], False
+    for line in (gossip or "").splitlines():
+        if line and not line[0].isspace():  # "/10.0.0.4", "host/10.0.0.4" or "/10.0.0.4:7000"
+            if found:
+                break
+            peer = line.strip().split("/")[-1].replace("[", "").replace("]", "")
+            found = re.fullmatch(re.escape(address) + r"(:\d+)?", peer) is not None
+        elif found:
+            block.append(line)
+    return any(re.match(r"\s*STATUS(?:_WITH_PORT)?:\d+:removing,", line) for line in block)
+
+
+def cassandra_removal_state(ring, address, removal_status, gossip=""):
     """ring: cassandra_status result; address: the dead node's;
     removal_status: {host: stdout of nodetool removenode status on it} for
     every node of the run ('' when it did not answer). Only the node coordinating a
-    removal says "Removing token"; the others see the node DL (gossip).
+    removal says "Removing token" and shows the node DL; the others show it
+    DN, their gossip (gossip: nodetool gossipinfo output) says "removing".
     Returns {'state', 'on'}. state: 'absent' (not in the ring: nothing to
-    do), 'resume' (DL and one node, 'on', is removing it: wait for it),
-    'busy' (a node is removing another node, several are removing, or other
-    nodes are leaving), 'orphan' (DL but no node of the run is coordinating
-    its removal: elsewhere, or its coordinator restarted), 'unknown' (no
-    ring) or 'start'."""
+    do), 'resume' (being removed and one node, 'on', is removing it: wait
+    for it), 'busy' (a node is removing another node, several are removing,
+    or other nodes are leaving), 'orphan' (being removed but no node of the
+    run is coordinating it: elsewhere, or its coordinator restarted),
+    'unknown' (no ring) or 'start'."""
     if not (ring or {}).get("cluster_status"):
         return {"state": "unknown", "on": ""}
     nodes = _nodes(ring["cluster_status"])
@@ -124,7 +143,7 @@ def cassandra_removal_state(ring, address, removal_status):
         return {"state": "absent", "on": ""}
     others_leaving = [n for n in nodes if n["state"] == "L" and n["address"] != address]
     removing = sorted(h for h, out in (removal_status or {}).items() if "Removing token" in (out or ""))
-    dl = dead["status"] + dead["state"] == "DL"
+    dl = dead["status"] == "D" and (dead["state"] == "L" or _gossip_removing(gossip, address))
     if len(removing) == 1 and dl and not others_leaving:
         return {"state": "resume", "on": removing[0]}
     if removing:
