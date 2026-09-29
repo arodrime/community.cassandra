@@ -76,6 +76,15 @@
           failed_when: false
           check_mode: false  # read-only
 
+        # Links resolved, also in the parents, for the path not created yet too
+        - name: Resolve the Cassandra directories
+          ansible.builtin.command:
+            argv: "{{ ['realpath', '-m', '--'] + _dirs }}"
+          register: cassandra_new_node_realpath
+          changed_when: false
+          failed_when: false
+          check_mode: false  # read-only
+
         - name: Get the system python3 version
           ansible.builtin.command: python3 -c "import sys; print('%d.%d' % sys.version_info[:2])"
           register: cassandra_new_node_python3
@@ -103,6 +112,10 @@
         - name: Work out what to check
           ansible.builtin.set_fact:
             _cassandra_new_node_plan: "{{ lookup('ansible.builtin.template', 'new_node_checks_plan.j2') | from_json }}"
+          # URLs with credentials or a signature
+          no_log: >-
+            {{ [cassandra_java_tarball, cassandra_medusa_pip_index_url, cassandra_repository_rpm_url, cassandra_repository_deb_url,
+                cassandra_repository_key_url] | select('search', '@|[?]') | list | length > 0 }}
 
         - name: Look for the apt package lists (Debian)
           ansible.builtin.find:

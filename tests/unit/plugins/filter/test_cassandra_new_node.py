@@ -300,3 +300,10 @@ def test_native_port_of_the_seeds_only_warns():
                             "msg": "Timeout when waiting for s1:9042"}]}
     out = cassandra_new_node_network(reached, [], "")
     assert out["problems"] == [] and "clients do" in out["warnings"][0]
+
+
+def test_default_pypi_refused_only_warns():
+    results = {"results": [{"item": {"name": "Medusa pip index", "url": "https://pypi.org/simple/cassandra-medusa/",
+                                     "soft": True}, "status": 403}]}
+    out = cassandra_new_node_urls(results)
+    assert out["problems"] == [] and "HTTP 403" in out["warnings"][0]

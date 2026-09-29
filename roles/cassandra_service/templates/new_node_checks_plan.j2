@@ -18,9 +18,9 @@
 {%- set _ = info.append('Ansible: ' ~ (ansible_facts['python']['executable'] | default('python')) ~ ' ' ~ (ansible_facts['python_version'] | default('?')) ~ (', as root' if uid == '0' else '')) -%}
 
 {#- Directories -#}
-{#- a link's target decides the file system -#}
-{%- set real = dict(cassandra_new_node_dir_stat.results | map(attribute='item')
-                    | zip(cassandra_new_node_dir_stat.results | map(attribute='stat.lnk_source', default=''))) -%}
+{#- the path with its links resolved decides the file system -#}
+{%- set real = dict(_dirs | zip(cassandra_new_node_realpath.stdout_lines | default([])))
+               if cassandra_new_node_realpath.stdout_lines | default([]) | length == _dirs | length else {} -%}
 {%- set kinds = ([['data']] * ([cassandra_data_file_directories] | flatten | length)) | flatten + ['commitlog', 'hints', 'saved_caches'] -%}
 {%- for k, d in kinds | zip([cassandra_data_file_directories] | flatten + [cassandra_commitlog_dir, cassandra_hints_dir, cassandra_saved_caches_dir]) -%}
 {%-   set _ = dirs.append({'kind': k, 'path': d, 'real': real.get(d) or d}) -%}
@@ -116,11 +116,14 @@
 {%-     endif -%}
 {%-     if offline and cassandra_medusa_pip_index_url == '' and cassandra_medusa_venv != '' -%}
 {%-       set _ = problems.append('cassandra_offline downloads nothing, and Medusa is not in ' ~ cassandra_medusa_venv ~ ': install it from your image, or set cassandra_medusa_pip_index_url to a PyPI mirror the host reaches') -%}
+{%-     elif cassandra_medusa_pip_index_url == '' and cassandra_medusa_pip_extra_args | select('match', '--(index-url|extra-index-url|find-links|no-index)|-[if]') | list -%}
+{%-       set _ = info.append('Medusa pip index: set by cassandra_medusa_pip_extra_args, not checked') -%}
 {%-     elif not (offline and cassandra_medusa_pip_index_url == '') -%}
 {%-       set _ = urls.append({'name': 'Medusa pip index', 'auth': 'pip', 'ca_path': cassandra_medusa_pip_cert,
                                'url': (cassandra_medusa_pip_index_url or 'https://pypi.org/simple') | regex_replace('/+$', '') ~ '/cassandra-medusa/',
                                'match': '(?i)cassandra[-_]medusa-' ~ (cassandra_medusa_version | string | regex_escape) ~ '[.-]',
-                               'what': 'cassandra-medusa ' ~ cassandra_medusa_version}) -%}
+                               'what': 'cassandra-medusa ' ~ cassandra_medusa_version,
+                               'soft': cassandra_medusa_pip_index_url == ''}) -%}
 {%-     endif -%}
 {%-   endif -%}
 {%- endif -%}
@@ -130,9 +133,10 @@
 {#- the seeds as listed, with their port when one is given -#}
 {%- set seeds = ((cassandra_seeds.split(',') if cassandra_seeds is string else cassandra_seeds) | map('trim') | select | list)[:2] -%}
 {%- for entry in seeds -%}
-{%-   set seed = entry | regex_replace(':[0-9]+$', '') -%}
-{%-   set _ = reach.append({'name': 'storage', 'host': seed,
-                            'port': (entry | regex_search(':([0-9]+)$', '\\1') or [cassandra_storage_port]) | first | int}) -%}
+{#-   host:port, [IPv6]:port, or an address alone (a bare IPv6 address has several colons) -#}
+{%-   set m = entry | regex_search('^\\[(.+)\\]:([0-9]+)$|^([^:]+):([0-9]+)$', '\\1', '\\2', '\\3', '\\4') or [] -%}
+{%-   set seed = (m[0] or m[2]) if m else entry | regex_replace('^\\[(.*)\\]$', '\\1') -%}
+{%-   set _ = reach.append({'name': 'storage', 'host': seed, 'port': ((m[1] or m[3]) if m else cassandra_storage_port) | int}) -%}
 {%-   if legacy_ssl -%}
 {%-     set _ = reach.append({'name': 'SSL storage', 'host': seed, 'port': cassandra_ssl_storage_port | int}) -%}
 {%-   endif -%}

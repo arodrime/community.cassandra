@@ -287,6 +287,8 @@ def cassandra_new_node_urls(results):
         if status <= 0:
             warnings.append("%s: no answer from %s (a proxy set only for the package manager or pip is not used by"
                             " this check)" % (name, url))
+        elif not 200 <= status < 400 and status != 405 and item.get("soft"):
+            warnings.append("%s: %s answers HTTP %s (pip may use another index, from /etc/pip.conf)" % (name, url, status))
         elif not 200 <= status < 400 and status != 405:  # 405: the method is refused, the server answers
             problems.append("%s: %s answers HTTP %s%s" % (name, url, status,
                                                         ": check the credentials" if status in (401, 403) else ""))
