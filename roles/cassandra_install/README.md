@@ -53,6 +53,10 @@ Role Variables
   then `python3.11` is installed next to it and cqlsh is pointed at it
   (`/usr/local/bin/cqlsh` wrapper, `CQLSH_PYTHON` in `/etc/profile.d`).
   The system `python3` is never changed.
+* `cassandra_cqlsh_python_manage`: `false` leaves cqlsh's Python as it is on
+  this node (nothing above is added or removed). The `import_cluster`
+  playbook sets it on the nodes whose cqlsh has no wrapper of this role.
+  Default `true`.
 * `cassandra_cqlsh_python_repo_uri`: where python3.11 comes from on Ubuntu
   releases that don't ship it (default: the deadsnakes PPA, signed by the key
   shipped in `files/deadsnakes.asc`; empty to rely on the configured

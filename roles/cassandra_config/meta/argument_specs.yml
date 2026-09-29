@@ -41,6 +41,12 @@ argument_specs:
         - Show the diff and ask for confirmation before changing the files.
         - V(auto) asks only on a node that was already initialized (C(<cassandra_data_dir>/system) exists). V(true) always
           asks, V(false) never does. Without a terminal to answer, a required confirmation fails the run.
+      cassandra_config_normalize:
+        type: bool
+        default: false
+        description:
+        - On a node already initialized, a file with the same settings as the role's (only comments, blank lines or
+          their layout differ, e.g. written by hand, without the role's header) is left as it is. V(true) rewrites it.
       cassandra_data_dir:
         type: path
         default: /var/lib/cassandra/data
@@ -1115,7 +1121,9 @@ argument_specs:
         - Remote JMX users (with O(cassandra_local_jmx) false), written to
           C(/etc/cassandra/jmxremote.password) and C(jmxremote.access), readable
           by cassandra only. Each item has C(name), C(password) and C(access)
-          (C(readwrite), the default, or C(readonly)). Keep the passwords in a vault.
+          (C(readwrite), the default, or C(readonly)). A C(readwrite) user also gets the C(create) and
+          C(unregister) rights of the JDK's controlRole, unless C(create_unregister) is false. Keep the passwords
+          in a vault.
       cassandra_cqlsh_credentials:
         type: list
         elements: dict

@@ -299,6 +299,7 @@
           versions cqlsh supports): Cassandra runs, cqlsh won't until python3.11 is installed from your image or mirror.
           cqlsh is left as it is (not pointed at the missing python3.11).
       when:
+        - cassandra_cqlsh_python_manage | bool
         - _cassandra_cqlsh_python == '/usr/bin/python3.11'
         - "'python3.11' not in ansible_facts['packages']"
 
@@ -313,6 +314,7 @@
 
 - name: Install python3.11 for cqlsh
   when:
+    - cassandra_cqlsh_python_manage | bool
     - _cassandra_cqlsh_python == '/usr/bin/python3.11'
     - not cassandra_offline | bool
   block:
@@ -371,7 +373,9 @@
   check_mode: false  # read-only
   failed_when: false
   loop: "{{ (['python3', _cassandra_cqlsh_python] | select | unique) }}"
-  when: ansible_facts['os_family'] == 'RedHat'
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_cqlsh_python_manage | bool
 
 - name: Ensure those site-packages exist (RedHat)
   ansible.builtin.file:
@@ -383,6 +387,7 @@
     label: "{{ item.stdout | default('') }}"
   when:
     - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_cqlsh_python_manage | bool
     - item.rc == 0
     - item.stdout != '/usr/lib/python3.6/site-packages'
 
@@ -402,6 +407,7 @@
     label: "{{ item.stdout | default('') }}"
   when:
     - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_cqlsh_python_manage | bool
     - cassandra_cqlshlib_src.stat.exists or not ansible_check_mode
     - item.rc == 0
     - item.stdout != '/usr/lib/python3.6/site-packages'
@@ -441,6 +447,7 @@
     label: "{{ item.dest }}"
   register: cassandra_cqlsh_wrapper
   when:
+    - cassandra_cqlsh_python_manage | bool
     - _cassandra_cqlsh_python != ''
     - item.dest != '/etc/sudoers.d/cqlsh' or cassandra_visudo.stat.exists
     # offline without python3.11: leave cqlsh as it is rather than point it at nothing
@@ -452,7 +459,9 @@
     path: "{{ item }}"
     state: absent
   loop: [/usr/local/bin/cqlsh, /etc/profile.d/cqlsh.sh, /etc/sudoers.d/cqlsh]
-  when: _cassandra_cqlsh_python == ''
+  when:
+    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_python == ''
 
 - name: Report changes
   ansible.builtin.include_tasks: report.yml

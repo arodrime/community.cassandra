@@ -2,6 +2,15 @@
 # Prepares a blank node and starts it in place of a dead one: it takes over the
 # dead node's tokens and streams their data from the replicas. The replace
 # flag is only in the unit for that first start.
+# e.g. host_vars that import_cluster wrote for the dead node, left under its name
+- name: The replacement gets the role's unit
+  ansible.builtin.assert:
+    that: cassandra_service_unit_manage | bool
+    fail_msg: >-
+      cassandra_service_unit_manage is false for {{ inventory_hostname }}, but the replace flag goes into the role's unit:
+      remove it (and the other *_manage: false lines the dead node had) from its host_vars.
+    quiet: true
+
 # Computed first: a var can't be defined from itself (recursive template)
 - name: Add the replace flag to the unit environment
   ansible.builtin.set_fact:

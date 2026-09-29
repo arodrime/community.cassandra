@@ -8,6 +8,12 @@ argument_specs:
       - In containers, settings are written but not applied live unless
         O(cassandra_linux_apply_live=true).
     options:
+      cassandra_linux_manage:
+        type: bool
+        default: true
+        description:
+          - V(false) leaves the OS settings of this node as they are, the role changes nothing on it.
+            The C(import_cluster) playbook sets it on the nodes it finds set up by other means.
       cassandra_data_block_device:
         type: str
         default: ""

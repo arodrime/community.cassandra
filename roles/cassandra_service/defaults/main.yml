@@ -12,6 +12,11 @@ cassandra_service_restart_on_change: false
 # answers: seeds don't bootstrap, it would join without its data.
 cassandra_service_allow_new_seed: false
 
+# false: the node's own unit (/etc/systemd/system/cassandra.service, or the
+# package's init script) is kept, not replaced by the role's (import_cluster
+# sets it on the nodes it finds started another way)
+cassandra_service_unit_manage: true
+
 cassandra_service_user: cassandra
 cassandra_service_group: cassandra
 # systemd Restart=. "no": a node that died stays down until a human looks

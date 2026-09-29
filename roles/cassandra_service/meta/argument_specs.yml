@@ -56,6 +56,13 @@ argument_specs:
         default: cassandra
         description:
           - Group running Cassandra.
+      cassandra_service_unit_manage:
+        type: bool
+        default: true
+        description:
+          - V(false) keeps the node's own unit (or the package's init script) instead of writing the role's; the
+            unit variables below then have no effect on it. The C(import_cluster) playbook sets it on the nodes it
+            finds started another way.
       cassandra_service_restart:
         type: str
         default: "no"

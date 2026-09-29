@@ -1,4 +1,8 @@
 ---
+# false: the role leaves this node's OS settings as they are (import_cluster
+# sets it on the nodes it finds set up by other means)
+cassandra_linux_manage: true
+
 # Disk of the Cassandra data, e.g. "/dev/sdb" or "/dev/nvme0n1" (a partition
 # is taken as its disk). See the README.
 cassandra_data_block_device: ""

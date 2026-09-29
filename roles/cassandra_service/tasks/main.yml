@@ -37,6 +37,7 @@
     dest: /etc/systemd/system/cassandra.service
     mode: "0644"
   register: cassandra_service_unit
+  when: cassandra_service_unit_manage | bool
 
 # The package's init script can leave the unit "active (exited)" with no JVM
 # (e.g. Cassandra died after a SysV start): systemd then sees nothing to start.
@@ -69,15 +70,11 @@
     msg: >-
       {{ inventory_hostname }}: Cassandra runs under the package's init script; the native unit
       takes over at the next restart (e.g. the rolling_restart playbook).
-  when: cassandra_service_jvm.rc | default(1) == 0
+  when:
+    - cassandra_service_jvm.rc | default(1) == 0
+    - cassandra_service_unit_manage | bool
 
-- name: Enable cassandra at boot
-  ansible.builtin.systemd_service:
-    name: cassandra
-    enabled: "{{ cassandra_service_enabled }}"
-    daemon_reload: true
-  when: _cassandra_service_act
-
+# Stopped first: a unit that cannot be disabled (a kept one) still leaves the node down
 - name: Stop cassandra
   ansible.builtin.systemd_service:
     name: cassandra
@@ -85,6 +82,13 @@
   when:
     - cassandra_service_state == 'stopped'
     - _cassandra_service_act
+
+- name: Enable cassandra at boot
+  ansible.builtin.systemd_service:
+    name: cassandra
+    enabled: "{{ cassandra_service_enabled }}"
+    daemon_reload: true
+  when: _cassandra_service_act
 
 - name: Start or restart this node
   when:

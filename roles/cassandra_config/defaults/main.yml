@@ -18,6 +18,11 @@ cassandra_rpm_conf_alternative_priority: 100
 # terminal to answer, a required confirmation fails the run.
 cassandra_config_confirm: auto
 
+# On a node already initialized, a file with the same settings as the role's
+# (only comments, blank lines or their layout differ, e.g. a config written by
+# hand, without the role's header) is left as it is. true rewrites it.
+cassandra_config_normalize: false
+
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data
 # data_file_directories (JBOD: one per disk); the first holds the system keyspaces
@@ -282,8 +287,9 @@ cassandra_config_force_identity_change: false
 
 # Remote JMX users (with cassandra_local_jmx: false), written to
 # /etc/cassandra/jmxremote.password and .access, readable by cassandra only:
-# [{name: ..., password: ..., access: readwrite|readonly}]. Keep the
-# passwords in a vault.
+# [{name: ..., password: ..., access: readwrite|readonly}]; a readwrite user
+# also gets the create (monitor, timer MBeans) and unregister rights, unless
+# create_unregister: false. Keep the passwords in a vault.
 cassandra_jmx_users: []
 
 # cqlsh set up for OS users (~/.cassandra/cqlshrc, pointing at this node, and

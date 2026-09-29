@@ -23,6 +23,10 @@ Role Variables
   unit changes. Default `false`: restarting is a cluster operation, do it
   node by node yourself.
 * `cassandra_service_user` / `cassandra_service_group`: default `cassandra`.
+* `cassandra_service_unit_manage`: `false` keeps the node's own unit (or the
+  package's init script) instead of writing the role's: the unit variables
+  have no effect on it. The `import_cluster` playbook sets it on the nodes it
+  finds started another way. Default `true`.
 * `cassandra_service_restart`: systemd `Restart=`. Default `no`; with
   `on-failure`, at most `cassandra_service_start_limit_burst` (3) restarts
   per `cassandra_service_start_limit_interval` (1800 s).

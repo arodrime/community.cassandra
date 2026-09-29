@@ -32,6 +32,11 @@ no terminal to answer (CI, AWX), a required confirmation fails the run.
 `--check` shows the diff and changes nothing. The role never restarts
 Cassandra: when it changed files of a running node, it says so.
 
+On a node already initialized, a file whose settings are the same as the
+role's (only comments, blank lines or their layout differ, e.g. a config
+written by hand, without the role's header line) is left as it is, owner
+and mode included: `cassandra_config_normalize: true` rewrites it.
+
 Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are
 written `root:cassandra` mode `0640` (`cassandra_config_owner`,
@@ -90,7 +95,9 @@ Role Variables
   A cluster upgraded from 4.x must set `CASSANDRA_4`, then move through
   `UPGRADING` to `NONE` with rolling restarts.
 * `cassandra_jmx_users`: remote JMX users (with `cassandra_local_jmx: false`),
-  as `{name, password, access}` (`readwrite`, the default, or `readonly`),
+  as `{name, password, access}` (`readwrite`, the default, or
+  `readonly`; a `readwrite` user also gets the `create` and `unregister`
+  rights of the JDK's controlRole, unless `create_unregister: false`),
   written to `/etc/cassandra/jmxremote.password` and `.access`, mode `0400`
   owned by cassandra. Keep the passwords in a vault.
 * `cassandra_cqlsh_credentials`: cqlsh set up for OS users, as

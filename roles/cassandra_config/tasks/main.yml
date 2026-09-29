@@ -139,7 +139,7 @@
               - "{{ _cassandra_config_python }}"
               - -c
               - |
-                import difflib, os, re, sys
+                import difflib, json, os, re, sys
                 live, new = sys.argv[1], sys.argv[2]
                 a = open(live).read().splitlines(True) if os.path.exists(live) else []
                 b = open(new).read().splitlines(True)
@@ -147,7 +147,27 @@
                 # values of password/secret keys never reach the output
                 secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
                 sys.stdout.write("".join(secret.sub(r"\1****", line) for line in d))
-                sys.exit(1 if d else 0)
+                def settings(lines):
+                    text = "".join(lines)
+                    if live.endswith(".yaml"):
+                        try:
+                            import yaml
+                            return yaml.safe_load(text)
+                        except ImportError:
+                            pass
+                    if live.endswith(".xml"):
+                        text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+                    elif live.endswith(".properties"):
+                        return sorted(re.sub(r"\s*[=:]\s*", "=", s.strip(), count=1) for s in text.splitlines()
+                                      if s.strip() and not s.strip().startswith(("#", "!")))
+                    return [s.rstrip() for s in text.splitlines() if s.strip() and not s.lstrip().startswith("#")]
+                # 2: the same settings, only comments, blank lines or their layout differ
+                try:
+                    # json: 1, 1.0 and true are not the same setting
+                    same = bool(a) and json.dumps(settings(a), sort_keys=True, default=str) == json.dumps(settings(b), sort_keys=True, default=str)
+                except Exception:
+                    same = False
+                sys.exit(0 if not d else 2 if same else 1)
               - "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
               - "{{ cassandra_config_tmp.path }}/{{ cassandra_config_file }}"
           loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
@@ -156,7 +176,7 @@
           register: cassandra_config_preview
           check_mode: false
           changed_when: false
-          failed_when: cassandra_config_preview.rc not in [0, 1]  # 1 = files differ
+          failed_when: cassandra_config_preview.rc not in [0, 1, 2]  # 1 = files differ, 2 = same settings
         # Top-level keys and rackdc properties: plain text, no YAML parser needed on the node
         - name: Compare the settings a joined node must keep
           ansible.builtin.command:
@@ -207,18 +227,37 @@
         _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
       when: cassandra_config_initialized.stat.exists
 
-    - name: Show the config changes
-      ansible.builtin.debug:
-        msg: "{{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='stdout_lines') | flatten }}"
-      when: cassandra_config_preview.results | selectattr('stdout') | list | length > 0
-
+    # On a node already initialized, a file with the same settings (only comments,
+    # blank lines or their layout differ, e.g. no header: set up by hand) is left as it is
     - name: List the files to change and whether to ask first
       ansible.builtin.set_fact:
-        _cassandra_config_changes: "{{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file') | list }}"
+        _cassandra_config_kept: "{{ _kept }}"
+        _cassandra_config_changes: >-
+          {{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file')
+             | reject('in', _kept) | list }}
         _cassandra_config_ask: >-
-          {{ cassandra_config_preview.results | selectattr('stdout') | list | length > 0
+          {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _kept)
+             | list | length > 0
              and (cassandra_config_confirm | string | lower == 'true'
                   or (cassandra_config_confirm | string | lower == 'auto' and cassandra_config_initialized.stat.exists)) }}
+      vars:
+        _kept: >-
+          {{ [] if cassandra_config_normalize | bool or not cassandra_config_initialized.stat.exists
+             else cassandra_config_preview.results | selectattr('rc', 'equalto', 2) | map(attribute='cassandra_config_file') | list }}
+
+    - name: Show the config changes
+      ansible.builtin.debug:
+        msg: >-
+          {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _cassandra_config_kept)
+             | map(attribute='stdout_lines') | flatten }}
+      when: _cassandra_config_changes | length > 0
+
+    - name: Say which files are left as they are
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ _cassandra_config_kept | join(', ') }} left as they are: same settings as the
+          role's, only comments or layout differ (cassandra_config_normalize: true rewrites them).
+      when: _cassandra_config_kept | length > 0
 
     # The diffs are masked above: no password reaches the report
     - name: Record the changes for the report
@@ -230,7 +269,7 @@
       vars:
         _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
         _files: >-
-          {% set out = [] %}{% for r in cassandra_config_preview.results if r.stdout %}{% set _ = out.append({
+          {% set out = [] %}{% for r in cassandra_config_preview.results if r.stdout and r.cassandra_config_file not in _cassandra_config_kept %}{% set _ = out.append({
             'item': cassandra_conf_dir ~ '/' ~ r.cassandra_config_file,
             'before': 'current',
             'after': '%d line(s) changed' % (r.stdout_lines | select('match', '^[-+](?![-+]{2} )') | list | length),
@@ -285,6 +324,7 @@
       loop_control:
         loop_var: cassandra_config_file
       register: cassandra_config_applied
+      when: cassandra_config_file not in _cassandra_config_kept
 
     # The package creates the stock directories only: others (a data disk, a
     # log dir) must exist, owned by the service user, before the node first

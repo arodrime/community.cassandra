@@ -37,6 +37,12 @@ argument_specs:
           - Python interpreter used by cqlsh.
           - When empty, C(python3) is used if the series' cqlsh supports it,
             otherwise C(python3.11) is installed next to it and cqlsh is pointed at it.
+      cassandra_cqlsh_python_manage:
+        type: bool
+        default: true
+        description:
+          - V(false) leaves cqlsh's Python as it is on this node (no python3.11, cqlshlib link or wrapper added or
+            removed). The C(import_cluster) playbook sets it on the nodes whose cqlsh has no wrapper of this role.
       cassandra_cqlsh_python_supported:
         type: dict
         default: {40x: ["3.6", "3.11"], 41x: ["3.6", "3.11"], 50x: ["3.8", "3.13"]}
