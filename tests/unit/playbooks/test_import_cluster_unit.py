@@ -9,7 +9,10 @@ import os
 import pytest
 import yaml
 
+import warnings
+
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -17,6 +20,10 @@ try:  # ansible-core 2.19+ renders trusted templates only
 except ImportError:
     def trust_as_template(template):
         return template
+
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # the file lookup, under plain pytest too
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -170,3 +177,24 @@ def test_boot_setting_read(kv, boot):
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
     assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}) == {"cassandra_medusa_link_dir": ""}
+
+
+def test_os_baseline_is_the_roles_defaults_not_the_inventory():
+    """The OS tuning is compared with the roles' own defaults (read from their files): a value an
+    inventory already sets must still be carried when it is not the default."""
+    load = task("Load the cassandra_linux and cassandra_service defaults (what they would set)")
+    wanted = task("Compare it with what the roles would set")["vars"]["_wanted"]
+    used = [v for v in yaml.safe_dump(wanted).split() if v.startswith("_d.")]
+    roles = os.path.join(os.path.dirname(PLAYBOOK), "..", "roles")
+    defaults = {}
+    for role in ("cassandra_linux", "cassandra_service"):
+        with open(os.path.join(roles, role, "defaults", "main.yml"), encoding="utf-8") as f:
+            defaults.update(yaml.safe_load(f))
+    templar = Templar(loader=DataLoader(), variables={"playbook_dir": os.path.dirname(PLAYBOOK),
+                                                      "cassandra_linux_timesync": False})
+    loaded = templar.template(trust_as_template(load["ansible.builtin.set_fact"]["import_cluster_os_defaults"]))
+    assert len(used) == 9 and all(v[3:] in loaded for v in used)
+    assert loaded == dict((k, v) for k, v in defaults.items() if k in loaded)
+    assert loaded["cassandra_linux_timesync"] is True  # the role's, not the play's
+    assert "{{" not in str(wanted).replace("{{ _d.", "").replace("{{ _cfg.", "").replace(
+        "{{ 'cassandra_", "")  # nothing else read from the play's vars

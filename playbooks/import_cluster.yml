@@ -16,6 +16,9 @@
 # ansible_host set to its address in the ring (import_cluster_set_ansible_host:
 # false leaves it out); a node without facts keeps the name it was given, or
 # its address.
+# The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
+# time sync, firewall) is listed in the report, and what a variable covers is
+# carried into the inventory for the nodes added later.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
 - name: Find the cluster from the given nodes
@@ -155,7 +158,8 @@
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
           && echo "own_unit=yes"
-        { [ -f /etc/sysctl.d/60-cassandra.conf ] || grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf; } \
+        # (the limits file's mark only: a sysctl.d/60-cassandra.conf may be the admin's, the sysctl module writes no mark)
+        grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf \
           && echo "own_os=yes"
         grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
@@ -424,6 +428,213 @@
         - _found.bin is defined
         - _found.ini | default('') != 'yes'
 
+    # The OS tuning an infrastructure team may have set (by hand, another tool,
+    # a golden image), compared with what cassandra_linux would set: the files
+    # as they are, and the live values. Read only.
+    # the roles' own defaults, as for the config import: not the values an
+    # inventory may already set (a value equal to them would not be carried)
+    - name: Load the cassandra_linux and cassandra_service defaults (what they would set)
+      ansible.builtin.set_fact:
+        import_cluster_os_defaults: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_linux/defaults/main.yml') | from_yaml
+              | combine(lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_service/defaults/main.yml') | from_yaml))
+             | dict2items | selectattr('key', 'match', '^cassandra_(linux_(sysctl|sysctl_file|limits|timesync)|data_readahead_kb|service_limit_.*)$')
+             | items2dict }}
+      when: import_cluster_config is defined
+
+    - name: Read the OS tuning
+      ansible.builtin.shell: |
+        set -- {{ _dirs | map('quote') | join(' ') }}  # the data and commitlog dirs
+        ports='{{ _ports | join('|') }}'
+        seen=
+        once() { r=$(readlink -f "$1"); case " $seen " in *" $r "*) return 1 ;; esac; seen="$seen $r"; }
+        # the package a file under /etc comes from (a distro default, not set by the admin)
+        owner() {
+          case $1 in /etc/*) ;; *) return ;; esac
+          o=$(rpm -qf --qf '%{NAME}\n' "$1" 2>/dev/null) && o=$(echo "$o" | head -1) || o=$(dpkg -S "$1" 2>/dev/null | cut -d: -f1) || o=
+          [ -n "$o" ] && echo "owner|$1|$o"
+        }
+        # the lines of a file, comments and blank lines left out: kind|file|line
+        f() {
+          k=$1; shift
+          for x in "$@"; do
+            # a link to /dev/null masks the file of that name in the other dirs
+            [ -L "$x" ] && [ "$(readlink -f "$x")" = /dev/null ] && { echo "masked|$x"; continue; }
+            [ -f "$x" ] && once "$x" || continue
+            awk -v p="$k|$x|" '!/^[[:space:]]*([#;]|$)/ {print p $0}' "$x" 2>/dev/null
+            owner "$x"
+          done
+        }
+        # kernel settings: the files sysctl --system reads; systemd-sysctl reads sysctl.conf
+        # only through a link in sysctl.d (99-sysctl.conf), at the place of its name
+        for x in /etc/sysctl.d/*.conf; do
+          [ -L "$x" ] && [ "$(readlink -f "$x")" = /etc/sysctl.conf ] && echo "sysctl_link|$x"
+        done
+        once /etc/sysctl.conf
+        f sysctl /etc/sysctl.d/*.conf /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf \
+          /lib/sysctl.d/*.conf
+        seen=; f sysctl /etc/sysctl.conf
+        more=$(cat /etc/sysctl.d/*.conf /run/sysctl.d/*.conf /etc/sysctl.conf 2>/dev/null \
+               | sed -n 's/^[[:space:]]*-\{0,1\}\([A-Za-z0-9_./-]*\)[[:space:]]*=.*/\1/p')
+        for k in $(printf '%s\n' {{ import_cluster_os_defaults.cassandra_linux_sysctl.keys() | map('quote') | join(' ') }} $more | sort -u); do
+          echo "sysctl_live|$k|$(sysctl -n "$k" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')"
+        done
+        # limits of the cassandra user, of the unit, of the running Cassandra
+        seen=; f limits /etc/security/limits.conf /etc/security/limits.d/*.conf
+        echo "groups|$(id -Gn cassandra 2>/dev/null)"
+        systemctl cat cassandra 2>/dev/null | awk '/^# \// {p=$2}
+          /^[[:space:]]*Limit(NOFILE|NPROC|MEMLOCK|AS)=/ {sub(/^[[:space:]]*/, ""); print "unit|" p "|" $0}'
+        for p in $(pgrep -x java); do
+          tr '\0' '\n' < /proc/$p/cmdline | grep -qx org.apache.cassandra.service.CassandraDaemon || continue
+          sed -n 's/^\(Max \(open files\|processes\|locked memory\|address space\)\)  *\([^ ]*\)  *\([^ ]*\).*/proc_limit|\1|\3|\4/p' /proc/$p/limits
+          break
+        done
+        # transparent huge pages, and what disables them
+        t=/sys/kernel/mm/transparent_hugepage
+        [ -f $t/enabled ] && echo "thp|enabled|$(cat $t/enabled)" && echo "thp|defrag|$(cat $t/defrag 2>/dev/null)"
+        echo "cmdline|$(cat /proc/cmdline 2>/dev/null)"
+        for x in /etc/default/grub /etc/default/grub.d/*.cfg; do
+          grep -s transparent_hugepage "$x" | grep -v '^[[:space:]]*#' | awk -v p="grub|$x|" '{print p $0}'
+        done
+        seen=
+        for x in /etc/systemd/system/*.service /usr/lib/systemd/system/*.service /lib/systemd/system/*.service \
+                 /etc/rc.d/rc.local /etc/rc.local; do
+          [ -f "$x" ] && grep -qs transparent_hugepage "$x" && once "$x" || continue
+          case $x in
+            *.service) s=$(systemctl is-enabled "${x##*/}" 2>/dev/null) ;;
+            *) if [ -x "$x" ]; then s=executable; else s="not executable"; fi ;;
+          esac
+          echo "thp_unit|$x|$s"
+        done
+        # tuned: the active profile(s), and the profiles they include
+        if [ -f /etc/tuned/active_profile ]; then
+          todo=$(cat /etc/tuned/active_profile)
+          echo "tuned|$todo|$(systemctl is-active tuned 2>/dev/null)"
+          seen= n=0
+          while [ -n "$todo" ] && [ $n -lt 10 ]; do
+            n=$((n + 1)); p=${todo%% *}; todo=$(echo ${todo#"$p"})
+            for d in /etc/tuned/profiles/$p /etc/tuned/$p /usr/lib/tuned/profiles/$p /usr/lib/tuned/$p; do
+              [ -f "$d/tuned.conf" ] || continue
+              f tuned_conf "$d/tuned.conf"
+              todo="$todo $(sed -n 's/^[[:space:]]*include[[:space:]]*=[[:space:]]*//p' "$d/tuned.conf" | tr ',' ' ')"
+              todo=$(echo $todo)
+              break
+            done
+          done
+        fi
+        # the disks of the data and commitlog dirs: read-ahead, scheduler, SSD or not
+        done_src=
+        for d in "$@"; do
+          src=$(findmnt -n -o SOURCE --target "$d" 2>/dev/null | sed 's/\[.*\]$//')
+          [ -n "$src" ] || { echo "disk|$d||||||"; continue; }
+          case " $done_src " in *" $src "*) continue ;; esac; done_src="$done_src $src"
+          l=$(lsblk -ndP -o TYPE,PKNAME,KNAME "$src" 2>/dev/null)
+          type=$(echo "$l" | sed -n 's/.*TYPE="\([^"]*\)".*/\1/p')
+          disk=
+          [ "$type" = part ] && disk=$(echo "$l" | sed -n 's/.*PKNAME="\([^"]*\)".*/\1/p')
+          [ "$type" = disk ] && disk=$(echo "$l" | sed -n 's/.*KNAME="\([^"]*\)".*/\1/p')
+          q=/sys/block/$disk/queue
+          if [ -n "$disk" ] && [ -d "$q" ]; then
+            echo "disk|$d|$src|$type|$disk|$(cat $q/read_ahead_kb)|$(sed -n 's/.*\[\(.*\)\].*/\1/p;t;p' $q/scheduler)|$(cat $q/rotational)"
+          else
+            echo "disk|$d|$src|$type|||||"
+          fi
+        done
+        seen=
+        for x in /etc/udev/rules.d/*.rules /run/udev/rules.d/*.rules /usr/lib/udev/rules.d/*.rules /lib/udev/rules.d/*.rules; do
+          [ -L "$x" ] && [ "$(readlink -f "$x")" = /dev/null ] && { echo "masked|$x"; continue; }
+          [ -f "$x" ] && once "$x" || continue
+          grep -E 'read_ahead_kb|queue/scheduler|--setra' "$x" | grep -v '^[[:space:]]*#' | awk -v p="udev|$x|" '{print p $0}' \
+            | grep . && owner "$x"
+        done
+        # swap
+        awk '!/^[[:space:]]*#/ && $3 == "swap" {print "swap_fstab|" $0}' /etc/fstab 2>/dev/null
+        awk 'NR > 1 {print "swap_on|" $1 " " $2 " " $3 "K"}' /proc/swaps 2>/dev/null
+        # time sync
+        ids=
+        for s in chronyd chrony ntpd ntp ntpsec openntpd systemd-timesyncd; do
+          [ "$(systemctl is-active $s 2>/dev/null)" = active ] || continue
+          id=$(systemctl show -p Id --value $s 2>/dev/null); id=${id%.service}; id=${id:-$s}  # no --value before systemd 230
+          case " $ids " in *" $id "*) continue ;; esac; ids="$ids $id"
+          echo "timesync|$id|active|$(systemctl is-enabled $s 2>/dev/null)"
+        done
+        for x in /etc/chrony.conf /etc/chrony/chrony.conf /etc/chrony.d/*.conf /etc/chrony/conf.d/*.conf \
+                 /etc/chrony/sources.d/*.sources /etc/ntp.conf /etc/ntpsec/ntp.conf /etc/systemd/timesyncd.conf \
+                 /etc/systemd/timesyncd.conf.d/*.conf; do
+          [ -f "$x" ] && grep -E '^[[:space:]]*(server|pool|peer|NTP=|FallbackNTP=)' "$x" | awk -v p="timesync_server|$x|" '{print p $0}'
+        done
+        # firewall: firewalld, ufw, else iptables/nftables rules for the Cassandra ports
+        if [ "$(systemctl is-active firewalld 2>/dev/null)" = active ] && command -v firewall-cmd >/dev/null; then
+          echo "fw|firewalld|active|default zone $(firewall-cmd --get-default-zone 2>/dev/null)"
+          for z in $(firewall-cmd --get-active-zones 2>/dev/null | grep -v '^[[:space:]]' | awk '{print $1}'); do
+            l=$(firewall-cmd --zone="$z" --list-ports 2>/dev/null); [ -n "$l" ] && echo "fw_rule|zone $z|ports $l"
+            for s in $(firewall-cmd --zone="$z" --list-services 2>/dev/null); do
+              l=$(firewall-cmd --info-service="$s" 2>/dev/null | sed -n 's/^[[:space:]]*ports: *//p')
+              [ -n "$l" ] && echo "fw_rule|zone $z|service $s: $l"
+            done
+            firewall-cmd --zone="$z" --list-rich-rules 2>/dev/null | awk -v p="fw_rule|zone $z|" '{print p "rich rule " $0}'
+          done
+        elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+          echo "fw|ufw|active|"
+          ufw status 2>/dev/null | grep ALLOW | awk '{print "fw_rule|ufw|" $0}'
+        else
+          # only when their tables are there already (listing them would load the kernel modules)
+          if grep -qsx filter /proc/net/ip_tables_names || { [ -e /sys/module/nf_tables ] && iptables -V 2>/dev/null | grep -q nf_tables; }; then
+            pol=$(iptables -S INPUT 2>/dev/null | sed -n 's/^-P INPUT //p')
+            [ -n "$pol" ] && [ "$pol" != ACCEPT ] && echo "fw|iptables|INPUT policy $pol|"
+            iptables -S 2>/dev/null | grep -E -- "--dports? ([0-9]+[,:])*($ports)([,:]|[[:space:]]|$)" | grep -- '-j ACCEPT' \
+              | awk '{print "fw_rule|iptables|" $0}'
+          fi
+          if [ -e /sys/module/nf_tables ] && command -v nft >/dev/null; then
+            nft list ruleset 2>/dev/null | grep -E "dport.*[^0-9]($ports)([^0-9]|$)" | grep accept | awk '{print "fw_rule|nftables|" $0}'
+          fi
+        fi
+        exit 0
+      vars:
+        _cfg: "{{ import_cluster_config.vars }}"
+        _dirs: >-
+          {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
+             + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog')] }}
+        _ports: >-
+          {{ [_cfg.cassandra_storage_port | default(7000), _cfg.cassandra_native_transport_port | default(9042),
+              _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199))] | map('string') | select('match', '^[0-9]+$') | list }}
+      register: import_cluster_os_found
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: import_cluster_config is defined
+
+    - name: Compare it with what the roles would set
+      ansible.builtin.set_fact:
+        import_cluster_os: >-
+          {{ import_cluster_os_found.stdout | community.cassandra.cassandra_os_import(_wanted)
+             if import_cluster_os_found.rc | default(1) == 0
+             else {'lines': ['OS tuning NOT read: ' ~ (import_cluster_os_found.stderr | default('') or import_cluster_os_found.msg
+                                                     | default('?')).splitlines() | first | default('?')],
+                   'vars': {}, 'carried': []} }}
+      vars:
+        _cfg: "{{ import_cluster_config.vars }}"
+        _d: "{{ import_cluster_os_defaults }}"
+        _wanted:
+          sysctl: "{{ _d.cassandra_linux_sysctl }}"
+          sysctl_file: "{{ _d.cassandra_linux_sysctl_file }}"
+          limits: "{{ _d.cassandra_linux_limits }}"
+          readahead_kb: "{{ _d.cassandra_data_readahead_kb }}"
+          timesync: "{{ _d.cassandra_linux_timesync }}"
+          service_limits:
+            nofile: "{{ _d.cassandra_service_limit_nofile }}"
+            nproc: "{{ _d.cassandra_service_limit_nproc }}"
+            memlock: "{{ _d.cassandra_service_limit_memlock }}"
+            as: "{{ _d.cassandra_service_limit_as }}"
+          ports:
+            - "{{ _cfg.cassandra_storage_port | default(7000) }}/tcp"
+            - "{{ _cfg.cassandra_native_transport_port | default(9042) }}/tcp"
+            - "{{ _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199)) }}/tcp"
+          # the node has cassandra_linux's own files, or cassandra_service's unit: it keeps their values
+          own: "{{ 'cassandra_linux_manage' not in import_cluster_keep | default({}) }}"
+          own_unit: "{{ 'cassandra_service_unit_manage' not in import_cluster_keep | default({}) }}"
+      when: import_cluster_os_found is not skipped
+
 - name: Write the inventory
   hosts: localhost
   connection: local
@@ -462,7 +673,8 @@
       SELF-CHECK PASSED: with these variables, the roles write the config of the {{ _self_check | length }} node(s) read
       as it is today (cassandra.yaml, cassandra-env.sh, the jvm options, rackdc, logback, and the JMX users, the unit and
       medusa.ini when the roles manage them: compared setting by setting, as Cassandra, the JVM, bash and systemd read
-      them; their content, not their owner or mode).
+      them; their content, not their owner or mode). Not compared: the OS tuning (see OS TUNING below),
+      /etc/default/cassandra, cassandra-topology.properties.
       {% else %}
       SELF-CHECK FAILED: THIS INVENTORY IS NOT VALID. With it, the roles would change the settings below on the
       nodes (the import misread them, or no variable covers them). Fix the variables (or the nodes) before any run.
@@ -616,8 +828,11 @@
                    else 'unsupported version ' ~ _hv.import_cluster_version)) }}
               vars: >-
                 {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx,
-                                                             _hv.import_cluster_medusa.vars | default({})))
+                                                             _hv.import_cluster_medusa.vars | default({}),
+                                                             _hv.import_cluster_os.vars | default({})))
                    if _read else {} }}
+              # the OS tuning found on it, for the report
+              os: "{{ _hv.import_cluster_os | default({}) if _read else {} }}"
               # a node not read is an existing node too: nothing of it is taken over
               keep: >-
                 {{ (_hv.import_cluster_keep | default({}) | combine(_env_log_dir, _hv.import_cluster_medusa.keep | default({})) if _read

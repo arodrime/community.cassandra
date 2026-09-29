@@ -524,8 +524,7 @@ roles then keep that Java and install no Java package.
 
 What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
 the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python and the systemd unit (or init script)
-Cassandra is started by. A part that has no mark of the roles (their repository file, sysctl file or ``Managed by
-Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
+Cassandra is started by. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
 ``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
 ``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
 ``group_vars``: nodes added later get the roles' full setup. Remove a line to let the role take that part over,
@@ -536,6 +535,45 @@ already is the role's conf dir), a heap set in a kept unit stays there, a readwr
 unregister rights keeps them that way, and ``cassandra_config`` leaves a file (the JMX users' files too) alone on an
 initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
 the roles change nothing on the imported nodes.
+
+The OS tuning already on the nodes (set by hand, by another tool or in the image) is read too, and listed in the
+report under ``OS TUNING FOUND ON THE NODES``, each line with what ``cassandra_linux`` or ``cassandra_service`` would
+set instead: the kernel settings of ``/etc/sysctl.conf`` and the ``sysctl.d`` files, and their live values when they
+differ; the ``cassandra`` user's limits (``limits.conf``, ``limits.d``), the unit's ``Limit*`` lines and the running
+Cassandra's limits; transparent huge pages (live values, kernel command line, a unit or ``rc.local`` that disables
+them); the read-ahead and IO scheduler of the data disks and the udev rules that set them; the ``tuned`` profile's
+settings for these; swap; the time sync service and its servers; the firewall (firewalld, ufw, or iptables/nftables
+rules for the Cassandra ports). Lines every node read has are shown once. What a variable covers is then carried into the
+inventory, so that nodes added later get the same tuning as the existing ones (which stay as they are):
+
+* ``cassandra_linux_sysctl``: the values the admin's files set (files under ``/etc`` that no package ships, apart
+  from ``/etc/sysctl.conf``), for the role's keys and every key of a file named for Cassandra; and
+  ``cassandra_linux_sysctl_file``, the file that sets most of them (not ``/etc/sysctl.conf`` when no link in
+  ``/etc/sysctl.d`` has systemd-sysctl read it at boot). The role then writes its keys in that same file,
+  line by line, keeping its other lines, rather than in a second file where one of the two would silently
+  override the other.
+* ``cassandra_linux_limits``: the ``cassandra`` user's own limits (its user or group lines; soft and hard must be the
+  same, the role sets both). The role keeps its own file, ``limits.d/cassandra.conf``, which it writes whole.
+* ``cassandra_service_limit_*``: the unit's ``Limit*`` lines.
+* ``cassandra_data_readahead_kb``: the read-ahead of the udev rules, when they all set one value and the data disks
+  have it. The role keeps its own rule file, which it writes whole, for the data disks only.
+* ``cassandra_linux_timesync: false`` when the nodes keep their time with a service other than chrony or
+  systemd-timesyncd (ntpd): the role would install chrony, whose unit stops it.
+
+THP, swap, ``tuned``, the time servers and the firewall are only reported: the role disables THP and swap the same
+way whatever the nodes use, does not write time servers, and only opens the firewall with
+``cassandra_manage_firewall: true``. A node the role set up keeps the values of the role's own files (its sysctl
+file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that running the roles again changes
+nothing on it; when those files do not hold them, the values in effect are carried, and a node without time sync gets
+``cassandra_linux_timesync: false`` rather than a chrony it does not have.
+
+Before writing anything, the import checks itself: for each node read, the files the roles would write with the
+imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
+and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as
+Cassandra, the JVM, bash and systemd read them. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in ``hosts.yml`` and the playbook fails
+(``-e import_cluster_strict=false`` writes the same files without failing). Fix the variables or the nodes before any
+run. The OS tuning, ``/etc/default/cassandra`` and ``cassandra-topology.properties`` are not compared.
 
 When a node has Cassandra Medusa (``medusa`` in the PATH or in a virtualenv under ``/opt``, and
 ``/etc/medusa/medusa.ini``), its version and settings are imported and ``cassandra_medusa_enabled`` is set, so

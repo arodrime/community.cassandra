@@ -1,0 +1,3 @@
+# data disks: small read-ahead, no scheduler
+ACTION=="add|change", KERNEL=="sd[b-z]", ATTR{queue/rotational}=="0", ATTR{queue/read_ahead_kb}="8", ATTR{queue/scheduler}="none"
+ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", RUN+="/sbin/blockdev --setra 16 /dev/%k"

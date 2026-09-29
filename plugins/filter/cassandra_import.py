@@ -719,6 +719,13 @@ def _slug(text):
     return "c_" + s if s[0].isdigit() else s
 
 
+def _same(key, a, b):
+    """Equal values; for a dict written in its order (KEEP_ORDER), in the same order too."""
+    if key in KEEP_ORDER and isinstance(a, dict) and isinstance(b, dict):
+        return list(a.items()) == list(b.items())
+    return a == b
+
+
 def _place(key, nodes, levels, group_vars, host_vars):
     """Put key at the highest level where all its nodes agree (levels:
     cluster, DC, rack, then the node itself). True if that is the cluster."""
@@ -726,7 +733,7 @@ def _place(key, nodes, levels, group_vars, host_vars):
         values = [n["vars"].get(key, MISSING) for n in members]
         if all(v is MISSING for v in values):
             return level == 0
-        if level < len(levels) and all(v == values[0] for v in values):
+        if level < len(levels) and all(_same(key, v, values[0]) for v in values):
             group_vars.setdefault(levels[level](members[0]), {})[key] = values[0]
             return level == 0
         if level == len(levels):
@@ -795,7 +802,7 @@ def _differences(keys, read, dcg, rackg):
         groups = {}  # by value, shown masked
         for n in read:
             value = n["vars"].get(key, MISSING)
-            same = "" if value is MISSING else json.dumps(value, sort_keys=True, default=str)
+            same = "" if value is MISSING else json.dumps(value, sort_keys=key not in KEEP_ORDER, default=str)
             groups.setdefault(same, (_show(key, value), []))[1].append(n)
         parts = []
         for value, members in sorted(groups.values(), key=lambda g: (-len(g[1]), g[0], sorted(n["name"] for n in g[1]))):
@@ -904,9 +911,50 @@ def cassandra_inventory_layout(nodes, cluster_name):
                           " file whose settings are all the same is left as it is):")
             report += ["    " + _mask(line) for line in n["normalized"]]
         report.append("")
+    report += _os_section(read)
     return {"cluster_group": cluster, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
             "names": dict((n["address"], n["name"]) for n in nodes if n.get("address"))}
+
+
+def _by_nodes(pairs):
+    """pairs: [(node name, lines)] -> report lines, each line once under the
+    nodes that have it: the ones every node has first."""
+    order, where = [], {}
+    for name, lines in pairs:
+        for line in lines:
+            if line not in where:
+                where[line] = []
+                order.append(line)
+            if name not in where[line]:
+                where[line].append(name)
+    groups = []
+    for line in order:
+        names = tuple(sorted(where[line]))
+        group = next((g for g in groups if g[0] == names), None)
+        if group is None:
+            groups.append((names, [line]))
+        else:
+            group[1].append(line)
+    out = []
+    for names, lines in sorted(groups, key=lambda g: len(g[0]) != len(pairs)):
+        out.append("  On every node read:" if len(names) == len(pairs) and len(pairs) > 1 else "  On %s:" % ", ".join(names))
+        out += ["    " + line for line in lines]
+    return out
+
+
+def _os_section(read):
+    """The OS tuning found on the nodes (import_cluster's cassandra_os_import)."""
+    nodes = [n for n in read if n.get("os")]
+    if not nodes:
+        return []
+    out = ["OS TUNING FOUND ON THE NODES (read only, compared with what cassandra_linux and cassandra_service set):"]
+    out += _by_nodes([(n["name"], n["os"].get("lines") or []) for n in nodes])
+    carried = _by_nodes([(n["name"], n["os"].get("carried") or []) for n in nodes])
+    if carried:
+        out += ["", "OS TUNING CARRIED INTO THE VARIABLES, for the nodes added later (the nodes above with"
+                " cassandra_linux_manage false are left as they are):"] + carried
+    return out + [""]
 
 
 def _secret(key, value):
@@ -959,7 +1007,12 @@ BLOCKS = [
     ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
     ("Logging (logback.xml)", [
         "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console"]),
-    ("systemd unit & service", ["cassandra_service_restart", "cassandra_service_environment"]),
+    ("OS tuning (found on the nodes, for the nodes added later)", [
+        "cassandra_linux_sysctl_file", "cassandra_linux_sysctl", "cassandra_linux_limits", "cassandra_data_readahead_kb",
+        "cassandra_linux_timesync"]),
+    ("systemd unit & service", [
+        "cassandra_service_restart", "cassandra_service_environment", "cassandra_service_limit_nofile",
+        "cassandra_service_limit_nproc", "cassandra_service_limit_memlock", "cassandra_service_limit_as"]),
     ("Medusa", [
         "cassandra_medusa_version", "cassandra_medusa_venv", "cassandra_medusa_link_dir", "cassandra_medusa_profile_d",
         "cassandra_medusa_python", "cassandra_medusa_storage_provider", "cassandra_medusa_bucket_name",
@@ -977,6 +1030,8 @@ BLOCK_PATTERNS = [
     (re.compile(r"^cassandra_\w+_(?:dir|directory|directories)$"), "Directories"),
     (re.compile(r"^cassandra_\w+_(?:address|port)$"), "Network & ports"),
 ]
+# Dicts a role writes in their order (a file written whole): not sorted
+KEEP_ORDER = ("cassandra_linux_limits",)
 TEMPLATE_BLOCKS = [("cassandra.yaml", "Other cassandra.yaml settings"), ("logback.xml", "Logging (logback.xml)")]
 
 
@@ -1043,7 +1098,7 @@ def _vars_yaml(variables):
             continue
         keys.sort(key=lambda k: (order.index(k), "") if k in order else (len(order), k))
         out.append("# %s\n" % title + "".join(yaml.dump({k: data[k]}, Dumper=Dumper, default_flow_style=False,
-                                                        sort_keys=True) for k in keys))
+                                                        sort_keys=k not in KEEP_ORDER) for k in keys))
     return "\n".join(out)
 
 
