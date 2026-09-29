@@ -206,7 +206,7 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
                        and (not aware or n["rack"] in new_racks)]
         # a node added in this run hands ranges over to the ones added after it in its
         # datacenter (its rack when each rack holds a full copy): those get a cleanup too
-        mine = [n for n in adding if n["dc"] == dc]
+        mine = [n for n in (adding or new_nodes) if n["dc"] == dc]
         cleanup[dc] += [n["host"] for i, n in enumerate(mine)
                         if any(not aware or m["rack"] == n["rack"] for m in mine[i + 1:])]
     if _ring_wide(keyspaces) and keyspaces is not None:
@@ -234,7 +234,7 @@ def cassandra_compactionstats(result, types=None):
     cassandra_stream_progress view: one session per running compaction of
     the given types (e.g. ['Cleanup']), its table as the only file."""
     view = {"item": result.get("item", "")}
-    if result.get("failed") or result.get("skipped") or result.get("rc", 0) != 0:
+    if result.get("failed") or result.get("skipped") or result.get("unreachable") or result.get("rc", 0) != 0:
         view.update(failed=True, msg=result.get("msg", ""), stderr=result.get("stderr", ""))
         return view
     sessions = []

@@ -279,3 +279,19 @@ def test_real_40_41_bootstrap_progress_between_two_checks():
                                       s, now=300, operations=["Bootstrap"])
         assert s["progressed"] and s["idle_checks"] == 0 and not s["stalled"]
         assert s["line"].startswith("[#########-----------]  4") and "/91." in s["line"] and "MiB" in s["line"] and "ETA ~" in s["line"]
+
+
+def test_an_unreachable_node_keeps_its_cleanup_running():
+    running = ({"rc": 0, "stdout": fixture("nodetool_compactionstats_41_cleanup.txt")}, "n1")
+    s = cassandra_stream_progress([cassandra_cleanup_view(running)], None, now=0, operations=["Cleanup"])
+    s = cassandra_stream_progress([cassandra_cleanup_view(({"unreachable": True, "msg": "ssh timeout"}, "n1"))], s,
+                                  now=300, operations=["Cleanup"])
+    assert not s["progressed"] and not s["answered"] and s["idle_checks"] == 1 and "100%" not in s["line"]
+
+
+def test_run_again_for_the_cleanup_keeps_the_earlier_new_nodes():
+    new = [{"host": "n7", "address": "10.0.0.7", "dc": "dc1", "rack": "r1", "in_ring": True, "state": "joined"},
+           {"host": "n8", "address": "10.0.0.8", "dc": "dc1", "rack": "r1", "in_ring": True, "state": "joined"}]
+    ring = {"dc1": {"nodes": RING["dc1"]["nodes"] + [node("10.0.0.7", "r1"), node("10.0.0.8", "r1")]}}
+    plan = cassandra_add_node_plan(ring, new, hosts=HOSTS, keyspaces=NTS3)
+    assert plan["cleanup"]["dc1"] == ["n1", "n4", "n7"]
