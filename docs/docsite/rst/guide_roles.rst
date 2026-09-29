@@ -458,6 +458,13 @@ Give it any reachable nodes; it finds the others in the ring. It writes ``hosts.
 ``host_vars/`` and a ``report.txt`` listing, per node, the Cassandra and Java versions, drift between nodes and the
 hand edits no variable covers (``cassandra_config`` would revert them).
 
+In ``hosts.yml`` every node is named by its hostname, the short one it reports, with ``ansible_host`` set to its
+address in the ring. ``import_cluster_host_names`` picks the name: ``hostname`` (default), ``fqdn`` or ``ip``;
+``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address.
+A node that could not be reached keeps the name it was given, or its address. In the ``group_vars`` and
+``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
+JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each.
+
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
 roles then keep that Java and install no Java package.
 

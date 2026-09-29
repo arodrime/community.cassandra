@@ -7,7 +7,8 @@ cassandra_config_import: a node's config files -> cassandra_config variables,
     plus what the role would still change (hand edits / normalized lines).
 cassandra_inventory_layout: every node's variables -> inventory groups,
     group_vars, host_vars, drift between nodes and the report.
-cassandra_inventory_files: that layout -> the files to write, passwords apart.
+cassandra_inventory_files: that layout -> the files to write, passwords apart,
+    variables grouped by subject.
 cassandra_unit_environment: systemctl's Environment of a unit -> dict.
 cassandra_config_ignored_vars: variable names, series -> the cassandra_config
     variables among them that series' templates don't use (e.g. 4.0 names after
@@ -489,9 +490,13 @@ def _values_hidden(func):
 
 @_values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
-    """nodes: [{name, dc, rack, ansible_host?, read: bool, reason?, vars,
-    hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars', 'report'}."""
+    """nodes: [{name, address?, dc, rack, ansible_host?, read: bool, reason?, vars,
+    hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars', 'report'}.
+    Nodes sharing a name are named by their address instead."""
     cluster = _slug(cluster_name)
+    names = [n["name"] for n in nodes]
+    shared = sorted({name for name in names if names.count(name) > 1})
+    nodes = [dict(n, name=n.get("address") or n["name"]) if n["name"] in shared else n for n in nodes]
 
     def clusterg(dummy):
         return cluster
@@ -520,6 +525,9 @@ def cassandra_inventory_layout(nodes, cluster_name):
 
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
               "Inventory group: %s (ansible-playbook ... -e cassandra_hosts=%s)" % (cluster, cluster), ""]
+    if shared:
+        report.append("SAME NAME for several nodes, named by their address instead: %s" % ", ".join(shared))
+        report.append("")
     unread = [n for n in nodes if n not in read]
     if unread:
         report.append("NOT READ (in the inventory, but not imported):")
@@ -559,6 +567,108 @@ def _secret(key, value):
     return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
 
 
+# The blocks of a main.yml/secrets.yml, in this order: a key goes to the block
+# that lists it, else to the first pattern it matches, else to the block of the
+# cassandra_config template that uses it (TEMPLATE_BLOCKS), else to "Other".
+# In a block, the listed keys in their order, then the others alphabetically.
+BLOCKS = [
+    ("Cluster & topology", [
+        "cassandra_cluster_name", "cassandra_dc", "cassandra_rack", "cassandra_prefer_local", "cassandra_seeds",
+        "cassandra_seed_provider_class_name", "cassandra_endpoint_snitch", "cassandra_num_tokens",
+        "cassandra_allocate_tokens_for_local_replication_factor", "cassandra_initial_token", "cassandra_partitioner",
+        "cassandra_storage_compatibility_mode"]),
+    ("Versions & packages", [
+        "cassandra_version", "cassandra_package_version", "cassandra_packages", "cassandra_java_version",
+        "cassandra_java_home", "cassandra_java_package", "cassandra_java_tarball", "cassandra_java_tarball_checksum",
+        "cassandra_java_tarball_dir", "cassandra_install_java", "cassandra_java_set_default"]),
+    ("Directories", [
+        "cassandra_conf_dir", "cassandra_data_dir", "cassandra_data_file_directories", "cassandra_commitlog_dir",
+        "cassandra_hints_dir", "cassandra_saved_caches_dir", "cassandra_cdc_raw_dir", "cassandra_log_dir",
+        "cassandra_heap_dump_dir"]),
+    ("Network & ports", [
+        "cassandra_listen_address", "cassandra_broadcast_address", "cassandra_rpc_address",
+        "cassandra_broadcast_rpc_address", "cassandra_storage_port", "cassandra_ssl_storage_port",
+        "cassandra_start_native_transport", "cassandra_native_transport_port",
+        "cassandra_native_transport_allow_older_protocols", "cassandra_rpc_keepalive", "cassandra_internode_compression",
+        "cassandra_inter_dc_tcp_nodelay"]),
+    ("JMX", [
+        "cassandra_jmx_port", "cassandra_local_jmx", "cassandra_jmx_rmi_hostname", "cassandra_jmx_username",
+        "cassandra_jmx_password_file", "cassandra_jmx_password", "cassandra_jmx_users"]),
+    ("JVM & heap (cassandra-env.sh, jvm*-server.options)", [
+        "cassandra_heap_size", "cassandra_heap_newsize", "cassandra_max_direct_memory_size", "cassandra_jvm_gc",
+        "cassandra_jvm_max_gc_pause_millis", "cassandra_jvm_g1_heap_region_size", "cassandra_jvm_g1_new_size_percent",
+        "cassandra_jvm_initiating_heap_occupancy_percent", "cassandra_jvm_cms_initiating_occupancy_fraction",
+        "cassandra_jvm_max_tenuring_threshold", "cassandra_jvm_parallel_gc_threads", "cassandra_jvm_conc_gc_threads",
+        "cassandra_jvm_extra_options", "cassandra_jvm8_extra_options", "cassandra_jvm11_extra_options",
+        "cassandra_jvm17_extra_options"]),
+    ("Other cassandra.yaml settings", []),
+    ("cassandra.yaml settings no variable covers", ["cassandra_extra_settings"]),
+    ("Logging (logback.xml)", [
+        "cassandra_log_level", "cassandra_log_level_cassandra", "cassandra_debug_log_enabled", "cassandra_log_console"]),
+    ("systemd unit & service", ["cassandra_service_restart", "cassandra_service_environment"]),
+    ("Medusa", [
+        "cassandra_medusa_version", "cassandra_medusa_venv", "cassandra_medusa_link_dir", "cassandra_medusa_profile_d",
+        "cassandra_medusa_python", "cassandra_medusa_storage_provider", "cassandra_medusa_bucket_name",
+        "cassandra_medusa_region", "cassandra_medusa_host", "cassandra_medusa_port", "cassandra_medusa_base_path",
+        "cassandra_medusa_prefix", "cassandra_medusa_key_file", "cassandra_medusa_fqdn"]),
+    ("Other", []),
+]
+BLOCK_PATTERNS = [
+    (re.compile(r"^cassandra_medusa_"), "Medusa"),
+    (re.compile(r"^cassandra_service_"), "systemd unit & service"),
+    (re.compile(r"^cassandra_jmx_"), "JMX"),
+    (re.compile(r"^cassandra_java_"), "Versions & packages"),
+    (re.compile(r"^cassandra_(?:jvm\d*|heap)_"), "JVM & heap (cassandra-env.sh, jvm*-server.options)"),
+    (re.compile(r"^cassandra_\w+_(?:dir|directory|directories)$"), "Directories"),
+    (re.compile(r"^cassandra_\w+_(?:address|port)$"), "Network & ports"),
+]
+TEMPLATE_BLOCKS = [("cassandra.yaml", "Other cassandra.yaml settings"), ("logback.xml", "Logging (logback.xml)")]
+
+
+@functools.lru_cache(maxsize=None)
+def _template_vars(name):
+    """The variables a cassandra_config template uses, whatever the series."""
+    used = set()
+    for series in SERIES.values():
+        path = os.path.join(ROLE, "templates", series, name + ".j2")
+        if os.path.exists(path):
+            with open(path) as f:
+                used.update(re.findall(r"\b(cassandra_\w+)", f.read()))
+    return frozenset(used)
+
+
+def _block(key):
+    for title, keys in BLOCKS:
+        if key in keys:
+            return title
+    for regex, title in BLOCK_PATTERNS:
+        if regex.search(key):
+            return title
+    for name, title in TEMPLATE_BLOCKS:
+        if key in _template_vars(name):
+            return title
+    return "Other"
+
+
+def _vars_yaml(variables):
+    """variables as YAML, grouped by subject (BLOCKS): a comment line per block,
+    a blank line between blocks. Each key is dumped on its own, the same way
+    a whole dict would be (same values and quoting)."""
+    data = json.loads(json.dumps(variables, default=str))
+    grouped = {}
+    for key in data:
+        grouped.setdefault(_block(key), []).append(key)
+    out = []
+    for title, order in BLOCKS:
+        keys = grouped.get(title)
+        if not keys:
+            continue
+        keys.sort(key=lambda k: (order.index(k), "") if k in order else (len(order), k))
+        out.append("# %s\n" % title + "".join(yaml.safe_dump({k: data[k]}, default_flow_style=False, sort_keys=True)
+                                              for k in keys))
+    return "\n".join(out)
+
+
 def _split_secrets(variables):
     public, secrets = {}, {}
     for key, value in variables.items():
@@ -578,8 +688,7 @@ def cassandra_inventory_files(layout):
             for base, data, secret in (("main.yml", public, False), ("secrets.yml", secrets, True)):
                 if data:
                     files.append({"path": "%s/%s/%s" % (kind, name, base), "secret": secret,
-                                  "content": yaml.safe_dump(json.loads(json.dumps(data, default=str)),
-                                                            default_flow_style=False, sort_keys=True)})
+                                  "content": _vars_yaml(data)})
     return files
 
 

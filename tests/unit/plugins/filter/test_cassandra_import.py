@@ -201,13 +201,25 @@ def test_layout_drift_goes_down_and_is_reported():
 
 
 def test_layout_unread_node_listed():
-    nodes = [node("n1", "dc1", "r1"),
-             {"name": "10.0.0.2", "ansible_host": "10.0.0.2", "dc": "dc1", "rack": "r1", "read": False,
-              "reason": "unreachable"}]
+    nodes = [dict(node("n1", "dc1", "r1"), address="10.0.0.1", ansible_host="10.0.0.1"),
+             {"name": "10.0.0.2", "address": "10.0.0.2", "ansible_host": "10.0.0.2", "dc": "dc1", "rack": "r1",
+              "read": False, "reason": "unreachable"}]
     out = cassandra_inventory_layout(nodes, "c")
     hosts = out["hosts"]["all"]["children"]["c"]["children"]["c_dc1"]["children"]["c_dc1_r1"]["hosts"]
-    assert hosts == {"n1": {}, "10.0.0.2": {"ansible_host": "10.0.0.2"}}
+    assert hosts == {"n1": {"ansible_host": "10.0.0.1"}, "10.0.0.2": {"ansible_host": "10.0.0.2"}}
     assert "10.0.0.2: unreachable" in out["report"]
+
+
+def test_layout_nodes_sharing_a_name_are_named_by_address():
+    # e.g. the same short hostname in two domains: one entry would hide the other
+    nodes = [dict(node("db", "dc1", "r1", cassandra_heap_size="8G"), address="10.0.0.1", ansible_host="10.0.0.1"),
+             dict(node("db", "dc1", "r1", cassandra_heap_size="16G"), address="10.0.0.2", ansible_host="10.0.0.2"),
+             dict(node("n3", "dc1", "r1", cassandra_heap_size="16G"), address="10.0.0.3", ansible_host="10.0.0.3")]
+    out = cassandra_inventory_layout(nodes, "c")
+    hosts = out["hosts"]["all"]["children"]["c"]["children"]["c_dc1"]["children"]["c_dc1_r1"]["hosts"]
+    assert sorted(hosts) == ["10.0.0.1", "10.0.0.2", "n3"]
+    assert out["host_vars"]["10.0.0.1"] == {"cassandra_heap_size": "8G"}
+    assert "SAME NAME for several nodes, named by their address instead: db" in out["report"]
 
 
 class Tagged(dict):
@@ -423,3 +435,87 @@ def test_medusa_keys_are_secrets_and_empty_values_are_not():
     assert sorted(by_path["group_vars/c/secrets.yml"]) == ["cassandra_medusa_extra_settings",
                                                            "cassandra_medusa_s3_access_key_id"]
     assert sorted(by_path["group_vars/c/main.yml"]) == ["cassandra_medusa_bucket_name", "cassandra_medusa_cql_password"]
+
+
+def test_inventory_files_grouped_by_subject():
+    variables = {"cassandra_zzz_unknown": 1, "cassandra_concurrent_writes": 8, "cassandra_version": "50x",
+                 "cassandra_seeds": ["i1", "i3"], "cassandra_cluster_name": "Imp Test", "cassandra_heap_size": "256M",
+                 "cassandra_listen_address": IPV4, "cassandra_extra_settings": {"b": 1, "a": "x: y"},
+                 "cassandra_medusa_venv": "/opt/medusa", "cassandra_medusa_version": "0.22.0",
+                 "cassandra_medusa_link_dir": "/usr/local/bin", "cassandra_concurrent_reads": 8,
+                 "cassandra_service_restart": "always", "cassandra_jmx_username": "admin", "cassandra_log_level": "INFO",
+                 "cassandra_data_dir": "/data", "cassandra_package_version": "5.0.9", "cassandra_rolling_progress_dir": "/x"}
+    files = cassandra_inventory_files({"group_vars": {"c": variables}, "host_vars": {}})
+    assert files[0]["content"] == """# Cluster & topology
+cassandra_cluster_name: Imp Test
+cassandra_seeds:
+- i1
+- i3
+
+# Versions & packages
+cassandra_version: 50x
+cassandra_package_version: 5.0.9
+
+# Directories
+cassandra_data_dir: /data
+cassandra_rolling_progress_dir: /x
+
+# Network & ports
+cassandra_listen_address: '{{ ansible_facts[''default_ipv4''][''address''] }}'
+
+# JMX
+cassandra_jmx_username: admin
+
+# JVM & heap (cassandra-env.sh, jvm*-server.options)
+cassandra_heap_size: 256M
+
+# Other cassandra.yaml settings
+cassandra_concurrent_reads: 8
+cassandra_concurrent_writes: 8
+
+# cassandra.yaml settings no variable covers
+cassandra_extra_settings:
+  a: 'x: y'
+  b: 1
+
+# Logging (logback.xml)
+cassandra_log_level: INFO
+
+# systemd unit & service
+cassandra_service_restart: always
+
+# Medusa
+cassandra_medusa_version: 0.22.0
+cassandra_medusa_venv: /opt/medusa
+cassandra_medusa_link_dir: /usr/local/bin
+
+# Other
+cassandra_zzz_unknown: 1
+"""
+
+
+@pytest.mark.parametrize("variables", [
+    {"cassandra_cluster_name": "Prod", "cassandra_dc": "dc1"},
+    {"cassandra_version": "40x", "cassandra_num_tokens": 16, "cassandra_seeds": "a,b", "cassandra_package_version": "4.0.10",
+     "cassandra_extra_settings": {"x": [1, {"y": None}], "long": "w " * 60, "quoted": "'#{{ x }}\n"},
+     "cassandra_jvm_extra_options": ["-Da=1", "-XX:+Foo"], "cassandra_heap_size": "8G", "cassandra_compaction_throughput": "64MiB/s",
+     "cassandra_auto_snapshot": True, "cassandra_row_cache_size": "0MiB", "cassandra_listen_address": IPV4,
+     "cassandra_service_environment": {"LOCAL_JMX": "no"}, "cassandra_medusa_prefix": "", "other_var": "yes",
+     "cassandra_storage_port": 7000, "cassandra_initial_token": "-9223372036854775808", "cassandra_float": 0.5,
+     "cassandra_null": None, "cassandra_on": "on", "cassandra_date": "2026-01-01", "cassandra_octal": "0755"},
+])
+def test_inventory_files_same_values_as_a_plain_dump(variables):
+    # the grouped file loads back to the same dict, types and quoting included
+    files = cassandra_inventory_files({"group_vars": {"c": variables}, "host_vars": {}})
+    content = "".join(f["content"] for f in files if f["path"] == "group_vars/c/main.yml")
+    plain = yaml.safe_dump(variables, default_flow_style=False, sort_keys=True)
+    assert yaml.safe_load(content) == yaml.safe_load(plain) == variables
+    assert "\n\n\n" not in content and not content.startswith("\n") and content.endswith("\n")
+
+
+def test_secrets_file_grouped_too():
+    files = cassandra_inventory_files({"group_vars": {}, "host_vars": {"n1": {
+        "cassandra_server_keystore_password": "k", "cassandra_jmx_password": "j", "cassandra_medusa_cql_password": "m"}}})
+    assert files[0]["path"] == "host_vars/n1/secrets.yml"
+    assert files[0]["content"] == ("# JMX\ncassandra_jmx_password: j\n\n# Other cassandra.yaml settings\n"
+                                   "cassandra_server_keystore_password: k\n\n# Medusa\ncassandra_medusa_cql_password: m\n")
