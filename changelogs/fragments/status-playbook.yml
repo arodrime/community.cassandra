@@ -1,0 +1,2 @@
+minor_changes:
+  - New status playbook - read-only view of the ring from one node, per datacenter with a summary line, and the differences between the inventory and the ring.

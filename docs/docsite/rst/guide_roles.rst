@@ -112,6 +112,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.status -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=orders -e cassandra_leaving_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=orders -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
@@ -123,6 +124,9 @@ gossip and the native transport running, no streams, schema agreement, and the s
 node is only touched when the cluster is healthy, and the run stops at the first node that does not come back
 healthy (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same
 checks on its own, changing nothing, and fails when there is a problem, so it can be scheduled.
+``status`` only shows the ring as one node sees it (the first that answers, or ``cassandra_status_from``), per
+datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
+ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
 
 Risky operations ask for confirmation first (type ``yes``). ``cassandra_operation_confirm: false`` skips the
 question, for runs without a terminal.
