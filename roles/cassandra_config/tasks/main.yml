@@ -185,8 +185,16 @@
               - -c
               - |
                 import json, os, re, sys
-                def read(path, pattern):
-                    return {k: v.strip().strip("'\"") for k, v in re.findall(pattern, open(path).read(), re.M)}
+                def value(v):  # a YAML scalar's text: quotes undone, trailing comment dropped
+                    m = re.match(r"'((?:[^']|'')*)'|\"((?:[^\"\\]|\\.)*)\"", v)
+                    if m:
+                        if m.group(1) is not None:
+                            return m.group(1).replace("''", "'")
+                        return re.sub(r"\\(.)", lambda e: {"n": "\n", "t": "\t"}.get(e.group(1), e.group(1)), m.group(2))
+                    return re.sub(r"\s+#.*$", "", v)
+                def read(path, pattern):  # properties: no inline comment, as the snitch reads them
+                    get = value if pattern == yaml else lambda v: v.strip().strip("'\"")
+                    return {k: get(v.strip()) for k, v in re.findall(pattern, open(path).read(), re.M)}
                 yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch|initial_token):[ \t]*(.*?)[ \t]*$"
                 rackdc = r"^[ \t]*(dc|rack)[ \t]*=[ \t]*(.*?)[ \t]*$"
                 live, new = {}, {}
@@ -194,6 +202,9 @@
                     if os.path.exists(live_file):  # no live file: nothing to keep
                         live.update(read(live_file, pattern))
                         new.update(read(new_file, pattern))
+                        if pattern == yaml:  # no num_tokens: Cassandra's default
+                            live.setdefault("num_tokens", "1")
+                            new.setdefault("num_tokens", "1")
                 print(json.dumps(["%s: %s -> %s" % (k, live.get(k, "(unset)"), new.get(k, "(unset)"))
                                   for k in sorted(set(live) | set(new)) if live.get(k) != new.get(k)]))
               - "{{ cassandra_conf_dir }}/cassandra.yaml"

@@ -140,3 +140,32 @@ def test_jmx_files_with_the_same_users_are_kept(tmp_path, password, access, same
     users = [{"name": "ops", "password": "s3cret", "access": "readwrite"},
              {"name": "mon", "password": "m0n", "access": "readonly"}]
     assert jmx_same(tmp_path, password, access, users) == same
+
+
+IDENTITY = task("Compare the settings a joined node must keep")["ansible.builtin.command"]["argv"][2]
+
+
+@pytest.mark.parametrize("live, new, changes", [
+    ("cluster_name: \"it's\"\nnum_tokens: 16\n", "cluster_name: 'it''s'\nnum_tokens: 16\n", []),
+    ("cluster_name: 'X' # prod\nnum_tokens: 16 # fixed\n", "cluster_name: 'X'\nnum_tokens: 16\n", []),
+    ("cluster_name: 'X'\ninitial_token: 0\n", "cluster_name: 'X'\nnum_tokens: 1\ninitial_token: 0\n", []),
+    ("cluster_name: \"say \\\"hi\\\" a\\\\b\"\n", "cluster_name: 'say \"hi\" a\\b'\n", []),
+    ("cluster_name: 'X'\nnum_tokens: 16\n", "cluster_name: 'Y'\nnum_tokens: 256\n",
+     ["cluster_name: X -> Y", "num_tokens: 16 -> 256"]),
+])
+def test_identity_compared_as_yaml_reads_it(tmp_path, live, new, changes):
+    assert identity_changes(tmp_path, live, new) == changes
+
+
+def identity_changes(tmp_path, live, new, live_rackdc="dc=d\n", new_rackdc="dc=d\n"):
+    for name, text in (("live.yaml", live), ("new.yaml", new), ("live.p", live_rackdc), ("new.p", new_rackdc)):
+        (tmp_path / name).write_text(text)
+    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in ("live.yaml", "new.yaml", "live.p", "new.p")],
+                         stdout=subprocess.PIPE, universal_newlines=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_rack_comment_is_part_of_the_value(tmp_path):
+    # properties have no inline comment: the snitch's rack is "r1 # old"
+    assert identity_changes(tmp_path, "num_tokens: 16\n", "num_tokens: 16\n", "rack=r1 # old\n", "rack=r1\n") == [
+        "rack: r1 # old -> r1"]

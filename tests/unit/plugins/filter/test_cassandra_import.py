@@ -2,6 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import os
+import re
 
 import pytest
 import yaml
@@ -655,3 +656,180 @@ def test_jmx_access_written_back_as_imported(access):
         content = yaml.safe_load(f)[0]["vars"]["_cassandra_jmx_access_content"]
     users = _jmx_users("ops s3cret\nmon m0n\n", access)
     assert Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(trust_as_template(content)) == access
+
+
+STOCK = {"40x": "stock-4.0.21", "41x": "stock-4.1.12", "50x": "stock-5.0.9"}
+
+
+def stock_yaml(series):
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "molecule",
+                        "default", "files", STOCK[series], "cassandra.yaml.stock")
+    with open(path) as f:
+        return f.read()
+
+
+def with_seeds_line(series, line):
+    """The stock cassandra.yaml, its seeds line replaced by line (indent kept unless line has one)."""
+    text = stock_yaml(series)
+    stock = next(n for n in text.split("\n") if n.strip().startswith('- seeds: "127.0.0.1:7000"'))
+    indent = stock[:len(stock) - len(stock.lstrip())]
+    return text.replace(stock, line if line.startswith(" ") else indent + line)
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("line, seeds", [
+    ("- seeds: 10.0.0.35,10.0.0.36,10.0.0.37", ["10.0.0.35", "10.0.0.36", "10.0.0.37"]),
+    ("- seeds: 10.0.0.35,10.0.0.36,10.0.0.37\n# - seeds: \"10.0.0.35,10.0.0.36\"", ["10.0.0.35", "10.0.0.36", "10.0.0.37"]),
+    ("- seeds: '10.0.0.35,10.0.0.36'", ["10.0.0.35", "10.0.0.36"]),
+    ("- seeds: \"10.0.0.35:7000,10.0.0.36:7000\"", ["10.0.0.35:7000", "10.0.0.36:7000"]),
+    ("- seeds: 10.0.0.35, 10.0.0.36 ,10.0.0.37", ["10.0.0.35", "10.0.0.36", "10.0.0.37"]),
+    ("- seeds: node1.example.com,node2.example.com  # the first two", ["node1.example.com", "node2.example.com"]),
+    ("- seeds: 10.0.0.35", ["10.0.0.35"]),
+])
+def test_seeds_read_however_written(series, line, seeds):
+    live = with_seeds_line(series, line)
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    assert out["vars"]["cassandra_seeds"] == seeds
+    # round trip: the role writes back the same seed list
+    env, ctx, dummy = _load_role(series, FACTS)
+    ctx.update(out["vars"])
+    written = yaml.safe_load("\n".join(_render(env, series, "cassandra.yaml", ctx)[1]))
+    assert [s.strip() for s in written["seed_provider"][0]["parameters"][0]["seeds"].split(",")] == seeds
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+def test_seeds_indented_otherwise(series):
+    text = stock_yaml(series)
+    stock = next(n for n in text.split("\n") if n.strip().startswith('- seeds: "127.0.0.1:7000"'))
+    live = text.replace(stock, " " * (len(stock) - len(stock.lstrip()) + 2) + "- seeds: 10.0.0.35,10.0.0.36")
+    assert yaml.safe_load(live)["seed_provider"][0]["parameters"][0]["seeds"] == "10.0.0.35,10.0.0.36"
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    assert out["vars"]["cassandra_seeds"] == ["10.0.0.35", "10.0.0.36"]
+    assert out["hand_edits"] == []  # the role writes the same seeds, indented its way
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("old, new, var, value", [
+    ("cluster_name: 'Test Cluster'", "cluster_name: Prod Cluster", "cassandra_cluster_name", "Prod Cluster"),
+    ("cluster_name: 'Test Cluster'", 'cluster_name: "Prod"  # do not change', "cassandra_cluster_name", "Prod"),
+    ("num_tokens: 16", "num_tokens: 256 # legacy", "cassandra_num_tokens", 256),
+    ("endpoint_snitch: SimpleSnitch", 'endpoint_snitch: "GossipingPropertyFileSnitch"', "cassandra_endpoint_snitch",
+     "GossipingPropertyFileSnitch"),
+    ("partitioner: org.apache.cassandra.dht.Murmur3Partitioner", "partitioner: 'org.apache.cassandra.dht.RandomPartitioner'",
+     "cassandra_partitioner", "org.apache.cassandra.dht.RandomPartitioner"),
+])
+def test_identity_read_however_written(series, old, new, var, value):
+    text = stock_yaml(series)
+    assert re.search("^" + re.escape(old) + "$", text, re.M)
+    live = re.sub("^" + re.escape(old) + "$", new, text, flags=re.M)
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    assert out["vars"][var] == value
+    assert out["hand_edits"] == []  # same setting, written the role's way
+    stock = cassandra_config_import({"cassandra.yaml": text}, series, FACTS)["normalized"]
+    added = [n for n in out["normalized"] if n not in stock]
+    assert len(added) == 1 and added[0].endswith("(node: %s)" % new)
+
+
+def test_quoted_number_read_as_a_number():
+    live = stock_yaml("41x").replace("\nnum_tokens: 16\n", '\nnum_tokens: "8"\n')
+    assert cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"]["cassandra_num_tokens"] == 8
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("drop, name", [
+    (r"^cluster_name:.*$", "cluster_name"),
+    (r"^num_tokens:.*$", "num_tokens: ''"),
+    (r"^partitioner:.*$", "partitioner"),
+    (r"^endpoint_snitch:.*$", "endpoint_snitch"),
+    (r"^(\s*- seeds:).*$", "seeds"),
+])
+def test_identity_not_read_fails(series, drop, name):
+    live = re.sub(drop, r"\1 ''" if "seeds" in drop else name if ":" in name else "", stock_yaml(series), count=1,
+                  flags=re.M)
+    name = name.split(":")[0]
+    with pytest.raises(AnsibleFilterError, match=r"cannot read %s from cassandra.yaml" % name) as err:
+        cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    # the reason reaches the report: it names settings, no value
+    assert cassandra_import_error({"failed": True, "msg": str(err.value)}).startswith(
+        "cassandra_config_import: cannot read %s from cassandra.yaml" % name)
+
+
+def test_identity_of_a_file_that_is_not_yaml_fails():
+    with pytest.raises(AnsibleFilterError, match="cannot read cluster_name, num_tokens, partitioner, endpoint_snitch, seeds"):
+        cassandra_config_import({"cassandra.yaml": "cluster_name: [\n"}, "40x", FACTS)
+
+
+def test_storage_compatibility_mode_absent_is_cassandra_4():
+    live = re.sub(r"^storage_compatibility_mode:.*$", "", stock_yaml("50x"), flags=re.M)
+    assert cassandra_config_import({"cassandra.yaml": live}, "50x", FACTS)["vars"][
+        "cassandra_storage_compatibility_mode"] == "CASSANDRA_4"
+
+
+@pytest.mark.parametrize("tpl, live, expected", [
+    ('    - seeds: "{{ s }}"', "        - seeds: a,b  # c", '    - seeds: "a,b"'),
+    ("x: {{ v }}", "x: 0700", "x: 0700"),  # as written, not read as octal
+    ("x: {{ v }}", "x: yes", "x: yes"),  # as written, not a bool
+    ("x: {{ v }}", 'x: "a" # c', 'x: "a" # c'),  # quoted under an unquoted template: as it is
+    ("x: '{{ v }}'", "x: \"it's\"", "x: \"it's\""),  # would need escaping: as it is
+    ("x: {{ v }}", "x: [a, b]", "x: [a, b]"),  # a list: left as it is
+    ("x: {{ v }}", "y: 1", "y: 1"),  # another key
+    ("- x: {{ v }}", "x: 1", "x: 1"),  # not a list item
+])
+def test_as_template_writes(tpl, live, expected):
+    assert cassandra_import._as_template_writes(tpl, live) == expected
+
+
+@pytest.mark.parametrize("line, value", [
+    ("concurrent_reads: 64  # tuned", 64),
+    ('concurrent_reads: "64"', '"64"'),  # kept quoted: written back as the node has it
+])
+def test_other_setting_read_however_written(line, value):
+    live = re.sub(r"^concurrent_reads:.*$", line, stock_yaml("41x"), flags=re.M)
+    assert cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"]["cassandra_concurrent_reads"] == value
+
+
+def test_num_tokens_absent_is_one():
+    live = re.sub(r"^num_tokens:.*$", "# num_tokens: 16\ninitial_token: -9223372036854775808", stock_yaml("41x"),
+                  flags=re.M)
+    assert cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"]["cassandra_num_tokens"] == 1
+
+
+@pytest.mark.parametrize("name, seeds", [("0123", "010"), ("1_000", "10.0.0.1"), ("12:30", "10.0.0.1")])
+def test_identity_text_not_a_number(name, seeds):
+    """cluster_name and seeds are text for Cassandra: not the number PyYAML makes of them."""
+    live = re.sub(r"^cluster_name:.*$", "cluster_name: " + name, stock_yaml("41x"), flags=re.M)
+    live = re.sub(r"^(\s*)- seeds:.*$", r"\1- seeds: " + seeds, live, count=1, flags=re.M)
+    got = cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"]
+    assert (got["cassandra_cluster_name"], got["cassandra_seeds"]) == (name, [seeds])
+
+
+@pytest.mark.parametrize("password", ['"#abc"', '"*abc"', "'a # b'", '"x: y"'])
+def test_quoted_value_kept_quoted(password):
+    live = re.sub(r"^(\s*keystore_password:).*$", r"\1 " + password, stock_yaml("50x"), count=1, flags=re.M)
+    out = cassandra_config_import({"cassandra.yaml": live}, "50x", FACTS)
+    assert out["vars"]["cassandra_tde_keystore_password"] == password  # written back as the node has it
+    assert out["hand_edits"] == []
+
+
+def test_quoted_secret_with_a_comment_not_in_the_report():
+    live = re.sub(r"^(\s*keystore_password:).*$", r'\1 "S3cr3t" # rotated', stock_yaml("50x"), count=1, flags=re.M)
+    out = cassandra_config_import({"cassandra.yaml": live}, "50x", FACTS)
+    assert "S3cr3t" not in "\n".join(out["hand_edits"] + out["normalized"])
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("line, name", [("cluster_name: 'it''s'", "it's"), ("cluster_name: ' Prod '", " Prod ")])
+def test_cluster_name_round_trip(series, line, name):
+    live = re.sub(r"^cluster_name:.*$", line, stock_yaml(series), flags=re.M)
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    assert out["vars"]["cassandra_cluster_name"] == name
+    env, ctx, dummy = _load_role(series, FACTS)
+    ctx.update(out["vars"])
+    assert yaml.safe_load("\n".join(_render(env, series, "cassandra.yaml", ctx)[1]))["cluster_name"] == name
+
+
+@pytest.mark.parametrize("line, value", [("auto_snapshot: yes", True), ("auto_snapshot: False", False)])
+def test_bool_read_however_written(line, value):
+    live = re.sub(r"^auto_snapshot:.*$", line, stock_yaml("41x"), flags=re.M)
+    assert cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"].get(
+        "cassandra_auto_snapshot", True) is value

@@ -48,6 +48,21 @@ SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 ALWAYS = ["cassandra_cluster_name", "cassandra_seeds", "cassandra_endpoint_snitch", "cassandra_num_tokens",
           "cassandra_partitioner", "cassandra_allocate_tokens_for_local_replication_factor",
           "cassandra_storage_compatibility_mode"]
+# The node keeps these for life: read from cassandra.yaml parsed as YAML (whatever
+# its quoting, indentation or comments), and the import fails without them
+# rather than writing the role default
+IDENTITY = {"cassandra_cluster_name": ("cluster_name",), "cassandra_num_tokens": ("num_tokens",),
+            "cassandra_partitioner": ("partitioner",), "cassandra_endpoint_snitch": ("endpoint_snitch",),
+            "cassandra_seeds": ("seed_provider", 0, "parameters", 0, "seeds")}
+# Read the same way when the node has them, but not mandatory (allocate_tokens... absent:
+# still the role default, which the template always writes; it only matters to a new node)
+IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, "class_name"),
+                     "cassandra_allocate_tokens_for_local_replication_factor": (
+                         "allocate_tokens_for_local_replication_factor",),
+                     "cassandra_storage_compatibility_mode": ("storage_compatibility_mode",)}
+INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
+# A plain "key: value" line (maybe a list item), and its value templated
+PLAIN_LINE = re.compile(r"^(\s*(?:- +)?)([a-z0-9_]+): *(.*?)\s*$")
 SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key", re.I)  # sse_c_key, access_key: Medusa's
 # Same masking as cassandra_config's diff preview
 SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
@@ -127,13 +142,37 @@ def _value(cap):
     return parsed if isinstance(parsed, (int, float, bool)) else cap
 
 
+def _as_template_writes(tpl, live):
+    """The live line of a plain YAML setting rewritten with the template line's
+    indentation and quoting (e.g. seeds: a,b for - seeds: "{{ ... }}", or a
+    trailing comment dropped), else the live line as it is (e.g. a quoted value
+    under an unquoted template: read with its quotes, as before)."""
+    t, n = PLAIN_LINE.match(tpl), PLAIN_LINE.match(live)
+    if not (t and n) or t.group(2) != n.group(2) or ("-" in t.group(1)) != ("-" in n.group(1)) \
+            or not t.group(3).lstrip("'\"").startswith("{{"):
+        return live
+    quote = t.group(3)[0] if t.group(3)[0] in "'\"" else ""
+    if n.group(3).startswith(("'", '"')):
+        if not quote:
+            return live
+        try:
+            value = yaml.safe_load("v: " + n.group(3))["v"]
+        except yaml.YAMLError:
+            return live
+    else:
+        value = re.sub(r"\s+#.*$", "", n.group(3))  # as written (e.g. 0700, yes stay text), comment dropped
+    if not isinstance(value, str) or not value or set(value) & set("'\"\\"):
+        return live  # quotes would need escaping: left as it is
+    return "%s%s: %s%s%s" % (t.group(1), t.group(2), quote, value, quote)
+
+
 def _read_line(tpl, live, ctx=None):
     """Values a template line takes to render as the live line, or None.
     ctx: the role defaults, to tell a bool switch from other variables."""
     parts = EXPR.split(tpl)
     exprs = parts[1::2]
     pattern = "".join(re.escape(p) if i % 2 == 0 else "(.*?)" for i, p in enumerate(parts))
-    m = re.fullmatch(pattern, live)
+    m = re.fullmatch(pattern, _as_template_writes(tpl, live)) or re.fullmatch(pattern, live)
     if not m:
         return None
     found, flags, values, gc = {}, {}, {}, {}
@@ -142,7 +181,7 @@ def _read_line(tpl, live, ctx=None):
         if re.fullmatch(r"(\w+)", e):
             found[e] = _value(cap)
         elif re.fullmatch(r"(\w+) \| lower", e):
-            found[e.split()[0]] = cap == "true"
+            found[e.split()[0]] = cap.lower() in ("true", "yes", "on")  # YAML's true, however written
         elif re.fullmatch(r"'' if %s else '[^']*'" % V, e):
             flags[re.fullmatch(r"'' if %s else '[^']*'" % V, e).group(1)] = cap == ""
         elif re.fullmatch(r"'# ' if (\w+) == '' else ''", e):
@@ -407,6 +446,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target=""):
             where[0] = name
             found.update(_import_file(env, cassandra_version, name, ctx, live_files[name].split("\n")))
     where[0] = "cassandra.yaml"
+    if "cassandra.yaml" in live_files:
+        found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
     changed = {k: v for k, v in found.items()
                if str(v).lower() != str(_default(ctx, k)).lower()
                and not (v == "" and _default(ctx, k) in ([], {}))}  # a list/dict variable left empty
@@ -466,6 +507,52 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target=""):
         elif facts.get("hostname") and out.get(key) == facts["hostname"]:
             out[key] = HOSTNAME
     return {"vars": out, "hand_edits": hand, "normalized": normalized}
+
+
+def _as_text(node):
+    """A YAML node with each scalar its text, as SnakeYAML reads a String
+    setting (cluster_name 0123 is not 83, seeds 010 not 8); plain null/~/empty: None."""
+    if isinstance(node, yaml.MappingNode):
+        return dict((_as_text(k), _as_text(v)) for k, v in node.value)
+    if isinstance(node, yaml.SequenceNode):
+        return [_as_text(v) for v in node.value]
+    if node is None or node.style is None and node.value in ("", "~", "null", "Null", "NULL"):
+        return None
+    return node.value
+
+
+def _identity(text, series):
+    """The settings a node keeps for life, from cassandra.yaml parsed as YAML.
+    Fails, naming them, when a mandatory one isn't there."""
+    try:
+        conf = _as_text(yaml.compose(text))
+    except yaml.YAMLError:
+        conf = None
+    found, missing = {}, []
+    for var, path in list(IDENTITY.items()) + list(IDENTITY_OPTIONAL.items()):
+        value = conf
+        for step in path:
+            try:
+                value = value[step]
+            except (KeyError, IndexError, TypeError):
+                value = None
+                break
+        if var in INTEGERS and isinstance(value, str) and value.strip().isdigit():
+            value = int(value)  # quoted: Cassandra reads it as a number all the same
+        if var == "cassandra_num_tokens" and isinstance(conf, dict) and "num_tokens" not in conf:
+            value = 1  # Cassandra's own default (e.g. a single-token node with initial_token)
+        if isinstance(value, bool) or not isinstance(value, int if var in INTEGERS else (str, int)) \
+                or str(value).strip() == "":
+            if var in IDENTITY:
+                missing.append(path[-1])
+            continue
+        found[var] = value
+    if missing:
+        raise AnsibleFilterError("cassandra_config_import: cannot read %s from cassandra.yaml (not the role default:"
+                                 " set them by hand in the inventory)" % ", ".join(missing))
+    if series == "50x" and "cassandra_storage_compatibility_mode" not in found and isinstance(conf, dict):
+        found["cassandra_storage_compatibility_mode"] = "CASSANDRA_4"  # 5.0's own default, not the role's
+    return found
 
 
 def _slug(text):
@@ -828,6 +915,7 @@ SAFE_REASONS = [
     (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files): [^\n]*?\(message hidden: "
                 r"it may show a value read from the nodes\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
+    (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
     (re.compile(r"(?:^|: )'(\w+)' is undefined(?:\.|$)"), r"undefined variable '\1'"),
 ]
