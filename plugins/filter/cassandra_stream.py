@@ -8,8 +8,13 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+import time
 
 _GIB = 1024.0 ** 3
+# the rate is measured over this many check intervals
+_WINDOW = 3
+# beyond this, the ETA is shown as unknown
+_ETA_MAX = 30 * 86400
 
 
 def _pair(done, total):
@@ -25,8 +30,48 @@ def _duration(seconds):
     return "%dm%02ds" % (seconds // 60, seconds % 60)
 
 
+def _rate(per_second):
+    if per_second >= _GIB:
+        return "%.1f GiB/s" % (per_second / _GIB)
+    if per_second >= 1024.0 ** 2:
+        mib = per_second / 1024.0 ** 2
+        return ("%.1f MiB/s" if mib < 10 else "%d MiB/s") % mib
+    return "%d KiB/s" % (per_second / 1024.0)
+
+
+def _eta(seconds):
+    """The time left, shorter than _duration's: "8h32", "1d04h"."""
+    seconds = int(seconds)
+    if seconds >= 86400:
+        return "%dd%02dh" % (seconds // 86400, seconds % 86400 // 3600)
+    if seconds >= 3600:
+        return "%dh%02d" % (seconds // 3600, seconds % 3600 // 60)
+    return "%dm%02ds" % (seconds // 60, seconds % 60)
+
+
+def _speed(samples, done, total, now, label="ETA"):
+    """The rate over the last _WINDOW check intervals (samples: [[time, bytes
+    done], ...] of the earlier checks that answered), the time left and the
+    end time (controller's local time): "12 MiB/s  ETA 8h32 (ends ~03:40)";
+    "ETA ?" while there are fewer than two checks, when nothing moved, or
+    when the ETA would be beyond _ETA_MAX."""
+    if total <= 0 or done >= total:
+        return None
+    first = samples[-_WINDOW:][0] if samples else None
+    if first is None or now <= first[0] or done <= first[1]:
+        return label + " ?"
+    per_second = (done - first[1]) / float(now - first[0])
+    left = (total - done) / per_second
+    if left > _ETA_MAX:
+        return "%s  %s ?" % (_rate(per_second), label)
+    # the date too when the end is on another day
+    end = time.localtime(now + left)
+    ends = time.strftime("%H:%M" if end[:3] == time.localtime(now)[:3] else "%Y-%m-%d %H:%M", end)
+    return "%s  %s %s (ends ~%s)" % (_rate(per_second), label, _eta(left), ends)
+
+
 def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4,
-                              width=20):
+                              width=20, eta_label="ETA"):
     """views: the results of cassandra_netstats looped over hosts (item: the
     host, then the module's return values); state: what
     the previous call returned (None the first time); now: epoch seconds.
@@ -39,8 +84,10 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     a row without progress), stalled (stall_checks calls in a row without
     progress while some session has bytes left, stall_checks * quiet_factor
     otherwise), transferring, sessions (sessions in netstats now),
-    answered (at least one view answered), bytes_done/bytes_total, line (one
-    readable line)."""
+    answered (at least one view answered), bytes_done/bytes_total, samples
+    (time and bytes done of the last checks, for the rate), line (one readable
+    line: bar, bytes, rate, ETA from the rate over the last 3 checks...).
+    eta_label: what the time left is called on the line."""
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
     tables = dict(state.get("tables") or {})
@@ -99,12 +146,16 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     pct = int(100 * done / total) if total else 0
     filled = int(width * done / total) if total else 0
     parts = ["[%s%s] %3d%%" % ("#" * filled, "-" * (width - filled), pct), _pair(done, total)]
+    samples = [list(x) for x in state.get("samples") or []]
+    # a check without answer has no new count: no rate from it
+    speed = _speed(samples, done, total, now, eta_label) if answered else ((eta_label + " ?") if total > done else None)
+    if speed:
+        parts.append(speed)
+    if answered:
+        samples = (samples + [[now, done]])[-_WINDOW:]
     if tables:
         parts.append("tables: %d done, %d streaming" % (list(tables.values()).count("done"),
                                                         list(tables.values()).count("streaming")))
-    start_done = state.get("start_done", done)
-    if done > start_done and total > done and now > start:
-        parts.append("ETA ~%s" % _duration((total - done) * (now - start) / float(done - start_done)))
     if not answered:
         parts.append("(no answer from nodetool netstats)")
     elif not streams:
@@ -116,10 +167,10 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     if idle_checks:
         parts.append("NO PROGRESS for %s (%d/%d checks)" % (_duration(now - last_progress), idle_checks, limit))
     return {
-        "start": start, "start_done": start_done, "streams": streams, "tables": tables, "progressed": progressed,
+        "start": start, "streams": streams, "tables": tables, "progressed": progressed,
         "last_progress": last_progress, "idle_checks": idle_checks,
         "stalled": idle_checks >= limit, "sessions": len(current), "transferring": transferring,
-        "answered": bool(answered), "bytes_done": done, "bytes_total": total, "line": "  ".join(parts),
+        "answered": bool(answered), "bytes_done": done, "bytes_total": total, "samples": samples, "line": "  ".join(parts),
     }
 
 

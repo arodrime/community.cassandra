@@ -50,7 +50,7 @@ Role Variables
   and cleanups are waited for as long as they make progress: every
   `cassandra_stream_check_interval` seconds (default 300) `nodetool netstats`
   (`compactionstats` for a cleanup) is read and one line printed, e.g.
-  `14:05 [########------------]  41%  290.4/710.2 GiB  tables: 12 done, 2 streaming  ETA ~3h10m  2 sessions  now: orders.items (from 10.0.0.3)`.
+  `14:05 [########------------]  41%  290.4/710.2 GiB  38 MiB/s  ETA 3h08 (ends ~17:13)  tables: 12 done, 2 streaming  2 sessions  now: orders.items (from 10.0.0.3)`.
   The run fails only after `cassandra_stream_stall_checks` checks in a row
   (default 3) with nothing streamed: no byte or file, no session started or
   ended; 4 times as many while nothing is left to transfer (before the first

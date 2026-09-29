@@ -33,7 +33,8 @@
       ansible.builtin.set_fact:
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
-               now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int) }}
+               now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
+                 eta_label='ETA of the running tasks') }}
       vars:
         _views: >-
           {{ cassandra_cleanup_read.results | zip(cassandra_cleanup_jobs_started.results | map(attribute='item'))

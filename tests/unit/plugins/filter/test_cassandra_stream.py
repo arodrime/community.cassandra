@@ -2,12 +2,28 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import os
+import time
+
+import pytest
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
     cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress)
 
 GIB = 1024 ** 3
+MIB = 1024 ** 2
+
+
+@pytest.fixture(autouse=True)
+def utc(monkeypatch):
+    """End times in UTC: epoch 0 is 00:00."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
 
 
@@ -36,14 +52,15 @@ def read(host, *sessions, **kwargs):
 def test_progress_and_line():
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 0, 100 * GIB), session("10.0.0.2", 0, 100 * GIB))],
                                   None, now=1000, operations=["Bootstrap"])
-    assert s["progressed"] and not s["stalled"] and s["line"].startswith("[--------------------]   0%")
+    assert s["progressed"] and not s["stalled"] and s["line"].startswith("[--------------------]   0%  0.0/200.0 GiB  ETA ?  ")
     files = [{"path": "/d/ks/t-%s/nb-1-big-Data.db" % ("0" * 32), "table": "ks.t", "done": 5, "total": 10}]
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 60 * GIB, 100 * GIB, files=files),
                                         session("10.0.0.2", 40 * GIB, 100 * GIB))],
                                   s, now=1300, operations=["Bootstrap"])
     assert s["progressed"] and s["last_progress"] == 1300
-    assert s["line"] == ("[##########----------]  50%  100.0/200.0 GiB  tables: 0 done, 1 streaming  ETA ~5m00s"
-                         "  2 sessions  now: ks.t (from 10.0.0.1)")
+    # 100 GiB in 300s
+    assert s["line"] == ("[##########----------]  50%  100.0/200.0 GiB  341 MiB/s  ETA 5m00s (ends ~00:26)"
+                         "  tables: 0 done, 1 streaming  2 sessions  now: ks.t (from 10.0.0.1)")
 
 
 def test_stall_after_checks_in_a_row_without_bytes():
@@ -240,10 +257,60 @@ def test_nothing_answers_then_a_bigger_total_is_progress():
     assert s["progressed"] and s["bytes_total"] == 120
 
 
-def test_eta_from_the_bytes_streamed_since_the_first_check():
-    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 40, 100))], None, now=0)
-    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 70, 100))], s, now=300)
-    assert s["start_done"] == 40 and "ETA ~5m00s" in s["line"]
+def eta(done, now, s, total=710 * GIB):
+    return cassandra_stream_progress([read("n4", session("10.0.0.1", done, total))], s, now=now)
+
+
+def test_eta_unknown_until_two_checks_or_when_nothing_moves():
+    s = eta(40 * GIB, 0, None)
+    assert "  ETA ?  " in s["line"] and "/s" not in s["line"]
+    s = eta(40 * GIB, 300, s)  # no byte since the first check: rate 0
+    assert "  ETA ?  " in s["line"]
+    # nothing left: no ETA
+    assert "ETA" not in eta(710 * GIB, 600, s)["line"]
+
+
+def test_eta_from_the_rate_of_the_last_three_checks():
+    # 12 MiB/s for 3 checks, after a first check at 40 GiB
+    s = eta(40 * GIB, 0, None)
+    s = eta(40 * GIB + 3600 * 12 * MIB, 3600, s)
+    assert "  12 MiB/s  ETA " in s["line"]
+    s = eta(40 * GIB + 7200 * 12 * MIB, 7200, s)
+    s = eta(40 * GIB + 10800 * 12 * MIB, 10800, s)
+    left = (710 * GIB - (40 * GIB + 10800 * 12 * MIB)) / (12.0 * MIB)
+    assert "  12 MiB/s  ETA %dh%02d (ends ~%s)" % (left // 3600, left % 3600 // 60,
+                                                   time.strftime("%H:%M", time.gmtime(10800 + left))) in s["line"]
+    # then 6 MiB/s: the first 12 MiB/s hour leaves the window after three more checks
+    for i in (1, 2, 3):
+        s = eta(s["bytes_done"] + 3600 * 6 * MIB, 10800 + 3600 * i, s)
+        assert ("  %s MiB/s  " % {1: 10, 2: "8.0", 3: "6.0"}[i]) in s["line"], s["line"]
+    assert len(s["samples"]) == 3
+
+
+def test_eta_over_a_day_shows_the_date():
+    s = eta(0, 0, None, total=100 * GIB)
+    s = eta(100 * MIB, 100, s, total=100 * GIB)  # 1 MiB/s: 99.9 GiB left, about 28h
+    assert "  1.0 MiB/s  ETA 1d04h (ends ~1970-01-02 04:26)" in s["line"]
+
+
+def test_eta_ignores_a_check_without_answer():
+    s = eta(0, 0, None, total=100 * GIB)
+    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=300)
+    assert s["samples"] == [[0, 0]] and "ETA ?" in s["line"]
+    s = eta(300 * MIB, 600, s, total=100 * GIB)
+    assert "  512 KiB/s  ETA " in s["line"]
+    # no answer after two good checks: no made-up rate
+    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=900)
+    assert "  ETA ?  (no answer" in s["line"] and "/s" not in s["line"]
+
+
+def test_eta_unknown_beyond_30_days():
+    s = eta(0, 0, None, total=100 * 1024 * GIB)
+    s = eta(1, 3600, s, total=100 * 1024 * GIB)  # 1 byte an hour: no absurd date, no error
+    assert "  0 KiB/s  ETA ?  " in s["line"]
+    s = eta(0, 0, None, total=100 * GIB)
+    assert "  40 KiB/s  ETA ?" in eta(40 * 1024, 1, s, total=100 * GIB)["line"]  # 30.3 days
+    assert "  50 KiB/s  ETA 24d06h (ends ~1970-01-25 06:32)" in eta(50 * 1024, 1, s, total=100 * GIB)["line"]
 
 
 def test_nodes_added_in_the_same_run_clean_up_for_the_later_ones():
@@ -278,7 +345,7 @@ def test_real_40_41_bootstrap_progress_between_two_checks():
         s = cassandra_stream_progress([netstats_view("n2", "nodetool_netstats_%s_bootstrap_receiving_late.txt" % version)],
                                       s, now=300, operations=["Bootstrap"])
         assert s["progressed"] and s["idle_checks"] == 0 and not s["stalled"]
-        assert s["line"].startswith("[#########-----------]  4") and "/91." in s["line"] and "MiB" in s["line"] and "ETA ~" in s["line"]
+        assert s["line"].startswith("[#########-----------]  4") and "/91." in s["line"] and "MiB" in s["line"] and "/s  ETA " in s["line"]
 
 
 def test_an_unreachable_node_keeps_its_cleanup_running():
@@ -295,3 +362,19 @@ def test_run_again_for_the_cleanup_keeps_the_earlier_new_nodes():
     ring = {"dc1": {"nodes": RING["dc1"]["nodes"] + [node("10.0.0.7", "r1"), node("10.0.0.8", "r1")]}}
     plan = cassandra_add_node_plan(ring, new, hosts=HOSTS, keyspaces=NTS3)
     assert plan["cleanup"]["dc1"] == ["n1", "n4", "n7"]
+
+
+def test_eta_says_the_day_when_the_end_is_tomorrow():
+    s = eta(0, 84600, None, total=10 * GIB)  # 23:30
+    s = eta(1024 * MIB, 84900, s, total=10 * GIB)  # 1 GiB in 5 minutes: 45 minutes left
+    assert "  ETA 45m00s (ends ~1970-01-02 00:20)" in s["line"]
+
+
+def test_cleanup_eta_is_for_the_running_tasks():
+    view = cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_50_cleanup.txt")}, "n1"))
+    s = cassandra_stream_progress([view], None, now=0, operations=["Cleanup"], eta_label="ETA of the running tasks")
+    assert "  ETA of the running tasks ?  " in s["line"]
+    for v in view["sessions"]:
+        v["bytes_done"] += MIB
+    s = cassandra_stream_progress([view], s, now=100, operations=["Cleanup"], eta_label="ETA of the running tasks")
+    assert "  ETA of the running tasks " in s["line"] and "(ends ~" in s["line"]
