@@ -314,25 +314,31 @@ KEPT = {"cassandra_linux_manage": False, "cassandra_cqlsh_python_manage": False,
 
 def test_kept_setup_on_a_blank_host():
     # a host rebuilt under an imported node's name, its host_vars left as they were
-    out = cassandra_new_node_kept_setup(KEPT, installed=False)
+    out = cassandra_new_node_kept_setup(KEPT, installed=False, imported=True)
     assert len(out["problems"]) == 1
     assert out["problems"][0].startswith("cassandra_linux_manage, cassandra_cqlsh_python_manage, cassandra_service_unit_manage"
-                                         " are false here, but no Cassandra is installed")
+                                         " are false on a host with the host_vars import_cluster wrote")
     assert "no OS tuning, no Python for cqlsh, no systemd unit" in out["problems"][0]
-    assert "remove them from this host's host_vars" in out["problems"][0]
-    one = cassandra_new_node_kept_setup({"cassandra_service_unit_manage": "false"}, installed=False)
-    assert one["problems"][0].startswith("cassandra_service_unit_manage is false here")
+    assert "remove these lines and cassandra_imported_host from its host_vars" in out["problems"][0]
+    one = cassandra_new_node_kept_setup({"cassandra_service_unit_manage": "false"}, installed=False, imported="true")
+    assert one["problems"][0].startswith("cassandra_service_unit_manage is false on a host with the host_vars")
 
 
 def test_kept_setup_accepted():
     # Cassandra there already, or the operator says the host is set up another way
-    assert cassandra_new_node_kept_setup(KEPT, installed=True)["problems"] == []
-    out = cassandra_new_node_kept_setup(KEPT, installed=False, allow="yes")
-    assert out["problems"] == [] and out["info"][0].startswith("kept as found on this host")
+    assert cassandra_new_node_kept_setup(KEPT, installed=True, imported=True)["problems"] == []
+    out = cassandra_new_node_kept_setup(KEPT, installed=False, imported=True, allow="yes")
+    assert out["problems"] == [] and out["info"][0].startswith("left as it is on this host")
+
+
+def test_switches_of_the_operator_not_refused():
+    # set on purpose (e.g. group_vars, OS tuned by other tooling): no import marker, the operator's choice
+    out = cassandra_new_node_kept_setup(KEPT, installed=False)
+    assert out["problems"] == [] and out["info"][0].startswith("left as it is on this host")
 
 
 def test_no_kept_setup():
     on = {"cassandra_linux_manage": True, "cassandra_cqlsh_python_manage": "true", "cassandra_service_unit_manage": True}
-    assert cassandra_new_node_kept_setup(on, installed=False) == {"problems": [], "warnings": [], "info": []}
-    # cassandra_repository_manage false is a usual choice, not checked here
-    assert cassandra_new_node_kept_setup({"cassandra_repository_manage": False}, installed=False)["problems"] == []
+    assert cassandra_new_node_kept_setup(on, installed=False, imported=True) == {"problems": [], "warnings": [], "info": []}
+    # cassandra_repository_manage false: the package checks cover it
+    assert cassandra_new_node_kept_setup({"cassandra_repository_manage": False}, installed=False, imported=True)["problems"] == []

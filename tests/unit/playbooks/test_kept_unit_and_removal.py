@@ -130,3 +130,13 @@ def test_orphan_removal_refused_unless_asked():
     assert not true(that, cassandra_dead_removal={"state": "orphan", "on": ""})
     assert true(that, cassandra_dead_removal={"state": "orphan", "on": ""}, cassandra_dead_node_new_removal=True)
     assert true(that, cassandra_dead_removal={"state": "start", "on": ""})
+
+
+def test_new_node_check_passes_the_import_marker():
+    # without it the refusal of a blank host under an imported name would silently never happen
+    block = load("roles", "cassandra_service", "tasks", "new_node_checks.yml")[1]["block"]
+    gather = next(t for t in block if t.get("name") == "Gather what the checks need")
+    task = next(t for t in gather["block"] if t.get("name") == "Put the findings together")
+    kept = [e for e in task["vars"]["_all"] if "cassandra_new_node_kept_setup" in e][0]
+    assert "imported=cassandra_imported_host | default(false)" in kept
+    assert "allow=cassandra_new_node_allow_kept_setup" in kept

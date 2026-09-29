@@ -66,6 +66,11 @@ PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn"]
 JMX_CREATE_UNREGISTER = ["create", "javax.management.monitor.*,javax.management.timer.*", "unregister"]
 # What the roles leave as it is on a node set up another way (host_vars only:
 # a node added later gets it from the roles)
+# Written next to the switches below when one of those a blank host would miss
+# is set (all but the repositories): add_node refuses a blank host rebuilt
+# under that node's name
+IMPORTED = "cassandra_imported_host"
+IMPORTED_FOR = ("cassandra_cqlsh_python_manage", "cassandra_linux_manage", "cassandra_service_unit_manage")
 KEEP = {
     "cassandra_repository_manage": "the package repositories",
     "cassandra_cqlsh_python_manage": "cqlsh's Python (python3.11, cqlshlib link, wrapper)",
@@ -631,6 +636,8 @@ def cassandra_inventory_layout(nodes, cluster_name):
     for n in nodes:
         if n.get("keep"):
             host_vars.setdefault(n["name"], {}).update(n["keep"])
+        if any(k in IMPORTED_FOR for k in n.get("keep") or {}):
+            host_vars[n["name"]][IMPORTED] = True
     for n in read:
         report.append("== %s" % n["name"])
         report += ["  " + note for note in n.get("notes", [])]
@@ -711,7 +718,7 @@ BLOCKS = [
         "cassandra_medusa_python", "cassandra_medusa_storage_provider", "cassandra_medusa_bucket_name",
         "cassandra_medusa_region", "cassandra_medusa_host", "cassandra_medusa_port", "cassandra_medusa_base_path",
         "cassandra_medusa_prefix", "cassandra_medusa_key_file", "cassandra_medusa_fqdn"]),
-    ("Left as it is on this node (set up another way)", list(KEEP)),
+    ("Left as it is on this node (set up another way)", list(KEEP) + [IMPORTED]),
     ("Other", []),
 ]
 BLOCK_PATTERNS = [

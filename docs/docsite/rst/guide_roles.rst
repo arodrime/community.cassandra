@@ -163,9 +163,10 @@ tarball and the Medusa pip index answer with their credentials, and when the rep
 (``cassandra_repository_manage: false``, ``cassandra_offline``) Cassandra is available or installed at
 ``cassandra_package_version``; the storage port of two seeds answers from the new host (their native port too, or a
 warning), its own Cassandra ports are free and Cassandra is not running there; a host with no Cassandra installed does
-not keep ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage`` or ``cassandra_service_unit_manage`` false (the
-host_vars ``import_cluster`` wrote for a node, left there when the host is rebuilt under its name: remove them, or set
-``cassandra_new_node_allow_kept_setup: true`` when the host is set up another way). A source that does not answer at all
+not keep the ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage`` or ``cassandra_service_unit_manage`` false
+that ``import_cluster`` wrote for a node (marked ``cassandra_imported_host: true``), left there when the host is rebuilt
+under its name: remove them, or set ``cassandra_new_node_allow_kept_setup: true`` when the host is set up another way.
+The same switches set by the operator, e.g. in ``group_vars``, are left to them. A source that does not answer at all
 is only a warning: the package managers and pip may go through a proxy of their own. ``-e cassandra_new_node_checks=false`` skips these checks.
 
 Before anything starts, ``add_node`` shows one screen and asks once (``cassandra_operation_confirm: false`` for
@@ -515,10 +516,11 @@ the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python an
 Cassandra is started by. A part that has no mark of the roles (their repository file, sysctl file or ``Managed by
 Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
 ``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
-``cassandra_service_unit_manage``), never in ``group_vars``: nodes added later get the roles' full setup. Remove a
-line to let the role take that part over, after a ``--check --diff``; a host rebuilt under the same name must lose
-them (``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before touching a node whose repositories are not managed and lack the target
-version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
+``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
+``group_vars``: nodes added later get the roles' full setup. Remove a line to let the role take that part over,
+after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
+(``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before
+touching a node whose repositories are not managed and lack the target version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
 already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
 unregister rights keeps them that way, and ``cassandra_config`` leaves a file (the JMX users' files too) alone on an
 initialized node when its settings are the same as the role's (only comments or layout differ). After an import,

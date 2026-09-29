@@ -50,10 +50,16 @@ argument_specs:
         type: bool
         default: false
         description:
-          - The new host checks refuse a host with no Cassandra installed yet where
+          - The new host checks refuse a host with no Cassandra installed yet that still has the host_vars
+            C(import_cluster) wrote for the node that had its name (C(cassandra_imported_host=true) with
             C(cassandra_linux_manage), C(cassandra_cqlsh_python_manage) or C(cassandra_service_unit_manage)
-            is V(false) (for example the host_vars C(import_cluster) wrote for the node a rebuilt host had),
-            as the roles would leave it half set up. V(true) accepts it, when that host is set up another way.
+            V(false)), as the roles would leave it half set up. The same switches set by the operator are not
+            refused. V(true) accepts it, when that host is set up another way.
+      cassandra_imported_host:
+        type: bool
+        description:
+          - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
+            there. The new host checks use it to tell those switches from the operator's own.
       cassandra_service_user:
         type: str
         default: cassandra

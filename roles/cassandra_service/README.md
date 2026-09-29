@@ -87,11 +87,12 @@ Role Variables
 * `cassandra_new_node_min_free_gb`: minimum free space (GiB) on each data
   directory's file system of a new host. Default `0` (none).
 * `cassandra_new_node_allow_kept_setup`: the checks refuse a new host with no
-  Cassandra installed where `cassandra_linux_manage`,
-  `cassandra_cqlsh_python_manage` or `cassandra_service_unit_manage` is
-  `false` (e.g. the host_vars `import_cluster` wrote for the node a rebuilt
-  host had): the roles would leave it half set up. `true` accepts it, when
-  the host is set up another way. Default `false`.
+  Cassandra installed that still has the host_vars `import_cluster` wrote for
+  the node that had its name (`cassandra_imported_host: true` with
+  `cassandra_linux_manage`, `cassandra_cqlsh_python_manage` or
+  `cassandra_service_unit_manage` false): the roles would leave it half set
+  up. Those switches set by the operator (no marker) are not refused. `true`
+  accepts it, when the host is set up another way. Default `false`.
 
 Config changes made by `cassandra_config` never restart the node either.
 

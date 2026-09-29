@@ -591,14 +591,15 @@ def test_layout_what_is_left_as_it_is_goes_to_each_node():
              node("n3", "dc1", "r1", cassandra_num_tokens=4)]
     out = cassandra_inventory_layout(nodes, "c")
     assert out["group_vars"]["c"] == {"cassandra_num_tokens": 4}
-    assert out["host_vars"] == {"n1": keep, "n2": keep}
+    marked = dict(keep, cassandra_imported_host=True)  # these switches come from the import (add_node checks it)
+    assert out["host_vars"] == {"n1": marked, "n2": marked}
     assert "none" in out["differences"]
     assert "LEFT AS IT IS" in out["report"]
     assert "the OS settings (kernel, limits, THP, swap, time sync, disks) (cassandra_linux_manage: false)" in out["report"]
     files = cassandra_inventory_files(out)
     n1 = next(f for f in files if f["path"] == "host_vars/n1/main.yml")
     assert n1["content"].startswith("# Left as it is on this node (set up another way)\n")
-    assert yaml.safe_load(n1["content"]) == keep
+    assert yaml.safe_load(n1["content"]) == marked
 
 
 def test_layout_left_as_it_is_on_every_node_stays_per_node():
@@ -607,12 +608,27 @@ def test_layout_left_as_it_is_on_every_node_stays_per_node():
     nodes.append(dict(node("n3", "dc1", "r1"), read=False, reason="unreachable", keep=keep))
     out = cassandra_inventory_layout(nodes, "c")
     assert out["group_vars"]["c"] == {"cassandra_num_tokens": 4}
-    assert out["host_vars"] == {"n1": keep, "n2": keep, "n3": keep}
+    marked = dict(keep, cassandra_imported_host=True)
+    assert out["host_vars"] == {"n1": marked, "n2": marked, "n3": marked}
     assert "The roles leave their setup as it is" in out["report"]
 
 
 def test_layout_value_kept_on_a_node_is_reported():
     keep = {"cassandra_service_unit_manage": False, "cassandra_log_dir": "/var/log/cassandra"}
+    out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep)], "c")
+    assert out["host_vars"] == {"n1": dict(keep, cassandra_imported_host=True)}
+
+
+def test_layout_no_marker_for_the_repositories_alone():
+    # a blank host misses nothing the package checks don't see: no marker, the operator's own switches stay theirs
+    keep = {"cassandra_repository_manage": False}
+    out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep)], "c")
+    assert out["host_vars"] == {"n1": keep}
+
+
+def test_layout_no_marker_without_a_switch():
+    # a value kept (log dir) but every part set up by the roles: nothing for add_node to refuse
+    keep = {"cassandra_log_dir": "/var/log/cassandra"}
     out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep)], "c")
     assert out["host_vars"] == {"n1": keep}
     assert "cassandra_log_dir: \"/var/log/cassandra\", as this node has it" in out["report"]

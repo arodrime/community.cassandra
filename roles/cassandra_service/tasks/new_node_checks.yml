@@ -4,7 +4,7 @@
 # (mounted where fstab or systemd expects, empty, free space), the Pythons of
 # cqlsh and Medusa, the packages and where they come from, the network to the
 # seeds, its own ports free, no Cassandra running, no *_manage: false switch
-# on a host with no Cassandra (host_vars of an imported node). Read-only, also
+# import_cluster wrote (host_vars of a node it found) on a host with no Cassandra. Read-only, also
 # under --check. Runs after the preflight play (its facts and ring). A host already
 # in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
 # checks it next). cassandra_new_node_checks: false skips them all.
@@ -216,7 +216,7 @@
                               and (ansible_facts['os_family'] != 'Debian'
                                    or cassandra_new_node_apt_lists.matched | default(0) > 0)) }}
               - "{{ cassandra_new_node_url_results | community.cassandra.cassandra_new_node_urls }}"
-              # *_manage: false host_vars (a node import_cluster read) on a blank host
+              # *_manage: false host_vars import_cluster wrote (a node it found), on a blank host
               - >-
                 {{ {'cassandra_linux_manage': cassandra_linux_manage | default(true),
                     'cassandra_cqlsh_python_manage': cassandra_cqlsh_python_manage,
@@ -225,6 +225,7 @@
                        'cassandra' in ansible_facts['packages'] | default({})
                        or cassandra_new_node_paths.results | selectattr('item', 'in', _cassandra_new_node_units)
                           | selectattr('stat.exists') | list | length > 0,
+                       imported=cassandra_imported_host | default(false),
                        allow=cassandra_new_node_allow_kept_setup) }}
               - >-
                 {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,

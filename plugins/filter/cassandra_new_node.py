@@ -301,9 +301,9 @@ def cassandra_new_node_urls(results):
     return _result(problems, warnings, info)
 
 
-# Switches import_cluster writes in an existing node's host_vars (its own setup
-# kept). cassandra_repository_manage is left out: false is a usual choice
-# (repositories set up by other means), and the package checks cover it.
+# Switches import_cluster writes in an existing node's host_vars (its own
+# setup kept), with cassandra_imported_host. cassandra_repository_manage is
+# left out: false is a usual choice, and the package checks cover it.
 KEPT_SETUP = (
     ("cassandra_linux_manage", "no OS tuning"),
     ("cassandra_cqlsh_python_manage", "no Python for cqlsh"),
@@ -311,23 +311,26 @@ KEPT_SETUP = (
 )
 
 
-def cassandra_new_node_kept_setup(switches, installed, allow=False):
+def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=False):
     """switches: {name: value} of the *_manage switches in KEPT_SETUP;
-    installed: Cassandra found on the host (its package or a unit). A blank
-    host with these switches off would be half set up: e.g. a host rebuilt
-    under the name of a node import_cluster read, its host_vars left as
-    they were. allow: the operator sets that host up another way."""
+    installed: Cassandra found on the host (its package or a unit);
+    imported: cassandra_imported_host, which import_cluster writes next to
+    the switches it sets for a node it found. A blank host with those
+    switches would be half set up: a host rebuilt under that node's name,
+    its host_vars left as they were. Switches an operator set (no marker)
+    are theirs. allow: the operator sets that host up another way."""
     off = [(name, what) for name, what in KEPT_SETUP if not boolean(switches.get(name, True))]
     if not off:
         return _result()
     names = ", ".join(name for name, what in off)
-    if installed or boolean(allow):
-        return _result(info=["kept as found on this host (false): %s" % names])
+    if installed or not boolean(imported) or boolean(allow):
+        return _result(info=["left as it is on this host (false): %s" % names])
     return _result(problems=[
-        "%s %s false here, but no Cassandra is installed on this host: the roles would leave it with %s. These"
-        " lines keep the setup of a node found by import_cluster; remove them from this host's host_vars (a host"
-        " rebuilt under that name), or set cassandra_new_node_allow_kept_setup: true if this host is set up"
-        " another way (e.g. these switches set on purpose in group_vars)" % (names, "is" if len(off) == 1 else "are", ", ".join(what for name, what in off))])
+        "%s %s false on a host with the host_vars import_cluster wrote for the node that had this name"
+        " (cassandra_imported_host), but no Cassandra is installed on this host: the roles would leave it with %s. For a host rebuilt under that"
+        " name, remove these lines and cassandra_imported_host from its host_vars; if this host is set up another"
+        " way, set cassandra_new_node_allow_kept_setup: true"
+        % (names, "is" if len(off) == 1 else "are", ", ".join(what for name, what in off))])
 
 
 class FilterModule(object):

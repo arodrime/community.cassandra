@@ -47,11 +47,11 @@ cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout
 cassandra_new_node_checks: true
 # Minimum free space (GiB) on each data directory's file system, 0 = no minimum
 cassandra_new_node_min_free_gb: 0
-# true: a new host with no Cassandra yet may keep *_manage: false switches
+# The checks refuse a new host with no Cassandra yet that has the *_manage:
+# false switches import_cluster wrote for the node the host had before
 # (cassandra_linux_manage, cassandra_cqlsh_python_manage,
-# cassandra_service_unit_manage): its setup is done another way. Otherwise
-# the checks refuse it (e.g. host_vars import_cluster wrote for the node the
-# host had before).
+# cassandra_service_unit_manage, with cassandra_imported_host: true in its
+# host_vars). true accepts it: its setup is done another way.
 cassandra_new_node_allow_kept_setup: false
 
 # Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
