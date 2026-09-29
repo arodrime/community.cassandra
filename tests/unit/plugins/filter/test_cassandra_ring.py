@@ -50,7 +50,7 @@ def test_matching_ring_and_inventory():
         "  UN  10.0.0.1  1.0 GiB    16      33.3%  id-10.0.0.1  r1    n1",
         "  UN  10.0.0.2  512.0 MiB  16      33.3%  id-10.0.0.2  r1    n2",
         "  dc1: 2 node(s), 2 up, 0 down; load 1.50 GiB",
-        "The inventory and the ring match (2 node(s))",
+        "The ring and the inventory match (2 node(s))",
     ]
 
 
@@ -75,7 +75,7 @@ def test_unreachable_host_found_by_its_resolved_name():
                                   unreachable=["node9.example"])
     assert lines[1:3] == ["  --  Address   Load     Tokens  Owns   Host ID      Rack  Inventory",
                           "  DN  10.0.0.9  1.0 GiB  16      33.3%  id-10.0.0.9  r1    node9.example"]
-    assert lines[-1] == "The inventory and the ring match (1 node(s))"
+    assert lines[-1] == "The ring and the inventory match (1 node(s))"
 
 
 def test_multi_dc_fixture_grouped_by_dc():
@@ -90,7 +90,7 @@ def test_multi_dc_fixture_grouped_by_dc():
         "  --  Address   Load     Tokens     Owns   Host ID                               Rack   Inventory",
         "  UN  10.0.1.1  2.0 GiB  123456789  50.0%  bbbbbbbb-2222-2222-2222-222222222222  rack2  b",
         "  datacenter2: 1 node(s), 1 up, 0 down; load 2.00 GiB",
-        "The inventory and the ring match (2 node(s))",
+        "The ring and the inventory match (2 node(s))",
     ]
 
 
@@ -109,7 +109,7 @@ def test_small_loads_and_empty_ring():
 def test_ipv6_ring_address_matches_the_compressed_facts():
     lines = cassandra_ring_report(ring(node("2001:db8:0:0:0:0:0:1")), {"a": ["a", "2001:db8::1", "fe80::1%eth0"]})
     assert lines[2].split()[-1] == "a"
-    assert lines[-1] == "The inventory and the ring match (1 node(s))"
+    assert lines[-1] == "The ring and the inventory match (1 node(s))"
 
 
 def test_explicit_address_wins_first_host_wins_and_ips_never_resolved(monkeypatch):
@@ -140,3 +140,24 @@ def test_no_dns_when_every_ring_address_is_known(monkeypatch):
 def test_limited_run_labels_the_other_ring_nodes():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.2")), {"n1": ["10.0.0.1"]}, limited=True)
     assert lines[-1] == "In the ring, not in this run (--limit): 10.0.0.2 (dc1, UN)"
+
+
+def test_sub_group_named_and_other_inventory_hosts_told_apart():
+    # cassandra_hosts=dc1_nodes, a sub-group: a ring node that is another host of the inventory is named as such
+    lines = cassandra_ring_report(
+        ring(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.9", "D")), {"n1": ["10.0.0.1"], "n3": ["10.0.0.3"]},
+        group="group dc1_nodes", outside={"n2": ["n2", "10.0.0.2"], "other": ["other", ""]})
+    assert "  UN  10.0.0.2  1.0 GiB  16      33.3%  id-10.0.0.2  r1    -" in lines
+    assert lines[-3:] == ["In group dc1_nodes, not in the ring: n3",
+                          "In the ring and the inventory, not in group dc1_nodes: 10.0.0.2 = n2 (dc1, UN)",
+                          "In the ring, not in group dc1_nodes nor found elsewhere in the inventory: 10.0.0.9 (dc1, DN)"]
+    lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, group="group dc1_nodes", outside={})
+    assert lines[-1] == "The ring and group dc1_nodes match (1 node(s))"
+
+
+def test_other_hosts_matched_by_address_only(monkeypatch):
+    # no resolution of the names of the hosts outside the run (a big inventory would be slow)
+    monkeypatch.setattr(cassandra_ring.socket, "getaddrinfo", lambda name, port: pytest.fail("resolved " + name))
+    lines = cassandra_ring_report(ring(node("10.0.0.1"), node("2001:db8:0:0:0:0:0:2")), {"n1": ["10.0.0.1"]},
+                                  outside={"n2": ["n2.example", "2001:db8::2"]}, limited=True)
+    assert lines[-1] == "In the ring and the inventory, not in this run (--limit): 2001:db8:0:0:0:0:0:2 = n2 (dc1, UN)"

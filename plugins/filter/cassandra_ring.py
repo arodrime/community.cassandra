@@ -76,17 +76,27 @@ def _table(rows):
     return ["  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip() for row in rows]
 
 
-def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False):
+def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
+                          outside=None):
     """cluster_status: the cassandra_status module's. inventory: {host:
-    [addresses and names it is known by]}. unreachable: the hosts Ansible could
-    not reach. limited: the play runs on part of the inventory (--limit).
+    [addresses and names it is known by]} of the hosts of the run. unreachable:
+    the hosts Ansible could not reach. limited: the play runs on part of the
+    group (--limit). group: the group of the run, as the report names it.
+    outside: {host: [addresses]} of the other hosts of the inventory, matched
+    by address only (no facts, no name resolution for them).
     Returns the report as a list of lines."""
     cluster_status = cluster_status or {}
     owner = _host_of(inventory, [_ip(n["address"]) for dc in cluster_status
                                  for n in cluster_status[dc].get("nodes", [])])
+    elsewhere = {}
+    for host in outside or {}:
+        for address in outside[host]:
+            if address and _IP.search(address):
+                elsewhere.setdefault(_ip(address), host)
     lines = []
     in_ring = set()
     stray = []
+    known = []
     for dc in sorted(cluster_status):
         nodes = cluster_status[dc].get("nodes", [])
         rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory"]]
@@ -95,7 +105,9 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
         unknown = 0
         for n in nodes:
             host = owner.get(_ip(n["address"]))
-            if host is None:
+            if host is None and _ip(n["address"]) in elsewhere:
+                known.append("%s = %s (%s, %s%s)" % (n["address"], elsewhere[_ip(n["address"])], dc, n["status"], n["state"]))
+            elif host is None:
                 stray.append("%s (%s, %s%s)" % (n["address"], dc, n["status"], n["state"]))
             else:
                 in_ring.add(host)
@@ -118,14 +130,17 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
         lines.append(summary + (" (%d unknown)" % unknown if unknown else ""))
     missing = [h for h in inventory if h not in in_ring]
     unreachable = set(unreachable or [])
+    run = "this run (--limit)" if limited else group
     if missing:
-        lines.append("In the inventory, not in the ring: " + ", ".join(
+        lines.append("In %s, not in the ring: " % run + ", ".join(
             h + (" (unreachable)" if h in unreachable else "") for h in missing))
+    if known:
+        lines.append("In the ring and the inventory, not in %s: " % run + ", ".join(known))
     if stray:
-        lines.append("In the ring, not in %s: " % ("this run (--limit)" if limited else "the inventory")
+        lines.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
                      + ", ".join(stray))
-    if not missing and not stray:
-        lines.append("The inventory and the ring match (%d node(s))" % len(inventory))
+    if not missing and not stray and not known:
+        lines.append("The ring and %s match (%d node(s))" % (run, len(inventory)))
     return lines
 
 
