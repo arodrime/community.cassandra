@@ -5,7 +5,7 @@
   community.cassandra.cassandra_drain:
   module_defaults:
     community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
-  when: cassandra_operation_drain | bool
+  when: cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool  # a kept unit may not drain
 
 - name: Reboot the host
   ansible.builtin.reboot:

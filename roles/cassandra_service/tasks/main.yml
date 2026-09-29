@@ -74,7 +74,10 @@
     - cassandra_service_jvm.rc | default(1) == 0
     - cassandra_service_unit_manage | bool
 
-# Stopped first: a unit that cannot be disabled (a kept one) still leaves the node down
+# Stopped before the boot setting: the stop is what stop_rack and decommission
+# are for, and a kept unit or init script that fails to disable (e.g. no
+# chkconfig for systemd-sysv-install) must not leave the node running. A stop
+# then a failed disable leaves it down (a decommissioned node refuses to start).
 - name: Stop cassandra
   ansible.builtin.systemd_service:
     name: cassandra

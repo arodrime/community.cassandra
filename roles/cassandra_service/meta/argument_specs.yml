@@ -46,6 +46,14 @@ argument_specs:
         description:
           - Minimum free space, in GiB, on the file system of each data directory of a new host. V(0)
             checks none, the free space is only shown.
+      cassandra_new_node_allow_kept_setup:
+        type: bool
+        default: false
+        description:
+          - The new host checks refuse a host with no Cassandra installed yet where
+            C(cassandra_linux_manage), C(cassandra_cqlsh_python_manage) or C(cassandra_service_unit_manage)
+            is V(false) (for example the host_vars C(import_cluster) wrote for the node a rebuilt host had),
+            as the roles would leave it half set up. V(true) accepts it, when that host is set up another way.
       cassandra_service_user:
         type: str
         default: cassandra
@@ -212,8 +220,9 @@ argument_specs:
         type: bool
         default: true
         description:
-          - Rolling restarts drain each node before stopping it (the unit drains
-            on stop too, a second drain is harmless).
+          - Rolling restarts and C(stop_rack) drain each node before stopping it (the role's unit drains
+            on stop too, a second drain is harmless). V(false) leaves it to the unit, except on a node whose own
+            unit is kept (C(cassandra_service_unit_manage=false)), which is drained anyway.
       cassandra_rolling_resume:
         type: bool
         default: false

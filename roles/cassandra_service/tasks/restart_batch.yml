@@ -21,7 +21,8 @@
         community.cassandra.cassandra_drain: "{{ _jmx }}"
       delegate_to: "{{ item }}"
       loop: "{{ _todo }}"
-      when: cassandra_operation_drain | bool
+      # a kept unit may not drain
+      when: cassandra_operation_drain | bool or not hostvars[item].cassandra_service_unit_manage | default(true) | bool
 
     - name: Restart them
       ansible.builtin.systemd_service:

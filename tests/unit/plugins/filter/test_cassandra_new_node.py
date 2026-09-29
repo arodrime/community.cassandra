@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_new_node import (
-    cassandra_new_node_dirs, cassandra_new_node_load, cassandra_new_node_network, cassandra_new_node_packages,
+    cassandra_new_node_dirs, cassandra_new_node_kept_setup, cassandra_new_node_load, cassandra_new_node_network, cassandra_new_node_packages,
     cassandra_new_node_urls, parse_load)
 
 GIB = 1024 ** 3
@@ -307,3 +307,32 @@ def test_default_pypi_refused_only_warns():
                                      "soft": True}, "status": 403}]}
     out = cassandra_new_node_urls(results)
     assert out["problems"] == [] and "HTTP 403" in out["warnings"][0]
+
+
+KEPT = {"cassandra_linux_manage": False, "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}
+
+
+def test_kept_setup_on_a_blank_host():
+    # a host rebuilt under an imported node's name, its host_vars left as they were
+    out = cassandra_new_node_kept_setup(KEPT, installed=False)
+    assert len(out["problems"]) == 1
+    assert out["problems"][0].startswith("cassandra_linux_manage, cassandra_cqlsh_python_manage, cassandra_service_unit_manage"
+                                         " are false here, but no Cassandra is installed")
+    assert "no OS tuning, no Python for cqlsh, no systemd unit" in out["problems"][0]
+    assert "remove them from this host's host_vars" in out["problems"][0]
+    one = cassandra_new_node_kept_setup({"cassandra_service_unit_manage": "false"}, installed=False)
+    assert one["problems"][0].startswith("cassandra_service_unit_manage is false here")
+
+
+def test_kept_setup_accepted():
+    # Cassandra there already, or the operator says the host is set up another way
+    assert cassandra_new_node_kept_setup(KEPT, installed=True)["problems"] == []
+    out = cassandra_new_node_kept_setup(KEPT, installed=False, allow="yes")
+    assert out["problems"] == [] and out["info"][0].startswith("kept as found on this host")
+
+
+def test_no_kept_setup():
+    on = {"cassandra_linux_manage": True, "cassandra_cqlsh_python_manage": "true", "cassandra_service_unit_manage": True}
+    assert cassandra_new_node_kept_setup(on, installed=False) == {"problems": [], "warnings": [], "info": []}
+    # cassandra_repository_manage false is a usual choice, not checked here
+    assert cassandra_new_node_kept_setup({"cassandra_repository_manage": False}, installed=False)["problems"] == []

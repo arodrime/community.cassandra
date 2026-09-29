@@ -162,7 +162,10 @@ from the configured repositories (installed already with ``cassandra_offline``);
 tarball and the Medusa pip index answer with their credentials, and when the repositories are set up by other means
 (``cassandra_repository_manage: false``, ``cassandra_offline``) Cassandra is available or installed at
 ``cassandra_package_version``; the storage port of two seeds answers from the new host (their native port too, or a
-warning), its own Cassandra ports are free and Cassandra is not running there. A source that does not answer at all
+warning), its own Cassandra ports are free and Cassandra is not running there; a host with no Cassandra installed does
+not keep ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage`` or ``cassandra_service_unit_manage`` false (the
+host_vars ``import_cluster`` wrote for a node, left there when the host is rebuilt under its name: remove them, or set
+``cassandra_new_node_allow_kept_setup: true`` when the host is set up another way). A source that does not answer at all
 is only a warning: the package managers and pip may go through a proxy of their own. ``-e cassandra_new_node_checks=false`` skips these checks.
 
 Before anything starts, ``add_node`` shows one screen and asks once (``cassandra_operation_confirm: false`` for
@@ -222,7 +225,10 @@ shows it ``DL`` (dead, being removed), and never while another node is leaving, 
 finishes every pending removal or decommission; it checks the node is gone afterwards, and does nothing when the node
 is already out of the ring. ``assassinate`` removes it from gossip without streaming, only when ``removenode`` can't
 finish: data it held alone is lost, repair afterwards. Run again after an interruption, ``removenode`` waits for the
-removal still in progress, and does nothing when the node is already out of the ring.
+removal still in progress, whichever node of the run coordinates it, and does nothing when the node is already out of
+the ring. A node shown ``DL`` that no node of the run is removing (a removal coordinated from outside
+``cassandra_hosts``, or whose coordinator restarted) is refused rather than removed a second time:
+``-e cassandra_dead_node_new_removal=true`` starts a ``removenode`` once none runs anywhere.
 
 
 Datacenters
@@ -243,7 +249,7 @@ Rack maintenance
 ----------------
 
 ``stop_rack`` stops every node of one rack at once (``-e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2``),
-each one drained by its unit. With at least as many racks as replicas in the datacenter, one rack down is one
+each one drained with ``nodetool drain`` (a node that does not answer is stopped all the same) then stopped. With at least as many racks as replicas in the datacenter, one rack down is one
 replica down: it refuses a keyspace with more replicas in the datacenter than racks, a SimpleStrategy keyspace with
 RF above 1 (it ignores racks), and a node already down elsewhere in the datacenter. With RF 2 it warns that
 (LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster; repair the
@@ -262,7 +268,9 @@ To move a cluster to another Java, set ``cassandra_java_version`` in the cluster
 ``update_jdk``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
 It refuses a Java the series does not support, and warns about ``cassandra_jvm<N>_*`` settings meant for the old
 Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
-``systemctl stop cassandra`` or a reboot outside Ansible is clean too.
+``systemctl stop cassandra`` or a reboot outside Ansible is clean too. A node's own unit kept as found
+(``cassandra_service_unit_manage: false``) may not: these playbooks drain it with ``nodetool`` even with
+``cassandra_operation_drain: false``.
 
 Where Java comes as a JDK tarball rather than a package, give it in ``cassandra_java_tarball``, a URL or a file on the
 controller, with ``cassandra_java_version`` naming its major version:
@@ -509,7 +517,7 @@ Ansible`` header), and every node that could not be read, gets the matching swit
 ``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
 ``cassandra_service_unit_manage``), never in ``group_vars``: nodes added later get the roles' full setup. Remove a
 line to let the role take that part over, after a ``--check --diff``; a host rebuilt under the same name must lose
-them. The upgrade playbook stops before touching a node whose repositories are not managed and lack the target
+them (``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before touching a node whose repositories are not managed and lack the target
 version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
 already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
 unregister rights keeps them that way, and ``cassandra_config`` leaves a file (the JMX users' files too) alone on an

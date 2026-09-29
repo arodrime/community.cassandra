@@ -47,6 +47,12 @@ cassandra_service_drain_timeout: 120  # seconds, below cassandra_service_timeout
 cassandra_new_node_checks: true
 # Minimum free space (GiB) on each data directory's file system, 0 = no minimum
 cassandra_new_node_min_free_gb: 0
+# true: a new host with no Cassandra yet may keep *_manage: false switches
+# (cassandra_linux_manage, cassandra_cqlsh_python_manage,
+# cassandra_service_unit_manage): its setup is done another way. Otherwise
+# the checks refuse it (e.g. host_vars import_cluster wrote for the node the
+# host had before).
+cassandra_new_node_allow_kept_setup: false
 
 # Wait for the node to be joined (nodetool netstats "Mode: NORMAL")
 cassandra_service_wait_for_normal: true
@@ -119,9 +125,11 @@ _cassandra_service_nodetool: >-
 # true asks, false goes on without asking (non-interactive runs).
 cassandra_operation_confirm: true
 
-# Rolling restarts drain each node (nodetool drain, with the JMX settings above)
-# before stopping it. The unit drains on stop too (cassandra_service_drain_on_stop):
-# a second drain is harmless.
+# Rolling restarts and stop_rack drain each node (nodetool drain, with the JMX
+# settings above) before stopping it. The role's unit drains on stop too
+# (cassandra_service_drain_on_stop): a second drain is harmless. false leaves
+# it to the unit, except on a node whose own unit is kept
+# (cassandra_service_unit_manage: false), which may not drain: drained anyway.
 cassandra_operation_drain: true
 
 # Rolling operations keep a progress file on the controller; resume an

@@ -25,8 +25,9 @@ Role Variables
 * `cassandra_service_user` / `cassandra_service_group`: default `cassandra`.
 * `cassandra_service_unit_manage`: `false` keeps the node's own unit (or the
   package's init script) instead of writing the role's: the unit variables
-  have no effect on it. The `import_cluster` playbook sets it on the nodes it
-  finds started another way. Default `true`.
+  have no effect on it, and the playbooks drain the node with `nodetool`
+  before stopping it (such a unit may not drain). The `import_cluster`
+  playbook sets it on the nodes it finds started another way. Default `true`.
 * `cassandra_service_restart`: systemd `Restart=`. Default `no`; with
   `on-failure`, at most `cassandra_service_start_limit_burst` (3) restarts
   per `cassandra_service_start_limit_interval` (1800 s).
@@ -85,6 +86,12 @@ Role Variables
   Default `true`; `false` skips them.
 * `cassandra_new_node_min_free_gb`: minimum free space (GiB) on each data
   directory's file system of a new host. Default `0` (none).
+* `cassandra_new_node_allow_kept_setup`: the checks refuse a new host with no
+  Cassandra installed where `cassandra_linux_manage`,
+  `cassandra_cqlsh_python_manage` or `cassandra_service_unit_manage` is
+  `false` (e.g. the host_vars `import_cluster` wrote for the node a rebuilt
+  host had): the roles would leave it half set up. `true` accepts it, when
+  the host is set up another way. Default `false`.
 
 Config changes made by `cassandra_config` never restart the node either.
 

@@ -3,8 +3,9 @@
 # stops once with every problem found: root access, the Cassandra directories
 # (mounted where fstab or systemd expects, empty, free space), the Pythons of
 # cqlsh and Medusa, the packages and where they come from, the network to the
-# seeds, its own ports free, no Cassandra running. Read-only, also under
-# --check. Runs after the preflight play (its facts and ring). A host already
+# seeds, its own ports free, no Cassandra running, no *_manage: false switch
+# on a host with no Cassandra (host_vars of an imported node). Read-only, also
+# under --check. Runs after the preflight play (its facts and ring). A host already
 # in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
 # checks it next). cassandra_new_node_checks: false skips them all.
 - name: Load the defaults of the roles the node gets
@@ -31,6 +32,12 @@
       when: _cassandra_new_node_check_it | bool
       vars:
         _dirs: "{{ [cassandra_data_file_directories] | flatten + [cassandra_commitlog_dir, cassandra_hints_dir, cassandra_saved_caches_dir] }}"
+        # a Cassandra installed already: the package's init script, or a unit of its own
+        _cassandra_new_node_units:
+          - /etc/systemd/system/cassandra.service
+          - /usr/lib/systemd/system/cassandra.service
+          - /lib/systemd/system/cassandra.service
+          - /etc/init.d/cassandra
       block:
         - name: Read the user Ansible runs as
           ansible.builtin.command: id -u
@@ -92,12 +99,12 @@
           failed_when: false
           check_mode: false  # read-only
 
-        - name: Look for the Pythons, Java and Medusa already there
+        - name: Look for the Pythons, Java, Medusa and a Cassandra unit already there
           ansible.builtin.stat:
             path: "{{ item }}"
           register: cassandra_new_node_paths
           loop: >-
-            {{ ['/usr/bin/python3.11', cassandra_cqlsh_python, cassandra_medusa_python,
+            {{ _cassandra_new_node_units + ['/usr/bin/python3.11', cassandra_cqlsh_python, cassandra_medusa_python,
                 (cassandra_medusa_venv ~ '/bin/python') if cassandra_medusa_venv != '' else '',
                 (_cassandra_java_home ~ '/.unpacked') if _cassandra_java_home != '' else '',
                 (_cassandra_java_home ~ '/bin/java') if _cassandra_java_home != '' else ''] | select | unique | list }}
@@ -209,6 +216,16 @@
                               and (ansible_facts['os_family'] != 'Debian'
                                    or cassandra_new_node_apt_lists.matched | default(0) > 0)) }}
               - "{{ cassandra_new_node_url_results | community.cassandra.cassandra_new_node_urls }}"
+              # *_manage: false host_vars (a node import_cluster read) on a blank host
+              - >-
+                {{ {'cassandra_linux_manage': cassandra_linux_manage | default(true),
+                    'cassandra_cqlsh_python_manage': cassandra_cqlsh_python_manage,
+                    'cassandra_service_unit_manage': cassandra_service_unit_manage}
+                   | community.cassandra.cassandra_new_node_kept_setup(
+                       'cassandra' in ansible_facts['packages'] | default({})
+                       or cassandra_new_node_paths.results | selectattr('item', 'in', _cassandra_new_node_units)
+                          | selectattr('stat.exists') | list | length > 0,
+                       allow=cassandra_new_node_allow_kept_setup) }}
               - >-
                 {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,
                      ss_output=cassandra_new_node_ss.stdout if cassandra_new_node_ss.rc | default(1) == 0 else none,

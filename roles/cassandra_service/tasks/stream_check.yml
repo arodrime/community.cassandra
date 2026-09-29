@@ -46,16 +46,23 @@
       when: _cassandra_stream_job.jid | default('') | length > 0
 
     # removenode resumed (no job to follow): over once that node has no removal left
+    # with that node's own JMX port and login (delegate_to keeps this node's variables)
     - name: Check the removal
-      ansible.builtin.command: "{{ _cassandra_service_nodetool }} removenode status"
+      ansible.builtin.command: >-
+        nodetool -p {{ _h.cassandra_jmx_port | default(_cassandra_service_jmx.port) }}{{ (' -u ' ~ _u | quote) if _u else '' }}{{ (' -pwf ' ~ _pwf | quote) if _pwf else ((' -pw ' ~ _pw | quote) if _pw else '') }} removenode status
       delegate_to: "{{ _cassandra_stream_removal_on | default(inventory_hostname, true) }}"
       register: cassandra_stream_removal
       changed_when: false
       failed_when: false
       check_mode: false  # read-only
       ignore_unreachable: true
-      no_log: "{{ cassandra_jmx_password | length > 0 }}"
+      no_log: "{{ (cassandra_jmx_password ~ _pw) | length > 0 }}"
       when: _cassandra_stream_removal_on | default('') | length > 0
+      vars:
+        _h: "{{ hostvars[_cassandra_stream_removal_on | default(inventory_hostname, true)] }}"
+        _u: "{{ _h.cassandra_jmx_username | default(cassandra_jmx_username) }}"
+        _pwf: "{{ _h.cassandra_jmx_password_file | default(cassandra_jmx_password_file) }}"
+        _pw: "{{ _h.cassandra_jmx_password | default(cassandra_jmx_password) }}"
 
     - name: Work out the progress
       ansible.builtin.set_fact:

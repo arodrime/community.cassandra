@@ -105,26 +105,33 @@ def cassandra_leaving_state(netstats, ring, address):
     return {"state": "normal", "in_ring": in_ring, "reason": ""}
 
 
-def cassandra_removal_state(ring, address, removal_status=""):
-    """ring: cassandra_status result; address: the dead node's; removal_status:
-    stdout of nodetool removenode status on the node that runs removenode.
-    Returns 'absent' (not in the ring: nothing to do), 'resume' (DL and that
-    node is still removing it: wait for it), 'busy' (that node is removing
-    another node, or other nodes are leaving too), 'unknown' (no ring) or
-    'start'."""
+def cassandra_removal_state(ring, address, removal_status):
+    """ring: cassandra_status result; address: the dead node's;
+    removal_status: {host: stdout of nodetool removenode status on it} for
+    every node of the run ('' when it did not answer). Only the node coordinating a
+    removal says "Removing token"; the others see the node DL (gossip).
+    Returns {'state', 'on'}. state: 'absent' (not in the ring: nothing to
+    do), 'resume' (DL and one node, 'on', is removing it: wait for it),
+    'busy' (a node is removing another node, several are removing, or other
+    nodes are leaving), 'orphan' (DL but no node of the run is coordinating
+    its removal: elsewhere, or its coordinator restarted), 'unknown' (no
+    ring) or 'start'."""
     if not (ring or {}).get("cluster_status"):
-        return "unknown"
+        return {"state": "unknown", "on": ""}
     nodes = _nodes(ring["cluster_status"])
     dead = next((n for n in nodes if n["address"] == address), None)
     if dead is None:
-        return "absent"
+        return {"state": "absent", "on": ""}
     others_leaving = [n for n in nodes if n["state"] == "L" and n["address"] != address]
-    removing = "Removing token" in (removal_status or "")
-    if removing and dead["status"] + dead["state"] == "DL" and not others_leaving:
-        return "resume"
+    removing = sorted(h for h, out in (removal_status or {}).items() if "Removing token" in (out or ""))
+    dl = dead["status"] + dead["state"] == "DL"
+    if len(removing) == 1 and dl and not others_leaving:
+        return {"state": "resume", "on": removing[0]}
     if removing:
-        return "busy"
-    return "start"
+        return {"state": "busy", "on": ", ".join(removing)}
+    if dl:
+        return {"state": "orphan", "on": ""}
+    return {"state": "start", "on": ""}
 
 
 class FilterModule(object):

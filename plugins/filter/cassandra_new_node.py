@@ -13,6 +13,8 @@ cassandra_new_node_packages: packages installed, or available from the
 cassandra_new_node_network: ports of existing nodes reached from the host, and
     its own Cassandra ports free.
 cassandra_new_node_urls: package sources reached with their credentials.
+cassandra_new_node_kept_setup: *_manage switches that keep a node's own setup,
+    on a host with no Cassandra to keep.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -21,6 +23,7 @@ __metaclass__ = type
 import os
 import re
 
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.module_utils.six.moves.urllib.parse import urlsplit, urlunsplit
 
 GIB = 1024 ** 3
@@ -298,6 +301,35 @@ def cassandra_new_node_urls(results):
     return _result(problems, warnings, info)
 
 
+# Switches import_cluster writes in an existing node's host_vars (its own setup
+# kept). cassandra_repository_manage is left out: false is a usual choice
+# (repositories set up by other means), and the package checks cover it.
+KEPT_SETUP = (
+    ("cassandra_linux_manage", "no OS tuning"),
+    ("cassandra_cqlsh_python_manage", "no Python for cqlsh"),
+    ("cassandra_service_unit_manage", "no systemd unit"),
+)
+
+
+def cassandra_new_node_kept_setup(switches, installed, allow=False):
+    """switches: {name: value} of the *_manage switches in KEPT_SETUP;
+    installed: Cassandra found on the host (its package or a unit). A blank
+    host with these switches off would be half set up: e.g. a host rebuilt
+    under the name of a node import_cluster read, its host_vars left as
+    they were. allow: the operator sets that host up another way."""
+    off = [(name, what) for name, what in KEPT_SETUP if not boolean(switches.get(name, True))]
+    if not off:
+        return _result()
+    names = ", ".join(name for name, what in off)
+    if installed or boolean(allow):
+        return _result(info=["kept as found on this host (false): %s" % names])
+    return _result(problems=[
+        "%s %s false here, but no Cassandra is installed on this host: the roles would leave it with %s. These"
+        " lines keep the setup of a node found by import_cluster; remove them from this host's host_vars (a host"
+        " rebuilt under that name), or set cassandra_new_node_allow_kept_setup: true if this host is set up"
+        " another way (e.g. these switches set on purpose in group_vars)" % (names, "is" if len(off) == 1 else "are", ", ".join(what for name, what in off))])
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -306,4 +338,5 @@ class FilterModule(object):
             "cassandra_new_node_packages": cassandra_new_node_packages,
             "cassandra_new_node_network": cassandra_new_node_network,
             "cassandra_new_node_urls": cassandra_new_node_urls,
+            "cassandra_new_node_kept_setup": cassandra_new_node_kept_setup,
         }

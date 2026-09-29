@@ -184,22 +184,41 @@ REMOVING = "RemovalStatus: Removing token (-42). Waiting for replication confirm
 IDLE_REMOVAL = "RemovalStatus: No token removals in process."
 
 
+def removal(ring, **status):
+    return cassandra_removal_state(ring, "10.0.0.4", status)
+
+
 def test_removal_state():
     dl = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D", state="L"))
     dn = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D"))
-    assert cassandra_removal_state(dn, "10.0.0.4", IDLE_REMOVAL) == "start"
-    assert cassandra_removal_state(dn, "10.0.0.4") == "start"
-    # died while leaving, nobody removing it: removenode again
-    assert cassandra_removal_state(dl, "10.0.0.4", IDLE_REMOVAL) == "start"
-    assert cassandra_removal_state(dl, "10.0.0.4", REMOVING) == "resume"
-    assert cassandra_removal_state(GONE, "10.0.0.4", IDLE_REMOVAL) == "absent"
-    assert cassandra_removal_state({"cluster_status": None}, "10.0.0.4") == "unknown"
+    assert removal(dn, n1=IDLE_REMOVAL, n2=IDLE_REMOVAL) == {"state": "start", "on": ""}
+    assert removal(dn, n1="", n2="") == {"state": "start", "on": ""}
+    assert removal(dl, n1=REMOVING, n2=IDLE_REMOVAL) == {"state": "resume", "on": "n1"}
+    assert removal(GONE, n1=IDLE_REMOVAL) == {"state": "absent", "on": ""}
+    assert removal({"cluster_status": None}, n1=IDLE_REMOVAL) == {"state": "unknown", "on": ""}
+
+
+def test_removal_found_on_any_node():
+    # the first node is idle, the removal runs from another one: waited for there, not started again
+    dl = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D", state="L"))
+    assert removal(dl, n1=IDLE_REMOVAL, n2=REMOVING) == {"state": "resume", "on": "n2"}
+
+
+def test_removal_dl_with_no_coordinator_in_the_run():
+    # DL (gossip) but no node of the run removing it: coordinated from elsewhere, or its
+    # coordinator restarted (or it died decommissioning): never a second removenode by itself
+    dl = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D", state="L"))
+    assert removal(dl, n1=IDLE_REMOVAL, n2=IDLE_REMOVAL) == {"state": "orphan", "on": ""}
+    assert removal(dl, n1=IDLE_REMOVAL, n2="") == {"state": "orphan", "on": ""}
 
 
 def test_removal_state_busy_with_another_node():
-    # the coordinator removes something while this node is only DN: another node
+    # a node removes something while this node is only DN: another node
     dn = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D"))
-    assert cassandra_removal_state(dn, "10.0.0.4", REMOVING) == "busy"
+    assert removal(dn, n1=IDLE_REMOVAL, n2=REMOVING) == {"state": "busy", "on": "n2"}
     # two nodes leaving: the removal in progress may be the other one's
     two = ring_result(node("10.0.0.1"), node("10.0.0.5", status="D", state="L"), node("10.0.0.4", status="D", state="L"))
-    assert cassandra_removal_state(two, "10.0.0.4", REMOVING) == "busy"
+    assert removal(two, n1=REMOVING) == {"state": "busy", "on": "n1"}
+    # two coordinators: not one removal to wait for
+    dl = ring_result(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D", state="L"))
+    assert removal(dl, n1=REMOVING, n2=REMOVING) == {"state": "busy", "on": "n1, n2"}
