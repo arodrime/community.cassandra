@@ -283,6 +283,32 @@
     group: "{{ cassandra_medusa_config_group }}"
     mode: "0750"
 
+# Medusa stores the backups under the fqdn: a new one starts a new folder in
+# the bucket (full backups)
+- name: Read the fqdn of the current medusa.ini
+  ansible.builtin.slurp:
+    path: /etc/medusa/medusa.ini
+  register: cassandra_medusa_ini_current
+  failed_when: false
+  no_log: true  # passwords
+
+- name: Keep this node's name in the backups
+  ansible.builtin.assert:
+    that: cassandra_medusa_ini_current.content is not defined or _old == _new or cassandra_medusa_fqdn_change | bool
+    fail_msg: >-
+      /etc/medusa/medusa.ini has fqdn {{ _old or '(none: Medusa works it out)' }}, this run would write
+      {{ _new or '(none: Medusa works it out)' }}. Medusa stores the backups under it: a change starts a new folder in the
+      bucket and full backups. Set cassandra_medusa_fqdn (or cassandra_medusa_fqdn_domain) to keep it, or
+      cassandra_medusa_fqdn_change=true to change it.
+    quiet: true
+  vars:
+    _old: >-
+      {{ ((cassandra_medusa_ini_current.content | default('') | b64decode | community.cassandra.cassandra_medusa_ini).storage
+          | default({})).fqdn | default('') }}
+    _new: >-
+      {{ ((lookup('ansible.builtin.template', 'medusa.ini.j2') | community.cassandra.cassandra_medusa_ini).storage
+          | default({})).fqdn | default('') }}
+
 - name: Write medusa.ini
   ansible.builtin.include_tasks: ini_file.yml
   vars:

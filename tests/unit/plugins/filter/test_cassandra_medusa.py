@@ -15,7 +15,10 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_medusa imp
     cassandra_medusa_ini,
     cassandra_medusa_ini_changes,
 )
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_files
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+    cassandra_inventory_files,
+    cassandra_inventory_layout,
+)
 
 FACTS = {"os_family": "RedHat"}
 FOUND = {"venv": "/opt/cassandra-medusa", "version": "0.30.1", "link_dir": "/usr/local/bin", "package": "",
@@ -181,6 +184,7 @@ def test_import_variables():
         "cassandra_medusa_port": "443",
         "cassandra_medusa_secure": "True",
         "cassandra_medusa_prefix": "orders",
+        "cassandra_medusa_fqdn": "",  # none: Medusa's own, not <hostname>.<cassandra_medusa_fqdn_domain>
         "cassandra_medusa_max_backup_age": "",
         "cassandra_medusa_max_backup_count": "14",
         "cassandra_medusa_transfer_max_bandwidth": "200MB/s",
@@ -354,3 +358,88 @@ def test_import_invalid_ini():
     assert imported["vars"] == {}
     assert "not valid INI" in imported["notes"][0]
     assert "hunter2" not in imported["notes"][0]
+
+
+def fqdn_nodes(*pairs):
+    """Nodes that read a medusa.ini with fqdn = value, on a host of that short hostname."""
+    ini = "[storage]\nstorage_provider = s3\n%s"
+    return [{"name": "n%d" % i, "hostname": hostname, "dc": "dc1", "rack": "r1", "read": True,
+             "hand_edits": [], "normalized": [], "notes": [],
+             "vars": cassandra_medusa_import(ini % ("fqdn = %s\n" % fqdn if fqdn is not None else ""), None, FOUND)["vars"]}
+            for i, (hostname, fqdn) in enumerate(pairs, 1)]
+
+
+def fqdn_written(layout, node):
+    """The fqdn the role writes on that node with the imported inventory."""
+    variables = dict(layout["group_vars"]["c"])
+    for group in ("c_dc1", "c_dc1_r1"):
+        variables.update(layout["group_vars"].get(group, {}))
+    variables.update(layout["host_vars"].get(node["name"], {}))
+    return cassandra_medusa_ini(render(variables, dict(FACTS, hostname=node["hostname"])))["storage"].get("fqdn")
+
+
+@pytest.mark.parametrize("pairs, domain", [
+    # one rule gives every node's value: kept as the domain, no host_vars
+    ([("node1", "node1.int.example"), ("node2", "node2.int.example"), ("node3", "node3.int.example")], "int.example"),
+    # anything else: each node keeps its own value
+    ([("node1", "node1.a.example"), ("node2", "node2.b.example")], None),
+    ([("node1", "node1"), ("node2", "node2")], None),
+    ([("node1", "node1.int.example"), ("node2", "other.int.example")], None),
+    ([("node1", "node1.int.example"), ("node2", None)], None),  # no fqdn: Medusa's own
+    ([("Node1", "node1.int.example"), ("node2", "node2.int.example")], None),  # not byte for byte
+    ([("", "node1.int.example"), ("node2", "node2.int.example")], None),  # no hostname fact
+    ([("node1", "node1."), ("node2", "node2.")], None),
+])
+def test_import_medusa_fqdn_exactly(pairs, domain):
+    nodes = fqdn_nodes(*pairs)
+    layout = cassandra_inventory_layout(nodes, "c")
+    assert layout["group_vars"]["c"].get("cassandra_medusa_fqdn_domain") == domain
+    if domain:
+        assert all("cassandra_medusa_fqdn" not in v for v in layout["host_vars"].values())
+        assert "<short hostname>.%s on every node" % domain in layout["report"]
+    else:
+        assert "no <short hostname>.<domain> rule" in layout["report"]
+    # the round trip: every node gets its value back, byte for byte
+    for node, (hostname, fqdn) in zip(nodes, pairs):
+        assert fqdn_written(layout, node) == fqdn
+    assert "fqdn" not in layout["differences"]  # the node's own name: no difference
+
+
+def test_new_node_gets_the_domain_rule():
+    layout = cassandra_inventory_layout(fqdn_nodes(("node1", "node1.int.example"), ("node2", "node2.int.example")), "c")
+    assert fqdn_written(layout, {"name": "node9", "hostname": "node9"}) == "node9.int.example"
+
+
+GUARD = next(t for t in yaml.safe_load(open(os.path.join(ROLE, "tasks", "main.yml")))
+             if t.get("name") == "Keep this node's name in the backups")
+
+
+@pytest.mark.parametrize("current, old, new, change, ok", [
+    (None, "", "node1.x", False, True),  # no medusa.ini yet
+    ("ini", "node1.x", "node1.x", False, True),
+    ("ini", "", "", False, True),
+    ("ini", "node1.x", "node1.y", False, False),
+    ("ini", "", "node1.x", False, False),  # Medusa's own name, maybe another one
+    ("ini", "node1.x", "", False, False),
+    ("ini", "node1.x", "node1.y", True, True),
+])
+def test_fqdn_change_refused(current, old, new, change, ok):
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:
+        def trust_as_template(template):
+            return template
+    variables = {"cassandra_medusa_ini_current": {"content": current} if current else {"failed": True},
+                 "_old": old, "_new": new, "cassandra_medusa_fqdn_change": change}
+    that = trust_as_template("{{ " + GUARD["ansible.builtin.assert"]["that"] + " }}")
+    assert Templar(loader=DataLoader(), variables=variables).template(that) is ok
+    # the fqdn of the current file, and the one the template writes
+    assert "cassandra_medusa_ini" in GUARD["vars"]["_old"] and "medusa.ini.j2" in GUARD["vars"]["_new"]
+
+
+def test_no_fqdn_anywhere_no_medusa_line():
+    layout = cassandra_inventory_layout(fqdn_nodes(("node1", None), ("node2", None)), "c")
+    assert "Medusa fqdn" not in layout["report"]
+    assert layout["group_vars"]["c"]["cassandra_medusa_fqdn"] == ""

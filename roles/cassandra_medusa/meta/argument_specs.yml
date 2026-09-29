@@ -243,9 +243,20 @@ argument_specs:
           - "[storage] C(prefix), to share a bucket between clusters."
       cassandra_medusa_fqdn:
         type: str
+        description:
+          - "[storage] C(fqdn), this node's name in the backups (their path in the bucket). Defaults to
+            C(<short hostname>.<cassandra_medusa_fqdn_domain>) when that domain is set, else C(\"\") (Medusa works it out)."
+      cassandra_medusa_fqdn_domain:
+        type: str
         default: ""
         description:
-          - "[storage] C(fqdn), this node's name in the backups."
+          - "Domain of the default C(cassandra_medusa_fqdn): each node gets C(<its short hostname>.<domain>)."
+      cassandra_medusa_fqdn_change:
+        type: bool
+        default: false
+        description:
+          - "Allow changing the C(fqdn) of an existing C(medusa.ini). Medusa stores the backups under it: a new one
+            starts a new folder in the bucket, and full backups."
       cassandra_medusa_max_backup_age:
         type: raw
         default: 0

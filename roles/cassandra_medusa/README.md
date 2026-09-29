@@ -47,6 +47,11 @@ The main ones (all of them in `meta/argument_specs.yml`):
 * `cassandra_medusa_storage_provider` (required): `s3`, `s3_compatible`,
   `local`, `google_storage`, `azure_blobs`...
 * `cassandra_medusa_bucket_name`, `cassandra_medusa_prefix`.
+* `cassandra_medusa_fqdn`: the node's name in the backups, their path in the
+  bucket (default: Medusa works it out); `cassandra_medusa_fqdn_domain` makes it
+  `<short hostname>.<domain>` on every node. The role refuses to change the
+  fqdn of an existing `medusa.ini` (a new folder in the bucket, full backups)
+  unless `cassandra_medusa_fqdn_change: true`.
 * `cassandra_medusa_host`, `cassandra_medusa_port`, `cassandra_medusa_secure`,
   `cassandra_medusa_region`: the endpoint of an `s3_compatible` storage.
 * `cassandra_medusa_s3_access_key_id`, `cassandra_medusa_s3_secret_access_key`

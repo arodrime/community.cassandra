@@ -465,7 +465,14 @@ address in the ring. ``import_cluster_host_names`` picks the name: ``hostname`` 
 ``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address.
 A node that could not be reached keeps the name it was given, or its address. In the ``group_vars`` and
 ``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
-JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each.
+JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each. The report, and the end
+of the run, start with the differences between nodes: each setting that differs, with its values and the nodes, DC or
+rack that have them. A node's own address or hostname is written as the fact that gives it, not as a difference.
+
+Medusa's ``fqdn`` is the node's folder in the backups: a new one means full backups. When every node has
+``<short hostname>.<domain>``, the same domain everywhere, the import keeps ``cassandra_medusa_fqdn_domain`` (new
+nodes get the same form); otherwise each node keeps its value in ``host_vars``. The ``cassandra_medusa`` role refuses to
+change the ``fqdn`` of an existing ``medusa.ini`` unless ``cassandra_medusa_fqdn_change: true``.
 
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
 roles then keep that Java and install no Java package.

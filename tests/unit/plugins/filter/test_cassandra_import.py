@@ -179,7 +179,7 @@ def test_layout_homogeneous_cluster_goes_to_cluster_level():
     assert out["group_vars"]["my_prod_dc1"] == {"cassandra_dc": "dc1"}
     assert out["group_vars"]["my_prod_dc1_r2"] == {"cassandra_rack": "r2"}
     assert out["host_vars"] == {}
-    assert "DRIFT" not in out["report"]
+    assert out["differences"] == "DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):\n  none"
     racks = out["hosts"]["all"]["children"]["my_prod"]["children"]["my_prod_dc1"]["children"]
     assert set(racks) == {"my_prod_dc1_r1", "my_prod_dc1_r2"}
 
@@ -195,9 +195,11 @@ def test_layout_drift_goes_down_and_is_reported():
     assert out["host_vars"]["n3"] == {"cassandra_heap_size": "16G"}
     assert out["host_vars"]["n4"] == {"cassandra_heap_size": "16G", "cassandra_concurrent_reads": 64}
     assert out["host_vars"]["n5"] == {"cassandra_listen_address": "10.0.0.5"}
-    assert "cassandra_heap_size:" in out["report"]
-    assert "cassandra_concurrent_reads:" in out["report"]
-    assert "cassandra_listen_address:" not in out["report"]  # per node by nature
+    # sorted like the vars files (JVM before cassandra.yaml settings), the listen address is per node by nature
+    assert out["differences"].split("\n")[1:] == [
+        '  cassandra_heap_size: "16G" on n3, n4; "8G" on DC dc1; (role default) on n5',
+        '  cassandra_concurrent_reads: (role default) on 4 nodes; 64 on n4']
+    assert out["report"].split("\n")[3:6] == out["differences"].split("\n")  # at the top
 
 
 def test_layout_unread_node_listed():
@@ -239,7 +241,7 @@ def test_report_masks_passwords():
               "hand_edits": ["cassandra.yaml, line 3:", "  + keystore_password: hand%d" % i]} for i in (1, 2)]
     report = cassandra_inventory_layout(nodes, "Prod")["report"]
     assert "pw1" not in report and "hand1" not in report
-    assert "n1: ****" in report
+    assert "cassandra_server_keystore_password: **** on n1; **** on n2" in report
     assert "keystore_password: ****" in report
 
 
@@ -519,3 +521,42 @@ def test_secrets_file_grouped_too():
     assert files[0]["path"] == "host_vars/n1/secrets.yml"
     assert files[0]["content"] == ("# JMX\ncassandra_jmx_password: j\n\n# Other cassandra.yaml settings\n"
                                    "cassandra_server_keystore_password: k\n\n# Medusa\ncassandra_medusa_cql_password: m\n")
+
+
+def test_differences_by_rack_and_counts():
+    nodes = [node("n%d" % i, "dc1", "r1" if i < 3 else "r2", cassandra_heap_size="8G" if i < 3 else "16G")
+             for i in range(1, 8)]
+    lines = cassandra_inventory_layout(nodes, "c")["differences"].split("\n")
+    assert lines[1:] == ['  cassandra_heap_size: "16G" on rack dc1/r2; "8G" on rack dc1/r1']
+    nodes[0]["vars"]["cassandra_heap_size"] = "12G"
+    lines = cassandra_inventory_layout(nodes, "c")["differences"].split("\n")
+    assert lines[1:] == ['  cassandra_heap_size: "16G" on rack dc1/r2; "12G" on n1; "8G" on n2']
+
+
+def test_differences_mask_passwords():
+    nodes = [node("n1", "dc1", "r1", cassandra_truststore_password="a"),
+             node("n2", "dc1", "r1", cassandra_truststore_password="b")]
+    out = cassandra_inventory_layout(nodes, "c")
+    assert out["differences"].split("\n")[1:] == ["  cassandra_truststore_password: **** on n1; **** on n2"]
+
+
+def test_address_equal_to_the_hostname_is_the_fact():
+    facts = dict(FACTS, hostname="node1")
+    v = cassandra_config_import(node_files("41x", facts, cassandra_rpc_address="node1",
+                                           cassandra_jmx_rmi_hostname="10.0.0.1"), "41x", facts)["vars"]
+    assert v["cassandra_rpc_address"] == "{{ ansible_facts['hostname'] }}"
+    assert v["cassandra_jmx_rmi_hostname"] == IPV4
+
+
+def test_differences_name_the_nodes_of_other_values():
+    nodes = [node("n%d" % i, "dc1", "r%d" % (i % 4), cassandra_heap_size="8G" if i % 2 else "16G") for i in range(8)]
+    lines = cassandra_inventory_layout(nodes, "c")["differences"].split("\n")
+    assert lines[1:] == ['  cassandra_heap_size: "16G" on 4 nodes; "8G" on n1, n3, n5, n7']
+
+
+def test_secret_in_a_list_of_strings():
+    nodes = [node("n1", "dc1", "r1", cassandra_jvm_extra_options=["-Dx.keyStorePassword=S3cr3t"]), node("n2", "dc1", "r1")]
+    out = cassandra_inventory_layout(nodes, "c")
+    assert "S3cr3t" not in out["report"]
+    files = cassandra_inventory_files(out)
+    assert [f["path"] for f in files if "S3cr3t" in f["content"]] == ["host_vars/n1/secrets.yml"]

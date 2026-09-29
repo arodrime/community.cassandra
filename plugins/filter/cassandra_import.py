@@ -57,11 +57,13 @@ def _mask(line):
     return SECRET_VALUE.sub(r"\1****", line)
 
 
+# The node's own address or name: written as the fact that gives it
 ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
-             "cassandra_broadcast_address", "cassandra_broadcast_rpc_address"]
+             "cassandra_broadcast_address", "cassandra_broadcast_rpc_address", "cassandra_jmx_rmi_hostname"]
 # Per node by nature: not reported as drift
 PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn"]
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
+HOSTNAME = "{{ ansible_facts['hostname'] }}"
 MISSING = object()
 TOP_KEY = re.compile(r"^(?:\{\{[^}]*\}\})?([a-z0-9_]+):")  # active top-level key, maybe behind a toggle
 EXTRA_HEADER = "# Settings no variable covers (cassandra_extra_settings)"
@@ -433,6 +435,8 @@ def _config_import(live_files, cassandra_version, facts, where):
     for key in ADDRESSES:
         if ipv4 and out.get(key) == ipv4:
             out[key] = IPV4
+        elif facts.get("hostname") and out.get(key) == facts["hostname"]:
+            out[key] = HOSTNAME
     return {"vars": out, "hand_edits": hand, "normalized": normalized}
 
 
@@ -488,11 +492,60 @@ def _values_hidden(func):
     return wrapper
 
 
+def _medusa_fqdn_domain(read):
+    """The domain D when every read node with a Medusa fqdn has exactly
+    "<its short hostname>.D", the same D everywhere (what the cassandra_medusa
+    default then writes back), else None."""
+    domains = set()
+    for n in read:
+        if "cassandra_medusa_fqdn" not in n["vars"]:
+            continue
+        fqdn, hostname = str(n["vars"]["cassandra_medusa_fqdn"]), str(n.get("hostname") or "")
+        if not hostname or not fqdn.startswith(hostname + ".") or len(fqdn) == len(hostname) + 1:
+            return None
+        domains.add(fqdn[len(hostname) + 1:])
+    return domains.pop() if len(domains) == 1 else None
+
+
+def _sort_key(key):
+    """Keys in the order of the vars files: by block, then as listed there."""
+    titles = [title for title, dummy in BLOCKS]
+    order = dict(BLOCKS)[_block(key)]
+    return (titles.index(_block(key)), order.index(key) if key in order else len(order), key)
+
+
+def _differences(keys, read, dcg, rackg):
+    """One line per key: each value and the nodes (or DC, rack) that have it."""
+    lines = []
+    for key in sorted(keys, key=_sort_key):
+        groups = {}  # by value, shown masked
+        for n in read:
+            value = n["vars"].get(key, MISSING)
+            same = "" if value is MISSING else json.dumps(value, sort_keys=True, default=str)
+            groups.setdefault(same, (_show(key, value), []))[1].append(n)
+        parts = []
+        for value, members in sorted(groups.values(), key=lambda g: (-len(g[1]), g[0], sorted(n["name"] for n in g[1]))):
+            names = sorted(n["name"] for n in members)
+            dc = [n for n in read if dcg(n) == dcg(members[0])]
+            rack = [n for n in read if rackg(n) == rackg(members[0])]
+            if dc == [n for n in read if n in members] and len(dc) > 1:
+                where = "DC %s" % members[0]["dc"]
+            elif rack == [n for n in read if n in members] and len(rack) > 1:
+                where = "rack %s/%s" % (members[0]["dc"], members[0]["rack"])
+            elif not parts and len(members) > 3:  # the most common value: the others are listed
+                where = "%d nodes" % len(members)
+            else:
+                where = ", ".join(names)
+            parts.append("%s on %s" % (value, where))
+        lines.append("  %s: %s" % (key, "; ".join(parts)))
+    return lines
+
+
 @_values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
-    """nodes: [{name, address?, dc, rack, ansible_host?, read: bool, reason?, vars,
-    hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars', 'report'}.
-    Nodes sharing a name are named by their address instead."""
+    """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
+    vars, hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars',
+    'differences', 'report'}. Nodes sharing a name are named by their address instead."""
     cluster = _slug(cluster_name)
     names = [n["name"] for n in nodes]
     shared = sorted({name for name in names if names.count(name) > 1})
@@ -520,11 +573,28 @@ def cassandra_inventory_layout(nodes, cluster_name):
         group_vars.setdefault(rackg(n), {})["cassandra_rack"] = n["rack"]
 
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
+    # Medusa's fqdn is the node's folder in the backups: a rule only when it
+    # gives every node its value exactly, else each node keeps its own
+    medusa = [n for n in read if n["vars"].get("cassandra_medusa_fqdn")]  # "": Medusa works it out
+    domain = _medusa_fqdn_domain(read) if medusa else None
+    if domain is not None:
+        read = [dict(n, vars=dict([(k, v) for k, v in n["vars"].items() if k != "cassandra_medusa_fqdn"]
+                                  + [("cassandra_medusa_fqdn_domain", domain)])) for n in read]
+        nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
     keys = sorted({k for n in read for k in n["vars"]} - {"cassandra_dc", "cassandra_rack"})
     drift = [k for k in keys if not _place(k, read, levels, group_vars, host_vars) and k not in PER_NODE]
+    differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
+    differences += _differences(drift, read, dcg, rackg) or ["  none"]
 
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
               "Inventory group: %s (ansible-playbook ... -e cassandra_hosts=%s)" % (cluster, cluster), ""]
+    report += differences + [""]
+    if domain is not None:
+        report += ["Medusa fqdn (each node's folder in the backups): <short hostname>.%s on every node,"
+                   " kept as cassandra_medusa_fqdn_domain" % domain, ""]
+    elif medusa:
+        report += ["Medusa fqdn (each node's folder in the backups): no <short hostname>.<domain> rule gives every"
+                   " node's value, kept as found (cassandra_medusa_fqdn)", ""]
     if shared:
         report.append("SAME NAME for several nodes, named by their address instead: %s" % ", ".join(shared))
         report.append("")
@@ -532,12 +602,6 @@ def cassandra_inventory_layout(nodes, cluster_name):
     if unread:
         report.append("NOT READ (in the inventory, but not imported):")
         report += ["  %s: %s" % (n["name"], n.get("reason", "unreachable")) for n in unread]
-        report.append("")
-    if drift:
-        report.append("DRIFT BETWEEN NODES (kept per group/node, check it is wanted):")
-        for k in drift:
-            report.append("  %s:" % k)
-            report += ["    %s: %s" % (n["name"], _show(k, n["vars"].get(k, MISSING))) for n in read]
         report.append("")
     for n in read:
         report.append("== %s" % n["name"])
@@ -552,14 +616,14 @@ def cassandra_inventory_layout(nodes, cluster_name):
             report += ["    " + _mask(line) for line in n["normalized"]]
         report.append("")
     return {"cluster_group": cluster, "hosts": hosts, "group_vars": group_vars,
-            "host_vars": host_vars, "report": "\n".join(report)}
+            "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report)}
 
 
 def _secret(key, value):
     if isinstance(value, dict):
         return any(_secret(k, v) for k, v in value.items())
     if isinstance(value, list):
-        return bool(SECRET.search(key)) or any(_secret(key, v) for v in value if isinstance(v, dict))
+        return bool(SECRET.search(key)) or any(_secret(key, v) for v in value if isinstance(v, (dict, str)))
     if value == "":
         return False  # e.g. a password variable set to "" to leave it out
     if isinstance(value, str) and SECRET_VALUE.search(value):

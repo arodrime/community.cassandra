@@ -27,7 +27,7 @@
     - name: Check the options
       ansible.builtin.assert:
         that: import_cluster_host_names | default('hostname') in ['hostname', 'fqdn', 'ip']
-        fail_msg: "import_cluster_host_names must be hostname, fqdn or ip, not {{ import_cluster_host_names }}"
+        fail_msg: "import_cluster_host_names must be hostname, fqdn or ip, not {{ import_cluster_host_names | default('') }}"
         quiet: true
       run_once: true
 
@@ -503,6 +503,7 @@
             _node:
               name: "{{ _name }}"
               address: "{{ item.address }}"
+              hostname: "{{ _hv.ansible_facts.hostname | default('') }}"
               # the address from the ring, whatever name the host was given or found by
               ansible_host: "{{ item.address if import_cluster_set_ansible_host | default(true) | bool else '' }}"
               dc: "{{ item.dc }}"
@@ -521,7 +522,11 @@
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               notes: >-
                 {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
-                   + _hv.import_cluster_medusa.notes | default([]) }}
+                   + _hv.import_cluster_medusa.notes | default([])
+                   + ([('reached at ' ~ _hv.ansible_host ~ ', hosts.yml has its ring address ' ~ item.address
+                        ~ ' (import_cluster_set_ansible_host: false leaves ansible_host out)')]
+                      if _host != item.address and _hv.ansible_host | default(item.address) != item.address
+                         and import_cluster_set_ansible_host | default(true) | bool else []) }}
             _versions: >-
               {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
                  ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')
@@ -615,3 +620,7 @@
     - name: Show the report
       ansible.builtin.debug:
         msg: "{{ (_report ~ '\nWritten to ' ~ _dir).split('\n') }}"
+
+    - name: Show the differences between nodes
+      ansible.builtin.debug:
+        msg: "{{ _layout.differences.split('\n') }}"

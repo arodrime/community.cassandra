@@ -68,6 +68,42 @@
       ansible.builtin.assert:
         that: _after.content | b64decode == _same
 
+    # the fqdn is the node's folder in the bucket: a change means full backups
+    - name: Another fqdn in the existing file
+      ansible.builtin.copy:
+        content: "{{ _other }}"
+        dest: /etc/medusa/medusa.ini
+        owner: cassandra
+        group: cassandra
+        mode: "0600"
+      vars:
+        _other: "{{ _same | replace('[storage]\n', '[storage]\nfqdn = old-name.example\n') }}"
+
+    - name: The role refuses to change it
+      block:
+        - name: Run the role
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_medusa
+
+        - name: Not refused
+          ansible.builtin.set_fact:
+            _refused: false
+      rescue:
+        - name: Refused
+          ansible.builtin.set_fact:
+            _refused: "{{ 'old-name.example' in ansible_failed_result.msg and 'full backups' in ansible_failed_result.msg }}"
+
+    - name: Read it again
+      ansible.builtin.slurp:
+        path: /etc/medusa/medusa.ini
+      register: _after_refused
+
+    - name: It refused, and left the file alone
+      ansible.builtin.assert:
+        that:
+          - _refused | bool
+          - "'fqdn = old-name.example' in _after_refused.content | b64decode"
+
     - name: Put the role's file back (for the tests)
       ansible.builtin.file:
         path: /etc/medusa/medusa.ini

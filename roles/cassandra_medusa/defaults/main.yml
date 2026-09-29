@@ -77,7 +77,13 @@ cassandra_medusa_s3_secret_access_key: ""
 cassandra_medusa_key_file: "{{ '/etc/medusa/credentials' if cassandra_medusa_s3_access_key_id != '' else '' }}"
 cassandra_medusa_base_path: ""  # local provider: where the backups go
 cassandra_medusa_prefix: ""
-cassandra_medusa_fqdn: ""
+# This node's name in the backups (their path in the bucket): "" lets Medusa
+# work it out; with cassandra_medusa_fqdn_domain, <short hostname>.<domain>.
+# A change starts a new folder in the bucket (full backups): the role refuses
+# to change the fqdn of an existing medusa.ini unless cassandra_medusa_fqdn_change.
+cassandra_medusa_fqdn_domain: ""
+cassandra_medusa_fqdn: "{{ (ansible_facts['hostname'] ~ '.' ~ cassandra_medusa_fqdn_domain) if cassandra_medusa_fqdn_domain != '' else '' }}"
+cassandra_medusa_fqdn_change: false
 cassandra_medusa_max_backup_age: 0
 cassandra_medusa_max_backup_count: 0
 cassandra_medusa_transfer_max_bandwidth: 50MB/s

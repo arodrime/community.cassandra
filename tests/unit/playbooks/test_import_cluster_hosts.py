@@ -84,3 +84,30 @@ def test_host_names_option_checked():
     assert Templar(loader=DataLoader(), variables={}).template(that) is True
     for value, ok in (("fqdn", True), ("ip", True), ("hostname", True), ("FQDN", False), ("name", False)):
         assert Templar(loader=DataLoader(), variables={"import_cluster_host_names": value}).template(that) is ok
+
+
+def test_hostname_given_to_the_layout():
+    # for the Medusa fqdn rule: <short hostname>.<domain>
+    variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in MATCH["vars"].items()}
+    variables.update(hostvars=HOSTVARS, _given=GIVEN, item={"address": "10.0.0.2"}, import_cluster_host_names="ip")
+    templar = Templar(loader=DataLoader(), variables=variables)
+    assert templar.template(trust_as_template(MATCH["vars"]["_node"]["hostname"])) == "node2"
+
+
+def test_host_names_message_renders_unset():
+    # 2.19+ templates fail_msg even when the assert passes
+    msg = trust_as_template(PLAYS[0]["tasks"][0]["ansible.builtin.assert"]["fail_msg"])
+    assert "hostname, fqdn or ip" in Templar(loader=DataLoader(), variables={}).template(msg)
+
+
+def test_other_connection_address_noted():
+    variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in MATCH["vars"].items()}
+    variables.update(hostvars=HOSTVARS, _given=GIVEN, item={"address": "10.0.0.1"})
+    for k in ("_versions", "_install", "_started"):
+        variables[k] = ""
+    templar = Templar(loader=DataLoader(), variables=variables)
+    notes = templar.template(trust_as_template(MATCH["vars"]["_node"]["notes"]))
+    assert "reached at node1.mgmt, hosts.yml has its ring address 10.0.0.1" in notes[-1]
+    variables["item"] = {"address": "10.0.0.2"}
+    notes = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(MATCH["vars"]["_node"]["notes"]))
+    assert not any("reached at" in n for n in notes)
