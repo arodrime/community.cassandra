@@ -15,6 +15,7 @@
 - name: Check the new hosts are ready
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  any_errors_fatal: true  # a host that errors must not drop out of the run
   tasks:
     - name: Check this host
       ansible.builtin.include_role:

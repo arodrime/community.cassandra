@@ -26,14 +26,16 @@ with open(PLAYBOOK, encoding="utf-8") as f:
 TASK = [t for p in PLAYS for t in p.get("tasks", []) if t.get("name") == "Show what the add will do"][0]
 
 
-def summary(**inventory):
+def summary(new_nodes=("node7",), joining=(), **inventory):
+    own = inventory.pop("node7", {})
     new = {"_cassandra_preflight": {"address": "10.0.0.7", "cassandra_dc": "dc1", "cassandra_rack": "r1",
                                     "cassandra_cluster_name": "Orders", "cassandra_version": "50x"},
            "ansible_facts": {"hostname": "node7"}}
-    new.update(inventory.pop("node7", {}))
+    new.update(inventory)  # group_vars: also node7's
+    new.update(own)
     variables = {
         "hostvars": {"node7": new, "node1": {"cassandra_preflight_describe": {"stdout": ""}}},
-        "_new": ["node7"], "_joining": [], "_existing": ["node1"], "ansible_play_hosts_all": ["node7"],
+        "_new": list(new_nodes), "_joining": list(joining), "_existing": ["node1"], "ansible_play_hosts_all": ["node7"],
         "cassandra_add_node_plan": {"estimate": [], "cleanup": {}, "scope": {}, "warnings": []},
         "cassandra_stream_check_interval": 300, "cassandra_stream_stall_checks": 3, "_cassandra_session_warning": "",
     }
@@ -43,19 +45,59 @@ def summary(**inventory):
     return templar.template(trust_as_template(TASK["vars"]["_summary"]))
 
 
-def test_medusa_off_by_default():
-    assert ", Medusa off\n" in summary()
-    assert "Medusa fqdn" not in summary()
+@pytest.mark.parametrize("enabled", [None, False, "false", "no"])
+def test_medusa_off(enabled):
+    text = summary() if enabled is None else summary(cassandra_medusa_enabled=enabled)
+    assert ", Medusa off\n" in text
+    assert "Medusa fqdn" not in text
 
 
 @pytest.mark.parametrize("inventory, line, fqdn", [
     ({"cassandra_medusa_version": "0.30.1", "cassandra_medusa_venv": "/srv/tools/venv", "cassandra_medusa_fqdn_domain": "db.example.internal"},
      "Medusa on (0.30.1 in /srv/tools/venv)", "node7.db.example.internal"),
-    ({}, "Medusa on (in /opt/cassandra-medusa)", "(Medusa works it out)"),
+    ({}, "Medusa on (0.30.1 in /opt/cassandra-medusa)", "(Medusa works it out)"),
     ({"cassandra_medusa_venv": "", "node7": {"cassandra_medusa_fqdn": "n7.example.org"}},
-     "Medusa on (in the system Python)", "n7.example.org"),
+     "Medusa on (0.30.1 in the system Python)", "n7.example.org"),
+    # an explicit "" wins over the domain: medusa.ini gets no fqdn
+    ({"cassandra_medusa_fqdn_domain": "db.example.internal", "node7": {"cassandra_medusa_fqdn": ""}},
+     "Medusa on (0.30.1 in /opt/cassandra-medusa)", "(Medusa works it out)"),
 ])
 def test_medusa_on(inventory, line, fqdn):
     text = summary(cassandra_medusa_enabled=True, **inventory)
     assert line in text
     assert "node7 (10.0.0.7): datacenter dc1, rack r1, Medusa fqdn %s\n" % fqdn in text
+
+
+@pytest.mark.parametrize("new, joining, cleanup, shown", [
+    (["node7"], [], "none", True),
+    ([], ["node7"], "none", True),  # a run again that waits for a node still joining: shown and confirmed
+    ([], [], "none", False),
+    ([], [], "one", True),
+])
+def test_shown_and_confirmed_when_there_is_something_to_do(new, joining, cleanup, shown):
+    confirm = [t for p in PLAYS for t in p.get("tasks", []) if t.get("name") == "Confirm the add"][0]
+    for task in (TASK, confirm):
+        variables = {"_new": new, "_joining": joining, "cassandra_add_node_cleanup": cleanup}
+        condition = "{{ %s }}" % task["when"]
+        assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(condition)) is shown
+
+
+def test_medusa_on_when_only_the_new_node_has_it():
+    text = summary(node7={"cassandra_medusa_enabled": True})
+    assert "Medusa on (" in text and ", Medusa fqdn " in text
+
+
+def test_a_run_again_for_a_joining_node_says_it_waits():
+    text = summary(new_nodes=(), joining=("node7",))
+    assert "still bootstrapping, waited for first: node7" in text
+    assert "with a progress line" in text and "No node to add" not in text
+    assert "No node to add (node7 already in the ring)" in summary(new_nodes=())
+
+
+def test_the_copied_medusa_defaults_are_the_role_defaults():
+    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_medusa", "defaults", "main.yml"),
+              encoding="utf-8") as f:
+        defaults = yaml.safe_load(f)
+    template = TASK["vars"]["_summary"]
+    assert "cassandra_medusa_version | default('%s')" % defaults["cassandra_medusa_version"] in template
+    assert "cassandra_medusa_venv | default('%s')" % defaults["cassandra_medusa_venv"] in template

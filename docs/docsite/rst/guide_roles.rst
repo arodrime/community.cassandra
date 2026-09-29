@@ -167,24 +167,26 @@ is only a warning: the package managers and pip may go through a proxy of their 
 
 Before anything starts, ``add_node`` shows one screen and asks once (``cassandra_operation_confirm: false`` for
 non-interactive runs): the cluster and its running version, each new node with its address, datacenter, rack and an
-estimate of the data it will receive (from ``nodetool status``), the Cassandra and Java it gets, the cleanup choice, and
-warnings: racks of a datacenter left with different node counts (their nodes then hold different shares of the data),
-and a run not inside ``tmux`` or ``screen`` on the controller (a lost SSH session stops the run).
+estimate of the data it will receive (from ``nodetool status``) and its Medusa fqdn, the Cassandra, Java and Medusa
+(on or off) it gets, the cleanup choice, and warnings: racks of a datacenter left with different node counts (their
+nodes then hold different shares of the data), and a run not inside ``tmux`` or ``screen`` on the controller (a lost
+SSH session stops the run).
 
 Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints a progress line
-every ``cassandra_stream_check_interval`` seconds (300 by default), with the percentage, bytes and tables streamed, the
-rate over the last 3 checks, the time left and the expected end time, and waits as long as the streams make progress: it stops only after ``cassandra_stream_stall_checks`` checks
-in a row (3) with nothing streamed (4 times as many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session), the node
-goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress. The wait
-also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a failed
-bootstrap over, stop Cassandra on the node, empty its data, commitlog, saved_caches and hints directories, wait until
-it is gone from ``nodetool status``, and run ``add_node`` again. ``replace_node``, ``decommission_node``,
+every ``cassandra_stream_check_interval`` seconds (300 by default), with the percentage, bytes and tables streamed,
+the rate over the last 3 checks, the time left and the expected end time, and waits as long as the streams make
+progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3) with nothing streamed (4 times as
+many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
+the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
+The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
+failed bootstrap over, stop Cassandra on the node, empty its data, commitlog, saved_caches and hints directories, wait
+until it is gone from ``nodetool status``, and run ``add_node`` again. ``replace_node``, ``decommission_node``,
 ``remove_dead_node`` and the rebuild of ``add_datacenter`` wait the same way.
 
 Once the new nodes have joined, the others still hold the data they handed over: ``add_node`` prints the ``cleanup``
 command for the nodes concerned (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
 replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``one`` (a node at a time), ``rack``, ``dc``
-or ``all`` (nodes cleaned together), the cluster checked before each batch. ``cleanup`` removes it, with
+or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
 
