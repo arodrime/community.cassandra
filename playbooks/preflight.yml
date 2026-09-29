@@ -199,7 +199,8 @@
     # when the datacenter's ring has more than 1 rack but fewer than its
     # replication factor hint. The ring counts down nodes too (a dead node's
     # rack is still there for remove_dead_node and replace_node), and each new
-    # node joins the ring the next one sees (in cassandra_new_nodes order). A
+    # node joins the ring the next one sees (in cassandra_new_nodes order, else
+    # in create_cluster's start order: cassandra_start_order). A
     # replacement allocates nothing (it takes the dead node's tokens). A
     # datacenter not in the ring yet (or no node running): the inventory's
     # racks, 1 or at least the hint.
@@ -232,7 +233,10 @@
           {%-   set order = [] -%}
           {%-   set nn = cassandra_new_nodes | default('', true) -%}
           {%-   set nn = nn | join(',') if nn is iterable and nn is not string else nn | string -%}
-          {%-   set _ = order.extend(query('ansible.builtin.inventory_hostnames', nn) if nn else []) -%}
+          {%-   set _ = order.extend(query('ansible.builtin.inventory_hostnames', nn) if nn
+                                     else ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list
+                                          | community.cassandra.cassandra_start_order(_hint,
+                                              cassandra_preflight_status.cluster_status | default({}, true))) -%}
           {%-   set ordered = [] -%}
           {%-   for n in order -%}
           {%-     for h in new | selectattr('layout.name', 'equalto', n) -%}

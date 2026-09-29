@@ -31,7 +31,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 with open(os.path.join(TOP, "playbooks", "preflight.yml"), encoding="utf-8") as f:
-    PLAY = yaml.safe_load(f)[0]
+    PLAY = next(p for p in yaml.safe_load(f) if p.get("name") == "Cassandra preflight checks")
 RACKS = next(t for t in PLAY["tasks"] if t.get("name") == "Racks per datacenter")
 
 
@@ -43,7 +43,7 @@ def render(template, **variables):
 def passes(inventory, ring, hint=3, **extra):
     """inventory: host -> (rack, address); ring: [(rack, address)] or None (no running node)"""
     hostvars = dict((h, {"_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": rack, "address": address,
-                                                  "layout": {"name": h}}})
+                                                  "layout": {"name": h, "dc": "dc1", "rack": rack, "seed": False}}})
                     for h, (rack, address) in inventory.items())
     variables = dict(RACKS["vars"], ansible_play_hosts=list(inventory), hostvars=hostvars,
                      cassandra_allocate_tokens_for_local_replication_factor=hint, item="dc1",
@@ -73,8 +73,8 @@ N1, N2, N3, N9 = ("r1", "10.0.0.1"), ("r2", "10.0.0.2"), ("r3", "10.0.0.3"), ("r
     ({"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8")}, [N1, N2], False),
     # a new node in a rack not in the ring: the allocator takes 1 rack
     ({"n1": N1, "n2": N2, "n9": N9}, [N1, N2], True),
-    # both at once: the r1 one is refused
-    ({"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8"), "n9": N9}, [N1, N2], False),
+    # both at once: create_cluster starts the r3 one first, then r1 has company
+    ({"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8"), "n9": N9}, [N1, N2], True),
     # enough racks in the ring
     ({"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8")}, [N1, N2, N3], True),
     ({"n1": ("r1", "10.0.0.1"), "n8": ("r1", "10.0.0.8")}, [N1], True),
@@ -82,8 +82,10 @@ N1, N2, N3, N9 = ("r1", "10.0.0.1"), ("r2", "10.0.0.2"), ("r3", "10.0.0.3"), ("r
     ({"n1": N1, "n2": N2, "n3": N3}, None, True),
     ({"n1": N1, "n2": N2}, None, False),
     ({"n1": N1, "n2": ("r1", "10.0.0.2")}, None, True),
-    # one join after the other: n2 brings r2, then n3 joins r1 in a 2-rack ring
-    ({"n1": N1, "n2": N2, "n3": ("r1", "10.0.0.3")}, [N1], False),
+    # one join after the other: create_cluster starts n3 in r1 while the ring has 1 rack, then n2 brings r2
+    ({"n1": N1, "n2": N2, "n3": ("r1", "10.0.0.3")}, [N1], True),
+    # whatever the order, a node joins r1 or r2 in a 2-rack ring
+    ({"n1": N1, "n2": N2, "n3": ("r1", "10.0.0.3"), "n4": ("r2", "10.0.0.4")}, [N1], False),
     ({"n1": N1, "n2": N2, "n3": N3}, [N1], True),
 ])
 def test_racks(inventory, ring, ok):
@@ -104,7 +106,7 @@ def test_racks_hint_as_a_string_and_4():
     ("n*:!n1:!n2", {}, True),  # n3 only, then n2 in inventory order
     # n2 first: n3 then joins r1 in a 2-rack ring
     ("n2, n3", {}, False),
-    ("", {}, False),  # inventory order
+    ("", {}, True),  # no cassandra_new_nodes (create_cluster): its start order, n3 first
 ])
 def test_racks_join_in_the_new_nodes_order(new_nodes, groups, ok):
     inventory = {"n1": N1, "n2": N2, "n3": ("r1", "10.0.0.3")}
@@ -121,7 +123,8 @@ def test_a_replacement_allocates_nothing():
 def test_the_message_names_the_refused_node():
     inventory = {"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8")}
     hostvars = dict((h, {"_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": r, "address": a,
-                                                  "layout": {"name": h}}}) for h, (r, a) in inventory.items())
+                                                  "layout": {"name": h, "dc": "dc1", "rack": r, "seed": False}}})
+                    for h, (r, a) in inventory.items())
     variables = dict(RACKS["vars"], ansible_play_hosts=list(inventory), hostvars=hostvars, item="dc1", groups={},
                      cassandra_allocate_tokens_for_local_replication_factor=3,
                      cassandra_preflight_status={"cluster_status": {"dc1": {"nodes": [
@@ -135,7 +138,8 @@ def test_the_message_names_the_refused_node():
 
 def test_racks_per_datacenter():
     # dc2's ring has 2 racks and a new node joins one of them; dc1 is fine
-    hostvars = dict((h, {"_cassandra_preflight": {"cassandra_dc": dc, "cassandra_rack": r, "address": a, "layout": {"name": h}}})
+    hostvars = dict((h, {"_cassandra_preflight": {"cassandra_dc": dc, "cassandra_rack": r, "address": a,
+                                                  "layout": {"name": h, "dc": dc, "rack": r, "seed": False}}})
                     for h, dc, r, a in [("n1", "dc1", "r1", "10.0.0.1"), ("m1", "dc2", "r1", "10.0.1.1"),
                                         ("m2", "dc2", "r2", "10.0.1.2"), ("m8", "dc2", "r1", "10.0.1.8")])
     ring = {"dc1": {"nodes": [{"address": "10.0.0.1", "rack": "r1"}]},
@@ -144,3 +148,16 @@ def test_racks_per_datacenter():
                      cassandra_allocate_tokens_for_local_replication_factor=3, cassandra_preflight_status={"cluster_status": ring})
     assert render("{{ %s }}" % RACKS["ansible.builtin.assert"]["that"], item="dc1", **variables) is True
     assert render("{{ %s }}" % RACKS["ansible.builtin.assert"]["that"], item="dc2", **variables) is False
+
+
+def test_create_cluster_starts_in_the_order_preflight_checks():
+    # one play starts every node, in the order of the group filled with cassandra_start_order
+    with open(os.path.join(TOP, "playbooks", "create_cluster.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    order = next(p for p in plays if p.get("name") == "Order the starts")
+    task = order["tasks"][0]
+    assert task["ansible.builtin.add_host"]["groups"] == "cassandra_create_start_order"
+    assert "community.cassandra.cassandra_start_order(" in task["loop"] and task["run_once"] is True
+    starts = [p for p in plays if "cassandra_service" in str(p.get("roles"))]
+    assert [(p["hosts"], p["serial"]) for p in starts] == [("cassandra_create_start_order", 1)]
+    assert "community.cassandra.cassandra_start_order(" in RACKS["vars"]["_refused"]

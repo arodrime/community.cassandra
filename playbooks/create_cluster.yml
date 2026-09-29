@@ -1,8 +1,9 @@
 ---
 # Builds a cluster from blank hosts (one inventory group per cluster):
 #   ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=my_cluster
-# Nodes are prepared in parallel, then started one at a time: seeds first,
-# each one joined before the next. Re-running it on a running cluster
+# Nodes are prepared in parallel, then started one at a time: seeds first
+# (a node of a new rack earlier when the token allocator needs it), each one
+# joined before the next. Re-running it on a running cluster
 # starts nothing.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
@@ -55,14 +56,27 @@
     - role: community.cassandra.cassandra_medusa
       when: cassandra_medusa_enabled | default(false) | bool
 
-- name: Start the seeds, one at a time
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_seed_True"
-  serial: 1
-  roles:
-    - community.cassandra.cassandra_service
+# The token allocator refuses a node joining a rack already in the ring while
+# its datacenter has more than 1 rack but fewer than
+# cassandra_allocate_tokens_for_local_replication_factor: seeds first, but a
+# node of a new rack before one it would refuse
+- name: Order the starts
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Seeds first, racks in an order the token allocator accepts
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: cassandra_create_start_order
+      loop: >-
+        {{ ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list
+           | community.cassandra.cassandra_start_order(_cassandra_preflight.cassandra_allocate_tokens_for_local_replication_factor,
+               cassandra_preflight_status.cluster_status | default({}, true)) }}
+      run_once: true
+      changed_when: false
 
-- name: Start the other nodes, one at a time
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_seed_False"
+- name: Start the nodes, one at a time
+  hosts: cassandra_create_start_order
   serial: 1
   roles:
     - community.cassandra.cassandra_service
