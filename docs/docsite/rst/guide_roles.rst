@@ -128,8 +128,9 @@ checks on its own, changing nothing, and fails when there is a problem, so it ca
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
 
-Risky operations ask for confirmation first (type ``yes``). ``cassandra_operation_confirm: false`` skips the
-question, for runs without a terminal.
+Risky operations ask for confirmation first: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
+asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
+terminal; without one, a run that would ask fails at once.
 
 Rolling operations record each node done in a progress file on the controller. An interrupted run resumes where it
 stopped with ``-e cassandra_rolling_resume=true``.

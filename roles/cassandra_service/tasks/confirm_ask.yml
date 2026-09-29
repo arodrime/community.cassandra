@@ -1,0 +1,45 @@
+---
+# One question of confirm.yml. It includes itself again after an answer that
+# is neither yes nor no (pause has no until on every ansible-core version).
+- name: Count the answers
+  ansible.builtin.set_fact:
+    _cassandra_confirm_tries: "{{ _cassandra_confirm_tries | int + 1 }}"
+
+- name: Confirm the operation
+  ansible.builtin.pause:
+    prompt: |-
+      {% if _cassandra_confirm_tries | int == 1 %}{{ cassandra_confirm_prompt }}
+      Answer yes to go on, no to stop{% else %}Please answer yes or no{% endif %}
+  register: _cassandra_confirm_reply
+  run_once: true
+
+- name: Read the answer
+  ansible.builtin.set_fact:
+    _cassandra_confirm_answer: "{{ _cassandra_confirm_reply | community.cassandra.cassandra_confirm_answer }}"
+
+- name: Stop, no terminal to answer on
+  ansible.builtin.fail:
+    msg: >-
+      No terminal to answer the confirmation on, nothing changed. Run it from a terminal,
+      or add -e cassandra_operation_confirm=false to go on without asking.
+  run_once: true
+  when: _cassandra_confirm_answer == 'no_terminal'
+
+# Only go and again carry on, whatever else the answer turned into
+- name: Stop at the operator's request
+  ansible.builtin.fail:
+    msg: Stopped at your request, nothing changed.
+  run_once: true
+  when: _cassandra_confirm_answer not in ['go', 'again']
+
+- name: Stop after 3 answers that are neither yes nor no
+  ansible.builtin.fail:
+    msg: No yes or no after 3 answers, stopped, nothing changed.
+  run_once: true
+  when:
+    - _cassandra_confirm_answer == 'again'
+    - _cassandra_confirm_tries | int >= 3
+
+- name: Ask again
+  ansible.builtin.include_tasks: confirm_ask.yml
+  when: _cassandra_confirm_answer == 'again'

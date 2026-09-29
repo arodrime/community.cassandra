@@ -2,20 +2,13 @@
 # Operator confirmation before a risky operation, once per run:
 #   include_role: name=community.cassandra.cassandra_service tasks_from=confirm.yml
 #   vars: cassandra_confirm_prompt: "what is about to happen, and the risk"
+# yes or y goes on, no or n stops; any other answer asks again, 3 times at most.
 # cassandra_operation_confirm: false skips the question (non-interactive runs).
-- name: Confirm the operation
-  ansible.builtin.pause:
-    prompt: "{{ cassandra_confirm_prompt }}\nType 'yes' to go on"
-  register: cassandra_confirm_answer
-  run_once: true
+- name: Start the count of answers
+  ansible.builtin.set_fact:
+    _cassandra_confirm_tries: 0
   when: cassandra_operation_confirm | bool
 
-- name: Stop unless confirmed
-  ansible.builtin.assert:
-    that: cassandra_confirm_answer.user_input | default('') == 'yes'
-    fail_msg: >-
-      Not confirmed, nothing was changed. Run interactively and answer 'yes',
-      or set cassandra_operation_confirm: false to go on without asking.
-    quiet: true
-  run_once: true
+- name: Ask for confirmation
+  ansible.builtin.include_tasks: confirm_ask.yml
   when: cassandra_operation_confirm | bool

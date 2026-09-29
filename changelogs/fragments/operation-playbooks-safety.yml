@@ -1,2 +1,2 @@
 minor_changes:
-  - Operation playbooks - the cluster is checked before and after each node, an interrupted run can be resumed, risky operations ask for confirmation (cassandra_confirm), and add_node checks the state of each new node first.
+  - Operation playbooks - the cluster is checked before and after each node, an interrupted run can be resumed, risky operations ask for confirmation (-e cassandra_operation_confirm=false skips it), and add_node checks the state of each new node first.
