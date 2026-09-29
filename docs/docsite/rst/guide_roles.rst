@@ -132,8 +132,12 @@ Risky operations ask for confirmation first: ``yes`` (or ``y``) goes on, ``no`` 
 asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
 terminal; without one, a run that would ask fails at once.
 
-Rolling operations record each node done in a progress file on the controller. An interrupted run resumes where it
-stopped with ``-e cassandra_rolling_resume=true``.
+Rolling operations record each node done in a progress file on the controller, in ``.cassandra_progress`` next to
+the inventory (in the current dir when the inventory's dir is not writable and has no ``.cassandra_progress`` yet, or
+with ``-i host1,host2``), or in ``cassandra_rolling_progress_dir``. An interrupted run resumes where it stopped with
+``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. The
+files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
+``.gitignore``.
 
 
 Creating a cluster

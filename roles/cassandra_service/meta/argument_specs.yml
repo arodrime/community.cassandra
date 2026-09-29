@@ -237,9 +237,15 @@ argument_specs:
             skipping the nodes already done.
       cassandra_rolling_progress_dir:
         type: path
+        default: ""
         description:
           - Where rolling operations keep their progress files, on the
-            controller. Defaults to C(~/.cassandra_rolling).
+            controller. A relative path is from the current dir.
+          - Empty (default) means C(.cassandra_progress) in the inventory's
+            dir, or in the current dir when the inventory's dir is not writable
+            and has no C(.cassandra_progress) yet (or there is none, as with
+            C(-i host1,host2)). With several inventories, the one of the first
+            host of the play.
       cassandra_rolling_progress_days:
         type: int
         default: 30

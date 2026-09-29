@@ -12,20 +12,42 @@
     ansible_become: false  # an inventory ansible_become beats the become keyword
     _prefix: "{{ cassandra_hosts | default('cassandra') }}-{{ cassandra_service_node_action }}-"
   block:
+    - name: Check the inventory's dir
+      ansible.builtin.stat:
+        path: "{{ inventory_dir }}"
+      register: cassandra_progress_inventory_dir_stat
+      when:
+        - cassandra_rolling_progress_dir | default('', true) == ''
+        - inventory_dir | default('', true) not in ['', 'None']  # 'None' with -i host1,host2
+
+    # made absolute here, on the controller, like import_cluster_dir: a
+    # relative path is from the dir the playbook is run from
+    - name: Pick the progress dir
+      ansible.builtin.set_fact:
+        cassandra_progress_dir: >-
+          {{ _given if _given is abs else _given | realpath }}
+      vars:
+        _inv: "{{ cassandra_progress_inventory_dir_stat.stat | default({}) }}"
+        _inv_progress: "{{ inventory_dir ~ '/.cassandra_progress' if _inv.exists | default(false) else '' }}"
+        _given: >-
+          {{ cassandra_rolling_progress_dir | default('', true) | expanduser
+             or ((inventory_dir if _inv.writeable | default(false) or (_inv_progress != '' and _inv_progress is directory)
+                  else '.') ~ '/.cassandra_progress') }}
+
     # A run that became root on the controller leaves a dir the user cannot write
     - name: Check the progress dir
       ansible.builtin.stat:
-        path: "{{ cassandra_rolling_progress_dir }}"
+        path: "{{ cassandra_progress_dir }}"
         follow: true  # a link to a dir is fine
       register: cassandra_progress_dir_stat
 
     - name: Stop if the progress dir is not usable
       ansible.builtin.fail:
         msg: >-
-          {{ cassandra_rolling_progress_dir }}
+          {{ cassandra_progress_dir }}
           {%- if not _st.isdir %} is not a directory: remove it or set cassandra_rolling_progress_dir.
           {%- else %} is not writable by {{ lookup('ansible.builtin.pipe', 'id -un') }} (owner {{ _st.pw_name }}, mode {{ _st.mode }}),
-          left by a run with become on the controller: sudo chown -R {{ lookup('ansible.builtin.pipe', 'id -un') }}: {{ cassandra_rolling_progress_dir }}
+          left by a run with become on the controller: sudo chown -R {{ lookup('ansible.builtin.pipe', 'id -un') }}: {{ cassandra_progress_dir }}
           (or set cassandra_rolling_progress_dir).{% endif %}
       vars:
         _st: "{{ cassandra_progress_dir_stat.stat }}"
@@ -35,13 +57,13 @@
 
     - name: Ensure the progress dir exists
       ansible.builtin.file:
-        path: "{{ cassandra_rolling_progress_dir }}"
+        path: "{{ cassandra_progress_dir }}"
         state: directory
         mode: "0755"
 
     - name: Find old progress files
       ansible.builtin.find:
-        paths: "{{ cassandra_rolling_progress_dir }}"
+        paths: "{{ cassandra_progress_dir }}"
         patterns: "*.done"
         age: "{{ cassandra_rolling_progress_days }}d"
       register: cassandra_progress_old
@@ -56,14 +78,14 @@
 
     - name: Find the progress file to resume
       ansible.builtin.find:
-        paths: "{{ cassandra_rolling_progress_dir }}"
+        paths: "{{ cassandra_progress_dir }}"
         patterns: "{{ _prefix }}*.done"
       register: cassandra_progress_found
       when: cassandra_rolling_resume | bool
 
     - name: Stop if there is nothing to resume
       ansible.builtin.fail:
-        msg: "No {{ _prefix }}*.done file in {{ cassandra_rolling_progress_dir }} to resume: run without cassandra_rolling_resume"
+        msg: "No {{ _prefix }}*.done file in {{ cassandra_progress_dir }} to resume: run without cassandra_rolling_resume"
       when:
         - cassandra_rolling_resume | bool
         - cassandra_progress_found.files | length == 0
@@ -72,7 +94,7 @@
       ansible.builtin.set_fact:
         cassandra_progress_file: >-
           {{ (cassandra_progress_found.files | sort(attribute='mtime') | last).path if cassandra_rolling_resume | bool
-             else cassandra_rolling_progress_dir ~ '/' ~ _prefix ~ now(fmt='%Y%m%dT%H%M%S') ~ '.done' }}
+             else cassandra_progress_dir ~ '/' ~ _prefix ~ now(fmt='%Y%m%dT%H%M%S') ~ '.done' }}
 
     - name: Check the progress file to resume
       ansible.builtin.stat:

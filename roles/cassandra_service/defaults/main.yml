@@ -133,7 +133,8 @@ cassandra_operation_confirm: true
 cassandra_operation_drain: true
 
 # Rolling operations keep a progress file on the controller; resume an
-# interrupted one with -e cassandra_rolling_resume=true.
+# interrupted one with -e cassandra_rolling_resume=true. Empty: .cassandra_progress
+# in the inventory's dir, or in the current dir when that one is not writable.
 cassandra_rolling_resume: false
-cassandra_rolling_progress_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cassandra_rolling"
+cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
