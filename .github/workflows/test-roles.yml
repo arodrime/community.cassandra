@@ -28,7 +28,7 @@ jobs:
 
       - name: Generate module list
         run: |
-          find roles -type d -maxdepth 1 -mindepth 1 -not -name cassandra_medusa | cut -d '/' -f2 | awk NF | jq -sRc 'split("\n") | map(select(length > 0))' > int_test_roles.json
+          find roles -type d -maxdepth 1 -mindepth 1 | cut -d '/' -f2 | awk NF | jq -sRc 'split("\n") | map(select(length > 0))' > int_test_roles.json
 
       - name: Set output variable
         id: json-list
@@ -109,8 +109,13 @@ jobs:
           # uses: steps don't get the job's working-directory
           command: cd ansible_collections/community/cassandra && ansible-galaxy collection install community-cassandra-*.tar.gz
 
+      # Every scenario of the role, but virtualbox (it needs a VM)
       - name: Run molecule test for ${{ matrix.cassandra_role }}
-        run: molecule test
+        run: |
+          for scenario in molecule/*/molecule.yml; do
+            scenario=$(basename "$(dirname "$scenario")")
+            [ "$scenario" = virtualbox ] || molecule test -s "$scenario"
+          done
         working-directory: ansible_collections/community/cassandra/roles/${{ matrix.cassandra_role }}
         env:
           ANSIBLE_ALLOW_BROKEN_CONDITIONALS: 1  # need for  TASK [Set async_dir for HOME env]

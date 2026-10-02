@@ -1,0 +1,25 @@
+---
+- name: Converge
+  hosts: all
+  tasks:
+    - name: Install Medusa into python3.11 (RHEL 8 and 9)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_medusa
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Refused on a Python the system manages
+      when: ansible_facts['os_family'] == 'Debian'
+      block:
+        - name: Run the role without a virtualenv
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_medusa
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: pip was let install into an externally managed Python
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Refuse an externally managed Python'
+              - "'Set cassandra_medusa_venv' in ansible_failed_result.msg"

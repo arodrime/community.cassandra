@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_medusa - new role installing Cassandra Medusa (backups) with pip, in its own virtualenv by default, from PyPI or a mirror of it, and writing ``/etc/medusa/medusa.ini`` from variables, readable only by the account Cassandra runs as (``cassandra_user`` when set, else ``cassandra``); it refuses to change the ``fqdn`` of an existing ``medusa.ini`` (the backups' path in the bucket) unless ``cassandra_medusa_fqdn_change`` is true. It schedules no backup.

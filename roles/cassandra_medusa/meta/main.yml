@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  author: Alain Rodriguez
+  description: Install Cassandra Medusa (backups) with pip and write its medusa.ini.
+  platforms:
+    - name: RedHat
+      versions:
+      - all
+    - name: Debian
+      versions:
+      - all
+    - name: Ubuntu
+      versions:
+      - all
+
+  galaxy_tags:
+    - cassandra
+    - database
+    - backup

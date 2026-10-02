@@ -1,0 +1,117 @@
+---
+# ---- Install ----
+# Medusa from pip, in its own virtualenv; medusa linked into
+# cassandra_medusa_link_dir ("" = no link).
+cassandra_medusa_version: 0.30.1
+# "": no virtualenv, pip installs into the system site-packages of the Python
+# (refused where the system manages it, PEP 668: Debian 12, Ubuntu 23.04 and later)
+cassandra_medusa_venv: /opt/cassandra-medusa
+cassandra_medusa_link_dir: /usr/local/bin
+# true: /etc/profile.d/cassandra-medusa.sh puts the virtualenv's bin in the
+# PATH of login shells (users' own profiles are never edited)
+cassandra_medusa_profile_d: false
+# Python of the virtualenv (or the one pip installs into without one): "" picks python3 when Medusa supports it, else
+# python3.11 (installed on the RedHat family, e.g. RHEL 8 and 9).
+cassandra_medusa_python: ""
+# Python versions Medusa 0.30.x supports (its requires-python: >=3.10,<3.13)
+cassandra_medusa_python_supported: ["3.10", "3.12"]
+# PyPI mirror (e.g. https://pypi.example.com/simple), "" = pip's
+# default. Credentials for it (e.g. mirror_user), the password in a vault.
+cassandra_medusa_pip_index_url: ""
+cassandra_medusa_pip_username: ""
+cassandra_medusa_pip_password: ""
+# CA bundle pip checks the mirror's certificate with: the system's, so that a
+# mirror with a certificate from an internal CA the hosts trust works ("" = pip's
+# own). Not used without a mirror.
+cassandra_medusa_pip_cert: >-
+  {{ '/etc/ssl/certs/ca-certificates.crt' if ansible_facts['os_family'] == 'Debian' else '/etc/pki/tls/certs/ca-bundle.crt' }}
+# More pip install arguments, e.g. ["--cert", "/etc/pki/tls/certs/mirror.pem"]
+cassandra_medusa_pip_extra_args: []
+# Download nothing (air-gapped hosts): Medusa must already be in the
+# virtualenv, unless cassandra_medusa_pip_index_url points at a reachable mirror.
+cassandra_offline: false
+
+# ---- /etc/medusa/medusa.ini ----
+# The config and the S3 credentials file hold secrets: readable by their owner
+# only, the account Cassandra runs as (cassandra_user), which runs Medusa too.
+cassandra_medusa_config_owner: "{{ cassandra_user | default('cassandra') }}"
+cassandra_medusa_config_group: "{{ cassandra_group | default('cassandra') }}"
+cassandra_medusa_config_mode: "0600"
+cassandra_medusa_key_file_owner: "{{ cassandra_medusa_config_owner }}"
+cassandra_medusa_key_file_group: "{{ cassandra_medusa_config_group }}"
+cassandra_medusa_key_file_mode: "{{ cassandra_medusa_config_mode }}"
+
+# A setting set to "" is left out of medusa.ini (Medusa's default applies).
+# [cassandra]
+cassandra_medusa_stop_cmd: ""
+cassandra_medusa_start_cmd: ""
+cassandra_medusa_cassandra_config_file: >-
+  {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}/cassandra.yaml
+cassandra_medusa_cql_username: ""
+cassandra_medusa_cql_password: ""
+# JMX login for nodetool; the password file wins over the password
+cassandra_medusa_nodetool_username: ""
+cassandra_medusa_nodetool_password: ""
+cassandra_medusa_nodetool_password_file: ""
+cassandra_medusa_nodetool_host: ""
+cassandra_medusa_nodetool_port: "{{ cassandra_jmx_port | default(7199) }}"
+cassandra_medusa_nodetool_executable: ""
+cassandra_medusa_nodetool_ssl: ""
+cassandra_medusa_sstableloader_bin: ""
+cassandra_medusa_sstableloader_truststore: ""
+cassandra_medusa_sstableloader_truststore_password: ""
+cassandra_medusa_sstableloader_keystore: ""
+cassandra_medusa_sstableloader_keystore_password: ""
+cassandra_medusa_resolve_ip_addresses: true
+cassandra_medusa_use_sudo: ""
+
+# [storage]
+# local, s3, s3_compatible (MinIO, Ceph...), s3_rgw, google_storage, azure_blobs, ibm_storage
+cassandra_medusa_storage_provider: ""
+cassandra_medusa_storage_class: ""
+cassandra_medusa_bucket_name: cassandra_backups
+# S3 keys: written to cassandra_medusa_key_file (AWS credentials format), in
+# the profile cassandra_medusa_api_profile or "default". Without them, set
+# cassandra_medusa_key_file to your own file, or leave it "" (instance role).
+cassandra_medusa_s3_access_key_id: ""
+cassandra_medusa_s3_secret_access_key: ""
+cassandra_medusa_key_file: "{{ '/etc/medusa/credentials' if cassandra_medusa_s3_access_key_id != '' else '' }}"
+cassandra_medusa_base_path: ""  # local provider: where the backups go
+cassandra_medusa_prefix: ""
+# This node's name in the backups (their path in the bucket): "" lets Medusa
+# work it out; with cassandra_medusa_fqdn_domain, <short hostname>.<domain>.
+# A change starts a new folder in the bucket (full backups): the role refuses
+# to change the fqdn of an existing medusa.ini unless cassandra_medusa_fqdn_change.
+cassandra_medusa_fqdn_domain: ""
+cassandra_medusa_fqdn: "{{ (ansible_facts['hostname'] ~ '.' ~ cassandra_medusa_fqdn_domain) if cassandra_medusa_fqdn_domain != '' else '' }}"
+cassandra_medusa_fqdn_change: false
+cassandra_medusa_max_backup_age: 0
+cassandra_medusa_max_backup_count: 0
+cassandra_medusa_transfer_max_bandwidth: 50MB/s
+cassandra_medusa_concurrent_transfers: 1
+cassandra_medusa_multi_part_upload_threshold: 20MB
+cassandra_medusa_backup_grace_period_in_days: 10
+cassandra_medusa_use_sudo_for_restore: true
+cassandra_medusa_api_profile: ""
+# s3_compatible endpoint, e.g. s3.example.com, 443, true
+cassandra_medusa_host: ""
+cassandra_medusa_port: ""
+cassandra_medusa_secure: ""
+cassandra_medusa_ssl_verify: ""
+cassandra_medusa_region: ""
+cassandra_medusa_s3_addressing_style: ""
+
+# [monitoring]
+cassandra_medusa_monitoring_provider: ""
+
+# [logging]
+cassandra_medusa_logging_enabled: ""
+cassandra_medusa_logging_file: ""
+cassandra_medusa_logging_level: ""
+cassandra_medusa_logging_format: ""
+cassandra_medusa_logging_max_bytes: ""
+cassandra_medusa_logging_backup_count: ""
+
+# Any other setting, per section, e.g. {checks: {enable_md5_checks: "true"}};
+# a key also set by a variable above is taken from here.
+cassandra_medusa_extra_settings: {}
