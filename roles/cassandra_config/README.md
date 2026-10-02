@@ -87,8 +87,8 @@ Role Variables
   the Cassandra service runs as and a group it is in (set both together).
   The deb and rpm packages create `cassandra` and their init scripts run
   the service as it; set these only when the service runs as another
-  account, which the role does not create and does not set in the service
-  unit. They own the directories and JMX files the role creates (existing
+  account, which the role does not create (`cassandra_service` runs the
+  service as it). They own the directories and JMX files the role creates (existing
   directories are left as they are), and `cassandra_group` is the group of
   the config files. The role stops before writing anything when the account
   does not exist or is not in that group (a group name, not a gid), or when

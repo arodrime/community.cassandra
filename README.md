@@ -20,6 +20,7 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 - `cassandra_install`- Install Cassandra.
 - `cassandra_linux`- Configure Linux OS Settings for Cassandra.
 - `cassandra_repository`- Configures a package repository for Cassandra on Debian and RedHat based platforms.
+- `cassandra_service`- Run Cassandra under a systemd unit, start it and wait until the node has joined.
 
 #### Modules
 
