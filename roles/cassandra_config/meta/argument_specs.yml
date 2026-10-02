@@ -28,7 +28,7 @@ argument_specs:
         default: cassandra
         description:
         - Account the Cassandra service runs as (the deb and rpm packages create and use C(cassandra)); it must exist and
-          be in O(cassandra_group). The role does not create it nor set it in the service unit.
+          be in O(cassandra_group). The role does not create it; C(cassandra_service) runs the service as it.
         - Owner of the data, commitlog, hints, saved caches and log directories the role creates, and of the JMX users
           files.
       cassandra_group:
