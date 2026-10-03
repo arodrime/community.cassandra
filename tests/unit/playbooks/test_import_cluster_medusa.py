@@ -152,7 +152,7 @@ def test_login_shells_only_when_not_found_otherwise(tmp_path):
 
 
 def test_only_cassandra_and_root_login_shells(tmp_path):
-    """Nothing found: the login shells of cassandra and root only, then the usual places."""
+    """Nothing found: the login shells of cassandra and root only."""
     assert run(tmp_path) == {}
     assert asked(tmp_path) == ["cassandra-lic", "cassandra-ic", "root-lic", "root-ic"]
 
@@ -164,7 +164,7 @@ def test_login_shell_answer_not_an_executable(tmp_path, answer):
     assert run(tmp_path) == {}
 
 
-@pytest.mark.parametrize("place", ["opt/cassandra-medusa", "opt/medusa", "usr/share/cassandra-medusa", "opt/tools"])
+@pytest.mark.parametrize("place", ["opt/cassandra-medusa", "opt/medusa", "usr/share/cassandra-medusa"])
 def test_usual_places_before_login_shells(tmp_path, place):
     """In a usual place: no profile is run."""
     venv(tmp_path / place)
@@ -174,10 +174,30 @@ def test_usual_places_before_login_shells(tmp_path, place):
     assert asked(tmp_path) == []
 
 
-def test_login_shell_answer_read_from_a_file():
-    """Not from a pipe: a process a profile left running in a session of its own would hold it open."""
-    assert re.search(r'as_user "\$u" "\$o" >"\$out"\n', SCRIPT)
-    assert "as_user \"$u\" \"$o\" |" not in SCRIPT
+def test_login_shell_leaving_a_process(tmp_path):
+    """A process a profile starts in a session of its own outlives the timeout: the answer is read from a file
+    (a pipe would wait for that process), removed at the end."""
+    tmp = tmp_path / "t"
+    tmp.mkdir()
+    stub = "as_user() { setsid sh -c 'sleep 30' 2>/dev/null & echo /nope; }\n"
+    script = AS_USER.sub(lambda m: stub, SCRIPT)
+    script = AS_CASSANDRA.sub(lambda m: 'as_cassandra() { "$@"; }\n', script)
+    script = re.sub(r"(?<=[\s\"'(=:])/(etc|opt|home|root|usr|srv|var)/", r"$ROOT/\1/", script)
+    env = {"ROOT": str(tmp_path), "PATH": "/usr/bin:/bin", "TMPDIR": str(tmp), "IMPORT_CLUSTER_MEDUSA_PATH": ""}
+    out = subprocess.run(["sh", "-c", script], env=env, cwd=str(tmp_path), capture_output=True, text=True, timeout=15,
+                         check=True)
+    assert out.stdout == ""
+    assert list(tmp.iterdir()) == []
+
+
+@pytest.mark.parametrize("names", [("medusa-0.15", "medusa-0.21")])
+def test_login_shell_before_any_venv_under_opt(tmp_path, names):
+    """Several under /opt: the one a login profile puts in the PATH, not the first by name."""
+    for name in names:
+        venv(tmp_path / "opt" / name)
+    login(tmp_path, "cassandra", "-lic", "%s/opt/%s/bin/medusa\n" % (tmp_path, names[1]))
+    found = run(tmp_path)
+    assert found["venv"] == str(tmp_path / "opt" / names[1]) and found["login"] == "cassandra"
 
 
 def test_any_venv_under_opt(tmp_path):
@@ -230,7 +250,7 @@ def test_login_shell_with_a_terminal(tmp_path):
     write(tmp_path / ".bashrc", "case $- in *i*) ;; *) return ;; esac\nPATH=%s/v/bin:$PATH\n" % tmp_path)
     write(tmp_path / "t.sh", as_user_script(tmp_path))
     out = subprocess.run(["timeout", "25", "script", "-qec", "sh %s/t.sh" % tmp_path, "/dev/null"],
-                         capture_output=True, text=True)
+                         capture_output=True, text=True, check=False)
     assert out.returncode == 0
     lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
     assert lines[-2:] == [str(tmp_path / "v/bin/medusa")] * 2
@@ -271,7 +291,7 @@ def as_cassandra_script(owners, cassandra_user):
 ])
 def test_version_as_root_only_when_root_owns_both(owners, cassandra_user, ran):
     out = subprocess.run(["sh", "-c", as_cassandra_script(owners, cassandra_user)], capture_output=True,
-                         text=True)
+                         text=True, check=True)
     assert (out.stdout.strip() == "ran") == ran
 
 

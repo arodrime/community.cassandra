@@ -20,8 +20,9 @@
 # time sync, firewall) is listed in the report, and what a variable covers is
 # carried into the inventory for the nodes added later.
 # Medusa is looked for at import_cluster_medusa_path (its virtualenv or its
-# medusa script, a full path on the nodes), else in the PATH, else under /opt,
-# and last in the PATH of a login shell of cassandra, then of root.
+# medusa script, a full path on the nodes), else in the PATH, else in the usual
+# places, else in the PATH of a login shell of cassandra, then of root, and
+# last in any virtualenv under /opt.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
 - name: Find the cluster from the given nodes
@@ -310,8 +311,7 @@
         bin=$(PATH=$PATH:/usr/local/bin command -v medusa 2>/dev/null)
         # else the usual places
         fixed=
-        for c in /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa /usr/share/cassandra-medusa/bin/medusa \
-                 /opt/*/bin/medusa; do
+        for c in /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa /usr/share/cassandra-medusa/bin/medusa; do
           [ -x "$c" ] && { fixed=$c; break; }
         done
         # else the medusa a login shell of cassandra or root finds (a profile may put a virtualenv in the
@@ -339,7 +339,8 @@
           done
         fi
         real=
-        for c in "$hint" "$bin" "$fixed" "$lbin"; do
+        # last, any virtualenv under /opt
+        for c in "$hint" "$bin" "$fixed" "$lbin" /opt/*/bin/medusa; do
           [ -n "$c" ] && [ -x "$c" ] && { real=$(readlink -f "$c"); break; }
         done
         [ -n "$real" ] || exit 0
@@ -377,7 +378,8 @@
           fi
         }
         if trusted "$real" && trusted "$(readlink -f "$py")"; then
-          v=$(as_cassandra "$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null)
+          v=$(as_cassandra "$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null \
+              | tail -n 1)
           echo "version=$v"
           [ -n "$v" ] || echo "version_unread=yes"
         else

@@ -579,12 +579,14 @@ When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and
 ``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path
 (``cassandra_medusa_venv``), or without a virtualenv when the nodes' Medusa is in a system Python
 (``cassandra_medusa_venv: ""`` and that Python). Medusa is looked for at ``import_cluster_medusa_path`` when given (its
-virtualenv or its ``medusa`` script, a full path on the nodes), else in the PATH, else in a virtualenv under ``/opt``
-or ``/usr/share/cassandra-medusa``, and last in the PATH of a login shell of the ``cassandra`` user, then of root
-(``bash`` run as that user, without a terminal, for 10 seconds at most). Its version is read by running its Python as
-``cassandra``; a script or a Python owned by another user than root or ``cassandra`` is not run. A virtualenv only a
-login profile puts in the PATH is reported: the roles leave profiles alone, new nodes get ``/usr/local/bin/medusa``,
-and ``cassandra_medusa_profile_d: true`` adds the virtualenv to every login shell's PATH. A Medusa installed by a package is not managed (the report says so).
+virtualenv or its ``medusa`` script, a full path on the nodes), else in the PATH, else in ``/opt/cassandra-medusa``,
+``/opt/medusa`` or ``/usr/share/cassandra-medusa``, else in the PATH of a login shell of the ``cassandra`` user, then
+of root (``bash`` run as that user, without a terminal, stopped after 10 seconds), and last in any virtualenv under
+``/opt``. Its version is read by running its Python as ``cassandra`` (as root only when there is no ``cassandra`` user
+and root owns both the script and the Python); a script or a Python owned by another user than root or ``cassandra``
+is not run. A virtualenv found through a login profile is reported: the roles leave profiles alone, new nodes get
+``/usr/local/bin/medusa``, and ``cassandra_medusa_profile_d: true`` adds the virtualenv to every login shell's PATH. A
+Medusa installed by a package is not managed (the report says so).
 
 Passwords found in the configuration go to separate ``secrets.yml`` files: encrypted with ansible-vault when
 ``import_cluster_vault_password_file`` is given, otherwise written with mode ``0600`` and the report gives the
