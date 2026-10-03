@@ -19,10 +19,9 @@
 # The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
 # time sync, firewall) is listed in the report, and what a variable covers is
 # carried into the inventory for the nodes added later.
-# Medusa is looked for in the PATH, in the PATH of a login shell of cassandra
-# or root (only when not in the PATH), and under /opt; import_cluster_medusa_path
-# (a full path on the nodes) gives its virtualenv or its medusa script when it
-# is elsewhere.
+# Medusa is looked for at import_cluster_medusa_path (its virtualenv or its
+# medusa script, a full path on the nodes), else in the PATH, else under /opt,
+# and last in the PATH of a login shell of cassandra, then of root.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
 - name: Find the cluster from the given nodes
@@ -298,7 +297,7 @@
         trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }
         # the file cassandra_medusa_profile_d writes
         [ -f /etc/profile.d/cassandra-medusa.sh ] && echo "profile_d=yes"
-        # import_cluster_medusa_path: the medusa script, its virtualenv or the virtualenv's bin
+        # import_cluster_medusa_path: the medusa script, its virtualenv or the bin dir of it
         hint=$IMPORT_CLUSTER_MEDUSA_PATH
         if [ -d "$hint" ]; then
           if [ -f "$hint/medusa" ]; then hint=$hint/medusa; else hint=$hint/bin/medusa; fi
@@ -307,12 +306,19 @@
           echo "hint_missing=$(printf %s "$IMPORT_CLUSTER_MEDUSA_PATH" | tr '\n' ' ')"
           hint=
         fi
-        # sudo's PATH may lack /usr/local/bin (RHEL)
+        # the PATH of sudo may lack /usr/local/bin (RHEL)
         bin=$(PATH=$PATH:/usr/local/bin command -v medusa 2>/dev/null)
+        # else the usual places
+        fixed=
+        for c in /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa /usr/share/cassandra-medusa/bin/medusa \
+                 /opt/*/bin/medusa; do
+          [ -x "$c" ] && { fixed=$c; break; }
+        done
         # else the medusa a login shell of cassandra or root finds (a profile may put a virtualenv in the
         # PATH): bash run as that user with a clean environment, login then interactive (~/.bashrc), without
-        # a terminal (setsid: an interactive bash would stop on the one of the ssh session) nor history; timeout
-        # in that session stops what a profile started too
+        # a terminal (setsid: an interactive bash would stop on the one of the ssh session) nor history, and
+        # stopped after 10s. Its answer goes to a file: a process a profile starts in a session of its own
+        # outlives the timeout, and would keep a pipe open.
         as_user() {
           r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser) || return 0
           "$r" -u "$1" -- setsid timeout -k 2 10 env -i HOME="$(getent passwd "$1" | cut -d: -f6)" USER="$1" \
@@ -320,19 +326,20 @@
             /bin/bash "$2" 'command -v medusa' </dev/null 2>/dev/null
         }
         login= lbin=
-        if [ -z "$hint$bin" ]; then
+        if [ -z "$hint$bin$fixed" ] && out=$(mktemp); then
+          trap 'rm -f "$out"' EXIT
           for u in cassandra root; do
             for o in -lic -ic; do
+              as_user "$u" "$o" >"$out"
               # the last line: a profile may print something first
-              lbin=$(as_user "$u" "$o" | tail -n 1)
+              lbin=$(tail -n 1 "$out")
               case $lbin in /*) [ -x "$lbin" ] && login=$u && break 2 ;; esac
               lbin=
             done
           done
         fi
         real=
-        for c in "$hint" "$bin" "$lbin" /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa \
-                 /usr/share/cassandra-medusa/bin/medusa /opt/*/bin/medusa; do
+        for c in "$hint" "$bin" "$fixed" "$lbin"; do
           [ -n "$c" ] && [ -x "$c" ] && { real=$(readlink -f "$c"); break; }
         done
         [ -n "$real" ] || exit 0
@@ -354,7 +361,7 @@
           echo "venv=$venv"
           py=$venv/bin/python
           [ -L "$bin" ] && [ "$(readlink -f "$bin")" = "$(readlink -f "$venv/bin/medusa")" ] && echo "link_dir=$(dirname "$bin")"
-          # in the PATH only by a login profile: reported, unless it is the role's file
+          # in the PATH only by a login profile: reported, unless by the file of the role
           [ -n "$login" ] && ! grep -qsF "$venv/bin" /etc/profile.d/cassandra-medusa.sh && echo "login=$login"
         else
           echo "python=$py"
@@ -363,14 +370,16 @@
         # (as root only when root owns both and there is no cassandra user)
         as_cassandra() {
           r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser)
-          if [ -n "$r" ] && getent passwd cassandra >/dev/null; then
-            "$r" -u cassandra -- setsid timeout -k 2 30 env -i PATH=/usr/bin:/bin "$@" </dev/null
+          if getent passwd cassandra >/dev/null; then
+            [ -z "$r" ] || "$r" -u cassandra -- setsid timeout -k 2 30 env -i PATH=/usr/bin:/bin "$@" </dev/null
           elif [ "$(stat -c %U "$real" "$(readlink -f "$py")" | sort -u)" = root ]; then
             timeout -k 2 30 "$@" </dev/null
           fi
         }
         if trusted "$real" && trusted "$(readlink -f "$py")"; then
-          echo "version=$(as_cassandra "$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null)"
+          v=$(as_cassandra "$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null)
+          echo "version=$v"
+          [ -n "$v" ] || echo "version_unread=yes"
         else
           echo "untrusted=yes"
         fi

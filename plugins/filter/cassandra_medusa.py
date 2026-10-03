@@ -107,8 +107,8 @@ def _perm(name, value):
 
 
 def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
-    """found: {venv, python, version, link_dir, package, bin, login, profile_d, hint_missing, ini_owner, ini_group,
-    ini_mode, key_owner, key_group, key_mode}
+    """found: {venv, python, version, link_dir, package, bin, login, profile_d, hint_missing, version_unread,
+    ini_owner, ini_group, ini_mode, key_owner, key_group, key_mode}
     (what import_cluster read on the node, "" when unknown).
     -> {'vars': cassandra_medusa variables, 'notes': [report lines], 'keep': the ones for this node
     only (host_vars: new nodes get the role's)}"""
@@ -201,6 +201,10 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     elif found.get("untrusted"):
         notes.insert(0, "Medusa: %s or its Python is owned by neither root nor cassandra, not run to read"
                         " its version: medusa.ini imported, cassandra_medusa_enabled left false" % where)
+    elif found.get("version_unread"):
+        notes.insert(0, "Medusa: the version of %s could not be read (its Python run as cassandra, or as root when"
+                        " root owns it and there is no cassandra user): medusa.ini imported, cassandra_medusa_enabled"
+                        " left false" % where)
     else:
         notes.insert(0, "Medusa: medusa.ini imported, but no Medusa install found (%s):"
                         " cassandra_medusa_enabled left false" % (where or "no medusa binary"))

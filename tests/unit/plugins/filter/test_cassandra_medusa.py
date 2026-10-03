@@ -450,3 +450,10 @@ def test_no_fqdn_anywhere_no_medusa_line():
     layout = cassandra_inventory_layout(fqdn_nodes(("node1", None), ("node2", None)), "c")
     assert "Medusa fqdn" not in layout["report"]
     assert layout["group_vars"]["c"]["cassandra_medusa_fqdn"] == ""
+
+
+def test_import_version_not_read():
+    found = {"bin": "/opt/m/bin/medusa", "venv": "/opt/m", "version": "", "version_unread": "yes"}
+    out = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, found)
+    assert out["notes"][0].startswith("Medusa: the version of /opt/m could not be read")
+    assert "cassandra_medusa_enabled" not in out["vars"]

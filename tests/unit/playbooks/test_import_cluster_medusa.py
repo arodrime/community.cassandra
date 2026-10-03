@@ -159,12 +159,25 @@ def test_only_cassandra_and_root_login_shells(tmp_path):
 
 @pytest.mark.parametrize("answer", ["medusa: alias for medusa-wrapper\n", "{root}/data/none/bin/medusa\n", ""])
 def test_login_shell_answer_not_an_executable(tmp_path, answer):
-    """An alias, a path that is not there, nothing: the usual places next."""
-    venv(tmp_path / "opt/cassandra-medusa")
+    """An alias, a path that is not there, nothing: not taken."""
     login(tmp_path, "cassandra", "-lic", answer.format(root=tmp_path))
+    assert run(tmp_path) == {}
+
+
+@pytest.mark.parametrize("place", ["opt/cassandra-medusa", "opt/medusa", "usr/share/cassandra-medusa", "opt/tools"])
+def test_usual_places_before_login_shells(tmp_path, place):
+    """In a usual place: no profile is run."""
+    venv(tmp_path / place)
+    login(tmp_path, "cassandra", "-lic", "%s/data/v/bin/medusa\n" % tmp_path)
     found = run(tmp_path)
-    assert found["venv"] == str(tmp_path / "opt/cassandra-medusa")
-    assert "login" not in found
+    assert found["venv"] == str(tmp_path / place) and "login" not in found
+    assert asked(tmp_path) == []
+
+
+def test_login_shell_answer_read_from_a_file():
+    """Not from a pipe: a process a profile left running in a session of its own would hold it open."""
+    assert re.search(r'as_user "\$u" "\$o" >"\$out"\n', SCRIPT)
+    assert "as_user \"$u\" \"$o\" |" not in SCRIPT
 
 
 def test_any_venv_under_opt(tmp_path):
@@ -229,6 +242,37 @@ def test_untrusted_venv_of_a_login_shell_is_not_run(tmp_path):
     login(tmp_path, "cassandra", "-lic", "%s/data/v/bin/medusa\n" % tmp_path)
     found = run(tmp_path, untrusted="data/v/bin/medusa")
     assert found["untrusted"] == "yes" and "version" not in found
+
+
+def test_version_not_read(tmp_path):
+    """Its Python answers nothing (e.g. cassandra cannot read the virtualenv): said so."""
+    venv(tmp_path / "opt/cassandra-medusa")
+    (tmp_path / "opt/cassandra-medusa/bin/python").unlink()
+    write(tmp_path / "opt/cassandra-medusa/bin/python", "#!/bin/sh\nexit 1\n", 0o755)
+    found = run(tmp_path)
+    assert found["version"] == "" and found["version_unread"] == "yes"
+
+
+def as_cassandra_script(owners, cassandra_user):
+    """The real as_cassandra without runuser, getent and stat answering for the test."""
+    body = AS_CASSANDRA.search(SCRIPT).group(0)
+    body = body.replace("r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser)", "r=")
+    assert "runuser)" not in body
+    return ('getent() { %s; }\nstat() { printf "%%s\\n" %s; }\nreal=/x py=/y\nreadlink() { echo "$2"; }\n'
+            % ("true" if cassandra_user else "false", " ".join(owners)) + body
+            + 'as_cassandra echo ran\n')
+
+
+@pytest.mark.parametrize("owners, cassandra_user, ran", [
+    (["root", "root"], False, True),
+    (["root", "cassandra"], False, False),
+    (["cassandra", "cassandra"], False, False),
+    (["root", "root"], True, False),  # no runuser here: nothing run as root while there is a cassandra user
+])
+def test_version_as_root_only_when_root_owns_both(owners, cassandra_user, ran):
+    out = subprocess.run(["sh", "-c", as_cassandra_script(owners, cassandra_user)], capture_output=True,
+                         text=True)
+    assert (out.stdout.strip() == "ran") == ran
 
 
 def test_untrusted_medusa_is_not_run(tmp_path):
