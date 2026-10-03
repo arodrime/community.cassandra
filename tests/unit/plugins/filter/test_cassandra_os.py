@@ -93,10 +93,10 @@ def test_records_keep_pipes_in_the_last_field():
 
 # --- sysctl ---
 
-def test_sysctl_infra_file_carried_into_its_file():
+def test_sysctl_site_file_carried_into_its_file():
     r = found(VENDOR_SYSCTL + SITE_SYSCTL + SYSCTL_CONF + "sysctl_live|vm.swappiness|60\nsysctl_live|vm.max_map_count|1048575\n")
     sysctl = r["vars"]["cassandra_linux_sysctl"]
-    assert sysctl["vm.swappiness"] == 10  # the infra file, read after the vendor's 50-default.conf
+    assert sysctl["vm.swappiness"] == 10  # the site file, read after the vendor's 50-default.conf
     assert sysctl["net.core.somaxconn"] == 4096  # a key of a Cassandra file, the role has none
     assert sysctl["net.ipv4.tcp_keepalive_time"] == 300
     assert sysctl["net.core.rmem_max"] == 33554432  # /etc/sysctl.conf, read last
@@ -410,7 +410,7 @@ def test_package_file_under_etc_not_carried():
 def test_own_node_sysctl_carries_only_its_own_file():
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\nvm.max_map_count = 1048575\n")
     r = found(own + SITE_SYSCTL, own=True)
-    # exactly its file: net.core.somaxconn of the infra file would be added to 60-cassandra.conf
+    # exactly its file: net.core.somaxconn of the site file would be added to 60-cassandra.conf
     assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.swappiness": 1, "vm.max_map_count": 1048575}}
     assert any(line.startswith("sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10") for line in r["lines"])
 
@@ -438,7 +438,7 @@ def test_own_node_without_its_limits_file_keeps_the_limits_in_effect():
 def test_own_node_limits_only_its_own_file():
     own = file_records("limits", "/etc/security/limits.d/cassandra.conf",
                        text="cassandra - memlock unlimited\ncassandra - nofile 200000\n")
-    other = file_records("limits", "/etc/security/limits.d/zz-infra.conf", text="cassandra - nofile 65536\ncassandra - rtprio 99\n")
+    other = file_records("limits", "/etc/security/limits.d/zz-local.conf", text="cassandra - nofile 65536\ncassandra - rtprio 99\n")
     r = found(own + other, own=True)
     # exactly its file, in its order: the role writes the file whole from the dict
     assert list(r["vars"]["cassandra_linux_limits"].items()) == [("memlock", "unlimited"), ("nofile", 200000)]
@@ -561,11 +561,11 @@ def test_running_limits_unit_suffix_not_compared():
 
 
 def test_limits_overridden_lines_shown():
-    """The Apache RPM ships limits.d/cassandra.conf, read after an infra 95-*.conf: the infra lines are shown."""
-    infra = file_records("limits", "/etc/security/limits.d/95-infra.conf", text="cassandra - nofile 500000\n")
+    """The Apache RPM ships limits.d/cassandra.conf, read after a site 95-*.conf: the site lines are shown."""
+    site = file_records("limits", "/etc/security/limits.d/95-local.conf", text="cassandra - nofile 500000\n")
     rpm = file_records("limits", "/etc/security/limits.d/cassandra.conf", text="cassandra - nofile 100000\n")
-    r = found(infra + rpm + "owner|/etc/security/limits.d/cassandra.conf|cassandra\n")
-    assert ("limits /etc/security/limits.d/95-infra.conf: cassandra - nofile = 500000, overridden by"
+    r = found(site + rpm + "owner|/etc/security/limits.d/cassandra.conf|cassandra\n")
+    assert ("limits /etc/security/limits.d/95-local.conf: cassandra - nofile = 500000, overridden by"
             " /etc/security/limits.d/cassandra.conf (package cassandra)") in r["lines"]
     assert r["vars"]["cassandra_linux_limits"]["nofile"] == 100000
 
