@@ -1,0 +1,14 @@
+---
+- name: Prepare as the default scenario
+  ansible.builtin.import_playbook: ../default/prepare.yml
+
+# The image removes the file to let pip install Ansible: put Ubuntu's back
+- name: Ubuntu's python3 managed by the system (PEP 668)
+  hosts: all
+  tasks:
+    - name: Mark it
+      ansible.builtin.shell: |
+        f=$(python3 -c "import sysconfig; print(sysconfig.get_path('stdlib'))")/EXTERNALLY-MANAGED
+        [ -f "$f" ] || printf '[externally-managed]\nError=Use apt or a virtualenv.\n' > "$f"
+      changed_when: false
+      when: ansible_facts['os_family'] == 'Debian'

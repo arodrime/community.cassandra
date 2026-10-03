@@ -1,0 +1,36 @@
+DOCUMENTATION:
+  name: cassandra_medusa_ini_changes
+  short_description: The settings that change between two versions of a Cassandra Medusa INI file
+  version_added: 2.1.0
+  author: Alain Rodriguez (@arodrime)
+  description:
+    - Compares the settings of two INI files (C(medusa.ini), or an AWS credentials file) and lists the ones that
+      change. Comments, order and spacing don't count, nor the case of C(true) and C(false), except for
+      C(resolve_ip_addresses) and C(nodetool_ssl), which Medusa compares as written.
+    - Passwords and keys are shown as C(****). Used by the cassandra_medusa role.
+  options:
+    _input:
+      description: The current content, C("") for a missing file.
+      type: str
+      required: true
+    new_text:
+      description: The new content. Fails, without showing it, when it is not valid INI.
+      type: str
+      required: true
+    name:
+      description: The file name shown in the changes.
+      type: str
+      default: medusa.ini
+
+EXAMPLES: |
+  - name: List what writing the new medusa.ini changes
+    ansible.builtin.debug:
+      msg: "{{ old_content | community.cassandra.cassandra_medusa_ini_changes(new_content) }}"
+
+RETURN:
+  _value:
+    description:
+      - One item per setting that changes, with C(before) and C(after) (C(absent) when missing). A current
+        content that is not valid INI gives one item, C(rewritten).
+    type: list
+    elements: dict

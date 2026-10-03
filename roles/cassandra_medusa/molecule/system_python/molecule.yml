@@ -1,0 +1,62 @@
+---
+# No virtualenv (cassandra_medusa_venv: ""): pip installs Medusa into python3.11
+# on RHEL 8 and Rocky 9, and refuses Ubuntu 24.04's python3, which the system manages (PEP 668).
+driver:
+  name: docker
+platforms:
+  - name: rhel810
+    image: registry.access.redhat.com/ubi8/ubi-init:8.10
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: rockylinux9
+    image: geerlingguy/docker-rockylinux9-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: ubuntu2404
+    image: geerlingguy/docker-ubuntu2404-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      all:
+        cassandra_medusa_venv: ""
+        cassandra_medusa_profile_d: true  # not used without a virtualenv
+        cassandra_medusa_storage_provider: local
+        cassandra_medusa_base_path: /var/backups/medusa
+    host_vars:
+      rhel810:
+        ansible_python_interpreter: /usr/bin/python3.12
+verifier:
+  name: testinfra
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - check
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

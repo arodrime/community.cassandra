@@ -1,0 +1,24 @@
+DOCUMENTATION:
+  name: cassandra_medusa_ini
+  short_description: Read a Cassandra Medusa medusa.ini
+  version_added: 2.1.0
+  author: Alain Rodriguez (@arodrime)
+  description:
+    - Parses the text of a C(medusa.ini) into its sections and settings, the setting names in lower case
+      (Medusa reads them case-insensitively).
+    - Returns an empty dictionary when the text is not valid INI. Used by the cassandra_medusa role.
+  options:
+    _input:
+      description: The content of the file.
+      type: str
+      required: true
+
+EXAMPLES: |
+  - name: Read the fqdn of the current medusa.ini
+    ansible.builtin.debug:
+      msg: "{{ (ini.content | b64decode | community.cassandra.cassandra_medusa_ini).storage.fqdn | default('') }}"
+
+RETURN:
+  _value:
+    description: The settings, by section.
+    type: dict

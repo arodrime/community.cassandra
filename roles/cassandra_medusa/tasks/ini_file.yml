@@ -1,0 +1,42 @@
+---
+# Writes an INI file (_cassandra_medusa_ini_path, _content, _owner, _group, _mode)
+# only when its settings change: comments, order and spacing don't count, so a
+# file written by hand with the same settings is kept.
+# no_log: the files hold passwords.
+- name: Read {{ _cassandra_medusa_ini_path }}
+  ansible.builtin.slurp:
+    path: "{{ _cassandra_medusa_ini_path }}"
+  register: cassandra_medusa_ini_old
+  failed_when: false
+  no_log: true
+
+- name: Compare the settings of {{ _cassandra_medusa_ini_path }}
+  ansible.builtin.set_fact:
+    _cassandra_medusa_ini_file_changes: >-
+      {{ (cassandra_medusa_ini_old.content | default('') | b64decode)
+         | community.cassandra.cassandra_medusa_ini_changes(_cassandra_medusa_ini_content, _cassandra_medusa_ini_path | basename) }}
+  no_log: true
+
+- name: Write {{ _cassandra_medusa_ini_path }}
+  ansible.builtin.copy:
+    content: "{{ _cassandra_medusa_ini_content }}"
+    dest: "{{ _cassandra_medusa_ini_path }}"
+    owner: "{{ _cassandra_medusa_ini_owner }}"
+    group: "{{ _cassandra_medusa_ini_group }}"
+    mode: "{{ _cassandra_medusa_ini_mode }}"
+  no_log: true
+  when: cassandra_medusa_ini_old.content is not defined or _cassandra_medusa_ini_file_changes | length > 0
+
+- name: Owner and mode of {{ _cassandra_medusa_ini_path }}
+  ansible.builtin.file:
+    path: "{{ _cassandra_medusa_ini_path }}"
+    owner: "{{ _cassandra_medusa_ini_owner }}"
+    group: "{{ _cassandra_medusa_ini_group }}"
+    mode: "{{ _cassandra_medusa_ini_mode }}"
+  when: cassandra_medusa_ini_old.content is defined
+
+# What changes, passwords and keys masked (the tasks above hide their output)
+- name: Settings changed in {{ _cassandra_medusa_ini_path }}
+  ansible.builtin.debug:
+    var: _cassandra_medusa_ini_file_changes
+  when: _cassandra_medusa_ini_file_changes | length > 0

@@ -1,0 +1,58 @@
+---
+- name: Prepare
+  hosts: all
+  vars:
+    _conf_dir: "{{ '/etc/cassandra' if ansible_facts['os_family'] == 'Debian' else '/etc/cassandra/conf' }}"
+  tasks:
+    - name: Update the apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Ensure the man1 directory exists (the Java package needs it)
+      ansible.builtin.file:
+        path: /usr/share/man/man1
+        state: directory
+        mode: "0755"
+
+    - name: Install Java 11
+      ansible.builtin.package:
+        name: "{{ 'openjdk-11-jre-headless' if ansible_facts['os_family'] == 'Debian' else 'java-11-openjdk-headless' }}"
+        state: present
+
+    - name: Install Cassandra
+      ansible.builtin.include_role:
+        name: "{{ item }}"
+      loop:
+        - community.cassandra.cassandra_repository
+        - community.cassandra.cassandra_install
+
+    - name: A small heap
+      ansible.builtin.lineinfile:
+        path: "{{ _conf_dir }}/cassandra-env.sh"
+        regexp: "^#?{{ item.key }}="
+        line: '{{ item.key }}="{{ item.value }}"'
+      loop: "{{ {'MAX_HEAP_SIZE': '512M', 'HEAP_NEWSIZE': '128M'} | dict2items }}"
+
+    # daemon_reload: the rpm ships an init script, which systemd sees after a reload
+    - name: Start Cassandra
+      ansible.builtin.systemd_service:
+        name: cassandra
+        state: restarted
+        daemon_reload: true
+
+    - name: Wait until the node is up
+      ansible.builtin.command: nodetool status
+      register: _status
+      until: _status.stdout_lines | select('match', '^UN ') | list | length == 1
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: The local storage, writable by the cassandra account
+      ansible.builtin.file:
+        path: /var/backups/medusa
+        state: directory
+        owner: cassandra
+        group: cassandra
+        mode: "0750"

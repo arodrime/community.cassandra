@@ -1,0 +1,378 @@
+---
+# Installs Cassandra Medusa with pip, in its own virtualenv or in a system
+# Python (cassandra_medusa_venv: ""), and writes /etc/medusa/medusa.ini. Schedules no backup.
+- name: Check the settings
+  ansible.builtin.assert:
+    that:
+      - cassandra_medusa_storage_provider != ''
+      - cassandra_medusa_storage_provider != 'local' or cassandra_medusa_base_path != ''
+      - cassandra_medusa_storage_provider != 's3_compatible' or cassandra_medusa_host != ''
+      - _unknown | length == 0
+    fail_msg: >-
+      {{ 'Set cassandra_medusa_storage_provider (local, s3, s3_compatible...).' if cassandra_medusa_storage_provider == ''
+         else 'The local provider needs cassandra_medusa_base_path.' if cassandra_medusa_storage_provider == 'local' and cassandra_medusa_base_path == ''
+         else 's3_compatible needs cassandra_medusa_host.' if cassandra_medusa_storage_provider == 's3_compatible' and cassandra_medusa_host == ''
+         else 'cassandra_medusa_extra_settings: Medusa has no section ' ~ _unknown | join(', ') ~ ' (it would not start).' }}
+    quiet: true
+  vars:
+    _unknown: >-
+      {{ cassandra_medusa_extra_settings.keys()
+         | difference(['cassandra', 'storage', 'monitoring', 'ssh', 'checks', 'logging', 'grpc', 'kubernetes']) }}
+
+- name: Look for the virtualenv
+  ansible.builtin.stat:
+    path: "{{ cassandra_medusa_venv }}/bin/python"
+  register: cassandra_medusa_venv_python
+  when: cassandra_medusa_venv != ''
+
+# Its python is a link to the Python it was made with
+- name: Look for the Python of the virtualenv
+  ansible.builtin.stat:
+    path: "{{ cassandra_medusa_venv }}/bin/python"
+    follow: true
+  register: cassandra_medusa_venv_python_target
+  when:
+    - cassandra_medusa_venv != ''
+    - cassandra_medusa_venv_python.stat.exists
+
+- name: Stop when the Python of the virtualenv is gone
+  ansible.builtin.assert:
+    that: cassandra_medusa_venv_python_target.stat.exists
+    fail_msg: >-
+      {{ cassandra_medusa_venv }}/bin/python on {{ inventory_hostname }} links to a Python that is gone (e.g. after an
+      OS upgrade): remove {{ cassandra_medusa_venv }}, and the next run creates it again.
+    quiet: true
+  when:
+    - cassandra_medusa_venv != ''
+    - cassandra_medusa_venv_python.stat.exists
+
+# ---- Python, for a new virtualenv (an existing one keeps its own) or without one ----
+- name: Prepare the Python
+  when: cassandra_medusa_venv == '' or not cassandra_medusa_venv_python.stat.exists
+  block:
+    - name: Get the system python3 version
+      ansible.builtin.command: python3 -c "import sys; print('%d.%d' % sys.version_info[:2])"
+      register: cassandra_medusa_python3_version
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only
+
+    - name: Pick the Python
+      ansible.builtin.set_fact:
+        _cassandra_medusa_python: >-
+          {{ cassandra_medusa_python if cassandra_medusa_python != ''
+             else '/usr/bin/python3' if (cassandra_medusa_python3_version.rc == 0
+                  and cassandra_medusa_python3_version.stdout is version(cassandra_medusa_python_supported[0], '>=')
+                  and cassandra_medusa_python3_version.stdout is version(cassandra_medusa_python_supported[1], '<='))
+             else '/usr/bin/python3.11' if ansible_facts['os_family'] == 'RedHat'
+             else '' }}
+
+    - name: Stop when no Python fits
+      ansible.builtin.assert:
+        that: _cassandra_medusa_python != ''
+        fail_msg: >-
+          Medusa {{ cassandra_medusa_version }} runs on Python {{ cassandra_medusa_python_supported | join(' to ') }},
+          python3 on {{ inventory_hostname }} is {{ cassandra_medusa_python3_version.stdout | default('') or 'missing' }}:
+          set cassandra_medusa_python to such an interpreter (installed by other means).
+        quiet: true
+
+    # Without a virtualenv: nothing more to do when Medusa is there already
+    - name: Read the Medusa version of this Python
+      ansible.builtin.command:
+        argv:
+          - "{{ _cassandra_medusa_python }}"
+          - -c
+          - "from importlib.metadata import version; print(version('cassandra-medusa'))"
+      register: cassandra_medusa_system_installed
+      changed_when: false
+      failed_when: false  # none yet
+      check_mode: false  # read-only
+      when: cassandra_medusa_venv == ''
+
+    - name: Decide whether pip installs Medusa into this Python
+      ansible.builtin.set_fact:
+        _cassandra_medusa_system_install: >-
+          {{ cassandra_medusa_venv == '' and cassandra_medusa_system_installed.stdout | default('') | trim
+             != cassandra_medusa_version | string }}
+
+    # PEP 668 (Debian 12, Ubuntu 23.04 and later): pip refuses the system Python
+    - name: Look for a system Python pip must not install into
+      ansible.builtin.command:
+        argv:
+          - "{{ _cassandra_medusa_python }}"
+          - -c
+          - "import os, sysconfig; print(os.path.isfile(os.path.join(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED')))"
+      register: cassandra_medusa_externally_managed
+      changed_when: false
+      failed_when: false  # a python3.11 not installed yet is not
+      check_mode: false  # read-only
+      when: _cassandra_medusa_system_install
+
+    - name: Refuse an externally managed Python
+      ansible.builtin.assert:
+        that: cassandra_medusa_externally_managed.stdout | default('') | trim != 'True'
+        fail_msg: >-
+          {{ _cassandra_medusa_python }} on {{ inventory_hostname }} is managed by the system (PEP 668): pip does not
+          install Medusa into it. Set cassandra_medusa_venv to a virtualenv path, e.g. /opt/cassandra-medusa.
+        quiet: true
+      when: _cassandra_medusa_system_install
+
+    # venv needs ensurepip: python3-venv (python3.X-venv) on Debian, the
+    # python3.11 packages on RedHat; without a virtualenv, pip. A
+    # cassandra_medusa_python of your own is yours.
+    - name: List the packages the Python needs
+      ansible.builtin.set_fact:
+        _cassandra_medusa_packages: >-
+          {{ [] if cassandra_medusa_python != '' or (cassandra_medusa_venv == '' and not _cassandra_medusa_system_install)
+             else ['python3.11', 'python3.11-pip'] if _cassandra_medusa_python == '/usr/bin/python3.11'
+             else ['python3-pip'] if cassandra_medusa_venv == ''
+             else [(_cassandra_medusa_python | basename) ~ '-venv'] if ansible_facts['os_family'] == 'Debian'
+             else [] }}
+
+    - name: Install the packages the Python needs
+      ansible.builtin.package:
+        name: "{{ _cassandra_medusa_packages }}"
+        state: present
+      retries: 3
+      when:
+        - _cassandra_medusa_packages | length > 0
+        - not cassandra_offline | bool
+
+    - name: Read the installed packages (offline)
+      ansible.builtin.package_facts:
+      check_mode: false
+      when:
+        - _cassandra_medusa_packages | length > 0
+        - cassandra_offline | bool
+
+    - name: Check the packages the Python needs are installed (offline)
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          cassandra_offline downloads nothing, and {{ inventory_hostname }} lacks {{ _missing | join(', ') }}
+          (Medusa's Python needs it): install it from your image or internal mirror first.
+        quiet: true
+      vars:
+        _missing: "{{ _cassandra_medusa_packages | reject('in', ansible_facts['packages'] | default({})) | list }}"
+      when:
+        - _cassandra_medusa_packages | length > 0
+        - cassandra_offline | bool
+
+# ---- Medusa ----
+- name: Create the virtualenv
+  ansible.builtin.command:
+    argv: ["{{ _cassandra_medusa_python }}", -m, venv, "{{ cassandra_medusa_venv }}"]
+    creates: "{{ cassandra_medusa_venv }}/bin/python"
+  when:
+    - cassandra_medusa_venv != ''
+    - not cassandra_medusa_venv_python.stat.exists
+
+- name: Set the Python Medusa runs on
+  ansible.builtin.set_fact:
+    _cassandra_medusa_python_bin: >-
+      {{ cassandra_medusa_venv ~ '/bin/python' if cassandra_medusa_venv != '' else _cassandra_medusa_python }}
+
+- name: Read the installed Medusa version
+  ansible.builtin.command:
+    argv:
+      - "{{ _cassandra_medusa_python_bin }}"
+      - -c
+      - "from importlib.metadata import version; print(version('cassandra-medusa'))"
+  register: cassandra_medusa_installed
+  changed_when: false
+  failed_when: false  # none yet
+  check_mode: false  # read-only
+
+- name: Keep the installed Medusa version
+  ansible.builtin.set_fact:
+    _cassandra_medusa_installed: >-
+      {{ cassandra_medusa_installed.stdout | trim if cassandra_medusa_installed.rc | default(1) == 0 else '' }}
+
+- name: Refuse offline without Medusa installed
+  ansible.builtin.assert:
+    that: _installed == cassandra_medusa_version | string
+    fail_msg: >-
+      cassandra_offline downloads nothing, and {{ cassandra_medusa_venv or _cassandra_medusa_python_bin }} on {{ inventory_hostname }} has
+      {{ ('Medusa ' ~ _installed) if _installed else 'no Medusa' }}, not {{ cassandra_medusa_version }}: install it
+      from your image, or set cassandra_medusa_pip_index_url to a PyPI mirror the host reaches.
+    quiet: true
+  vars:
+    _installed: "{{ _cassandra_medusa_installed }}"
+  when:
+    - cassandra_offline | bool
+    - cassandra_medusa_pip_index_url == ''
+
+# The mirror login goes in a pip config file only root reads, not in the
+# environment: Ansible puts that in the remote command line (ps, sudo logs).
+- name: Install Medusa {{ cassandra_medusa_version }}
+  when: _cassandra_medusa_installed != cassandra_medusa_version | string
+  vars:
+    _login: "{{ cassandra_medusa_pip_index_url != '' and cassandra_medusa_pip_username != '' }}"
+  block:
+    - name: Create a pip config file for the mirror login
+      ansible.builtin.tempfile:
+        suffix: .pip.conf
+      register: cassandra_medusa_pip_conf
+      when:
+        - _login | bool
+        - not ansible_check_mode
+
+    - name: Write the mirror login into it
+      ansible.builtin.copy:
+        dest: "{{ cassandra_medusa_pip_conf.path }}"
+        mode: "0600"
+        content: |
+          [global]
+          index-url = {{ cassandra_medusa_pip_index_url | regex_replace('^(\w+://)',
+                         '\1' ~ (cassandra_medusa_pip_username | urlencode | replace('/', '%2F')) ~ ':'
+                         ~ (cassandra_medusa_pip_password | urlencode | replace('/', '%2F')) ~ '@') }}
+      no_log: true
+      when: cassandra_medusa_pip_conf.path is defined
+
+    # The last attempt ends the retries without failing the task: the next one
+    # shows pip's error, the password masked
+    - name: Run pip install
+      ansible.builtin.command:
+        argv: >-
+          {{ [_cassandra_medusa_python_bin, '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input']
+             + cassandra_medusa_pip_extra_args + ['cassandra-medusa==' ~ cassandra_medusa_version] }}
+      environment: >-
+        {{ ({'PIP_CERT': cassandra_medusa_pip_cert} if cassandra_medusa_pip_cert != '' and cassandra_medusa_pip_index_url != '' else {})
+           | combine({'PIP_CONFIG_FILE': cassandra_medusa_pip_conf.path} if cassandra_medusa_pip_conf.path is defined
+                     else {} if cassandra_medusa_pip_index_url == '' or _login | bool
+                     else {'PIP_INDEX_URL': cassandra_medusa_pip_index_url}) }}
+      register: cassandra_medusa_pip
+      changed_when: true
+      failed_when: false
+      retries: 3  # 4 attempts: keep the until below in step
+      until: cassandra_medusa_pip.rc == 0 or cassandra_medusa_pip.attempts | default(1) >= 4
+      no_log: "{{ cassandra_medusa_pip_username != '' or cassandra_medusa_pip_password != '' }}"
+
+    - name: Check pip installed it
+      ansible.builtin.assert:
+        that: cassandra_medusa_pip.rc | default(0) == 0
+        fail_msg: >-
+          pip install cassandra-medusa=={{ cassandra_medusa_version }} failed on {{ inventory_hostname }}:
+          {{ _err | replace(cassandra_medusa_pip_password, '****') if cassandra_medusa_pip_password != '' else _err }}
+        quiet: true
+      vars:
+        _err: "{{ (cassandra_medusa_pip.stderr | default('')).splitlines()[-15:] | join(' / ') }}"
+      when: cassandra_medusa_pip is not skipped
+  always:
+    - name: Remove the pip config file
+      ansible.builtin.file:
+        path: "{{ cassandra_medusa_pip_conf.path }}"
+        state: absent
+      when: cassandra_medusa_pip_conf.path is defined
+
+# A medusa already there that is not a link (another install) is left in place.
+# Without a virtualenv, pip puts medusa in the Python's scripts directory
+# (/usr/local/bin): no link.
+- name: Look for medusa in {{ cassandra_medusa_link_dir }}
+  ansible.builtin.stat:
+    path: "{{ cassandra_medusa_link_dir }}/medusa"
+  register: cassandra_medusa_link
+  when:
+    - cassandra_medusa_venv != ''
+    - cassandra_medusa_link_dir != ''
+
+- name: Link medusa into {{ cassandra_medusa_link_dir }}
+  ansible.builtin.file:
+    src: "{{ cassandra_medusa_venv }}/bin/medusa"
+    dest: "{{ cassandra_medusa_link_dir }}/medusa"
+    state: link
+  when:
+    - cassandra_medusa_venv != ''
+    - cassandra_medusa_link_dir != ''
+    - not cassandra_medusa_link.stat.exists or cassandra_medusa_link.stat.islnk
+    - not ansible_check_mode or _cassandra_medusa_installed != ''  # nothing to link to yet
+
+- name: Say another medusa comes first in the PATH
+  ansible.builtin.debug:
+    msg: >-
+      {{ cassandra_medusa_link_dir }}/medusa on {{ inventory_hostname }} is another install of Medusa (not a link),
+      left as it is: this one is {{ cassandra_medusa_venv }}/bin/medusa.
+  when:
+    - cassandra_medusa_venv != ''
+    - cassandra_medusa_link_dir != ''
+    - cassandra_medusa_link.stat.exists
+    - not cassandra_medusa_link.stat.islnk
+
+- name: Put the virtualenv in the PATH of login shells
+  ansible.builtin.copy:
+    dest: /etc/profile.d/cassandra-medusa.sh
+    content: |
+      # Managed by Ansible (community.cassandra.cassandra_medusa)
+      case ":$PATH:" in *":{{ cassandra_medusa_venv }}/bin:"*) ;; *) PATH="{{ cassandra_medusa_venv }}/bin:$PATH" ;; esac
+    mode: "0644"
+  when:
+    - cassandra_medusa_profile_d | bool
+    - cassandra_medusa_venv != ''
+
+# ---- Config ----
+# An existing one keeps its owner and mode
+- name: Look for /etc/medusa
+  ansible.builtin.stat:
+    path: /etc/medusa
+  register: cassandra_medusa_config_dir
+
+- name: Create /etc/medusa
+  when: not cassandra_medusa_config_dir.stat.exists
+  ansible.builtin.file:
+    path: /etc/medusa
+    state: directory
+    owner: root
+    group: "{{ cassandra_medusa_config_group }}"
+    mode: "0750"
+
+# Medusa stores the backups under the fqdn: a new one starts a new folder in
+# the bucket (full backups)
+- name: Read the fqdn of the current medusa.ini
+  ansible.builtin.slurp:
+    path: /etc/medusa/medusa.ini
+  register: cassandra_medusa_ini_current
+  failed_when: false
+  no_log: true  # passwords
+
+- name: Keep this node's name in the backups
+  ansible.builtin.assert:
+    that: cassandra_medusa_ini_current.content is not defined or _old == _new or cassandra_medusa_fqdn_change | bool
+    fail_msg: >-
+      /etc/medusa/medusa.ini has fqdn {{ _old or '(none: Medusa works it out)' }}, this run would write
+      {{ _new or '(none: Medusa works it out)' }}. Medusa stores the backups under it: a change starts a new folder in the
+      bucket and full backups. Set cassandra_medusa_fqdn (or cassandra_medusa_fqdn_domain) to keep it, or
+      cassandra_medusa_fqdn_change=true to change it.
+    quiet: true
+  vars:
+    _old: >-
+      {{ ((cassandra_medusa_ini_current.content | default('') | b64decode | community.cassandra.cassandra_medusa_ini).storage
+          | default({})).fqdn | default('') }}
+    _new: >-
+      {{ ((lookup('ansible.builtin.template', 'medusa.ini.j2') | community.cassandra.cassandra_medusa_ini).storage
+          | default({})).fqdn | default('') }}
+
+- name: Write medusa.ini
+  ansible.builtin.include_tasks: ini_file.yml
+  vars:
+    _cassandra_medusa_ini_path: /etc/medusa/medusa.ini
+    _cassandra_medusa_ini_content: "{{ lookup('ansible.builtin.template', 'medusa.ini.j2') }}"
+    _cassandra_medusa_ini_owner: "{{ cassandra_medusa_config_owner }}"
+    _cassandra_medusa_ini_group: "{{ cassandra_medusa_config_group }}"
+    _cassandra_medusa_ini_mode: "{{ cassandra_medusa_config_mode }}"
+
+# Written only from the keys given here: a key file of your own is left alone
+- name: Write the S3 credentials
+  ansible.builtin.include_tasks: ini_file.yml
+  vars:
+    _cassandra_medusa_ini_path: "{{ cassandra_medusa_key_file }}"
+    _cassandra_medusa_ini_owner: "{{ cassandra_medusa_key_file_owner }}"
+    _cassandra_medusa_ini_group: "{{ cassandra_medusa_key_file_group }}"
+    _cassandra_medusa_ini_mode: "{{ cassandra_medusa_key_file_mode }}"
+    _cassandra_medusa_ini_content: |
+      # Managed by Ansible (community.cassandra.cassandra_medusa)
+      [{{ cassandra_medusa_api_profile or 'default' }}]
+      aws_access_key_id = {{ cassandra_medusa_s3_access_key_id }}
+      aws_secret_access_key = {{ cassandra_medusa_s3_secret_access_key }}
+  when:
+    - cassandra_medusa_s3_access_key_id != ''
+    - cassandra_medusa_key_file != ''

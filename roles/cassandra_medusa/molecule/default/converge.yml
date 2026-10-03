@@ -1,0 +1,212 @@
+---
+- name: Converge
+  hosts: all
+  roles:
+    - role: community.cassandra.cassandra_medusa
+
+# A file written by hand with the same settings is kept: only the settings count
+- name: Same settings, written by hand
+  hosts: all
+  tags: molecule-idempotence-notest
+  vars:
+    _same: |
+      # written by hand
+      [storage]
+      bucket_name=backups
+      storage_provider = s3_compatible
+      prefix = orders
+      host = s3.example.com
+      port = 443
+      secure = true
+      key_file = /etc/medusa/credentials
+      max_backup_age = 0
+      max_backup_count = 0
+      transfer_max_bandwidth = 50MB/s
+      concurrent_transfers = 1
+      multi_part_upload_threshold = 20MB
+      backup_grace_period_in_days = 10
+      use_sudo_for_restore = True
+      [cassandra]
+      config_file = {{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}/cassandra.yaml
+      cql_username = medusa
+      cql_password = cql-secret
+      nodetool_username = medusa_jmx
+      nodetool_password_file_path = /etc/cassandra/jmxremote.password
+      nodetool_port = 7199
+      resolve_ip_addresses = True
+      [monitoring]
+      [ssh]
+      [checks]
+      enable_md5_checks = true
+      [logging]
+      [grpc]
+      [kubernetes]
+  tasks:
+    - name: Not under --check (the check step runs the role above only)
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Write it by hand
+      ansible.builtin.copy:
+        content: "{{ _same }}"
+        dest: /etc/medusa/medusa.ini
+        owner: cassandra
+        group: cassandra
+        mode: "0600"
+
+    - name: Run the role again
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_medusa
+
+    - name: Read the file
+      ansible.builtin.slurp:
+        path: /etc/medusa/medusa.ini
+      register: _after
+
+    - name: It was kept
+      ansible.builtin.assert:
+        that: _after.content | b64decode == _same
+
+    # the fqdn is the node's folder in the bucket: a change means full backups
+    - name: Another fqdn in the existing file
+      ansible.builtin.copy:
+        content: "{{ _other }}"
+        dest: /etc/medusa/medusa.ini
+        owner: cassandra
+        group: cassandra
+        mode: "0600"
+      vars:
+        _other: "{{ _same | replace('[storage]\n', '[storage]\nfqdn = old-name.example\n') }}"
+
+    - name: The role refuses to change it
+      block:
+        - name: Run the role
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_medusa
+
+        - name: Not refused
+          ansible.builtin.set_fact:
+            _refused: false
+      rescue:
+        - name: Refused
+          ansible.builtin.set_fact:
+            _refused: "{{ 'old-name.example' in ansible_failed_result.msg and 'full backups' in ansible_failed_result.msg }}"
+
+    - name: Read it again
+      ansible.builtin.slurp:
+        path: /etc/medusa/medusa.ini
+      register: _after_refused
+
+    - name: It refused, and left the file alone
+      ansible.builtin.assert:
+        that:
+          - _refused | bool
+          - "'fqdn = old-name.example' in _after_refused.content | b64decode"
+
+    - name: Put the role's file back (for the tests)
+      ansible.builtin.file:
+        path: /etc/medusa/medusa.ini
+        state: absent
+
+- name: Converge again
+  hosts: all
+  tags: molecule-idempotence-notest
+  tasks:
+    - name: Not under --check (the check step runs the role above only)
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Write the role's file back
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_medusa
+
+- name: Offline
+  hosts: all
+  tags: molecule-idempotence-notest
+  tasks:
+    - name: Not under --check (the check step runs the role above only)
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Another version, offline, is refused
+      block:
+        - name: Run the role offline for another version
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_medusa
+          vars:
+            cassandra_offline: true
+            cassandra_medusa_version: 9.9.9
+            cassandra_medusa_storage_provider: local
+            cassandra_medusa_base_path: /var/backups/medusa
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: offline mode accepted to install Medusa
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that: "'cassandra_offline downloads nothing' in ansible_failed_result.msg"
+
+    # The login goes to pip in a temporary file: masked in the error, removed after
+    - name: A mirror with a login that fails
+      block:
+        - name: Run the role with a mirror that does not answer
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_medusa
+          vars:
+            cassandra_medusa_version: 9.9.9
+            cassandra_medusa_pip_index_url: http://127.0.0.1:9/simple
+            cassandra_medusa_pip_username: mirror_user
+            cassandra_medusa_pip_password: "p@ss:w/rd%x"
+            cassandra_medusa_pip_extra_args: [--retries, "0", --timeout, "5"]
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: pip installed from a mirror that does not answer
+      rescue:
+        - name: Look for a pip config file left behind
+          ansible.builtin.find:
+            paths: /tmp
+            patterns: "*.pip.conf"
+          register: _left
+
+        - name: Check the failure
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Check pip installed it'
+              - "'pip install cassandra-medusa==9.9.9 failed' in ansible_failed_result.msg"
+              - "'p@ss:w/rd%x' not in ansible_failed_result.msg"
+              - "'p%40ss' not in ansible_failed_result.msg"
+              - _left.files | length == 0
+              # pip went to the mirror, with the login: from the config file only
+              - "'mirror_user:****@127.0.0.1:9' in cassandra_medusa_pip.stdout | default('')"
+
+    - name: A virtualenv whose Python is gone
+      block:
+        - name: Make one
+          ansible.builtin.shell: mkdir -p /opt/broken-venv/bin && ln -sfn /usr/bin/python3.99 /opt/broken-venv/bin/python
+          changed_when: true
+
+        - name: Run the role on it
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_medusa
+          vars:
+            cassandra_medusa_venv: /opt/broken-venv
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: the role ran on a virtualenv without its Python
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Stop when the Python of the virtualenv is gone'
+              - "'remove /opt/broken-venv' in ansible_failed_result.msg"
+
+    - name: Wrong settings are refused
+      ansible.builtin.include_tasks: refused.yml
+      loop:
+        - {cassandra_medusa_storage_provider: ""}
+        - {cassandra_medusa_storage_provider: local, cassandra_medusa_base_path: ""}
+        - {cassandra_medusa_storage_provider: s3_compatible, cassandra_medusa_host: ""}
+        - {cassandra_medusa_extra_settings: {storage: {}, backups: {kms_id: k}}}
