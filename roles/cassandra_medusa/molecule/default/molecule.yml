@@ -26,7 +26,7 @@ provisioner:
     group_vars:
       all:
         # a virtualenv path of its own (as imported from existing nodes), in the login PATH
-        cassandra_medusa_venv: /opt/cassandra-virtual
+        cassandra_medusa_venv: /opt/medusa-venv
         cassandra_medusa_profile_d: true
         cassandra_medusa_storage_provider: s3_compatible
         cassandra_medusa_bucket_name: backups

@@ -6,7 +6,7 @@ testinfra_hosts = testinfra.utils.ansible_runner.AnsibleRunner(
     os.environ['MOLECULE_INVENTORY_FILE']
 ).get_hosts('all')
 
-VENV = "/opt/cassandra-virtual"
+VENV = "/opt/medusa-venv"
 
 # Medusa's own config loader reads the file the role wrote
 LOAD = """

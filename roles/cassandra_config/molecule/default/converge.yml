@@ -201,7 +201,7 @@
           - {name: monitor, password: Mon1tor-Secret, access: readonly}
           - {name: admin, password: Adm1n-Secret}
         cassandra_cqlsh_credentials:
-          - {os_user: root, username: dba, password: Dba-Cql-Secret}
+          - {os_user: root, username: app_admin, password: App-Cql-Secret}
 
     - name: Render with an extra setting that has a variable
       block:

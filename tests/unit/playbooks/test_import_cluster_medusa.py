@@ -64,21 +64,21 @@ def venv(path):
 
 
 def test_venv_of_its_own_linked(tmp_path):
-    venv(tmp_path / "srv/tools/cassandra-virtual")
+    venv(tmp_path / "srv/tools/medusa-venv")
     (tmp_path / "usr/local/bin").mkdir(parents=True)
-    (tmp_path / "usr/local/bin/medusa").symlink_to(tmp_path / "srv/tools/cassandra-virtual/bin/medusa")
+    (tmp_path / "usr/local/bin/medusa").symlink_to(tmp_path / "srv/tools/medusa-venv/bin/medusa")
     found = run(tmp_path)
-    assert found["venv"] == str(tmp_path / "srv/tools/cassandra-virtual")
+    assert found["venv"] == str(tmp_path / "srv/tools/medusa-venv")
     assert found["link_dir"] == str(tmp_path / "usr/local/bin")
     assert "python" not in found and "profile" not in found
 
 
 def test_venv_from_the_shebang(tmp_path):
     """A script outside the virtualenv, run by its python."""
-    venv(tmp_path / "srv/cassandra-virtual")
-    write(tmp_path / "usr/local/bin/medusa", "#!%s/srv/cassandra-virtual/bin/python\n" % tmp_path, 0o755)
+    venv(tmp_path / "srv/medusa-venv")
+    write(tmp_path / "usr/local/bin/medusa", "#!%s/srv/medusa-venv/bin/python\n" % tmp_path, 0o755)
     found = run(tmp_path)
-    assert found["venv"] == str(tmp_path / "srv/cassandra-virtual")
+    assert found["venv"] == str(tmp_path / "srv/medusa-venv")
     assert "link_dir" not in found
 
 
@@ -112,7 +112,7 @@ def test_no_medusa(tmp_path):
 def test_venv_activated_by_a_profile(tmp_path, profile, line):
     """Only in a login profile (not in the PATH, no link): found, and the file named."""
     home = tmp_path / profile.rsplit("/", 1)[0]
-    path = home / "venvs/medusa" if "venvs" in line else tmp_path / "data/cassandra-virtual"
+    path = home / "venvs/medusa" if "venvs" in line else tmp_path / "data/medusa-venv"
     venv(path)
     # a commented-out activation of a virtualenv that exists does not count
     venv(tmp_path / "data/old")
