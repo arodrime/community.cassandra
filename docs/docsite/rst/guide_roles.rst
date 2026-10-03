@@ -277,7 +277,7 @@ next one. ``rolling_reboot`` does the same with a reboot of the host (OS patchin
 allows losing a rack (see `Rack maintenance`_).
 
 To move a cluster to another Java, set ``cassandra_java_version`` in the cluster's ``group_vars`` and run
-``update_jdk``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
+``update_java``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
 It refuses a Java the series does not support, and warns about ``cassandra_jvm<N>_*`` settings meant for the old
 Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
 ``systemctl stop cassandra`` or a reboot outside Ansible is clean too. A node's own unit kept as found
@@ -300,7 +300,7 @@ without their dependencies (``rpm --nodeps``), plus the ones Cassandra needs to 
 Java dependency as missing, and a plain ``dnf upgrade`` that finds a newer Cassandra would install a Java package to
 satisfy it (the tarball stays the system ``java``): exclude the cassandra packages from routine upgrades
 (``excludepkgs``, versionlock).
-``update_jdk`` moves a cluster to a new tarball the same way as to a new package.
+``update_java`` moves a cluster to a new tarball the same way as to a new package.
 
 
 Changing the seeds

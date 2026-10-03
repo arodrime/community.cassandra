@@ -36,7 +36,7 @@ group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 - `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
-- `update_jdk`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
+- `update_java`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
 - `apply_config`- Applies the inventory's config: shows every diff, asks once, then writes and restarts only the nodes that need it, one at a time.
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
 - `status`- Read-only view of the ring from one node (`nodetool status` per datacenter, a summary per datacenter, inventory hosts missing from the ring and the reverse); fails only when no node answers (or the `cassandra_status_from` node does not).

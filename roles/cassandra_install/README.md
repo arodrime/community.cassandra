@@ -32,7 +32,7 @@ Role Variables
   package: on Debian/Ubuntu a local `cassandra-java-tarball` package provides
   the Java they depend on; on the RedHat family they are installed with
   `rpm --nodeps` (plus procps-ng, python3 and shadow-utils).
-  `cassandra_java_version` must still name its major version; `update_jdk`
+  `cassandra_java_version` must still name its major version; `update_java`
   moves the nodes to a new tarball.
 * `cassandra_java_home` (default `""`): Java already unpacked in this
   directory by other means, not a package: made the system `java`, and the

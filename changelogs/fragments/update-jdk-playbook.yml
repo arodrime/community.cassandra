@@ -1,2 +1,0 @@
-minor_changes:
-  - New update_jdk playbook - moves a running cluster to another Java, node by node.
