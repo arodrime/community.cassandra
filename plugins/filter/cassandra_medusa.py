@@ -199,7 +199,7 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
             notes.insert(1, "Medusa: %s is not in a virtualenv (Python %s): new nodes get it the same way,"
                             " pip installing into that Python (cassandra_medusa_venv: '')" % (where, python or "?"))
     elif found.get("untrusted"):
-        notes.insert(0, "Medusa: %s or its Python is owned by neither root nor cassandra, not run as root to read"
+        notes.insert(0, "Medusa: %s or its Python is owned by neither root nor cassandra, not run to read"
                         " its version: medusa.ini imported, cassandra_medusa_enabled left false" % where)
     else:
         notes.insert(0, "Medusa: medusa.ini imported, but no Medusa install found (%s):"

@@ -579,8 +579,9 @@ When a node has Cassandra Medusa (``medusa`` in the PATH, in the PATH of a login
 of root, or in a virtualenv under ``/opt``, and ``/etc/medusa/medusa.ini``), its version and settings are imported and
 ``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path
 (``cassandra_medusa_venv``), or without a virtualenv when the nodes' Medusa is in a system Python
-(``cassandra_medusa_venv: ""`` and that Python). Elsewhere, give its virtualenv or its ``medusa`` script with
-``-e import_cluster_medusa_path=/path/to/venv``. A virtualenv only a login profile puts in the PATH is reported: the
+(``cassandra_medusa_venv: ""`` and that Python). The login shells (``bash`` run as ``cassandra``, then as root, without
+a terminal) are only tried when ``medusa`` is not in the PATH. Elsewhere, give its virtualenv or its ``medusa`` script,
+a full path on the nodes: ``-e import_cluster_medusa_path=/path/to/venv``. A virtualenv only a login profile puts in the PATH is reported: the
 roles leave profiles alone, new nodes get ``/usr/local/bin/medusa``, and ``cassandra_medusa_profile_d: true`` adds the
 virtualenv to every login shell's PATH. A Medusa installed by a package is not managed (the report says so).
 

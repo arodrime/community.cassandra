@@ -20,8 +20,9 @@
 # time sync, firewall) is listed in the report, and what a variable covers is
 # carried into the inventory for the nodes added later.
 # Medusa is looked for in the PATH, in the PATH of a login shell of cassandra
-# or root, and under /opt; import_cluster_medusa_path gives its virtualenv
-# or its medusa script when it is elsewhere.
+# or root (only when not in the PATH), and under /opt; import_cluster_medusa_path
+# (a full path on the nodes) gives its virtualenv or its medusa script when it
+# is elsewhere.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
 - name: Find the cluster from the given nodes
@@ -297,21 +298,26 @@
         trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }
         # the file cassandra_medusa_profile_d writes
         [ -f /etc/profile.d/cassandra-medusa.sh ] && echo "profile_d=yes"
-        # import_cluster_medusa_path: the medusa script, or its virtualenv
+        # import_cluster_medusa_path: the medusa script, its virtualenv or the virtualenv's bin
         hint=$IMPORT_CLUSTER_MEDUSA_PATH
-        [ -d "$hint" ] && hint=$hint/bin/medusa
+        if [ -d "$hint" ]; then
+          if [ -f "$hint/medusa" ]; then hint=$hint/medusa; else hint=$hint/bin/medusa; fi
+        fi
         if [ -n "$hint" ] && [ ! -x "$hint" ]; then
-          echo "hint_missing=$IMPORT_CLUSTER_MEDUSA_PATH"
+          echo "hint_missing=$(printf %s "$IMPORT_CLUSTER_MEDUSA_PATH" | tr '\n' ' ')"
           hint=
         fi
         # sudo's PATH may lack /usr/local/bin (RHEL)
         bin=$(PATH=$PATH:/usr/local/bin command -v medusa 2>/dev/null)
         # else the medusa a login shell of cassandra or root finds (a profile may put a virtualenv in the
-        # PATH): bash run as that user with a clean environment, login then interactive (~/.bashrc)
+        # PATH): bash run as that user with a clean environment, login then interactive (~/.bashrc), without
+        # a terminal (setsid: an interactive bash would stop on the one of the ssh session) nor history; timeout
+        # in that session stops what a profile started too
         as_user() {
-          command -v runuser >/dev/null || return 0
-          timeout 10 runuser -u "$1" -- env -i HOME="$(getent passwd "$1" | cut -d: -f6)" USER="$1" LOGNAME="$1" \
-            SHELL=/bin/bash PATH=/usr/bin:/bin /bin/bash "$2" 'command -v medusa' </dev/null 2>/dev/null
+          r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser) || return 0
+          "$r" -u "$1" -- setsid timeout -k 2 10 env -i HOME="$(getent passwd "$1" | cut -d: -f6)" USER="$1" \
+            LOGNAME="$1" SHELL=/bin/bash PATH=/usr/bin:/bin HISTFILE=/dev/null \
+            /bin/bash "$2" 'command -v medusa' </dev/null 2>/dev/null
         }
         login= lbin=
         if [ -z "$hint$bin" ]; then
@@ -353,9 +359,18 @@
         else
           echo "python=$py"
         fi
-        # run as root: only a script and a Python owned by root or cassandra
+        # its version, from its Python: only a script and a Python owned by root or cassandra, run as cassandra
+        # (as root only when root owns both and there is no cassandra user)
+        as_cassandra() {
+          r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser)
+          if [ -n "$r" ] && getent passwd cassandra >/dev/null; then
+            "$r" -u cassandra -- setsid timeout -k 2 30 env -i PATH=/usr/bin:/bin "$@" </dev/null
+          elif [ "$(stat -c %U "$real" "$(readlink -f "$py")" | sort -u)" = root ]; then
+            timeout -k 2 30 "$@" </dev/null
+          fi
+        }
         if trusted "$real" && trusted "$(readlink -f "$py")"; then
-          echo "version=$("$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null)"
+          echo "version=$(as_cassandra "$py" -c "from importlib.metadata import version; print(version('cassandra-medusa'))" 2>/dev/null)"
         else
           echo "untrusted=yes"
         fi
@@ -421,16 +436,19 @@
           vars:
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
-    - name: Note a Medusa without medusa.ini
+    - name: Note a Medusa without medusa.ini, or an import_cluster_medusa_path without Medusa
       ansible.builtin.set_fact:
         import_cluster_medusa:
           vars: {}
-          notes:
-            - "Medusa {{ _found.version | default('') or '?' }} in {{ _found.bin }}, but no /etc/medusa/medusa.ini: NOT imported"
+          notes: >-
+            {{ (['Medusa ' ~ (_found.version | default('') or '?') ~ ' in ' ~ _found.bin
+                 ~ ', but no /etc/medusa/medusa.ini: NOT imported'] if _found.bin is defined else [])
+               + (['Medusa: no medusa in ' ~ _found.hint_missing ~ ' (import_cluster_medusa_path) on this node']
+                  if _found.hint_missing is defined else []) }}
       vars:
         _found: "{{ dict(import_cluster_medusa_found.stdout_lines | default([]) | map('split', '=', 1)) }}"
       when:
-        - _found.bin is defined
+        - _found.bin is defined or _found.hint_missing is defined
         - _found.ini | default('') != 'yes'
 
     # The OS tuning already on the nodes (set by hand, by another tool, by

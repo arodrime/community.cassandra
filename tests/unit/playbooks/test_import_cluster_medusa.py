@@ -7,6 +7,7 @@ __metaclass__ = type
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -30,19 +31,28 @@ def find_task(node, name):
 
 
 with open(PLAYBOOK, encoding="utf-8") as f:
-    SCRIPT = find_task(yaml.safe_load(f), "Look for Medusa")["ansible.builtin.shell"]
+    PLAYS = yaml.safe_load(f)
+SCRIPT = find_task(PLAYS, "Look for Medusa")["ansible.builtin.shell"]
 
 
 TRUSTED = """trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }"""
 
 
-AS_USER = re.compile(r"^ *as_user\(\) \{\n.*?^ *\}\n", re.M | re.S)
+def function(name):
+    return re.compile(r"^ *%s\(\) \{\n.*?^ *\}\n" % name, re.M | re.S)
+
+
+AS_USER = function("as_user")
+AS_CASSANDRA = function("as_cassandra")
 
 
 def run(root, cwd=None, untrusted="", hint=""):
     # bash run as that user: here, its answer from a file (the users asked are logged)
-    assert len(AS_USER.findall(SCRIPT)) == 1 and "runuser -u" in AS_USER.search(SCRIPT).group(0)
+    assert len(AS_USER.findall(SCRIPT)) == 1 and "setsid" in AS_USER.search(SCRIPT).group(0)
     script = AS_USER.sub('as_user() { echo "$1$2" >> "$ROOT/asked"; cat "$ROOT/login/$1$2" 2>/dev/null; }\n', SCRIPT)
+    # the version read as cassandra: here, as the test's user
+    assert len(AS_CASSANDRA.findall(script)) == 1 and "runuser" in AS_CASSANDRA.search(script).group(0)
+    script = AS_CASSANDRA.sub('as_cassandra() { "$@"; }\n', script)
     script = re.sub(r"(?<=[\s\"'(=:])/(etc|opt|home|root|usr|srv|var)/", r"$ROOT/\1/", script)
     # owned by root or cassandra: here, all but $UNTRUSTED
     assert TRUSTED in script
@@ -162,7 +172,7 @@ def test_any_venv_under_opt(tmp_path):
     assert run(tmp_path)["venv"] == str(tmp_path / "opt/backup-tools")
 
 
-@pytest.mark.parametrize("hint", ["data/v", "data/v/bin/medusa"])
+@pytest.mark.parametrize("hint", ["data/v", "data/v/bin", "data/v/bin/medusa"])
 def test_path_given(tmp_path, hint):
     """import_cluster_medusa_path: the virtualenv or its medusa, before anything else."""
     venv(tmp_path / "data/v")
@@ -179,8 +189,42 @@ def test_path_given_without_medusa(tmp_path):
     assert found["venv"] == str(tmp_path / "opt/cassandra-medusa")
 
 
+def test_path_given_with_a_newline(tmp_path):
+    """The name is reported on one line: it cannot add a line of its own."""
+    found = run(tmp_path, hint="data/none\nversion=9")
+    assert found["hint_missing"] == str(tmp_path / "data/none version=9")
+    assert "version" not in found
+
+
+def as_user_script(home):
+    """The real as_user, run by the test's user (runuser left out), HOME given."""
+    body = AS_USER.search(SCRIPT).group(0)
+    body = body.replace('r=$(PATH=$PATH:/usr/sbin:/sbin command -v runuser) || return 0', 'r=')
+    body = body.replace('"$r" -u "$1" -- ', '')
+    assert "setsid timeout" in body
+    body = body.replace('HOME="$(getent passwd "$1" | cut -d: -f6)"', 'HOME="%s"' % home)
+    assert "runuser" not in body and "getent" not in body
+    return body + 'as_user "$(id -un)" -lic | tail -n 1; as_user "$(id -un)" -ic | tail -n 1\n'
+
+
+@pytest.mark.skipif(not shutil.which("script") or not shutil.which("setsid") or not os.path.exists("/bin/bash"),
+                    reason="needs script, setsid and bash")
+def test_login_shell_with_a_terminal(tmp_path):
+    """Under a terminal (ssh -tt): the interactive bash must not stop on it; ~/.bash_profile and a ~/.bashrc
+    that returns when not interactive are both read."""
+    venv(tmp_path / "v")
+    write(tmp_path / ".bash_profile", "echo hello\nPATH=%s/v/bin:$PATH\n" % tmp_path)
+    write(tmp_path / ".bashrc", "case $- in *i*) ;; *) return ;; esac\nPATH=%s/v/bin:$PATH\n" % tmp_path)
+    write(tmp_path / "t.sh", as_user_script(tmp_path))
+    out = subprocess.run(["timeout", "25", "script", "-qec", "sh %s/t.sh" % tmp_path, "/dev/null"],
+                         capture_output=True, text=True)
+    assert out.returncode == 0
+    lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    assert lines[-2:] == [str(tmp_path / "v/bin/medusa")] * 2
+
+
 def test_untrusted_venv_of_a_login_shell_is_not_run(tmp_path):
-    """Found by a login shell, but owned by neither root nor cassandra: not run as root."""
+    """Found by a login shell, but owned by neither root nor cassandra: not run."""
     venv(tmp_path / "data/v")
     login(tmp_path, "cassandra", "-lic", "%s/data/v/bin/medusa\n" % tmp_path)
     found = run(tmp_path, untrusted="data/v/bin/medusa")
@@ -188,7 +232,7 @@ def test_untrusted_venv_of_a_login_shell_is_not_run(tmp_path):
 
 
 def test_untrusted_medusa_is_not_run(tmp_path):
-    """medusa in the PATH but owned by another user: its Python is not run as root."""
+    """medusa in the PATH but owned by another user: its Python is not run."""
     venv(tmp_path / "srv/v")
     (tmp_path / "usr/local/bin").mkdir(parents=True)
     (tmp_path / "usr/local/bin/medusa").symlink_to(tmp_path / "srv/v/bin/medusa")
@@ -209,3 +253,33 @@ def test_profile_d_of_the_role_is_not_a_user_profile(tmp_path):
     assert found["profile_d"] == "yes"
     assert found["venv"] == str(path)
     assert "login" not in found
+
+
+NOTE = find_task(PLAYS, "Note a Medusa without medusa.ini, or an import_cluster_medusa_path without Medusa")
+
+
+@pytest.mark.parametrize("found, notes", [
+    (["bin=/opt/m/bin/medusa", "version=0.30.1"], ["Medusa 0.30.1 in /opt/m/bin/medusa, but no /etc/medusa/medusa.ini: NOT imported"]),
+    (["hint_missing=/srv/x"], ["Medusa: no medusa in /srv/x (import_cluster_medusa_path) on this node"]),
+    (["hint_missing=/srv/x", "bin=/opt/m/bin/medusa"],
+     ["Medusa ? in /opt/m/bin/medusa, but no /etc/medusa/medusa.ini: NOT imported",
+      "Medusa: no medusa in /srv/x (import_cluster_medusa_path) on this node"]),
+    (["ini=yes", "hint_missing=/srv/x"], None),
+    ([], None),
+])
+def test_note_without_medusa_ini(found, notes):
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:
+        def trust_as_template(template):
+            return template
+    variables = {"import_cluster_medusa_found": {"stdout_lines": found}}
+    variables.update((k, trust_as_template(v)) for k, v in NOTE["vars"].items())
+    templar = Templar(loader=DataLoader(), variables=variables)
+    when = all(templar.template(trust_as_template("{{ %s }}" % c)) for c in NOTE["when"])
+    assert when == (notes is not None)
+    if when:
+        fact = NOTE["ansible.builtin.set_fact"]["import_cluster_medusa"]
+        assert templar.template(trust_as_template(fact["notes"])) == notes
