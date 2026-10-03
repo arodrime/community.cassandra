@@ -15,7 +15,7 @@ cassandra_medusa_profile_d: false
 cassandra_medusa_python: ""
 # Python versions Medusa 0.30.x supports (its requires-python: >=3.10,<3.13)
 cassandra_medusa_python_supported: ["3.10", "3.12"]
-# PyPI mirror (e.g. https://mirror.example.com/api/pypi/pypi/simple), "" = pip's
+# PyPI mirror (e.g. https://pypi.example.com/simple), "" = pip's
 # default. Credentials for it, the password in a vault.
 cassandra_medusa_pip_index_url: ""
 cassandra_medusa_pip_username: ""

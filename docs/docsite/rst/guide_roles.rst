@@ -371,7 +371,7 @@ a Java tarball given as a URL (``cassandra_java_tarball``): packages come throug
 the sources below.
 Two setups are covered.
 
-**Internal mirror** (Artifactory, Nexus, reposync...): the hosts reach a mirror of the Cassandra repositories and of
+**Internal mirror** (a repository manager, reposync...): the hosts reach a mirror of the Cassandra repositories and of
 their OS repositories. Point the roles at it:
 
 .. code-block:: yaml
@@ -475,8 +475,8 @@ to every node, and ``add_node``, ``replace_node`` and ``add_datacenter`` to the 
     # group_vars/orders.yml
     cassandra_medusa_enabled: true
     cassandra_medusa_version: 0.30.1
-    cassandra_medusa_pip_index_url: https://mirror.example.com/artifactory/api/pypi/pypi/simple
-    cassandra_medusa_pip_username: svc-cassandra
+    cassandra_medusa_pip_index_url: https://pypi.example.com/simple
+    cassandra_medusa_pip_username: mirror_user
     cassandra_medusa_storage_provider: s3_compatible
     cassandra_medusa_host: s3.example.com
     cassandra_medusa_port: 443

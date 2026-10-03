@@ -51,7 +51,7 @@ argument_specs:
         type: str
         default: ""
         description:
-          - PyPI mirror to install from (C(PIP_INDEX_URL)), e.g. an Artifactory or Nexus PyPI proxy. C("") for pip's default.
+          - PyPI mirror to install from (C(PIP_INDEX_URL)), e.g. a PyPI proxy of a repository manager. C("") for pip's default.
       cassandra_medusa_pip_username:
         type: str
         default: ""

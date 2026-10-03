@@ -39,8 +39,8 @@ The main ones (all of them in `meta/argument_specs.yml`):
   site-packages of the Python (`python3.11` on RHEL 8), `medusa` then being in
   `/usr/local/bin`; refused where the system manages that Python (PEP 668:
   Debian 12, Ubuntu 23.04 and later).
-* `cassandra_medusa_pip_index_url`: PyPI mirror, e.g. an Artifactory PyPI
-  remote `https://mirror.example.com/artifactory/api/pypi/pypi/simple`. With
+* `cassandra_medusa_pip_index_url`: PyPI mirror, e.g.
+  `https://pypi.example.com/simple`. With
   `cassandra_medusa_pip_username` and `cassandra_medusa_pip_password` (vault).
   pip checks its certificate against the system CA bundle
   (`cassandra_medusa_pip_cert`).

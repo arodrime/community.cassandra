@@ -10,7 +10,7 @@ cassandra_repository_manage: "{{ not cassandra_offline | bool }}"
 cassandra_repository_username: ""
 cassandra_repository_password: ""
 # Where the packages come from: the Apache repositories, or a mirror of them
-# (Artifactory, Nexus, reposync...) for hosts without internet access
+# (a repository manager, reposync...) for hosts without internet access
 cassandra_repository_deb_url: https://debian.cassandra.apache.org
 cassandra_repository_rpm_url: "https://redhat.cassandra.apache.org/{{ cassandra_version }}/"
 debian_packages:
