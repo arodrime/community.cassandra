@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_service - new role running Cassandra under a native systemd unit (as ``cassandra_user``:``cassandra_group``, limits, ``TasksMax``, no automatic restart by default, ``nodetool drain`` on stop), enabling and starting it, then waiting until the node is in ``NORMAL`` mode (``nodetool netstats``); a change to the unit does not restart a running node unless ``cassandra_service_restart_on_change`` is set (https://github.com/ansible-collections/community.cassandra/issues/334).
