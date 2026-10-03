@@ -575,14 +575,14 @@ FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in ``
 (``-e import_cluster_strict=false`` writes the same files without failing). Fix the variables or the nodes before any
 run. The OS tuning, ``/etc/default/cassandra`` and ``cassandra-topology.properties`` are not compared.
 
-When a node has Cassandra Medusa (``medusa`` in the PATH or in a virtualenv under ``/opt``, and
-``/etc/medusa/medusa.ini``), its version and settings are imported and ``cassandra_medusa_enabled`` is set, so
-nodes added later get the same Medusa, in the same virtualenv path (``cassandra_medusa_venv``), or without a
-virtualenv when the nodes' Medusa is in a system Python (``cassandra_medusa_venv: ""`` and that Python). A
-virtualenv put in the PATH by a login profile of the ``cassandra`` user, of root or of the system
-(``source <venv>/bin/activate``, files owned by root or ``cassandra``) is found too; the report names that file, which the roles
-leave alone: new nodes get ``/usr/local/bin/medusa``, and ``cassandra_medusa_profile_d: true`` adds the virtualenv to
-every login shell's PATH. A Medusa installed by a package is not managed (the report says so).
+When a node has Cassandra Medusa (``medusa`` in the PATH, in the PATH of a login shell of the ``cassandra`` user or
+of root, or in a virtualenv under ``/opt``, and ``/etc/medusa/medusa.ini``), its version and settings are imported and
+``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path
+(``cassandra_medusa_venv``), or without a virtualenv when the nodes' Medusa is in a system Python
+(``cassandra_medusa_venv: ""`` and that Python). Elsewhere, give its virtualenv or its ``medusa`` script with
+``-e import_cluster_medusa_path=/path/to/venv``. A virtualenv only a login profile puts in the PATH is reported: the
+roles leave profiles alone, new nodes get ``/usr/local/bin/medusa``, and ``cassandra_medusa_profile_d: true`` adds the
+virtualenv to every login shell's PATH. A Medusa installed by a package is not managed (the report says so).
 
 Passwords found in the configuration go to separate ``secrets.yml`` files: encrypted with ansible-vault when
 ``import_cluster_vault_password_file`` is given, otherwise written with mode ``0600`` and the report gives the

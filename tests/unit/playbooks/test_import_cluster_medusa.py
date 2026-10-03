@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # import_cluster: where the nodes' Medusa lives. The shell script is read from
 # the playbook and run by sh on a fake root: its absolute paths are moved under
-# it, and the cassandra user's home is <root>/var/lib/cassandra.
+# it, and what a login shell of a user answers is <root>/login/<user><bash options>.
 
 import os
 import re
@@ -36,15 +36,19 @@ with open(PLAYBOOK, encoding="utf-8") as f:
 TRUSTED = """trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }"""
 
 
-def run(root, cwd=None, untrusted=""):
-    script = re.sub(r"(?<=[\s\"'(=:])/(etc|opt|home|root|usr|srv|var)/", r"$ROOT/\1/", SCRIPT)
-    script = script.replace("getent passwd cassandra | cut -d: -f6", "echo $ROOT/var/lib/cassandra")
-    assert "h=/root " in script
-    script = script.replace("h=/root ", "h=$ROOT/root ")
+AS_USER = re.compile(r"^ *as_user\(\) \{\n.*?^ *\}\n", re.M | re.S)
+
+
+def run(root, cwd=None, untrusted="", hint=""):
+    # bash run as that user: here, its answer from a file (the users asked are logged)
+    assert len(AS_USER.findall(SCRIPT)) == 1 and "runuser -u" in AS_USER.search(SCRIPT).group(0)
+    script = AS_USER.sub('as_user() { echo "$1$2" >> "$ROOT/asked"; cat "$ROOT/login/$1$2" 2>/dev/null; }\n', SCRIPT)
+    script = re.sub(r"(?<=[\s\"'(=:])/(etc|opt|home|root|usr|srv|var)/", r"$ROOT/\1/", script)
     # owned by root or cassandra: here, all but $UNTRUSTED
     assert TRUSTED in script
     script = script.replace(TRUSTED, 'trusted() { [ "$1" != "$UNTRUSTED" ]; }')
-    env = {"ROOT": str(root), "PATH": "/usr/bin:/bin", "UNTRUSTED": untrusted and str(root / untrusted)}
+    env = {"ROOT": str(root), "PATH": "/usr/bin:/bin", "UNTRUSTED": untrusted and str(root / untrusted),
+           "IMPORT_CLUSTER_MEDUSA_PATH": hint and str(root / hint)}
     out = subprocess.run(["sh", "-c", script], env=env, cwd=str(cwd or root), capture_output=True, text=True,
                          check=True)
     return dict(line.split("=", 1) for line in out.stdout.splitlines())
@@ -70,7 +74,7 @@ def test_venv_of_its_own_linked(tmp_path):
     found = run(tmp_path)
     assert found["venv"] == str(tmp_path / "srv/tools/medusa-venv")
     assert found["link_dir"] == str(tmp_path / "usr/local/bin")
-    assert "python" not in found and "profile" not in found
+    assert "python" not in found and "login" not in found
 
 
 def test_venv_from_the_shebang(tmp_path):
@@ -103,40 +107,84 @@ def test_no_medusa(tmp_path):
     assert run(tmp_path) == {}
 
 
-@pytest.mark.parametrize("profile, line", [
-    ("var/lib/cassandra/.bash_profile", "source {venv}/bin/activate\n"),
-    ("var/lib/cassandra/.bashrc", ". \"$HOME/venvs/medusa/bin/activate\"\n"),
-    ("root/.profile", "source ~/venvs/medusa/bin/activate\n"),
-    ("etc/profile.d/medusa.sh", "export PATH={venv}/bin:$PATH\n"),
-])
-def test_venv_activated_by_a_profile(tmp_path, profile, line):
-    """Only in a login profile (not in the PATH, no link): found, and the file named."""
-    home = tmp_path / profile.rsplit("/", 1)[0]
-    path = home / "venvs/medusa" if "venvs" in line else tmp_path / "data/medusa-venv"
-    venv(path)
-    # a commented-out activation of a virtualenv that exists does not count
-    venv(tmp_path / "data/old")
-    write(tmp_path / profile, "# source %s/data/old/bin/activate\n" % tmp_path + line.format(venv=path))
+def login(root, user, options, answer):
+    """What bash run as that user with those options answers to command -v medusa."""
+    write(root / "login" / (user + options), answer)
+
+
+def asked(root):
+    path = root / "asked"
+    return path.read_text().split() if path.exists() else []
+
+
+@pytest.mark.parametrize("user, options", [("cassandra", "-lic"), ("cassandra", "-ic"), ("root", "-lic"),
+                                           ("root", "-ic")])
+def test_venv_in_the_path_of_a_login_shell(tmp_path, user, options):
+    """Only in the PATH of a login shell (a profile activates it, no link): found, and who it is for."""
+    venv(tmp_path / "data/medusa-venv")
+    # a profile may print something before
+    login(tmp_path, user, options, "Welcome\n%s/data/medusa-venv/bin/medusa\n" % tmp_path)
     found = run(tmp_path)
-    assert found["venv"] == str(path)
-    assert found["profile"] == str(tmp_path / profile)
+    assert found["venv"] == str(tmp_path / "data/medusa-venv")
+    assert found["login"] == user
     assert "link_dir" not in found
+    assert "version" in found
 
 
-def test_other_users_profiles_are_not_read(tmp_path):
-    """Run as root: a virtualenv activated by any user's profile would run their code."""
-    venv(tmp_path / "home/alice/v")
-    write(tmp_path / "home/alice/.bashrc", "source %s/home/alice/v/bin/activate\n" % tmp_path)
+def test_login_shells_only_when_not_found_otherwise(tmp_path):
+    """medusa in the PATH: no user's profile is run."""
+    venv(tmp_path / "srv/v")
+    (tmp_path / "usr/local/bin").mkdir(parents=True)
+    (tmp_path / "usr/local/bin/medusa").symlink_to(tmp_path / "srv/v/bin/medusa")
+    found = run(tmp_path)
+    assert found["venv"] == str(tmp_path / "srv/v") and "login" not in found
+    assert asked(tmp_path) == []
+
+
+def test_only_cassandra_and_root_login_shells(tmp_path):
+    """Nothing found: the login shells of cassandra and root only, then the usual places."""
     assert run(tmp_path) == {}
+    assert asked(tmp_path) == ["cassandra-lic", "cassandra-ic", "root-lic", "root-ic"]
 
 
-@pytest.mark.parametrize("untrusted", ["etc/profile.d/v.sh", "data/v", "data/v/bin/medusa"])
-def test_untrusted_files_are_not_read(tmp_path, untrusted):
-    """A profile or a virtualenv owned by neither root nor cassandra."""
+@pytest.mark.parametrize("answer", ["medusa: alias for medusa-wrapper\n", "{root}/data/none/bin/medusa\n", ""])
+def test_login_shell_answer_not_an_executable(tmp_path, answer):
+    """An alias, a path that is not there, nothing: the usual places next."""
+    venv(tmp_path / "opt/cassandra-medusa")
+    login(tmp_path, "cassandra", "-lic", answer.format(root=tmp_path))
+    found = run(tmp_path)
+    assert found["venv"] == str(tmp_path / "opt/cassandra-medusa")
+    assert "login" not in found
+
+
+def test_any_venv_under_opt(tmp_path):
+    venv(tmp_path / "opt/backup-tools")
+    assert run(tmp_path)["venv"] == str(tmp_path / "opt/backup-tools")
+
+
+@pytest.mark.parametrize("hint", ["data/v", "data/v/bin/medusa"])
+def test_path_given(tmp_path, hint):
+    """import_cluster_medusa_path: the virtualenv or its medusa, before anything else."""
     venv(tmp_path / "data/v")
-    write(tmp_path / "etc/profile.d/v.sh", "source %s/data/v/bin/activate\n" % tmp_path)
-    assert run(tmp_path)["venv"] == str(tmp_path / "data/v")
-    assert run(tmp_path, untrusted=untrusted) == {}
+    venv(tmp_path / "opt/cassandra-medusa")
+    found = run(tmp_path, hint=hint)
+    assert found["venv"] == str(tmp_path / "data/v")
+    assert asked(tmp_path) == []
+
+
+def test_path_given_without_medusa(tmp_path):
+    venv(tmp_path / "opt/cassandra-medusa")
+    found = run(tmp_path, hint="data/none")
+    assert found["hint_missing"] == str(tmp_path / "data/none")
+    assert found["venv"] == str(tmp_path / "opt/cassandra-medusa")
+
+
+def test_untrusted_venv_of_a_login_shell_is_not_run(tmp_path):
+    """Found by a login shell, but owned by neither root nor cassandra: not run as root."""
+    venv(tmp_path / "data/v")
+    login(tmp_path, "cassandra", "-lic", "%s/data/v/bin/medusa\n" % tmp_path)
+    found = run(tmp_path, untrusted="data/v/bin/medusa")
+    assert found["untrusted"] == "yes" and "version" not in found
 
 
 def test_untrusted_medusa_is_not_run(tmp_path):
@@ -151,12 +199,13 @@ def test_untrusted_medusa_is_not_run(tmp_path):
 
 
 def test_profile_d_of_the_role_is_not_a_user_profile(tmp_path):
-    """The role's own file: its virtualenv found (no link needed), the file not reported."""
+    """The role's own file puts it in the login PATH: found (no link needed), not reported as a user's."""
     path = tmp_path / "srv/medusa"
     venv(path)
     write(tmp_path / "etc/profile.d/cassandra-medusa.sh",
           'case ":$PATH:" in *":%s/bin:"*) ;; *) PATH="%s/bin:$PATH" ;; esac\n' % (path, path))
+    login(tmp_path, "cassandra", "-lic", "%s/bin/medusa\n" % path)
     found = run(tmp_path)
     assert found["profile_d"] == "yes"
     assert found["venv"] == str(path)
-    assert "profile" not in found
+    assert "login" not in found

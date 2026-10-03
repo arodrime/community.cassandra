@@ -107,7 +107,7 @@ def _perm(name, value):
 
 
 def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
-    """found: {venv, python, version, link_dir, package, bin, profile, profile_d, ini_owner, ini_group,
+    """found: {venv, python, version, link_dir, package, bin, login, profile_d, hint_missing, ini_owner, ini_group,
     ini_mode, key_owner, key_group, key_mode}
     (what import_cluster read on the node, "" when unknown).
     -> {'vars': cassandra_medusa variables, 'notes': [report lines], 'keep': the ones for this node
@@ -187,10 +187,10 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
                          % defaults["cassandra_medusa_link_dir"])
         if found.get("profile_d") == "yes":
             out["cassandra_medusa_profile_d"] = True
-        if found.get("profile"):
-            notes.append("Medusa: its virtualenv is put in the PATH by %s (login profile), which the roles leave"
+        if found.get("login"):
+            notes.append("Medusa: its virtualenv is put in the PATH by a login profile of %s, which the roles leave"
                          " alone; new nodes don't get it (cassandra_medusa_profile_d: true adds"
-                         " /etc/profile.d/cassandra-medusa.sh for every login)" % found["profile"])
+                         " /etc/profile.d/cassandra-medusa.sh for every login)" % found["login"])
         # its Python (a full path: a name depends on the PATH)
         python = found.get("python", "")
         if not venv and python.startswith("/"):
@@ -204,6 +204,9 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     else:
         notes.insert(0, "Medusa: medusa.ini imported, but no Medusa install found (%s):"
                         " cassandra_medusa_enabled left false" % (where or "no medusa binary"))
+    if found.get("hint_missing"):
+        notes.append("Medusa: no medusa in %s (import_cluster_medusa_path) on this node, looked for it in the usual"
+                     " places instead" % found["hint_missing"])
     return {"vars": out, "notes": notes, "keep": keep}
 
 

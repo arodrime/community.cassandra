@@ -19,6 +19,9 @@
 # The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
 # time sync, firewall) is listed in the report, and what a variable covers is
 # carried into the inventory for the nodes added later.
+# Medusa is looked for in the PATH, in the PATH of a login shell of cassandra
+# or root, and under /opt; import_cluster_medusa_path gives its virtualenv
+# or its medusa script when it is elsewhere.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
 - name: Find the cluster from the given nodes
@@ -291,34 +294,39 @@
       ansible.builtin.shell: |
         ini=/etc/medusa/medusa.ini
         [ -f "$ini" ] && echo "ini=yes" && stat --printf 'ini_owner=%U\nini_group=%G\nini_mode=%a\n' "$ini"
+        trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }
+        # the file cassandra_medusa_profile_d writes
+        [ -f /etc/profile.d/cassandra-medusa.sh ] && echo "profile_d=yes"
+        # import_cluster_medusa_path: the medusa script, or its virtualenv
+        hint=$IMPORT_CLUSTER_MEDUSA_PATH
+        [ -d "$hint" ] && hint=$hint/bin/medusa
+        if [ -n "$hint" ] && [ ! -x "$hint" ]; then
+          echo "hint_missing=$IMPORT_CLUSTER_MEDUSA_PATH"
+          hint=
+        fi
         # sudo's PATH may lack /usr/local/bin (RHEL)
         bin=$(PATH=$PATH:/usr/local/bin command -v medusa 2>/dev/null)
-        # a virtualenv put in the PATH by a login profile (source <venv>/bin/activate, or <venv>/bin in PATH):
-        # the cassandra user's, the system's and root's, from files owned by root or cassandra only (this runs as root)
-        home=$(getent passwd cassandra | cut -d: -f6)
-        trusted() { case $(stat -c %U "$1" 2>/dev/null) in root|cassandra) ;; *) return 1 ;; esac; }
-        pvenv= pairs=
-        # the file cassandra_medusa_profile_d writes is the role's, not a user's: not reported
-        [ -f /etc/profile.d/cassandra-medusa.sh ] && echo "profile_d=yes"
-        for f in ${home:+$home/.bash_profile $home/.bashrc $home/.profile} /etc/profile /etc/bashrc /etc/bash.bashrc \
-                 /etc/profile.d/*.sh /root/.bash_profile /root/.bashrc /root/.profile; do
-          [ -f "$f" ] && trusted "$f" || continue
-          # ~ and $HOME: the home the file is in
-          case $f in /root/*) h=/root ;; /etc/*) h= ;; *) h=$home ;; esac
-          lines=$(grep -v '^[[:space:]]*#' "$f" | { if [ -n "$h" ]; then sed 's#\(~\|\$HOME\|\${HOME}\)/#'"$h"'/#g'; else cat; fi; })
-          set -f  # the words found are paths, not patterns
-          for d in $(printf "%s\n" "$lines" | grep -oE "/[^[:space:]:\"'=;]+/bin/activate" | sed 's#/bin/activate$##') \
-                   $(printf "%s\n" "$lines" | grep 'PATH=' | grep -oE "/[^[:space:]:\"'=;\$]+/bin" | sed 's#/bin$##'); do
-            if [ -x "$d/bin/medusa" ] && [ -f "$d/pyvenv.cfg" ] && trusted "$d" && trusted "$d/bin/medusa"; then
-              pvenv=${pvenv:-$d}
-              [ "$f" = /etc/profile.d/cassandra-medusa.sh ] || pairs="$pairs $f|$d"
-              break
-            fi
+        # else the medusa a login shell of cassandra or root finds (a profile may put a virtualenv in the
+        # PATH): bash run as that user with a clean environment, login then interactive (~/.bashrc)
+        as_user() {
+          command -v runuser >/dev/null || return 0
+          timeout 10 runuser -u "$1" -- env -i HOME="$(getent passwd "$1" | cut -d: -f6)" USER="$1" LOGNAME="$1" \
+            SHELL=/bin/bash PATH=/usr/bin:/bin /bin/bash "$2" 'command -v medusa' </dev/null 2>/dev/null
+        }
+        login= lbin=
+        if [ -z "$hint$bin" ]; then
+          for u in cassandra root; do
+            for o in -lic -ic; do
+              # the last line: a profile may print something first
+              lbin=$(as_user "$u" "$o" | tail -n 1)
+              case $lbin in /*) [ -x "$lbin" ] && login=$u && break 2 ;; esac
+              lbin=
+            done
           done
-          set +f
-        done
+        fi
         real=
-        for c in "$bin" "${pvenv:+$pvenv/bin/medusa}" /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa /usr/share/cassandra-medusa/bin/medusa; do
+        for c in "$hint" "$bin" "$lbin" /opt/cassandra-medusa/bin/medusa /opt/medusa/bin/medusa \
+                 /usr/share/cassandra-medusa/bin/medusa /opt/*/bin/medusa; do
           [ -n "$c" ] && [ -x "$c" ] && { real=$(readlink -f "$c"); break; }
         done
         [ -n "$real" ] || exit 0
@@ -340,13 +348,8 @@
           echo "venv=$venv"
           py=$venv/bin/python
           [ -L "$bin" ] && [ "$(readlink -f "$bin")" = "$(readlink -f "$venv/bin/medusa")" ] && echo "link_dir=$(dirname "$bin")"
-          # the profiles that put this virtualenv in the PATH
-          profiles=
-          for p in $pairs; do
-            [ "$(readlink -f "${p#*|}")" = "$(readlink -f "$venv")" ] || continue
-            case " $profiles " in *" ${p%%|*} "*) ;; *) profiles="$profiles ${p%%|*}" ;; esac
-          done
-          [ -n "$profiles" ] && echo "profile=${profiles# }"
+          # in the PATH only by a login profile: reported, unless it is the role's file
+          [ -n "$login" ] && ! grep -qsF "$venv/bin" /etc/profile.d/cassandra-medusa.sh && echo "login=$login"
         else
           echo "python=$py"
         fi
@@ -358,6 +361,8 @@
         fi
         pkg=$(rpm -qf --qf '%{NAME}\n' "$real" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$real" 2>/dev/null | cut -d: -f1) || pkg=
         echo "package=$pkg"
+      environment:
+        IMPORT_CLUSTER_MEDUSA_PATH: "{{ import_cluster_medusa_path | default('') }}"
       register: import_cluster_medusa_found
       changed_when: false
       failed_when: false

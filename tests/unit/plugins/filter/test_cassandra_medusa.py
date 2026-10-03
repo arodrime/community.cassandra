@@ -210,9 +210,9 @@ def test_import_secrets_go_to_secrets_yml():
 
 
 def test_import_venv_from_a_login_profile():
-    """A virtualenv of its own, activated from a login profile, without a link:
-    new nodes get the same path, plus the default link (not this node); the profile is reported."""
-    found = dict(FOUND, venv="/srv/tools/medusa-venv", link_dir="", profile="/home/ops/.bash_profile",
+    """A virtualenv of its own, put in the PATH by a login profile, without a link:
+    new nodes get the same path, plus the default link (not this node); the profile's user is reported."""
+    found = dict(FOUND, venv="/srv/tools/medusa-venv", link_dir="", login="cassandra",
                  bin="/srv/tools/medusa-venv/bin/medusa")
     imported = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, found)
     assert imported["vars"]["cassandra_medusa_venv"] == "/srv/tools/medusa-venv"
@@ -222,7 +222,12 @@ def test_import_venv_from_a_login_profile():
     assert imported["notes"][0] == ("Medusa 0.30.1 in /srv/tools/medusa-venv, medusa.ini imported"
                                     " (cassandra_medusa_enabled: true)")
     assert "no /usr/local/bin/medusa link" in imported["notes"][1]
-    assert "by /home/ops/.bash_profile (login profile)" in imported["notes"][2]
+    assert "by a login profile of cassandra," in imported["notes"][2]
+
+
+def test_import_path_given_not_found():
+    out = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, dict(FOUND, hint_missing="/srv/x"))
+    assert out["notes"][-1].startswith("Medusa: no medusa in /srv/x (import_cluster_medusa_path)")
 
 
 def test_import_profile_d_of_the_role():
