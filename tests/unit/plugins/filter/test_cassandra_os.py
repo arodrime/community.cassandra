@@ -49,12 +49,12 @@ def file_records(kind, path, fixture=None, text=None):
                    if not re.match(r"^\s*([#;]|$)", line))
 
 
-INFRA_SYSCTL = file_records("sysctl", "/etc/sysctl.d/99-infra-cassandra.conf", "99-infra-cassandra.conf")
+SITE_SYSCTL = file_records("sysctl", "/etc/sysctl.d/99-cassandra.conf", "99-cassandra.conf")
 VENDOR_SYSCTL = file_records("sysctl", "/usr/lib/sysctl.d/50-default.conf", "50-default.conf")
 SYSCTL_CONF = file_records("sysctl", "/etc/sysctl.conf", "sysctl.conf")
-INFRA_LIMITS = file_records("limits", "/etc/security/limits.d/95-infra-cassandra-limits.conf", "95-infra-cassandra-limits.conf")
+SITE_LIMITS = file_records("limits", "/etc/security/limits.d/95-cassandra-limits.conf", "95-cassandra-limits.conf")
 NPROC = file_records("limits", "/etc/security/limits.d/20-nproc.conf", "20-nproc.conf")
-UDEV = file_records("udev", "/etc/udev/rules.d/99-infra-readahead.rules", "99-infra-readahead.rules")
+UDEV = file_records("udev", "/etc/udev/rules.d/99-readahead.rules", "99-readahead.rules")
 
 
 def found(text, **changes):
@@ -94,7 +94,7 @@ def test_records_keep_pipes_in_the_last_field():
 # --- sysctl ---
 
 def test_sysctl_infra_file_carried_into_its_file():
-    r = found(VENDOR_SYSCTL + INFRA_SYSCTL + SYSCTL_CONF + "sysctl_live|vm.swappiness|60\nsysctl_live|vm.max_map_count|1048575\n")
+    r = found(VENDOR_SYSCTL + SITE_SYSCTL + SYSCTL_CONF + "sysctl_live|vm.swappiness|60\nsysctl_live|vm.max_map_count|1048575\n")
     sysctl = r["vars"]["cassandra_linux_sysctl"]
     assert sysctl["vm.swappiness"] == 10  # the infra file, read after the vendor's 50-default.conf
     assert sysctl["net.core.somaxconn"] == 4096  # a key of a Cassandra file, the role has none
@@ -102,16 +102,16 @@ def test_sysctl_infra_file_carried_into_its_file():
     assert sysctl["net.core.rmem_max"] == 33554432  # /etc/sysctl.conf, read last
     assert sysctl["vm.zone_reclaim_mode"] == 0  # role default kept
     assert "kernel.sysrq" not in sysctl  # not Cassandra's
-    assert r["vars"]["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-infra-cassandra.conf"
+    assert r["vars"]["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-cassandra.conf"
     lines = r["lines"]
-    assert "sysctl /etc/sysctl.d/99-infra-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)" in lines
-    assert "sysctl /etc/sysctl.d/99-infra-cassandra.conf: vm.max_map_count = 1048575 (same as cassandra_linux)" in lines
+    assert "sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)" in lines
+    assert "sysctl /etc/sysctl.d/99-cassandra.conf: vm.max_map_count = 1048575 (same as cassandra_linux)" in lines
     assert ("sysctl /usr/lib/sysctl.d/50-default.conf: vm.swappiness = 30 (cassandra_linux: 1), overridden by"
-            " /etc/sysctl.d/99-infra-cassandra.conf") in lines
+            " /etc/sysctl.d/99-cassandra.conf") in lines
     assert "sysctl live: vm.swappiness = 60 (files say 10)" in lines  # not applied live
     assert not any("max_map_count" in line and "live" in line for line in lines)
     assert not any("sysrq" in line for line in lines)
-    assert any(c.startswith("cassandra_linux_sysctl_file: /etc/sysctl.d/99-infra-cassandra.conf") for c in r["carried"])
+    assert any(c.startswith("cassandra_linux_sysctl_file: /etc/sysctl.d/99-cassandra.conf") for c in r["carried"])
 
 
 def test_sysctl_vendor_values_not_carried():
@@ -161,21 +161,21 @@ def test_sysctl_most_keys_file_wins_the_name():
 # --- limits ---
 
 def test_limits_user_entries_carried():
-    r = found(NPROC + INFRA_LIMITS + "groups|cassandra dbadmins\n")
+    r = found(NPROC + SITE_LIMITS + "groups|cassandra cassandra_admins\n")
     limits = r["vars"]["cassandra_linux_limits"]
     assert limits["nofile"] == 500000
     assert limits["nproc"] == 65536  # the user's entry wins over "*"
     assert limits["memlock"] == "unlimited"  # from its group
     assert limits["as"] == "unlimited"  # soft and hard differ: the role default kept
     assert any("NOT carried: the cassandra user's as" in c for c in r["carried"])
-    assert ("limits /etc/security/limits.d/95-infra-cassandra-limits.conf: cassandra nofile = 500000"
+    assert ("limits /etc/security/limits.d/95-cassandra-limits.conf: cassandra nofile = 500000"
             " (cassandra_linux: 1048576)") in r["lines"]
-    assert ("limits /etc/security/limits.d/95-infra-cassandra-limits.conf: @dbadmins memlock = unlimited"
+    assert ("limits /etc/security/limits.d/95-cassandra-limits.conf: @cassandra_admins memlock = unlimited"
             " (same as cassandra_linux)") in r["lines"]
 
 
 def test_limits_group_not_member_ignored():
-    r = found(INFRA_LIMITS + "groups|cassandra\n")
+    r = found(SITE_LIMITS + "groups|cassandra\n")
     assert "memlock" not in [line.split()[3] for line in r["lines"] if line.startswith("limits")]
     assert r["vars"]["cassandra_linux_limits"]["memlock"] == "unlimited"  # role default
 
@@ -229,7 +229,7 @@ def test_unit_limits_last_wins_and_carried():
 def test_udev_readahead_carried():
     r = found(UDEV.splitlines()[0] + "\n" + "disk|/data/c|/dev/sdb1|part|sdb|8|none|0\n")
     assert r["vars"] == {"cassandra_data_readahead_kb": 8}
-    assert any(line.startswith("udev /etc/udev/rules.d/99-infra-readahead.rules: read_ahead_kb 8 (cassandra_linux: 4),"
+    assert any(line.startswith("udev /etc/udev/rules.d/99-readahead.rules: read_ahead_kb 8 (cassandra_linux: 4),"
                                " scheduler none") for line in r["lines"])
     assert "disk sdb (/data/c, SSD): read_ahead_kb 8 (cassandra_linux: 4), scheduler none (same as cassandra_linux)" in r["lines"]
 
@@ -353,7 +353,7 @@ def node(name, os_found, **vars):
 
 def test_report_section_and_round_trip():
     """Lines every node has once, the others under their nodes; the carried variables in group_vars."""
-    common = INFRA_SYSCTL + INFRA_LIMITS + "groups|cassandra\n"
+    common = SITE_SYSCTL + SITE_LIMITS + "groups|cassandra\n"
     a = found(common + "swap_on|/dev/sda2 partition 1024K\n")
     b = found(common)
     layout = cassandra_inventory_layout([node("n1", a, **a["vars"]), node("n2", b, **b["vars"])], "c")
@@ -362,16 +362,16 @@ def test_report_section_and_round_trip():
                          " cassandra_service set):")
     section = report[start:]
     assert section[1] == "  On every node read:"
-    assert "    sysctl /etc/sysctl.d/99-infra-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)" in section
+    assert "    sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)" in section
     assert section.index("  On n2:") < section.index("    swap: none active, none in /etc/fstab (same as cassandra_linux)")
     assert "  On n1:" in section and "    swap active: /dev/sda2 partition 1024K (cassandra_linux: none)" in section
-    assert section.count("    sysctl /etc/sysctl.d/99-infra-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)") == 1
+    assert section.count("    sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10 (cassandra_linux: 1)") == 1
     carried = section.index("OS TUNING CARRIED INTO THE VARIABLES, for the nodes added later (the nodes above with"
                             " cassandra_linux_manage false are left as they are):")
     assert section[carried + 1] == "  On every node read:"
     gv = layout["group_vars"]["c"]
     assert gv["cassandra_linux_sysctl"]["vm.swappiness"] == 10
-    assert gv["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-infra-cassandra.conf"
+    assert gv["cassandra_linux_sysctl_file"] == "/etc/sysctl.d/99-cassandra.conf"
     assert gv["cassandra_linux_limits"]["nofile"] == 500000
     assert layout["host_vars"]["n1"]["cassandra_linux_manage"] is False
     assert "  none" in layout["differences"]
@@ -409,10 +409,10 @@ def test_package_file_under_etc_not_carried():
 
 def test_own_node_sysctl_carries_only_its_own_file():
     own = file_records("sysctl", "/etc/sysctl.d/60-cassandra.conf", text="vm.swappiness = 1\nvm.max_map_count = 1048575\n")
-    r = found(own + INFRA_SYSCTL, own=True)
+    r = found(own + SITE_SYSCTL, own=True)
     # exactly its file: net.core.somaxconn of the infra file would be added to 60-cassandra.conf
     assert sysctl_vars(r) == {"cassandra_linux_sysctl": {"vm.swappiness": 1, "vm.max_map_count": 1048575}}
-    assert any(line.startswith("sysctl /etc/sysctl.d/99-infra-cassandra.conf: vm.swappiness = 10") for line in r["lines"])
+    assert any(line.startswith("sysctl /etc/sysctl.d/99-cassandra.conf: vm.swappiness = 10") for line in r["lines"])
 
 
 def test_own_node_without_its_sysctl_file_keeps_what_it_has():

@@ -428,7 +428,7 @@
         - _found.bin is defined
         - _found.ini | default('') != 'yes'
 
-    # The OS tuning an infrastructure team may have set (by hand, another tool,
+    # The OS tuning already on the nodes (set by hand, by another tool, by
     # a golden image), compared with what cassandra_linux would set: the files
     # as they are, and the live values. Read only.
     # the roles' own defaults, as for the config import: not the values an
