@@ -1,0 +1,66 @@
+---
+# Moves this single-token node to the token of cassandra_move_step (one step
+# of the cassandra_token_move_plan filter): nodetool move streams the ranges it
+# gains, the nodes that lose ranges keep them until a cleanup. Can take hours.
+# Before: the nodes that receive data must keep cassandra_move_min_free_percent
+# of their data disk free (cassandra_move_force_disk: true goes on anyway).
+- name: Check the disk space of the nodes that receive data
+  when: _receivers | length > 0
+  vars:
+    _receivers: >-
+      {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
+         | select('in', groups[cassandra_hosts | default('cassandra')]) | list }}
+  block:
+    - name: Read their file systems
+      ansible.builtin.setup:
+        gather_subset: ['!all', '!min', 'mounts']
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _receivers }}"
+
+    - name: Refuse a move they have no room for
+      ansible.builtin.assert:
+        that: _problems | length == 0 or cassandra_move_force_disk | default(false) | bool
+        fail_msg: >-
+          {{ _problems | join('; ') }}. Nothing was moved. Free some space (a cleanup, old snapshots), or set
+          cassandra_move_force_disk: true if the estimate is wrong (it assumes the data is spread evenly along the ring).
+        quiet: true
+      vars:
+        _disks: >-
+          {%- set out = {} -%}
+          {%- for h in _receivers -%}
+          {%-   set _ = out.update({h: {'path': (hostvars[h].cassandra_data_file_directories | default([]) | first)
+                                                | default(hostvars[h].cassandra_data_dir | default('/var/lib/cassandra/data'), true),
+                                        'mounts': hostvars[h].ansible_facts.mounts | default([])}}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _problems: >-
+          {{ cassandra_move_step | community.cassandra.cassandra_token_disk_problems(_disks,
+               cassandra_move_min_free_percent | default(20)) }}
+
+- name: Move the node
+  community.cassandra.cassandra_move:
+    token: "{{ cassandra_move_step.to }}"
+    debug: true  # nodetool's stderr in the result: the reason of a failure
+  module_defaults:
+    community.cassandra.cassandra_move: "{{ _cassandra_service_jmx }}"
+  async: "{{ cassandra_move_timeout | default(_cassandra_stream_async) }}"
+  poll: 0
+  register: cassandra_move_job
+
+- name: Start following the move
+  ansible.builtin.set_fact:
+    _cassandra_stream_state: {}
+
+- name: Follow the move
+  ansible.builtin.include_tasks: stream_wait.yml
+  when: not ansible_check_mode
+  vars:
+    _cassandra_stream_what: "move to {{ cassandra_move_step.to }}"
+    _cassandra_stream_operations: [Relocation]
+    _cassandra_stream_from: ["{{ inventory_hostname }}"]
+    _cassandra_stream_job: {'jid': "{{ cassandra_move_job.ansible_job_id }}", 'host': "{{ inventory_hostname }}"}
+    _cassandra_stream_advice: >-
+      the node is still MOVING: check nodetool netstats and system.log on it. Nothing else was touched;
+      don't start another move meanwhile. A move that failed leaves the node MOVING with no stream: restarting
+      Cassandra on it cancels it (the node keeps its old token), then run move_node again.

@@ -1,0 +1,268 @@
+---
+# Moves nodes of a single-token cluster (cassandra_num_tokens: 1) to new
+# tokens, one at a time (nodetool move):
+#   ansible-playbook -i inventory community.cassandra.move_node -e cassandra_hosts=my_cluster
+# Without cassandra_move_tokens, each datacenter is evened out with the fewest
+# moves (e.g. after add_node -e cassandra_token_auto=balanced); with
+#   -e '{"cassandra_move_tokens": {"node2": "-3074457345618258603"}}'
+# only those nodes move. The plan comes first: each datacenter's ring now and
+# after, the order of the moves, the data each one streams and to which
+# nodes; then one confirmation (cassandra_operation_confirm: false skips it).
+# --check shows the plan and stops there.
+# Each move: the cluster checked (all nodes up and normal, no stream), the
+# nodes that receive data keep cassandra_move_min_free_percent (20) of their
+# data disk free (cassandra_move_force_disk: true goes on anyway), nodetool
+# move followed like a bootstrap (a progress line every
+# cassandra_stream_check_interval seconds), the cluster checked again. The
+# run stops at the first problem.
+# Run it again to resume: the plan is worked out again from the ring (the
+# nodes already moved stay), a move an earlier run left going is waited for.
+# The nodes that lost ranges keep that data until a cleanup: the commands are
+# printed, or cassandra_move_cleanup: one, rack, dc or all runs it here.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Find moves an earlier run left going
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Load the cassandra_service defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Check the cluster has one token per node
+      ansible.builtin.assert:
+        that: _cassandra_preflight.cassandra_num_tokens | int == 1
+        fail_msg: >-
+          move_node is for clusters with one token per node (cassandra_num_tokens: 1, here
+          {{ _cassandra_preflight.cassandra_num_tokens }}): with vnodes, add or remove nodes to change ownership.
+        quiet: true
+      run_once: true
+
+    - name: Check the cleanup choice
+      ansible.builtin.assert:
+        that: cassandra_move_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
+        fail_msg: "cassandra_move_cleanup must be none, one, rack, dc or all (got {{ cassandra_move_cleanup | default('') }})"
+        quiet: true
+      run_once: true
+
+    - name: Read this node's mode
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+      register: cassandra_move_netstats
+      failed_when: false
+
+    - name: Group the nodes still moving
+      ansible.builtin.group_by:
+        key: cassandra_move_left_going
+      changed_when: false
+      when: cassandra_move_netstats.mode | default('') == 'MOVING'
+
+- name: Wait for the moves an earlier run left going
+  hosts: cassandra_move_left_going
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Say what is waited for
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} is still moving (an earlier run): waited for before anything else"
+
+    - name: Start following the move
+      ansible.builtin.set_fact:
+        _cassandra_stream_state: {}
+
+    - name: Follow the move
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: stream_wait.yml
+      when: not ansible_check_mode
+      vars:
+        _cassandra_stream_what: move left going by an earlier run
+        _cassandra_stream_operations: [Relocation]
+        _cassandra_stream_from: ["{{ inventory_hostname }}"]
+        _cassandra_stream_join: true  # over once the node is NORMAL again
+        _cassandra_stream_advice: >-
+          check nodetool netstats and system.log on it. A move that failed leaves the node MOVING with no
+          stream: restarting Cassandra on it cancels it (the node keeps its old token), then run move_node again.
+
+- name: Plan the moves
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  vars:
+    _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
+    _from: "{{ ansible_play_hosts | first }}"
+  tasks:
+    - name: Load the cassandra_service defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    # Without the replication (no CQL access), the shares assume cassandra_token_rf (3)
+    - name: Read the keyspaces' replication
+      block:
+        - name: Read the keyspaces' replication
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: keyspaces.yml
+            apply:
+              run_once: true
+          vars:
+            cassandra_keyspaces_from: "{{ _from }}"
+          run_once: true
+      rescue:
+        - name: Go on without it
+          ansible.builtin.set_fact:
+            cassandra_keyspaces: null
+          run_once: true
+
+    - name: Read the tokens of the ring
+      community.cassandra.cassandra_ring:
+      module_defaults:
+        community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
+      delegate_to: "{{ _from }}"
+      register: cassandra_move_ring
+      run_once: true
+
+    - name: Read the loads
+      community.cassandra.cassandra_status:
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      delegate_to: "{{ _from }}"
+      register: cassandra_move_status
+      run_once: true
+
+    - name: Work out the moves
+      ansible.builtin.set_fact:
+        cassandra_move_plan: >-
+          {{ cassandra_move_ring.ring | community.cassandra.cassandra_token_move_plan(_cassandra_preflight.cassandra_partitioner,
+               keyspaces=cassandra_keyspaces | default(none), default_rf=cassandra_token_rf | default(3), hosts=_hosts,
+               targets=cassandra_move_tokens | default({}), status=cassandra_move_status.cluster_status) }}
+      vars:
+        _hosts: >-
+          {{ dict(ansible_play_hosts_all | map('extract', hostvars, ['_cassandra_preflight', 'address']) | zip(ansible_play_hosts_all)) }}
+      run_once: true
+
+    - name: Show the plan
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['move_node on cluster ' ~ _cassandra_preflight.cassandra_cluster_name ~ ' (shares with the largest replication'
+              ~ ' factor of each datacenter, else cassandra_token_rf; the data of a move from the loads of the nodes):']
+             + _plan.lines + (_plan.warnings | map('regex_replace', '^', 'WARNING: ') | list)
+             + ((['Cleanup afterwards (cassandra_move_cleanup=' ~ cassandra_move_cleanup | default('none') ~ ')',
+                  _cassandra_session_warning]) if _plan.steps else ['Nothing to move.']) }}
+      run_once: true
+
+    - name: Refuse a plan that can't be followed
+      ansible.builtin.assert:
+        that: _problems | length == 0
+        fail_msg: "{{ _problems + ['Nothing was moved.'] }}"
+        quiet: true
+      run_once: true
+      vars:
+        _outside: "{{ _plan.steps | map(attribute='name') | reject('in', ansible_play_hosts) | list }}"
+        _problems: >-
+          {{ _plan.problems + ([_outside | join(', ') ~ ' would move but ' ~ ('is' if _outside | length == 1 else 'are')
+             ~ ' not a node of this run (' ~ cassandra_hosts | default('cassandra') ~ ', --limit): add '
+             ~ ('it' if _outside | length == 1 else 'them') ~ ' to the inventory group, or give the moves'
+             ~ ' (cassandra_move_tokens)'] if _outside else []) }}
+
+    - name: Say that --check stops here
+      ansible.builtin.debug:
+        msg: "--check: the plan only, nothing was moved."
+      run_once: true
+      when: ansible_check_mode and _plan.steps | length > 0
+
+    - name: Confirm the moves
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      when: _plan.steps | length > 0 and not ansible_check_mode
+      vars:
+        cassandra_confirm_prompt: "move_node: move {{ _plan.steps | map(attribute='name') | join(', ') }} as shown above, one at a time?"
+
+    - name: Line the nodes up in the order of the moves
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: cassandra_move_order
+        cassandra_move_step: "{{ item }}"
+      loop: "{{ _plan.steps if not ansible_check_mode else [] }}"
+      loop_control:
+        label: "{{ item.name }}: {{ item.from }} -> {{ item.to }}"
+      run_once: true
+      changed_when: false
+
+- name: Move the nodes, one at a time
+  hosts: cassandra_move_order
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Move this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: move
+
+- name: Summary
+  hosts: cassandra_move_order
+  gather_facts: false
+  tasks:
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+
+# The nodes that lost ranges (worked out from the plan) still hold that data
+# until a cleanup. cassandra_move_cleanup: none (default) prints the command;
+# one, rack, dc or all runs it here, by batches, the cluster checked before each.
+- name: Clean up the nodes that lost ranges
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  vars:
+    _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
+    _targets: "{{ _plan.cleanup | default([]) | select('in', ansible_play_hosts) | list }}"
+    _mode: "{{ cassandra_move_cleanup | default('none') }}"
+    cassandra_service_node_action: cleanup
+    cassandra_cleanup_jobs: 2
+  tasks:
+    - name: Say which cleanups to run
+      ansible.builtin.debug:
+        msg:
+          - "Once the cluster is fine, clean up the nodes that lost ranges, e.g. one at a time:"
+          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup
+            -e cassandra_hosts={{ cassandra_hosts | default('cassandra') }} --limit {{ _targets | join(',') }}"
+          - "  (-e cassandra_cleanup_mode=rack|dc|all for batches of nodes together)"
+      run_once: true
+      when:
+        - _targets | length > 0
+        - _mode == 'none' or ansible_check_mode
+
+    - name: Clean up, by batches
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cleanup_batch.yml
+        apply:
+          run_once: true
+      loop: "{{ _batches }}"
+      loop_control:
+        loop_var: cassandra_cleanup_batch
+        label: "{{ cassandra_cleanup_batch | join(', ') }}"
+      run_once: true
+      when: _mode != 'none' and not ansible_check_mode
+      vars:
+        _batches: >-
+          {%- set batches = {} -%}
+          {%- for h in _targets -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   set key = {'one': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
+          {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
+          {%- endfor -%}
+          {{ batches.values() | list }}
