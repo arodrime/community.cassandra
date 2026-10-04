@@ -447,3 +447,13 @@ def test_bisect_not_worse_than_each_greedy(n, k, racks, rf):
     for greedy in (_greedy_bisect(ring, new, size, rf, _largest_first), _greedy_bisect(ring, new, size, rf, _largest_only),
                    _split_largest(ring, new, size)):
         assert best <= _balance_key(ring + greedy, size, rf)
+
+
+def test_bisect_same_positions_other_racks_both_tried():
+    # a review found the second greedy skipped for having the same positions, with better racks on them
+    size = 2 ** 64
+    ring = [(2208115789264903189, "n0", "r0"), (3436951878756879807, "n1", "r1"), (6906942652851629972, "n2", "r0")]
+    new = [("x0", "r0"), ("x2", "r1"), ("x1", "r0"), ("x3", "r1"), ("x6", "r0"), ("x4", "r1"), ("x5", "r1"), ("x7", "r1")]
+    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import _balance_key, _split_largest
+    best = _balance_key(ring + plan_bisect(ring, new, size, 3), size, 3)
+    assert best <= _balance_key(ring + _split_largest(ring, new, size), size, 3)

@@ -309,11 +309,13 @@ def plan_bisect(ring, new, size, rf):
     best, seen = None, set()
     for greedy in (_greedy_bisect(ring, new, size, rf, _largest_first), _greedy_bisect(ring, new, size, rf, _largest_only),
                    _split_largest(ring, new, size)):
-        spots = tuple(sorted(p for p, dummy, dummy2 in greedy))
-        if spots in seen:  # the same positions: the same racks order
+        # the same positions with the same racks: the same plan (with other racks, the greedy's own
+        # placement is a candidate _place may not try beyond PLACE_SEARCH nodes)
+        spots = tuple(sorted((p, rack) for p, dummy, rack in greedy))
+        if spots in seen:
             continue
         seen.add(spots)
-        placed = _place(list(ring), list(spots), new, size, rf, given=greedy)
+        placed = _place(list(ring), [p for p, dummy in spots], new, size, rf, given=greedy)
         score = _balance_key(list(ring) + placed, size, rf)
         if best is None or score < best[0]:
             best = (score, placed)
