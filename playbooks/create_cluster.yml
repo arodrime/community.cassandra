@@ -5,6 +5,9 @@
 # (a node of a new rack earlier when the token allocator needs it), each one
 # joined before the next. Re-running it on a running cluster
 # starts nothing.
+# One token per node (cassandra_num_tokens: 1): the nodes without
+# cassandra_initial_token get evenly spaced tokens, shown with each node's
+# share of the data, then confirmed (cassandra_operation_confirm).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
@@ -38,11 +41,90 @@
           - cassandra_num_tokens
           - cassandra_partitioner
           - cassandra_endpoint_snitch
-          - cassandra_allocate_tokens_for_local_replication_factor
           - cassandra_dc
           - cassandra_rack
-        _all: "{{ _names + (['cassandra_storage_compatibility_mode'] if cassandra_version == '50x' else []) }}"
+        # the allocator's hint only matters with vnodes
+        _all: >-
+          {{ _names + (['cassandra_storage_compatibility_mode'] if cassandra_version == '50x' else [])
+             + (['cassandra_allocate_tokens_for_local_replication_factor'] if cassandra_num_tokens | int > 1 else []) }}
         _missing: "{{ _all | reject('in', hostvars[inventory_hostname]) | list }}"
+
+# Each datacenter's nodes evenly spaced on the ring, racks taken in turn, the
+# datacenters 100 tokens apart (module_utils/cassandra_tokens.py). A node
+# that has cassandra_initial_token keeps it; a datacenter where only some
+# have one is refused unless cassandra_token_allow_partial (the others then
+# split the largest ranges). A rerun after a create that stopped half way
+# gives the same tokens: the nodes already running must have them.
+- name: Work out the tokens (one token per node)
+  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  gather_facts: false
+  tasks:
+    - name: Work out the tokens
+      when: _cassandra_preflight.cassandra_num_tokens | int == 1
+      vars:
+        _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_token_plan | default({}) }}"
+        _running: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
+             | map(attribute='inventory_hostname') | list }}
+      block:
+        - name: Load the cassandra_service defaults
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: defaults.yml
+            public: true
+
+        - name: Read the tokens of the nodes already running
+          community.cassandra.cassandra_ring:
+          module_defaults:
+            community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
+          register: cassandra_create_ring
+          delegate_to: "{{ _running | first }}"
+          run_once: true
+          when: _running | length > 0
+
+        - name: Plan the ring
+          ansible.builtin.set_fact:
+            cassandra_token_plan: >-
+              {{ _nodes | community.cassandra.cassandra_token_assign(_cassandra_preflight.cassandra_partitioner,
+                   default_rf=cassandra_token_rf | default(3), allow_partial=cassandra_token_allow_partial | default(false) | bool,
+                   ring=cassandra_create_ring.ring | default({}), hosts=_hosts) }}
+          vars:
+            _nodes: >-
+              {%- set l = [] -%}
+              {%- for h in ansible_play_hosts -%}
+              {%-   set p = hostvars[h]._cassandra_preflight -%}
+              {%-   set _ = l.append({'name': h, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack, 'token': p.cassandra_initial_token}) -%}
+              {%- endfor -%}
+              {{ l }}
+            _hosts: >-
+              {{ dict(ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'address']) | zip(ansible_play_hosts)) }}
+          run_once: true
+
+        - name: Show the ring
+          ansible.builtin.debug:
+            msg: "{{ ['One token per node, the ring (RF of the shares: cassandra_token_rf):'] + _plan.lines
+                     + (_plan.warnings | map('regex_replace', '^', 'WARNING: ') | list) }}"
+          run_once: true
+
+        - name: Refuse a ring that can't be worked out
+          ansible.builtin.assert:
+            that: _plan.problems | length == 0
+            fail_msg: "{{ _plan.problems }}"
+            quiet: true
+          run_once: true
+
+        - name: Confirm the tokens
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: confirm.yml
+          when: _plan.tokens | length > 0 and _running | length < ansible_play_hosts | length
+          vars:
+            cassandra_confirm_prompt: "create_cluster: give the nodes marked * the tokens shown above?"
+
+        - name: Give the node its token
+          ansible.builtin.set_fact:
+            cassandra_initial_token: "{{ _plan.tokens[inventory_hostname] }}"
+          when: inventory_hostname in _plan.tokens
 
 - name: Prepare the nodes
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
@@ -70,10 +152,15 @@
         groups: cassandra_create_start_order
       loop: >-
         {{ ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list
-           | community.cassandra.cassandra_start_order(_cassandra_preflight.cassandra_allocate_tokens_for_local_replication_factor,
+           | community.cassandra.cassandra_start_order(_hint,
                cassandra_preflight_status.cluster_status | default({}, true)) }}
       run_once: true
       changed_when: false
+      vars:
+        # one token per node: no allocator, any order
+        _hint: >-
+          {{ _cassandra_preflight.cassandra_allocate_tokens_for_local_replication_factor
+             if _cassandra_preflight.cassandra_num_tokens | int > 1 else '' }}
 
 - name: Start the nodes, one at a time
   hosts: cassandra_create_start_order

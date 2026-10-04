@@ -69,6 +69,8 @@
           cassandra_num_tokens: "{{ cassandra_num_tokens }}"
           cassandra_endpoint_snitch: "{{ cassandra_endpoint_snitch }}"
           cassandra_allocate_tokens_for_local_replication_factor: "{{ cassandra_allocate_tokens_for_local_replication_factor }}"
+          cassandra_partitioner: "{{ cassandra_partitioner }}"
+          cassandra_initial_token: "{{ cassandra_initial_token | string }}"
           _cassandra_service_seeds: "{{ _cassandra_service_seeds }}"
           cassandra_dc: "{{ cassandra_dc }}"
           cassandra_rack: "{{ cassandra_rack }}"
@@ -99,6 +101,7 @@
         - cassandra_cluster_name
         - cassandra_version
         - cassandra_num_tokens
+        - cassandra_partitioner
         - cassandra_endpoint_snitch
         - cassandra_allocate_tokens_for_local_replication_factor
         - _cassandra_service_seeds
@@ -215,7 +218,8 @@
     # in create_cluster's start order: cassandra_start_order). A
     # replacement allocates nothing (it takes the dead node's tokens). A
     # datacenter not in the ring yet (or no node running): the inventory's
-    # racks, 1 or at least the hint.
+    # racks, 1 or at least the hint. One token per node: no allocator (the
+    # tokens come from initial_token).
     - name: Racks per datacenter
       ansible.builtin.assert:
         that: _refused | length == 0
@@ -265,5 +269,7 @@
           {%- endif -%}
           {{ out }}
       loop: "{{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | list }}"
-      when: _hint | string not in ['', 'None']
+      when:
+        - _hint | string not in ['', 'None']
+        - cassandra_num_tokens | int > 1
       run_once: true
