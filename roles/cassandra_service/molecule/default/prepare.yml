@@ -1,0 +1,21 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    # Behave like a real VM (the image's policy-rc.d blocks service starts)
+    - name: Remove the image's policy-rc.d
+      ansible.builtin.file:
+        path: /usr/sbin/policy-rc.d
+        state: absent
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # Local runs may use an image with Cassandra preinstalled, started at boot
+    # with the stock config: back to "installed, never started"
+    - name: Stop a Cassandra the image started
+      ansible.builtin.shell: |
+        systemctl stop cassandra 2>/dev/null
+        pkill -9 -f 'org.apache.cassandra.service.[C]assandraDaemon'
+        systemctl reset-failed cassandra 2>/dev/null
+        rm -rf /var/lib/cassandra/*
+        true
+      changed_when: false
