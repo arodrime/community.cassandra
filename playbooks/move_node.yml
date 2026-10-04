@@ -215,10 +215,28 @@
   vars:
     cassandra_service_node_action: move
   tasks:
+    # The plan is worked out again on each run: nothing to skip from an earlier one
     - name: Set up the progress file
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: progress.yml
+      vars:
+        _cassandra_progress_resume: false
+
+    # All the plan's cleanups (wider than each move's losses when the replication is unknown or a
+    # keyspace uses SimpleStrategy), before the first move: a run that stops forgets none
+    - name: Record the nodes to clean up after the moves
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_progress_dir }}/{{ cassandra_hosts | default('cassandra') }}-move.cleanup"
+        line: "{{ item }}"
+        create: true
+        mode: "0644"
+      loop: "{{ cassandra_move_plan.cleanup | default([]) }}"
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+      run_once: true
 
 - name: Move the nodes, one at a time
   hosts: cassandra_move_order
@@ -232,6 +250,7 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: move
+        cassandra_service_resume_hint: Once fixed, run move_node again (the plan is worked out again from the ring).
 
 - name: Summary
   hosts: cassandra_move_order
@@ -309,7 +328,7 @@
         msg: >-
           {{ _left | join(', ') }} lost ranges in a move but {{ 'is' if _left | length == 1 else 'are' }} not a node of
           this run (--limit, or not in the inventory group): clean {{ 'it' if _left | length == 1 else 'them' }} up
-          (kept in {{ _move_record }}).
+          (kept in {{ _move_record }}: remove {{ 'its line' if _left | length == 1 else 'their lines' }} once done by hand).
       run_once: true
       when:
         - _left | length > 0

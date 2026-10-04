@@ -133,12 +133,17 @@
           {% endif %}
           {{ _cassandra_session_warning }}
 
+    # balanced with no move: the even ring, also on a rerun after some nodes started (they keep their tokens)
     - name: Give the new node its token
       ansible.builtin.set_fact:
-        cassandra_initial_token: "{{ cassandra_new_dc_tokens.bisect[inventory_hostname] }}"
+        cassandra_initial_token: "{{ cassandra_new_dc_tokens[_kind][inventory_hostname] }}"
       when:
         - _single | bool
-        - inventory_hostname in cassandra_new_dc_tokens.bisect
+        - inventory_hostname in cassandra_new_dc_tokens[_kind]
+      vars:
+        _kind: >-
+          {{ 'balanced' if cassandra_new_dc_tokens.moves | length == 0 and cassandra_new_dc_tokens.balanced_problems | length == 0
+             and inventory_hostname in cassandra_new_dc_tokens.balanced else 'bisect' }}
 
 - name: Start the new nodes, one at a time, without streaming
   hosts: "{{ cassandra_new_nodes }}"

@@ -69,5 +69,5 @@
       ansible.builtin.fail:
         msg: >-
           Stopped at {{ inventory_hostname }} ({{ ansible_failed_task.name | default('') }}): no other node was touched after it.
-          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
+          {{ cassandra_service_resume_hint | default('Once fixed, resume with the same command plus -e cassandra_rolling_resume=true') }}
           (progress: {{ cassandra_progress_file | default('none') }})

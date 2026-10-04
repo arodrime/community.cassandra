@@ -387,3 +387,10 @@ def test_move_cleanup_everywhere_when_unsure():
     simple = dict(known, legacy={"class": "SimpleStrategy", "rf": {"*": 2}})
     out = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces=simple)
     assert out["cleanup"] == ["n1", "n2", "n3", "n4", "n6"]
+
+
+def test_system_keyspaces_are_only_system_ones():
+    ks = {"systems_inventory": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 1}},
+          "system_auth": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}
+    out = cassandra_token_add_plan(ring(*T3), [node("n4")], M3, keyspaces=ks, hosts=HOSTS)
+    assert "with RF 1" in out["lines"][1]  # systems_inventory is a user keyspace

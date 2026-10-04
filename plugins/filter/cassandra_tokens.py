@@ -51,12 +51,16 @@ def _has_token(node):
     return str(node.get("token") if node.get("token") is not None else "").strip() not in ("", "None")
 
 
+def _system(name):
+    return name == "system" or name.startswith("system_")
+
+
 def _rf_set(keyspaces, dc, default):
     """The replication factors of the datacenter (NetworkTopologyStrategy
     keyspaces, not system_*: system_auth is often replicated to every node
     and holds next to nothing), [default] when none is known."""
     rfs = set(ks["rf"][dc] for name, ks in (keyspaces or {}).items()
-              if not name.startswith("system") and ks["rf"].get(dc, 0) > 0)
+              if not _system(name) and ks["rf"].get(dc, 0) > 0)
     return sorted(rfs) or [int(default or DEFAULT_RF)]
 
 
@@ -78,7 +82,7 @@ def _transfer_all(before, after, size, rfs):
 
 def _simple_warning(keyspaces):
     simple = sorted(name for name, ks in (keyspaces or {}).items()
-                    if ks.get("class") == "SimpleStrategy" and not name.startswith("system"))
+                    if ks.get("class") == "SimpleStrategy" and not _system(name))
     if not simple:
         return []
     return ["%s use%s SimpleStrategy: its replicas follow the whole ring, across datacenters and racks, which"

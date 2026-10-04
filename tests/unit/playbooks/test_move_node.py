@@ -105,3 +105,14 @@ def test_moves_outside_the_run_refused():
                         " group, or give the moves (cassandra_move_tokens)"]
     plan["steps"] = [{"name": "n1"}]
     assert render("{{ _problems }}", **dict(variables, _plan=plan)) == []
+
+
+def test_the_plan_cleanups_recorded_before_the_moves():
+    setup = next(p for p in PLAYS if p.get("name") == "Set up the progress files")
+    names = [t["name"] for t in setup["tasks"]]
+    assert names.index("Record the nodes to clean up after the moves") > names.index("Set up the progress file")
+    record = task(setup, "Record the nodes to clean up after the moves")
+    moves = PLAYS.index(next(p for p in PLAYS if p.get("name") == "Move the nodes, one at a time"))
+    assert PLAYS.index(setup) < moves
+    assert render(record["loop"], cassandra_move_plan={"cleanup": ["n1", "n2", "n3"]}) == ["n1", "n2", "n3"]
+    assert record["ansible.builtin.lineinfile"]["path"].endswith("-move.cleanup")

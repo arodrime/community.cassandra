@@ -242,7 +242,10 @@ playbooks work them out:
   update.
 
 Every token worked out is checked against the tokens of all the datacenters. SimpleStrategy keyspaces are not in the
-shares (their replicas follow the whole ring): the plans warn about them; clean up every node after tokens change.
+shares (their replicas follow the whole ring): the plans warn about them, and ``move_node`` then cleans up every node
+of the cluster (and every node of the datacenters that move when it can't read the replication). The system
+keyspaces are left out (``system_distributed`` and ``system_traces`` are SimpleStrategy by default, and small): a
+cleanup of the whole cluster after big moves in a multi-datacenter cluster removes their stale copies too.
 
 The shares shown assume the largest replication factor of each datacenter (``cassandra_token_rf``, 3, when no
 keyspace says, e.g. a new cluster). ``allocate_tokens_for_local_replication_factor`` only matters with vnodes: its
