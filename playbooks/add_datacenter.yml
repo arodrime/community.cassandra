@@ -133,7 +133,7 @@
           {% endif %}
           {{ _cassandra_session_warning }}
 
-    # balanced with no move: the even ring, also on a rerun after some nodes started (they keep their tokens)
+    # a new datacenter: balanced (no move) is the even ring, racks taken in turn
     - name: Give the new node its token
       ansible.builtin.set_fact:
         cassandra_initial_token: "{{ cassandra_new_dc_tokens[_kind][inventory_hostname] }}"

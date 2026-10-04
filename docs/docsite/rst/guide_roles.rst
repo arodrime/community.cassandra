@@ -228,7 +228,8 @@ playbooks work them out:
   (each new node splits the largest range, no node moves), ``balanced`` (an even ring for the new node count: the new
   nodes join at their final tokens, then ``move_node`` moves the others; only when no new node has a token in the
   inventory) or ``true`` (both are shown, with each node's share before and after, and you choose). Going from *N* to *N + 1* even nodes moves nearly every node; going
-  to *2N* moves none: every range is split in two. The screen says so when bisect leaves the ring uneven.
+  to *2N* moves none: every range is split in two (the new nodes' racks are ordered so that racks keep alternating
+  when they can). The screen says so when bisect leaves the ring uneven.
 - ``move_node`` moves nodes to new tokens, one at a time (``nodetool move``): without ``cassandra_move_tokens``, each
   datacenter is evened out with the fewest moves. The plan comes first (the rings before and after, the order, the
   data each move streams and where), then one confirmation; ``--check`` stops after the plan. Before each move the

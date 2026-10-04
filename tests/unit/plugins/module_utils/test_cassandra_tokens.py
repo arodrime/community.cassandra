@@ -378,3 +378,27 @@ def test_balanced_moves_resume(seed):
         state = [(dst if m == name else p, m, r) for p, m, r in state]
         again = plan_balanced(state, [], size, 3)["moves"]
         assert sorted((m, d) for m, dummy, d in again) == sorted((m, d) for m, dummy, d in order[k + 1:])
+
+
+@pytest.mark.parametrize("planner", ["bisect", "balanced"])
+def test_doubling_three_racks_is_even(planner):
+    # r0 r1 r2 evenly spaced, one new node per rack, RF 3: each new node must sit where its neighbours are
+    # the two other racks (a review found 16.67% to 83.33% when only the rack before was looked at)
+    size = 2 ** 64
+    ring = ring_of(balanced_positions(3, size), ["r0", "r1", "r2"])
+    new = [("a", "r0"), ("b", "r1"), ("c", "r2")]
+    placed = plan_bisect(ring, new, size, 3) if planner == "bisect" else plan_balanced(ring, new, size, 3)["new"]
+    eff = [e for dummy, e in ownership(ring + placed, size, 3).values()]
+    assert max(eff) - min(eff) <= Fraction(10, size)
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_many_new_nodes_slot_by_slot(seed):
+    # more than PLACE_SEARCH new nodes: placed slot by slot, every new node placed once
+    rnd = random.Random(seed)
+    size = 2 ** 64
+    ring = ring_of(balanced_positions(4, size), ["r0", "r1", "r2", "r0"])
+    new = [("x%d" % i, "r%d" % rnd.randint(0, 2)) for i in range(9)]
+    placed = plan_balanced(ring, new, size, 3)["new"]
+    assert sorted(n for dummy, n, dummy2 in placed) == sorted(n for n, dummy in new)
+    assert dict((n, r) for dummy, n, r in placed) == dict(new)

@@ -148,7 +148,8 @@ def test_add_one_node_to_three():
     assert out["bisect"] == {"n4": "6148914691236517205"}
     assert len(out["moves"]) == 2 and out["even"] == {"bisect": False, "balanced": True}
     assert out["warnings"] == ["dc1: bisect leaves the ring uneven; 3 new node(s) instead of 1 (the datacenter doubled"
-                               " to 6) would split every range in two: even, with no move"]
+                               " to 6) would split every range in two: even with no move (when the racks can"
+                               " alternate)"]
     assert out["balanced_problems"] == []
     assert any(line.startswith("dc1 bisect (no move)") for line in out["lines"])
     assert any(line.startswith("dc1 balanced (2 moves)") for line in out["lines"])
@@ -240,7 +241,7 @@ def test_move_uneven_ring():
 def test_move_even_ring_nothing():
     out = cassandra_token_move_plan(ring(*T3), M3, hosts=HOSTS)
     assert out["steps"] == [] and out["problems"] == []
-    assert "  dc1: nothing to move (the ring is as even as it gets)" in out["lines"]
+    assert "  dc1: nothing to move (the tokens are as even as they get with the nodes in this order)" in out["lines"]
 
 
 def test_move_targets():

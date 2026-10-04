@@ -65,7 +65,9 @@
       ansible.builtin.fail:
         msg: >-
           Stopped at the batch {{ _todo | join(', ') }}: no later batch was started.
-          {% if cassandra_progress_file is defined %}
+          {% if cassandra_service_resume_hint is defined %}
+          {{ cassandra_service_resume_hint }}
+          {% elif cassandra_progress_file is defined %}
           Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
           (progress: {{ cassandra_progress_file }})
           {% else %}

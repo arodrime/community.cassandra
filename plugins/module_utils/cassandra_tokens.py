@@ -27,6 +27,7 @@ __metaclass__ = type
 
 import re
 from fractions import Fraction
+from itertools import permutations
 
 # partitioner: (first token, ring size)
 PARTITIONERS = {
@@ -37,6 +38,8 @@ DC_OFFSET = 100
 # per datacenter: the balanced plan tries every rotation, O(m^2 n) per spacing tried
 # (~3 s for 128 nodes doubled, about a minute near the cap)
 MAX_NODES = 256
+# new nodes whose rack orders are all tried on the positions found (7! orders), more: slot by slot
+PLACE_SEARCH = 7
 
 
 class TokenError(ValueError):
@@ -185,10 +188,45 @@ def _balance_key(ring, size, rf):
     return (max(e for dummy, e in own.values()), max(p for p, dummy in own.values()))
 
 
+def _place(base, spots, new, size, rf):
+    """The new nodes [(name, rack)] on the positions spots, their racks in the
+    order that leaves the smallest largest effective share, then the smallest
+    spread (with one token per node, which rack follows which decides the
+    replicas): every order while there are at most PLACE_SEARCH nodes, else
+    slot by slot. Each rack's nodes in rack_order's order."""
+    spots = sorted(spots)
+    if len(set(r for dummy, r in new) | set(r for dummy, dummy2, r in base)) < 2:
+        return [(p, name, rack) for p, (name, rack) in zip(spots, new)]
+
+    def key(ring):
+        eff = [e for dummy, e in ownership(ring, size, rf).values()]
+        return (max(eff), max(eff) - min(eff))
+
+    def build(racks):
+        queues = {}
+        for name, rack in rack_order(new):
+            queues.setdefault(rack, []).append(name)
+        out = []
+        for p, rack in zip(spots, racks):
+            out.append((p, queues[rack].pop(0), rack))
+        return out
+    racks = [r for dummy, r in new]
+    if len(new) <= PLACE_SEARCH:
+        best = min(sorted(set(permutations(racks))), key=lambda order: key(base + build(order)))
+        return build(best)
+    order, left = [], list(racks)
+    for dummy in spots:  # slot by slot: the rack that keeps the ring placed so far the most even
+        rack = min(sorted(set(left)), key=lambda r: key(base + build(order + [r])))
+        order.append(rack)
+        left.remove(rack)
+    return build(order)
+
+
 def plan_bisect(ring, new, size, rf):
     """No move: each new node in turn (new: [(name, rack)]) at the middle of the
     range whose split leaves the smallest largest effective ownership (then the
-    smallest largest primary share, then the lowest position).
+    smallest largest primary share, then the lowest position); then the racks
+    of the new nodes ordered over those positions (_place).
     Returns [(position, name, rack)] of the new nodes."""
     cur = list(ring)
     placed = []
@@ -211,7 +249,9 @@ def plan_bisect(ring, new, size, rf):
             spot = (best[1], name, rack)
         cur.append(spot)
         placed.append(spot)
-    return placed
+    if len(set(r for dummy, r in new) | set(r for dummy, dummy2, r in ring)) < 2:
+        return placed
+    return _place(list(ring), [p for p, dummy, dummy2 in placed], new, size, rf)
 
 
 def _distance(a, b, size):
@@ -268,9 +308,8 @@ def plan_balanced(ring, new, size, rf, offset=0):
     convention (offset) and one starting at each node's position; existing
     nodes keep their ring order, fewest moves first (a node within
     tolerance() of its position stays where it is), then the shortest total
-    distance moved, then the convention. New nodes fill the free positions in
-    ring order, each time a node of a rack other than the previous node's
-    when there is one.
+    distance moved, then the convention. New nodes fill the free positions,
+    their racks in the order that evens the effective shares out (_place).
     Returns {'ring': [(position, name, rack)] after, 'moves': [(name, from,
     to)], 'new': [(position, name, rack)]}."""
     m = len(ring) + len(new)
@@ -308,14 +347,7 @@ def plan_balanced(ring, new, size, rf, offset=0):
     moves = [(name, p, targets[j]) for (p, name, dummy2), j, stay in zip(pts, picks, stays) if not stay]
     used = set(picks)
     free = [t for j, t in enumerate(targets) if j not in used]
-    left = rack_order(new)
-    placed = []
-    for t in free:
-        prev = [r for p, dummy, r in sorted(after + placed) if p < t]
-        prev_rack = prev[-1] if prev else (sorted(after + placed)[-1][2] if after or placed else None)
-        pick = next((x for x in left if x[1] != prev_rack), left[0])
-        left.remove(pick)
-        placed.append((t, pick[0], pick[1]))
+    placed = _place(after, free, rack_order(new), size, rf)
     return {"ring": after + placed, "moves": moves, "new": placed}
 
 

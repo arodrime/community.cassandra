@@ -379,7 +379,8 @@ def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
     if existing and not _even(bisect_ring, size, rf) and len(existing) + len(new_names) < 2 * len(existing):
         out["warnings"].append(
             "%s: bisect leaves the ring uneven; %d new node(s) instead of %d (the datacenter doubled to %d) would"
-            " split every range in two: even, with no move" % (dc, len(existing), len(new_names), 2 * len(existing)))
+            " split every range in two: even with no move (when the racks can alternate)"
+            % (dc, len(existing), len(new_names), 2 * len(existing)))
 
 
 @_wrap
@@ -494,7 +495,7 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
             continue
         out["lines"] += _table(dc, cur, size, first, rf, "now")
         if not ordered:
-            out["lines"].append("  %s: nothing to move%s" % (dc, "" if wanted else " (the ring is as even as it gets)"))
+            out["lines"].append("  %s: nothing to move%s" % (dc, "" if wanted else " (the tokens are as even as they get with the nodes in this order)"))
             continue
         known = [loads.get(names.get(name)) for dummy, name, dummy2 in cur]
         rf_data = min(all_rfs[0], len(cur))

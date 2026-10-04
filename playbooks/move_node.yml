@@ -299,6 +299,9 @@
     _mode: "{{ cassandra_move_cleanup | default('none') }}"
     # not "move-...": a resume of the moves must not pick this file
     cassandra_service_node_action: cleanup_after_move
+    cassandra_service_resume_hint: >-
+      Once fixed, clean up this batch and the ones after it with the cleanup playbook (--limit those nodes), then
+      remove them from the record; or run move_node again with cassandra_move_cleanup (it cleans every recorded node).
     cassandra_cleanup_jobs: 2
   tasks:
     - name: Set up the progress file
