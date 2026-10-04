@@ -402,3 +402,34 @@ def test_many_new_nodes_slot_by_slot(seed):
     placed = plan_balanced(ring, new, size, 3)["new"]
     assert sorted(n for dummy, n, dummy2 in placed) == sorted(n for n, dummy in new)
     assert dict((n, r) for dummy, n, r in placed) == dict(new)
+
+
+# (2 racks alternating can't stay alternating once doubled: each new node sits between two nodes of different racks)
+@pytest.mark.parametrize("n, racks, rf", [(4, ["r1"], 1), (4, ["r1"], 3), (6, ["r1", "r2", "r3"], 3),
+                                          (5, ["r1"], 2), (3, ["r1", "r2", "r3"], 3)])
+def test_bisect_doubling_splits_every_range(n, racks, rf):
+    # a review found 4 -> 8 at 1.56% to 25%: each split must take one of the largest ranges left
+    size = 2 ** 64
+    ring = ring_of(balanced_positions(n, size), [racks[i % len(racks)] for i in range(n)])
+    new = [("new%d" % i, racks[i % len(racks)]) for i in range(n)]
+    placed = plan_bisect(ring, new, size, rf)
+    pos = sorted(p for p, dummy, dummy2 in ring + placed)
+    gaps = [b - a for a, b in zip(pos, pos[1:])] + [pos[0] + size - pos[-1]]
+    assert max(gaps) - min(gaps) <= 2
+    eff = [e for dummy, e in ownership(ring + placed, size, rf).values()]
+    assert max(eff) - min(eff) <= Fraction(10, size)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_many_new_nodes_never_worse_than_alternating(seed):
+    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import _alternate, _balance_key
+    rnd = random.Random(seed)
+    size = 10 ** 6
+    n = rnd.randint(2, 6)
+    ring = ring_of(balanced_positions(n, size), ["r%d" % rnd.randint(0, 2) for dummy in range(n)])
+    new = [("x%d" % i, "r%d" % rnd.randint(0, 2)) for i in range(rnd.randint(8, 11))]
+    plan = plan_balanced(ring, new, size, 3)
+    after = [p for p in plan["ring"] if p[1] not in dict(new)]
+    free = [p for p, dummy, dummy2 in plan["new"]]
+    alt = _alternate(after, free, new)
+    assert _balance_key(plan["ring"], size, 3) <= _balance_key(after + alt, size, 3)

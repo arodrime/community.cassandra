@@ -184,42 +184,59 @@ def transfer(before, after, size, rf):
 
 
 def _balance_key(ring, size, rf):
+    """The effective shares, largest first, then the primary shares: a ring is
+    better when its largest share is smaller, then its second largest... (a
+    split that lowers no maximum still splits one of the largest ranges)."""
     own = ownership(ring, size, rf)
-    return (max(e for dummy, e in own.values()), max(p for p, dummy in own.values()))
+    return (sorted((e for dummy, e in own.values()), reverse=True),
+            sorted((p for p, dummy in own.values()), reverse=True))
 
 
-def _place(base, spots, new, size, rf):
+def _alternate(base, spots, new):
+    """The new nodes on the positions in ring order, each time a node of a rack
+    other than the previous node's when there is one."""
+    left = rack_order(new)
+    placed = []
+    for t in sorted(spots):
+        before = sorted(base + placed)
+        prev = [r for p, dummy, r in before if p < t]
+        prev_rack = prev[-1] if prev else (before[-1][2] if before else None)
+        pick = next((x for x in left if x[1] != prev_rack), left[0])
+        left.remove(pick)
+        placed.append((t, pick[0], pick[1]))
+    return placed
+
+
+def _place(base, spots, new, size, rf, given=None):
     """The new nodes [(name, rack)] on the positions spots, their racks in the
-    order that leaves the smallest largest effective share, then the smallest
-    spread (with one token per node, which rack follows which decides the
-    replicas): every order while there are at most PLACE_SEARCH nodes, else
-    slot by slot. Each rack's nodes in rack_order's order."""
+    order that leaves the most even effective shares (_balance_key: with one
+    token per node, which rack follows which decides the replicas): every
+    order while there are at most PLACE_SEARCH nodes; beyond, the best of the
+    given placement, racks alternating along the ring, and a slot by slot
+    choice. Each rack's nodes in rack_order's order."""
     spots = sorted(spots)
     if len(set(r for dummy, r in new) | set(r for dummy, dummy2, r in base)) < 2:
-        return [(p, name, rack) for p, (name, rack) in zip(spots, new)]
+        return given or [(p, name, rack) for p, (name, rack) in zip(spots, new)]
 
-    def key(ring):
-        eff = [e for dummy, e in ownership(ring, size, rf).values()]
-        return (max(eff), max(eff) - min(eff))
+    def key(placed):
+        return _balance_key(base + placed, size, rf)
 
     def build(racks):
         queues = {}
         for name, rack in rack_order(new):
             queues.setdefault(rack, []).append(name)
-        out = []
-        for p, rack in zip(spots, racks):
-            out.append((p, queues[rack].pop(0), rack))
-        return out
+        return [(p, queues[rack].pop(0), rack) for p, rack in zip(spots, racks)]
     racks = [r for dummy, r in new]
     if len(new) <= PLACE_SEARCH:
-        best = min(sorted(set(permutations(racks))), key=lambda order: key(base + build(order)))
-        return build(best)
-    order, left = [], list(racks)
-    for dummy in spots:  # slot by slot: the rack that keeps the ring placed so far the most even
-        rack = min(sorted(set(left)), key=lambda r: key(base + build(order + [r])))
-        order.append(rack)
-        left.remove(rack)
-    return build(order)
+        candidates = [build(order) for order in sorted(set(permutations(racks)))]
+    else:
+        order, left = [], list(racks)
+        for dummy in spots:  # slot by slot: the rack that keeps the ring placed so far the most even
+            rack = min(sorted(set(left)), key=lambda r: key(build(order + [r])))
+            order.append(rack)
+            left.remove(rack)
+        candidates = [build(order), _alternate(base, spots, new)]
+    return min(candidates + ([given] if given else []), key=key)
 
 
 def plan_bisect(ring, new, size, rf):
@@ -249,9 +266,7 @@ def plan_bisect(ring, new, size, rf):
             spot = (best[1], name, rack)
         cur.append(spot)
         placed.append(spot)
-    if len(set(r for dummy, r in new) | set(r for dummy, dummy2, r in ring)) < 2:
-        return placed
-    return _place(list(ring), [p for p, dummy, dummy2 in placed], new, size, rf)
+    return _place(list(ring), [p for p, dummy, dummy2 in placed], new, size, rf, given=placed)
 
 
 def _distance(a, b, size):
