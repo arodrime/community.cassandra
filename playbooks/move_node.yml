@@ -99,9 +99,9 @@
   gather_facts: false
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
-    _from: "{{ ansible_play_hosts | first }}"
+    _move_from: "{{ ansible_play_hosts | first }}"
     _jmx: >-
-      {{ _cassandra_service_jmx | combine({'port': hostvars[_from].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
+      {{ _cassandra_service_jmx | combine({'port': hostvars[_move_from].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
   tasks:
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
@@ -119,7 +119,7 @@
             apply:
               run_once: true
           vars:
-            cassandra_keyspaces_from: "{{ _from }}"
+            cassandra_keyspaces_from: "{{ _move_from }}"
           run_once: true
       rescue:
         - name: Go on without it
@@ -131,7 +131,7 @@
       community.cassandra.cassandra_ring:
       module_defaults:
         community.cassandra.cassandra_ring: "{{ _jmx }}"
-      delegate_to: "{{ _from }}"
+      delegate_to: "{{ _move_from }}"
       register: cassandra_move_ring
       run_once: true
 
@@ -139,7 +139,7 @@
       community.cassandra.cassandra_status:
       module_defaults:
         community.cassandra.cassandra_status: "{{ _jmx }}"
-      delegate_to: "{{ _from }}"
+      delegate_to: "{{ _move_from }}"
       register: cassandra_move_status
       run_once: true
 
