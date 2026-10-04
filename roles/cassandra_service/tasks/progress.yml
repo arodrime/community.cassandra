@@ -11,6 +11,8 @@
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
     _prefix: "{{ cassandra_hosts | default('cassandra') }}-{{ cassandra_service_node_action }}-"
+    # a play that must start over whatever -e cassandra_rolling_resume says (extra vars beat the others)
+    _progress_resuming: "{{ _cassandra_progress_resume | default(cassandra_rolling_resume) }}"
   block:
     - name: Check the inventory's dir
       ansible.builtin.stat:
@@ -81,26 +83,26 @@
         paths: "{{ cassandra_progress_dir }}"
         patterns: "{{ _prefix }}*.done"
       register: cassandra_progress_found
-      when: cassandra_rolling_resume | bool
+      when: _progress_resuming | bool
 
     - name: Stop if there is nothing to resume
       ansible.builtin.fail:
         msg: "No {{ _prefix }}*.done file in {{ cassandra_progress_dir }} to resume: run without cassandra_rolling_resume"
       when:
-        - cassandra_rolling_resume | bool
+        - _progress_resuming | bool
         - cassandra_progress_found.files | length == 0
 
     - name: Pick the progress file
       ansible.builtin.set_fact:
         cassandra_progress_file: >-
-          {{ (cassandra_progress_found.files | sort(attribute='mtime') | last).path if cassandra_rolling_resume | bool
+          {{ (cassandra_progress_found.files | sort(attribute='mtime') | last).path if _progress_resuming | bool
              else cassandra_progress_dir ~ '/' ~ _prefix ~ now(fmt='%Y%m%dT%H%M%S') ~ '.done' }}
 
     - name: Check the progress file to resume
       ansible.builtin.stat:
         path: "{{ cassandra_progress_file }}"
       register: cassandra_progress_file_stat
-      when: cassandra_rolling_resume | bool
+      when: _progress_resuming | bool
 
     - name: Stop if the progress file to resume is not writable
       ansible.builtin.fail:
@@ -109,7 +111,7 @@
           (owner {{ cassandra_progress_file_stat.stat.pw_name }}), left by a run with become on the controller:
           sudo chown {{ lookup('ansible.builtin.pipe', 'id -un') }}: {{ cassandra_progress_file }}
       when:
-        - cassandra_rolling_resume | bool
+        - _progress_resuming | bool
         - not (cassandra_progress_file_stat.stat.readable and cassandra_progress_file_stat.stat.writeable)
 
     - name: Create the progress file
@@ -117,7 +119,7 @@
         path: "{{ cassandra_progress_file }}"
         state: touch
         mode: "0644"
-      when: not cassandra_rolling_resume | bool
+      when: not _progress_resuming | bool
 
     - name: Read the nodes already done
       ansible.builtin.set_fact:
@@ -131,4 +133,4 @@
              if ansible_play_hosts_all | difference(cassandra_progress_done) | length == 0
              else ('Resuming ' ~ cassandra_progress_file ~ ': ' ~ cassandra_progress_done | length
                    ~ ' node(s) already done, skipped: ' ~ cassandra_progress_done | join(', ')) }}
-      when: cassandra_rolling_resume | bool
+      when: _progress_resuming | bool

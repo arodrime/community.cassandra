@@ -344,8 +344,8 @@ def test_move_cleanup_union_of_replication_factors():
           "b": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}
     r = ring(*(T3 + ["0"]))
     with_both = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces=ks)
-    rf1 = cassandra_token_move_plan(r, M3, hosts=HOSTS, default_rf=1)
-    rf3 = cassandra_token_move_plan(r, M3, hosts=HOSTS, default_rf=3)
+    rf1 = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces={"a": ks["a"]})
+    rf3 = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces={"b": ks["b"]})
     assert set(with_both["cleanup"]) == set(rf1["cleanup"]) | set(rf3["cleanup"])
 
 
@@ -371,3 +371,19 @@ def test_move_swap_message_names_the_other_move():
     out = cassandra_token_move_plan(r, M3, hosts=HOSTS, targets={"n1": "100", "n7": str(-2 ** 63)})
     assert out["problems"][0] == ("n1: token 100 is n7's, which moves later (another datacenter): move it first, in"
                                   " a run of its own")
+
+
+def test_move_cleanup_everywhere_when_unsure():
+    r = ring(*(T3 + ["0"]))
+    r.update(ring("100", dc="dc2", start=5))
+    known = {"app": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3, "dc2": 1}}}
+    base = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces=known)
+    assert "n6" not in base["cleanup"] and len(base["cleanup"]) < 4
+    # replication unknown: the datacenters that move, all of them
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces=None)
+    assert out["cleanup"] == ["n1", "n2", "n3", "n4"]
+    assert any(w.startswith("the replication could not be read") for w in out["warnings"])
+    # a SimpleStrategy keyspace: the whole cluster
+    simple = dict(known, legacy={"class": "SimpleStrategy", "rf": {"*": 2}})
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces=simple)
+    assert out["cleanup"] == ["n1", "n2", "n3", "n4", "n6"]

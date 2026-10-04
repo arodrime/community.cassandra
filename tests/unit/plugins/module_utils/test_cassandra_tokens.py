@@ -9,7 +9,7 @@ from fractions import Fraction
 import pytest
 
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
-    TokenError, balanced_positions, balanced_tokens, dc_offset, move_order, ownership, parse_ring,
+    TokenError, _gap, balanced_positions, balanced_tokens, dc_offset, move_order, ownership, parse_ring,
     parse_token, partitioner_range, plan_balanced, plan_bisect, rack_order, tolerance, transfer)
 
 M3 = "org.apache.cassandra.dht.Murmur3Partitioner"
@@ -345,3 +345,36 @@ def test_bisect_keeps_the_ring(seed):
     placed = plan_bisect(ring, [("new%d" % i, "r1") for i in range(rnd.randint(1, 8))], size, 3)
     positions = [p for p, dummy, dummy2 in ring + placed]
     assert len(set(positions)) == len(positions)
+
+
+def test_move_order_never_passes_a_node():
+    # the case a review found: sorted by target, n3 jumped over n1 (twice the streaming)
+    size = 2 ** 64
+    tokens = [(-6957332811113955950, "n2"), (-2283165261425827812, "n0"), (-627383705726182493, "n3"),
+              (1886718038715041137, "n1")]
+    ring = [(t + 2 ** 63, n, "r1") for t, n in tokens]
+    plan = plan_balanced(ring, [], size, 3)
+    order = move_order(ring, plan["moves"], size)
+    names = [mv[0] for mv in order]
+    assert names.index("n1") < names.index("n3")
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_balanced_moves_resume(seed):
+    """Property: from the ring after any number of the moves (a run that stopped), the plan is exactly the moves
+    left, and no move passes another node."""
+    rnd = random.Random(seed)
+    size = 2 ** 64
+    n = rnd.randint(2, 9)
+    racks = ["r%d" % rnd.randint(1, 2) for dummy in range(n)]
+    ring = ring_of(sorted(set(rnd.randrange(size) for dummy in range(n))), racks)
+    plan = plan_balanced(ring, [], size, 3)
+    order = move_order(ring, plan["moves"], size)
+    state = list(ring)
+    for k, (name, src, dst) in enumerate(order):
+        others = sorted(p for p, m, dummy in state if m != name)
+        if others:
+            assert _gap(src, others) == _gap(dst, others)
+        state = [(dst if m == name else p, m, r) for p, m, r in state]
+        again = plan_balanced(state, [], size, 3)["moves"]
+        assert sorted((m, d) for m, dummy, d in again) == sorted((m, d) for m, dummy, d in order[k + 1:])

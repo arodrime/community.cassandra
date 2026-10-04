@@ -150,8 +150,14 @@
                keyspaces=cassandra_keyspaces | default(none), default_rf=cassandra_token_rf | default(3), hosts=_hosts,
                targets=cassandra_move_tokens | default({}), status=cassandra_move_status.cluster_status) }}
       vars:
+        # every node of the group, the ones out of this run (--limit) by their inventory address or name
         _hosts: >-
-          {{ dict(ansible_play_hosts_all | map('extract', hostvars, ['_cassandra_preflight', 'ring_address']) | zip(ansible_play_hosts_all)) }}
+          {%- set out = {} -%}
+          {%- for h in groups[cassandra_hosts | default('cassandra')] -%}
+          {%-   set _ = out.update({(hostvars[h]._cassandra_preflight.ring_address if hostvars[h]._cassandra_preflight is defined
+                                    else hostvars[h].ansible_host | default(h)): h}) -%}
+          {%- endfor -%}
+          {{ out }}
       run_once: true
 
     - name: Show the plan
@@ -264,10 +270,10 @@
   gather_facts: false
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
-    _todo: "{{ cassandra_progress_dir | default('') ~ '/' ~ cassandra_hosts | default('cassandra') ~ '-move.cleanup' }}"
+    _move_record: "{{ cassandra_progress_dir | default('') ~ '/' ~ cassandra_hosts | default('cassandra') ~ '-move.cleanup' }}"
     # this run's, and the ones an interrupted run left
     _listed: >-
-      {{ (_plan.cleanup | default([]) + (lookup('ansible.builtin.file', _todo, errors='ignore') | default('', true)).splitlines())
+      {{ (_plan.cleanup | default([]) + (lookup('ansible.builtin.file', _move_record, errors='ignore') | default('', true)).splitlines())
          | select | unique | list }}
     _targets: "{{ _listed | select('in', ansible_play_hosts) | list }}"
     _left: "{{ _listed | reject('in', ansible_play_hosts) | list }}"
@@ -282,7 +288,7 @@
         tasks_from: progress.yml
       when: not ansible_check_mode
       vars:
-        cassandra_rolling_resume: false  # the cleanups start over: they are listed in the record
+        _cassandra_progress_resume: false  # the cleanups start over: they are listed in the record
 
     - name: Say which cleanups to run
       ansible.builtin.debug:
@@ -290,7 +296,7 @@
           - "Once the cluster is fine, clean up the nodes that lost ranges, e.g. one at a time:"
           - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup
             -e cassandra_hosts={{ cassandra_hosts | default('cassandra') }} --limit {{ _targets | join(',') }}"
-          - "  (-e cassandra_cleanup_mode=rack|dc|all for batches of nodes together; listed in {{ _todo }} until a
+          - "  (-e cassandra_cleanup_mode=rack|dc|all for batches of nodes together; listed in {{ _move_record }} until a
             move_node run with cassandra_move_cleanup cleans them up)"
       run_once: true
       when:
@@ -303,7 +309,7 @@
         msg: >-
           {{ _left | join(', ') }} lost ranges in a move but {{ 'is' if _left | length == 1 else 'are' }} not a node of
           this run (--limit, or not in the inventory group): clean {{ 'it' if _left | length == 1 else 'them' }} up
-          (kept in {{ _todo }}).
+          (kept in {{ _move_record }}).
       run_once: true
       when:
         - _left | length > 0
@@ -334,7 +340,7 @@
     # what this run could not reach (--limit, a node down, a name not in the inventory) stays listed
     - name: Forget the cleanups done
       ansible.builtin.file:
-        path: "{{ _todo }}"
+        path: "{{ _move_record }}"
         state: absent
       delegate_to: localhost
       become: false  # the controller: no sudo there
@@ -345,7 +351,7 @@
 
     - name: Keep the cleanups this run could not reach
       ansible.builtin.copy:
-        dest: "{{ _todo }}"
+        dest: "{{ _move_record }}"
         content: |
           {% for h in _left %}
           {{ h }}

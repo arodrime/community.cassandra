@@ -236,7 +236,7 @@ playbooks work them out:
   disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
   again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
   lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``one``, ``rack``, ``dc``, ``all``), or the
-  command is printed; they stay listed next to the progress files (``<cluster>-move.cleanup``) until a ``move_node``
+  command is printed; they stay listed next to the progress files (``<cassandra_hosts>-move.cleanup``) until a ``move_node``
   run cleans them up, so an interrupted run forgets none. A moved node keeps its old ``initial_token`` in
   ``cassandra.yaml`` (it is not read again); the run says which ``cassandra_initial_token`` of the inventory to
   update.

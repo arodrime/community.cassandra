@@ -4,14 +4,31 @@
 # gains, the nodes that lose ranges keep them until a cleanup. Can take hours.
 # Before: the nodes that receive data must keep cassandra_move_min_free_percent
 # of their data disk free (cassandra_move_force_disk: true goes on anyway).
-# The nodes that lose ranges are added to <progress dir>/<cluster>-move.cleanup
+# The nodes that lose ranges are added to <progress dir>/<cassandra_hosts>-move.cleanup
 # first (move_node cleans them up, or says how).
+
+# Only the nodes of this run (preflight read their data directories): the others are named
+- name: Say which receiving nodes are not checked
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ _unchecked | join(', ') }} {{ 'receives' if _unchecked | length == 1 else 'receive' }} data from this
+      move but {{ 'is' if _unchecked | length == 1 else 'are' }} not in this run (--limit): disk space not checked.
+  when: _unchecked | length > 0
+  vars:
+    _unchecked: >-
+      {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
+         | reject('in', groups[cassandra_hosts | default('cassandra')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+                              | map(attribute='inventory_hostname') | list)
+         | list }}
+
 - name: Check the disk space of the nodes that receive data
   when: _receivers | length > 0
   vars:
     _receivers: >-
       {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
-         | select('in', groups[cassandra_hosts | default('cassandra')]) | list }}
+         | select('in', groups[cassandra_hosts | default('cassandra')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+                              | map(attribute='inventory_hostname') | list)
+         | list }}
   block:
     - name: Read their file systems
       ansible.builtin.setup:

@@ -319,20 +319,37 @@ def plan_balanced(ring, new, size, rf, offset=0):
     return {"ring": after + placed, "moves": moves, "new": placed}
 
 
+def _gap(x, others):
+    """Which gap between the sorted positions others x falls in (the last and
+    the first gap are the same one, round the ring)."""
+    below = sum(1 for o in others if o < x)
+    return below % len(others)
+
+
 def move_order(ring, moves, size):
-    """Moves [(name, from, to)] in an order where no move lands on a token
+    """Moves [(name, from, to)] in an order where each node moves without
+    passing another node (the ring order stays the same at every step: each
+    move streams only what its own range gains, and a run that stops half way
+    plans the moves left again), else at least where no move lands on a token
     another node still holds. Raises when they block each other."""
-    held = set(p % size for p, dummy, dummy2 in ring)
-    left = sorted(moves, key=lambda x: x[2])
+    pos = dict((name, p % size) for p, name, dummy in ring)
+    left = sorted(moves, key=lambda x: (x[1], x[0]))
     order = []
+
+    def free(mv):
+        return all(p != mv[2] % size for n, p in pos.items() if n != mv[0])
+
+    def keeps_order(mv):
+        others = sorted(p for n, p in pos.items() if n != mv[0])
+        return not others or _gap(mv[1] % size, others) == _gap(mv[2] % size, others)
     while left:
-        ready = next((mv for mv in left if mv[2] % size not in held), None)
+        ready = next((mv for mv in left if free(mv) and keeps_order(mv)), None) or next(
+            (mv for mv in left if free(mv)), None)
         if ready is None:
             raise TokenError("the moves of %s block each other (each one to a token another one holds)"
                              % ", ".join(mv[0] for mv in left))
         left.remove(ready)
-        held.discard(ready[1] % size)
-        held.add(ready[2] % size)
+        pos[ready[0]] = ready[2] % size
         order.append(ready)
     return order
 

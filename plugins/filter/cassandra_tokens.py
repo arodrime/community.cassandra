@@ -82,7 +82,7 @@ def _simple_warning(keyspaces):
     if not simple:
         return []
     return ["%s use%s SimpleStrategy: its replicas follow the whole ring, across datacenters and racks, which"
-            " the shares shown leave out; after tokens change, clean up every node of the cluster"
+            " the shares shown leave out; after tokens change, every node of the cluster needs a cleanup"
             % (", ".join(simple), "s" if len(simple) == 1 else "")]
 
 
@@ -519,7 +519,15 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
         if len(same) > 1:
             out["problems"].append("%s would have the same token %d" % (" and ".join(sorted(same)), token_of(p, first, size)))
     if out["steps"]:
-        out["warnings"] += _simple_warning(keyspaces)
+        simple = _simple_warning(keyspaces)
+        out["warnings"] += simple
+        if keyspaces is None:
+            out["warnings"].append("the replication could not be read: the shares assume RF %s, and every node of the"
+                                   " datacenters that move is cleaned up" % default_rf)
+            for dc in set(s["dc"] for s in out["steps"]):
+                lost_any |= set(hosts.get(_ip(n["address"]), _ip(n["address"])) for n in ring[dc])
+        if simple:  # its replicas follow the whole ring: every node may have lost some
+            lost_any |= set(where)
         if any(None in s["gain_bytes"].values() for s in out["steps"]):
             out["warnings"].append("the loads are not all known: the disk space of the nodes that receive data is not"
                                    " checked before their moves")
