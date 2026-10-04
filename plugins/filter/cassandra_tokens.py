@@ -14,8 +14,10 @@ cassandra_token_disk_problems: a move's data against the free space of the
     nodes that receive it.
 
 A token is unique in the whole cluster: every planned token is checked
-against the tokens of all datacenters (a worked out one is moved on by a
-token or two when it falls on one, which changes no share that matters).
+against the tokens of all datacenters. In add_node and move_node plans, a
+worked out one that falls on another datacenter's token is moved on by a
+token or two (no share that matters changes); create_cluster refuses a
+token twice (its datacenters' offsets keep them apart).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -25,7 +27,7 @@ from fractions import Fraction
 from functools import wraps
 
 from ansible.errors import AnsibleFilterError
-from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _ip
+from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _host_of, _ip
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
     TokenError, balanced_positions, dc_offset, move_order, ownership, parse_token, partitioner_range,
     plan_balanced, plan_bisect, position, rack_order, token_of, tolerance, transfer)
@@ -49,23 +51,29 @@ def _has_token(node):
     return str(node.get("token") if node.get("token") is not None else "").strip() not in ("", "None")
 
 
+def _rf_set(keyspaces, dc, default):
+    """The replication factors of the datacenter (NetworkTopologyStrategy
+    keyspaces, not system_*: system_auth is often replicated to every node
+    and holds next to nothing), [default] when none is known."""
+    rfs = set(ks["rf"][dc] for name, ks in (keyspaces or {}).items()
+              if not name.startswith("system") and ks["rf"].get(dc, 0) > 0)
+    return sorted(rfs) or [int(default or DEFAULT_RF)]
+
+
 def _rf_by_dc(keyspaces, dcs, default):
-    """The largest replication factor of each datacenter (NetworkTopologyStrategy
-    keyspaces), default when no keyspace is replicated there or keyspaces is unknown."""
+    """The largest of them per datacenter: the factor the shares shown assume."""
+    return dict((dc, _rf_set(keyspaces, dc, default)[-1]) for dc in dcs)
+
+
+def _transfer_all(before, after, size, rfs):
+    """transfer() for every replication factor of the datacenter: a node gains
+    (loses) the most it gains (loses) with any of them."""
     out = {}
-    for dc in dcs:
-        rfs = [ks["rf"][dc] for ks in (keyspaces or {}).values() if ks["rf"].get(dc, 0) > 0]
-        out[dc] = max(rfs) if rfs else int(default or DEFAULT_RF)
+    for rf in rfs:
+        for name, (gain, lost) in transfer(before, after, size, rf).items():
+            g, lo = out.get(name, (0, 0))
+            out[name] = (max(g, gain), max(lo, lost))
     return out
-
-
-def _rf_min(keyspaces, dc, default):
-    """The smallest replication factor of the datacenter's own keyspaces (not
-    system_*): the data per replica set is load / that, an estimate on the
-    safe side when keyspaces have different factors."""
-    rfs = [ks["rf"][dc] for name, ks in (keyspaces or {}).items()
-           if not name.startswith("system") and ks["rf"].get(dc, 0) > 0]
-    return min(rfs) if rfs else None
 
 
 def _simple_warning(keyspaces):
@@ -104,6 +112,14 @@ def _even(ring, size, rf):
     return max(eff) - min(eff) <= Fraction(EVEN_TOLERANCES * rf * tolerance(len(ring), size), size)
 
 
+def _better(after, before, size, rfs):
+    """The effective shares are closer to each other after, for some replication factor."""
+    def spread(ring, rf):
+        eff = [e for dummy, e in ownership(ring, size, rf).values()]
+        return max(eff) - min(eff)
+    return any(spread(after, rf) < spread(before, rf) for rf in rfs)
+
+
 def _dc_index(dcs):
     return dict((dc, i) for i, dc in enumerate(sorted(set(dcs))))
 
@@ -130,8 +146,14 @@ def _nudge(spots, taken, size):
     return out
 
 
-def _addresses(hosts):
-    return dict((_ip(a), name) for a, name in (hosts or {}).items())
+def _addresses(hosts, ring):
+    """{ring address: inventory name}. hosts: {address: name}; a ring address
+    none of them gives is looked for in what the names (and the addresses
+    that are names) resolve to on the controller, as the status playbook does."""
+    known = {}
+    for address, name in (hosts or {}).items():
+        known.setdefault(name, []).extend([address, name])
+    return _host_of(known, [_ip(n["address"]) for dc in (ring or {}) for n in ring[dc]])
 
 
 def _ring_entries(ring, dc, hosts, problems):
@@ -212,7 +234,7 @@ def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAUL
     half way); otherwise the cluster exists and they are for add_node.
     Returns {'tokens': {name: token} to give, 'lines', 'problems', 'warnings'}."""
     first, size = partitioner_range(partitioner)
-    hosts = _addresses(hosts)
+    hosts = _addresses(hosts, ring)
     dcs = sorted(set(n["dc"] for n in nodes))
     index = _dc_index(dcs + list((ring or {}).keys()))
     rfs = _rf_by_dc(keyspaces, dcs, default_rf)
@@ -287,6 +309,13 @@ def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
     new_names = set(f[0] for f in free) | set(name for dummy, name, dummy2 in fixed)
     marks = dict((name, " +") for name in new_names)
     out["lines"] += _table(dc, existing, size, first, rf, "now")
+    racks = {}
+    for rack in [r for dummy, dummy2, r in existing + fixed] + [r for dummy, r in free]:
+        racks[rack] = racks.get(rack, 0) + 1
+    if len(racks) > 1 and len(set(racks.values())) > 1:
+        out["warnings"].append("%s: racks of different sizes once the nodes are added (%s): with one token per node"
+                               " some nodes hold more, whatever the tokens" % (
+                                   dc, ", ".join("%s %d" % (r, c) for r, c in sorted(racks.items()))))
     if not existing:  # a new datacenter: as create_cluster would do it
         if fixed:
             placed = plan_bisect(fixed, rack_order(free), size, rf)
@@ -359,7 +388,7 @@ def cassandra_token_add_plan(ring, new_nodes, partitioner, keyspaces=None, defau
     [{'name', 'dc', 'from', 'to'}] (balanced), 'balanced_problems', 'even':
     {'bisect': bool, 'balanced': bool}, 'lines', 'problems', 'warnings'}."""
     first, size = partitioner_range(partitioner)
-    hosts = _addresses(hosts)
+    hosts = _addresses(hosts, ring)
     in_ring = set(_ip(n["address"]) for dc in (ring or {}) for n in ring[dc])
     new = [n for n in new_nodes if _ip(n.get("address") or "") not in in_ring]
     dcs = sorted(set(n["dc"] for n in new))
@@ -389,7 +418,7 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
     share}, 'loss': {name: share}, 'gain_bytes': {name: bytes or None}}],
     'cleanup': [names that lose ranges], 'lines', 'problems', 'warnings'}."""
     first, size = partitioner_range(partitioner)
-    hosts = _addresses(hosts)
+    hosts = _addresses(hosts, ring)
     names = dict((hosts.get(_ip(n["address"]), _ip(n["address"])), _ip(n["address"]))
                  for dc in (ring or {}) for n in ring[dc])
     loads = {}
@@ -425,6 +454,7 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
         cur = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
         elsewhere = set(p for name, p in where.items() if name not in members)
         rf = rfs[dc]
+        all_rfs = _rf_set(keyspaces, dc, default_rf)
         if wanted:
             moves = []
             for name in sorted(wanted):
@@ -434,15 +464,25 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
                     out["problems"].append("%s: %s" % (name, exc))
                     continue
                 src = where[name]
-                holder = [n for n, p in where.items() if p == dst and n != name and n not in wanted]
+                # a node of this datacenter that moves away first is fine (move_order); one of another
+                # datacenter moves after this datacenter's moves, if at all
+                holder = [n for n, p in where.items() if p == dst and n != name and (n not in members or n not in targets)]
                 if holder:
-                    out["problems"].append("%s: token %s is %s's, which does not move" % (name, wanted[name], holder[0]))
+                    out["problems"].append("%s: token %s is %s's, which %s" % (
+                        name, wanted[name], holder[0], "does not move" if holder[0] not in targets
+                        else "moves later (another datacenter): move it first, in a run of its own"))
                 elif src != dst:
                     moves.append((name, src, dst))
         else:
             planned = plan_balanced(cur, [], size, rf, dc_offset(index[dc]))["moves"]
             spots = _nudge([(dst, name, None) for name, dummy, dst in planned], set(elsewhere), size)
             moves = [(name, src, p) for (name, src, dummy), (p, dummy2, dummy3) in zip(planned, spots)]
+            final = dict((name, p) for name, dummy, p in moves)
+            if moves and not _better([(final.get(n, p), n, r) for p, n, r in cur], cur, size, all_rfs):
+                out["lines"] += _table(dc, cur, size, first, rf, "now")
+                out["lines"].append("  %s: nothing to move (the moves that even out the tokens leave the shares as they"
+                                    " are: racks of different sizes)" % dc)
+                continue
         try:
             ordered = move_order(cur, moves, size)
         except TokenError as exc:
@@ -453,12 +493,12 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
             out["lines"].append("  %s: nothing to move%s" % (dc, "" if wanted else " (the ring is as even as it gets)"))
             continue
         known = [loads.get(names.get(name)) for dummy, name, dummy2 in cur]
-        rf_data = min(_rf_min(keyspaces, dc, rf) or rf, rf, len(cur))
+        rf_data = min(all_rfs[0], len(cur))
         unique = (sum(known) / rf_data) if known and None not in known else None
         state_ring = list(cur)
         for name, src, dst in ordered:
             after = [(dst if n == name else p, n, r) for p, n, r in state_ring]
-            moved = transfer(state_ring, after, size, rf)
+            moved = _transfer_all(state_ring, after, size, all_rfs)
             gain = dict((n, g) for n, (g, dummy) in moved.items() if g)
             loss = dict((n, lost) for n, (dummy, lost) in moved.items() if lost)
             lost_any |= set(loss)

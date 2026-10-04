@@ -272,7 +272,7 @@ def test_move_auto_avoids_other_datacenters():
     # dc1 uneven; dc2 sits where dc1's balanced positions are: dc1's targets move on by a token
     r = ring(str(-2 ** 63), "5", "10")
     r.update(ring(str(-2 ** 63 + 2 ** 64 // 3), str(-2 ** 63 + 2 * 2 ** 64 // 3), dc="dc2", start=5))
-    out = cassandra_token_move_plan(r, M3, hosts=HOSTS)
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS, default_rf=1)
     assert out["problems"] == []
     dc2 = set(int(n["token"]) for n in r["dc2"])
     dc1 = [s for s in out["steps"] if s["dc"] == "dc1"]
@@ -286,7 +286,7 @@ def test_move_bytes_estimate_with_the_smallest_factor():
     one = cassandra_token_move_plan(ring(*(T3 + ["0"])), M3, hosts=HOSTS, status=STATUS)
     # 120 GiB of load: 120 GiB of data with RF 1, not 40 GiB
     for mine, ref in zip(out["steps"], one["steps"]):
-        assert mine["gain_bytes"] and all(abs(b - 3 * ref["gain_bytes"][n]) <= 3 for n, b in mine["gain_bytes"].items())
+        assert ref["gain_bytes"] and all(mine["gain_bytes"][n] >= 3 * b - 3 for n, b in ref["gain_bytes"].items())
 
 
 def test_move_refused_while_a_node_is_busy():
@@ -324,3 +324,50 @@ def test_disk_problems():
     assert cassandra_token_disk_problems(step, disks, 20) == []
     disks = {"n2": {"paths": ["/var/lib/cassandra", "/var/lib/cassandra/data"], "mounts": mounts}}  # a mount point itself
     assert cassandra_token_disk_problems(step, disks, 20) == cassandra_token_disk_problems(step, free, 20)
+
+
+def test_move_cleanup_with_system_keyspaces_on_every_node():
+    # system_auth replicated to the 6 nodes: the app keyspace (RF 3) still loses ranges on some nodes
+    six = [str(-2 ** 63 + i * 2 ** 64 // 6) for i in range(6)]
+    six[1] = str(int(six[1]) + 2 ** 58)  # one node off its place
+    status = {"dc1": {"nodes": [{"address": "10.100.100.%d" % i, "load": "30 GiB"} for i in range(1, 7)]}}
+    app = {"app": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}
+    both = dict(app, system_auth={"class": "NetworkTopologyStrategy", "rf": {"dc1": 6}})
+    out_app = cassandra_token_move_plan(ring(*six), M3, hosts=HOSTS, status=status, keyspaces=app)
+    out_both = cassandra_token_move_plan(ring(*six), M3, hosts=HOSTS, status=status, keyspaces=both)
+    assert out_app["cleanup"] and out_both["cleanup"] == out_app["cleanup"]
+    assert out_both["steps"][0]["gain_bytes"] == out_app["steps"][0]["gain_bytes"]
+
+
+def test_move_cleanup_union_of_replication_factors():
+    ks = {"a": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 1}},
+          "b": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}
+    r = ring(*(T3 + ["0"]))
+    with_both = cassandra_token_move_plan(r, M3, hosts=HOSTS, keyspaces=ks)
+    rf1 = cassandra_token_move_plan(r, M3, hosts=HOSTS, default_rf=1)
+    rf3 = cassandra_token_move_plan(r, M3, hosts=HOSTS, default_rf=3)
+    assert set(with_both["cleanup"]) == set(rf1["cleanup"]) | set(rf3["cleanup"])
+
+
+def test_move_skips_moves_that_change_no_share():
+    # racks r0 r1 r2 evenly spaced, a 4th node of r1 bisected in, RF 3: evening the tokens out changes no
+    # effective share (every node replicates whatever racks allow)
+    r = ring(T3[0], T3[1], T3[2], "6148914691236517205", racks=["r0", "r1", "r2", "r1"])
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS)
+    assert out["steps"] == []
+    assert any("leave the shares as they are" in line for line in out["lines"])
+
+
+def test_ring_names_resolved_when_no_address_matches():
+    # the inventory knows the node by a name (e.g. listen_address: localhost-like name): resolved on the controller
+    r = {"dc1": [{"address": "127.0.0.1", "rack": "r1", "status": "Up", "state": "Normal", "token": T3[0]}]}
+    out = cassandra_token_assign([node("n1")], M3, ring=r, hosts={"localhost": "n1"})
+    assert out["problems"] == [] and out["tokens"] == {}
+
+
+def test_move_swap_message_names_the_other_move():
+    r = ring(str(-2 ** 63), "0")
+    r.update(ring(str(-2 ** 63 + 100), "100", dc="dc2", start=5))
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS, targets={"n1": "100", "n7": str(-2 ** 63)})
+    assert out["problems"][0] == ("n1: token 100 is n7's, which moves later (another datacenter): move it first, in"
+                                  " a run of its own")

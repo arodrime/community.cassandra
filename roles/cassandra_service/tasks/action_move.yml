@@ -4,8 +4,8 @@
 # gains, the nodes that lose ranges keep them until a cleanup. Can take hours.
 # Before: the nodes that receive data must keep cassandra_move_min_free_percent
 # of their data disk free (cassandra_move_force_disk: true goes on anyway).
-# After: the nodes that lost ranges are added to <progress dir>/<cluster>-move.cleanup
-# (move_node cleans them up, or says how).
+# The nodes that lose ranges are added to <progress dir>/<cluster>-move.cleanup
+# first (move_node cleans them up, or says how).
 - name: Check the disk space of the nodes that receive data
   when: _receivers | length > 0
   vars:
@@ -39,6 +39,22 @@
           {{ cassandra_move_step | community.cassandra.cassandra_token_disk_problems(_disks,
                cassandra_move_min_free_percent | default(20)) }}
 
+# Before the move: a run that stops while it streams forgets none of them
+- name: Record the nodes that lose ranges, for the cleanup
+  ansible.builtin.lineinfile:
+    path: "{{ cassandra_progress_dir }}/{{ cassandra_hosts | default('cassandra') }}-move.cleanup"
+    line: "{{ item }}"
+    create: true
+    mode: "0644"
+  loop: "{{ cassandra_move_step.loss | list | sort }}"
+  delegate_to: localhost
+  become: false  # the controller: no sudo there
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  when:
+    - cassandra_progress_dir is defined
+    - not ansible_check_mode
+
 - name: Move the node
   community.cassandra.cassandra_move:
     token: "{{ cassandra_move_step.to }}"
@@ -65,18 +81,3 @@
       the node is still MOVING: check nodetool netstats and system.log on it. Nothing else was touched;
       don't start another move meanwhile. A move that failed leaves the node MOVING with no stream: restarting
       Cassandra on it cancels it (the node keeps its old token), then run move_node again.
-
-- name: Record the nodes that lost ranges, for the cleanup
-  ansible.builtin.lineinfile:
-    path: "{{ cassandra_progress_dir }}/{{ cassandra_hosts | default('cassandra') }}-move.cleanup"
-    line: "{{ item }}"
-    create: true
-    mode: "0644"
-  loop: "{{ cassandra_move_step.loss | list | sort }}"
-  delegate_to: localhost
-  become: false  # the controller: no sudo there
-  vars:
-    ansible_become: false  # an inventory ansible_become beats the become keyword
-  when:
-    - cassandra_progress_dir is defined
-    - not ansible_check_mode
