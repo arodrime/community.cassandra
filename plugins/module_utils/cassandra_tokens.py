@@ -34,7 +34,9 @@ PARTITIONERS = {
     "RandomPartitioner": (0, 2 ** 127),
 }
 DC_OFFSET = 100
-MAX_NODES = 256  # per datacenter: the balanced plan tries every rotation, O(m^2 n) per spacing
+# per datacenter: the balanced plan tries every rotation, O(m^2 n) per spacing tried
+# (~3 s for 128 nodes doubled, about a minute near the cap)
+MAX_NODES = 256
 
 
 class TokenError(ValueError):
@@ -57,6 +59,7 @@ def parse_token(value, partitioner):
         raise TokenError("%r is not a single token (an integer)" % (value,))
     token = int(text)
     # RandomPartitioner accepts 2^127 itself (Murmur3: up to 2^63 - 1)
+    # 2^127 folds onto 0 in the ring math: a ring with both is refused as one token twice
     last = first + size - (0 if first == 0 else 1)
     if not first <= token <= last:
         raise TokenError("%s is outside the %s range [%d, %d]" % (text, str(partitioner).rsplit(".", 1)[-1], first, last))
@@ -303,7 +306,8 @@ def plan_balanced(ring, new, size, rf, offset=0):
     stays = [_distance(p, targets[j], size) <= tol for (p, dummy, dummy2), j in zip(pts, picks)]
     after = [(p if stay else targets[j], name, rack) for (p, name, rack), j, stay in zip(pts, picks, stays)]
     moves = [(name, p, targets[j]) for (p, name, dummy2), j, stay in zip(pts, picks, stays) if not stay]
-    free = [t for j, t in enumerate(targets) if j not in set(picks)]
+    used = set(picks)
+    free = [t for j, t in enumerate(targets) if j not in used]
     left = rack_order(new)
     placed = []
     for t in free:

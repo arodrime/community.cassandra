@@ -70,11 +70,14 @@
           cassandra_endpoint_snitch: "{{ cassandra_endpoint_snitch }}"
           cassandra_allocate_tokens_for_local_replication_factor: "{{ cassandra_allocate_tokens_for_local_replication_factor }}"
           cassandra_partitioner: "{{ cassandra_partitioner }}"
-          cassandra_initial_token: "{{ cassandra_initial_token | string }}"
+          cassandra_initial_token: "{{ '' if cassandra_initial_token is none else cassandra_initial_token | string }}"
+          cassandra_data_file_directories: "{{ cassandra_data_file_directories }}"
           _cassandra_service_seeds: "{{ _cassandra_service_seeds }}"
           cassandra_dc: "{{ cassandra_dc }}"
           cassandra_rack: "{{ cassandra_rack }}"
           address: "{{ _address }}"
+          # the address the other nodes (nodetool status, ring) see this node by
+          ring_address: "{{ (cassandra_extra_settings | default({})).broadcast_address | default(_address, true) }}"
           layout:  # for cassandra_seed_layout
             name: "{{ inventory_hostname }}"
             address: >-
@@ -185,7 +188,7 @@
           vars:
             _up: >-
               {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
-                 | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}
+                 | selectattr('status', 'equalto', 'U') | selectattr('state', 'in', ['N', 'M']) | map(attribute='address') | list }}
             _host: >-
               {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_service_seed_entry', 'equalto', item)
                  | map(attribute='_cassandra_preflight.address') | list }}

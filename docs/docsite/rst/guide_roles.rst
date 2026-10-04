@@ -215,15 +215,19 @@ playbooks work them out:
   *i* of *N* at ``-2^63 + i * 2^64 / N`` (Murmur3Partitioner; ``i * 2^127 / N`` with RandomPartitioner), the racks
   taken in turn so that consecutive tokens are on different racks (racks sorted by name, each rack's nodes in
   inventory order), and each datacenter 100 tokens after the one before it (datacenters sorted by name): tokens never
-  collide, and each datacenter, which NetworkTopologyStrategy replicates on its own, is even. The ring is shown with
+  collide, and each datacenter, which NetworkTopologyStrategy replicates on its own, is even (with racks of the same
+  size; with uneven racks some nodes hold more, and the run warns). ``add_datacenter`` does the same for the new
+  datacenter (the next free offset when its own is taken). The ring is shown with
   each node's share before anything starts, and confirmed (``cassandra_operation_confirm``). A datacenter where only
   some nodes have a token is refused, unless ``cassandra_token_allow_partial: true`` (the others then split the
   largest ranges). Copy the tokens shown into the inventory to keep a record: a node that has joined keeps the
-  ``initial_token`` its ``cassandra.yaml`` has when the inventory gives none.
-- ``add_node`` needs a token for each new node: ``cassandra_initial_token``, or ``-e cassandra_token_auto=`` ``bisect``
+  ``initial_token`` its ``cassandra.yaml`` has when the inventory gives none. Run again on a running cluster, it keeps
+  the tokens of the running nodes; it only gives tokens to the others when the running nodes have the ones it worked
+  out (a create that stopped half way), otherwise add them with ``add_node``.
+- ``add_node`` needs a token for each new node: ``cassandra_initial_token``, or ``cassandra_token_auto``: ``bisect``
   (each new node splits the largest range, no node moves), ``balanced`` (an even ring for the new node count: the new
-  nodes join at their final tokens, then ``move_node`` moves the others) or ``true`` (both are shown, with each
-  node's share before and after, and you choose). Going from *N* to *N + 1* even nodes moves nearly every node; going
+  nodes join at their final tokens, then ``move_node`` moves the others; only when no new node has a token in the
+  inventory) or ``true`` (both are shown, with each node's share before and after, and you choose). Going from *N* to *N + 1* even nodes moves nearly every node; going
   to *2N* moves none: every range is split in two. The screen says so when bisect leaves the ring uneven.
 - ``move_node`` moves nodes to new tokens, one at a time (``nodetool move``): without ``cassandra_move_tokens``, each
   datacenter is evened out with the fewest moves. The plan comes first (the rings before and after, the order, the
@@ -232,7 +236,13 @@ playbooks work them out:
   disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
   again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
   lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``one``, ``rack``, ``dc``, ``all``), or the
-  command is printed.
+  command is printed; they stay listed next to the progress files (``<cluster>-move.cleanup``) until a ``move_node``
+  run cleans them up, so an interrupted run forgets none. A moved node keeps its old ``initial_token`` in
+  ``cassandra.yaml`` (it is not read again); the run says which ``cassandra_initial_token`` of the inventory to
+  update.
+
+Every token worked out is checked against the tokens of all the datacenters. SimpleStrategy keyspaces are not in the
+shares (their replicas follow the whole ring): the plans warn about them; clean up every node after tokens change.
 
 The shares shown assume the largest replication factor of each datacenter (``cassandra_token_rf``, 3, when no
 keyspace says, e.g. a new cluster). ``allocate_tokens_for_local_replication_factor`` only matters with vnodes: its

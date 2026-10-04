@@ -12,23 +12,28 @@ cassandra_token_move_plan: the moves that even out each datacenter (or the
     ones given), in a safe order, with what each one streams and leaves behind.
 cassandra_token_disk_problems: a move's data against the free space of the
     nodes that receive it.
-cassandra_ring_tokens: nodetool ring output as {dc: [{address, rack, status,
-    state, token}]}.
+
+A token is unique in the whole cluster: every planned token is checked
+against the tokens of all datacenters (a worked out one is moved on by a
+token or two when it falls on one, which changes no share that matters).
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from fractions import Fraction
+from functools import wraps
 
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _ip
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
-    TokenError, balanced_positions, dc_offset, move_order, ownership, parse_ring, parse_token, partitioner_range,
+    TokenError, balanced_positions, dc_offset, move_order, ownership, parse_token, partitioner_range,
     plan_balanced, plan_bisect, position, rack_order, token_of, tolerance, transfer)
 
 DEFAULT_RF = 3
 GIB = 1024 ** 3
-_UNITS = {"bytes": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": GIB, "TiB": 1024 ** 4}
+# shares that differ by less than this many tolerances per replica count as even
+EVEN_TOLERANCES = 4
 
 
 def _pct(frac):
@@ -39,15 +44,9 @@ def _gib(size):
     return "%.1f GiB" % (float(size) / GIB)
 
 
-def _bytes(load):
-    """nodetool's Load ('1.5 GiB', '1,5 GiB' in some locales) -> bytes, None when unknown."""
-    parts = str(load or "").split()
-    if len(parts) != 2 or parts[1] not in _UNITS:
-        return None
-    try:
-        return float(parts[0].replace(",", ".")) * _UNITS[parts[1]]
-    except ValueError:
-        return None
+def _has_token(node):
+    """A token is set (the inventory's null comes as 'None' through | string)."""
+    return str(node.get("token") if node.get("token") is not None else "").strip() not in ("", "None")
 
 
 def _rf_by_dc(keyspaces, dcs, default):
@@ -55,13 +54,34 @@ def _rf_by_dc(keyspaces, dcs, default):
     keyspaces), default when no keyspace is replicated there or keyspaces is unknown."""
     out = {}
     for dc in dcs:
-        rfs = [ks["rf"][dc] for ks in (keyspaces or {}).values() if dc in ks.get("rf", {})]
-        out[dc] = max(rfs) if rfs and max(rfs) > 0 else int(default or DEFAULT_RF)
+        rfs = [ks["rf"][dc] for ks in (keyspaces or {}).values() if ks["rf"].get(dc, 0) > 0]
+        out[dc] = max(rfs) if rfs else int(default or DEFAULT_RF)
     return out
+
+
+def _rf_min(keyspaces, dc, default):
+    """The smallest replication factor of the datacenter's own keyspaces (not
+    system_*): the data per replica set is load / that, an estimate on the
+    safe side when keyspaces have different factors."""
+    rfs = [ks["rf"][dc] for name, ks in (keyspaces or {}).items()
+           if not name.startswith("system") and ks["rf"].get(dc, 0) > 0]
+    return min(rfs) if rfs else None
+
+
+def _simple_warning(keyspaces):
+    simple = sorted(name for name, ks in (keyspaces or {}).items()
+                    if ks.get("class") == "SimpleStrategy" and not name.startswith("system"))
+    if not simple:
+        return []
+    return ["%s use%s SimpleStrategy: its replicas follow the whole ring, across datacenters and racks, which"
+            " the shares shown leave out; after tokens change, clean up every node of the cluster"
+            % (", ".join(simple), "s" if len(simple) == 1 else "")]
 
 
 def _table(dc, ring, size, first, rf, label=None, marks=None):
     """Lines of one datacenter's ring: node, rack, token, primary share, effective share."""
+    if not ring:
+        return []
     own = ownership(ring, size, rf)
     rows = [["node", "rack", "token", "owns", "with RF %d" % rf]]
     for p, name, rack in sorted(ring):
@@ -75,14 +95,13 @@ def _table(dc, ring, size, first, rf, label=None, marks=None):
     return lines
 
 
-def _spread(ring, size, rf):
-    eff = [e for dummy, e in ownership(ring, size, rf).values()]
-    return max(eff) - min(eff)
-
-
 def _even(ring, size, rf):
-    """Balanced: the effective shares differ by no more than a few tolerances."""
-    return _spread(ring, size, rf) <= Fraction(4 * rf * tolerance(len(ring), size), size)
+    """The effective shares differ by no more than a few tolerances (rounding,
+    a node left a token off its balanced position)."""
+    if len(ring) < 2:
+        return True
+    eff = [e for dummy, e in ownership(ring, size, rf).values()]
+    return max(eff) - min(eff) <= Fraction(EVEN_TOLERANCES * rf * tolerance(len(ring), size), size)
 
 
 def _dc_index(dcs):
@@ -92,11 +111,27 @@ def _dc_index(dcs):
 def _free_offset(index, count, size, taken):
     """The datacenter's offset (index * 100), or the next one whose positions
     no other datacenter holds."""
-    for i in range(index, index + 1000):
+    for i in range(index, index + 1000):  # 1000 tries: far more datacenters than a cluster has
         pos = balanced_positions(count, size, dc_offset(i))
         if not set(pos) & taken:
             return dc_offset(i)
     raise TokenError("no free offset for %d nodes" % count)
+
+
+def _nudge(spots, taken, size):
+    """Worked out positions [(position, name, rack)] moved on by a token or two
+    when another node holds one; taken grows with them."""
+    out = []
+    for p, name, rack in spots:
+        while p in taken:
+            p = (p + 1) % size
+        taken.add(p)
+        out.append((p, name, rack))
+    return out
+
+
+def _addresses(hosts):
+    return dict((_ip(a), name) for a, name in (hosts or {}).items())
 
 
 def _ring_entries(ring, dc, hosts, problems):
@@ -104,57 +139,43 @@ def _ring_entries(ring, dc, hosts, problems):
     a node with several tokens (vnodes) is a problem."""
     entries, seen = [], {}
     for n in (ring or {}).get(dc, []):
-        seen[n["address"]] = seen.get(n["address"], 0) + 1
-        entries.append((n["address"], (hosts or {}).get(n["address"], n["address"]), n["rack"], n["token"]))
+        address = _ip(n["address"])
+        seen[address] = seen.get(address, 0) + 1
+        entries.append((address, hosts.get(address, address), n["rack"], n["token"]))
     multi = sorted(a for a, c in seen.items() if c > 1)
     if multi:
         problems.append("%s: %s %s several tokens (vnodes): these plans are for one token per node"
-                        % (dc, ", ".join((hosts or {}).get(a, a) for a in multi), "has" if len(multi) == 1 else "have"))
+                        % (dc, ", ".join(hosts.get(a, a) for a in multi), "has" if len(multi) == 1 else "have"))
         return None
     return entries
 
 
 def _wrap(func):
+    @wraps(func)
     def run(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except TokenError as exc:
             raise AnsibleFilterError("%s: %s" % (func.__name__, exc))
-    run.__name__ = func.__name__
-    run.__doc__ = func.__doc__
     return run
 
 
-@_wrap
-def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAULT_RF, allow_partial=False,
-                           ring=None, hosts=None):
-    """nodes: [{'name', 'dc', 'rack', 'token'}] in inventory order, token '' when
-    the inventory sets none. Each datacenter without any token gets the
-    balanced ring (racks taken in turn); one with some tokens set is refused,
-    unless allow_partial: then its other nodes split the largest ranges.
-    ring/hosts: a running ring (parsed nodetool ring, {address: name}): every
-    node in it must already have the token planned for it (a create that
-    stopped half way), else there is nothing to work out here (add_node).
-    Returns {'tokens': {name: token} for the nodes with none set, 'lines',
-    'problems', 'warnings'}."""
+def _plan_new_cluster(nodes, partitioner, index, rfs, allow_partial, out):
+    """create_cluster's plan for nodes none of which runs. Returns {name: position} of all of them."""
     first, size = partitioner_range(partitioner)
-    dcs = sorted(set(n["dc"] for n in nodes))
-    index = _dc_index(dcs + list((ring or {}).keys()))
-    rfs = _rf_by_dc(keyspaces, dcs, default_rf)
-    tokens, lines, problems, warnings, all_pos = {}, [], [], [], {}
-    for dc in dcs:
-        members = [n for n in nodes if n["dc"] == dc]
+    planned = {}
+    for dc in sorted(set(n["dc"] for n in nodes)):
         given, missing = [], []
-        for n in members:
-            if str(n.get("token", "") if n.get("token") is not None else "").strip() == "":
+        for n in [n for n in nodes if n["dc"] == dc]:
+            if not _has_token(n):
                 missing.append((n["name"], n["rack"]))
-            else:
-                try:
-                    given.append((position(parse_token(n["token"], partitioner), first, size), n["name"], n["rack"]))
-                except TokenError as exc:
-                    problems.append("%s: cassandra_initial_token %s" % (n["name"], exc))
+                continue
+            try:
+                given.append((position(parse_token(n["token"], partitioner), first, size), n["name"], n["rack"]))
+            except TokenError as exc:
+                out["problems"].append("%s: cassandra_initial_token %s" % (n["name"], exc))
         if given and missing and not allow_partial:
-            problems.append(
+            out["problems"].append(
                 "%s: cassandra_initial_token is set on %s but not on %s: set it on every node of the datacenter or on"
                 " none (then the tokens are worked out), or -e cassandra_token_allow_partial=true (the others split"
                 " the largest ranges)" % (dc, ", ".join(g[1] for g in given), ", ".join(m[0] for m in missing)))
@@ -166,45 +187,81 @@ def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAUL
             placed = plan_bisect(given, rack_order(missing), size, rfs[dc])
         else:
             placed = []
-        for p, name, dummy in placed:
-            tokens[name] = str(token_of(p, first, size))
-        dc_ring = given + placed
-        for p, name, dummy in dc_ring:
-            all_pos.setdefault(p, []).append(name)
+        planned.update((name, p) for p, name, dummy in given + placed)
+        out["placed"].update((name, p) for p, name, dummy in placed)
         racks = {}
-        for dummy, dummy2, rack in dc_ring:
+        for dummy, dummy2, rack in given + placed:
             racks[rack] = racks.get(rack, 0) + 1
         if len(racks) > 1 and len(set(racks.values())) > 1:
-            warnings.append("%s: racks of different sizes (%s): with one token per node the ring can't alternate"
-                            " racks all the way round, some nodes hold more" % (
-                                dc, ", ".join("%s %d" % (r, c) for r, c in sorted(racks.items()))))
-        try:
-            lines += _table(dc, dc_ring, size, first, rfs[dc],
-                            marks=dict((name, " *") for dummy, name, dummy2 in placed))
-        except TokenError as exc:
-            problems.append("%s: %s" % (dc, exc))
-    for p, names in sorted(all_pos.items()):
-        if len(names) > 1:
-            problems.append("%s have the same token %d" % (" and ".join(names), token_of(p, first, size)))
-    if tokens:
-        lines.append("* worked out here (put them in the inventory, host_vars cassandra_initial_token, to keep a"
-                     " record; a node that has joined keeps its token anyway)")
-    planned = dict((n["name"], tokens.get(n["name"], n.get("token"))) for n in nodes)
+            out["warnings"].append("%s: racks of different sizes (%s): with one token per node the ring can't"
+                                   " alternate racks all the way round, some nodes hold more" % (
+                                       dc, ", ".join("%s %d" % (r, c) for r, c in sorted(racks.items()))))
+    return planned
+
+
+@_wrap
+def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAULT_RF, allow_partial=False,
+                           ring=None, hosts=None):
+    """nodes: [{'name', 'dc', 'rack', 'token'}] in inventory order, token '' when
+    the inventory sets none. Each datacenter without any token gets the
+    balanced ring (racks taken in turn); one with some tokens set is refused,
+    unless allow_partial: then its other nodes split the largest ranges.
+    ring/hosts: the running ring (parsed nodetool ring, {address: name}). The
+    nodes in it keep the token they have. The others get the plan only when
+    every running node has the token the plan gives it (a create that stopped
+    half way); otherwise the cluster exists and they are for add_node.
+    Returns {'tokens': {name: token} to give, 'lines', 'problems', 'warnings'}."""
+    first, size = partitioner_range(partitioner)
+    hosts = _addresses(hosts)
+    dcs = sorted(set(n["dc"] for n in nodes))
+    index = _dc_index(dcs + list((ring or {}).keys()))
+    rfs = _rf_by_dc(keyspaces, dcs, default_rf)
+    out = {"tokens": {}, "lines": [], "problems": [], "warnings": [], "placed": {}}
+    names = [n["name"] for n in nodes]
+    running, strangers = {}, []
     for dc in sorted(ring or {}):
         for n in ring[dc]:
-            name = (hosts or {}).get(n["address"])
-            want = planned.get(name)
-            if name is None or want in (None, "") or parse_token(want, partitioner) != int(n["token"]):
-                problems.append(
-                    "%s (%s) runs in the ring with token %s, not %s: the cluster exists, create_cluster only works out"
-                    " the tokens of a new one. Set cassandra_initial_token of the running nodes from nodetool ring and"
-                    " add the others with add_node (cassandra_token_auto)"
-                    % (name or "a node outside the inventory", n["address"], n["token"], want or "a planned one"))
-    return {"tokens": tokens, "lines": lines, "problems": problems, "warnings": warnings}
+            name = hosts.get(_ip(n["address"]))
+            if name in names:
+                running[name] = position(int(n["token"]), first, size)
+            else:
+                strangers.append("%s (%s)" % (n["address"], dc))
+    left = [name for name in names if name not in running]
+    planned = _plan_new_cluster(nodes, partitioner, index, rfs, allow_partial, out) if left else {}
+    for n in nodes:
+        if n["name"] in running and _has_token(n) and str(n["token"]).strip() != str(token_of(running[n["name"]], first, size)):
+            out["warnings"].append(
+                "%s: cassandra_initial_token %s, the ring has %d (the token a node joined with; initial_token is"
+                " not read again): fix the inventory" % (n["name"], n["token"], token_of(running[n["name"]], first, size)))
+    if (running or strangers) and left and (strangers or any(planned.get(k) != p for k, p in running.items())):
+        out["problems"].append(
+            "the cluster runs already (%s in the ring, not with the tokens worked out here): create_cluster only starts"
+            " a new cluster, or one a create left half way. Add %s with add_node (cassandra_token_auto)"
+            % (", ".join(sorted(running) + strangers), ", ".join(left)))
+    out["placed"] = dict((name, p) for name, p in out["placed"].items() if name not in running)
+    planned.update(running)
+    by_pos = {}
+    for name, p in planned.items():
+        by_pos.setdefault(p, []).append(name)
+    for p, names in sorted(by_pos.items()):
+        if len(names) > 1:
+            out["problems"].append("%s have the same token %d" % (" and ".join(sorted(names)), token_of(p, first, size)))
+    for dc in dcs:
+        dc_ring = [(planned[n["name"]], n["name"], n["rack"]) for n in nodes if n["dc"] == dc and n["name"] in planned]
+        try:
+            out["lines"] += _table(dc, dc_ring, size, first, rfs[dc], marks=dict((name, " *") for name in out["placed"]))
+        except TokenError as exc:
+            out["problems"].append("%s: %s" % (dc, exc))
+    out["tokens"] = dict((name, str(token_of(p, first, size))) for name, p in out.pop("placed").items())
+    if out["tokens"]:
+        out["lines"].append("* worked out here (put them in the inventory, host_vars cassandra_initial_token, to keep a"
+                            " record; a node that has joined keeps its token anyway)")
+    return out
 
 
 def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
-    """One datacenter of cassandra_token_add_plan."""
+    """One datacenter of cassandra_token_add_plan. taken: the positions of every
+    node of the cluster, and of the new ones already planned."""
     first, size = partitioner_range(partitioner)
     entries = _ring_entries(ring, dc, hosts, out["problems"])
     if entries is None:
@@ -212,79 +269,105 @@ def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
     existing = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
     fixed, free = [], []
     for n in [n for n in new if n["dc"] == dc]:
-        if str(n.get("token") if n.get("token") is not None else "").strip():
-            try:
-                fixed.append((position(parse_token(n["token"], partitioner), first, size), n["name"], n["rack"]))
-            except TokenError as exc:
-                out["problems"].append("%s: cassandra_initial_token %s" % (n["name"], exc))
-        else:
+        if not _has_token(n):
             free.append((n["name"], n["rack"]))
-    base = existing + fixed
+            continue
+        try:
+            p = position(parse_token(n["token"], partitioner), first, size)
+        except TokenError as exc:
+            out["problems"].append("%s: cassandra_initial_token %s" % (n["name"], exc))
+            continue
+        if p in taken:
+            out["problems"].append("%s: cassandra_initial_token %s is already a token of the cluster"
+                                   % (n["name"], n["token"]))
+            continue
+        taken.add(p)
+        fixed.append((p, n["name"], n["rack"]))
     rf = rfs[dc]
-    out["lines"] += _table(dc, existing, size, first, rf, "now") if existing else []
+    new_names = set(f[0] for f in free) | set(name for dummy, name, dummy2 in fixed)
+    marks = dict((name, " +") for name in new_names)
+    out["lines"] += _table(dc, existing, size, first, rf, "now")
     if not existing:  # a new datacenter: as create_cluster would do it
         if fixed:
-            bisect_ring = fixed + plan_bisect(fixed, rack_order(free), size, rf)
+            placed = plan_bisect(fixed, rack_order(free), size, rf)
         else:
             off = _free_offset(index[dc], len(free), size, taken)
-            bisect_ring = [(p, name, rack) for p, (name, rack) in
-                           zip(balanced_positions(len(free), size, off), rack_order(free))]
-        balanced_ring = bisect_ring
+            placed = [(p, name, rack) for p, (name, rack) in
+                      zip(balanced_positions(len(free), size, off), rack_order(free))]
+        bisect_ring = balanced_ring = fixed + _nudge(placed, taken, size)
         moves = []
     else:
-        bisect_ring = base + plan_bisect(base, free, size, rf)
-        plan = plan_balanced(base, free, size, rf, dc_offset(index[dc]))
-        balanced_ring = plan["ring"]
-        moves = plan["moves"]
-    fixed_names = set(name for dummy, name, dummy2 in fixed)
+        others = set(taken)
+        bisect_ring = existing + fixed + _nudge(plan_bisect(existing + fixed, rack_order(free), size, rf), taken, size)
+        balanced_ring, moves = None, []
+        if fixed:
+            given = sorted(name for dummy, name, dummy2 in fixed)
+            out["balanced_problems"].append(
+                "%s: %s %s a cassandra_initial_token: balanced only places nodes without one (use bisect, or take it"
+                " out of the inventory)" % (dc, ", ".join(given), "has" if len(given) == 1 else "have"))
+        else:
+            try:
+                plan = plan_balanced(existing, free, size, rf, dc_offset(index[dc]))
+            except TokenError as exc:
+                out["balanced_problems"].append("%s: %s" % (dc, exc))
+                plan = None
+            if plan:
+                mine = set(p for p, dummy, dummy2 in existing)
+                # other datacenters' tokens: a worked out position moves on by a token or two
+                avoid = others - mine
+                dst = dict((name, d) for name, dummy, d in plan["moves"])
+                spots = _nudge([(dst.get(name, p), name, rack) for p, name, rack in plan["ring"]
+                                if name in dst or name in new_names], avoid, size)
+                moved = dict((name, p) for p, name, dummy in spots)
+                balanced_ring = [(moved.get(name, p), name, rack) for p, name, rack in plan["ring"]]
+                moves = [(name, src, moved[name]) for name, src, dummy in plan["moves"]]
+                taken |= set(p for p, name, dummy in balanced_ring if name in new_names)
+                blocked = [name for p, name, dummy in balanced_ring if name in new_names and p in mine]
+                if blocked:
+                    out["balanced_problems"].append(
+                        "%s: %s would bootstrap at a token a node that moves still holds: move it first (move_node),"
+                        " or use bisect" % (dc, ", ".join(blocked)))
     for kind, kring in (("bisect", bisect_ring), ("balanced", balanced_ring)):
+        if kring is None:
+            out["even"][kind] = False
+            continue
         for p, name, dummy in kring:
-            if name in set(f[0] for f in free) | fixed_names:
+            if name in new_names:
                 out[kind][name] = str(token_of(p, first, size))
         out["even"][kind] = out["even"][kind] and _even(kring, size, rf)
-    new_names = set(f[0] for f in free) | fixed_names
-    marks = dict((name, " +") for name in new_names)
     out["lines"] += _table(dc, bisect_ring, size, first, rf, "bisect (no move)", marks)
-    if existing:
+    if existing and balanced_ring is not None:
         for name, src, dst in moves:
             marks[name] = " >"
             out["moves"].append({"name": name, "dc": dc, "from": str(token_of(src, first, size)),
                                  "to": str(token_of(dst, first, size))})
         out["lines"] += _table(dc, balanced_ring, size, first, rf, "balanced (%d move%s)" % (
             len(moves), "" if len(moves) == 1 else "s"), marks)
-        held = set(p for p, dummy, dummy2 in existing)
-        blocked = [name for p, name, dummy in balanced_ring if name in new_names and p in held]
-        if blocked:
-            out["balanced_problems"].append(
-                "%s: %s would bootstrap at a token a node that moves still holds: move it first (move_node), or"
-                " use bisect" % (dc, ", ".join(blocked)))
-    taken |= set(p for p, dummy, dummy2 in balanced_ring)
-    n_after = len(base) + len(free)
-    if existing and not out["even"]["bisect"] and n_after < 2 * len(existing):
+    if existing and not _even(bisect_ring, size, rf) and len(existing) + len(new_names) < 2 * len(existing):
         out["warnings"].append(
             "%s: bisect leaves the ring uneven; %d new node(s) instead of %d (the datacenter doubled to %d) would"
-            " split every range in two: even, with no move" % (dc, len(existing), len(free) + len(fixed),
-                                                               2 * len(existing)))
+            " split every range in two: even, with no move" % (dc, len(existing), len(new_names), 2 * len(existing)))
 
 
 @_wrap
 def cassandra_token_add_plan(ring, new_nodes, partitioner, keyspaces=None, default_rf=DEFAULT_RF, hosts=None):
     """ring: parsed nodetool ring; new_nodes: [{'name', 'dc', 'rack', 'token',
     'address'}] in join order (a node already in the ring is left out; a token
-    set in the inventory is kept). hosts: {address: inventory name}.
+    set in the inventory is kept, and then only bisect places the others).
+    hosts: {address: inventory name}.
     Returns {'bisect': {name: token}, 'balanced': {name: token}, 'moves':
     [{'name', 'dc', 'from', 'to'}] (balanced), 'balanced_problems', 'even':
     {'bisect': bool, 'balanced': bool}, 'lines', 'problems', 'warnings'}."""
     first, size = partitioner_range(partitioner)
-    hosts = dict(hosts or {})
-    in_ring = set(n["address"] for dc in (ring or {}) for n in ring[dc])
-    new = [n for n in new_nodes if n.get("address") not in in_ring]
+    hosts = _addresses(hosts)
+    in_ring = set(_ip(n["address"]) for dc in (ring or {}) for n in ring[dc])
+    new = [n for n in new_nodes if _ip(n.get("address") or "") not in in_ring]
     dcs = sorted(set(n["dc"] for n in new))
     index = _dc_index(dcs + list((ring or {}).keys()))
     rfs = _rf_by_dc(keyspaces, dcs, default_rf)
     taken = set(position(int(n["token"]), first, size) for dc in (ring or {}) for n in ring[dc])
     out = {"bisect": {}, "balanced": {}, "moves": [], "balanced_problems": [], "even": {"bisect": True, "balanced": True},
-           "lines": [], "problems": [], "warnings": []}
+           "lines": [], "problems": [], "warnings": _simple_warning(keyspaces) if new else []}
     for dc in dcs:
         try:
             _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out)
@@ -306,24 +389,27 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
     share}, 'loss': {name: share}, 'gain_bytes': {name: bytes or None}}],
     'cleanup': [names that lose ranges], 'lines', 'problems', 'warnings'}."""
     first, size = partitioner_range(partitioner)
-    hosts = dict(hosts or {})
-    names = dict((hosts.get(n["address"], n["address"]), n["address"]) for dc in (ring or {}) for n in ring[dc])
+    hosts = _addresses(hosts)
+    names = dict((hosts.get(_ip(n["address"]), _ip(n["address"])), _ip(n["address"]))
+                 for dc in (ring or {}) for n in ring[dc])
     loads = {}
     for dc in (status or {}):
         for n in status[dc].get("nodes", []):
-            loads[n["address"]] = _bytes(n.get("load"))
+            loads[_ip(n["address"])] = _bytes(n.get("load"))
     dcs = sorted(ring or {})
     index = _dc_index(dcs)
     rfs = _rf_by_dc(keyspaces, dcs, default_rf)
-    out = {"steps": [], "cleanup": [], "lines": [], "problems": [], "warnings": []}
+    out = {"steps": [], "cleanup": [], "lines": [], "problems": [], "warnings": [], "after": {}}
     targets = dict(targets or {})
     for name in sorted(set(targets) - set(names)):
         out["problems"].append("%s is not in the ring (nodetool ring): no token to move" % name)
-    all_tokens = {}
+    # where every node of the cluster is, after the moves planned so far
+    where = dict((hosts.get(_ip(n["address"]), _ip(n["address"])), position(int(n["token"]), first, size))
+                 for dc in dcs for n in ring[dc])
     lost_any = set()
     for dc in dcs:
-        wanted = dict((k, v) for k, v in targets.items() if k in names and any(
-            n["address"] == names[k] for n in ring[dc]))
+        members = set(hosts.get(_ip(n["address"]), _ip(n["address"])) for n in ring[dc])
+        wanted = dict((k, v) for k, v in targets.items() if k in members)
         problems = []
         entries = _ring_entries(ring, dc, hosts, problems)
         if entries is None:
@@ -332,12 +418,12 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
             continue
         if targets and not wanted:
             continue
-        state = dict((n["address"], n["state"]) for n in ring[dc])
-        busy = sorted(hosts.get(a, a) for a, s in state.items() if s != "Normal")
+        busy = sorted(hosts.get(_ip(n["address"]), n["address"]) for n in ring[dc] if n["state"] != "Normal")
         if busy:
             out["problems"].append("%s: %s not Normal (joining, leaving or moving): wait until it is" % (dc, ", ".join(busy)))
             continue
         cur = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
+        elsewhere = set(p for name, p in where.items() if name not in members)
         rf = rfs[dc]
         if wanted:
             moves = []
@@ -347,11 +433,16 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
                 except TokenError as exc:
                     out["problems"].append("%s: %s" % (name, exc))
                     continue
-                src = next(p for p, n, dummy in cur if n == name)
-                if src != dst:
+                src = where[name]
+                holder = [n for n, p in where.items() if p == dst and n != name and n not in wanted]
+                if holder:
+                    out["problems"].append("%s: token %s is %s's, which does not move" % (name, wanted[name], holder[0]))
+                elif src != dst:
                     moves.append((name, src, dst))
         else:
-            moves = plan_balanced(cur, [], size, rf, dc_offset(index[dc]))["moves"]
+            planned = plan_balanced(cur, [], size, rf, dc_offset(index[dc]))["moves"]
+            spots = _nudge([(dst, name, None) for name, dummy, dst in planned], set(elsewhere), size)
+            moves = [(name, src, p) for (name, src, dummy), (p, dummy2, dummy3) in zip(planned, spots)]
         try:
             ordered = move_order(cur, moves, size)
         except TokenError as exc:
@@ -362,7 +453,8 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
             out["lines"].append("  %s: nothing to move%s" % (dc, "" if wanted else " (the ring is as even as it gets)"))
             continue
         known = [loads.get(names.get(name)) for dummy, name, dummy2 in cur]
-        unique = (sum(known) / min(rf, len(cur))) if known and None not in known else None
+        rf_data = min(_rf_min(keyspaces, dc, rf) or rf, rf, len(cur))
+        unique = (sum(known) / rf_data) if known and None not in known else None
         state_ring = list(cur)
         for name, src, dst in ordered:
             after = [(dst if n == name else p, n, r) for p, n, r in state_ring]
@@ -377,14 +469,20 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
                 "loss": dict((n, float(lost)) for n, lost in loss.items()),
                 "gain_bytes": dict((n, int(g * unique) if unique is not None else None) for n, g in gain.items())})
             state_ring = after
+            where[name] = dst
         out["lines"] += _table(dc, state_ring, size, first, rf, "after the moves",
                                dict((name, " >") for name, dummy, dummy2 in ordered))
-        for p, name, dummy in state_ring:
-            all_tokens.setdefault(p, []).append(name)
-    for p, same in sorted(all_tokens.items()):
+    by_pos = {}
+    for name, p in where.items():
+        by_pos.setdefault(p, []).append(name)
+    for p, same in sorted(by_pos.items()):
         if len(same) > 1:
-            out["problems"].append("%s would have the same token %d" % (" and ".join(same), token_of(p, first, size)))
+            out["problems"].append("%s would have the same token %d" % (" and ".join(sorted(same)), token_of(p, first, size)))
     if out["steps"]:
+        out["warnings"] += _simple_warning(keyspaces)
+        if any(None in s["gain_bytes"].values() for s in out["steps"]):
+            out["warnings"].append("the loads are not all known: the disk space of the nodes that receive data is not"
+                                   " checked before their moves")
         out["lines"].append("Moves, one at a time, in this order:")
         for i, s in enumerate(out["steps"]):
             sizes = dict((n, "" if b is None else " ~" + _gib(b)) for n, b in s["gain_bytes"].items())
@@ -393,27 +491,31 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
                                                                              s["to"], receive or "nobody"))
         out["cleanup"] = sorted(lost_any)
         out["lines"].append("Then a cleanup on the nodes that lose ranges: %s" % ", ".join(out["cleanup"]))
+        out["after"] = dict((s["name"], s["to"]) for s in out["steps"])
     return out
 
 
 def _disk(entry):
-    """{'free', 'total'}, given as such or as {'path', 'mounts'} (ansible_facts
-    mounts: the file system the path is on)."""
+    """{'free', 'total'}, given as such or as {'paths', 'mounts'} (ansible_facts
+    mounts): the file systems the data directories are on, each counted once."""
     if not entry or "mounts" not in entry:
         return entry
-    path = entry.get("path") or "/"
-    on = [m for m in entry["mounts"] or [] if m.get("mount") and (
-        m["mount"] == "/" or path == m["mount"] or path.startswith(m["mount"].rstrip("/") + "/"))]
-    if not on:
+    found = {}
+    for path in entry.get("paths") or ["/"]:
+        on = [m for m in entry["mounts"] or [] if m.get("mount") and (
+            m["mount"] == "/" or path == m["mount"] or path.startswith(m["mount"].rstrip("/") + "/"))]
+        if on:
+            m = max(on, key=lambda x: len(x["mount"]))
+            found[m["mount"]] = m
+    if not found or any(m.get("size_available") is None or not m.get("size_total") for m in found.values()):
         return None
-    m = max(on, key=lambda x: len(x["mount"]))
-    return {"free": m.get("size_available"), "total": m.get("size_total")}
+    return {"free": sum(m["size_available"] for m in found.values()), "total": sum(m["size_total"] for m in found.values())}
 
 
 def cassandra_token_disk_problems(step, disks, min_free_percent=20):
     """step: one of cassandra_token_move_plan's steps; disks: {name: {'free':
     bytes, 'total': bytes}} of the data directories' file systems, or {name:
-    {'path': data directory, 'mounts': ansible_facts mounts}}. A node that
+    {'paths': data directories, 'mounts': ansible_facts mounts}}. A node that
     receives data must keep min_free_percent of its disk free afterwards (it
     keeps the ranges it gives away until a cleanup)."""
     problems = []
@@ -429,10 +531,6 @@ def cassandra_token_disk_problems(step, disks, min_free_percent=20):
     return problems
 
 
-def cassandra_ring_tokens(stdout):
-    return parse_ring(stdout)
-
-
 class FilterModule(object):
     def filters(self):
         return {
@@ -440,5 +538,4 @@ class FilterModule(object):
             "cassandra_token_add_plan": cassandra_token_add_plan,
             "cassandra_token_move_plan": cassandra_token_move_plan,
             "cassandra_token_disk_problems": cassandra_token_disk_problems,
-            "cassandra_ring_tokens": cassandra_ring_tokens,
         }

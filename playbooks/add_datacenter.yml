@@ -77,7 +77,8 @@
                add=cassandra_datacenter_replication | default({})) }}
       run_once: true
 
-    # One token per node: evenly spaced, 100 tokens after a datacenter already there
+    # One token per node: evenly spaced, the datacenter's offset (100 * its index in the sorted names, or the next
+    # free one); a new datacenter has no ranges yet, bisect and balanced are the same plan
     - name: Work out the tokens of the new nodes (one token per node)
       when: _single | bool
       run_once: true
@@ -85,7 +86,8 @@
         - name: Read the tokens of the ring
           community.cassandra.cassandra_ring:
           module_defaults:
-            community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
+            community.cassandra.cassandra_ring: >-
+              {{ _cassandra_service_jmx | combine({'port': hostvars[_existing[0]].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
           delegate_to: "{{ _existing[0] }}"
           register: cassandra_new_dc_tokens_ring
 
@@ -101,7 +103,7 @@
               {%- set l = [] -%}
               {%- for h in ansible_play_hosts_all -%}
               {%-   set p = hostvars[h]._cassandra_preflight -%}
-              {%-   set _ = l.append({'name': h, 'address': p.address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
+              {%-   set _ = l.append({'name': h, 'address': p.ring_address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
                                       'token': p.cassandra_initial_token}) -%}
               {%- endfor -%}
               {{ l }}

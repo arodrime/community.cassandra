@@ -168,11 +168,11 @@ def _read_line(tpl, live, ctx=None):
             found[e.split()[0]] = cap.lower() in ("true", "yes", "on")  # YAML's true, however written
         elif re.fullmatch(r"'' if %s else '[^']*'" % V, e):
             flags[re.fullmatch(r"'' if %s else '[^']*'" % V, e).group(1)] = cap == ""
-        elif re.fullmatch(r"'# ' if (\w+)(?: \| string)? == '' else ''", e):
+        elif re.fullmatch(r"'# ' if (\w+)(?: == ''| \| string in \['', 'None'\]) else ''", e):
             flags[e.split()[3]] = cap == ""
-        elif re.fullmatch(r"\(' ' ~ (\w+)\) if \w+ \| string != '' else ''", e):
-            if cap:
-                found[re.fullmatch(r"\(' ' ~ (\w+)\).*", e).group(1)] = cap[1:]
+        elif re.fullmatch(r"\(' ' ~ (\w+)\) if \w+ \| string not in \['', 'None'\] else ''", e):
+            if cap:  # the text of the value, quotes undone
+                found[re.fullmatch(r"\(' ' ~ (\w+)\).*", e).group(1)] = re.sub(r"^(['\"])(.*)\1$", r"\2", cap[1:].strip())
         elif re.fullmatch(r"%s or '[^']*'" % V, e):
             values[re.fullmatch(r"%s or '[^']*'" % V, e).group(1)] = _value(cap)
         elif re.fullmatch(r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", e):

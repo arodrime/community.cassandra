@@ -200,13 +200,21 @@ def test_bisect_doubling_is_balanced_without_moves():
     assert all(abs(a - b) <= 1 for a, b in zip(sorted(p for p, dummy, dummy2 in placed), balanced_positions(6, size)[1::2]))
 
 
-def test_bisect_keeps_racks_alternating():
-    # 3 racks alternating, RF 3: the new node of r1 goes where its neighbours are r3 and r2 (no skew)
-    size = 600
-    ring = ring_of(balanced_positions(3, size), ["r1", "r2", "r3"])
-    placed = plan_bisect(ring, [("new", "r1")], size, 3)
-    # any spot is the same for RF = racks = 3 with 4 nodes; the plan is deterministic
-    assert placed == plan_bisect(ring, [("new", "r1")], size, 3)
+@pytest.mark.parametrize("seed", range(20))
+def test_bisect_picks_the_best_middle_with_racks(seed):
+    """Property: the middle chosen leaves the smallest largest effective share of all the middles."""
+    rnd = random.Random(seed)
+    size = 10 ** 6
+    n = rnd.randint(2, 9)
+    ring = ring_of(sorted(rnd.sample(range(size), n)), ["r%d" % rnd.randint(1, 3) for dummy in range(n)])
+    rack, rf = "r%d" % rnd.randint(1, 3), rnd.randint(1, 3)
+    placed = plan_bisect(ring, [("new", rack)], size, rf)
+    pos = sorted(p for p, dummy, dummy2 in ring)
+    middles = [(a + ((b - a) % size) // 2) % size for a, b in zip([pos[-1]] + pos[:-1], pos)]
+
+    def worst(p):
+        return max(e for dummy, e in ownership(ring + [(p, "new", rack)], size, rf).values())
+    assert worst(placed[0][0]) == min(worst(p) for p in middles)
 
 
 def test_balanced_from_three_to_four_canonical():
@@ -315,10 +323,11 @@ def test_parse_ring():
 def test_balanced_moves_can_run_in_order(seed):
     """Property: the moves of a balanced plan have an order where no node lands on a token another one holds."""
     rnd = random.Random(seed)
-    size = 2 ** 64
+    size = 1000  # small: targets often fall on tokens other nodes hold
     n, k = rnd.randint(1, 12), rnd.randint(0, 6)
     racks = ["r%d" % rnd.randint(1, 3) for dummy in range(n)]
-    ring = ring_of(sorted(set(rnd.randrange(size) for dummy in range(n))), racks)
+    pos = sorted(set(rnd.choice([rnd.randrange(size), (i * size) // (n + k)]) for i in range(n)))
+    ring = ring_of(pos, racks[:len(pos)])
     plan = plan_balanced(ring, [("new%d" % i, "r%d" % (i % 3 + 1)) for i in range(k)], size, 3)
     state = dict((name, p) for p, name, dummy in ring)
     for name, src, dst in move_order(ring, plan["moves"], size):

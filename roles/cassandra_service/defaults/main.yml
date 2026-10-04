@@ -74,6 +74,18 @@ cassandra_stream_max_time: 0  # seconds, 0: no limit
 # command; one: run it one node at a time; rack, dc: the nodes of a rack, of a
 # datacenter together, one batch after the other; all: every node at once.
 cassandra_add_node_cleanup: none
+# One token per node (cassandra_num_tokens: 1): where add_node puts the new
+# nodes without cassandra_initial_token (false: refused; bisect; balanced;
+# true: shows both, asks), the replication factor the shares assume when no
+# keyspace gives one, a datacenter where only some nodes have a token
+# (create_cluster), and move_node's options
+cassandra_token_auto: false
+cassandra_token_rf: 3
+cassandra_token_allow_partial: false
+cassandra_move_tokens: {}
+cassandra_move_cleanup: none
+cassandra_move_min_free_percent: 20
+cassandra_move_force_disk: false
 
 # checks per include level of the progress waits: Ansible nests every include
 # one level deeper and fails past ~150 levels. A round covers 6 hours (a month

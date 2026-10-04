@@ -161,3 +161,12 @@ def test_create_cluster_starts_in_the_order_preflight_checks():
     starts = [p for p in plays if "cassandra_service" in str(p.get("roles"))]
     assert [(p["hosts"], p["serial"]) for p in starts] == [("cassandra_create_start_order", 1)]
     assert "community.cassandra.cassandra_start_order(" in RACKS["vars"]["_refused"]
+
+
+@pytest.mark.parametrize("num_tokens, hint, checked", [
+    (16, 3, True), ("16", "3", True), (16, "", False), (1, 3, False), ("1", "", False)])
+def test_racks_checked_for_the_allocator_only(num_tokens, hint, checked):
+    # one token per node: the tokens come from initial_token, no allocator rule
+    variables = dict(RACKS["vars"], cassandra_num_tokens=num_tokens,
+                     cassandra_allocate_tokens_for_local_replication_factor=hint)
+    assert all(render("{{ %s }}" % c, **variables) for c in RACKS["when"]) is checked

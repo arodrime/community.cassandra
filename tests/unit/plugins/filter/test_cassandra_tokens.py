@@ -8,8 +8,7 @@ import pytest
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_tokens import (
-    cassandra_ring_tokens, cassandra_token_add_plan, cassandra_token_assign, cassandra_token_disk_problems,
-    cassandra_token_move_plan)
+    cassandra_token_add_plan, cassandra_token_assign, cassandra_token_disk_problems, cassandra_token_move_plan)
 
 M3 = "org.apache.cassandra.dht.Murmur3Partitioner"
 T3 = ["-9223372036854775808", "-3074457345618258603", "3074457345618258602"]
@@ -94,11 +93,39 @@ def test_assign_same_token_twice():
 def test_assign_rerun_after_half_a_create():
     nodes = [node("n1"), node("n2"), node("n3")]
     out = cassandra_token_assign(nodes, M3, ring=ring(T3[0]), hosts=HOSTS)
-    assert out["problems"] == [] and len(out["tokens"]) == 3
+    assert out["problems"] == [] and out["tokens"] == {"n2": T3[1], "n3": T3[2]}
+    # n1 joined with another token: the cluster is not the one planned here
     out = cassandra_token_assign(nodes, M3, ring=ring("12"), hosts=HOSTS)
-    assert len(out["problems"]) == 1 and "n1 (10.100.100.1) runs in the ring with token 12" in out["problems"][0]
+    assert out["tokens"] == {"n2": T3[1], "n3": T3[2]} and len(out["problems"]) == 1
+    assert out["problems"][0].startswith("the cluster runs already (n1 in the ring, not with the tokens worked out")
+    assert out["problems"][0].endswith("Add n2, n3 with add_node (cassandra_token_auto)")
+    # a node outside the inventory runs
     out = cassandra_token_assign(nodes, M3, ring=ring(T3[0], start=8), hosts=HOSTS)
-    assert "n9 (10.100.100.9) runs in the ring" in out["problems"][0]
+    assert "10.100.100.9 (dc1)" in out["problems"][0]
+
+
+def test_assign_rerun_on_a_running_cluster():
+    # every node runs, whatever its token (moved, bisected): nothing to give, nothing refused
+    nodes = [node("n1"), node("n2", token=T3[1]), node("n3")]
+    out = cassandra_token_assign(nodes, M3, ring=ring("1", "2", "3"), hosts=HOSTS)
+    assert out["problems"] == [] and out["tokens"] == {}
+    assert out["warnings"] == ["n2: cassandra_initial_token %s, the ring has 2 (the token a node joined with;"
+                               " initial_token is not read again): fix the inventory" % T3[1]]
+    assert "n1" in out["lines"][2] and " 1 " in out["lines"][2]
+
+
+def test_assign_ipv6_ring_addresses():
+    nodes = [node("n1"), node("n2")]
+    r = {"dc1": [{"address": "2001:db8:0:0:0:0:0:1", "rack": "r1", "status": "Up", "state": "Normal", "token": "1"},
+                 {"address": "2001:db8:0:0:0:0:0:2", "rack": "r1", "status": "Up", "state": "Normal", "token": "2"}]}
+    out = cassandra_token_assign(nodes, M3, ring=r, hosts={"2001:db8::1": "n1", "2001:db8::2": "n2"})
+    assert out["problems"] == []
+
+
+def test_assign_only_bad_tokens_no_crash():
+    out = cassandra_token_assign([node("n1", token="None"), node("n2", "dc2", token="abc")], M3)
+    assert out["tokens"] == {"n1": str(-2 ** 63)}  # null in the inventory: no token
+    assert out["problems"] == ["n2: cassandra_initial_token 'abc' is not a single token (an integer)"]
 
 
 def test_assign_unknown_partitioner():
@@ -139,8 +166,35 @@ def test_add_node_already_in_ring_left_out():
 
 
 def test_add_given_token_kept():
-    out = cassandra_token_add_plan(ring(*T3), [node("n4", token="7")], M3, hosts=HOSTS)
-    assert out["bisect"] == {"n4": "7"} and out["balanced"]["n4"] == "7"
+    out = cassandra_token_add_plan(ring(*T3), [node("n4", token="7"), node("n5")], M3, hosts=HOSTS)
+    assert out["bisect"]["n4"] == "7" and "n5" in out["bisect"]
+    # balanced would move it: only bisect places the others then
+    assert out["balanced"] == {} and out["moves"] == [] and not out["even"]["balanced"]
+    assert out["balanced_problems"] == ["dc1: n4 has a cassandra_initial_token: balanced only places nodes without one"
+                                        " (use bisect, or take it out of the inventory)"]
+
+
+def test_add_given_token_of_another_datacenter_refused():
+    r = ring(*T3)
+    r.update(ring("0", dc="dc2", start=5))
+    out = cassandra_token_add_plan(r, [node("n4", token="0")], M3, hosts=HOSTS)
+    assert out["problems"] == ["n4: cassandra_initial_token 0 is already a token of the cluster"]
+
+
+def test_add_worked_out_tokens_avoid_other_datacenters():
+    # dc2 holds the middles dc1's new nodes would take: they move on by a token
+    r = ring(str(-2 ** 63), "0")
+    r.update(ring(str(-2 ** 62), str(2 ** 62), dc="dc2", start=5))
+    out = cassandra_token_add_plan(r, [node("n3"), node("n4")], M3, hosts=HOSTS)
+    assert sorted(out["bisect"].values()) == sorted([str(-2 ** 62 + 1), str(2 ** 62 + 1)])
+    assert sorted(out["balanced"].values()) == sorted(out["bisect"].values())
+    assert out["problems"] == [] and out["even"]["bisect"]
+
+
+def test_add_simplestrategy_warned():
+    ks = {"app": {"class": "SimpleStrategy", "rf": {"*": 3}}, "system_auth": {"class": "SimpleStrategy", "rf": {"*": 1}}}
+    out = cassandra_token_add_plan(ring(*T3), [node("n4")], M3, keyspaces=ks, hosts=HOSTS)
+    assert out["warnings"][0].startswith("app uses SimpleStrategy: its replicas follow the whole ring")
 
 
 def test_add_new_datacenter():
@@ -201,7 +255,38 @@ def test_move_targets():
 def test_move_targets_problems():
     out = cassandra_token_move_plan(ring(*T3), M3, hosts=HOSTS, targets={"n9": "1", "n1": T3[1]})
     assert "n9 is not in the ring (nodetool ring): no token to move" in out["problems"]
+    assert "n1: token %s is n2's, which does not move" % T3[1] in out["problems"]
+    # two nodes swapping tokens block each other
+    out = cassandra_token_move_plan(ring(*T3), M3, hosts=HOSTS, targets={"n1": T3[1], "n2": T3[0]})
     assert any("block each other" in p for p in out["problems"])
+
+
+def test_move_target_of_another_datacenter_refused():
+    r = ring(str(-2 ** 63), "0")
+    r.update(ring(str(-2 ** 63 + 100), "100", dc="dc2", start=5))
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS, targets={"n1": "100"})
+    assert out["problems"] == ["n1: token 100 is n7's, which does not move"]
+
+
+def test_move_auto_avoids_other_datacenters():
+    # dc1 uneven; dc2 sits where dc1's balanced positions are: dc1's targets move on by a token
+    r = ring(str(-2 ** 63), "5", "10")
+    r.update(ring(str(-2 ** 63 + 2 ** 64 // 3), str(-2 ** 63 + 2 * 2 ** 64 // 3), dc="dc2", start=5))
+    out = cassandra_token_move_plan(r, M3, hosts=HOSTS)
+    assert out["problems"] == []
+    dc2 = set(int(n["token"]) for n in r["dc2"])
+    dc1 = [s for s in out["steps"] if s["dc"] == "dc1"]
+    assert len(dc1) == 2 and not set(int(s["to"]) for s in dc1) & dc2
+
+
+def test_move_bytes_estimate_with_the_smallest_factor():
+    ks = {"big": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 1}},
+          "small": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}
+    out = cassandra_token_move_plan(ring(*(T3 + ["0"])), M3, hosts=HOSTS, status=STATUS, keyspaces=ks)
+    one = cassandra_token_move_plan(ring(*(T3 + ["0"])), M3, hosts=HOSTS, status=STATUS)
+    # 120 GiB of load: 120 GiB of data with RF 1, not 40 GiB
+    for mine, ref in zip(out["steps"], one["steps"]):
+        assert mine["gain_bytes"] and all(abs(b - 3 * ref["gain_bytes"][n]) <= 3 for n, b in mine["gain_bytes"].items())
 
 
 def test_move_refused_while_a_node_is_busy():
@@ -230,12 +315,12 @@ def test_disk_problems():
     mounts = [{"mount": "/", "size_available": 900 * 1024 ** 3, "size_total": 1000 * 1024 ** 3},
               {"mount": "/var/lib/cassandra", "size_available": 60 * 1024 ** 3, "size_total": 100 * 1024 ** 3},
               {"mount": "/var/lib/cassandra2", "size_available": 1, "size_total": 2}]
-    disks = {"n2": {"path": "/var/lib/cassandra/data", "mounts": mounts}}
+    disks = {"n2": {"paths": ["/var/lib/cassandra/data"], "mounts": mounts}}
     assert cassandra_token_disk_problems(step, disks, 20) == cassandra_token_disk_problems(step, free, 20)
-    disks = {"n2": {"path": "/srv/data", "mounts": mounts}}  # on /: plenty of room
+    disks = {"n2": {"paths": ["/srv/data"], "mounts": mounts}}  # on /: plenty of room
     assert cassandra_token_disk_problems(step, disks, 20) == []
-
-
-def test_ring_tokens_filter():
-    assert cassandra_ring_tokens("Datacenter: dc1\n10.100.100.1  r1  Up  Normal  1 KiB  ?  5\n") == {
-        "dc1": [{"address": "10.100.100.1", "rack": "r1", "status": "Up", "state": "Normal", "token": "5"}]}
+    # JBOD: the file systems of all the directories, each once
+    disks = {"n2": {"paths": ["/var/lib/cassandra/data", "/var/lib/cassandra/data2", "/srv/d"], "mounts": mounts}}
+    assert cassandra_token_disk_problems(step, disks, 20) == []
+    disks = {"n2": {"paths": ["/var/lib/cassandra", "/var/lib/cassandra/data"], "mounts": mounts}}  # a mount point itself
+    assert cassandra_token_disk_problems(step, disks, 20) == cassandra_token_disk_problems(step, free, 20)

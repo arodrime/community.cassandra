@@ -100,3 +100,21 @@ def test_import_single_token_with_hint_left_active(series):
     assert out["hand_edits"] == [] and out["normalized"] == []
     assert out["vars"]["cassandra_allocate_tokens_for_local_replication_factor"] == 3
     assert out["vars"]["cassandra_initial_token"] == TOKEN
+
+
+@pytest.mark.parametrize("series", SERIES)
+def test_null_token_and_hint_left_out(series):
+    # `cassandra_initial_token:` left empty in host_vars is null: commented out, not "initial_token: None"
+    text = cassandra_yaml(series, cassandra_num_tokens=1, cassandra_initial_token=None,
+                          cassandra_allocate_tokens_for_local_replication_factor=None)
+    conf = yaml.safe_load(text)
+    assert "initial_token" not in conf and "allocate_tokens_for_local_replication_factor" not in conf
+
+
+@pytest.mark.parametrize("series", SERIES)
+@pytest.mark.parametrize("line", ["initial_token: '%s'" % TOKEN, 'initial_token: "%s"' % TOKEN])
+def test_import_quoted_token(series, line):
+    live = cassandra_yaml(series, cassandra_num_tokens=1, cassandra_initial_token=TOKEN).replace(
+        "initial_token: %s" % TOKEN, line)
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    assert out["vars"]["cassandra_initial_token"] == TOKEN

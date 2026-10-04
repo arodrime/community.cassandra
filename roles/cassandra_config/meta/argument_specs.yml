@@ -77,7 +77,8 @@ argument_specs:
           node's first start only.
         - When C('') on a node that has joined (its system keyspace exists), the value its C(cassandra.yaml)
           already has is kept.
-        - The create_cluster and add_node playbooks can work it out (C(cassandra_token_auto)).
+        - The create_cluster and add_datacenter playbooks work it out when it is not set, add_node with
+          C(cassandra_token_auto).
       cassandra_hinted_handoff_enabled:
         type: bool
         default: true
@@ -1120,7 +1121,7 @@ argument_specs:
         type: bool
         default: false
         description:
-        - Change C(cluster_name), C(num_tokens), C(initial_token), C(partitioner),
+        - Change C(cluster_name), C(num_tokens), C(partitioner),
           C(endpoint_snitch), C(dc) or C(rack) of a node that already joined a
           cluster. Refused otherwise; only for a documented procedure (e.g. a
           snitch migration).

@@ -147,12 +147,65 @@ argument_specs:
             replicas as racks there). C(none) prints the command; C(one) runs it one node at a time;
             C(rack) and C(dc) clean the nodes of a rack, of a datacenter together, one batch after the other;
             C(all) cleans them all at once. The cluster is checked before each batch.
+      cassandra_token_auto:
+        type: raw
+        default: false
+        description:
+          - One token per node (I(cassandra_num_tokens=1)), C(add_node) - where the new nodes without
+            C(cassandra_initial_token) go. C(false) refuses them; C(bisect) splits the largest ranges, no node
+            moves; C(balanced) gives an even ring for the new node count, the new nodes join at their final
+            tokens and C(move_node) moves the others afterwards; C(true) shows both plans and asks which
+            (refused when C(cassandra_operation_confirm) is false).
+      cassandra_token_rf:
+        type: int
+        default: 3
+        description:
+          - One token per node - the replication factor the shares shown by C(create_cluster), C(add_node),
+            C(add_datacenter) and C(move_node) assume in a datacenter no keyspace is replicated to.
+            Otherwise the largest replication factor of the datacenter's keyspaces.
+      cassandra_token_allow_partial:
+        type: bool
+        default: false
+        description:
+          - One token per node, C(create_cluster) - a datacenter where only some nodes have
+            C(cassandra_initial_token) is refused; C(true) gives the others the middles of the largest ranges.
+      cassandra_move_tokens:
+        type: dict
+        default: {}
+        description:
+          - "C(move_node) - the nodes to move and their new tokens, a dict node name to token. Empty, each single-token
+            datacenter is evened out with the fewest moves."
+      cassandra_move_cleanup:
+        type: str
+        default: none
+        choices: [none, one, rack, dc, all]
+        description:
+          - What C(move_node) does about the cleanup of the nodes that lost ranges (this run's and the ones an
+            interrupted run recorded), as C(cassandra_add_node_cleanup).
+      cassandra_move_min_free_percent:
+        type: int
+        default: 20
+        description:
+          - C(move_node) - before each move, the nodes that receive data must keep this share of their data
+            directories' disks free, counting the data the move streams to them (estimated from the loads,
+            data spread evenly along the ring).
+      cassandra_move_force_disk:
+        type: bool
+        default: false
+        description:
+          - C(move_node) - go on with a move the disk check refuses.
+      cassandra_move_timeout:
+        type: int
+        description:
+          - C(move_node) - seconds the job running C(nodetool move) may last; by default as long as the
+            streams make progress (see C(cassandra_stream_max_time)).
       cassandra_stream_check_interval:
         type: int
         default: 300
         description:
           - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
-            C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter)).
+            C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
+            C(move_node)).
             Each check reads C(nodetool netstats) and prints one progress line.
       cassandra_stream_stall_checks:
         type: int

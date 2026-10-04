@@ -50,7 +50,6 @@
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
     _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
     _auto: "{{ cassandra_token_auto | default(false) | string | lower }}"
-    _to_place: "{{ _new }}"
     _no_token: >-
       {{ _new | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_initial_token']) | zip(_new)
          | selectattr(0, 'equalto', '') | map(attribute=1) | list }}
@@ -153,7 +152,7 @@
           ansible.builtin.assert:
             that:
               - _auto in ['false', 'true', 'bisect', 'balanced']
-              - _auto != 'true' or cassandra_operation_confirm | bool or _to_place | length == 0
+              - _auto != 'true' or cassandra_operation_confirm | bool or _new | length == 0
               - _auto != 'false' or _no_token | length == 0
             fail_msg: >-
               {{ ('cassandra_token_auto must be false, true, bisect or balanced (got ' ~ _auto ~ ')')
@@ -185,13 +184,13 @@
               {%- set l = [] -%}
               {%- for h in ansible_play_hosts_all -%}
               {%-   set p = hostvars[h]._cassandra_preflight -%}
-              {%-   set _ = l.append({'name': h, 'address': p.address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
+              {%-   set _ = l.append({'name': h, 'address': p.ring_address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
                                       'token': p.cassandra_initial_token}) -%}
               {%- endfor -%}
               {{ l }}
             _hosts: >-
               {{ dict(groups[cassandra_hosts | default('cassandra')]
-                      | map('extract', hostvars, ['_cassandra_preflight', 'address'])
+                      | map('extract', hostvars, ['_cassandra_preflight', 'ring_address'])
                       | zip(groups[cassandra_hosts | default('cassandra')])) }}
 
         - name: Refuse tokens that can't be worked out
@@ -250,7 +249,7 @@
             {% for w in cassandra_add_node_plan.warnings %}
             WARNING: {{ w }}
             {% endfor %}
-            {% if _single | bool and _to_place %}
+            {% if _single | bool and _new %}
             One token per node (shares with the largest replication factor of each datacenter, else cassandra_token_rf):
             {% for line in cassandra_add_node_tokens.lines %}
             {{ line }}
@@ -279,7 +278,7 @@
         prompt: "bisect (no node moves) or balanced (an even ring, move_node moves other nodes afterwards)? Answer bisect or balanced"
       register: cassandra_token_choice
       run_once: true
-      when: _single | bool and _auto == 'true' and _to_place | length > 0
+      when: _single | bool and _auto == 'true' and _new | length > 0
 
     - name: Check the choice
       ansible.builtin.assert:
@@ -291,7 +290,7 @@
              if _choice not in ['bisect', 'balanced'] else cassandra_add_node_tokens.balanced_problems | join(' ') }}
         quiet: true
       run_once: true
-      when: _single | bool and _auto == 'true' and _to_place | length > 0
+      when: _single | bool and _auto == 'true' and _new | length > 0
       vars:
         _choice: "{{ cassandra_token_choice.user_input | default('') | trim | lower }}"
 

@@ -38,6 +38,7 @@ def summary(new_nodes=("node7",), joining=(), **inventory):
         "_new": list(new_nodes), "_joining": list(joining), "_existing": ["node1"], "ansible_play_hosts_all": ["node7"],
         "cassandra_add_node_plan": {"estimate": [], "cleanup": {}, "scope": {}, "warnings": []},
         "cassandra_stream_check_interval": 300, "cassandra_stream_stall_checks": 3, "_cassandra_session_warning": "",
+        "_single": False, "_auto": "false",
     }
     variables.update(inventory)
     variables.update((k, trust_as_template(v)) for k, v in TASK["vars"].items())
@@ -101,3 +102,41 @@ def test_the_copied_medusa_defaults_are_the_role_defaults():
     template = TASK["vars"]["_summary"]
     assert "cassandra_medusa_version | default('%s')" % defaults["cassandra_medusa_version"] in template
     assert "cassandra_medusa_venv | default('%s')" % defaults["cassandra_medusa_venv"] in template
+
+
+TOKENS = {"lines": ["dc1 now: 3 node(s)", "dc1 bisect (no move): 4 node(s)"], "warnings": ["dc1: bisect leaves it uneven"],
+          "moves": [{"name": "node2"}], "balanced_problems": []}
+
+
+@pytest.mark.parametrize("auto, said", [
+    ("bisect", "Following bisect: no node moves."),
+    ("balanced", "Following balanced: then run move_node to move node2 (until then the ring is uneven)."),
+    ("true", "You choose next: bisect or balanced."),
+    ("false", "Tokens from the inventory (cassandra_initial_token)."),
+])
+def test_single_token_plan_shown(auto, said):
+    text = summary(_single=True, _auto=auto, cassandra_add_node_tokens=TOKENS)
+    assert "dc1 bisect (no move): 4 node(s)\n" in text and "WARNING: dc1: bisect leaves it uneven\n" in text
+    assert said in text
+    assert "One token per node" not in summary(_single=False, _auto=auto, cassandra_add_node_tokens=TOKENS)
+
+
+CHOICE = [t for p in PLAYS for t in p.get("tasks", []) for t in t.get("block", [])
+          if t.get("name") == "Check the token choice"][0]
+
+
+@pytest.mark.parametrize("auto, confirm, no_token, ok, says", [
+    ("false", True, ["node7"], False, "One token per node: node7 has no cassandra_initial_token"),
+    ("false", True, [], True, ""),
+    ("bisect", False, ["node7"], True, ""),
+    ("true", True, ["node7"], True, ""),
+    ("true", False, ["node7"], False, "choose one on the command line instead"),
+    ("yes", True, [], False, "cassandra_token_auto must be false, true, bisect or balanced (got yes)"),
+])
+def test_token_choice_checked(auto, confirm, no_token, ok, says):
+    variables = {"_auto": auto, "cassandra_operation_confirm": confirm, "_new": ["node7"], "_no_token": no_token}
+    templar = Templar(loader=DataLoader(), variables=variables)
+    passed = all(templar.template(trust_as_template("{{ %s }}" % c)) for c in CHOICE["ansible.builtin.assert"]["that"])
+    assert passed is ok
+    if not ok:
+        assert says in templar.template(trust_as_template(CHOICE["ansible.builtin.assert"]["fail_msg"]))

@@ -44,9 +44,11 @@ written `root:cassandra` mode `0640` (`cassandra_config_owner`,
 may hold keystore passwords.
 
 On a node that already joined a cluster, the role refuses to change
-`cluster_name`, `num_tokens`, `initial_token`, `partitioner`,
-`endpoint_snitch`, `dc` or `rack`: a new cluster name or partitioner stops the
-node from starting, the others move data ownership without streaming it. The
+`cluster_name`, `num_tokens`, `partitioner`, `endpoint_snitch`, `dc` or
+`rack`: a new cluster name or partitioner stops the node from starting, the
+others move data ownership without streaming it. (`initial_token` is read at
+a node's first start only: a joined node keeps its tokens whatever it says;
+`move_node` moves a single-token node.) The
 error lists the live and new values: fix the inventory to match the node, or
 set `cassandra_config_force_identity_change: true` while following a
 documented procedure (e.g. a snitch migration).

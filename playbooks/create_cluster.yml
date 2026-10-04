@@ -76,9 +76,11 @@
         - name: Read the tokens of the nodes already running
           community.cassandra.cassandra_ring:
           module_defaults:
-            community.cassandra.cassandra_ring: "{{ _cassandra_service_jmx }}"
+            community.cassandra.cassandra_ring: >-
+              {{ _cassandra_service_jmx | combine({'port': hostvars[_running | first | default(inventory_hostname)].cassandra_jmx_port
+                                                           | default(_cassandra_service_jmx.port) | int}) }}
           register: cassandra_create_ring
-          delegate_to: "{{ _running | first }}"
+          delegate_to: "{{ _running | first | default(inventory_hostname) }}"  # templated even when skipped
           run_once: true
           when: _running | length > 0
 
@@ -97,7 +99,7 @@
               {%- endfor -%}
               {{ l }}
             _hosts: >-
-              {{ dict(ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'address']) | zip(ansible_play_hosts)) }}
+              {{ dict(ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'ring_address']) | zip(ansible_play_hosts)) }}
           run_once: true
 
         - name: Show the ring

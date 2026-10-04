@@ -36,7 +36,8 @@ cassandra_num_tokens: 16
 cassandra_allocate_tokens_for_local_replication_factor: "{{ 3 if cassandra_num_tokens | int > 1 else '' }}"
 # One token per node (num_tokens: 1): this node's token, read at its first
 # start only. '' on a node that has joined: the initial_token its cassandra.yaml
-# has is kept. create_cluster and add_node can work it out (cassandra_token_auto).
+# has is kept. create_cluster and add_datacenter work it out when it is not set,
+# add_node with cassandra_token_auto.
 cassandra_initial_token: ""
 cassandra_hinted_handoff_enabled: true
 cassandra_max_hint_window: "3h"

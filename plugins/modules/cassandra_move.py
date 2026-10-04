@@ -24,7 +24,7 @@ extends_documentation_fragment:
 options:
   token:
     description:
-      - The new token, an integer in the partitioner's range.
+      - The new token, one integer (nodetool refuses one outside the partitioner's range).
     type: str
     required: true
 '''

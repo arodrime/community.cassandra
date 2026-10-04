@@ -73,6 +73,17 @@ Role Variables
   cleanup of the nodes that handed data over. `none` prints the command,
   `one` runs it one node at a time, `rack` and `dc` the nodes of a rack, of a
   datacenter together, batch after batch, `all` every node at once.
+* One token per node (`cassandra_num_tokens: 1`): `cassandra_token_auto`
+  (default `false`), where `add_node` puts new nodes without
+  `cassandra_initial_token`: `bisect` (no node moves), `balanced` (even ring,
+  `move_node` moves the others afterwards) or `true` (shows both, asks);
+  `cassandra_token_rf` (default 3), the replication factor the shares shown
+  assume when no keyspace gives one; `cassandra_token_allow_partial` (default
+  `false`), `create_cluster` with tokens on only some nodes of a datacenter;
+  `move_node`: `cassandra_move_tokens` (default `{}`: even out each
+  datacenter), `cassandra_move_cleanup` (as `cassandra_add_node_cleanup`),
+  `cassandra_move_min_free_percent` (default 20) and
+  `cassandra_move_force_disk` (default `false`).
 
 * `cassandra_service_allow_new_seed`: a node that never started and is
   listed in `cassandra_seeds` is refused when another seed already answers

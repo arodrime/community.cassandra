@@ -118,7 +118,7 @@
       check_mode: false
       failed_when: false  # no live file: nothing to keep
       when:
-        - cassandra_initial_token | string == ''
+        - cassandra_initial_token | string in ['', 'None']
         - cassandra_config_initialized.stat.exists
 
     - name: Keep the token a joined node was started with
@@ -265,7 +265,7 @@
                 def read(path, pattern):  # properties: no inline comment, as the snitch reads them
                     get = value if pattern == yaml else lambda v: v.strip().strip("'\"")
                     return {k: get(v.strip()) for k, v in re.findall(pattern, open(path).read(), re.M)}
-                yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch|initial_token):[ \t]*(.*?)[ \t]*$"
+                yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch):[ \t]*(.*?)[ \t]*$"
                 rackdc = r"^[ \t]*(dc|rack)[ \t]*=[ \t]*(.*?)[ \t]*$"
                 live, new = {}, {}
                 for live_file, new_file, pattern in ((sys.argv[1], sys.argv[2], yaml), (sys.argv[3], sys.argv[4], rackdc)):
@@ -300,7 +300,7 @@
         fail_msg: >-
           {{ inventory_hostname }} has already joined a cluster ({{ cassandra_data_dir }}/system exists) and these
           settings would change: {{ _changes | join('; ') }}. A node keeps them for life: a new cluster_name or
-          partitioner stops it from starting, new num_tokens/initial_token or dc/rack move data ownership without
+          partitioner stops it from starting, a new num_tokens or dc/rack moves data ownership without
           streaming. Fix the inventory to match the node, or follow the documented procedure and set
           cassandra_config_force_identity_change: true.
         quiet: true
