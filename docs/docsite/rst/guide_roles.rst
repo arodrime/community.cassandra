@@ -204,6 +204,42 @@ or ``all`` (nodes cleaned together), the cluster checked before each batch. The 
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
 
 
+One token per node
+------------------
+
+With ``cassandra_num_tokens: 1`` each node owns one range of the ring, from the token of the node before it to its
+own ``initial_token`` (``cassandra_initial_token``). Where the tokens sit decides how much data each node holds, so the
+playbooks work them out:
+
+- ``create_cluster`` gives the nodes without ``cassandra_initial_token`` evenly spaced tokens: in each datacenter, node
+  *i* of *N* at ``-2^63 + i * 2^64 / N`` (Murmur3Partitioner; ``i * 2^127 / N`` with RandomPartitioner), the racks
+  taken in turn so that consecutive tokens are on different racks (racks sorted by name, each rack's nodes in
+  inventory order), and each datacenter 100 tokens after the one before it (datacenters sorted by name): tokens never
+  collide, and each datacenter, which NetworkTopologyStrategy replicates on its own, is even. The ring is shown with
+  each node's share before anything starts, and confirmed (``cassandra_operation_confirm``). A datacenter where only
+  some nodes have a token is refused, unless ``cassandra_token_allow_partial: true`` (the others then split the
+  largest ranges). Copy the tokens shown into the inventory to keep a record: a node that has joined keeps the
+  ``initial_token`` its ``cassandra.yaml`` has when the inventory gives none.
+- ``add_node`` needs a token for each new node: ``cassandra_initial_token``, or ``-e cassandra_token_auto=`` ``bisect``
+  (each new node splits the largest range, no node moves), ``balanced`` (an even ring for the new node count: the new
+  nodes join at their final tokens, then ``move_node`` moves the others) or ``true`` (both are shown, with each
+  node's share before and after, and you choose). Going from *N* to *N + 1* even nodes moves nearly every node; going
+  to *2N* moves none: every range is split in two. The screen says so when bisect leaves the ring uneven.
+- ``move_node`` moves nodes to new tokens, one at a time (``nodetool move``): without ``cassandra_move_tokens``, each
+  datacenter is evened out with the fewest moves. The plan comes first (the rings before and after, the order, the
+  data each move streams and where), then one confirmation; ``--check`` stops after the plan. Before each move the
+  cluster is checked, and the nodes that receive data must keep ``cassandra_move_min_free_percent`` (20) of their data
+  disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
+  again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
+  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``one``, ``rack``, ``dc``, ``all``), or the
+  command is printed.
+
+The shares shown assume the largest replication factor of each datacenter (``cassandra_token_rf``, 3, when no
+keyspace says, e.g. a new cluster). ``allocate_tokens_for_local_replication_factor`` only matters with vnodes: its
+default is empty with one token per node (the line stays commented out), and ``preflight`` does not check the racks
+for the token allocator then.
+
+
 Removing a node
 ---------------
 

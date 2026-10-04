@@ -1,0 +1,8 @@
+minor_changes:
+  - "cassandra_config role - new ``cassandra_initial_token`` option (``initial_token``); a node that has joined keeps the ``initial_token`` its ``cassandra.yaml`` has when the option is empty. ``cassandra_allocate_tokens_for_local_replication_factor`` defaults to empty (commented out) with one token per node (``cassandra_num_tokens: 1``)."
+  - "create_cluster playbook - with one token per node, the nodes without ``cassandra_initial_token`` get evenly spaced tokens (racks in turn, datacenters 100 tokens apart), shown with each node's share and confirmed; a datacenter where only some nodes have one is refused unless ``cassandra_token_allow_partial``."
+  - "add_node playbook - with one token per node, a new node needs ``cassandra_initial_token`` or ``cassandra_token_auto`` (``bisect``, ``balanced`` or ``true`` to choose after seeing both plans)."
+  - "preflight playbook - ``cassandra_partitioner`` must match on every node; the racks are not checked for the token allocator with one token per node."
+  - "New move_node playbook - moves single-token nodes one at a time (by default, the fewest moves that even out each datacenter), with a disk space check before each move, then cleans up."
+  - "New cassandra_move module - moves a single-token node to a new token (``nodetool move``)."
+  - "New cassandra_ring module - returns the tokens of the ring per datacenter (``nodetool ring``)."

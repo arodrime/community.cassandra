@@ -32,8 +32,9 @@ default `cassandra`; per-cluster settings such as `cassandra_seeds` in its
 group_vars). Run them with `ansible-playbook community.cassandra.<name>`.
 
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds).
-- `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first.
-- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time.
+- `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
+- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.
+- `move_node`- One token per node: moves nodes to new tokens one at a time (by default, the fewest moves that even out each datacenter), then cleans up.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
 - `update_java`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
