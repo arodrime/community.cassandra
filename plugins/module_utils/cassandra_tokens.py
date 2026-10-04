@@ -277,23 +277,41 @@ def _largest_only(ring, size, rf):
     return (max(e for dummy, e in own.values()), max(p for p, dummy in own.values()))
 
 
-def _ranges_first(ring, size, rf):
-    """The primary shares largest first (the largest range split first, as with one rack)."""
-    return sorted((p for p, dummy in ownership(ring, size, 1).values()), reverse=True)
+def _split_largest(ring, new, size):
+    """Each new node in turn at the middle of the largest range (the lowest
+    one of equal ranges), whatever the racks."""
+    cur = [p for p, dummy, dummy2 in _sorted_ring(ring, size)]
+    placed = []
+    for name, rack in new:
+        if not cur:
+            spot = 0
+        else:
+            gaps = [((p - cur[i - 1]) % size if len(cur) > 1 else size, -((cur[i - 1] + ((p - cur[i - 1]) % size or size)
+                                                                             // 2) % size)) for i, p in enumerate(cur)]
+            length, neg = max(gaps)
+            if length < 2:
+                raise TokenError("no room left in the ring for %s" % name)
+            spot = -neg
+        cur = sorted(cur + [spot])
+        placed.append((spot, name, rack))
+    return placed
 
 
 def plan_bisect(ring, new, size, rf):
     """No move: each new node in turn (new: [(name, rack)]) at the middle of a
     range, picked greedily three ways (the most even effective shares, largest
-    first, up to 64 nodes; the smallest largest share; the largest range), the racks of the new
+    first; the smallest largest share; the largest range), the racks of the new
     nodes then ordered over each set of positions (_place); the most even of
     the three (_balance_key). A greedy plan: not always the best possible.
     Returns [(position, name, rack)] of the new nodes."""
-    best = None
-    keys = (_largest_first, _largest_only, _ranges_first) if len(ring) + len(new) <= 64 else (_largest_only, _ranges_first)
-    for key in keys:
-        placed = _greedy_bisect(ring, new, size, rf, key)
-        placed = _place(list(ring), [p for p, dummy, dummy2 in placed], new, size, rf, given=placed)
+    best, seen = None, set()
+    for greedy in (_greedy_bisect(ring, new, size, rf, _largest_first), _greedy_bisect(ring, new, size, rf, _largest_only),
+                   _split_largest(ring, new, size)):
+        spots = tuple(sorted(p for p, dummy, dummy2 in greedy))
+        if spots in seen:  # the same positions: the same racks order
+            continue
+        seen.add(spots)
+        placed = _place(list(ring), list(spots), new, size, rf, given=greedy)
         score = _balance_key(list(ring) + placed, size, rf)
         if best is None or score < best[0]:
             best = (score, placed)

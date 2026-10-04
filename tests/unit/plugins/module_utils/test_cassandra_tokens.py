@@ -435,12 +435,15 @@ def test_many_new_nodes_never_worse_than_alternating(seed):
     assert _balance_key(plan["ring"], size, 3) <= _balance_key(after + alt, size, 3)
 
 
-@pytest.mark.parametrize("n, k, racks, rf", [(3, 6, 1, 2), (3, 5, 2, 3), (5, 5, 2, 3), (4, 4, 1, 3), (6, 3, 3, 3)])
+@pytest.mark.parametrize("n, k, racks, rf", [(3, 6, 1, 2), (3, 5, 2, 3), (5, 5, 2, 3), (4, 4, 1, 3), (6, 3, 3, 3),
+                                            (67, 14, 4, 2)])
 def test_bisect_not_worse_than_each_greedy(n, k, racks, rf):
     from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
-        _balance_key, _greedy_bisect, _largest_only)
+        _balance_key, _greedy_bisect, _largest_first, _largest_only, _split_largest)
     size = 2 ** 64
     ring = ring_of(balanced_positions(n, size), ["r%d" % (i % racks) for i in range(n)])
     new = rack_order([("x%d" % i, "r%d" % (i % racks)) for i in range(k)])
     best = _balance_key(ring + plan_bisect(ring, new, size, rf), size, rf)
-    assert best <= _balance_key(ring + _greedy_bisect(ring, new, size, rf, _largest_only), size, rf)
+    for greedy in (_greedy_bisect(ring, new, size, rf, _largest_first), _greedy_bisect(ring, new, size, rf, _largest_only),
+                   _split_largest(ring, new, size)):
+        assert best <= _balance_key(ring + greedy, size, rf)
