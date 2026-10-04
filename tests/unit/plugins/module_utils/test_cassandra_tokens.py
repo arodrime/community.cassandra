@@ -435,8 +435,8 @@ def test_many_new_nodes_never_worse_than_alternating(seed):
     assert _balance_key(plan["ring"], size, 3) <= _balance_key(after + alt, size, 3)
 
 
-@pytest.mark.parametrize("n, k, racks, rf", [(3, 6, 1, 2), (3, 5, 2, 3), (5, 5, 2, 3), (4, 4, 1, 3), (6, 3, 3, 3),
-                                            (67, 14, 4, 2)])
+@pytest.mark.parametrize("n, k, racks, rf", [
+    (3, 6, 1, 2), (3, 5, 2, 3), (5, 5, 2, 3), (4, 4, 1, 3), (6, 3, 3, 3), (67, 14, 4, 2)])
 def test_bisect_not_worse_than_each_greedy(n, k, racks, rf):
     from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
         _balance_key, _greedy_bisect, _largest_first, _largest_only, _split_largest)

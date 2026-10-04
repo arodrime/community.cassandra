@@ -286,8 +286,10 @@ def _split_largest(ring, new, size):
         if not cur:
             spot = 0
         else:
-            gaps = [((p - cur[i - 1]) % size if len(cur) > 1 else size, -((cur[i - 1] + ((p - cur[i - 1]) % size or size)
-                                                                             // 2) % size)) for i, p in enumerate(cur)]
+            gaps = []
+            for i, p in enumerate(cur):
+                length = (p - cur[i - 1]) % size if len(cur) > 1 else size
+                gaps.append((length, -((cur[i - 1] + length // 2) % size)))  # the lowest middle of equal ones
             length, neg = max(gaps)
             if length < 2:
                 raise TokenError("no room left in the ring for %s" % name)
