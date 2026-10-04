@@ -16,6 +16,7 @@
   delegate_to: "{{ _from }}"
   register: cassandra_keyspaces_cqlsh
   changed_when: false
+  check_mode: false  # a SELECT: --check plans with the real replication too
   vars:
     _from: "{{ cassandra_keyspaces_from | default(inventory_hostname) }}"
 
