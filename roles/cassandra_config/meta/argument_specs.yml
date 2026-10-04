@@ -63,10 +63,21 @@ argument_specs:
         description:
         - C(num_tokens) in C(cassandra.yaml).
       cassandra_allocate_tokens_for_local_replication_factor:
-        type: int
-        default: 3
+        type: raw
         description:
-        - C(allocate_tokens_for_local_replication_factor) in C(cassandra.yaml).
+        - C(allocate_tokens_for_local_replication_factor) in C(cassandra.yaml), an integer.
+        - Default C(3) with vnodes (I(cassandra_num_tokens) above 1), C('') with one token per node.
+        - C('') leaves the line commented out.
+      cassandra_initial_token:
+        type: raw
+        default: ''
+        description:
+        - C(initial_token) in C(cassandra.yaml), commented out when C('').
+        - With one token per node (I(cassandra_num_tokens=1)), the node's token. Cassandra reads it at the
+          node's first start only.
+        - When C('') on a node that has joined (its system keyspace exists), the value its C(cassandra.yaml)
+          already has is kept.
+        - The create_cluster and add_node playbooks can work it out (C(cassandra_token_auto)).
       cassandra_hinted_handoff_enabled:
         type: bool
         default: true

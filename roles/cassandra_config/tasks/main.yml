@@ -108,6 +108,32 @@
         path: "{{ cassandra_data_dir }}/system"
       register: cassandra_config_initialized
 
+    # Cassandra reads initial_token at a node's first start only: a joined node
+    # with none in the inventory keeps the one its cassandra.yaml has
+    - name: Read the token a joined node was started with
+      ansible.builtin.slurp:
+        src: "{{ cassandra_conf_dir }}/cassandra.yaml"
+      register: cassandra_config_live_yaml
+      no_log: true  # passwords
+      check_mode: false
+      failed_when: false  # no live file: nothing to keep
+      when:
+        - cassandra_initial_token | string == ''
+        - cassandra_config_initialized.stat.exists
+
+    - name: Keep the token a joined node was started with
+      ansible.builtin.set_fact:
+        cassandra_initial_token: "{{ _live }}"
+      vars:
+        _line: >-
+          {{ cassandra_config_live_yaml.content | b64decode
+             | regex_findall('(?m)^initial_token:[ \t]*(.*?)[ \t]*$') | last | default('') }}
+        _live: >-
+          {{ _line | regex_replace('\s+#.*$', '') | replace('"', '') | replace("'", '') | trim }}
+      when:
+        - cassandra_config_live_yaml.content is defined
+        - _live != ''
+
     # Render into a temp dir and diff against the live files (Ansible's own
     # diff skips files over 100KB, cassandra.yaml included)
     - name: Preview config changes

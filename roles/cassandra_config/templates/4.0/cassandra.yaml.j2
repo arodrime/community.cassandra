@@ -42,13 +42,13 @@ num_tokens: {{ cassandra_num_tokens }}
 
 # Replica factor is explicitly set, regardless of keyspace or datacenter.
 # This is the replica factor within the datacenter, like NTS.
-allocate_tokens_for_local_replication_factor: {{ cassandra_allocate_tokens_for_local_replication_factor }}
+{{ '# ' if cassandra_allocate_tokens_for_local_replication_factor == '' else '' }}allocate_tokens_for_local_replication_factor: {{ cassandra_allocate_tokens_for_local_replication_factor or '3' }}
 
 # initial_token allows you to specify tokens manually.  While you can use it with
 # vnodes (num_tokens > 1, above) -- in which case you should provide a 
 # comma-separated list -- it's primarily used when adding nodes to legacy clusters 
 # that do not have vnodes enabled.
-# initial_token:
+{{ '# ' if cassandra_initial_token | string == '' else '' }}initial_token:{{ (' ' ~ cassandra_initial_token) if cassandra_initial_token | string != '' else '' }}
 
 # May either be "true" or "false" to enable globally
 hinted_handoff_enabled: {{ cassandra_hinted_handoff_enabled | lower }}

@@ -31,7 +31,13 @@ cassandra_data_file_directories: "{{ [cassandra_data_dir] }}"
 # ---- cassandra.yaml ----
 cassandra_cluster_name: "Test Cluster"
 cassandra_num_tokens: 16
-cassandra_allocate_tokens_for_local_replication_factor: 3
+# vnodes: the token allocator's replication factor hint; '' leaves the line
+# commented out (the default with one token per node: tokens come from initial_token)
+cassandra_allocate_tokens_for_local_replication_factor: "{{ 3 if cassandra_num_tokens | int > 1 else '' }}"
+# One token per node (num_tokens: 1): this node's token, read at its first
+# start only. '' on a node that has joined: the initial_token its cassandra.yaml
+# has is kept. create_cluster and add_node can work it out (cassandra_token_auto).
+cassandra_initial_token: ""
 cassandra_hinted_handoff_enabled: true
 cassandra_max_hint_window: "3h"
 cassandra_hinted_handoff_throttle: "1024KiB"
