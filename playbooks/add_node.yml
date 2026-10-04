@@ -14,6 +14,10 @@
 # seconds (300); the run stops only after cassandra_stream_stall_checks checks (3)
 # in a row with nothing streamed. Afterwards the cleanup command is printed, or
 # run with cassandra_add_node_cleanup: one, rack, dc or all (default none).
+# One token per node (cassandra_num_tokens: 1): each new node needs
+# cassandra_initial_token, or -e cassandra_token_auto=bisect (each one splits
+# the largest range, nothing moves), balanced (an even ring: move_node then
+# moves the nodes the screen marks) or true (shows both, asks which).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
@@ -42,6 +46,14 @@
     _joining: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
                   | selectattr('cassandra_new_node_state', 'equalto', 'joining') | map(attribute='inventory_hostname') | list }}"
     _existing: "{{ groups[cassandra_hosts | default('cassandra')] | reject('in', ansible_play_hosts_all) | list }}"
+    # one token per node: the new nodes' tokens (cassandra_token_auto)
+    _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
+    _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
+    _auto: "{{ cassandra_token_auto | default(false) | string | lower }}"
+    _to_place: "{{ _new }}"
+    _no_token: >-
+      {{ _new | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_initial_token']) | zip(_new)
+         | selectattr(0, 'equalto', '') | map(attribute=1) | list }}
   tasks:
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
@@ -132,6 +144,64 @@
           {{ dict(_existing | map('extract', hostvars, ['_cassandra_preflight', 'address']) | zip(_existing)) }}
       run_once: true
 
+    # One token per node: where the new nodes go (plugins/filter/cassandra_tokens.py)
+    - name: Plan the tokens of the new nodes (one token per node)
+      when: _single | bool
+      run_once: true
+      block:
+        - name: Check the token choice
+          ansible.builtin.assert:
+            that:
+              - _auto in ['false', 'true', 'bisect', 'balanced']
+              - _auto != 'true' or cassandra_operation_confirm | bool or _to_place | length == 0
+              - _auto != 'false' or _no_token | length == 0
+            fail_msg: >-
+              {{ ('cassandra_token_auto must be false, true, bisect or balanced (got ' ~ _auto ~ ')')
+                 if _auto not in ['false', 'true', 'bisect', 'balanced']
+                 else ('cassandra_token_auto=true asks which plan to follow: choose one on the command line instead'
+                       ' (-e cassandra_token_auto=bisect or balanced), the run being non-interactive'
+                       ' (cassandra_operation_confirm false)') if _auto == 'true'
+                 else ('One token per node: ' ~ _no_token | join(', ') ~ ' ' ~ ('has' if _no_token | length == 1 else 'have')
+                       ~ ' no cassandra_initial_token. Set it, or -e cassandra_token_auto=true to see where they would'
+                       ' go (bisect: no node moves; balanced: an even ring, other nodes move) and choose') }}
+            quiet: true
+
+        - name: Read the tokens of the ring
+          community.cassandra.cassandra_ring:
+          module_defaults:
+            community.cassandra.cassandra_ring: >-
+              {{ _cassandra_service_jmx | combine({'port': hostvars[_existing[0]].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
+          delegate_to: "{{ _existing | first }}"
+          register: cassandra_add_node_ring
+
+        - name: Work out where the new nodes go
+          ansible.builtin.set_fact:
+            cassandra_add_node_tokens: >-
+              {{ cassandra_add_node_ring.ring | community.cassandra.cassandra_token_add_plan(_new_tokens,
+                   _p0.cassandra_partitioner, keyspaces=cassandra_keyspaces | default(none),
+                   default_rf=cassandra_token_rf | default(3), hosts=_hosts) }}
+          vars:
+            _new_tokens: >-
+              {%- set l = [] -%}
+              {%- for h in ansible_play_hosts_all -%}
+              {%-   set p = hostvars[h]._cassandra_preflight -%}
+              {%-   set _ = l.append({'name': h, 'address': p.address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
+                                      'token': p.cassandra_initial_token}) -%}
+              {%- endfor -%}
+              {{ l }}
+            _hosts: >-
+              {{ dict(groups[cassandra_hosts | default('cassandra')]
+                      | map('extract', hostvars, ['_cassandra_preflight', 'address'])
+                      | zip(groups[cassandra_hosts | default('cassandra')])) }}
+
+        - name: Refuse tokens that can't be worked out
+          ansible.builtin.assert:
+            that:
+              - cassandra_add_node_tokens.problems | length == 0
+              - _auto != 'balanced' or cassandra_add_node_tokens.balanced_problems | length == 0
+            fail_msg: "{{ cassandra_add_node_tokens.problems + (cassandra_add_node_tokens.balanced_problems if _auto == 'balanced' else []) }}"
+            quiet: true
+
     - name: Check the cleanup choice
       ansible.builtin.assert:
         that: cassandra_add_node_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
@@ -180,6 +250,20 @@
             {% for w in cassandra_add_node_plan.warnings %}
             WARNING: {{ w }}
             {% endfor %}
+            {% if _single | bool and _to_place %}
+            One token per node (shares with the largest replication factor of each datacenter, else cassandra_token_rf):
+            {% for line in cassandra_add_node_tokens.lines %}
+            {{ line }}
+            {% endfor %}
+            {% for w in cassandra_add_node_tokens.warnings %}
+            WARNING: {{ w }}
+            {% endfor %}
+            {{ {'false': 'Tokens from the inventory (cassandra_initial_token).',
+                'bisect': 'Following bisect: no node moves.',
+                'balanced': ('Following balanced: then run move_node to move ' ~ cassandra_add_node_tokens.moves | map(attribute='name') | join(', ')
+                             ~ ' (until then the ring is uneven).') if cassandra_add_node_tokens.moves else 'Following balanced: no node moves.',
+                'true': 'You choose next: bisect or balanced.'}[_auto] }}
+            {% endif %}
             {{ _cassandra_session_warning }}
 
     - name: Confirm the add
@@ -189,6 +273,40 @@
       when: _new | length > 0 or _joining | length > 0 or cassandra_add_node_cleanup | default('none') != 'none'
       vars:
         cassandra_confirm_prompt: "add_node: go on with the {{ 'add' if _new or _joining else 'cleanup' }} shown above?"
+
+    - name: Choose where the new nodes go
+      ansible.builtin.pause:
+        prompt: "bisect (no node moves) or balanced (an even ring, move_node moves other nodes afterwards)? Answer bisect or balanced"
+      register: cassandra_token_choice
+      run_once: true
+      when: _single | bool and _auto == 'true' and _to_place | length > 0
+
+    - name: Check the choice
+      ansible.builtin.assert:
+        that:
+          - _choice in ['bisect', 'balanced']
+          - _choice != 'balanced' or cassandra_add_node_tokens.balanced_problems | length == 0
+        fail_msg: >-
+          {{ ('Answer bisect or balanced (got ' ~ _choice ~ '): nothing was done, run it again')
+             if _choice not in ['bisect', 'balanced'] else cassandra_add_node_tokens.balanced_problems | join(' ') }}
+        quiet: true
+      run_once: true
+      when: _single | bool and _auto == 'true' and _to_place | length > 0
+      vars:
+        _choice: "{{ cassandra_token_choice.user_input | default('') | trim | lower }}"
+
+    - name: Give the new node its token
+      ansible.builtin.set_fact:
+        cassandra_initial_token: "{{ cassandra_add_node_tokens[_kind][inventory_hostname] }}"
+        cassandra_add_node_token_kind: "{{ _kind }}"
+      when:
+        - _single | bool
+        - _auto != 'false'
+        - inventory_hostname in cassandra_add_node_tokens[_kind] | default({})
+      vars:
+        _kind: >-
+          {{ (hostvars[ansible_play_hosts_all[0]].cassandra_token_choice.user_input | default('') | trim | lower)
+             if _auto == 'true' else _auto }}
 
 - name: Add the new nodes, one at a time
   hosts: "{{ cassandra_new_nodes }}"
@@ -228,6 +346,19 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+
+    - name: Say which nodes to move (one token per node, balanced)
+      ansible.builtin.debug:
+        msg:
+          - "The ring is even once {{ _moves | map(attribute='name') | join(', ') }} move, one at a time (the plan shown at the start):"
+          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.move_node -e cassandra_hosts={{ cassandra_hosts | default('cassandra') }}"
+      run_once: true
+      when:
+        - _moves | length > 0
+        - ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_add_node_token_kind', 'defined')
+          | selectattr('cassandra_add_node_token_kind', 'equalto', 'balanced') | list | length > 0
+      vars:
+        _moves: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_add_node_tokens.moves | default([]) }}"
 
 # The nodes that handed ranges over still hold that data until a cleanup: the
 # datacenter's nodes, or only the new nodes' racks when every keyspace has as
