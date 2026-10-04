@@ -239,12 +239,9 @@ def _place(base, spots, new, size, rf, given=None):
     return min(candidates + ([given] if given else []), key=key)
 
 
-def plan_bisect(ring, new, size, rf):
-    """No move: each new node in turn (new: [(name, rack)]) at the middle of the
-    range whose split leaves the smallest largest effective ownership (then the
-    smallest largest primary share, then the lowest position); then the racks
-    of the new nodes ordered over those positions (_place).
-    Returns [(position, name, rack)] of the new nodes."""
+def _greedy_bisect(ring, new, size, rf, key):
+    """Each new node in turn at the middle of the range whose split gives the
+    smallest key(ring after, size, rf), then the lowest position."""
     cur = list(ring)
     placed = []
     for name, rack in new:
@@ -258,15 +255,49 @@ def plan_bisect(ring, new, size, rf):
                 if length < 2:
                     continue
                 cand = (pts[i - 1][0] + length // 2) % size
-                key = _balance_key(cur + [(cand, name, rack)], size, rf) + (cand,)
-                if best is None or key < best[0]:
-                    best = (key, cand)
+                score = (key(cur + [(cand, name, rack)], size, rf), cand)
+                if best is None or score < best[0]:
+                    best = (score, cand)
             if best is None:
                 raise TokenError("no room left in the ring for %s" % name)
             spot = (best[1], name, rack)
         cur.append(spot)
         placed.append(spot)
-    return _place(list(ring), [p for p, dummy, dummy2 in placed], new, size, rf, given=placed)
+    return placed
+
+
+def _largest_first(ring, size, rf):
+    """The effective shares largest first, then the primary ones (_balance_key)."""
+    return _balance_key(ring, size, rf)
+
+
+def _largest_only(ring, size, rf):
+    """Only the largest effective share, then the largest primary one."""
+    own = ownership(ring, size, rf)
+    return (max(e for dummy, e in own.values()), max(p for p, dummy in own.values()))
+
+
+def _ranges_first(ring, size, rf):
+    """The primary shares largest first (the largest range split first, as with one rack)."""
+    return sorted((p for p, dummy in ownership(ring, size, 1).values()), reverse=True)
+
+
+def plan_bisect(ring, new, size, rf):
+    """No move: each new node in turn (new: [(name, rack)]) at the middle of a
+    range, picked greedily three ways (the most even effective shares, largest
+    first, up to 64 nodes; the smallest largest share; the largest range), the racks of the new
+    nodes then ordered over each set of positions (_place); the most even of
+    the three (_balance_key). A greedy plan: not always the best possible.
+    Returns [(position, name, rack)] of the new nodes."""
+    best = None
+    keys = (_largest_first, _largest_only, _ranges_first) if len(ring) + len(new) <= 64 else (_largest_only, _ranges_first)
+    for key in keys:
+        placed = _greedy_bisect(ring, new, size, rf, key)
+        placed = _place(list(ring), [p for p, dummy, dummy2 in placed], new, size, rf, given=placed)
+        score = _balance_key(list(ring) + placed, size, rf)
+        if best is None or score < best[0]:
+            best = (score, placed)
+    return best[1]
 
 
 def _distance(a, b, size):

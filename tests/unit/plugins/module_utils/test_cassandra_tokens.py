@@ -406,9 +406,9 @@ def test_many_new_nodes_slot_by_slot(seed):
 
 # (2 racks alternating can't stay alternating once doubled: each new node sits between two nodes of different racks)
 @pytest.mark.parametrize("n, racks, rf", [(4, ["r1"], 1), (4, ["r1"], 3), (6, ["r1", "r2", "r3"], 3),
-                                          (5, ["r1"], 2), (3, ["r1", "r2", "r3"], 3)])
+                                          (5, ["r1"], 2), (3, ["r1", "r2", "r3"], 3), (5, ["r1", "r2"], 3)])
 def test_bisect_doubling_splits_every_range(n, racks, rf):
-    # a review found 4 -> 8 at 1.56% to 25%: each split must take one of the largest ranges left
+    # reviews found 4 -> 8 at 1.56% to 25%, and 5 -> 10 on 2 racks at 0.30 to 0.40: every range split once
     size = 2 ** 64
     ring = ring_of(balanced_positions(n, size), [racks[i % len(racks)] for i in range(n)])
     new = [("new%d" % i, racks[i % len(racks)]) for i in range(n)]
@@ -433,3 +433,14 @@ def test_many_new_nodes_never_worse_than_alternating(seed):
     free = [p for p, dummy, dummy2 in plan["new"]]
     alt = _alternate(after, free, new)
     assert _balance_key(plan["ring"], size, 3) <= _balance_key(after + alt, size, 3)
+
+
+@pytest.mark.parametrize("n, k, racks, rf", [(3, 6, 1, 2), (3, 5, 2, 3), (5, 5, 2, 3), (4, 4, 1, 3), (6, 3, 3, 3)])
+def test_bisect_not_worse_than_each_greedy(n, k, racks, rf):
+    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
+        _balance_key, _greedy_bisect, _largest_only)
+    size = 2 ** 64
+    ring = ring_of(balanced_positions(n, size), ["r%d" % (i % racks) for i in range(n)])
+    new = rack_order([("x%d" % i, "r%d" % (i % racks)) for i in range(k)])
+    best = _balance_key(ring + plan_bisect(ring, new, size, rf), size, rf)
+    assert best <= _balance_key(ring + _greedy_bisect(ring, new, size, rf, _largest_only), size, rf)
