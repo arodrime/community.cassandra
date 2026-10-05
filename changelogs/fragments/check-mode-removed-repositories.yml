@@ -1,3 +1,3 @@
 ---
 bugfixes:
-  - cassandra_install, cassandra_linux - under ``--check`` with ``cassandra_install_method: packages``, the dnf calls leave out the ``cassandra-<series>`` repositories that ``cassandra_repository`` removes in the real run (one left on a plain directory of files made ``--check`` fail).
+  - "cassandra_install, cassandra_linux - under ``--check`` with ``cassandra_install_method=packages``, the dnf calls leave out the ``cassandra-<series>`` repositories that ``cassandra_repository`` removes in the real run (one left on a plain directory of files made ``--check`` fail)."

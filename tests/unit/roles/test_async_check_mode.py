@@ -27,8 +27,7 @@ def async_tasks(items, inherited=""):
         if "async" in t:
             yield t, cond
         for key in ("block", "rescue", "always"):
-            for found in async_tasks(t.get(key), cond):
-                yield found
+            yield from async_tasks(t.get(key), cond)
 
 
 FILES = sorted(os.path.basename(p) for p in glob.glob(os.path.join(TASKS, "*.yml")))
@@ -44,4 +43,4 @@ def test_async_tasks_are_skipped_in_check_mode(name):
 
 def test_decommission_is_one_of_them():
     with open(os.path.join(TASKS, "action_decommission.yml"), encoding="utf-8") as f:
-        assert [t["name"] for t, _ in async_tasks(yaml.safe_load(f))] == ["Decommission the node"]
+        assert [t["name"] for t, unused in async_tasks(yaml.safe_load(f))] == ["Decommission the node"]
