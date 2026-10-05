@@ -147,12 +147,13 @@
       vars:
         cassandra_service_node_action: decommission
         cassandra_service_node_checks_after: false  # stopped: checked from another node
-        # the nodes before this one are gone (--check: only those an earlier run decommissioned)
+        # the nodes before this one are gone (--check: only those an earlier run removed)
         _gone: >-
-          {{ ansible_play_hosts_all[:ansible_play_hosts_all.index(inventory_hostname)]
-             | map('extract', hostvars) | map(attribute='cassandra_leaving_node') | map(attribute='state')
-             | select('equalto', 'decommissioned') | list | length
-             if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname) }}
+          {%- set before = ansible_play_hosts_all[:ansible_play_hosts_all.index(inventory_hostname)] -%}
+          {{ before | select('in', cassandra_progress_done | default([])
+                                   + before | map('extract', hostvars) | selectattr('cassandra_leaving_node.state', 'equalto', 'decommissioned')
+                                     | map(attribute='inventory_hostname') | list) | list | length
+             if ansible_check_mode else before | length }}
         # this one may be leaving already (an earlier run): its own checks are skipped, UL expected
         _left: >-
           {{ cassandra_leaving_node.state == 'decommissioned'

@@ -68,3 +68,18 @@ def test_progress_file_writers_are_found():
             items = yaml.safe_load(f)
         found += [name for t in all_tasks(items) if "cassandra_progress_file" in str(t.get("ansible.builtin.lineinfile", {}))]
     assert sorted(found) == ["cleanup_batch.yml", "node_operation.yml", "restart_batch.yml"]
+
+
+def test_cleanup_is_followed_only_outside_check_mode():
+    # cleanup_wait.yml reads the jobs the skipped async task did not start
+    with open(os.path.join(TASKS, "cleanup_batch.yml"), encoding="utf-8") as f:
+        follow = next(t for t in all_tasks(yaml.safe_load(f)) if t.get("name") == "Follow the cleanups")
+    assert "not ansible_check_mode" in conditions(follow)
+
+
+@pytest.mark.parametrize("playbook", ["add_node.yml", "move_node.yml"])
+def test_playbook_cleanups_skipped_in_check_mode(playbook):
+    with open(os.path.join(TASKS, "..", "..", "..", "playbooks", playbook), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    task = next(t for p in plays for t in all_tasks(p.get("tasks")) if t.get("name") == "Clean up, by batches")
+    assert "not ansible_check_mode" in conditions(task)

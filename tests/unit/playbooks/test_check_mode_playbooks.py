@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # decommission_node, add_node, add_datacenter: the nodes before this one are
-# done, except under --check (none was removed or added: the health checks of
+# done, except under --check (only what an earlier run did: the health checks of
 # the next node expect the ring as it is). decommission_node reads the replication
 # under --check too, and a cqlsh refusal shows its error.
 
@@ -22,13 +22,15 @@ except ImportError:
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "decommission_node.yml")
 
 
-def gone(check_mode, host, states=("normal", "normal")):
+def gone(check_mode, host, states=("normal", "normal"), done=None):
     with open(PLAYBOOK, encoding="utf-8") as f:
         plays = yaml.safe_load(f)
     task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Remove this node")
     variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": host,
-                 "hostvars": {"n2": {"cassandra_leaving_node": {"state": states[0]}},
-                              "n5": {"cassandra_leaving_node": {"state": states[1]}}}}
+                 "hostvars": {"n2": {"inventory_hostname": "n2", "cassandra_leaving_node": {"state": states[0]}},
+                              "n5": {"inventory_hostname": "n5", "cassandra_leaving_node": {"state": states[1]}}}}
+    if done is not None:
+        variables["cassandra_progress_done"] = done
     return int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_gone"])))
 
 
@@ -44,6 +46,8 @@ def test_under_check_the_ones_an_earlier_run_removed_are_gone():
     # --check -e cassandra_rolling_resume=true after a run that removed n2
     assert gone(True, "n5", states=("decommissioned", "normal")) == 1
     assert gone(True, "n5", states=("leaving", "normal")) == 0
+    assert gone(True, "n5", done=["n2"]) == 1  # in the progress file, whatever nodetool said
+    assert gone(True, "n2", states=("decommissioned", "normal")) == 0  # not itself
 
 
 def add_node_pending(check_mode, host):
