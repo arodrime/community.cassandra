@@ -112,8 +112,8 @@ COMMON = {
          "#-Dcassandra.expiration_date_overflow_policy=REJECT" + append_list("cassandra_jvm_extra_options")),
     ],
     "cassandra-rackdc.properties": [
-        ("dc=dc1", "dc={{ cassandra_dc }}"),
-        ("rack=rack1", "rack={{ cassandra_rack }}"),
+        ("dc=dc1", "dc={{ cassandra_rackdc_dc }}"),
+        ("rack=rack1", "rack={{ cassandra_rackdc_rack }}"),
         ("# prefer_local=true", "{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true"),
     ],
     "logback.xml": [

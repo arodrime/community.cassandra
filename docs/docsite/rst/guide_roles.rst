@@ -564,6 +564,14 @@ JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented 
 of the run, start with the differences between nodes: each setting that differs, with its values and the nodes, DC or
 rack that have them. A node's own address or hostname is written as the fact that gives it, not as a difference.
 
+Each node's ``cassandra_dc`` and ``cassandra_rack`` are the ring's. Of Cassandra's snitches, only
+``GossipingPropertyFileSnitch`` reads them from ``cassandra-rackdc.properties``: under another snitch (e.g.
+``SimpleSnitch``, whose ring says ``datacenter1`` and ``rack1``) the file's ``dc=`` and ``rack=`` lines may say
+something else, and the import keeps them as they are with ``cassandra_rackdc_dc`` and ``cassandra_rackdc_rack``
+(remove them before switching to ``GossipingPropertyFileSnitch``: ``cassandra_config`` refuses them then). Comment
+lines that differ from the role's templates, such as the stock comments of the release a file came from, are listed
+apart: they set nothing.
+
 Medusa's ``fqdn`` is the node's folder in the backups: a new one means full backups. When every node has
 ``<short hostname>.<domain>``, the same domain everywhere, the import keeps ``cassandra_medusa_fqdn_domain`` (new
 nodes get the same form); otherwise each node keeps its value in ``host_vars``. The ``cassandra_medusa`` role refuses to

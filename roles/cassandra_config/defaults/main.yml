@@ -270,6 +270,12 @@ cassandra_jvm17_extra_options: []
 cassandra_dc: dc1
 cassandra_rack: rack1
 cassandra_prefer_local: false
+# The file's dc and rack lines. Of Cassandra's snitches only GossipingPropertyFileSnitch
+# reads them (then they must be cassandra_dc and cassandra_rack); under another
+# snitch they may differ from the node's dc and rack (import_cluster keeps the
+# node's own lines then)
+cassandra_rackdc_dc: "{{ cassandra_dc }}"
+cassandra_rackdc_rack: "{{ cassandra_rack }}"
 
 # ---- logback.xml ----
 cassandra_log_level: INFO  # root logger

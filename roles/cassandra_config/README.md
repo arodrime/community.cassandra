@@ -45,9 +45,10 @@ may hold keystore passwords.
 
 On a node that already joined a cluster, the role refuses to change
 `cluster_name`, `num_tokens`, `partitioner`, `endpoint_snitch`, `dc` or
-`rack`: a new cluster name or partitioner stops the node from starting, the
-others move data ownership without streaming it. (`initial_token` is read at
-a node's first start only: a joined node keeps its tokens whatever it says;
+`rack` (the file's `dc` and `rack` only under a snitch that reads them): a
+new cluster name or partitioner stops the node from starting, the others
+move data ownership without streaming it. (`initial_token` is read at a
+node's first start only: a joined node keeps its tokens whatever it says;
 `move_node` moves a single-token node.) The
 error lists the live and new values: fix the inventory to match the node, or
 set `cassandra_config_force_identity_change: true` while following a
@@ -146,7 +147,12 @@ Role Variables
   `cassandra_client_encryption_optional`, `cassandra_client_truststore` /
   `_password`. Settings commented out in stock stay commented until set.
 * `cassandra-rackdc.properties`: `cassandra_dc`, `cassandra_rack`,
-  `cassandra_prefer_local`.
+  `cassandra_prefer_local`. Of Cassandra's snitches, only
+  `GossipingPropertyFileSnitch` reads its `dc=` and `rack=`; under another one,
+  `cassandra_rackdc_dc` and `cassandra_rackdc_rack` (default: `cassandra_dc`,
+  `cassandra_rack`) keep lines that differ from the node's dc and rack. The
+  role refuses them under a snitch that reads them: remove them before
+  switching to `GossipingPropertyFileSnitch`.
 * `logback.xml`: `cassandra_log_level` (root logger),
   `cassandra_log_level_cassandra` (`org.apache.cassandra` logger),
   `cassandra_debug_log_enabled`, `cassandra_log_console` (default `false`:
