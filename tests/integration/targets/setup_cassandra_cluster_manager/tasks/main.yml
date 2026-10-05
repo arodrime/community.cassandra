@@ -168,7 +168,7 @@
   delay: 5
 
 - name: Add nodes to the Cassandra Cluster
-  ansible.builtin.shell: "sudo -E -u cassandra bash -c '{{ ccm_cmd }} add {{ item.node }} -i {{ item.ip }} -j {{ item.port }} -b --data-center={{ item.dc }} --remote-debug-port {{ item.debug_port }} {{ item.args }}'"
+  ansible.builtin.shell: "sudo -E -u cassandra bash -c '{{ ccm_cmd }} add {{ item.node }} -i {{ item.ip }} -j {{ item.port }} -b --data-center={{ item.dc }} --remote-debug-port {{ item.debug_port }} --token={{ item.token }} {{ item.args }}'"
   become_user: cassandra
   args:
     chdir: /home/cassandra
