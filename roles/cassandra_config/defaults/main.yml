@@ -75,6 +75,8 @@ cassandra_seed_provider_class_name: "org.apache.cassandra.locator.SimpleSeedProv
 # comma-separated string) of addresses, "host" or "host:port". A new node
 # joining an existing cluster must not be in this list (seeds don't bootstrap).
 cassandra_seeds: "127.0.0.1:7000"
+# A running node gets a changed seed list live (nodetool reloadseeds), no restart
+cassandra_config_reload_seeds: true
 cassandra_concurrent_reads: 32
 cassandra_concurrent_writes: 32
 cassandra_concurrent_counter_writes: 32
@@ -242,6 +244,12 @@ cassandra_heap_dump_dir: "$CASSANDRA_LOG_DIR"
 cassandra_local_jmx: true  # false = remote JMX, with authentication
 cassandra_jmx_port: 7199
 cassandra_jmx_rmi_hostname: ""
+# JMX login for the seed reload, same variables as cassandra_service: only with
+# JMX authentication; prefer the password file (an inline password is on
+# nodetool's command line while it runs)
+cassandra_jmx_username: ""
+cassandra_jmx_password: ""
+cassandra_jmx_password_file: ""
 
 # ---- jvm8/jvm11/jvm17-server.options ----
 # Each cassandra_jvm_<option> applies to every jvm<N>-server.options file;

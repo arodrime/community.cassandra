@@ -1,0 +1,33 @@
+DOCUMENTATION:
+  name: cassandra_seed_list
+  author: Alain Rodriguez (@arodrime)
+  version_added: 2.1.0
+  short_description: Split a Cassandra seed list into hosts and ports
+  description:
+    - Takes C(cassandra_seeds) as a list, or as the comma-separated string C(cassandra.yaml) takes,
+      and returns one entry per seed with its host and its port.
+    - "Seeds are C(host), C(host:port), C([ipv6]:port) or a bare IPv6 address."
+  options:
+    _input:
+      description: The seed list.
+      type: raw
+      required: true
+
+EXAMPLES: |
+  - name: Split the seeds
+    ansible.builtin.debug:
+      msg: "{{ '10.100.100.1:7000, fe80::1' | community.cassandra.cassandra_seed_list }}"
+    # => [{"host": "10.100.100.1", "port": 7000}, {"host": "fe80::1", "port": null}]
+
+RETURN:
+  _value:
+    description: One entry per seed, empty entries left out.
+    type: list
+    elements: dict
+    contains:
+      host:
+        description: The address or name in lower case, without brackets.
+        type: str
+      port:
+        description: The port given with the seed, V(null) when there is none.
+        type: int

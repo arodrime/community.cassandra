@@ -8,6 +8,11 @@ cassandra_service_state: started
 # nodes in the playbook (serial: 1) when restarting several.
 cassandra_service_restart_on_change: false
 
+# A new node listed in cassandra_seeds is refused when the cluster already runs
+# (another seed answers, or a host of the run linked to it by the seed lists
+# started before): seeds don't bootstrap, it would join without its data.
+cassandra_service_allow_new_seed: false
+
 # The account the Cassandra service runs as and its group, same variables as
 # cassandra_config (the deb/rpm packages create cassandra; this role creates
 # neither)

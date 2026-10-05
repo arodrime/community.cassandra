@@ -1,0 +1,152 @@
+---
+# A node that never started (no system keyspace, its unit not running) and is
+# listed in cassandra_seeds is refused when the cluster already exists:
+# another seed answers on its storage port, or a host of the run that had
+# started before is linked to it by the seed lists (same cluster name).
+# Seeds started for the first time by this same run (a cluster being
+# created, e.g. with serial: 1) don't count.
+- name: Gather the addresses of this node
+  ansible.builtin.setup:
+    gather_subset: [network]
+  when: ansible_facts['all_ipv4_addresses'] is not defined
+
+- name: Look for the system keyspace of a node that already started
+  ansible.builtin.stat:
+    path: "{{ item }}/system"
+    follow: true
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: >-
+    {{ ([cassandra_data_file_directories | default([cassandra_data_dir | default('/var/lib/cassandra/data')])] | flatten
+        + [(cassandra_extra_settings | default({})).local_system_data_file_directory | default('', true) | string])
+       | select | map('regex_replace', '(?<=.)/+$', '') | unique }}
+  register: cassandra_service_system_dirs
+  failed_when: false  # not found (e.g. not a directory)
+
+- name: Tell whether this node is new
+  ansible.builtin.set_fact:
+    # new in this run: kept when a later play of the run looks at it again
+    _cassandra_service_new_node: "{{ _new | bool or _cassandra_service_new_node | default(false) | bool }}"
+    # a custom seed provider may not read cassandra_seeds; with auto_bootstrap
+    # false (e.g. a new datacenter, rebuilt after) no node bootstraps, seed or not
+    _cassandra_service_check_seed: >-
+      {{ _new | bool
+         and cassandra_seed_provider_class_name | default('org.apache.cassandra.locator.SimpleSeedProvider')
+             == 'org.apache.cassandra.locator.SimpleSeedProvider'
+         and (cassandra_extra_settings | default({})).auto_bootstrap | default(true) | bool }}
+    # its names and addresses, as other hosts of the run may find them in cassandra_seeds
+    _cassandra_service_names: "{{ _names }}"
+    _cassandra_service_seed_hosts: >-
+      {{ cassandra_seeds | default([]) | community.cassandra.cassandra_seed_list | map(attribute='host')
+         | reject('in', ['localhost', '127.0.0.1', '::1']) | list }}
+    _cassandra_service_cluster: "{{ cassandra_cluster_name | default('') }}"
+  vars:
+    _status: "{{ cassandra_service_before.status | default({}) }}"
+    # a unit left "active (exited)" by the init script has no JVM: not running;
+    # cassandra_config, when it ran before, also looked at the live cassandra.yaml
+    _new: >-
+      {{ not (_status.ActiveState | default('') == 'active' and _status.MainPID | default(0) | int > 0)
+         and cassandra_service_system_dirs.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list | length == 0
+         and not _cassandra_config_initialized | default(false) | bool }}
+    _names: >-
+      {{ ([inventory_hostname, ansible_host | default(''), cassandra_listen_address | default(''),
+           (cassandra_extra_settings | default({})).broadcast_address | default(''),
+           ansible_facts['fqdn'] | default(''), ansible_facts['hostname'] | default('')]
+          + ansible_facts['all_ipv4_addresses'] | default([]) + ansible_facts['all_ipv6_addresses'] | default([]))
+         | map('string') | map('lower') | reject('in', ['', 'localhost', '127.0.0.1', '::1']) | unique | list }}
+
+- name: Find this node in the seed list
+  when: _cassandra_service_check_seed | bool
+  vars:
+    _mine: "{{ _cassandra_service_names + ['localhost', '127.0.0.1', '::1'] }}"
+    _seeds: "{{ cassandra_seeds | default([]) | community.cassandra.cassandra_seed_list }}"
+  block:
+    # As Cassandra does: a name or another spelling of an address of this node is this node
+    - name: Resolve the seeds on this node
+      ansible.builtin.command:
+        argv: [getent, ahosts, "{{ item.host }}"]
+      loop: "{{ _seeds }}"
+      loop_control:
+        label: "{{ item.host }}"
+      register: cassandra_service_seed_ips
+      changed_when: false
+      failed_when: false  # not resolved: compared by name only
+      check_mode: false  # read only
+
+    - name: Tell whether this node is a seed
+      ansible.builtin.set_fact:
+        _cassandra_service_is_seed: "{{ _seeds | selectattr('host', 'in', _me) | list | length > 0 }}"
+        _cassandra_service_other_seeds: "{{ _seeds | rejectattr('host', 'in', _me) | list }}"
+      vars:
+        # getent ahosts lines: "<address> STREAM <name>"
+        _me: >-
+          {{ _mine + cassandra_service_seed_ips.results | selectattr('stdout', 'defined')
+             | selectattr('stdout', 'search', '^(' ~ (_mine | map('regex_escape') | join('|')) ~ ') ', multiline=True, ignorecase=True)
+             | map(attribute='item.host') | list }}
+
+# The port cassandra.yaml gets: the seed's own, else storage_port (internode
+# TLS uses it too since 4.0). A seed this node cannot reach counts as down.
+- name: Look for other seeds already up
+  ansible.builtin.wait_for:
+    host: "{{ item.host }}"
+    port: "{{ item.port or cassandra_storage_port | default(7000) }}"
+    timeout: 3
+    connect_timeout: 3
+  loop: "{{ _cassandra_service_other_seeds }}"
+  loop_control:
+    label: "{{ item.host }}"
+  register: cassandra_service_seeds_up
+  failed_when: false  # a seed that answers returns its state, one that does not a msg
+  check_mode: false  # read only
+  when:
+    - _cassandra_service_check_seed | bool
+    - _cassandra_service_is_seed | bool
+
+- name: Refuse to join a running cluster as a seed
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is a new node listed in cassandra_seeds, but the cluster already runs
+      ({{ (_answering + _started | map('regex_replace', '$', ' started before') | list) | join(', ') }}).
+      Seeds don't bootstrap: it would join the cluster without its data.
+      Remove it from cassandra_seeds on this node, start it, then make it a seed on every node once it has joined.
+      If this cluster holds no data yet (e.g. an earlier run started its first seeds), set
+      cassandra_service_allow_new_seed: true for this run.
+  vars:
+    # the hosts this run (all its plays) looked at
+    _hosts: "{{ groups['all'] | map('extract', hostvars) | selectattr('_cassandra_service_new_node', 'defined') | list }}"
+    # the seeds this run started for the first time (a non-seed that answers joined a running cluster)
+    _new_now: >-
+      {{ _hosts | selectattr('_cassandra_service_new_node') | selectattr('_cassandra_service_is_seed', 'defined')
+         | selectattr('_cassandra_service_is_seed') | map(attribute='_cassandra_service_names') | flatten }}
+    # in this node's seed list, by name or by an address the name resolves to
+    _new_seeds: >-
+      {{ _new_now + cassandra_service_seed_ips.results | default([]) | selectattr('stdout', 'defined')
+         | selectattr('stdout', 'search', '^(' ~ (_new_now | map('regex_escape') | join('|')) ~ ') ', multiline=True, ignorecase=True)
+         | map(attribute='item.host') | list }}
+    _answering: >-
+      {{ cassandra_service_seeds_up.results | default([]) | selectattr('state', 'defined')
+         | map(attribute='item.host') | reject('in', _new_seeds) | list }}
+    # hosts that had started before this run, in this cluster: one is in this node's
+    # seed list (by name or resolved address), or this node is in its seed list
+    _before: >-
+      {{ _hosts | rejectattr('_cassandra_service_new_node')
+         | selectattr('_cassandra_service_cluster', 'equalto', _cassandra_service_cluster) | list }}
+    _my_seeds: >-
+      {{ _cassandra_service_other_seeds | map(attribute='host') | list
+         + cassandra_service_seed_ips.results | default([]) | map(attribute='stdout', default='')
+           | map('regex_findall', '^([^ ]+) ', multiline=True) | flatten }}
+    _in_mine: >-
+      {{ _before | map(attribute='inventory_hostname')
+         | zip(_before | map(attribute='_cassandra_service_names') | map('intersect', _my_seeds) | map('length'))
+         | rejectattr('1', 'equalto', 0) | map(attribute='0') | list }}
+    _in_theirs: >-
+      {{ _before | map(attribute='inventory_hostname')
+         | zip(_before | map(attribute='_cassandra_service_seed_hosts', default=[]) | map('intersect', _cassandra_service_names)
+               | map('length'))
+         | rejectattr('1', 'equalto', 0) | map(attribute='0') | list }}
+    _started: "{{ (_in_mine + _in_theirs) | unique }}"
+  when:
+    - _cassandra_service_check_seed | bool
+    - _cassandra_service_is_seed | bool
+    - (_answering + _started) | length > 0

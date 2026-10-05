@@ -1,0 +1,20 @@
+---
+- name: Start a new node listed as a seed, check mode {{ check }}
+  block:
+    - name: Forget an earlier error
+      ansible.builtin.set_fact:
+        _refusal: ""
+
+    - name: Start it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        apply:
+          check_mode: "{{ check }}"
+  rescue:
+    - name: Keep the error
+      ansible.builtin.set_fact:
+        _refusal: "{{ ansible_failed_result.msg }}"
+
+- name: It was refused, naming the other seed
+  ansible.builtin.assert:
+    that: _refusal is search('is a new node listed in cassandra_seeds, but the cluster already runs [(]127.0.0.2[)]')

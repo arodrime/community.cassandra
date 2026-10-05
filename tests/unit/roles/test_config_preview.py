@@ -483,8 +483,9 @@ def test_installed_series(installed, series, ok):
     ({"cassandra.service": {"state": "stopped"}}, False), ({}, False),
 ])
 def test_restart_warning_on_a_running_node(services, warn):
-    when = task("Warn that a restart is needed")["when"][1]
-    assert render("{{ %s }}" % when, ansible_facts={"services": services}) is warn
+    running = initialized_facts(None, isdir=lambda d: False, services=services)["_cassandra_config_running"]
+    assert running is warn
+    assert "_cassandra_config_running | bool" in task("Warn that a restart is needed")["when"]
 
 
 SEED = task("Seed the alternative conf dir from the one in use")["ansible.builtin.command"]["argv"][2]

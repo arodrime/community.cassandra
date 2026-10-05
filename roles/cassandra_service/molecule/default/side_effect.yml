@@ -1,0 +1,53 @@
+---
+# Cassandra runs: a new seed list is applied live, without a restart
+- name: Change the seeds of the running node
+  hosts: all
+  vars:
+    cassandra_cluster_name: "Molecule Cluster"
+    cassandra_heap_size: 256M
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_dc: dc_molecule
+    cassandra_config_confirm: false
+  tasks:
+    - name: Add a seed
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_seeds: ["127.0.0.1:7000", "10.100.100.9:7000"]
+
+    - name: Reloaded live
+      ansible.builtin.assert:
+        that:
+          - cassandra_config_applied is changed
+          - cassandra_config_seeds_reload is changed
+
+    - name: The same list again
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_seeds: ["127.0.0.1:7000", "10.100.100.9:7000"]
+
+    - name: Nothing to change
+      ansible.builtin.assert:
+        that:
+          - cassandra_config_applied is not changed
+          - cassandra_config_seeds_reload is not changed
+
+    # As a run stopped between the file and the reload leaves it
+    - name: Write another list without reloading it
+      ansible.builtin.replace:
+        path: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}/cassandra.yaml"
+        regexp: '10[.]100[.]100[.]9:7000'
+        replace: '10.100.100.8:7000'
+
+    - name: Run with that list
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+      vars:
+        cassandra_seeds: ["127.0.0.1:7000", "10.100.100.8:7000"]
+
+    - name: The file was right, the live list is reloaded anyway
+      ansible.builtin.assert:
+        that:
+          - cassandra_config_applied is not changed
+          - cassandra_config_seeds_reload is changed

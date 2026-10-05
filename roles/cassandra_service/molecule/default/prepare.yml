@@ -19,3 +19,60 @@
         rm -rf /var/lib/cassandra/*
         true
       changed_when: false
+
+# A node that never started, listed in cassandra_seeds while another seed
+# (a listener on 127.0.0.2) answers
+- name: Refuse a new seed in a running cluster
+  hosts: all
+  vars:
+    cassandra_seeds: "127.0.0.1:7000,127.0.0.2:7000"
+  tasks:
+    - name: Answer as another seed
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import socket, time
+            s = socket.socket()
+            s.bind(("127.0.0.2", 7000))
+            s.listen(5)
+            s.settimeout(1)
+            end = time.time() + 300
+            while time.time() < end:
+                try:
+                    s.accept()[0].close()
+                except socket.timeout:
+                    pass
+          - molecule-other-seed
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for it
+      ansible.builtin.wait_for:
+        host: 127.0.0.2
+        port: 7000
+        timeout: 30
+
+    - name: Look for the unit before
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cassandra.service
+      register: unit_before
+
+    - name: Run the role, under --check then for real
+      ansible.builtin.include_tasks: refused.yml
+      loop: [true, false]
+      loop_control:
+        loop_var: check
+
+    - name: Nothing was written
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cassandra.service
+      register: unit_after
+      failed_when: unit_after.stat.exists != unit_before.stat.exists or unit_after.stat.checksum | default('') != unit_before.stat.checksum | default('')
+
+    - name: Stop the other seed
+      ansible.builtin.command: pkill -f molecule-other-seed
+      changed_when: false
+      failed_when: false  # already gone

@@ -41,6 +41,19 @@ deletes the node's data).
 `--check` shows the diff and runs the checks below, and changes nothing. The role never restarts
 Cassandra: when it changed files of a running node, it says so.
 
+The seed list is the exception: on a running node the role applies
+`cassandra.yaml`'s seeds live (`nodetool reloadseeds`), on every run, so a
+run stopped after writing the file still gets them applied; it reports a
+change only when the node's live list changes. That needs JMX access: with
+JMX authentication, set `cassandra_jmx_username` and
+`cassandra_jmx_password_file` (or `cassandra_jmx_password`), the same
+variables as `cassandra_service`. When the reload fails (no JMX access, a
+`cassandra.yaml` the running version cannot read), the role says so and
+the list applies at the next restart. A list Cassandra does not take live
+(e.g. only the node itself: it keeps its previous list) keeps the restart
+warning (`--check` assumes the reload would work). `cassandra_config_reload_seeds: false` leaves the seeds to the
+next restart.
+
 Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are
 written owned by root, group `cassandra_group`, mode `0640`
@@ -136,6 +149,11 @@ Role Variables
   written to `/etc/cassandra/jmxremote.password` and `.access`, mode `0400`
   owned by `cassandra_user`. Keep the passwords in a vault. Without users,
   remote JMX needs a `jmxremote.password` of your own, as in stock.
+* `cassandra_config_reload_seeds` (default `true`), `cassandra_jmx_username`,
+  `cassandra_jmx_password_file`, `cassandra_jmx_password`: the live seed
+  reload and its JMX login, see above. The `jmxremote.password` written from
+  `cassandra_jmx_users` works as the password file; an inline password is
+  on nodetool's command line while it runs.
 * `cassandra_config_backup` (default `true`): keep a timestamped copy of
   each file the role replaces, next to it, to roll back.
 * `cassandra_extra_settings`: settings no variable covers, as a dict written

@@ -22,6 +22,13 @@ argument_specs:
         default: false
         description:
         - Restart a running node when the unit changes. Otherwise the change applies at the next restart.
+      cassandra_service_allow_new_seed:
+        type: bool
+        default: false
+        description:
+        - 'Start a node that never started even though it is listed in C(cassandra_seeds) and the cluster already runs
+          (another seed answers, or another host of the run with the same C(cassandra_cluster_name) started before).'
+        - 'By default it is refused: seeds don''t bootstrap, it would join the running cluster without its data.'
       cassandra_user:
         type: str
         default: cassandra

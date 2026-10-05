@@ -258,6 +258,7 @@
     - name: Tell whether this node was already initialized
       ansible.builtin.set_fact:
         _cassandra_config_initialized: "{{ _why | length > 0 }}"
+        _cassandra_config_running: "{{ _running | bool }}"
         _cassandra_config_initialized_why: "{{ _why | join(', ') }}"
         _cassandra_config_reset: >-
           {{ '' if not _found else "ONLY if this node never joined the real cluster (e.g. started once with the stock config),
@@ -559,16 +560,85 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Warn that a restart is needed
-      ansible.builtin.debug:
-        msg: >-
-          {{ inventory_hostname }}: {{ _cassandra_config_changes | join(', ') }} changed while Cassandra is running;
-          the new settings apply at the next restart (not done by this role).
-      when:
-        - cassandra_config_applied.changed
-        - (ansible_facts.services['cassandra.service'] | default(ansible_facts.services['cassandra'] | default({}))).state
-          | default('') == 'running'
-
 - name: JMX users
   ansible.builtin.include_tasks: access.yml
   when: cassandra_config_pkg_conf.stat.exists
+
+# After the JMX files: the reload may log in with the password file written there
+- name: Apply the seed list live, say what needs a restart
+  when: cassandra_config_pkg_conf.stat.exists
+  vars:
+    # The password, if given inline, is on nodetool's command line: no_log below
+    _nodetool: >-
+      {{ ['nodetool', '-p', cassandra_jmx_port | string]
+         + ((['-u', cassandra_jmx_username]
+             + (['-pwf', cassandra_jmx_password_file] if cassandra_jmx_password_file
+                else (['-pw', cassandra_jmx_password] if cassandra_jmx_password else [])))
+            if cassandra_jmx_username else []) }}
+    _hide: "{{ (cassandra_jmx_username and cassandra_jmx_password and not cassandra_jmx_password_file) | bool }}"
+    # the remote seeds nodetool lists: "... excluding the current node's IP: /10.0.0.1:7000 /10.0.0.2:7000"
+    _before: "{{ (cassandra_config_seeds_live.stdout | default('') | regex_findall(\"node's IP: (.*)\") | first | default('')).split() }}"
+    _after: "{{ (cassandra_config_seeds_reload.stdout | default('') | regex_findall(\"node's IP: (.*)\") | first | default('')).split() }}"
+    _reloaded: >-
+      {{ cassandra_config_seeds_reload.rc | default(1) == 0
+         and cassandra_config_seeds_reload.stdout | default('') is search('Updated seed node IP list|Seed node list does not contain') }}
+  block:
+    # Seeds are re-read live (nodetool reloadseeds), no restart. Reloaded
+    # even when the file was already right (a run stopped before the reload):
+    # changed only when the node's live list moves. Not cassandra_reload: its
+    # output masks the JMX login wherever it appears (e.g. in a seed's name).
+    - name: Reload the seed list on the running node
+      when:
+        - cassandra_config_reload_seeds | bool
+        - _cassandra_config_running | bool
+        - not ansible_check_mode
+      block:
+        - name: Read the live seed list
+          ansible.builtin.command:
+            argv: "{{ _nodetool + ['getseeds'] }}"
+          register: cassandra_config_seeds_live
+          changed_when: false
+          failed_when: false  # said below
+          no_log: "{{ _hide }}"
+
+        # nodetool says "Failed to reload" (exit code 0) when the node cannot read the new list
+        - name: Reload the seed list
+          ansible.builtin.command:
+            argv: "{{ _nodetool + ['reloadseeds'] }}"
+          register: cassandra_config_seeds_reload
+          changed_when: _reloaded | bool and _after | sort != _before | sort
+          failed_when: false  # said below
+          no_log: "{{ _hide }}"
+          when: cassandra_config_seeds_live.rc == 0
+
+        # The files are written: the new list applies at the next restart anyway
+        - name: Say the seed list could not be reloaded
+          ansible.builtin.debug:
+            msg: >-
+              WARNING: {{ inventory_hostname }}: could not reload the seed list live
+              ({{ _failed.stderr_lines | default([]) | last | default(_failed.stdout | default('') | trim, true) }});
+              it applies at the next restart. With JMX authentication, set cassandra_jmx_username and
+              cassandra_jmx_password_file; cassandra_config_reload_seeds: false skips the reload.
+          vars:
+            _failed: "{{ cassandra_config_seeds_reload if cassandra_config_seeds_live.rc == 0 else cassandra_config_seeds_live }}"
+          when: not _reloaded | bool
+
+    - name: Warn that a restart is needed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ _restart | join(', ') }} changed while Cassandra is running;
+          the new settings apply at the next restart (not done by this role).
+      vars:
+        # a cassandra.yaml diff on the seeds line only, applied by the reload above
+        # (not a list Cassandra keeps the old one for, e.g. only this node)
+        _yaml_diff: >-
+          {{ (cassandra_config_preview.results | selectattr('cassandra_config_file', 'equalto', 'cassandra.yaml')
+              | map(attribute='stdout_lines') | first | default([]))[2:] | select('match', '[-+]') | list }}
+        _seeds_only: >-
+          {{ cassandra_config_reload_seeds | bool and (ansible_check_mode or cassandra_config_seeds_reload is changed)
+             and _yaml_diff | length > 0 and _yaml_diff | reject('match', '[-+] *- seeds:') | list | length == 0 }}
+        _restart: "{{ _cassandra_config_changes | reject('in', ['cassandra.yaml'] if _seeds_only | bool else []) | list }}"
+      when:
+        - cassandra_config_applied.changed
+        - _cassandra_config_running | bool
+        - _restart | length > 0

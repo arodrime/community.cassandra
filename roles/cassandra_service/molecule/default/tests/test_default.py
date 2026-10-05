@@ -49,6 +49,11 @@ def test_cluster_name_applied(host):
     assert "Name: Molecule Cluster" in host.run("nodetool describecluster").stdout
 
 
+def test_seeds_reloaded_live(host):
+    # set by side_effect.yml (molecule test): the last seed list, applied without a restart
+    assert host.run("nodetool getseeds").stdout.split(": ")[-1].split() == ["/10.100.100.8:7000"]
+
+
 def test_restart_policy_is_no(host):
     unit = host.file("/etc/systemd/system/cassandra.service").content_string
 

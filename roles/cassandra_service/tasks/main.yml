@@ -23,6 +23,14 @@
     quiet: true
   when: cassandra_service_drain_on_stop
 
+# Seeds don't bootstrap: a new node listed in cassandra_seeds would join an
+# existing cluster without its data. Read only, also under --check.
+- name: Refuse a new seed node in a running cluster
+  ansible.builtin.include_tasks: new_seed.yml
+  when:
+    - cassandra_service_state in ['started', 'restarted']
+    - not cassandra_service_allow_new_seed | bool
+
 # Same name as the package's init script: systemd prefers a native unit
 # over the SysV-generated one, so service/systemctl both use this.
 - name: Install the cassandra systemd unit

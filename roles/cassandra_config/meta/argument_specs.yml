@@ -256,6 +256,13 @@ argument_specs:
         description:
         - 'Seed nodes: a list, or a comma separated string, of addresses (C(host) or C(host:port)).'
         - Same list on every node of the cluster. A new node joining an existing cluster must not be in it.
+      cassandra_config_reload_seeds:
+        type: bool
+        default: true
+        description:
+        - On a running node, apply the seed list of C(cassandra.yaml) live (C(nodetool reloadseeds)), no restart.
+        - Also when the file was already right (a run stopped before the reload); reported as changed only when the
+          node's live list changes. A reload that fails is reported, and the list applies at the next restart.
       cassandra_concurrent_reads:
         type: int
         default: 32
@@ -1001,6 +1008,23 @@ argument_specs:
         default: ''
         description:
         - C(java.rmi.server.hostname) for remote JMX. Left commented out when empty.
+      cassandra_jmx_username:
+        type: str
+        default: ''
+        description:
+        - JMX user for the seed reload, with JMX authentication only. Same variable as in the cassandra_service role.
+      cassandra_jmx_password:
+        type: str
+        default: ''
+        no_log: true
+        description:
+        - Password of O(cassandra_jmx_username), on the C(nodetool) command line while it runs. Prefer
+          O(cassandra_jmx_password_file).
+      cassandra_jmx_password_file:
+        type: str
+        default: ''
+        description:
+        - 'File on the node with the password of O(cassandra_jmx_username), in the C(jmxremote.password) format.'
       cassandra_jvm_gc:
         type: str
         choices:

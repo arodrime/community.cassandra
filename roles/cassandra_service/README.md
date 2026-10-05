@@ -24,6 +24,7 @@ Role Variables
 * `cassandra_service_restart_on_change`: restart a running node when the
   unit changes. Default `false`: restarting is a cluster operation, do it
   node by node yourself.
+* `cassandra_service_allow_new_seed`: default `false`, see "New seeds" below.
 * `cassandra_user` / `cassandra_group`: the account and group the service
   runs as, default `cassandra` (created by the packages). The same
   variables as in `cassandra_config`, which gives them the directories and
@@ -85,6 +86,38 @@ must join one at a time, and a new cluster starts its seeds first.
 
     ansible-playbook site.yml --limit dc1-node1,dc2-node1   # the seeds
     ansible-playbook site.yml                               # the others
+
+New seeds
+---------
+
+Seeds don't bootstrap: a node that never started and is listed in
+`cassandra_seeds` takes its token ranges without streaming their data. So
+before starting such a node (no `system` keyspace in its data directories,
+its unit not running, not found initialized by `cassandra_config`), the
+role looks for the cluster: it probes the other seeds (their storage port,
+or the one given as `host:port`), and looks for hosts of the run, with the
+same `cassandra_cluster_name`, that had started before and are linked to
+it by the seed lists (one is in its list, or it is in theirs). If it finds
+one, it refuses to start the node: add the node as a non-seed, then put it
+in `cassandra_seeds` once it has joined. Seeds started for the first time
+by the same run (a cluster being created) don't count. The node finds
+itself in the list by its inventory name, `ansible_host`,
+`cassandra_listen_address`, the `broadcast_address` of
+`cassandra_extra_settings`, host name, FQDN or addresses, and by resolving
+the seeds on the node (`getent ahosts`); a seed it cannot reach counts as
+down. A node with `auto_bootstrap: false` (in `cassandra_extra_settings`,
+e.g. a new datacenter to `nodetool rebuild`), or with another seed
+provider than `SimpleSeedProvider`, is not checked.
+`cassandra_service_allow_new_seed: true` skips the check, e.g. to finish
+creating a cluster an earlier run started.
+
+The check reads these `cassandra_config` variables: `cassandra_seeds`,
+`cassandra_data_file_directories` (else `cassandra_data_dir`, else
+`/var/lib/cassandra/data`), `cassandra_storage_port`,
+`cassandra_cluster_name`, `cassandra_seed_provider_class_name`,
+`cassandra_listen_address` and `cassandra_extra_settings`. Set them in the
+inventory when this role runs without `cassandra_config`, or a stopped
+node whose data is elsewhere is taken for a new one.
 
 Example Playbook
 ----------------
