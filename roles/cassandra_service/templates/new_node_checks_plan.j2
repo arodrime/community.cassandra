@@ -40,20 +40,31 @@
 {%-   endif -%}
 {%- endif -%}
 
-{#- Cassandra: from the repository the role adds, from repositories set up by other means, or installed already (offline) -#}
-{%- if cassandra_repository_manage | bool -%}
+{#- Cassandra: from the repository the role adds, from package files (cassandra_install_method packages),
+    from repositories set up by other means, or installed already (offline) -#}
+{%- set files_method = cassandra_install_method == 'packages' -%}
+{%- set base = cassandra_install_url | regex_replace('/+$', '') -%}
+{%- if files_method and not offline and cassandra_package_version == '' -%}
+{%-   set _ = problems.append('cassandra_install_method packages needs cassandra_package_version: it names the files to download') -%}
+{%- elif files_method and not offline -%}
+{#-   cassandra_install's OS vars add cassandra-tools -#}
+{%-   for p in ([cassandra_packages] | flatten + ['cassandra-tools']) | unique -%}
+{%-     set f = cassandra_install_package_file | replace('{name}', p) | replace('{version}', cassandra_package_version) -%}
+{%-     set _ = urls.append({'name': 'Cassandra package file ' ~ f, 'auth': 'repository', 'headers': {'Range': 'bytes=0-0'}, 'url': base ~ '/' ~ f}) -%}
+{%-   endfor -%}
+{%- elif cassandra_repository_manage | bool and not files_method -%}
 {%-   if debian -%}
 {%-     set _ = urls.append({'name': 'Cassandra repository', 'auth': 'repository',
-                             'url': (cassandra_repository_deb_url | regex_replace('/+$', '')) ~ '/dists/' ~ cassandra_version ~ '/InRelease'}) -%}
+                             'url': base ~ '/dists/' ~ cassandra_version ~ '/InRelease'}) -%}
 {%-   else -%}
 {%-     set _ = urls.append({'name': 'Cassandra repository', 'auth': 'repository',
-                             'url': (cassandra_repository_rpm_url | regex_replace('/+$', '')) ~ '/repodata/repomd.xml'}) -%}
+                             'url': base ~ '/repodata/repomd.xml'}) -%}
 {%-   endif -%}
 {%-   if cassandra_repository_key_url != '' -%}
 {%-     set _ = urls.append({'name': 'Cassandra signing keys', 'auth': 'repository', 'url': cassandra_repository_key_url}) -%}
 {%-   endif -%}
 {%- endif -%}
-{%- if offline or not cassandra_repository_manage | bool -%}
+{%- if offline or not (cassandra_repository_manage | bool or files_method) -%}
 {%-   set _ = packages.append({'name': 'cassandra', 'why': 'Cassandra', 'mode': 'installed' if offline else 'either',
                                'version': cassandra_package_version}) -%}
 {%- endif -%}

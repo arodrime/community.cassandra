@@ -169,6 +169,20 @@
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
           [ -e "$f" ] && { echo "own_repo=yes"; break; }
         done
+        # a configured repository offers the cassandra package (else it was installed from a file: new nodes
+        # need cassandra_install_method packages); apt: a source besides the installed package's status
+        if command -v apt-cache >/dev/null 2>&1; then
+          # (read from the local lists: none, nothing to conclude)
+          ls /var/lib/apt/lists/*_Packages* >/dev/null 2>&1 && echo "pkg_query=ok"
+          apt-cache policy cassandra 2>/dev/null | grep -E '^ +[0-9]+ ' | grep -vq '/var/lib/dpkg/status' && echo "pkg_repo=yes"
+        else
+          # a repository skipped (unreachable), other than a cassandra-* one (e.g. a plain directory declared as
+          # one): nothing to conclude
+          res=$(timeout 180 dnf -q repoquery --setopt=skip_if_unavailable=True --qf 'PKG %{name}' cassandra 2>&1); rc=$?
+          bad=$(echo "$res" | sed -n "s/.*repo '\([^']*\)'.*/\1/p; s/.*Ignoring repositories: //p" | tr ', ' '\n\n' | grep . | grep -v '^cassandra-')
+          [ $rc = 0 ] && [ -z "$bad" ] && echo "pkg_query=ok"
+          echo "$res" | grep -q '^PKG ' && echo "pkg_repo=yes"
+        fi
         exit 0
       register: import_cluster_running
       changed_when: false
@@ -185,6 +199,9 @@
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
+        # installed, but no configured repository offers it (the query ran): from a package file
+        import_cluster_package_from_file: >-
+          {{ 'cassandra' in ansible_facts.packages and _kv.pkg_query is defined and _kv.pkg_repo is not defined }}
         import_cluster_conf_dir: >-
           {{ _kv.config | dirname if _kv.config is match('/')
              else ('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
@@ -746,9 +763,10 @@
       {% endif %}
 
       Not read from the nodes, set them in group_vars if they apply (see the guide's air-gapped section):
-        cassandra_offline (hosts without network), the mirror (cassandra_repository_deb_url/_rpm_url,
-        cassandra_repository_username, and its password in a vaulted file), cassandra_java_tarball for new
-        nodes, and the repository of a vendor Java package (cassandra_java_package) for new nodes.
+        cassandra_offline (hosts without network), the mirror (cassandra_install_url: the repository, or with
+        cassandra_install_method packages the directory of the package files; cassandra_install_username, and its
+        password in a vaulted file), cassandra_java_tarball for new nodes, and the repository of a vendor Java
+        package (cassandra_java_package) for new nodes.
 
       Next steps:
         1. Review the report above and the variables (hand edits, drift).
@@ -798,8 +816,11 @@
                  else ('java-' ~ _hv.import_cluster_java | default('') ~ '-openjdk-headless') }}
             # the installed version, so nodes added later get the same one
             _pkg: >-
-              {{ {'cassandra_package_version': _hv.import_cluster_package | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1')}
-                 if _read and _hv.import_cluster_package | default('') else {} }}
+              {{ ({'cassandra_package_version': _hv.import_cluster_package | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+).*$', '\1')}
+                  if _read and _hv.import_cluster_package | default('') else {})
+                 | combine({'cassandra_install_method': 'packages'}
+                           if _read and _hv.import_cluster_package | default('') and _hv.import_cluster_package_from_file | default(false) | bool
+                           else {}) }}
             _conf: >-
               {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
                   if _read and _hv.import_cluster_conf_dir not in _default_conf_dirs else {})
@@ -900,7 +921,13 @@
                  ~ ((', NOT its EnvironmentFile ' ~ _hv.import_cluster_unit.env_files ~ ': put what it sets in cassandra_service_environment')
                     if _hv.import_cluster_unit.env_files | default('') else '') ~ ')' }}
             _install: >-
-              {{ ('package ' ~ _hv.import_cluster_package) if _hv.import_cluster_package | default('')
+              {{ ('package ' ~ _hv.import_cluster_package
+                  ~ (' installed from a file, no configured repository offers it (cassandra_install_method: packages;'
+                     ~ ' set cassandra_install_url, the directory of the package files, for new nodes'
+                     ~ (('; cassandra_repository removes the cassandra-<series> repository it added on this node')
+                        if 'cassandra_repository_manage' not in _hv.import_cluster_keep | default({}) else '') ~ ')'
+                     if _hv.import_cluster_package_from_file | default(false) | bool else ''))
+                 if _hv.import_cluster_package | default('')
                  else 'NOT a package install: cassandra_install would install the package next to it' }}
 
         - name: Lay out groups and variables

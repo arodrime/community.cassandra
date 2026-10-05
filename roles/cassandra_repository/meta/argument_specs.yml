@@ -4,12 +4,50 @@ argument_specs:
     short_description: Configure the Apache Cassandra package repository.
     description:
       - Adds the Apache Cassandra apt or yum repository for one release series.
+      - With O(cassandra_install_method=packages), adds none and removes the ones it added.
     options:
       cassandra_version:
         type: str
         default: 50x
         description:
           - Release series of the repository, for example C(40x), C(41x) or C(50x).
+      cassandra_install_method:
+        type: str
+        default: repository
+        description:
+          - How the Cassandra packages are installed, the same in C(cassandra_repository)
+            and C(cassandra_install).
+          - V(repository), from the yum/apt repository C(cassandra_repository) adds at
+            O(cassandra_install_url) (Apache's, or a mirror of it). The URL is checked
+            first (C(repodata/repomd.xml), or the suite's C(InRelease) or C(Release)), and a
+            plain directory of package files is refused, nothing is added.
+          - V(packages), the package files are downloaded from O(cassandra_install_url),
+            a plain directory of files (e.g. a generic folder of a repository manager),
+            and installed (on the RedHat family without their Java dependency, like with a
+            Java tarball). No repository is added, and the
+            ones C(cassandra_repository) added earlier are removed.
+            C(cassandra_package_version) is required.
+      cassandra_install_url:
+        type: str
+        description:
+          - The repository (V(repository)), or the directory of the package files
+            (V(packages)).
+          - Defaults to O(cassandra_repository_rpm_url) or O(cassandra_repository_deb_url)
+            (Apache's repositories). Apache's RPM directory
+            (C(https://redhat.cassandra.apache.org/<series>/)) also works with V(packages);
+            its Debian files are under C(https://debian.cassandra.apache.org/pool/main/c/cassandra/).
+      cassandra_install_username:
+        type: str
+        description:
+          - User for O(cassandra_install_url) when it needs credentials to read (an
+            account, or a service account with a token as O(cassandra_install_password)).
+            Defaults to O(cassandra_repository_username).
+      cassandra_install_password:
+        type: str
+        no_log: true
+        description:
+          - Password or token for O(cassandra_install_username). Keep it in a vault.
+            Defaults to O(cassandra_repository_password).
       debian_packages:
         type: list
         elements: str
@@ -58,6 +96,7 @@ argument_specs:
         type: str
         default: ""
         description:
+          - Older name of O(cassandra_install_username), its default.
           - User for a mirror that needs credentials to read (an account, or a service
             account with a token as O(cassandra_repository_password)). Used for the
             repository and for O(cassandra_repository_key_url).
@@ -68,14 +107,16 @@ argument_specs:
         default: ""
         no_log: true
         description:
-          - Password or token for O(cassandra_repository_username). Keep it in a vault.
+          - Older name of O(cassandra_install_password), its default.
       cassandra_repository_deb_url:
         type: str
         default: https://debian.cassandra.apache.org
         description:
-          - Cassandra apt repository (Debian, Ubuntu), or a mirror of it.
+          - Older name of O(cassandra_install_url) on Debian and Ubuntu, its default
+            there (the Cassandra apt repository, or a mirror of it).
       cassandra_repository_rpm_url:
         type: str
         description:
-          - Cassandra yum/dnf repository (RedHat family), or a mirror of it.
+          - Older name of O(cassandra_install_url) on the RedHat family, its default
+            there (the Cassandra yum/dnf repository, or a mirror of it).
             Defaults to C(https://redhat.cassandra.apache.org/<cassandra_version>/).

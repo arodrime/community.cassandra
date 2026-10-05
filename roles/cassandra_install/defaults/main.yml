@@ -10,6 +10,31 @@ cassandra_version: "50x"
 # upgrade); on Debian and Ubuntu the pinned packages are also held.
 cassandra_package_version: ""
 
+# How the Cassandra packages are installed (same in cassandra_repository):
+#   repository  from the yum/apt repository cassandra_repository adds (or
+#               repositories set up by other means)
+#   packages    the package files, downloaded from cassandra_install_url (a
+#               plain directory of files, e.g. a generic folder of a repository
+#               manager), installed without their Java dependency;
+#               cassandra_package_version is then required
+cassandra_install_method: repository
+# The repository, or the directory of the package files. Defaults to the
+# older cassandra_repository_deb_url / cassandra_repository_rpm_url.
+cassandra_install_url: >-
+  {{ cassandra_repository_deb_url | default('https://debian.cassandra.apache.org') if ansible_facts['os_family'] == 'Debian'
+     else cassandra_repository_rpm_url | default('https://redhat.cassandra.apache.org/' ~ cassandra_version ~ '/') }}
+# Credentials for that URL (keep the password in a vault). Default to the
+# older cassandra_repository_username / cassandra_repository_password.
+cassandra_install_username: "{{ cassandra_repository_username | default('') }}"
+cassandra_install_password: "{{ cassandra_repository_password | default('') }}"
+# packages: the name of each file in cassandra_install_url ({name}: the
+# package, {version}: cassandra_package_version), Apache's by default
+cassandra_install_package_file: "{{ '{name}_{version}_all.deb' if ansible_facts['os_family'] == 'Debian' else '{name}-{version}-1.noarch.rpm' }}"
+# packages: checksums of the files, by file name, e.g.
+# {"cassandra-5.0.7-1.noarch.rpm": "sha256:0123..."}; a file without one is
+# not checked
+cassandra_install_checksums: {}
+
 # Java installed before Cassandra, so the package's Java dependency is
 # already met and no other JVM gets pulled in. Defaults to the version
 # each series is built and tested against.
@@ -27,14 +52,13 @@ cassandra_java_tarball: ""
 # e.g. "sha256:0123..." (recommended for a URL)
 cassandra_java_tarball_checksum: ""
 cassandra_java_tarball_dir: /opt/cassandra-java
-# Credentials for the URL. By default the repository's, when the tarball is
-# on the same host as the Cassandra repository (the mirror)
-cassandra_java_tarball_username: "{{ cassandra_repository_username | default('') if _cassandra_java_tarball_on_mirror else '' }}"
-cassandra_java_tarball_password: "{{ cassandra_repository_password | default('') if _cassandra_java_tarball_on_mirror else '' }}"
+# Credentials for the URL. By default cassandra_install_url's, when the
+# tarball is on the same host (the mirror)
+cassandra_java_tarball_username: "{{ cassandra_install_username if _cassandra_java_tarball_on_mirror else '' }}"
+cassandra_java_tarball_password: "{{ cassandra_install_password if _cassandra_java_tarball_on_mirror else '' }}"
 _cassandra_java_tarball_on_mirror: >-
   {{ cassandra_java_tarball is match('https?://')
-     and (cassandra_java_tarball | urlsplit('hostname')) in [cassandra_repository_rpm_url | default('') | urlsplit('hostname'),
-                                                               cassandra_repository_deb_url | default('') | urlsplit('hostname')] }}
+     and (cassandra_java_tarball | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
 _cassandra_java_tarball_name: "{{ cassandra_java_tarball | urlsplit('path') | basename }}"
 # Java already unpacked there by other means (not a package): made the system
 # java, and the Cassandra packages installed without a Java package, as with

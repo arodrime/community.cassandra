@@ -1,0 +1,145 @@
+---
+- name: Refusals
+  hosts: all
+  tasks:
+    - name: A plain directory is not a repository
+      block:
+        - name: Declare the directory as a repository
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_repository
+          vars:
+            cassandra_install_url: http://127.0.0.1:8080/
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: a plain directory was accepted as a repository
+      rescue:
+        - name: Refused, pointing at the packages method
+          ansible.builtin.assert:
+            that: "'set cassandra_install_method: packages' in ansible_failed_result.msg"
+
+    - name: Nothing was declared
+      ansible.builtin.stat:
+        path: "{{ '/etc/apt/sources.list.d/cassandra-50x.sources' if ansible_facts['os_family'] == 'Debian'
+                  else '/etc/yum.repos.d/cassandra-50x.repo' }}"
+      register: cassandra_test_repo
+      failed_when: cassandra_test_repo.stat.exists
+
+    - name: The packages method needs a version
+      block:
+        - name: Run the role without cassandra_package_version
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_install_method: packages
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: packages accepted without a version
+      rescue:
+        - name: Refused for the version
+          ansible.builtin.assert:
+            that: "'needs cassandra_package_version' in ansible_failed_result.msg"
+
+    - name: The tarball method is not there yet
+      block:
+        - name: Run the role with the tarball method
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_repository
+          vars:
+            cassandra_install_method: tarball
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: tarball accepted
+      rescue:
+        - name: Refused as not supported yet
+          ansible.builtin.assert:
+            that: "'not supported yet' in ansible_failed_result.msg"
+
+# Then the first converge only: install, upgrade (the idempotence run skips them)
+- name: --check on a blank host
+  hosts: all
+  check_mode: true
+  tags: molecule-idempotence-notest
+  vars: &packages
+    cassandra_install_method: packages
+    cassandra_install_url: http://127.0.0.1:8080/
+    cassandra_package_version: 5.0.6
+    cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+    cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+    cassandra_java_version: "17"
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install
+
+- name: Nothing installed by --check; a repository on the directory, as an older role left it
+  hosts: all
+  tags: molecule-idempotence-notest
+  tasks:
+    - name: Read the installed packages
+      ansible.builtin.package_facts:
+
+    - name: No Cassandra
+      ansible.builtin.assert:
+        that: "'cassandra' not in ansible_facts['packages']"
+
+    - name: The broken repository (RedHat)
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/cassandra-50x.repo
+        content: |
+          [cassandra-50x]
+          name = Official Cassandra 50x yum repo
+          baseurl = http://127.0.0.1:8080/
+          gpgcheck = 1
+        mode: "0644"
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: The broken source (Debian & Ubuntu)
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/cassandra-50x.sources
+        content: |
+          Types: deb
+          URIs: http://127.0.0.1:8080/
+          Suites: 50x
+          Components: main
+          Signed-By: /etc/apt/keyrings/apache-cassandra.asc
+        mode: "0644"
+      when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install 5.0.6
+  hosts: all
+  tags: molecule-idempotence-notest
+  vars: *packages
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install
+
+- name: Upgrade to 5.0.7 (as the upgrade playbook does)
+  hosts: all
+  tags: molecule-idempotence-notest
+  tasks:
+    - name: Read the installed packages
+      ansible.builtin.package_facts:
+
+    - name: 5.0.6 is there
+      ansible.builtin.assert:
+        that: ansible_facts['packages'][item][0].version == '5.0.6'
+      loop: [cassandra, cassandra-tools]
+
+    - name: Upgrade
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+      vars:
+        <<: *packages
+        cassandra_package_version: 5.0.7
+        _cassandra_install_upgrade: true
+
+- name: Converge
+  hosts: all
+  vars:
+    <<: *packages
+    cassandra_package_version: 5.0.7
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install

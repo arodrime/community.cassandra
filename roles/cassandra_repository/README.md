@@ -2,6 +2,9 @@ cassandra_repository
 ====================
 
 Configures a repository for Cassandra on Debian and RedHat based platforms.
+With `cassandra_install_method: packages`, configures none (and removes the
+ones it configured before): `cassandra_install` then downloads the package
+files themselves.
 
 Requirements
 ------------
@@ -22,12 +25,29 @@ cassandra_offline:
   - `true` on air-gapped hosts, nothing is downloaded: sets the default of
     `cassandra_repository_manage` to `false` (see the guide's air-gapped section).
 
-cassandra_repository_username / cassandra_repository_password:
+cassandra_install_method:
+  - `repository` (default): adds the yum/apt repository at
+    `cassandra_install_url`. The URL is checked first (`repodata/repomd.xml`,
+    or the suite's `InRelease`/`Release`): a plain directory of package files
+    is refused with a message, and no repository is added.
+  - `packages`: the package files are downloaded by `cassandra_install` from
+    `cassandra_install_url`, a plain directory (e.g. a generic folder of a
+    repository manager). This role adds no repository, and removes the
+    `cassandra-<series>` repositories it added before.
+  - Same variable as in `cassandra_install`.
+
+cassandra_install_url:
+  - The repository, or the directory of the package files. Defaults to
+    `cassandra_repository_deb_url` / `cassandra_repository_rpm_url`.
+
+cassandra_install_username / cassandra_install_password:
   - Credentials for a mirror that needs them to read: an account and its
     password, or a service account and its token. Used for the repository and
     for `cassandra_repository_key_url`. On RedHat they go in the yum repository
     file (then mode 0600), on Debian/Ubuntu in
     `/etc/apt/auth.conf.d/cassandra.conf` (0600). Keep the password in a vault.
+    Default to `cassandra_repository_username` / `cassandra_repository_password`
+    (their older names, still read).
 
 cassandra_repository_manage:
   - `false` when the repositories are configured by other means (a
@@ -35,8 +55,8 @@ cassandra_repository_manage:
     Defaults to `true`, `false` with `cassandra_offline`.
 
 cassandra_repository_deb_url / cassandra_repository_rpm_url:
-  - Where the packages come from: the Apache repositories by default, or a
-    mirror of them for hosts without internet access.
+  - Older names of `cassandra_install_url` (its default): the Apache
+    repositories by default, or a mirror of them.
 
 cassandra_repository_key_url:
   - Where the release signing keys come from. Empty (default): the copy of
