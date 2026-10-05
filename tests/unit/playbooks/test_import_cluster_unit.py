@@ -198,3 +198,24 @@ def test_os_baseline_is_the_roles_defaults_not_the_inventory():
     assert loaded["cassandra_linux_timesync"] is True  # the role's, not the play's
     assert "{{" not in str(wanted).replace("{{ _d.", "").replace("{{ _cfg.", "").replace(
         "{{ 'cassandra_", "")  # nothing else read from the play's vars
+
+
+@pytest.mark.parametrize("installed, kv, from_file", [
+    ({"cassandra": [{"version": "5.0.7"}]}, {"pkg_query": "ok"}, True),  # no configured repository offers it
+    ({"cassandra": [{"version": "5.0.7"}]}, {"pkg_query": "ok", "pkg_repo": "yes"}, False),
+    ({"cassandra": [{"version": "5.0.7"}]}, {}, False),  # the query failed (e.g. timed out): no conclusion
+    ({}, {}, False),  # not a package install
+])
+def test_package_installed_from_a_file(installed, kv, from_file):
+    facts = {"packages": installed}
+    assert render(WORK_OUT["import_cluster_package_from_file"], _kv=kv, ansible_facts=facts) == from_file
+
+
+@pytest.mark.parametrize("from_file, read, pkg", [
+    (True, True, {"cassandra_package_version": "5.0.7", "cassandra_install_method": "packages"}),
+    (False, True, {"cassandra_package_version": "5.0.7"}),
+    (True, False, {}),
+])
+def test_install_method_of_a_package_installed_from_a_file(from_file, read, pkg):
+    hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": from_file}
+    assert render(MATCH["_pkg"], _hv=hv, _read=read) == pkg

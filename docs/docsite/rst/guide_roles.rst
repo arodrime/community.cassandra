@@ -416,10 +416,10 @@ restart): it is restarted too.
 Restricted networks (air-gapped)
 --------------------------------
 
-The roles download nothing themselves, apart from the signing keys when ``cassandra_repository_key_url`` is set and
-a Java tarball given as a URL (``cassandra_java_tarball``): packages come through the hosts' package manager, from
-the sources below.
-Two setups are covered.
+The roles download nothing themselves, apart from the signing keys when ``cassandra_repository_key_url`` is set,
+a Java tarball given as a URL (``cassandra_java_tarball``) and the package files of ``cassandra_install_method:
+packages``: packages come through the hosts' package manager, from the sources below.
+Three setups are covered.
 
 **Internal mirror** (a repository manager, reposync...): the hosts reach a mirror of the Cassandra repositories and of
 their OS repositories. Point the roles at it:
@@ -431,14 +431,40 @@ their OS repositories. Point the roles at it:
    # Ubuntu 24.04+ with Cassandra 4.x only: python3.11 for cqlsh, "" if the OS mirror has it
    cassandra_cqlsh_python_repo_uri: https://mirror.example.com/deadsnakes
 
-A mirror that needs credentials to read (an account, or a service account and its token) takes them in
-``cassandra_repository_username`` and ``cassandra_repository_password`` (keep the password in a vault). A Java
-tarball on the same host (``cassandra_java_tarball``, see Java above) uses them too, unless
-``cassandra_java_tarball_username``/``_password`` are set; a tarball elsewhere gets no credentials.
+``cassandra_install_url`` sets the same, for the hosts' own OS family. A mirror that needs credentials to read (an
+account, or a service account and its token) takes them in ``cassandra_install_username`` and
+``cassandra_install_password`` (keep the password in a vault; ``cassandra_repository_username``/``_password``, their
+older names, still work). A Java tarball on the same host (``cassandra_java_tarball``, see Java above) uses them too,
+unless ``cassandra_java_tarball_username``/``_password`` are set; a tarball elsewhere gets no credentials.
+``cassandra_repository`` checks the URL is a repository before adding it (``repodata/repomd.xml``, or the suite's
+``InRelease``/``Release``): a plain directory of package files is refused, rather than left as a repository that
+breaks every later ``dnf``/``apt`` call.
 
 The RPM URL keeps ``{{ cassandra_version }}``: the upgrade playbook moves it to the next series. A mirror that signs
 the repository with its own key needs that key's fingerprint added to ``cassandra_repository_key_fingerprints`` and
 the key itself in ``cassandra_repository_key_url``.
+
+**Package files in a plain directory** (e.g. a generic folder of a repository manager holding
+``cassandra-5.0.7-1.noarch.rpm`` and ``cassandra-tools-5.0.7-1.noarch.rpm``, no ``repodata/``): the hosts download
+the files of ``cassandra_package_version`` themselves, no repository is added (``cassandra_repository`` removes the
+``cassandra-<series>`` one it added before), and they are installed (on the RedHat family without their Java
+dependency, like with a Java tarball):
+
+.. code-block:: yaml
+
+   cassandra_install_method: packages
+   cassandra_install_url: https://mirror.example.com/generic/cassandra/rpms/
+   cassandra_package_version: "5.0.7"
+   cassandra_install_username: reader              # if the mirror needs it
+   cassandra_install_password: "{{ vault_cassandra_install_password }}"
+
+The OS packages Cassandra needs (procps-ng, python3, shadow-utils; python3.11 for cqlsh on RHEL 8) still come from the
+hosts' OS repositories or their mirror. Files named otherwise than Apache's take ``cassandra_install_package_file``,
+and ``cassandra_install_checksums`` checks them (``sha256:...`` by file name): recommended, the package signatures
+are not checked with this method. For an upgrade, put the new version's
+files in the same directory: the ``upgrade`` playbook checks they are there before stopping any node.
+``import_cluster`` writes ``cassandra_install_method: packages`` for nodes whose Cassandra no configured repository
+offers (installed from a file); set ``cassandra_install_url`` for the nodes added later.
 
 **No network at all**: the packages are already on the hosts (system image, or installed by other means), and
 nothing must be downloaded. One switch:

@@ -1,6 +1,24 @@
 ---
+- name: Check the install method
+  ansible.builtin.assert:
+    that: cassandra_install_method in ['repository', 'packages']
+    fail_msg: >-
+      cassandra_install_method is {{ cassandra_install_method }}:
+      {{ 'not supported yet' if cassandra_install_method == 'tarball' else 'unknown' }}, use repository or packages.
+    quiet: true
+
 # Nothing to do where the repositories are managed by other means (a
 # Satellite/Foreman, an image, a local mirror already configured)
 - name: Configure the Cassandra repository
   ansible.builtin.include_tasks: repository.yml
-  when: cassandra_repository_manage | bool
+  when:
+    - cassandra_repository_manage | bool
+    - cassandra_install_method == 'repository'
+
+# Package files from a plain directory: no repository. The ones this role
+# added earlier (e.g. on that directory, which breaks every dnf/apt call) go.
+- name: Remove the Cassandra repositories (packages)
+  ansible.builtin.include_tasks: no_repository.yml
+  when:
+    - cassandra_repository_manage | bool
+    - cassandra_install_method == 'packages'

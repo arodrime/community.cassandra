@@ -1,0 +1,29 @@
+---
+- name: Remove the Cassandra yum repositories (RedHat)
+  ansible.builtin.yum_repository:
+    name: "cassandra-{{ item }}"
+    state: absent
+  diff: false  # they may hold a password
+  loop: "{{ ([cassandra_version] + ['311x', '40x', '41x', '50x']) | unique }}"
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Remove the Cassandra apt sources and their credentials (Debian & Ubuntu)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ ([cassandra_version] + ['311x', '40x', '41x', '50x']) | unique | product(['list', 'sources'])
+       | map('join', '.') | map('regex_replace', '^', '/etc/apt/sources.list.d/cassandra-') | list
+       + ['/etc/apt/auth.conf.d/cassandra.conf'] }}
+  register: _cassandra_repository_removed
+  when: ansible_facts['os_family'] == "Debian"
+
+# Also under --check: cassandra_install resolves the packages' dependencies
+- name: Update the apt cache (Debian & Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ omit if _cassandra_repository_removed is changed else 3600 }}"
+  check_mode: false
+  changed_when: false
+  retries: 3
+  when: ansible_facts['os_family'] == "Debian"

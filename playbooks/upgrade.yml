@@ -72,6 +72,7 @@
         - _phase in ['preflight', 'prepare', 'canary', 'rolling']
         - not cassandra_repository_manage | default(true) | bool
         - not cassandra_offline | default(false) | bool
+        - cassandra_install_method == 'repository'
 
     - name: The target packages are available
       ansible.builtin.assert:
@@ -87,6 +88,52 @@
           {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_available', 'defined')
              | selectattr('cassandra_upgrade_available.rc', 'defined') | rejectattr('cassandra_upgrade_available.rc', 'equalto', 0)
              | map(attribute='inventory_hostname') | list }}
+      run_once: true
+
+    # cassandra_install_method packages: the node is stopped before its files
+    # are downloaded, they must be there first
+    - name: Look for the target package files
+      ansible.builtin.uri:
+        url: "{{ cassandra_install_url | regex_replace('/+$', '') }}/{{ cassandra_install_package_file | replace('{name}', item) | replace('{version}', cassandra_package_version) }}"
+        headers:
+          Range: bytes=0-0
+        status_code: [200, 206]
+        url_username: "{{ cassandra_install_username | default(omit, true) }}"
+        url_password: "{{ cassandra_install_password | default(omit, true) }}"
+        force_basic_auth: "{{ cassandra_install_username != '' }}"
+        timeout: 30
+      loop: "{{ ([cassandra_packages] | flatten + ['cassandra-tools']) | unique }}"  # the role's OS vars add cassandra-tools
+      register: cassandra_upgrade_files
+      failed_when: false
+      check_mode: false
+      no_log: "{{ cassandra_install_url is search('@|[?]') }}"  # credentials or a signature in the URL
+      when:
+        - _phase in ['preflight', 'prepare', 'canary', 'rolling']
+        - cassandra_install_method == 'packages'
+        - not cassandra_offline | default(false) | bool
+
+    - name: The target package files are there
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          cassandra_install_method is packages and {{ _missing | join(', ') }} can't get the files of
+          {{ cassandra_package_version }} from cassandra_install_url (HTTP {{ _codes | join(', ') }}): put them there,
+          or check the URL and the credentials. Nothing was done.
+        quiet: true
+      vars:
+        _missing: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_files', 'defined')
+                if h.cassandra_upgrade_files.results | default([]) | rejectattr('skipped', 'defined')
+                   | rejectattr('status', 'in', [200, 206]) | list -%}
+          {%-   set _ = out.append(h.inventory_hostname) -%}
+          {%- endfor -%}
+          {{ out }}
+        # of the checks that ran (skipped ones, e.g. the repository method, have no status)
+        _codes: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_files', 'defined')
+             | map(attribute='cassandra_upgrade_files.results', default=[]) | flatten
+             | rejectattr('skipped', 'defined') | rejectattr('status', 'in', [200, 206]) | map(attribute='status') | unique | list }}
       run_once: true
 
     - name: Check the phase

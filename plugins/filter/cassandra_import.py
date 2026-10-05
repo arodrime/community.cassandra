@@ -1061,7 +1061,8 @@ BLOCKS = [
         "cassandra_allocate_tokens_for_local_replication_factor", "cassandra_initial_token", "cassandra_partitioner",
         "cassandra_storage_compatibility_mode"]),
     ("Versions & packages", [
-        "cassandra_version", "cassandra_package_version", "cassandra_packages", "cassandra_java_version",
+        "cassandra_version", "cassandra_package_version", "cassandra_install_method", "cassandra_packages",
+        "cassandra_java_version",
         "cassandra_java_home", "cassandra_java_package", "cassandra_java_tarball", "cassandra_java_tarball_checksum",
         "cassandra_java_tarball_dir", "cassandra_install_java", "cassandra_java_set_default"]),
     ("Directories", [
@@ -1179,8 +1180,19 @@ def _vars_yaml(variables):
             continue
         keys.sort(key=lambda k: (order.index(k), "") if k in order else (len(order), k))
         out.append("# %s\n" % title + "".join(yaml.dump({k: data[k]}, Dumper=Dumper, default_flow_style=False,
-                                                        sort_keys=k not in KEEP_ORDER) for k in keys))
+                                                        sort_keys=k not in KEEP_ORDER) + _note(k, data[k]) for k in keys))
     return "\n".join(out)
+
+
+# What the nodes can't tell, written under the variable that needs it
+NOTES = {
+    ("cassandra_install_method", "packages"): (
+        "# TODO: cassandra_install_url: the directory of the package files, for new nodes (not read from the nodes)\n"),
+}
+
+
+def _note(key, value):
+    return NOTES.get((key, value), "") if isinstance(value, str) else ""
 
 
 def _split_secrets(variables):

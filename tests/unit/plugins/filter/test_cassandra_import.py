@@ -452,6 +452,16 @@ def test_medusa_keys_are_secrets_and_empty_values_are_not():
     assert sorted(by_path["group_vars/c/main.yml"]) == ["cassandra_medusa_bucket_name", "cassandra_medusa_cql_password"]
 
 
+def test_inventory_files_note_what_the_nodes_cannot_tell():
+    files = cassandra_inventory_files({"group_vars": {"c": {"cassandra_install_method": "packages",
+                                                            "cassandra_package_version": "5.0.7"}}, "host_vars": {}})
+    assert files[0]["content"] == """# Versions & packages
+cassandra_package_version: 5.0.7
+cassandra_install_method: packages
+# TODO: cassandra_install_url: the directory of the package files, for new nodes (not read from the nodes)
+"""
+
+
 def test_inventory_files_grouped_by_subject():
     variables = {"cassandra_zzz_unknown": 1, "cassandra_concurrent_writes": 8, "cassandra_version": "50x",
                  "cassandra_seeds": ["i1", "i3"], "cassandra_cluster_name": "Imp Test", "cassandra_heap_size": "256M",
