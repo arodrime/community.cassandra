@@ -5,6 +5,9 @@
 # (a node of a new rack earlier when the token allocator needs it), each one
 # joined before the next. Re-running it on a running cluster
 # starts nothing.
+# The identity settings must come from the inventory, but a new 5.0 cluster
+# may leave cassandra_storage_compatibility_mode out: NONE (CASSANDRA_4 and
+# UPGRADING, steps of an upgrade, are refused on a new cluster).
 # One token per node (cassandra_num_tokens: 1): the nodes without
 # cassandra_initial_token get evenly spaced tokens, shown with each node's
 # share of the data, then confirmed (cassandra_operation_confirm).
@@ -16,6 +19,22 @@
 - name: Refuse an identity left to the role defaults
   hosts: "{{ cassandra_hosts | default('cassandra') }}"
   gather_facts: false
+  vars:
+    # a cluster never started: every host of the group in the run (no --limit), checked by the preflight
+    # (it answered) and below, none running, none with a system keyspace (a cluster stopped as a whole
+    # is not new)
+    _group: "{{ groups[cassandra_hosts | default('cassandra')] | default([]) }}"
+    _new_cluster: >-
+      {%- set fresh = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   if v._cassandra_preflight_running is defined and not v._cassandra_preflight_running | bool
+              and v.cassandra_create_system.results is defined
+              and v.cassandra_create_system.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length == 0 -%}
+      {%-     set _ = fresh.append(h) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ _group | difference(ansible_play_hosts_all) | length == 0 and fresh | length == ansible_play_hosts_all | length }}
   tasks:
     - name: Load the cassandra_config defaults
       ansible.builtin.include_role:
@@ -23,13 +42,22 @@
         tasks_from: defaults.yml
         public: true
 
+    # the first data directory holds it (cassandra_data_dir is that one unless the inventory says otherwise)
+    - name: Look for the system keyspace of a node that ran already
+      ansible.builtin.stat:
+        path: "{{ item }}/system"
+      loop: "{{ [cassandra_data_dir, [cassandra_data_file_directories] | flatten | first] | unique }}"
+      register: cassandra_create_system
+
     # Role defaults are not in hostvars: what is there came from the inventory or -e
     - name: Check the identity settings come from the inventory
       ansible.builtin.assert:
         that: _missing | length == 0 or cassandra_accept_default_identity | default(false) | bool
         fail_msg: |-
           Left to the role defaults on {{ inventory_hostname }}: set them in the inventory (group_vars of the
-          cluster, dc and rack per host), or -e cassandra_accept_default_identity=true. Current values:
+          cluster, dc and rack per host), or -e cassandra_accept_default_identity=true. Current values{{
+          ' (cassandra_storage_compatibility_mode is only needed once the cluster runs: NONE if create_cluster started it)'
+          if 'cassandra_storage_compatibility_mode' in _missing else '' }}:
           {% for name in _missing %}
             {{ name }}: {{ lookup('ansible.builtin.vars', name) | to_json }}
           {% endfor %}
@@ -43,11 +71,42 @@
           - cassandra_endpoint_snitch
           - cassandra_dc
           - cassandra_rack
-        # the allocator's hint only matters with vnodes
+        # the allocator's hint only matters with vnodes; the storage compatibility mode of a 5.0 cluster
+        # is required once it runs (an upgraded one may be in CASSANDRA_4), a new one gets NONE (below)
         _all: >-
-          {{ _names + (['cassandra_storage_compatibility_mode'] if cassandra_version == '50x' else [])
+          {{ _names + (['cassandra_storage_compatibility_mode'] if cassandra_version == '50x' and not _new_cluster | bool else [])
              + (['cassandra_allocate_tokens_for_local_replication_factor'] if cassandra_num_tokens | int > 1 else []) }}
         _missing: "{{ _all | reject('in', hostvars[inventory_hostname]) | list }}"
+
+    # Only an upgraded cluster has a reason for another mode (CASSANDRA_4, then UPGRADING, then NONE)
+    - name: A new 5.0 cluster starts in storage compatibility mode NONE
+      ansible.builtin.assert:
+        that: _mode == 'NONE'
+        fail_msg: >-
+          cassandra_storage_compatibility_mode is {{ _mode }} on {{ inventory_hostname }}: a new 5.0 cluster has no older
+          sstables or nodes to stay compatible with, it starts in NONE (CASSANDRA_4 and UPGRADING are steps of an
+          upgrade from 4.x, see the upgrade playbook). Set NONE, or leave it out.
+        quiet: true
+      when:
+        - cassandra_version == '50x'
+        - _new_cluster | bool
+      vars:
+        _mode: "{{ hostvars[inventory_hostname].cassandra_storage_compatibility_mode | default('NONE') | string }}"
+
+    - name: Say a new 5.0 cluster starts in NONE
+      ansible.builtin.debug:
+        msg: >-
+          cassandra_storage_compatibility_mode is not in the inventory of {{ _unset | join(', ') }}: a new 5.0 cluster,
+          NONE (the role's default).
+      run_once: true
+      when:
+        - cassandra_version == '50x'
+        - _new_cluster | bool
+        - _unset | length > 0
+      vars:
+        _unset: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | rejectattr('cassandra_storage_compatibility_mode', 'defined')
+             | map(attribute='inventory_hostname') | list }}
 
 # Each datacenter's nodes evenly spaced on the ring, racks taken in turn, the
 # datacenters 100 tokens apart (module_utils/cassandra_tokens.py). A node

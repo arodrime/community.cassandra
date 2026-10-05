@@ -1,0 +1,2 @@
+minor_changes:
+  - "create_cluster playbook - a new 5.0 cluster (no node has started yet) no longer needs ``cassandra_storage_compatibility_mode`` in the inventory: it starts in ``NONE``, said in the output; ``CASSANDRA_4`` and ``UPGRADING`` (steps of an upgrade from 4.x) are refused there. A running cluster still needs it set."
