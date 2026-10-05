@@ -12,6 +12,77 @@ argument_specs:
         default: cassandra
         description:
           - Package or list of packages to install. The OS vars add C(cassandra-tools).
+      cassandra_install_method:
+        type: str
+        default: repository
+        description:
+          - How the Cassandra packages are installed, the same in C(cassandra_repository)
+            and C(cassandra_install).
+          - V(repository), from the yum/apt repository C(cassandra_repository) adds at
+            O(cassandra_install_url) (Apache's, or a mirror of it). The URL is checked
+            first (C(repodata/repomd.xml), or the suite's C(InRelease) or C(Release)), and a
+            plain directory of package files is refused, nothing is added.
+          - V(packages), the package files are downloaded from O(cassandra_install_url),
+            a plain directory of files (e.g. a generic folder of a repository manager),
+            and installed (on the RedHat family without their Java dependency, like with a
+            Java tarball). No repository is added, and the
+            ones C(cassandra_repository) added earlier are removed.
+            C(cassandra_package_version) is required.
+      cassandra_install_url:
+        type: str
+        description:
+          - The repository (V(repository)), or the directory of the package files
+            (V(packages)).
+          - Defaults to C(cassandra_repository_rpm_url) or C(cassandra_repository_deb_url)
+            (Apache's repositories). Apache's RPM directory
+            (C(https://redhat.cassandra.apache.org/<series>/)) also works with V(packages);
+            its Debian files are under C(https://debian.cassandra.apache.org/pool/main/c/cassandra/).
+      cassandra_install_username:
+        type: str
+        description:
+          - User for O(cassandra_install_url) when it needs credentials to read (an
+            account, or a service account with a token as O(cassandra_install_password)).
+            Defaults to C(cassandra_repository_username).
+      cassandra_install_password:
+        type: str
+        no_log: true
+        description:
+          - Password or token for O(cassandra_install_username). Keep it in a vault.
+            Defaults to C(cassandra_repository_password).
+      cassandra_install_package_file:
+        type: str
+        description:
+          - With O(cassandra_install_method=packages), the name of each package file in
+            O(cassandra_install_url), where C({name}) is the package and C({version}) is
+            C(cassandra_package_version).
+          - Defaults to Apache's names, C({name}-{version}-1.noarch.rpm) and
+            C({name}_{version}_all.deb).
+      cassandra_install_checksums:
+        type: dict
+        default: {}
+        description:
+          - With O(cassandra_install_method=packages), the checksum of each file, by file
+            name (as C(sha256:<hex>), the get_url format). A file without one is not checked.
+      cassandra_repository_username:
+        type: str
+        default: ""
+        description:
+          - Older name of O(cassandra_install_username), its default.
+      cassandra_repository_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Older name of O(cassandra_install_password), its default.
+      cassandra_repository_deb_url:
+        type: str
+        default: https://debian.cassandra.apache.org
+        description:
+          - Older name of O(cassandra_install_url) on Debian and Ubuntu, its default there.
+      cassandra_repository_rpm_url:
+        type: str
+        description:
+          - Older name of O(cassandra_install_url) on the RedHat family, its default there.
       cassandra_version:
         type: str
         default: 50x
@@ -89,14 +160,14 @@ argument_specs:
       cassandra_java_tarball_username:
         type: str
         description:
-          - User for the tarball URL. Defaults to O(cassandra_repository_username) when the
-            tarball is on the same host as the Cassandra repository, else none.
+          - User for the tarball URL. Defaults to O(cassandra_install_username) when the
+            tarball is on the same host as O(cassandra_install_url), else none.
       cassandra_java_tarball_password:
         type: str
         no_log: true
         description:
-          - Password or token for the tarball URL. Defaults to O(cassandra_repository_password)
-            when the tarball is on the same host as the Cassandra repository, else none.
+          - Password or token for the tarball URL. Defaults to O(cassandra_install_password)
+            when the tarball is on the same host as O(cassandra_install_url), else none.
       cassandra_java_set_default:
         type: bool
         default: true

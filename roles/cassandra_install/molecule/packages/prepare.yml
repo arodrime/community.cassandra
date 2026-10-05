@@ -1,0 +1,51 @@
+---
+# UBI 8 only ships platform-python 3.6, below ansible-core's target minimum
+- name: Bootstrap Python on RHEL 8
+  hosts: rhel8
+  gather_facts: false
+  tasks:
+    - name: Install python3.12
+      ansible.builtin.raw: test -x /usr/bin/python3.12 || dnf -y install python3.12
+      changed_when: false
+
+# A plain directory of package files (no repository metadata), as a generic
+# folder of a repository manager serves them
+- name: Serve the package files over HTTP
+  hosts: all
+  vars:
+    _apache: >-
+      {{ 'https://debian.cassandra.apache.org/pool/main/c/cassandra/' if ansible_facts['os_family'] == 'Debian'
+         else 'https://redhat.cassandra.apache.org/50x/' }}
+    _files: >-
+      {{ (['cassandra', 'cassandra-tools'] | product(['5.0.6', '5.0.7']))
+         | map('join', ' ') | map('regex_replace', '^(\S+) (\S+)$',
+                                  '\1_\2_all.deb' if ansible_facts['os_family'] == 'Debian' else '\1-\2-1.noarch.rpm') | list }}
+  tasks:
+    - name: Create the directory
+      ansible.builtin.file:
+        path: /srv/packages
+        state: directory
+        mode: "0755"
+
+    - name: Download the package files
+      ansible.builtin.get_url:
+        url: "{{ _apache }}{{ item }}"
+        dest: /srv/packages/{{ item }}
+        mode: "0644"
+      loop: "{{ _files }}"
+      register: _download
+      until: _download is succeeded
+      retries: 3
+
+    - name: Serve them
+      ansible.builtin.command: >-
+        systemd-run --unit packages-http
+        {{ ansible_facts['python']['executable'] }} -m http.server 8080 --bind 127.0.0.1 --directory /srv/packages
+      args:
+        creates: /run/systemd/transient/packages-http.service
+
+    - name: Wait for the server
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8080
+        timeout: 30

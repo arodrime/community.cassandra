@@ -1,0 +1,115 @@
+---
+# cassandra_install_method packages: the package files are downloaded from
+# cassandra_install_url (a plain directory, no repository) and installed
+# without their Java dependency, as with Java from a tarball. Only the ones
+# not installed in cassandra_package_version are (the version check before
+# lets an installed node change version only for the upgrade playbook).
+- name: List the package files to install
+  ansible.builtin.set_fact:
+    _cassandra_install_files: >-
+      {%- set out = [] -%}
+      {%- for p in [cassandra_packages] | flatten
+            if _cassandra_install_before[p] | default([]) | map(attribute='version')
+               | select('equalto', cassandra_package_version) | list | length == 0 -%}
+      {%-   set _ = out.append(cassandra_install_package_file | replace('{name}', p) | replace('{version}', cassandra_package_version)) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Download and install the package files
+  when: _cassandra_install_files | length > 0
+  vars:
+    _dir: /var/tmp/cassandra-packages
+    _base: "{{ cassandra_install_url | regex_replace('/+$', '') }}"
+    _paths: "{{ _cassandra_install_files | map('regex_replace', '^', _dir ~ '/') | list }}"
+  block:
+    - name: A password goes with a user
+      ansible.builtin.assert:
+        that: cassandra_install_password == "" or cassandra_install_username != ""
+        fail_msg: cassandra_install_password is set without cassandra_install_username.
+        quiet: true
+
+    # Under --check nothing is downloaded: the files must be there all the same
+    - name: Check the package files are there (--check)
+      ansible.builtin.uri:
+        url: "{{ _base }}/{{ item }}"
+        headers:
+          Range: bytes=0-0
+        status_code: [200, 206]
+        url_username: "{{ cassandra_install_username | default(omit, true) }}"
+        url_password: "{{ cassandra_install_password | default(omit, true) }}"
+        force_basic_auth: "{{ cassandra_install_username != '' }}"
+        timeout: 30
+      loop: "{{ _cassandra_install_files }}"
+      no_log: "{{ cassandra_install_url is search('@|[?]') }}"  # credentials or a signature in the URL
+      check_mode: false  # read-only
+      when: ansible_check_mode
+
+    - name: Install what Cassandra needs besides Java (RedHat)
+      ansible.builtin.package:
+        name: [procps-ng, python3, shadow-utils]
+        state: present
+      retries: 3
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Start from an empty download directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: "{{ item }}"
+        mode: "0700"
+      loop: [absent, directory]
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Download the package files
+      ansible.builtin.get_url:
+        url: "{{ _base }}/{{ item }}"
+        dest: "{{ _dir }}/{{ item }}"
+        checksum: "{{ cassandra_install_checksums[item] | default(omit) }}"
+        url_username: "{{ cassandra_install_username | default(omit, true) }}"
+        url_password: "{{ cassandra_install_password | default(omit, true) }}"
+        force_basic_auth: "{{ cassandra_install_username != '' }}"
+        mode: "0644"
+        timeout: 60
+      loop: "{{ _cassandra_install_files }}"
+      register: _cassandra_install_download
+      until: _cassandra_install_download is succeeded
+      retries: 3
+      changed_when: false  # a temp file: the install below reports the change
+      no_log: "{{ cassandra_install_url is search('@|[?]') }}"
+      when: not ansible_check_mode
+
+    - name: Install them without their Java dependency (RedHat)
+      ansible.builtin.command:
+        argv: "{{ ['rpm', '-U', '--nodeps', '--oldpackage'] + _paths }}"
+      changed_when: true
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - not ansible_check_mode
+
+    # apt resolves the other dependencies from the configured repositories; Java
+    # is a package already (or the local one that stands for the tarball). The
+    # config files written by cassandra_config are kept on an upgrade.
+    - name: Install them (Debian & Ubuntu)
+      ansible.builtin.command:
+        argv: >-
+          {{ ['apt-get', 'install', '-y', '--allow-change-held-packages',
+              '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold'] + _paths }}
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      changed_when: true
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - not ansible_check_mode
+
+    - name: Say what would be installed (--check)
+      ansible.builtin.debug:
+        msg: "Would download and install {{ _cassandra_install_files | join(', ') }}"
+      changed_when: true
+      when: ansible_check_mode
+
+  always:
+    - name: Remove the downloaded files
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+      changed_when: false

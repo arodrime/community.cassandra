@@ -1,8 +1,9 @@
 cassandra_install
 =================
 
-Installs Apache Cassandra from the repository set up by `cassandra_repository`,
-with the Java version the series is built for.
+Installs Apache Cassandra from the repository set up by `cassandra_repository`
+(or from package files, `cassandra_install_method: packages`), with the Java
+version the series is built for.
 
 On Debian/Ubuntu, the package would start Cassandra with its stock config as
 soon as it is installed; a temporary `policy-rc.d` prevents that, so the node
@@ -17,6 +18,24 @@ Role Variables
   The Python cqlsh may need and jemalloc only give a warning. Default `false`.
 * `cassandra_version`: Cassandra series, same values as `cassandra_repository`
   (`40x`, `41x`, `50x`). Default `50x`.
+* `cassandra_install_method` (default `repository`): `packages` downloads the
+  package files from `cassandra_install_url`, a plain directory of files (no
+  repository metadata, e.g. a generic folder of a repository manager), and
+  installs them without their Java dependency (`rpm -U --nodeps` with
+  procps-ng, python3 and shadow-utils on the RedHat family; `apt-get install`
+  of the files on Debian/Ubuntu, Java being a package or the local package of
+  a tarball). Only what is not installed in `cassandra_package_version`,
+  which is then required, is downloaded; the files are removed after.
+  `cassandra_install_package_file` names the files (Apache's names by
+  default: `{name}-{version}-1.noarch.rpm`, `{name}_{version}_all.deb`), and
+  `cassandra_install_checksums` can give their checksums by file name
+  (`{"cassandra-5.0.7-1.noarch.rpm": "sha256:..."}`). Same variable as in
+  `cassandra_repository`; `tarball` is not supported yet.
+* `cassandra_install_url`, `cassandra_install_username`,
+  `cassandra_install_password`: the repository or the directory of the files,
+  and its credentials (default to `cassandra_repository_rpm_url` /
+  `cassandra_repository_deb_url`, `cassandra_repository_username`,
+  `cassandra_repository_password`).
 * `cassandra_package_version`: exact Cassandra version (e.g. `5.0.4`), so
   every node, including the ones added later, runs the same one. Empty
   (default) installs the repository's latest. An installed node is never moved

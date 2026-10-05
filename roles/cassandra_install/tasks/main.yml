@@ -4,6 +4,18 @@
   ansible.builtin.include_vars:
     file: "{{ ansible_facts['os_family'] }}.yml"
 
+- name: Check the install method
+  ansible.builtin.assert:
+    that:
+      - cassandra_install_method in ['repository', 'packages']
+      - cassandra_install_method != 'packages' or cassandra_package_version != ''
+    fail_msg: >-
+      {{ ('cassandra_install_method is ' ~ cassandra_install_method ~ ': '
+          ~ ('not supported yet' if cassandra_install_method == 'tarball' else 'unknown') ~ ', use repository or packages.')
+         if cassandra_install_method not in ['repository', 'packages']
+         else 'cassandra_install_method packages needs cassandra_package_version (e.g. "5.0.7"): it names the files to download.' }}
+    quiet: true
+
 - name: Snapshot installed packages (change report)
   ansible.builtin.package_facts:
   check_mode: false
@@ -89,6 +101,7 @@
   when:
     - ansible_check_mode
     - not cassandra_offline | bool
+    - cassandra_install_method == 'repository'
 
 - name: Check the installed version against cassandra_package_version
   when: cassandra_package_version != ""
@@ -113,7 +126,7 @@
 - name: Install Cassandra Packages
   when:
     - not cassandra_offline | bool
-    - not ansible_check_mode or cassandra_install_available.rc == 0
+    - not ansible_check_mode or cassandra_install_method == 'packages' or cassandra_install_available.rc == 0
   vars:
     _cassandra_install_names: >-
       {{ cassandra_packages if cassandra_package_version == ''
@@ -136,6 +149,7 @@
         state: present
       retries: 3
       when:
+        - cassandra_install_method == 'repository'
         - not (_cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian')
         - _cassandra_java_home == '' or ansible_facts['os_family'] == 'Debian'
 
@@ -144,6 +158,7 @@
     # runs with. (Debian: a local package provides Java, see java_tarball.yml.)
     - name: Install the Cassandra packages without a Java package (cassandra_java_home)
       when:
+        - cassandra_install_method == 'repository'
         - _cassandra_java_home != ''
         - ansible_facts['os_family'] == 'RedHat'
         - >-
@@ -204,6 +219,9 @@
             state: absent
           changed_when: false
 
+    - name: Install the Cassandra package files (packages)
+      ansible.builtin.include_tasks: packages.yml
+      when: cassandra_install_method == 'packages'
 
     # The upgrade playbook, node stopped: the pinned packages are held
     - name: Upgrade the Cassandra packages (Debian)
@@ -212,7 +230,9 @@
         state: present
         allow_change_held_packages: true
       retries: 3
-      when: _cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian'
+      when:
+        - cassandra_install_method == 'repository'
+        - _cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian'
 
     - name: Hold the pinned packages (Debian)
       ansible.builtin.dpkg_selections:
