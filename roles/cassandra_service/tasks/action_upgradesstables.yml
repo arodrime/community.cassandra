@@ -7,3 +7,4 @@
     community.cassandra.cassandra_upgradesstables: "{{ _cassandra_service_jmx }}"
   async: "{{ cassandra_upgrade_sstables_timeout | default(86400) }}"
   poll: 30
+  when: not ansible_check_mode  # async has no check mode: the plan only

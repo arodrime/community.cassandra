@@ -25,6 +25,7 @@
       async: "{{ cassandra_cleanup_timeout | default(_cassandra_stream_async) }}"
       poll: 0
       register: cassandra_cleanup_jobs_started
+      when: not ansible_check_mode  # async has no check mode: the plan only
 
     - name: Start following the cleanups
       ansible.builtin.set_fact:
@@ -32,6 +33,7 @@
 
     - name: Follow the cleanups
       ansible.builtin.include_tasks: cleanup_wait.yml
+      when: not ansible_check_mode
 
     - name: Add the batch to the progress file
       ansible.builtin.lineinfile:

@@ -3,7 +3,8 @@ __metaclass__ = type
 
 # decommission_node, add_node, add_datacenter: the nodes before this one are
 # done, except under --check (none was removed or added: the health checks of
-# the next node expect the ring as it is).
+# the next node expect the ring as it is). decommission_node reads the replication
+# under --check too, and a cqlsh refusal shows its error.
 
 import os
 
@@ -21,11 +22,13 @@ except ImportError:
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "decommission_node.yml")
 
 
-def gone(check_mode, host):
+def gone(check_mode, host, states=("normal", "normal")):
     with open(PLAYBOOK, encoding="utf-8") as f:
         plays = yaml.safe_load(f)
     task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Remove this node")
-    variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": host}
+    variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": host,
+                 "hostvars": {"n2": {"cassandra_leaving_node": {"state": states[0]}},
+                              "n5": {"cassandra_leaving_node": {"state": states[1]}}}}
     return int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_gone"])))
 
 
@@ -35,6 +38,12 @@ def test_the_nodes_before_are_gone():
 
 def test_none_is_gone_under_check():
     assert (gone(True, "n2"), gone(True, "n5")) == (0, 0)
+
+
+def test_under_check_the_ones_an_earlier_run_removed_are_gone():
+    # --check -e cassandra_rolling_resume=true after a run that removed n2
+    assert gone(True, "n5", states=("decommissioned", "normal")) == 1
+    assert gone(True, "n5", states=("leaving", "normal")) == 0
 
 
 def add_node_pending(check_mode, host):
@@ -86,5 +95,5 @@ def test_decommission_refusal_names_cqlsh_error_and_credentials():
            "AuthenticationFailed('Remote end requires authentication',)})")
     out = refusal({"msg": "module execution failed", "err": err})
     assert out.startswith("decommission refused: module execution failed: Connection error:")
-    assert "set cassandra_cql_username and cassandra_cql_password" in out
+    assert "check cassandra_cql_username and cassandra_cql_password" in out
     assert refusal({"msg": ["a5-n1 is in cassandra_seeds"]}) == "decommission refused: a5-n1 is in cassandra_seeds"

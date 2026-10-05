@@ -426,7 +426,7 @@
         loop_var: cassandra_cleanup_batch
         label: "{{ cassandra_cleanup_batch | join(', ') }}"
       run_once: true
-      when: _mode != 'none'
+      when: _mode != 'none' and not ansible_check_mode
       vars:
         _batches: >-
           {%- set batches = {} -%}

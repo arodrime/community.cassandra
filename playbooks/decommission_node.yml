@@ -86,7 +86,7 @@
             cassandra_op_result: >-
               decommission refused: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}{{
                 (': ' ~ _err.splitlines() | last) if _err else '' }}{{
-                ' (CQL authentication is on: set cassandra_cql_username and cassandra_cql_password)'
+                ' (CQL authentication is on: check cassandra_cql_username and cassandra_cql_password)'
                 if 'requires authentication' in _err or 'AuthenticationFailed' in _err else '' }}
           vars:
             # cqlsh's own error (reading the replication)
@@ -147,8 +147,12 @@
       vars:
         cassandra_service_node_action: decommission
         cassandra_service_node_checks_after: false  # stopped: checked from another node
-        # the nodes before this one are gone (--check: none was removed)
-        _gone: "{{ 0 if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname) }}"
+        # the nodes before this one are gone (--check: only those an earlier run decommissioned)
+        _gone: >-
+          {{ ansible_play_hosts_all[:ansible_play_hosts_all.index(inventory_hostname)]
+             | map('extract', hostvars) | map(attribute='cassandra_leaving_node') | map(attribute='state')
+             | select('equalto', 'decommissioned') | list | length
+             if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname) }}
         # this one may be leaving already (an earlier run): its own checks are skipped, UL expected
         _left: >-
           {{ cassandra_leaving_node.state == 'decommissioned'
