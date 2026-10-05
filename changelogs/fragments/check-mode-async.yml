@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - decommission_node, move_node playbooks - ``--check`` failed with "check mode and async cannot be used on same task"; it now shows the plan without starting the decommission or the move.

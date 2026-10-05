@@ -81,6 +81,7 @@
   async: "{{ cassandra_move_timeout | default(_cassandra_stream_async) }}"
   poll: 0
   register: cassandra_move_job
+  when: not ansible_check_mode  # async has no check mode: the plan only
 
 - name: Start following the move
   ansible.builtin.set_fact:

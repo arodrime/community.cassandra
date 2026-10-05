@@ -15,7 +15,9 @@
   async: "{{ cassandra_decommission_timeout | default(_cassandra_stream_async) }}"
   poll: 0
   register: cassandra_decommission_job
-  when: _cassandra_leave_state == 'normal'
+  when:
+    - _cassandra_leave_state == 'normal'
+    - not ansible_check_mode  # async has no check mode: the plan only
 
 - name: Start following the decommission
   ansible.builtin.set_fact:
