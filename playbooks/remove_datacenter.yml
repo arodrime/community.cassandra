@@ -2,8 +2,9 @@
 # Removes a datacenter from a running cluster: the keyspaces stop keeping
 # replicas there, then its nodes leave one at a time (decommission, nothing
 # left to stream) and Cassandra is stopped and disabled on them.
-#   ansible-playbook -i inventory community.cassandra.remove_datacenter -e cassandra_hosts=my_cluster \
+#   ansible-playbook -i inventory community.cassandra.remove_datacenter \
 #     -e cassandra_target_dc=dc3
+# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
 # Move that region's clients to another datacenter first: once the keyspaces
 # are altered, reads and writes there fail. Its nodes can't be seeds (take them
 # out with change_seeds first). A keyspace with replicas only there is refused.
@@ -12,7 +13,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check the datacenter to remove
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
     _leaving: >-
@@ -82,7 +83,7 @@
       changed_when: false
 
 - name: Remove the datacenter's nodes, one at a time
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_leaving_dc"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_leaving_dc"
   serial: 1
   any_errors_fatal: true
   vars:
@@ -96,11 +97,11 @@
         cassandra_service_node_action: decommission
         cassandra_service_node_checks_after: false
         _gone: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
-        cassandra_service_expected_before: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int }}"
-        cassandra_service_expected_after: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int - 1 }}"
+        cassandra_service_expected_before: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int }}"
+        cassandra_service_expected_after: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int - 1 }}"
 
 - name: Summary
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_leaving_dc"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_leaving_dc"
   gather_facts: false
   tasks:
     - name: Print the summary

@@ -2,13 +2,14 @@
 # Applies a new cassandra_seeds list to every node of a cluster, live (no
 # restart): only the seeds line of cassandra.yaml changes. Other differences
 # between the inventory and the nodes' config are shown, not applied.
-#   ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.change_seeds
+# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
 # The preflight check refuses seeds that are not up members of the cluster.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Update the seed list
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
     _file: "{{ cassandra_conf_dir }}/cassandra.yaml"
@@ -125,7 +126,7 @@
           WARNING: the config of {{ _drift | join(', ') }} differs from the inventory beyond the seeds (diffs above),
           not applied by change_seeds. Apply it with the cassandra_config role, e.g.
           ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.create_cluster
-          -e cassandra_hosts={{ cassandra_hosts | default('cassandra') }} (it starts nothing on a running cluster),
+          -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }} (it starts nothing on a running cluster),
           then restart the nodes with community.cassandra.rolling_restart.
       vars:
         _drift: >-

@@ -1,8 +1,9 @@
 ---
 # Last resort for a node that is dead for good and will not be replaced: takes
 # it out of the ring, its data rebuilt from the other replicas.
-#   ansible-playbook -i inventory community.cassandra.remove_dead_node -e cassandra_hosts=my_cluster \
+#   ansible-playbook -i inventory community.cassandra.remove_dead_node \
 #     -e cassandra_dead_node_address=10.0.0.14
+# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
 # Take the dead host out of the inventory first. Prefer replace_node (a new host
 # takes over its tokens and data). cassandra_dead_node_method: removenode
 # (default: streams the dead node's ranges from the other replicas),
@@ -25,7 +26,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Remove the dead node
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
     _method: "{{ cassandra_dead_node_method | default('removenode') }}"
@@ -128,7 +129,7 @@
         that: cassandra_dead_removal.state != 'orphan' or cassandra_dead_node_new_removal | default(false) | bool
         fail_msg: >-
           {{ cassandra_dead_node_address }} is being removed (gossip), or DL (it died while decommissioning), but no node of
-          {{ cassandra_hosts | default('cassandra') }} is removing it (nodetool removenode status). Check on the other nodes
+          {{ lookup('community.cassandra.cassandra_hosts') }} is removing it (nodetool removenode status). Check on the other nodes
           of the cluster: if one is removing it, wait for it there. If none is (its coordinator restarted), run this again
           with -e cassandra_dead_node_new_removal=true to start a removenode; or, if a node of the run shows it DL
           (it died decommissioning), with -e cassandra_dead_node_method=removenode_force to finish it without streaming

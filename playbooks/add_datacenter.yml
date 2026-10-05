@@ -1,8 +1,9 @@
 ---
 # Adds a datacenter to a running cluster:
-#   ansible-playbook -i inventory community.cassandra.add_datacenter -e cassandra_hosts=my_cluster \
+#   ansible-playbook -i inventory community.cassandra.add_datacenter \
 #     -e cassandra_new_nodes=my_cluster_dc3 -e cassandra_rebuild_source_dc=dc1 \
 #     -e '{"cassandra_datacenter_replication": {"orders": 3, "system_auth": 3}}'
+# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
 # Put the new nodes in the cluster's inventory group first, all declaring the
 # new cassandra_dc. They join one at a time without streaming (auto_bootstrap:
 # false), then the keyspaces in cassandra_datacenter_replication get that many
@@ -23,7 +24,7 @@
   any_errors_fatal: true
   vars:
     _new_dc: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }}"
-    _existing: "{{ groups[cassandra_hosts | default('cassandra')] | reject('in', ansible_play_hosts_all) | list }}"
+    _existing: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | list }}"
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
     _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
   tasks:
@@ -168,9 +169,9 @@
         _cassandra_join_over: run add_datacenter again.
         _done: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
         cassandra_service_expected_before: >-
-          {{ groups[cassandra_hosts | default('cassandra')] | length - ansible_play_hosts_all | length + _done | int }}
+          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - ansible_play_hosts_all | length + _done | int }}
         cassandra_service_expected_after: >-
-          {{ groups[cassandra_hosts | default('cassandra')] | length - ansible_play_hosts_all | length + _done | int + 1 }}
+          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - ansible_play_hosts_all | length + _done | int + 1 }}
 
 - name: Give the datacenter its replicas and data
   hosts: "{{ cassandra_new_nodes }}"

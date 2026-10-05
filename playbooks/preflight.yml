@@ -1,6 +1,7 @@
 ---
 # Checks one cluster (an inventory group) before changing it:
-#   ansible-playbook -i inventory community.cassandra.preflight -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.preflight
+# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
 # Fails on settings that must match across the cluster, on rack layouts the
 # token allocator refuses and on mixed Cassandra versions; warns on seed layouts
 # that are only risky.
@@ -17,7 +18,7 @@
         tasks_from: hosts_check.yml
 
 - name: Cassandra preflight checks
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: true
   tasks:
     # An unreachable host would silently be left out of the rest of the run
@@ -118,7 +119,7 @@
                   'then apply it live: ansible-playbook -i ' ~ ansible_inventory_sources | first
                     ~ ' community.cassandra.change_seeds -e cassandra_hosts=' ~ _cluster] }}"
       vars:
-        _cluster: "{{ cassandra_hosts | default('cassandra') }}"
+        _cluster: "{{ lookup('community.cassandra.cassandra_hosts') }}"
         _layout: >-
           {{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'layout']) | list
              | community.cassandra.cassandra_seed_layout }}

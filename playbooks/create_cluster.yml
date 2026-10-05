@@ -1,6 +1,7 @@
 ---
 # Builds a cluster from blank hosts (one inventory group per cluster):
-#   ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.create_cluster
+# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
 # Nodes are prepared in parallel, then started one at a time: seeds first
 # (a node of a new rack earlier when the token allocator needs it), each one
 # joined before the next. Re-running it on a running cluster
@@ -14,7 +15,7 @@
 # A cluster keeps these for life: a role default that changes in a later
 # release must not silently change what the next node of this cluster gets
 - name: Refuse an identity left to the role defaults
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Load the cassandra_config defaults
@@ -56,7 +57,7 @@
 # split the largest ranges). A rerun after a create that stopped half way
 # gives the same tokens: the nodes already running must have them.
 - name: Work out the tokens (one token per node)
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Work out the tokens
@@ -129,7 +130,7 @@
           when: inventory_hostname in _plan.tokens
 
 - name: Prepare the nodes
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   roles:
     - community.cassandra.cassandra_repository
     - community.cassandra.cassandra_install
@@ -145,7 +146,7 @@
 # cassandra_allocate_tokens_for_local_replication_factor: seeds first, but a
 # node of a new rack before one it would refuse
 - name: Order the starts
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Seeds first, racks in an order the token allocator accepts
@@ -171,7 +172,7 @@
     - community.cassandra.cassandra_service
 
 - name: Check the new cluster
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Check the whole cluster from one node
