@@ -3,7 +3,8 @@
 # from another node of the cluster. Waits up to cassandra_service_health_timeout
 # for down nodes to come back, then fails listing every problem.
 #   include_role: name=community.cassandra.cassandra_service tasks_from=cluster_health.yml
-# Expects the cluster's inventory group in cassandra_hosts (default 'cassandra').
+# Expects the cluster's inventory group in cassandra_hosts (default: the
+# inventory's cluster group, see the lookup community.cassandra.cassandra_hosts).
 # cassandra_service_health_node_checks: false checks from the other node only
 # (this node has no Cassandra running yet, e.g. before it is added).
 # cassandra_service_health_down_ok: addresses expected down (a dead node being replaced).
@@ -14,9 +15,9 @@
 - name: Work out the node count and a second node to check from
   ansible.builtin.set_fact:
     _cassandra_health_expected: >-
-      {{ cassandra_service_health_expected_nodes | default(groups[cassandra_hosts | default('cassandra')] | length) | int }}
+      {{ cassandra_service_health_expected_nodes | default(groups[lookup('community.cassandra.cassandra_hosts')] | length) | int }}
     _cassandra_health_peer: >-
-      {{ groups[cassandra_hosts | default('cassandra')]
+      {{ groups[lookup('community.cassandra.cassandra_hosts')]
          | reject('in', [inventory_hostname]
                         + (query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
                            if cassandra_new_nodes | default('') | length > 0 else [])

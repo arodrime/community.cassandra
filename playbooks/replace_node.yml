@@ -1,8 +1,10 @@
 ---
 # Replaces a dead node by a blank host, which takes over its tokens and
 # streams their data from the replicas (replace_address_first_boot):
-#   ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=my_cluster \
+#   ansible-playbook -i inventory community.cassandra.replace_node \
 #     -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.0.14
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # In the inventory, put the new host in the cluster's group and take the dead
 # one out (the new host may reuse its address). The dead node must be down
 # (DN) in the ring and the new host blank. A dead seed: take it out of
@@ -28,7 +30,7 @@
   any_errors_fatal: true
   vars:
     _from: >-
-      {{ groups[cassandra_hosts | default('cassandra')] | reject('in', ansible_play_hosts_all) | first | default('') }}
+      {{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | first | default('') }}
   tasks:
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:

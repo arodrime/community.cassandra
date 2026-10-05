@@ -9,7 +9,7 @@
 
 - name: Reboot the host
   ansible.builtin.reboot:
-    msg: "Rolling reboot of the Cassandra cluster ({{ cassandra_hosts | default('cassandra') }})"
+    msg: "Rolling reboot of the Cassandra cluster ({{ lookup('community.cassandra.cassandra_hosts') }})"
     reboot_timeout: "{{ cassandra_reboot_timeout | default(1800) }}"
     reboot_command: "{{ cassandra_reboot_command | default(omit) }}"
     boot_time_command: "{{ cassandra_reboot_boot_time_command | default(omit) }}"

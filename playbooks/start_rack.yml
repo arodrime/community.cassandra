@@ -1,8 +1,10 @@
 ---
 # Starts every node of one rack (stopped by stop_rack), waits until each one
 # has joined, then checks the whole cluster:
-#   ansible-playbook -i inventory community.cassandra.start_rack -e cassandra_hosts=my_cluster \
+#   ansible-playbook -i inventory community.cassandra.start_rack \
 #     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # max_hint_window (3 hours by default): hints stop being kept after that.
 - name: Check the cluster's group
@@ -18,7 +20,7 @@
         tasks_from: hosts_check.yml
 
 - name: Find the rack's nodes
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Load the cassandra_config defaults (dc and rack)
@@ -43,7 +45,7 @@
       run_once: true
 
 - name: Start the rack
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_target_rack_nodes"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_target_rack_nodes"
   gather_facts: true
   gather_subset: [network]
   any_errors_fatal: true
@@ -55,7 +57,7 @@
         cassandra_service_state: started
 
 - name: Check the cluster
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: true
   gather_subset: [network]
   tasks:

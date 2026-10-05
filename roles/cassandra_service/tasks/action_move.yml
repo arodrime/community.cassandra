@@ -17,7 +17,7 @@
   vars:
     _unchecked: >-
       {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
-         | reject('in', groups[cassandra_hosts | default('cassandra')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+         | reject('in', groups[lookup('community.cassandra.cassandra_hosts')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
                               | map(attribute='inventory_hostname') | list)
          | list }}
 
@@ -26,7 +26,7 @@
   vars:
     _receivers: >-
       {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
-         | select('in', groups[cassandra_hosts | default('cassandra')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+         | select('in', groups[lookup('community.cassandra.cassandra_hosts')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
                               | map(attribute='inventory_hostname') | list)
          | list }}
   block:
@@ -59,7 +59,7 @@
 # Before the move: a run that stops while it streams forgets none of them
 - name: Record the nodes that lose ranges, for the cleanup
   ansible.builtin.lineinfile:
-    path: "{{ cassandra_progress_dir }}/{{ cassandra_hosts | default('cassandra') }}-move.cleanup"
+    path: "{{ cassandra_progress_dir }}/{{ lookup('community.cassandra.cassandra_hosts') }}-move.cleanup"
     line: "{{ item }}"
     create: true
     mode: "0644"

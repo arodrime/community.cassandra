@@ -3,7 +3,9 @@
 # ring (every node up and normal, none joining/leaving/moving), gossip, native
 # transport, streams, schema agreement and the storage and CQL ports. Fails
 # (non-zero exit) when there is a problem, so it can be scheduled.
-#   ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.health_check
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 - name: Check the cluster's group
   hosts: localhost
   gather_facts: false
@@ -17,7 +19,7 @@
         tasks_from: hosts_check.yml
 
 - name: Cluster health
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: true
   gather_subset: [network]
   tasks:

@@ -4,14 +4,16 @@
 # time: cluster checked, Java installed and made the default, config written,
 # node drained and restarted, cluster checked again. Nodes already running that
 # Java are skipped.
-#   ansible-playbook -i inventory community.cassandra.update_java -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.update_java
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Refused: a Java the series does not support (4.0/4.1: 8, 11; 5.0: 11, 17).
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check the Java change
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
     _supported: {40x: ["8", "11"], 41x: ["8", "11"], 50x: ["11", "17"]}
@@ -111,7 +113,7 @@
       when: groups['cassandra_update_java_True'] | default([]) | length > 0
 
 - name: Set up the progress file
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_update_java_True"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_update_java_True"
   gather_facts: false
   vars:
     cassandra_service_node_action: update_java
@@ -122,7 +124,7 @@
         tasks_from: progress.yml
 
 - name: Move to the new Java, one node at a time
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_update_java_True"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_update_java_True"
   serial: 1
   any_errors_fatal: true
   tasks:
@@ -134,7 +136,7 @@
         cassandra_service_node_action: update_java
 
 - name: Summary
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Print the summary

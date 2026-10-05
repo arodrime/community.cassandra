@@ -2,7 +2,9 @@
 # Restarts every node of a cluster, one at a time: checks the cluster, drains
 # the node, restarts it, waits until it has joined, checks the cluster again.
 # Stops at the first problem, without touching the next node.
-#   ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.rolling_restart
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 # -e cassandra_rolling_mode=rack restarts all the nodes of a rack together,
 # rack by rack: faster on big clusters, and only allowed when every datacenter
@@ -12,7 +14,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Set up the progress file
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
     cassandra_service_node_action: restart
@@ -30,7 +32,7 @@
         tasks_from: progress.yml
 
 - name: Rolling restart
-  hosts: "{{ cassandra_hosts | default('cassandra') if cassandra_rolling_mode | default('node') == 'node' else 'localhost:!localhost' }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') if cassandra_rolling_mode | default('node') == 'node' else 'localhost:!localhost' }}"
   serial: 1
   any_errors_fatal: true
   tasks:
@@ -42,7 +44,7 @@
         cassandra_service_node_action: restart
 
 - name: Rolling restart, one rack at a time
-  hosts: "{{ cassandra_hosts | default('cassandra') if cassandra_rolling_mode | default('node') == 'rack' else 'localhost:!localhost' }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') if cassandra_rolling_mode | default('node') == 'rack' else 'localhost:!localhost' }}"
   gather_facts: true
   gather_subset: [network]
   any_errors_fatal: true
@@ -120,7 +122,7 @@
       run_once: true
 
 - name: Summary
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Print the summary

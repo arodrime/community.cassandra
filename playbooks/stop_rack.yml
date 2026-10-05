@@ -2,8 +2,10 @@
 # Stops every node of one rack at once (maintenance of the rack's hosts,
 # network, power...), each one drained (nodetool drain, best effort; with
 # cassandra_operation_drain: false only by the role's unit) then stopped:
-#   ansible-playbook -i inventory community.cassandra.stop_rack -e cassandra_hosts=my_cluster \
+#   ansible-playbook -i inventory community.cassandra.stop_rack \
 #     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # With at least as many racks as replicas in the datacenter, one rack down is
 # one replica down. Refused when a keyspace would lose more than that (more
 # replicas in the datacenter than racks, SimpleStrategy with RF > 1) or when a
@@ -15,7 +17,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check that the rack can go down
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
     _dc_nodes: >-
@@ -130,7 +132,7 @@
       changed_when: false
 
 - name: Stop the rack
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_target_rack_nodes"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_target_rack_nodes"
   gather_facts: false
   any_errors_fatal: true
   tasks:
@@ -174,6 +176,6 @@
         msg: >-
           {{ cassandra_target_dc | default('(not set)') }}/{{ cassandra_target_rack | default('(not set)') }} is down ({{ ansible_play_hosts_all | join(', ') }}).
           Start it with: ansible-playbook -i <inventory> community.cassandra.start_rack -e cassandra_hosts={{
-          cassandra_hosts | default('cassandra') }} -e cassandra_target_dc={{ cassandra_target_dc | default('(not set)') }}
+          lookup('community.cassandra.cassandra_hosts') }} -e cassandra_target_dc={{ cassandra_target_dc | default('(not set)') }}
           -e cassandra_target_rack={{ cassandra_target_rack | default('(not set)') }}
       run_once: true

@@ -3,7 +3,9 @@
 # data to the others (nodetool decommission), then Cassandra is stopped and
 # disabled on it. The cluster is checked before and after each node; the run
 # stops at the first problem.
-#   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=my_cluster -e cassandra_leaving_nodes=node7
+#   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Refused: a seed (take it out of cassandra_seeds with change_seeds first), and
 # a datacenter left with fewer nodes than a keyspace has replicas there
 # (cassandra_decommission_force: true goes on, at the cost of those replicas).
@@ -20,7 +22,7 @@
   gather_facts: false
   any_errors_fatal: true  # remove none of them if one is refused
   vars:
-    _cluster: "{{ groups[cassandra_hosts | default('cassandra')] }}"
+    _cluster: "{{ groups[lookup('community.cassandra.cassandra_hosts')] }}"
     _leaving: "{{ ansible_play_hosts_all }}"
     _staying: "{{ _cluster | reject('in', _leaving) | list }}"
   tasks:
@@ -29,7 +31,7 @@
         - name: A node to remove is in the cluster
           ansible.builtin.assert:
             that: inventory_hostname in _cluster
-            fail_msg: "{{ inventory_hostname }} is not in the inventory group {{ cassandra_hosts | default('cassandra') }}"
+            fail_msg: "{{ inventory_hostname }} is not in the inventory group {{ lookup('community.cassandra.cassandra_hosts') }}"
             quiet: true
 
         - name: A seed can't be removed
@@ -146,8 +148,8 @@
         cassandra_service_node_checks_before: "{{ cassandra_leaving_node.state == 'normal' }}"
         cassandra_service_leaving_before: "{{ [cassandra_leaving_node_address] if cassandra_leaving_node.state == 'leaving' else [] }}"
         cassandra_service_expected_before: >-
-          {{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int - (1 if _left | bool else 0) }}
-        cassandra_service_expected_after: "{{ groups[cassandra_hosts | default('cassandra')] | length - _gone | int - 1 }}"
+          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int - (1 if _left | bool else 0) }}
+        cassandra_service_expected_after: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int - 1 }}"
 
 - name: Summary
   hosts: "{{ cassandra_leaving_nodes }}"

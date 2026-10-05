@@ -6,13 +6,15 @@
 # Cassandra is older than its config files (written by cassandra_config, which
 # never restarts, or by a run stopped before the restart), are touched.
 # Stops at the first problem.
-#   ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=my_cluster
+#   ansible-playbook -i inventory community.cassandra.apply_config
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Find what each node needs
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     # Check mode: shows the diffs, writes nothing
@@ -74,7 +76,7 @@
       {%- set out = [] -%}{%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | default(false) | bool -%}{%-          set _ = out.append(h) -%}{%- endfor -%}{{ out }}
 
 - name: Set up the progress file
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_apply_config_True"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_apply_config_True"
   gather_facts: false
   vars:
     cassandra_service_node_action: apply_config
@@ -85,7 +87,7 @@
         tasks_from: progress.yml
 
 - name: Apply the config, one node at a time
-  hosts: "{{ cassandra_hosts | default('cassandra') }}:&cassandra_apply_config_True"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_apply_config_True"
   serial: 1
   any_errors_fatal: true
   tasks:
@@ -97,7 +99,7 @@
         cassandra_service_node_action: apply_config
 
 - name: Summary
-  hosts: "{{ cassandra_hosts | default('cassandra') }}"
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
     - name: Print the summary

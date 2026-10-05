@@ -32,7 +32,7 @@ def render(template, **variables):
 def test_operation_summary_is_a_list():
     msg = load("roles", "cassandra_service", "tasks", "summary.yml")[0]["ansible.builtin.debug"]["msg"]
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}}
-    assert render(msg, cassandra_service_summary_hosts=["n1", "n2"], hostvars=hostvars) == \
+    assert render(msg, cassandra_service_summary_hosts=["n1", "n2"], hostvars=hostvars, groups={"prod": ["n1", "n2"]}) == \
         ["n1: add done in 5s", "n2: not reached"]
 
 

@@ -8,7 +8,7 @@
   vars:
     _data: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}"
     _from: >-
-      {{ groups[cassandra_hosts | default('cassandra')]
+      {{ groups[lookup('community.cassandra.cassandra_hosts')]
          | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)) | first | default('') }}
     _address: >-
       {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
@@ -35,7 +35,7 @@
     - name: Need a node of the cluster to read the ring from
       ansible.builtin.assert:
         that: _from | length > 0
-        fail_msg: "Every node of {{ cassandra_hosts | default('cassandra') }} is in cassandra_new_nodes: use create_cluster for a new cluster"
+        fail_msg: "Every node of {{ lookup('community.cassandra.cassandra_hosts') }} is in cassandra_new_nodes: use create_cluster for a new cluster"
         quiet: true
 
     - name: Look for this node's system keyspace

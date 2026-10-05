@@ -53,12 +53,10 @@ def test_missing_group_named_with_the_groups():
     assert msg == "cassandra_hosts: group 'prd' not found in the inventory (groups: empty, prod)."
 
 
-def test_default_group_missing():
-    # -e cassandra_host=prod (typo): cassandra_hosts is not set, the default group does not exist
-    passed, msg = check()
-    assert passed is False
-    assert msg == ("cassandra_hosts: group 'cassandra' not found in the inventory (groups: empty, prod);"
-                   " cassandra_hosts is not set, 'cassandra' is its default.")
+def test_default_is_the_cluster_group():
+    # no -e cassandra_hosts: the inventory's only cluster group
+    assert check()[0] is True
+    assert render(CHECK["vars"]["_name"], groups=GROUPS) == "prod"
 
 
 def test_empty_group():
