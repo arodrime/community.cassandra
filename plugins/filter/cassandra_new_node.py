@@ -88,12 +88,13 @@ def _unit_mounts(unit_files):
     return mounts
 
 
-def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, min_free_gb=0):
+def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, min_free_gb=0, reset=False):
     """dirs: [{'kind': 'data', 'path', 'real'}] (kinds: data, commitlog, hints,
     saved_caches; real: the link's target when path is a link); mounts: ansible_facts['mounts']; found: the paths found in
     them (find, not recursive). A dir whose expected mount (fstab or enabled
     mount unit) is not mounted would land on the file system below it.
-    Adds 'data_free': the bytes free on the data directories' file systems."""
+    reset: the node is reset first (reset_node.yml), a directory not empty is
+    only a warning. Adds 'data_free': the bytes free on the data directories' file systems."""
     actual = dict((_norm(m["mount"]), m) for m in mounts or [] if m.get("mount"))
     expected = _unit_mounts(unit_files)
     expected.update(_fstab_mounts(fstab))
@@ -129,7 +130,11 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
         # what the directory holds, besides the other Cassandra directories and a new file system's lost+found
         held = [p for p in found if os.path.dirname(p) == path and os.path.basename(p) != "lost+found"
                 and not any(_under(other, p) for other in paths if other != path)]
-        if held:
+        if held and reset:
+            names = sorted(os.path.basename(p) for p in held)
+            warnings.append("%s directory %s is not empty (%s%s): the reset asked for empties it first"
+                            % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
+        elif held:
             names = sorted(os.path.basename(p) for p in held)
             problems.append("%s directory %s is not empty (%s%s): a new node starts empty. Move the data away, or empty it"
                             " if it is not needed" % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
@@ -236,12 +241,16 @@ def _listening(ss_output):
     return ports
 
 
-def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False):
+def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False, reset=False):
     """reached: a wait_for loop result over {'name', 'host', 'port'} items;
     own_ports: [{'name', 'port'}] this host's Cassandra ports; ss_output:
-    ss -ltn output (None: could not run it)."""
+    ss -ltn output (None: could not run it); reset: the node is reset first
+    (reset_node.yml stops a running Cassandra: only a warning, its ports too)."""
     problems, warnings, info = [], [], []
-    if running:
+    if running and reset:
+        warnings.append("Cassandra is running here: the reset asked for stops it first (refused if it is a member of a"
+                        " cluster)")
+    elif running:
         problems.append("Cassandra is running here: a new node must not have started yet. If it holds no data you need"
                         " (e.g. the package's own instance), stop it and empty its directories")
     for r in (reached or {}).get("results", []):
@@ -260,7 +269,8 @@ def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False
         busy = _listening(ss_output)
         for p in own_ports:
             if int(p["port"]) in busy:
-                problems.append("port %s (%s) is already in use here" % (p["port"], p["name"]))
+                (warnings if running and reset else problems).append(
+                    "port %s (%s) is already in use here%s" % (p["port"], p["name"], " (by Cassandra?)" if running and reset else ""))
     return _result(problems, warnings, info)
 
 

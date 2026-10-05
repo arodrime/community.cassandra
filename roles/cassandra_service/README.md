@@ -95,6 +95,20 @@ Role Variables
   packages or the sources they come from, the seeds' ports, the host's own
   ports free, no Cassandra running) and stop with every problem found.
   Default `true`; `false` skips them.
+* `cassandra_add_node_reset`: `add_node` refuses a new node that has data
+  but is not in the ring (started once by mistake, a failed bootstrap);
+  `true` empties it first (`tasks/reset_node.yml`, as the `reset_node`
+  playbook: Cassandra stopped and disabled, what its directories hold
+  deleted, shown and confirmed; refused on a node the cluster sees in its
+  ring). Default `false`.
+* `cassandra_replace_node_reset`: the same for a replacement host that still
+  holds data in `replace_node`, typically a host replacing itself (its
+  address only seen down, as the node being replaced). Default `false`.
+* `cassandra_create_cluster_reset`: `create_cluster` rebuilds a cluster that
+  runs already, all its data lost (another snitch, datacenters or racks):
+  refused unless the group is the whole ring; the operator types the cluster
+  name, or gives it in `cassandra_create_cluster_reset_confirm` for a run
+  without a terminal. Default `false`.
 * `cassandra_new_node_min_free_gb`: minimum free space (GiB) on each data
   directory's file system of a new host. Default `0` (none).
 * `cassandra_new_node_allow_kept_setup`: the checks refuse a new host with no

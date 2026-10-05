@@ -43,7 +43,7 @@ def render(template, variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def variables(inventory, running, task=IDENTITY, others=None, play=None, group=None, data=()):
+def variables(inventory, running, reset=False, task=IDENTITY, others=None, play=None, group=None, data=()):
     """others: {host: running (None: no preflight fact)}; play: the hosts in the run; group: the group's hosts;
     data: the hosts holding a system keyspace"""
     hostvars = {"n1": dict(inventory, _cassandra_preflight_running=running, inventory_hostname="n1")}
@@ -54,7 +54,7 @@ def variables(inventory, running, task=IDENTITY, others=None, play=None, group=N
     hosts = play or list(hostvars)
     v = dict(PLAY["vars"], **task.get("vars", {}))
     v.update(inventory, hostvars=hostvars, inventory_hostname="n1", ansible_play_hosts_all=hosts, ansible_play_hosts=hosts,
-             groups={"cassandra": group or list(hostvars)})
+             groups={"cassandra": group or list(hostvars)}, cassandra_create_cluster_reset=reset)
     return v
 
 
@@ -75,6 +75,12 @@ def test_new_cluster_may_leave_the_mode_out():
 ])
 def test_partly_running_or_unknown_is_not_new(kw):
     assert missing(SET, running=False, **kw) == ["cassandra_storage_compatibility_mode"]
+
+
+def test_cluster_rebuilt_may_leave_the_mode_out():
+    # cassandra_create_cluster_reset: the cluster there is wiped first
+    assert missing(SET, running=True, reset=True) == []
+    assert missing(SET, running=True, reset="true", data=["n1"]) == []
 
 
 def test_running_cluster_needs_the_mode():

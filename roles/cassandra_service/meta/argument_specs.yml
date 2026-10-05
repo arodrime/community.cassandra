@@ -147,6 +147,46 @@ argument_specs:
             replicas as racks there). C(none) prints the command; C(one) runs it one node at a time;
             C(rack) and C(dc) clean the nodes of a rack, of a datacenter together, one batch after the other;
             C(all) cleans them all at once. The cluster is checked before each batch.
+      cassandra_add_node_reset:
+        type: bool
+        default: false
+        description:
+          - What the C(add_node) playbook does with a new node that has data but is not in the ring (started
+            once by mistake, a failed bootstrap). C(false) refuses it. C(true) resets it first, the same way as
+            the C(reset_node) playbook. It stops Cassandra, keeps it from starting at boot, then deletes what its
+            data, commitlog, saved_caches, hints and cdc_raw directories hold, from the inventory and the live
+            C(cassandra.yaml). The list is shown and confirmed first.
+          - The reset is refused when an up node of the cluster lists one of the node's addresses in its ring,
+            when no other node answers as up, when Cassandra runs there with other nodes in its ring, and on
+            paths that look wrong (a system directory, a top-level one that is not a mount point, one holding
+            another mount point, the config or the logs).
+      cassandra_replace_node_reset:
+        type: bool
+        default: false
+        description:
+          - What the C(replace_node) playbook does with a replacement host that still holds data, typically a
+            host replacing itself (the dead node's address is its own, e.g. a lost disk or a reinstall).
+            C(false) refuses it, C(true) resets it first as C(cassandra_add_node_reset) does. The other nodes
+            may list the host's address only as the dead node being replaced, down.
+      cassandra_create_cluster_reset:
+        type: bool
+        default: false
+        description:
+          - C(true) makes the C(create_cluster) playbook rebuild a cluster that runs already, ALL ITS DATA
+            LOST, e.g. to move it to another snitch, datacenters or racks (a node keeps them for life once it
+            has joined). Every node is stopped, kept from starting at boot and emptied as by the C(reset_node)
+            playbook, then the cluster is created with the inventory's settings.
+          - Refused when C(--limit) leaves a host of the group out, when no node answers C(nodetool status),
+            when the ring has a node the group does not have, when a running node is not in that ring or the
+            running nodes see different rings, when a node holding data is not in that ring, or when a node's
+            live C(cassandra.yaml) names another cluster. The plan is shown, then the operator types the cluster name. C(--check) shows
+            the plan only.
+      cassandra_create_cluster_reset_confirm:
+        type: str
+        default: ""
+        description:
+          - The cluster name, for C(cassandra_create_cluster_reset) without a terminal (it replaces typing
+            it). Any other value is refused.
       cassandra_token_auto:
         type: raw
         default: false

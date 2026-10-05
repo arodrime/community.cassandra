@@ -7,7 +7,9 @@
 # import_cluster wrote (host_vars of a node it found) on a host with no Cassandra. Read-only, also
 # under --check. Runs after the preflight play (its facts and ring). A host already
 # in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
-# checks it next). cassandra_new_node_checks: false skips them all.
+# checks it next). _cassandra_new_node_reset (a reset asked for): leftovers in
+# the directories and a running Cassandra are only warnings, the reset deals with
+# them. cassandra_new_node_checks: false skips them all.
 - name: Load the defaults of the roles the node gets
   ansible.builtin.include_role:
     name: "community.cassandra.{{ item }}"
@@ -196,7 +198,7 @@
                    fstab=(cassandra_new_node_fstab.content | default('') | b64decode),
                    unit_files=cassandra_new_node_mount_units.stdout | default(''),
                    found=cassandra_new_node_found.files | default([]) | map(attribute='path') | list,
-                   min_free_gb=cassandra_new_node_min_free_gb) }}
+                   min_free_gb=cassandra_new_node_min_free_gb, reset=_cassandra_new_node_reset | default(false)) }}
             _all:
               - "{{ {'problems': _cassandra_new_node_plan.problems, 'warnings': [], 'info': _cassandra_new_node_plan.info} }}"
               - "{{ _dirs_result }}"
@@ -230,7 +232,8 @@
               - >-
                 {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,
                      ss_output=cassandra_new_node_ss.stdout if cassandra_new_node_ss.rc | default(1) == 0 else none,
-                     running=_cassandra_preflight_running | default(false)) }}
+                     running=_cassandra_preflight_running | default(false),
+                     reset=_cassandra_new_node_reset | default(false)) }}
 
         - name: What {{ inventory_hostname }} has
           ansible.builtin.debug:
@@ -254,9 +257,15 @@
         msg: >-
           {{ _hosts | join(', ') }} {{ 'is' if _hosts | length == 1 else 'are' }} not ready (the problems are listed above):
           nothing was installed. Fix them and run again, or skip these checks with -e cassandra_new_node_checks=false.
+          {{ ('Leftovers of a node that never joined (started once by mistake, a failed bootstrap) or of a host replacing itself:'
+              ' -e cassandra_add_node_reset=true (add_node) or -e cassandra_replace_node_reset=true (replace_node) empties'
+              ' it first, if they hold nothing you need.') if _leftovers | bool else '' }}
       run_once: true
       when: _hosts | length > 0
       vars:
+        _leftovers: >-
+          {{ _hosts | map('extract', hostvars, ['_cassandra_new_node_check', 'problems']) | flatten
+             | select('search', 'is not empty|Cassandra is running here') | list | length > 0 }}
         _hosts: >-
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_new_node_check', 'defined')
              | rejectattr('_cassandra_new_node_check.problems', 'equalto', []) | map(attribute='inventory_hostname') | list }}

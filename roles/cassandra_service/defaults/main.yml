@@ -74,6 +74,18 @@ cassandra_stream_max_time: 0  # seconds, 0: no limit
 # command; one: run it one node at a time; rack, dc: the nodes of a rack, of a
 # datacenter together, one batch after the other; all: every node at once.
 cassandra_add_node_cleanup: none
+# add_node: a new node with data but not in the ring (started once by
+# mistake, a failed bootstrap) is refused; true empties it first (stops
+# Cassandra, deletes what its directories hold, shown and confirmed;
+# reset_node.yml). replace_node: the same for a replacement host that still
+# holds data, typically a host replacing itself (same address).
+cassandra_add_node_reset: false
+cassandra_replace_node_reset: false
+# create_cluster: true rebuilds a cluster that runs already, all its data
+# lost (another snitch, datacenters, racks); the operator types the cluster
+# name, or gives it in cassandra_create_cluster_reset_confirm (no terminal)
+cassandra_create_cluster_reset: false
+cassandra_create_cluster_reset_confirm: ""
 # One token per node (cassandra_num_tokens: 1): where add_node puts the new
 # nodes without cassandra_initial_token (false: refused; bisect; balanced;
 # true: shows both, asks), the replication factor the shares assume when no

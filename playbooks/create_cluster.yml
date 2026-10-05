@@ -13,8 +13,25 @@
 # One token per node (cassandra_num_tokens: 1): the nodes without
 # cassandra_initial_token get evenly spaced tokens, shown with each node's
 # share of the data, then confirmed (cassandra_operation_confirm).
+# -e cassandra_create_cluster_reset=true rebuilds a cluster that runs already,
+# ALL ITS DATA LOST: e.g. to move it to another snitch, datacenters or racks,
+# which a node keeps for life once it has joined. Refused when --limit leaves a
+# node of the group out, when no node answers nodetool status, when the ring has
+# a node the group does not have (never wipe part of a cluster that keeps
+# running), when a running node is not in that ring or the rings differ, when
+# a node holding data is not in that ring, when a Cassandra runs that its unit
+# did not start, or when a node's live cassandra.yaml names another cluster. The token plan (one token per node),
+# then each node's plan is shown, then the operator types the cluster name (no
+# terminal: -e cassandra_create_cluster_reset_confirm=<cluster name> with
+# cassandra_operation_confirm=false); every node is stopped and disabled, then
+# emptied (reset_node.yml), then the cluster is created with the inventory's
+# settings. --check shows the plan only. A create that fails after the wipe:
+# run create_cluster again without the option.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    # the cluster there now is wiped: its ring does not count for the seeds and racks
+    _cassandra_preflight_cluster_reset: "{{ cassandra_create_cluster_reset | default(false) }}"
 
 # A cluster keeps these for life: a role default that changes in a later
 # release must not silently change what the next node of this cluster gets
@@ -22,10 +39,10 @@
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   vars:
-    # a cluster never started: every host of the group in the run (no --limit), checked by the preflight
-    # (it answered) and below, none running, none with a system keyspace (a cluster stopped as a whole
-    # is not new)
-    _group: "{{ groups[cassandra_hosts | default('cassandra')] | default([]) }}"
+    # the one there is wiped first (cassandra_create_cluster_reset), or a cluster never started: every
+    # host of the group in the run (no --limit), checked by the preflight (it answered) and below, none
+    # running, none with a system keyspace (a cluster stopped as a whole is not new)
+    _group: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | default([]) }}"
     _new_cluster: >-
       {%- set fresh = [] -%}
       {%- for h in ansible_play_hosts_all -%}
@@ -36,7 +53,8 @@
       {%-     set _ = fresh.append(h) -%}
       {%-   endif -%}
       {%- endfor -%}
-      {{ _group | difference(ansible_play_hosts_all) | length == 0 and fresh | length == ansible_play_hosts_all | length }}
+      {{ cassandra_create_cluster_reset | default(false) | bool
+         or (_group | difference(ansible_play_hosts_all) | length == 0 and fresh | length == ansible_play_hosts_all | length) }}
   tasks:
     - name: Load the cassandra_config defaults
       ansible.builtin.include_role:
@@ -124,9 +142,11 @@
       when: _cassandra_preflight.cassandra_num_tokens | int == 1
       vars:
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_token_plan | default({}) }}"
+        # a cluster rebuilt (cassandra_create_cluster_reset) keeps none of its tokens
         _running: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
-             | map(attribute='inventory_hostname') | list }}
+          {{ [] if cassandra_create_cluster_reset | default(false) | bool
+             else ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
+                  | map(attribute='inventory_hostname') | list }}
       block:
         - name: Load the cassandra_service defaults
           ansible.builtin.include_role:
@@ -189,8 +209,119 @@
             cassandra_initial_token: "{{ _plan.tokens[inventory_hostname] }}"
           when: inventory_hostname in _plan.tokens
 
+# After the token plan (shown and confirmed before anything is wiped)
+- name: Reset the whole cluster first (cassandra_create_cluster_reset)
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  gather_facts: false
+  any_errors_fatal: true  # every node stopped before any is emptied, none if one is refused
+  strategy: linear  # each task on every node before the next one
+  tasks:
+    - name: Reset the whole cluster
+      when: cassandra_create_cluster_reset | default(false) | bool
+      vars:
+        _group: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+        _running: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
+             | selectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list }}
+      block:
+        - name: Load the cassandra_service defaults
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: defaults.yml
+            public: true
+
+        - name: Every node of the group is in the run
+          ansible.builtin.assert:
+            that: ansible_play_hosts | sort == groups[_group] | sort
+            fail_msg: >-
+              The reset wipes the whole cluster: every host of {{ _group }} must be in the run, without --limit
+              (left out: {{ groups[_group] | difference(ansible_play_hosts) | join(', ') }}). Nothing was changed.
+            quiet: true
+          run_once: true
+
+        - name: Read the ring of the running nodes
+          community.cassandra.cassandra_status:
+            down: 10000  # read it whatever the state of the nodes
+            interval: 0
+            port: "{{ hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int }}"
+          module_defaults:
+            community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+          delegate_to: "{{ item }}"
+          loop: "{{ _running }}"
+          register: cassandra_create_reset_rings
+          failed_when: false
+          run_once: true
+
+        - name: Check the group is the whole cluster
+          ansible.builtin.set_fact:
+            _cassandra_create_reset_check: >-
+              {{ _answers | community.cassandra.cassandra_cluster_reset_check(_addresses_of, _group, running=_running) }}
+          run_once: true
+          vars:
+            _answers: >-
+              {%- set out = [] -%}
+              {%- for r in cassandra_create_reset_rings.results | default([]) -%}
+              {%-   set _ = out.append({'host': r.item, 'status': r.cluster_status | default(none)}) -%}
+              {%- endfor -%}
+              {{ out }}
+            _addresses_of: >-
+              {%- set out = {} -%}
+              {%- for h in groups[_group] -%}
+              {%-   set v = hostvars[h] -%}
+              {%-   set _ = out.update({h: (v.ansible_facts.all_ipv4_addresses | default([]) + v.ansible_facts.all_ipv6_addresses | default([])
+                                            + [v._cassandra_preflight.address | default(''), v._cassandra_preflight.ring_address | default('')])
+                                           | select | unique | list}) -%}
+              {%- endfor -%}
+              {{ out }}
+
+        - name: Show what the reset does
+          ansible.builtin.debug:
+            msg: >-
+              {{ ['create_cluster with cassandra_create_cluster_reset: cluster ' ~ _cassandra_preflight.cassandra_cluster_name ~ ', ALL ITS DATA LOST,'
+                  ~ ' then created again with the settings of the inventory (snitch ' ~ _cassandra_preflight.cassandra_endpoint_snitch ~ '):']
+                 + _nodes
+                 + _cassandra_create_reset_check.info + _cassandra_create_reset_check.problems | map('regex_replace', '^', 'REFUSED: ') | list
+                 + (['--check: the plan only, nothing is stopped, deleted or started.'] if ansible_check_mode else []) }}
+          run_once: true
+          vars:
+            _nodes: >-
+              {%- set l = [] -%}
+              {%- for h in ansible_play_hosts -%}
+              {%-   set p = hostvars[h]._cassandra_preflight -%}
+              {%-   set _ = l.append('  ' ~ h ~ ' (' ~ p.address ~ '): ' ~ ('running' if hostvars[h]._cassandra_preflight_running | default(false) else 'stopped')
+                                     ~ ', then datacenter ' ~ p.cassandra_dc ~ ', rack ' ~ p.cassandra_rack ~ (', seed' if p.layout.seed | bool else '')) -%}
+              {%- endfor -%}
+              {{ l }}
+
+        - name: Refuse to reset part of a cluster
+          ansible.builtin.fail:
+            msg: "Nothing was changed: {{ _cassandra_create_reset_check.problems | join('; ') }}"
+          run_once: true
+          when: _cassandra_create_reset_check.problems | length > 0
+
+        - name: Stop and empty every node
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: reset_node.yml
+          vars:
+            _cassandra_node_reset_whole_cluster: true
+            _cassandra_node_reset_cluster_ring: "{{ _cassandra_create_reset_check.ring }}"
+
+        # what the preflight found no longer stands: the nodes start as a new cluster
+        - name: Forget the cluster that was there
+          ansible.builtin.set_fact:
+            _cassandra_preflight_running: false
+            cassandra_preflight_status: {}
+            # its new snitch, datacenters and racks (a stale system dir left outside the emptied ones)
+            cassandra_config_force_identity_change: true
+          when: not ansible_check_mode
+
 - name: Prepare the nodes
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  pre_tasks:
+    - name: The plan only (--check with cassandra_create_cluster_reset)
+      ansible.builtin.meta: end_play
+      when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
   roles:
     - community.cassandra.cassandra_repository
     - community.cassandra.cassandra_install
@@ -209,6 +340,10 @@
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
+    - name: The plan only (--check with cassandra_create_cluster_reset)
+      ansible.builtin.meta: end_play
+      when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
+
     - name: Seeds first, racks in an order the token allocator accepts
       ansible.builtin.add_host:
         name: "{{ item }}"
@@ -235,6 +370,10 @@
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
   tasks:
+    - name: The plan only (--check with cassandra_create_cluster_reset)
+      ansible.builtin.meta: end_play
+      when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
+
     - name: Say the cluster is not checked (--check)
       ansible.builtin.debug:
         msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."

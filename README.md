@@ -45,6 +45,7 @@ settings such as `cassandra_seeds` in its group_vars). Run them with
 - `cleanup`- Runs `nodetool cleanup` node by node, rack by rack, DC by DC or everywhere at once, checking the cluster before each batch.
 - `decommission_node`- Removes the nodes in `cassandra_leaving_nodes`, one at a time; refuses seeds and a datacenter left with fewer nodes than replicas.
 - `replace_node`- Replaces a dead node (`cassandra_replace_address`) by a blank host (`cassandra_new_nodes`), which takes over its tokens and data.
+- `reset_node`- Empties nodes that are not members of the cluster (`cassandra_reset_nodes`: started once by mistake, a failed bootstrap) for a fresh start; refused on any node the cluster sees in its ring. `add_node` and `replace_node` do the same with `cassandra_add_node_reset` / `cassandra_replace_node_reset`.
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.
 - `remove_dead_node`- Last resort for a dead node that will not be replaced: `removenode` (or `assassinate`).
 - `add_datacenter` / `remove_datacenter`- Adds a datacenter (join without streaming, replication, rebuild), or removes one (replication, then its nodes leave).
