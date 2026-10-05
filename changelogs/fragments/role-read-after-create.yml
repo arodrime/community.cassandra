@@ -1,0 +1,4 @@
+bugfixes:
+  - cassandra_role - read the role from ``system_auth.roles`` once, and treat an empty result as a missing role (which the module then creates). The module used to check that the role exists, then read its properties with a second query; when the second read did not see the role, the module failed with ``list index out of range``.
+trivial:
+  - Integration tests - give each ccm node its own initial token. Seeds starting together could pick the same token, and nodes then disagreed on which node owned that range, so a role just created was sometimes not found.
