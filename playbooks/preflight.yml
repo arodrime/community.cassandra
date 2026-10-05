@@ -143,7 +143,10 @@
         _running: >-
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
              | map(attribute='inventory_hostname') | list }}
-        _from: "{{ _running | first | default(inventory_hostname) }}"  # templated even when the block is skipped
+        # a node being added or reset may run alone, another cluster's way (e.g. the package's own instance)
+        _aside_pattern: "{{ [cassandra_new_nodes | default([]), cassandra_reset_nodes | default([])] | flatten | select | join(',') }}"
+        _aside: "{{ query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else [] }}"
+        _from: "{{ (_running | reject('in', _aside) | list + _running) | first | default(inventory_hostname) }}"  # templated even when the block is skipped
       block:
         # Also waits for a node that is still starting
         - name: Read the cluster description from a running node

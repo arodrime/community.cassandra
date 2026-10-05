@@ -116,6 +116,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
     $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=orders -e cassandra_leaving_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=orders -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
+    $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_hosts=orders -e cassandra_reset_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
@@ -192,8 +193,8 @@ progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row 
 many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
-failed bootstrap over, stop Cassandra on the node, empty its data, commitlog, saved_caches and hints directories, wait
-until it is gone from ``nodetool status``, and run ``add_node`` again. ``replace_node``, ``decommission_node``,
+failed bootstrap over, stop Cassandra on the node, wait until it is gone from ``nodetool status``, and run ``add_node``
+again with ``-e cassandra_add_node_reset=true`` (see `Resetting a node`_). ``replace_node``, ``decommission_node``,
 ``remove_dead_node`` and the rebuild of ``add_datacenter`` wait the same way.
 
 Once the new nodes have joined, the others still hold the data they handed over: ``add_node`` prints the ``cleanup``
@@ -276,6 +277,42 @@ dead one out of the inventory (the new host may reuse its address), then run it 
 ``cassandra_new_nodes`` and the dead node's address in ``cassandra_replace_address``. Only a node that is down in the
 ring can be replaced. A dead seed: take it out of ``cassandra_seeds`` with ``change_seeds`` first, replace it, then
 make the new node a seed.
+
+A replacement host that still holds data is refused: a replacement starts blank. Typically a host replacing itself
+(the dead node's own address, after a lost disk or a reinstall) with some of its old data left:
+``-e cassandra_replace_node_reset=true`` empties it first (see `Resetting a node`_); there, the other nodes may list
+its address only as the dead node being replaced, down.
+
+
+Resetting a node
+----------------
+
+A node that never joined the cluster but has data of its own (started once with the package's stock configuration,
+or a bootstrap that failed) is refused by ``add_node``. The reset starts it over: Cassandra stopped and kept from
+starting at boot, then everything its data, commitlog, saved_caches, hints and cdc_raw directories hold deleted (the
+directories stay, they may be mount points). The directories are those of the inventory and those of the live
+``cassandra.yaml`` (Cassandra's defaults under ``/var/lib/cassandra`` for the keys it leaves out).
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_hosts=orders -e cassandra_reset_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=orders -e cassandra_new_nodes=node7 -e cassandra_add_node_reset=true
+
+Nothing is changed, and the run stops with the reason, when an up node of the cluster (every node of the group the
+preflight did not find stopped, but the nodes being added or reset, is asked) lists one of the node's addresses
+(from its facts, the inventory and its live ``cassandra.yaml``) or its host ID in ``nodetool status``, up or down: a
+member leaves with ``decommission_node`` or ``remove_dead_node`` first. Also when no other node answers as up and
+normal (nothing to check against, e.g. a single-node cluster), when a node with data finds a down node in the ring
+that no inventory host accounts for (it may be this node under an old address), when the node is not in the
+``cassandra_hosts`` group or its live ``cassandra.yaml`` names another cluster than the inventory's (or the stock
+``Test Cluster``), when Cassandra runs on the node with other nodes in its ring, does not answer, or runs without a
+``cassandra`` unit to stop it, when a directory can't be read (run with ``-b``), and for a path
+that looks wrong: empty or relative, ``/``, a system directory, a top-level directory that is not a mount point, a
+home, the package's storage root, another program's directory under ``/var/lib``, a directory holding another mount
+point, the config or the logs, one directory inside another (links resolved), or a live ``cassandra.yaml`` that can't
+be read. The directories are checked again, links resolved, just before the delete.
+The run shows what it would stop and delete, directory by directory, then asks once (``cassandra_operation_confirm:
+false`` skips the question); ``--check`` shows it and changes nothing. A second run finds nothing to do.
 
 
 When a node is dead for good and will not be replaced, take it out of the inventory and run ``remove_dead_node`` with

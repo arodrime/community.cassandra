@@ -96,6 +96,15 @@ def test_non_empty_dirs():
     assert "(.keep)" in out["problems"][2]
 
 
+def test_non_empty_dirs_with_a_reset_only_warn():
+    found = ["/var/lib/cassandra/data/system", "/var/lib/cassandra/commitlog/CommitLog-7-1.log"]
+    out = cassandra_new_node_dirs(DIRS, [ROOT, DATA], found=found, reset=True)
+    assert out["problems"] == []
+    assert out["warnings"] == [
+        "data directory /var/lib/cassandra/data is not empty (system): the reset asked for empties it first",
+        "commitlog directory /var/lib/cassandra/commitlog is not empty (CommitLog-7-1.log): the reset asked for empties it first"]
+
+
 def test_other_cassandra_dirs_inside_a_data_dir_dont_count():
     dirs = [{"kind": "data", "path": "/data"}, {"kind": "commitlog", "path": "/data/commitlog"}]
     out = cassandra_new_node_dirs(dirs, [ROOT], found=["/data/commitlog", "/data/lost+found"])
@@ -239,6 +248,17 @@ def test_network_running_and_no_ss():
     out = cassandra_new_node_network({"results": []}, PORTS, None, running=True)
     assert out["problems"][0].startswith("Cassandra is running here")
     assert out["warnings"] == ["could not list the listening ports (ss)"]
+
+
+def test_network_running_with_a_reset_only_warns():
+    out = cassandra_new_node_network({"results": []}, PORTS, SS, running=True, reset=True)
+    assert out["problems"] == []
+    assert out["warnings"] == [
+        "Cassandra is running here: the reset asked for stops it first (refused if it is a member of a cluster)",
+        "port 9042 (native (CQL)) is already in use here (by Cassandra?)", "port 7199 (JMX) is already in use here (by Cassandra?)"]
+    # not running: a busy port is someone else's, the reset changes nothing to it
+    out = cassandra_new_node_network({"results": []}, PORTS, SS, running=False, reset=True)
+    assert out["problems"] == ["port 9042 (native (CQL)) is already in use here", "port 7199 (JMX) is already in use here"]
 
 
 def test_urls():

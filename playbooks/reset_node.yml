@@ -1,0 +1,24 @@
+---
+# Empties nodes that are not members of the cluster, for a fresh start (e.g.
+# a node started once with the wrong config, a failed bootstrap):
+#   ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_hosts=my_cluster -e cassandra_reset_nodes=node7
+# Cassandra is stopped and kept from starting at boot, then what its data,
+# commitlog, saved_caches, hints and cdc_raw directories hold is deleted (from
+# the inventory and the live cassandra.yaml). Refused on a node any up node of
+# the cluster lists in its ring (or when no other node answers as up), on a
+# running member, on a node of another cluster, and on paths that look wrong.
+# Shown, then confirmed once (cassandra_operation_confirm: false skips it);
+# --check shows it only. add_node (cassandra_add_node_reset) and
+# replace_node (cassandra_replace_node_reset) run the same reset themselves.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+- name: Reset the nodes
+  hosts: "{{ cassandra_reset_nodes }}"
+  gather_facts: false
+  any_errors_fatal: true  # reset none of them if one is refused
+  tasks:
+    - name: Reset this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: reset_node.yml
