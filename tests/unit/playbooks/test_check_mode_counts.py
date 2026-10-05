@@ -59,3 +59,32 @@ def test_add_datacenter_done_nodes():
     for check_mode, expected in ((False, 1), (True, 0)):
         variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": "n5"}
         assert int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_done"]))) == expected
+
+
+def test_decommission_reads_the_replication_under_check():
+    # read-only: --check refuses a datacenter left with too few nodes (and needs the CQL credentials) too
+    with open(PLAYBOOK, encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    tasks = [t for p in plays for b in p.get("tasks", []) for t in [b] + b.get("block", [])]
+    read = next(t for t in tasks if t.get("name") == "Read the keyspaces' replication from a node that stays")
+    assert read["check_mode"] is False and read["changed_when"] is False
+
+
+def refusal(result):
+    with open(PLAYBOOK, encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    record = next(t for p in plays for b in p.get("tasks", []) for t in b.get("rescue", [])
+                  if t.get("name") == "Record the refusal")
+    variables = dict(ansible_failed_result=result)
+    variables["_err"] = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(record["vars"]["_err"]))
+    return Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(record["ansible.builtin.set_fact"]["cassandra_op_result"]))
+
+
+def test_decommission_refusal_names_cqlsh_error_and_credentials():
+    err = ("Using ssl: False\nConnection error: ('Unable to connect to any servers', {'10.0.0.1:9042': "
+           "AuthenticationFailed('Remote end requires authentication',)})")
+    out = refusal({"msg": "module execution failed", "err": err})
+    assert out.startswith("decommission refused: module execution failed: Connection error:")
+    assert "set cassandra_cql_username and cassandra_cql_password" in out
+    assert refusal({"msg": ["a5-n1 is in cassandra_seeds"]}) == "decommission refused: a5-n1 is in cassandra_seeds"

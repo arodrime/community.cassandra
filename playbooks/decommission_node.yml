@@ -63,6 +63,7 @@
           run_once: true
           register: cassandra_decommission_keyspaces
           changed_when: false
+          check_mode: false  # read-only: --check checks the replicas too
 
         - name: Every datacenter keeps enough nodes for its replicas
           ansible.builtin.assert:
@@ -82,7 +83,14 @@
       rescue:
         - name: Record the refusal
           ansible.builtin.set_fact:
-            cassandra_op_result: "decommission refused: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+            cassandra_op_result: >-
+              decommission refused: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}{{
+                (': ' ~ _err.splitlines() | last) if _err else '' }}{{
+                ' (CQL authentication is on: set cassandra_cql_username and cassandra_cql_password)'
+                if 'requires authentication' in _err or 'AuthenticationFailed' in _err else '' }}
+          vars:
+            # cqlsh's own error (reading the replication)
+            _err: "{{ ansible_failed_result.err | default('') | trim }}"
 
         - name: Print the summary
           ansible.builtin.include_role:
