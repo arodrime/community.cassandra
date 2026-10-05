@@ -39,8 +39,8 @@
 
     - name: Serve them
       ansible.builtin.command: >-
-        systemd-run --unit packages-http --working-directory /srv/packages
-        {{ ansible_facts['python']['executable'] }} -m http.server 8080 --bind 127.0.0.1
+        systemd-run --unit packages-http
+        {{ ansible_facts['python']['executable'] }} -m http.server 8080 --bind 127.0.0.1 --directory /srv/packages
       args:
         creates: /run/systemd/transient/packages-http.service
 
