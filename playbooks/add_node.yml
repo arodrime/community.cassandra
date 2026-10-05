@@ -340,9 +340,9 @@
       vars:
         cassandra_service_node_action: add
         cassandra_service_node_checks_before: false
-        # not in the ring yet: this node and the ones after it that never started
+        # not in the ring yet: this node and the ones after it that never started (--check: all of them)
         _pending: >-
-          {{ ansible_play_hosts_all[ansible_play_hosts_all.index(inventory_hostname):]
+          {{ ansible_play_hosts_all[0 if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname):]
              | map('extract', hostvars, 'cassandra_new_node_state') | select('equalto', 'new') | list | length }}
         cassandra_service_expected_before: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _pending | int }}"
         cassandra_service_expected_after: >-

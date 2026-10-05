@@ -1,3 +1,0 @@
----
-bugfixes:
-  - decommission_node playbook - ``--check`` with several nodes failed on the second one, its health check expecting the first one gone.
