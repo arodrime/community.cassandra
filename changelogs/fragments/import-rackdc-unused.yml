@@ -1,0 +1,3 @@
+bugfixes:
+  - import_cluster playbook - under a snitch that does not read ``cassandra-rackdc.properties``' ``dc`` and ``rack`` (e.g. ``SimpleSnitch``), a file whose lines differ from the ring made the self-check fail on those nodes; the nodes' ``cassandra_dc`` and ``cassandra_rack`` stay the ring's, and the file keeps its lines with the new ``cassandra_config`` variables ``cassandra_rackdc_dc`` and ``cassandra_rackdc_rack``. ``cassandra_config`` no longer refuses to change those lines on a joined node under such a snitch.
+  - import_cluster playbook - comment lines that differ from the role's templates (e.g. the stock comments of an older release, kept by the package on upgrade) are listed apart in the report instead of as hand edits.

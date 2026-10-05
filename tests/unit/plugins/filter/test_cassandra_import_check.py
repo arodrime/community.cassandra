@@ -60,7 +60,8 @@ def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/ca
     imported = cassandra_config_import(files, series, facts, "", storage_dir)
     node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
             "vars": dict(imported["vars"], cassandra_version=series, **(tamper or {})),
-            "hand_edits": imported["hand_edits"], "normalized": imported["normalized"], "notes": [],
+            "hand_edits": imported["hand_edits"], "normalized": imported["normalized"],
+            "comments": imported["comments"], "notes": [],
             # a unit set up another way
             "keep": {"cassandra_service_unit_manage": False} if keep is None else keep}
     layout = cassandra_inventory_layout([node], imported["vars"].get("cassandra_cluster_name", "c"))
@@ -546,3 +547,151 @@ def test_a_boolean_setting_written_another_way(value, imported):
 @pytest.mark.parametrize("line", ["keystore_password: pa#ss", "keystore_password: ab'cd", "keystore_password: my pass"])
 def test_yaml_secrets_are_masked_whole(line):
     assert _mask(line) == "keystore_password: ****"
+
+
+# --- cassandra-rackdc.properties under a snitch that doesn't read it --------
+
+def ring_import(series, members):
+    """import_cluster on several nodes: [(name, files, ring dc, ring rack)] ->
+    (inventory files, layout, {name: self-check})."""
+    nodes, files_of = [], {}
+    for i, (name, files, dc, rack) in enumerate(members):
+        facts = dict(FACTS, hostname=name, default_ipv4={"address": "10.100.100.%d" % (i + 1)})
+        imported = cassandra_config_import(files, series, facts, "", "/var/lib/cassandra")
+        nodes.append({"name": name, "address": "10.100.100.%d" % (i + 1), "hostname": name, "dc": dc, "rack": rack,
+                      "read": True, "vars": dict(imported["vars"], cassandra_version=series),
+                      "hand_edits": imported["hand_edits"], "normalized": imported["normalized"],
+                      "comments": imported["comments"], "notes": [],
+                      "keep": {"cassandra_service_unit_manage": False}})
+        files_of[name] = (files, facts)
+    layout = cassandra_inventory_layout(nodes, "my_cluster")
+    inventory = cassandra_inventory_files(layout)
+    checks = dict((name, cassandra_import_self_check(inventory, layout["hosts"], name, facts, files, {},
+                                                     "/var/lib/cassandra", {"40x": "11", "41x": "11", "50x": "17"}[series]))
+                  for name, (files, facts) in files_of.items())
+    return inventory, layout, checks
+
+
+def with_snitch(files, snitch, dc, rack):
+    files = seeded(files)
+    files["cassandra.yaml"] = re.sub(r"(?m)^endpoint_snitch:.*$", "endpoint_snitch: " + snitch, files["cassandra.yaml"])
+    files["cassandra-rackdc.properties"] = re.sub(r"(?m)^dc=.*$", "dc=" + dc, files["cassandra-rackdc.properties"])
+    files["cassandra-rackdc.properties"] = re.sub(r"(?m)^rack=.*$", "rack=" + rack, files["cassandra-rackdc.properties"])
+    return files
+
+
+@pytest.mark.parametrize("series, snitch", [
+    ("40x", "SimpleSnitch"), ("41x", "org.apache.cassandra.locator.SimpleSnitch"), ("50x", "SimpleSnitch")])
+def test_simple_snitch_keeps_the_rackdc_lines_it_ignores(series, snitch):
+    """SimpleSnitch: the ring says datacenter1/rack1 whatever the file says; the
+    file keeps its own lines, the nodes' identity is the ring's."""
+    racks = ["RACK_A", "RACK_A", "RACK_A", "RACK_B", "RACK_B"]
+    members = [("node%d" % (i + 1), with_snitch(stock(series), snitch, "DC_EXAMPLE", rack), "datacenter1", "rack1")
+               for i, rack in enumerate(racks)]
+    inventory, layout, checks = ring_import(series, members)
+    assert all(c["differences"] == [] for c in checks.values()), checks
+    for i, rack in enumerate(racks):
+        hv = cassandra_inventory_host_vars(inventory, layout["hosts"], "node%d" % (i + 1))
+        assert (hv["cassandra_dc"], hv["cassandra_rack"]) == ("datacenter1", "rack1")
+        assert (hv["cassandra_rackdc_dc"], hv["cassandra_rackdc_rack"]) == ("DC_EXAMPLE", rack)
+    assert layout["group_vars"]["my_cluster"]["cassandra_rackdc_dc"] == "DC_EXAMPLE"
+    assert "cassandra_rackdc_rack" not in layout["differences"]  # per node by nature
+    assert "dc= and rack= kept as the nodes have them" in layout["report"]
+    assert "SimpleSnitch does not read them" in layout["report"]
+
+
+def test_simple_snitch_with_the_ring_values_in_the_file_needs_no_variable():
+    members = [("node1", with_snitch(stock("40x"), "SimpleSnitch", "datacenter1", "rack1"), "datacenter1", "rack1")]
+    inventory, layout, checks = ring_import("40x", members)
+    assert checks["node1"]["differences"] == []
+    assert not [k for gv in list(layout["group_vars"].values()) + list(layout["host_vars"].values())
+                for k in gv if k.startswith("cassandra_rackdc_")]
+    assert "dc= and rack= kept" not in layout["report"]
+
+
+@pytest.mark.parametrize("snitch", ["GossipingPropertyFileSnitch", "org.apache.cassandra.locator.GossipingPropertyFileSnitch",
+                                    "com.example.CustomSnitch"])
+def test_a_snitch_that_reads_rackdc_takes_the_ring_values(snitch):
+    """GossipingPropertyFileSnitch (or a class that may read the file): dc= and
+    rack= are the node's dc and rack, the ring's."""
+    members = [("node1", with_snitch(stock("50x"), snitch, "DC_EXAMPLE", "RACK_A"), "DC_EXAMPLE", "RACK_A")]
+    inventory, layout, checks = ring_import("50x", members)
+    assert checks["node1"]["differences"] == []
+    assert not [k for gv in list(layout["group_vars"].values()) + list(layout["host_vars"].values())
+                for k in gv if k.startswith("cassandra_rackdc_")]
+    # the file says something else than the ring (edited since the node started): caught
+    members = [("node1", with_snitch(stock("50x"), snitch, "DC_EXAMPLE", "RACK_B"), "DC_EXAMPLE", "RACK_A")]
+    assert ring_import("50x", members)[2]["node1"]["differences"] == [
+        "cassandra-rackdc.properties: rack: node has 'RACK_B', import would write 'RACK_A'"]
+
+
+# --- comments of another release: not hand edits -----------------------------
+
+def older_release(text):
+    """cassandra.yaml as an older 4.0.x shipped it (kept by the package on upgrade):
+    without the comment blocks later releases added (4.0.1 lacks these)."""
+    for start, end in (("# Enable/disable transfering hints to a peer during decommission.",
+                        "#transfer_hints_on_decommission: true\n\n"),
+                       ("# Strategy to choose the batchlog storage endpoints.", "# batchlog_endpoint_strategy: random_remote\n\n")):
+        i = text.index(start)
+        text = text[:i] + text[text.index(end, i) + len(end):]
+    return text.replace("# cannot go below one mebibyte.", "# cannot go below one megabyte.")
+
+
+def test_stock_comments_of_another_release_are_not_hand_edits():
+    files = seeded(stock("40x"))
+    files["cassandra.yaml"] = older_release(files["cassandra.yaml"])
+    imported = cassandra_config_import(files, "40x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert len(imported["comments"]) == 1 and imported["comments"][0].startswith("cassandra.yaml: ")
+    assert "5 lines missing before line " in imported["comments"][0]
+    assert check(files, "40x")["differences"] == []
+    inventory, layout = import_node(files, "40x")
+    assert "Comments only, no setting" in layout["report"]
+    assert "No hand edit left" in layout["report"]
+
+
+def test_an_option_commented_out_is_still_a_hand_edit():
+    """A block with a commented-out option: the option is off, not a comment."""
+    files = seeded(stock("50x"))
+    files["jvm-server.options"] = re.sub(r"(?m)^(-Xss.*)$", r"# switched off\n#\1", files["jvm-server.options"], count=1)
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert "  - -Xss256k" in imported["hand_edits"]
+    assert imported["comments"] == []
+
+
+def test_a_rackdc_line_the_file_lacks_is_not_imported():
+    """No rack= under SimpleSnitch: no variable (not the role default), the self-check says what the role would add."""
+    files = with_snitch(stock("40x"), "SimpleSnitch", "DC_EXAMPLE", "RACK_A")
+    files["cassandra-rackdc.properties"] = re.sub(r"(?m)^rack=.*\n", "", files["cassandra-rackdc.properties"])
+    imported = cassandra_config_import(files, "40x", FACTS, "", "/var/lib/cassandra")
+    assert imported["vars"]["cassandra_rackdc_dc"] == "DC_EXAMPLE"
+    assert "cassandra_rackdc_rack" not in imported["vars"]
+    inventory, layout, checks = ring_import("40x", [("node1", files, "datacenter1", "rack9")])
+    assert checks["node1"]["differences"] == [
+        "cassandra-rackdc.properties: rack: node has nothing, import would write 'rack9'"]
+
+
+def test_a_setting_among_comment_lines_is_still_a_hand_edit():
+    """A block of comments with a setting the role lacks: a hand edit, not comments only."""
+    files = seeded(stock("50x"))
+    files["cassandra-env.sh"] = edit(files["cassandra-env.sh"], "\n# ", "\n# edited by hand\nexport FOO_HAND=1\n# ")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert "  + export FOO_HAND=1" in imported["hand_edits"]
+    assert imported["comments"] == []
+
+
+def test_logback_comments_are_not_hash_lines():
+    """logback.xml: a line starting with # is text, not a comment."""
+    files = seeded(stock("50x"))
+    files["logback.xml"] = edit(files["logback.xml"], "<configuration", "# not a comment\n<configuration")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert "  + # not a comment" in imported["hand_edits"]
+
+
+def test_list_items_swapped_are_a_hand_edit():
+    """The same lines in another order are not the same setting (a list's order counts)."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _same_settings
+    assert _same_settings("cassandra.yaml", ["    - /a", "    - /b"], ["    - /b", "    - /a"]) is None
+    assert _same_settings("cassandra.yaml", ["    - /a", "# x", "    - /b"], ["# y", "    - /a", "    - /b"]) == [
+        ("    - /a", "    - /a"), ("    - /b", "    - /b")]

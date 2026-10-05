@@ -79,7 +79,9 @@ def test_defaults_import_to_nothing(series):
     assert out["hand_edits"] == []
     assert out["normalized"] == []
     identity = {"cassandra_cluster_name", "cassandra_seeds", "cassandra_endpoint_snitch", "cassandra_num_tokens",
-                "cassandra_partitioner", "cassandra_allocate_tokens_for_local_replication_factor"}
+                "cassandra_partitioner", "cassandra_allocate_tokens_for_local_replication_factor",
+                # SimpleSnitch doesn't read rackdc's dc= and rack=: as on the node (the layout drops them if the ring's)
+                "cassandra_rackdc_dc", "cassandra_rackdc_rack"}
     if series == "50x":
         identity.add("cassandra_storage_compatibility_mode")
     assert set(out["vars"]) == identity
@@ -89,7 +91,7 @@ def test_defaults_import_to_nothing(series):
 def test_variables_read_back(series):
     changes = {"cassandra_cluster_name": "Prod", "cassandra_num_tokens": 4,
                "cassandra_seeds": "10.0.0.1,10.0.0.2", "cassandra_listen_address": "10.0.0.1",
-               "cassandra_rpc_address": "10.0.0.9", "cassandra_heap_size": "8G", "cassandra_dc": "paris"}
+               "cassandra_rpc_address": "10.0.0.9", "cassandra_heap_size": "8G", "cassandra_rackdc_dc": "paris"}
     if series != "50x":
         changes["cassandra_heap_newsize"] = "800M"
     out = cassandra_config_import(node_files(series, **changes), series, FACTS)
@@ -101,13 +103,13 @@ def test_variables_read_back(series):
     assert v["cassandra_listen_address"] == IPV4  # the node's own address: fact expression
     assert v["cassandra_rpc_address"] == "10.0.0.9"
     assert v["cassandra_heap_size"] == "8G"
-    assert v["cassandra_dc"] == "paris"
+    assert v["cassandra_rackdc_dc"] == "paris"  # SimpleSnitch: the file's, not the node's dc
 
 
 def test_hand_edit_and_normalized():
     files = node_files("50x")
     yaml_lines = files["cassandra.yaml"].split("\n")
-    # hand edit no variable can hold: a rewritten comment
+    # a rewritten comment: listed apart, not a hand edit
     i = next(i for i, line in enumerate(yaml_lines) if line.startswith("# commitlog_total_space:"))
     yaml_lines[i - 1] = "# edited by hand"
     # stock package style: hints_directory left commented, same value
@@ -115,7 +117,8 @@ def test_hand_edit_and_normalized():
     yaml_lines[j] = "# " + yaml_lines[j]
     files["cassandra.yaml"] = "\n".join(yaml_lines)
     out = cassandra_config_import(files, "50x", FACTS)
-    assert any("+ # edited by hand" in line for line in out["hand_edits"])
+    assert not any("edited by hand" in line for line in out["hand_edits"])  # a comment sets nothing
+    assert out["comments"] == ["cassandra.yaml: line %d" % i]
     assert not any("hints_directory" in line for line in out["hand_edits"])
     assert any(line.startswith("cassandra.yaml: hints_directory:") for line in out["normalized"])
     assert "cassandra_extra_settings" not in out["vars"]
@@ -379,7 +382,7 @@ def test_layout_error_hides_its_message():
     with pytest.raises(AnsibleFilterError) as err:
         cassandra_inventory_layout([{"name": "n1", "dc": "dc1", "rack": "r1", "read": True, "vars": "hunter2"}], "c")
     assert "hunter2" not in str(err.value)
-    assert str(err.value).startswith("cassandra_inventory_layout: AttributeError in ")
+    assert re.match(r"cassandra_inventory_layout: \w+Error in ", str(err.value))
 
 
 def test_import_error_keeps_what_shows_no_value():

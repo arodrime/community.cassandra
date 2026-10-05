@@ -874,6 +874,7 @@
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
+              comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
               notes: >-
                 {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
                    + _hv.import_cluster_medusa.notes | default([])

@@ -74,8 +74,11 @@ def _mask(line):
 # The node's own address or name: written as the fact that gives it
 ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
              "cassandra_broadcast_address", "cassandra_broadcast_rpc_address", "cassandra_jmx_rmi_hostname"]
+# cassandra-rackdc.properties' dc= and rack= lines, apart from the node's dc and rack
+# (cassandra_dc/_rack, the ring's) under a snitch that doesn't read them
+RACKDC = ("cassandra_rackdc_dc", "cassandra_rackdc_rack")
 # Per node by nature: not reported as drift
-PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn"]
+PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn", "cassandra_rackdc_rack"]
 # The rights the role gives a readwrite JMX user besides readwrite
 JMX_CREATE_UNREGISTER = ["create", "javax.management.monitor.*,javax.management.timer.*", "unregister"]
 # What the roles leave as it is on a node set up another way (host_vars only:
@@ -439,6 +442,37 @@ def _without_extras(rendered, live, extras):
     return rendered, live
 
 
+def _snitch_reads_rackdc(snitch):
+    """False for the snitches that take the node's dc and rack from elsewhere than
+    cassandra-rackdc.properties' dc= and rack= (the role's list); a snitch of
+    another class may read them."""
+    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
+        unread = yaml.safe_load(f)["_cassandra_config_snitches_without_rackdc"]
+    name = str(snitch or "").strip()
+    prefix = "org.apache.cassandra.locator."  # a name without a dot is in that package
+    return (name[len(prefix):] if name.startswith(prefix) else name) not in unread
+
+
+def _same_settings(name, role, node):
+    """A block that differs but sets the same: each of the role's setting lines
+    paired, in order, with the node's line that means the same, every other line on both
+    sides a comment or blank (# in the files read here but logback.xml).
+    [(role line, node line)], else None."""
+    def comment(line):
+        return not line.strip() or (not name.endswith(".xml") and line.lstrip().startswith("#"))
+    pairs, left, at = [], [], 0
+    for r in role:
+        if comment(r):
+            continue
+        j = next((j for j in range(at, len(node)) if _same_setting(name, r, node[j])), None)
+        if j is None:
+            return None
+        pairs.append((r, node[j]))
+        left += node[at:j]
+        at = j + 1
+    return pairs if all(comment(n) for n in left + node[at:]) else None
+
+
 def _properties(lines):
     """The settings of a key=value (or key: value) file, comments and blank
     lines left out; a value keeps its trailing spaces, as for Java's Properties
@@ -456,7 +490,7 @@ def _properties(lines):
 
 
 def _leftovers(env, series, files, ctx, live_files):
-    hand, normalized = [], []
+    hand, normalized, comments = [], [], []
     extras = ctx.get("cassandra_extra_settings") or {}
     for name in files:
         if name not in live_files:
@@ -482,14 +516,30 @@ def _leftovers(env, series, files, ctx, live_files):
         for op, i1, i2, j1, j2 in ops:
             if op == "equal":
                 continue
-            if op == "replace" and i2 - i1 == j2 - j1:
-                pairs = list(zip(rendered[i1:i2], live[j1:j2]))
-                if all(_same_setting(name, r, n) for r, n in pairs):
-                    normalized += ["%s: %s  (node: %s)" % (name, _mask(r.strip()), _mask(n.strip())) for r, n in pairs]
-                    continue
+            pairs = _same_settings(name, rendered[i1:i2], live[j1:j2])
+            if pairs is not None:
+                normalized += ["%s: %s  (node: %s)" % (name, _mask(r.strip()), _mask(n.strip())) for r, n in pairs]
+                if (i2 - i1) + (j2 - j1) > 2 * len(pairs):
+                    # comment lines too, e.g. the stock comments of the release the file came from
+                    comments.append((name, j1 + 1, j2 - j1, i2 - i1))
+                continue
             hand.append("%s, line %d:" % (name, j1 + 1))
             hand += ["  - " + _mask(line) for line in rendered[i1:i2]] + ["  + " + _mask(line) for line in live[j1:j2]]
-    return hand, normalized
+    return hand, normalized, _comment_lines(comments)
+
+
+def _comment_lines(blocks):
+    """[(file, node line, node lines, role lines)] -> one report line per file."""
+    out = []
+    for name in sorted({b[0] for b in blocks}):
+        where = []
+        for dummy, line, node, role in (b for b in blocks if b[0] == name):
+            if node == 0:
+                where.append("%d line%s missing before line %d" % (role, "s" if role > 1 else "", line))
+            else:
+                where.append("line %d" % line if node == 1 else "lines %d-%d" % (line, line + node - 1))
+        out.append("%s: %s" % (name, ", ".join(where)))
+    return out
 
 
 def _jmx_lines(text):
@@ -553,7 +603,8 @@ def _hidden(name, where):
 
 def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir=""):
     """cassandra_config variables that render a node's files, and what the
-    role would still change: {'vars', 'hand_edits', 'normalized'}.
+    role would still change: {'vars', 'hand_edits', 'normalized', 'comments'
+    (comment lines only, which set nothing)}.
     conf_target: the resolved dir the node reads its config from; storage_dir:
     the JVM's -Dcassandra.storagedir."""
     if cassandra_version not in SERIES:
@@ -644,9 +695,15 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
-    hand, normalized = _leftovers(env, cassandra_version, files, render, live_files)
+    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files)
     hand += jmx_note
-    out = dict(changed)
+    out = dict((k, v) for k, v in changed.items() if k not in RACKDC)
+    if "cassandra-rackdc.properties" in live_files and not _snitch_reads_rackdc(found.get("cassandra_endpoint_snitch")):
+        # the file's dc= and rack= as the node has them: its snitch doesn't read them, its dc and rack
+        # (the ring's) may differ (the layout drops them where they don't; a line the file lacks: the
+        # role writes the ring's). Else they are the ring's.
+        node_kv = _properties(live_files["cassandra-rackdc.properties"].split("\n"))
+        out.update((k, found.get(k, ctx[k])) for k, key in zip(RACKDC, ("dc", "rack")) if key in node_kv)
     for key in ALWAYS:
         if key != "cassandra_storage_compatibility_mode" or cassandra_version == "50x":  # 5.0 setting
             out[key] = found.get(key, ctx.get(key))
@@ -663,7 +720,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             out[key] = IPV4
         elif facts.get("hostname") and out.get(key) == facts["hostname"]:
             out[key] = HOSTNAME
-    return {"vars": out, "hand_edits": hand, "normalized": normalized}
+    return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments}
 
 
 def _as_text(node):
@@ -822,10 +879,17 @@ def _differences(keys, read, dcg, rackg):
     return lines
 
 
+def _without_ring_rackdc(node):
+    """The node's variables without cassandra-rackdc.properties' dc= and rack= where
+    they are its dc and rack (the role's default writes them: cassandra_dc, cassandra_rack)."""
+    ring = {"cassandra_rackdc_dc": node["dc"], "cassandra_rackdc_rack": node["rack"]}
+    return dict((k, node["vars"][k]) for k in node["vars"] if k not in ring or node["vars"][k] != ring[k])
+
+
 @_values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
-    vars, hand_edits, normalized, notes}] -> {'hosts', 'group_vars', 'host_vars',
+    vars, hand_edits, normalized, comments?, notes}] -> {'hosts', 'group_vars', 'host_vars',
     'differences', 'report', 'names' (address -> name in hosts.yml)}. Nodes sharing a name are named by their address instead."""
     cluster = _slug(cluster_name)
     names = [n["name"] for n in nodes]
@@ -854,6 +918,8 @@ def cassandra_inventory_layout(nodes, cluster_name):
         group_vars.setdefault(rackg(n), {})["cassandra_rack"] = n["rack"]
 
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
+    read = [dict(n, vars=_without_ring_rackdc(n)) for n in read]
+    nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
     # Medusa's fqdn is the node's folder in the backups: a rule only when it
     # gives every node its value exactly, else each node keeps its own
     medusa = [n for n in read if n["vars"].get("cassandra_medusa_fqdn")]  # "": Medusa works it out
@@ -870,6 +936,14 @@ def cassandra_inventory_layout(nodes, cluster_name):
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
               "Inventory group: %s (ansible-playbook ... -e cassandra_hosts=%s)" % (cluster, cluster), ""]
     report += differences + [""]
+    rackdc = [n for n in read if any(k in n["vars"] for k in RACKDC)]
+    if rackdc:
+        snitches = sorted({str(n["vars"].get("cassandra_endpoint_snitch")) for n in rackdc})
+        report += ["cassandra-rackdc.properties: dc= and rack= kept as the nodes have them (cassandra_rackdc_dc,"
+                   " cassandra_rackdc_rack) on %s: %s does not read them, the nodes' dc and rack are the ring's"
+                   " (cassandra_dc, cassandra_rack). A node added later gets them from its groups, else its"
+                   " cassandra_dc and cassandra_rack." % (", ".join(sorted(n["name"] for n in rackdc)),
+                                                          " / ".join(snitches)), ""]
     if domain is not None:
         report += ["Medusa fqdn (each node's folder in the backups): <short hostname>.%s on every node,"
                    " kept as cassandra_medusa_fqdn_domain" % domain, ""]
@@ -906,6 +980,10 @@ def cassandra_inventory_layout(nodes, cluster_name):
             report += ["    " + _mask(line) for line in n["hand_edits"]]
         else:
             report.append("  No hand edit left: cassandra_config would not change the config.")
+        if n.get("comments"):
+            report.append("  Comments only, no setting (e.g. the stock comments of the release the file came from):"
+                          " no effect, kept unless the role rewrites the file for a setting:")
+            report += ["    " + line for line in n["comments"]]
         if n["normalized"]:
             report.append("  Same setting, written another way by the role (no effect; on an initialized node, a"
                           " file whose settings are all the same is left as it is):")

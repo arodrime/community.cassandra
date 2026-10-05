@@ -190,6 +190,8 @@ def test_jmx_files_with_the_same_users_are_kept(tmp_path, password, access, same
 
 
 IDENTITY = task("Compare the settings a joined node must keep")["ansible.builtin.command"]["argv"][2]
+with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
+    SNITCHES = json.dumps(yaml.safe_load(f)["_cassandra_config_snitches_without_rackdc"])
 
 
 @pytest.mark.parametrize("live, new, changes", [
@@ -207,9 +209,35 @@ def test_identity_compared_as_yaml_reads_it(tmp_path, live, new, changes):
 def identity_changes(tmp_path, live, new, live_rackdc="dc=d\n", new_rackdc="dc=d\n"):
     for name, text in (("live.yaml", live), ("new.yaml", new), ("live.p", live_rackdc), ("new.p", new_rackdc)):
         (tmp_path / name).write_text(text)
-    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in ("live.yaml", "new.yaml", "live.p", "new.p")],
+    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in ("live.yaml", "new.yaml", "live.p", "new.p")]
+                         + [SNITCHES],
                          stdout=subprocess.PIPE, universal_newlines=True, check=True)
     return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("live, new, changes", [
+    # SimpleSnitch takes no dc or rack from the file: its dc= and rack= are not the node's
+    ("endpoint_snitch: SimpleSnitch\n", "endpoint_snitch: SimpleSnitch\n", []),
+    ("endpoint_snitch: org.apache.cassandra.locator.PropertyFileSnitch\n", "endpoint_snitch: PropertyFileSnitch\n",
+     ["endpoint_snitch: org.apache.cassandra.locator.PropertyFileSnitch -> PropertyFileSnitch"]),
+    ("endpoint_snitch: Ec2Snitch\n", "endpoint_snitch: Ec2Snitch\n", []),
+    # GossipingPropertyFileSnitch does, on either side
+    ("endpoint_snitch: GossipingPropertyFileSnitch\n", "endpoint_snitch: GossipingPropertyFileSnitch\n",
+     ["dc: DC_EXAMPLE -> datacenter1", "rack: RACK_A -> rack1"]),
+    ("endpoint_snitch: org.apache.cassandra.locator.GossipingPropertyFileSnitch\n",
+     "endpoint_snitch: GossipingPropertyFileSnitch\n",
+     ["dc: DC_EXAMPLE -> datacenter1",
+      "endpoint_snitch: org.apache.cassandra.locator.GossipingPropertyFileSnitch -> GossipingPropertyFileSnitch",
+      "rack: RACK_A -> rack1"]),
+    ("endpoint_snitch: SimpleSnitch\n", "endpoint_snitch: GossipingPropertyFileSnitch\n",
+     ["dc: DC_EXAMPLE -> datacenter1", "endpoint_snitch: SimpleSnitch -> GossipingPropertyFileSnitch",
+      "rack: RACK_A -> rack1"]),
+    # a snitch of another class may read them
+    ("endpoint_snitch: com.example.SimpleSnitch\n", "endpoint_snitch: com.example.SimpleSnitch\n",
+     ["dc: DC_EXAMPLE -> datacenter1", "rack: RACK_A -> rack1"]),
+])
+def test_rackdc_identity_only_where_the_snitch_reads_it(tmp_path, live, new, changes):
+    assert identity_changes(tmp_path, live, new, "dc=DC_EXAMPLE\nrack=RACK_A\n", "dc=datacenter1\nrack=rack1\n") == changes
 
 
 def test_rack_comment_is_part_of_the_value(tmp_path):
@@ -231,7 +259,8 @@ def test_identity_of_a_joined_node_as_cassandra_reads_it(tmp_path, live, changes
     for name in ("live.properties", "new.properties"):
         (tmp_path / name).write_text("dc=dc1\nrack=r1\n")
     out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in (
-        "live.yaml", "new.yaml", "live.properties", "new.properties")], stdout=subprocess.PIPE, check=True).stdout
+        "live.yaml", "new.yaml", "live.properties", "new.properties")] + [SNITCHES], stdout=subprocess.PIPE,
+        check=True).stdout
     assert json.loads(out) == changes
 
 
@@ -270,3 +299,24 @@ def test_controller_fallback_keeps_the_same_yaml():
     slurped[1]["content"] = "eDogMgo="  # x: 2
     assert kept(results, slurped=slurped) == ["logback.xml"]
     assert kept(results, slurped=slurped[:1]) == ["logback.xml"]  # one of them not read: not the same
+
+
+RACKDC_GUARD = task("Refuse rackdc lines other than the node's dc and rack under a snitch that reads them")
+
+
+@pytest.mark.parametrize("snitch, rackdc, ok", [
+    ("SimpleSnitch", ("DC_EXAMPLE", "RACK_A"), True),  # not read: kept as the node has them
+    ("org.apache.cassandra.locator.SimpleSnitch", ("DC_EXAMPLE", "RACK_A"), True),
+    ("GossipingPropertyFileSnitch", ("datacenter1", "rack1"), True),
+    # read: the node would move to the file's dc (a snitch change after an import under SimpleSnitch)
+    ("GossipingPropertyFileSnitch", ("DC_EXAMPLE", "rack1"), False),
+    ("GossipingPropertyFileSnitch", ("datacenter1", "RACK_A"), False),
+    ("com.example.SimpleSnitch", ("DC_EXAMPLE", "RACK_A"), False),  # another class may read them
+])
+def test_rackdc_lines_are_the_node_dc_and_rack_under_a_snitch_that_reads_them(snitch, rackdc, ok):
+    with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
+        unread = yaml.safe_load(f)["_cassandra_config_snitches_without_rackdc"]
+    that = RACKDC_GUARD["ansible.builtin.assert"]["that"]
+    assert render("{{ %s }}" % that, cassandra_endpoint_snitch=snitch, cassandra_dc="datacenter1", cassandra_rack="rack1",
+                  cassandra_rackdc_dc=rackdc[0], cassandra_rackdc_rack=rackdc[1],
+                  _cassandra_config_snitches_without_rackdc=unread) is ok

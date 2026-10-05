@@ -15,3 +15,8 @@ _cassandra_config_template_versions:
 _cassandra_config_python: >-
   {{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined
      else ansible_python_interpreter | default('/usr/bin/python3') }}
+# Snitches that don't take the node's dc and rack from cassandra-rackdc.properties'
+# dc= and rack= (Cassandra 4.0 to 5.0; the cloud ones may read its other settings)
+_cassandra_config_snitches_without_rackdc: [SimpleSnitch, RackInferringSnitch, PropertyFileSnitch, Ec2Snitch,
+                                            Ec2MultiRegionSnitch, GoogleCloudSnitch, CloudstackSnitch,
+                                            AlibabaCloudSnitch, AzureSnitch]

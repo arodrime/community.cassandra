@@ -1057,12 +1057,24 @@ argument_specs:
         type: str
         default: dc1
         description:
-        - Datacenter in C(cassandra-rackdc.properties), usually set per datacenter group.
+        - The node's datacenter, usually set per datacenter group. Written in C(cassandra-rackdc.properties)
+          unless O(cassandra_rackdc_dc) is set.
       cassandra_rack:
         type: str
         default: rack1
         description:
-        - Rack in C(cassandra-rackdc.properties), usually set per node.
+        - The node's rack, usually set per rack group. Written in C(cassandra-rackdc.properties)
+          unless O(cassandra_rackdc_rack) is set.
+      cassandra_rackdc_dc:
+        type: str
+        description:
+        - C(dc) in C(cassandra-rackdc.properties), defaults to O(cassandra_dc). Of Cassandra's snitches only
+          C(GossipingPropertyFileSnitch) reads it, and then it must be O(cassandra_dc); under another snitch the file
+          may name another datacenter than the node's (C(import_cluster) keeps the node's own line then).
+      cassandra_rackdc_rack:
+        type: str
+        description:
+        - C(rack) in C(cassandra-rackdc.properties), defaults to O(cassandra_rack). See O(cassandra_rackdc_dc).
       cassandra_prefer_local:
         type: bool
         default: false

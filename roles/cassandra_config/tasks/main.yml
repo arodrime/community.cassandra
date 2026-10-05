@@ -19,6 +19,20 @@
     _taken: "{{ cassandra_extra_settings | list | intersect(_keys) }}"
   when: cassandra_extra_settings | length > 0
 
+# GossipingPropertyFileSnitch takes the node's dc and rack from the file: other lines would
+# move it (e.g. kept by import_cluster under SimpleSnitch, then the snitch changed)
+- name: Refuse rackdc lines other than the node's dc and rack under a snitch that reads them
+  ansible.builtin.assert:
+    that: >-
+      [cassandra_rackdc_dc | string, cassandra_rackdc_rack | string] == [cassandra_dc | string, cassandra_rack | string]
+      or cassandra_endpoint_snitch | regex_replace('^org[.]apache[.]cassandra[.]locator[.]', '')
+         in _cassandra_config_snitches_without_rackdc
+    fail_msg: >-
+      {{ cassandra_endpoint_snitch }} reads the node's dc and rack from cassandra-rackdc.properties: cassandra_rackdc_dc
+      ({{ cassandra_rackdc_dc }}) and cassandra_rackdc_rack ({{ cassandra_rackdc_rack }}) must be cassandra_dc
+      ({{ cassandra_dc }}) and cassandra_rack ({{ cassandra_rack }}). Remove them from the inventory.
+    quiet: true
+
 # 4.x cassandra-env.sh exits if only one of the pair is set under CMS
 - name: Assert heap settings are consistent (4.x, CMS)
   ansible.builtin.assert:
@@ -241,8 +255,13 @@
                     return {k: get(v.strip()) for k, v in re.findall(pattern, open(path).read(), re.M)}
                 yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch|initial_token):[ \t]*(.*?)[ \t]*$"
                 rackdc = r"^[ \t]*(dc|rack)[ \t]*=[ \t]*(.*?)[ \t]*$"
+                def reads_rackdc(snitch):  # a name without a dot is in that package
+                    return re.sub(r"^org\.apache\.cassandra\.locator\.", "", snitch or "") not in json.loads(sys.argv[5])
                 live, new = {}, {}
                 for live_file, new_file, pattern in ((sys.argv[1], sys.argv[2], yaml), (sys.argv[3], sys.argv[4], rackdc)):
+                    # rackdc's dc and rack: the node's only for a snitch that reads them
+                    if pattern == rackdc and not any(reads_rackdc(s.get("endpoint_snitch")) for s in (live, new)):
+                        continue
                     if os.path.exists(live_file):  # no live file: nothing to keep
                         live.update(read(live_file, pattern))
                         new.update(read(new_file, pattern))
@@ -255,6 +274,7 @@
               - "{{ cassandra_config_tmp.path }}/cassandra.yaml"
               - "{{ cassandra_conf_dir }}/cassandra-rackdc.properties"
               - "{{ cassandra_config_tmp.path }}/cassandra-rackdc.properties"
+              - "{{ _cassandra_config_snitches_without_rackdc | to_json }}"
           register: cassandra_config_identity
           check_mode: false
           changed_when: false
