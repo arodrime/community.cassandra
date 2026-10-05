@@ -34,6 +34,47 @@ With the default values, the configuration files are the stock ones of the serie
 deb and rpm packages set themselves. Only what you set changes.
 
 
+Project setup
+-------------
+
+Every step is a plain ``ansible-playbook`` call. A project directory with an ``ansible.cfg`` holds what each call
+would otherwise repeat:
+
+.. code-block:: text
+
+    project/
+      ansible.cfg
+      collections/                    # ansible-galaxy collection install -p ./collections <collection tarball or name>
+      inventories/orders/hosts.yml    # one dir per cluster, as import_cluster writes it
+      inventories/orders/group_vars/all/local.yml   # your own settings (mirror, ...): kept by a re-import
+
+.. code-block:: ini
+
+    # ansible.cfg (a sample; relative paths are from this file's dir)
+    [defaults]
+    collections_path = ./collections
+    # the cluster most runs are on; -i inventories/<other>/hosts.yml for another one
+    inventory = ./inventories/orders/hosts.yml
+    # read by Ansible for every run, and by import_cluster to encrypt the passwords it finds;
+    # keep it outside the project, mode 0600
+    vault_password_file = ~/.ansible/vault_pass
+    stdout_callback = ansible.builtin.default
+    callback_result_format = yaml
+    interpreter_python = auto_silent
+
+    [privilege_escalation]
+    become = true
+
+Then, with the cluster group found from the inventory (see `Inventory`_):
+
+.. code-block:: console
+
+    $ ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_dir=inventories/orders
+    $ ansible-playbook community.cassandra.health_check
+    $ ansible-playbook community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+
+Ansible ignores an ``ansible.cfg`` in a world-writable dir; ``ANSIBLE_CONFIG=<path>`` names one explicitly.
+
 Inventory
 ---------
 
@@ -44,7 +85,7 @@ Use one group per cluster and one group per datacenter (the playbooks below take
 .. code-block:: yaml
 
     # inventory.yml
-    cassandra:
+    all:
       children:
         orders:
           children:
@@ -58,6 +99,15 @@ Use one group per cluster and one group per datacenter (the playbooks below take
                 node4:
                 node5:
                 node6:
+
+Without ``-e cassandra_hosts=<group>``, the playbooks run on the group ``cassandra`` when the inventory has one,
+else on the inventory's cluster group: the group whose hosts no other group holds all of (``orders`` here; the groups
+the playbooks make while they run, ``all`` and ``ungrouped`` left out). When a cluster has one datacenter and one
+rack, its groups hold the same hosts: the one whose name starts the others' is taken (``orders`` for ``orders_dc1``
+and ``orders_dc1_rack1``, as the import names them). An inventory with several clusters, or groups with the same hosts
+and unrelated names, is refused with the candidate groups: give ``-e cassandra_hosts=<group>`` then. Keep one
+inventory per cluster (``inventories/<cluster>/hosts.yml``, as the import writes it) and the playbooks need no
+``cassandra_hosts``. The same rule is the lookup ``community.cassandra.cassandra_hosts``, for your own playbooks.
 
 .. code-block:: yaml
 
@@ -100,23 +150,23 @@ Operation playbooks
 -------------------
 
 The collection has playbooks for the usual operations on a cluster. Each one works on one inventory group
-(``-e cassandra_hosts=<group>``) and starts with ``preflight``, which checks that the settings that must match do
+(the inventory's cluster group, or ``-e cassandra_hosts=<group>``, see `Inventory`_) and starts with ``preflight``, which checks that the settings that must match do
 match on every node, that the racks suit the token allocator, and that the seeds are a sensible layout (it suggests
 a seed list when they are not).
 
 .. code-block:: console
 
-    $ ansible-playbook -i inventory community.cassandra.preflight -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.create_cluster -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=orders -e cassandra_new_nodes=node7
-    $ ansible-playbook -i inventory community.cassandra.rolling_restart -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.apply_config -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.health_check -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.status -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.cleanup -e cassandra_hosts=orders
-    $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_hosts=orders -e cassandra_leaving_nodes=node7
-    $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_hosts=orders -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
-    $ ansible-playbook -i inventory community.cassandra.change_seeds -e cassandra_hosts=orders
+    $ ansible-playbook -i inventory community.cassandra.preflight
+    $ ansible-playbook -i inventory community.cassandra.create_cluster
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.rolling_restart
+    $ ansible-playbook -i inventory community.cassandra.apply_config
+    $ ansible-playbook -i inventory community.cassandra.health_check
+    $ ansible-playbook -i inventory community.cassandra.status
+    $ ansible-playbook -i inventory community.cassandra.cleanup
+    $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
+    $ ansible-playbook -i inventory community.cassandra.change_seeds
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
 Operations that touch running nodes check the whole cluster before and after each node: every node up and normal,
@@ -157,7 +207,7 @@ Add the host to the inventory, in its datacenter's group, without adding it to `
 
 .. code-block:: console
 
-    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_hosts=orders -e cassandra_new_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
 
 The other nodes are not touched. A node that has never started and is listed in ``cassandra_seeds`` is refused while
 another seed answers: seeds don't bootstrap, so it would join without its data. Add it, then make it a seed.
@@ -638,15 +688,26 @@ is not run. A virtualenv found through a login profile is reported: the roles le
 ``/usr/local/bin/medusa``, and ``cassandra_medusa_profile_d: true`` adds the virtualenv to every login shell's PATH. A
 Medusa installed by a package is not managed (the report says so).
 
-Passwords found in the configuration go to separate ``secrets.yml`` files: encrypted with ansible-vault when
-``import_cluster_vault_password_file`` is given, otherwise written with mode ``0600`` and the report gives the
-``ansible-vault encrypt`` command to run.
+Passwords found in the configuration go to separate ``secrets.yml`` files, encrypted with ansible-vault as a whole
+with Ansible's vault password file (``vault_password_file`` in ``ansible.cfg``, see `Project setup`_, or
+``ANSIBLE_VAULT_PASSWORD_FILE``), or with ``import_cluster_vault_password_file`` (and ``import_cluster_vault_id``)
+when given. ``--vault-password-file`` on the command line is not seen by the playbook: set the file in
+``ansible.cfg`` instead. An executable password file is run, as Ansible does. Without a password file, they are
+written in clear with mode ``0600``, and the report and the end of the run give the ``ansible-vault encrypt``
+command to run. A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
+
+Every file the import writes starts with ``# Written by community.cassandra.import_cluster``. An existing
+``import_cluster_dir`` is refused unless ``import_cluster_force=true``; then the import replaces the files it wrote,
+removes those it no longer writes (the ``host_vars`` of a node gone from the ring), and keeps every other file there:
+your ``group_vars/all/*.yml`` (a mirror, a vault), an ``ansible.cfg``, notes. The report lists the files removed and
+the files kept. A file of the import you edit by hand is replaced by the next import: put your own settings in files
+of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
 Then check what the roles would change:
 
 .. code-block:: console
 
-    $ ansible-playbook -i orders/hosts.yml community.cassandra.preflight -e cassandra_hosts=orders
+    $ ansible-playbook -i orders/hosts.yml community.cassandra.preflight
     $ ansible-playbook -i orders/hosts.yml site.yml --check
 
 Repeat until the diff only shows what you intend to change. The confirmation prompt is a last safety net, not a

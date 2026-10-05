@@ -1,0 +1,4 @@
+minor_changes:
+  - "operation playbooks - without ``cassandra_hosts``, run on the inventory's cluster group when it has only one (the ``cassandra`` group first, as before); with several clusters, fail naming the groups. ``-e cassandra_hosts=<group>`` works as before."
+  - "import_cluster playbook - the ``secrets.yml`` files are encrypted with Ansible's own vault password file too (``vault_password_file`` in ``ansible.cfg``, ``ANSIBLE_VAULT_PASSWORD_FILE``), and an executable password file is run; written in clear, a warning ends the run. A vaulted file whose content is unchanged is left as it is."
+  - "import_cluster playbook - every file written starts with a ``# Written by community.cassandra.import_cluster`` line; a re-import (``import_cluster_force``) replaces those, removes the ones it no longer writes (a node gone from the ring), and keeps any other file in the inventory dir (``group_vars/all/*.yml``, ``ansible.cfg``, notes), listed in the report."

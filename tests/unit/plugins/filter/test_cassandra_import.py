@@ -834,3 +834,52 @@ def test_bool_read_however_written(line, value):
     live = re.sub(r"^auto_snapshot:.*$", line, stock_yaml("41x"), flags=re.M)
     assert cassandra_config_import({"cassandra.yaml": live}, "41x", FACTS)["vars"].get(
         "cassandra_auto_snapshot", True) is value
+
+
+def test_reimport_keeps_what_it_did_not_write():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        GENERATED, cassandra_inventory_generated, cassandra_inventory_leftovers)
+    assert cassandra_inventory_generated("a: 1\n") == GENERATED + "\na: 1\n"
+    found = {
+        "hosts.yml": GENERATED, "report.txt": GENERATED,
+        "group_vars/prod/main.yml": GENERATED,                 # written again
+        "group_vars/all/mirror.yml": "cassandra_repository_rpm_url: x",  # the user's
+        "group_vars/all/vault.yml": "$ANSIBLE_VAULT;1.1;AES256",        # the user's, vaulted
+        "group_vars/all/main.yml": "a: 1",                     # the user's, named like the import's
+        "ansible.cfg": None, "notes.txt": None,                # not read
+        "host_vars/gone/main.yml": GENERATED,                  # a node gone from the ring
+        "host_vars/gone/secrets.yml": "$ANSIBLE_VAULT;1.1;AES256",
+        "host_vars/old/main.yml": "# Written before the header existed",
+        "host_vars/old/secrets.yml": "$ANSIBLE_VAULT;1.1;AES256",
+        "host_vars/clear/secrets.yml": GENERATED,
+        "host_vars/mine/secrets.yml": "$ANSIBLE_VAULT;1.1;AES256",  # no main.yml next to it
+        "group_vars/prod_dc1/secrets.yml": "$ANSIBLE_VAULT;1.1;AES256",  # its main.yml is written again
+        "group_vars/prod_dc1/main.yml": GENERATED,
+    }
+    written = ["hosts.yml", "report.txt", "group_vars/prod/main.yml", "group_vars/prod_dc1/main.yml"]
+    out = cassandra_inventory_leftovers(found, written)
+    assert out["stale"] == ["group_vars/prod_dc1/secrets.yml", "host_vars/clear/secrets.yml",
+                            "host_vars/gone/main.yml", "host_vars/gone/secrets.yml"]
+    assert out["kept"] == ["ansible.cfg", "group_vars/all/main.yml", "group_vars/all/mirror.yml",
+                           "group_vars/all/vault.yml", "host_vars/mine/secrets.yml", "host_vars/old/main.yml",
+                           "host_vars/old/secrets.yml", "notes.txt"]
+    # host_vars/gone/ is empty once its files are removed; host_vars/clear/ is too
+    assert out["dirs"] == ["host_vars/clear", "host_vars/gone"]
+
+
+def test_reimport_header_only_at_the_top():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        GENERATED, cassandra_inventory_leftovers)
+    out = cassandra_inventory_leftovers({"host_vars/x/main.yml": "a: 1\n" + GENERATED}, [])
+    assert out == {"stale": [], "kept": ["host_vars/x/main.yml"], "dirs": []}
+
+
+def test_same_secret_not_encrypted_again():
+    from ansible.parsing.vault import VaultLib, VaultSecret
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_same_secret
+    vaulted = VaultLib([("default", VaultSecret(b"pw"))]).encrypt("a: 1\n").decode()
+    assert cassandra_inventory_same_secret(vaulted, "a: 1\n", "pw") is True
+    assert cassandra_inventory_same_secret(vaulted, "a: 2\n", "pw") is False
+    assert cassandra_inventory_same_secret(vaulted, "a: 1\n", "other") is False  # another password
+    assert cassandra_inventory_same_secret("a: 1\n", "a: 1\n", "pw") is False   # in clear: encrypted now
+    assert cassandra_inventory_same_secret("", "a: 1\n", "pw") is False

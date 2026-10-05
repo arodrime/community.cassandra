@@ -37,6 +37,7 @@ import jinja2
 import yaml
 
 from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
+from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
@@ -871,7 +872,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
 
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
-              "Inventory group: %s (ansible-playbook ... -e cassandra_hosts=%s)" % (cluster, cluster), ""]
+              "Inventory group: %s (the playbooks run on it; -e cassandra_hosts=%s when the inventory has other clusters)" % (cluster, cluster), ""]
     report += differences + [""]
     if domain is not None:
         report += ["Medusa fqdn (each node's folder in the backups): <short hostname>.%s on every node,"
@@ -1128,6 +1129,56 @@ def cassandra_inventory_files(layout):
     return files
 
 
+# First line of every file the import writes: a re-import replaces or removes
+# only the files that start with it (and the vaulted secrets.yml next to one)
+GENERATED = "# Written by community.cassandra.import_cluster: the next import replaces it. Your own settings: other files."
+_OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main|secrets)\.yml$")
+
+
+def cassandra_inventory_generated(content):
+    """content, marked as written by the import."""
+    return GENERATED + "\n" + content
+
+
+def cassandra_inventory_leftovers(found, written):
+    """found: {path relative to the inventory dir: its content, or None when
+    not read}; written: the paths this import writes. Returns {'stale': the
+    files an earlier import wrote that this one does not (to remove), 'kept':
+    the files the import did not write (left as they are)}."""
+    def generated(path):
+        text = found.get(path)
+        if text is None:
+            return False
+        if text.startswith(GENERATED):
+            return True
+        # vaulted as a whole: the import wrote it when it wrote the main.yml next to it
+        return (text.startswith("$ANSIBLE_VAULT") and path.endswith("/secrets.yml")
+                and (found.get(path[:-len("secrets.yml")] + "main.yml") or "").startswith(GENERATED))
+
+    stale, kept = [], []
+    for path in sorted(found):
+        if path in written:
+            continue
+        (stale if _OWNABLE.match(path) and generated(path) else kept).append(path)
+    # a node gone: its host_vars dir goes too, when nothing else is left in it
+    left = set(os.path.dirname(p) for p in list(written) + kept)
+    dirs = sorted(set(os.path.dirname(p) for p in stale) - left)
+    return {"stale": stale, "kept": kept, "dirs": dirs}
+
+
+def cassandra_inventory_same_secret(existing, content, password):
+    """True when existing, a vaulted file, decrypts with password to content:
+    written again, it would only change its encryption."""
+    if not existing or not str(existing).startswith("$ANSIBLE_VAULT"):
+        return False
+    try:
+        from ansible.parsing.vault import VaultLib, VaultSecret
+        plain = VaultLib([("default", VaultSecret(to_bytes(password)))]).decrypt(to_bytes(existing))
+    except Exception:  # another password, a damaged file: written again
+        return False
+    return to_text(plain) == content
+
+
 def cassandra_config_ignored_vars(names, cassandra_version):
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
@@ -1195,6 +1246,9 @@ class FilterModule(object):
             "cassandra_config_import": cassandra_config_import,
             "cassandra_inventory_layout": cassandra_inventory_layout,
             "cassandra_inventory_files": cassandra_inventory_files,
+            "cassandra_inventory_generated": cassandra_inventory_generated,
+            "cassandra_inventory_leftovers": cassandra_inventory_leftovers,
+            "cassandra_inventory_same_secret": cassandra_inventory_same_secret,
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,
