@@ -10,14 +10,15 @@ short_description: The inventory group of the cluster the operation playbooks ru
 version_added: 2.1.0
 description:
   - Returns the variable C(cassandra_hosts) when it is set (C(-e cassandra_hosts=<group>)).
-  - Else the group C(cassandra) when the inventory has one.
-  - Else the cluster group of the inventory, when there is only one, as the import writes it
-    (C(all) > C(<cluster>) > C(<cluster>_<dc>) > C(<cluster>_<dc>_<rack>)) or as written by hand.
-    The cluster group is the group no other group holds all the hosts of, leaving out C(all),
-    C(ungrouped) and the groups the playbooks make while they run. Among groups with the same
-    hosts (one datacenter, one rack), the one whose name starts the others' (C(prod) for
-    C(prod_dc1) and C(prod_dc1_rack1)).
-  - Else fails, naming the candidate groups.
+  - Else the group C(cassandra) when the inventory has one with hosts.
+  - Else the cluster group, when the inventory holds one cluster laid out as the import writes it
+    (C(all) > C(<cluster>) > C(<cluster>_<dc>) > C(<cluster>_<dc>_<rack>)), that is the group whose
+    name starts every other group's (C(prod) for C(prod_dc1) and C(prod_dc1_rack1)) and holds
+    their hosts. C(all), C(ungrouped) and the groups the playbooks make while they run are left out.
+  - Else fails, naming the top groups. Any other group (C(monitoring), C(linux), a second cluster)
+    needs C(-e cassandra_hosts=<group>), rather than a guess that could run on other hosts.
+  - The groups are read at each call, so a group your own plays add (C(group_by), C(add_host)) before
+    an operation playbook in the same run makes the next calls fail the same way.
 options: {}
 author: Alain Rodriguez (@arodrime)
 """
@@ -48,7 +49,7 @@ DEFAULT = "cassandra"
 # groups the playbooks make with group_by/add_host while they run: never the
 # cluster group, even when they hold every host
 RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|move_left_going\w*|move_order|leaving_dc|seed_\w+"
-                     r"|create_start_order|apply_config_\w+|update_java_\w+|upgrade_nodes|reset_\w+)$")
+                     r"|create_start_order|apply_config_\w+|update_java_\w+|upgrade_nodes)$")
 
 
 def cluster_group(given, groups):
@@ -60,28 +61,19 @@ def cluster_group(given, groups):
         return DEFAULT
     cands = dict((name, frozenset(hosts)) for name, hosts in groups.items()
                  if hosts and name not in ("all", "ungrouped") and not RUNTIME.match(name))
-    top = dict((name, hosts) for name, hosts in cands.items()
-               if not any(hosts < other for other in cands.values()))
-    by_hosts = {}
-    for name, hosts in top.items():
-        by_hosts.setdefault(hosts, []).append(name)
-    # the groups with the same hosts (one datacenter, one rack: <cluster>,
-    # <cluster>_<dc>, <cluster>_<dc>_<rack>): the one whose name starts the others'
-    heads = []
-    for names in by_hosts.values():
-        head = [n for n in sorted(names) if all(o == n or o.startswith(n + "_") for o in names)]
-        heads.append(head[0] if head else None)
-    if len(heads) == 1 and heads[0]:
-        return heads[0]
-    if not heads:
+    if not cands:
         raise ValueError("cassandra_hosts is not set and the inventory has no group with hosts."
                          " Put the nodes in a group (all > <cluster> > <dc> > <rack>, as the import writes it)")
+    # the import's layout: every other group is <cluster>_..., within <cluster>
+    heads = [name for name, hosts in sorted(cands.items())
+             if all(o == name or (o.startswith(name + "_") and h <= hosts) for o, h in cands.items())]
     if len(heads) == 1:
-        raise ValueError("cassandra_hosts is not set and these groups hold the same hosts: %s."
-                         " Run with -e cassandra_hosts=<the cluster's group>" % ", ".join(sorted(top)))
-    listed = sorted(h if h else "/".join(sorted(names)) for h, names in zip(heads, by_hosts.values()))
-    raise ValueError("cassandra_hosts is not set and the inventory has several clusters (groups: %s)."
-                     " Run with -e cassandra_hosts=<one of them>" % ", ".join(listed))
+        return heads[0]
+    top = [name for name, hosts in cands.items() if not any(hosts < other for other in cands.values())]
+    top = sorted(n for n in top if not any(n.startswith(o + "_") for o in top))  # orders, not orders_dc1 too
+    raise ValueError("cassandra_hosts is not set and the inventory's groups are not one cluster's"
+                     " (<cluster>, <cluster>_<dc>, <cluster>_<dc>_<rack>; top groups: %s)."
+                     " Run with -e cassandra_hosts=<the cluster's group>" % ", ".join(top))
 
 
 class LookupModule(LookupBase):

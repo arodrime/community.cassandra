@@ -2,7 +2,8 @@
 # Moves nodes of a single-token cluster (cassandra_num_tokens: 1) to new
 # tokens, one at a time (nodetool move):
 #   ansible-playbook -i inventory community.cassandra.move_node
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Without cassandra_move_tokens, each datacenter is evened out with the fewest
 # moves (e.g. after add_node -e cassandra_token_auto=balanced); with
 #   -e '{"cassandra_move_tokens": {"node2": "-3074457345618258603"}}'

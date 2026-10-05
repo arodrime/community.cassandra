@@ -3,7 +3,8 @@
 # the node, reboots the host, waits until Cassandra has joined, checks the cluster again.
 # Stops at the first problem, without touching the next node.
 #   ansible-playbook -i inventory community.cassandra.rolling_reboot
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 # cassandra_reboot_timeout (default 1800 s), cassandra_reboot_command and
 # cassandra_reboot_boot_time_command pass through to ansible.builtin.reboot.

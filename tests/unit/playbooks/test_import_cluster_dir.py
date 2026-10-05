@@ -77,16 +77,13 @@ TASKS = dict((t.get("name"), t) for play in PLAYS for t in play.get("tasks", [])
 WRITE_VARS = PLAYS[-1]["vars"]
 
 
-def vault_file(**variables):
-    return render(WRITE_VARS["_vault_file"], **variables)
-
-
 def secret(tmp_path, monkeypatch, **variables):
     """The vault password as the play keeps it, and the secrets.yml content written with it."""
     monkeypatch.chdir(tmp_path)
     loader = DataLoader()
     loader.set_basedir(os.path.dirname(PLAYBOOK))
     variables = dict({"import_cluster_vault_stat": {"stat": {"executable": False}}}, **variables)
+    variables["_vault_given"] = render(WRITE_VARS["_vault_given"], **variables)
     variables["_vault_file"] = render(WRITE_VARS["_vault_file"], **variables)
     variables["_vault"] = variables["_vault_file"] != ""
     keep = TASKS["Keep the vault password"]["ansible.builtin.set_fact"]["_vault_secret"]
@@ -103,6 +100,7 @@ def test_vault_password_file_from_the_current_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "DEFAULT_VAULT_PASSWORD_FILE", None)
     variables, content = secret(tmp_path, monkeypatch, import_cluster_vault_password_file="./vp.txt")
     assert variables["_vault_secret"] == "secret"
+    assert variables["_vault_file"] == str(tmp_path.resolve() / "vp.txt")  # the modules get an absolute path
     assert content.startswith("$ANSIBLE_VAULT;")
 
 
@@ -128,7 +126,7 @@ def test_vault_password_script(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "DEFAULT_VAULT_PASSWORD_FILE", None)
     variables, content = secret(tmp_path, monkeypatch, import_cluster_vault_password_file="/bin/script",
                                 import_cluster_vault_stat={"stat": {"executable": True}},
-                                import_cluster_vault_script={"stdout": "secret\n"})
+                                import_cluster_vault_script={"stdout": "secret"})
     assert variables["_vault_secret"] == "secret"
     assert content.startswith("$ANSIBLE_VAULT;")
 

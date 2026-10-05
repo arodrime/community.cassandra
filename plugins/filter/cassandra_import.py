@@ -872,7 +872,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
 
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
-              "Inventory group: %s (the playbooks run on it; -e cassandra_hosts=%s when the inventory has other clusters)" % (cluster, cluster), ""]
+              "Inventory group: %s (the playbooks find it in this inventory; elsewhere: -e cassandra_hosts=%s)" % (cluster, cluster), ""]
     report += differences + [""]
     if domain is not None:
         report += ["Medusa fqdn (each node's folder in the backups): <short hostname>.%s on every node,"
@@ -1140,30 +1140,41 @@ def cassandra_inventory_generated(content):
     return GENERATED + "\n" + content
 
 
-def cassandra_inventory_leftovers(found, written):
-    """found: {path relative to the inventory dir: its content, or None when
-    not read}; written: the paths this import writes. Returns {'stale': the
-    files an earlier import wrote that this one does not (to remove), 'kept':
-    the files the import did not write (left as they are)}."""
+def _decrypt(text, password):
+    """text decrypted with password, or None (no password, another one, damaged)."""
+    if not password:
+        return None
+    try:
+        from ansible.parsing.vault import VaultLib, VaultSecret
+        return to_text(VaultLib([("default", VaultSecret(to_bytes(password)))]).decrypt(to_bytes(text)))
+    except Exception:
+        return None
+
+
+def cassandra_inventory_leftovers(paths, read, written, password=""):
+    """paths: the files in the inventory dir (relative paths); read: {path:
+    its first line (a vaulted file: all of it)} for those read; written: the
+    paths this import writes; password: the vault password, if any. Returns {'stale': the files
+    an earlier import wrote that this one does not (to remove), 'kept': the
+    files the import did not write (left as they are), 'replaced': the files at
+    a path it writes that no import wrote}."""
+    found = dict((p, read.get(p)) for p in paths)
+
     def generated(path):
         text = found.get(path)
         if text is None:
             return False
-        if text.startswith(GENERATED):
-            return True
-        # vaulted as a whole: the import wrote it when it wrote the main.yml next to it
-        return (text.startswith("$ANSIBLE_VAULT") and path.endswith("/secrets.yml")
-                and (found.get(path[:-len("secrets.yml")] + "main.yml") or "").startswith(GENERATED))
+        if text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its header
+            return (_decrypt(text, password) or "").startswith(GENERATED)
+        return text.startswith(GENERATED)
 
     stale, kept = [], []
     for path in sorted(found):
         if path in written:
             continue
         (stale if _OWNABLE.match(path) and generated(path) else kept).append(path)
-    # a node gone: its host_vars dir goes too, when nothing else is left in it
-    left = set(os.path.dirname(p) for p in list(written) + kept)
-    dirs = sorted(set(os.path.dirname(p) for p in stale) - left)
-    return {"stale": stale, "kept": kept, "dirs": dirs}
+    replaced = sorted(p for p in found if p in written and not generated(p))
+    return {"stale": stale, "kept": kept, "replaced": replaced}
 
 
 def cassandra_inventory_same_secret(existing, content, password):
@@ -1171,12 +1182,7 @@ def cassandra_inventory_same_secret(existing, content, password):
     written again, it would only change its encryption."""
     if not existing or not str(existing).startswith("$ANSIBLE_VAULT"):
         return False
-    try:
-        from ansible.parsing.vault import VaultLib, VaultSecret
-        plain = VaultLib([("default", VaultSecret(to_bytes(password)))]).decrypt(to_bytes(existing))
-    except Exception:  # another password, a damaged file: written again
-        return False
-    return to_text(plain) == content
+    return _decrypt(existing, password) == content
 
 
 def cassandra_config_ignored_vars(names, cassandra_version):

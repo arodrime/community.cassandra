@@ -4,7 +4,8 @@
 # left to stream) and Cassandra is stopped and disabled on them.
 #   ansible-playbook -i inventory community.cassandra.remove_datacenter \
 #     -e cassandra_target_dc=dc3
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Move that region's clients to another datacenter first: once the keyspaces
 # are altered, reads and writes there fail. Its nodes can't be seeds (take them
 # out with change_seeds first). A keyspace with replicas only there is refused.

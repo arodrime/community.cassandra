@@ -1,7 +1,8 @@
 ---
 # Builds a cluster from blank hosts (one inventory group per cluster):
 #   ansible-playbook -i inventory community.cassandra.create_cluster
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Nodes are prepared in parallel, then started one at a time: seeds first
 # (a node of a new rack earlier when the token allocator needs it), each one
 # joined before the next. Re-running it on a running cluster

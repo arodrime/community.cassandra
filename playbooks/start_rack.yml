@@ -3,7 +3,8 @@
 # has joined, then checks the whole cluster:
 #   ansible-playbook -i inventory community.cassandra.start_rack \
 #     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # max_hint_window (3 hours by default): hints stop being kept after that.
 - name: Check the cluster's group

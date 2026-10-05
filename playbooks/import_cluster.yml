@@ -699,7 +699,9 @@
       {%- endfor -%}
       {{ out }}
     # import_cluster_vault_password_file, else Ansible's (ansible.cfg vault_password_file, ANSIBLE_VAULT_PASSWORD_FILE)
-    _vault_file: >-
+    # (made absolute here: the modules would take a relative path from their own working directory)
+    _vault_file: "{{ (_vault_given | realpath) if _vault_given else '' }}"
+    _vault_given: >-
       {{ (import_cluster_vault_password_file | default('', true)
           or lookup('ansible.builtin.config', 'DEFAULT_VAULT_PASSWORD_FILE') | default('', true)) | string | expanduser }}
     _vault: "{{ _vault_file != '' }}"
@@ -762,6 +764,9 @@
       {% endif %}
       {% if _leftovers.kept | default([]) %}
       KEPT as they are (not written by the import): {{ _leftovers.kept | join(', ') }}
+      {% endif %}
+      {% if _leftovers.replaced | default([]) %}
+      REPLACED (at a path the import writes, without its header): {{ _leftovers.replaced | join(', ') }}
       {% endif %}
 
       Not read from the nodes, set them in group_vars if they apply (see the guide's air-gapped section):
@@ -998,58 +1003,6 @@
         that: not import_cluster_dir_stat.stat.exists or import_cluster_force | default(false) | bool
         fail_msg: "{{ _dir }} exists: pick another import_cluster_dir, or set import_cluster_force=true"
 
-    # a re-import keeps what it did not write (group_vars/all/*, ansible.cfg,
-    # notes...): it replaces its own files, and removes the ones an earlier
-    # import wrote that this one does not (a node gone from the ring)
-    - name: Find the files already there
-      ansible.builtin.find:
-        paths: "{{ _dir }}"
-        recurse: true
-        file_type: file
-      register: import_cluster_existing
-      when: import_cluster_dir_stat.stat.exists
-
-    - name: Read the group_vars and host_vars files already there
-      ansible.builtin.slurp:
-        src: "{{ _dir }}/{{ item }}"
-      loop: "{{ _found | select('match', '^(group_vars|host_vars)/[^/]+/(main|secrets)[.]yml$') | list }}"
-      register: import_cluster_existing_vars
-      no_log: true  # a secrets.yml in clear
-      vars:
-        _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir) | list }}"
-
-    - name: Sort out the files an earlier import wrote
-      ansible.builtin.set_fact:
-        _leftovers: "{{ dict(_found | zip(_found | map('extract', _read))) | community.cassandra.cassandra_inventory_leftovers(_written) }}"
-      vars:
-        _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir) | list }}"
-        # the first line is enough to tell, and a secret's value never leaves this task
-        _read: >-
-          {{ dict(import_cluster_existing_vars.results | map(attribute='item')
-                  | zip(import_cluster_existing_vars.results | map(attribute='content') | map('b64decode')
-                        | map('regex_replace', '(?s)\n.*', ''))) }}
-        _written: "{{ ['hosts.yml', 'report.txt'] + _files | map(attribute='path') | list }}"
-
-    - name: Remove the files an earlier import wrote and this one does not
-      ansible.builtin.file:
-        path: "{{ _dir }}/{{ item }}"
-        state: absent
-      loop: "{{ _leftovers.stale + _leftovers.dirs }}"
-
-    - name: Create the dirs
-      ansible.builtin.file:
-        path: "{{ _dir }}/{{ item }}"
-        state: directory
-        mode: "0755"
-      loop: "{{ [''] + _files | map(attribute='path') | map('dirname') | unique | list }}"
-
-    - name: Write hosts.yml
-      ansible.builtin.copy:
-        content: "{{ (('' if _self_check_ok | bool else '# NOT VALID: the import self-check failed, see report.txt\n')
-                      ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false)) | community.cassandra.cassandra_inventory_generated }}"
-        dest: "{{ _dir }}/hosts.yml"
-        mode: "0644"
-
     # The vault password: import_cluster_vault_password_file, else Ansible's own
     # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE); a
     # password file that is executable is run, as Ansible does
@@ -1067,9 +1020,12 @@
             fail_msg: "vault password file {{ _vault_file }} not found"
             quiet: true
 
+        # a <name>-client script is asked for the vault id, as Ansible does
         - name: Run the vault password script
           ansible.builtin.command:
-            argv: ["{{ _vault_file }}"]
+            argv: >-
+              {{ [_vault_file] + (['--vault-id', import_cluster_vault_id | default('default')]
+                 if _vault_file | basename | splitext | first is match('.*-client$') else []) }}
           register: import_cluster_vault_script
           changed_when: false
           check_mode: false
@@ -1079,9 +1035,92 @@
         - name: Keep the vault password
           ansible.builtin.set_fact:
             _vault_secret: >-
-              {{ import_cluster_vault_script.stdout | trim if import_cluster_vault_stat.stat.executable
-                 else lookup('ansible.builtin.file', _vault_file | realpath) | trim }}
+              {{ import_cluster_vault_script.stdout if import_cluster_vault_stat.stat.executable
+                 else lookup('ansible.builtin.file', _vault_file) | trim }}
           no_log: true
+
+        - name: Stop on an empty vault password
+          ansible.builtin.assert:
+            that: _vault_secret | length > 0
+            fail_msg: "empty vault password from {{ _vault_file }}"
+            quiet: true
+
+    # a re-import keeps what it did not write (group_vars/all/*, ansible.cfg,
+    # notes...): it replaces its own files, and removes the ones an earlier
+    # import wrote that this one does not (a node gone from the ring)
+    - name: Find the files already there
+      ansible.builtin.find:
+        paths: "{{ _dir }}"
+        recurse: true
+        depth: 3  # group_vars/<group>/main.yml
+        file_type: file
+      register: import_cluster_existing
+      when: import_cluster_dir_stat.stat.exists
+
+    - name: Read the group_vars and host_vars files already there
+      ansible.builtin.slurp:
+        src: "{{ _dir }}/{{ item }}"
+      loop: "{{ _found | select('match', '^((group_vars|host_vars)/[^/]+/(main|secrets)[.]yml|hosts[.]yml|report[.]txt)$') | list }}"
+      register: import_cluster_existing_vars
+      no_log: true  # a secrets.yml in clear
+      vars:
+        _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
+                    | reject('match', '(.*/)?[.]') | list }}"
+
+    - name: Sort out the files an earlier import wrote
+      ansible.builtin.set_fact:
+        _leftovers: >-
+          {{ _found | community.cassandra.cassandra_inventory_leftovers(_read, _written, _vault_secret | default('')) }}
+      vars:
+        _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
+                    | reject('match', '(.*/)?[.]') | list }}"
+        # the first line is enough to tell (a vaulted file: decrypted to its first line), and a
+        # secret's value never leaves this task
+        _read: >-
+          {%- set out = {} -%}
+          {%- for r in import_cluster_existing_vars.results -%}
+          {%-   set t = r.content | b64decode -%}
+          {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') else t.split('\n') | first}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _written: "{{ ['hosts.yml', 'report.txt'] + _files | map(attribute='path') | list }}"
+
+    - name: Stop rather than write in clear over a vaulted file
+      ansible.builtin.assert:
+        that: _vault | bool or _vaulted | length == 0
+        fail_msg: >-
+          {{ _vaulted | join(', ') }} in {{ _dir }} are vaulted, and no vault password file is set: set
+          vault_password_file in ansible.cfg (or -e import_cluster_vault_password_file=<file>)
+        quiet: true
+      vars:
+        _vaulted: >-
+          {%- set out = [] -%}
+          {%- for r in import_cluster_existing_vars.results | default([]) if r.content is defined -%}
+          {%-   if r.item in _files | selectattr('secret') | map(attribute='path') and (r.content | b64decode).startswith('$ANSIBLE_VAULT') -%}
+          {%-     set _ = out.append(r.item) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Remove the files an earlier import wrote and this one does not
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: absent
+      loop: "{{ _leftovers.stale }}"  # files only: a dir may hold files of yours
+
+    - name: Create the dirs
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ [''] + _files | map(attribute='path') | map('dirname') | unique | list }}"
+
+    - name: Write hosts.yml
+      ansible.builtin.copy:
+        content: "{{ (('' if _self_check_ok | bool else '# NOT VALID: the import self-check failed, see report.txt\n')
+                      ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false)) | community.cassandra.cassandra_inventory_generated }}"
+        dest: "{{ _dir }}/hosts.yml"
+        mode: "0644"
 
     # secrets.yml: encrypted as a whole (Ansible reads vaulted vars files), or 0600 in clear
     - name: Write group_vars and host_vars

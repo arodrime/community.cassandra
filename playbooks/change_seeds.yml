@@ -3,7 +3,8 @@
 # restart): only the seeds line of cassandra.yaml changes. Other differences
 # between the inventory and the nodes' config are shown, not applied.
 #   ansible-playbook -i inventory community.cassandra.change_seeds
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # The preflight check refuses seeds that are not up members of the cluster.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight

@@ -54,26 +54,36 @@ def test_two_dcs():
 
 def test_runtime_groups_ignored():
     # group_by groups made by the playbooks hold every host at times
-    groups = {"all": ["n1", "n2"], "orders": ["n1", "n2"], "eu": ["n1", "n2"],
+    groups = {"all": ["n1", "n2"], "orders": ["n1", "n2"],
               "cassandra_apply_config_True": ["n1", "n2"], "cassandra_update_java_True": ["n1", "n2"],
               "cassandra_upgrade_nodes": ["n1", "n2"], "cassandra_create_start_order": ["n1", "n2"],
               "cassandra_seed_True": ["n1", "n2"], "cassandra_target_rack_nodes": ["n1", "n2"],
-              "cassandra_move_order": ["n1", "n2"], "cassandra_leaving_dc": ["n1", "n2"]}
-    with pytest.raises(ValueError, match="these groups hold the same hosts: eu, orders[.]"):
-        cluster_group(None, groups)
-    del groups["eu"]
+              "cassandra_move_order": ["n1", "n2"], "cassandra_leaving_dc": ["n1", "n2"],
+              "cassandra_move_left_going": ["n1"]}
     assert cluster_group(None, groups) == "orders"
 
 
 def test_same_hosts_without_a_common_name():
     groups = {"all": ["n1"], "orders": ["n1"], "eu": ["n1"]}
+    with pytest.raises(ValueError, match="top groups: eu, orders[)]"):
+        cluster_group(None, groups)
+
+
+@pytest.mark.parametrize("other", [
+    {"monitoring": ["n1", "n2", "m1"]},             # every node and more: not a guess
+    {"linux": ["n1", "n2", "b1"], "bastion": ["b1"]},
+    {"seeds": ["n1"]},                              # a group of the user's, inside the cluster
+    {"prod_extra": ["n1", "x9"]},                   # named like the cluster's, other hosts
+])
+def test_other_groups_refused(other):
+    groups = dict({"all": ["n1", "n2", "m1", "b1", "x9"], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"]}, **other)
     with pytest.raises(ValueError, match="-e cassandra_hosts=<the cluster's group>"):
         cluster_group(None, groups)
 
 
 def test_several_clusters():
     groups = {"all": ["n1", "n2"], "orders": ["n1"], "orders_dc1": ["n1"], "users": ["n2"]}
-    with pytest.raises(ValueError, match=r"several clusters \(groups: orders, users\)"):
+    with pytest.raises(ValueError, match=r"top groups: orders, users\)"):
         cluster_group(None, groups)
 
 
@@ -97,7 +107,7 @@ def test_lookup():
 
 
 def test_lookup_error():
-    with pytest.raises(AnsibleError, match="several clusters"):
+    with pytest.raises(AnsibleError, match="not one cluster"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups={"a": ["n1"], "b": ["n2"]})
 
 

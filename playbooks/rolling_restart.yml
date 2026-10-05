@@ -3,7 +3,8 @@
 # the node, restarts it, waits until it has joined, checks the cluster again.
 # Stops at the first problem, without touching the next node.
 #   ansible-playbook -i inventory community.cassandra.rolling_restart
-# On the inventory's cluster group (the only one; else -e cassandra_hosts=<group>).
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 # -e cassandra_rolling_mode=rack restarts all the nodes of a rack together,
 # rack by rack: faster on big clusters, and only allowed when every datacenter

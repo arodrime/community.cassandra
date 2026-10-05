@@ -55,8 +55,8 @@ would otherwise repeat:
     collections_path = ./collections
     # the cluster most runs are on; -i inventories/<other>/hosts.yml for another one
     inventory = ./inventories/orders/hosts.yml
-    # read by Ansible for every run, and by import_cluster to encrypt the passwords it finds;
-    # keep it outside the project, mode 0600
+    # read by Ansible for every run (which fails if it is missing), and by import_cluster to
+    # encrypt the passwords it finds; keep it outside the project, mode 0600
     vault_password_file = ~/.ansible/vault_pass
     stdout_callback = ansible.builtin.default
     callback_result_format = yaml
@@ -100,14 +100,15 @@ Use one group per cluster and one group per datacenter (the playbooks below take
                 node5:
                 node6:
 
-Without ``-e cassandra_hosts=<group>``, the playbooks run on the group ``cassandra`` when the inventory has one,
-else on the inventory's cluster group: the group whose hosts no other group holds all of (``orders`` here; the groups
-the playbooks make while they run, ``all`` and ``ungrouped`` left out). When a cluster has one datacenter and one
-rack, its groups hold the same hosts: the one whose name starts the others' is taken (``orders`` for ``orders_dc1``
-and ``orders_dc1_rack1``, as the import names them). An inventory with several clusters, or groups with the same hosts
-and unrelated names, is refused with the candidate groups: give ``-e cassandra_hosts=<group>`` then. Keep one
-inventory per cluster (``inventories/<cluster>/hosts.yml``, as the import writes it) and the playbooks need no
-``cassandra_hosts``. The same rule is the lookup ``community.cassandra.cassandra_hosts``, for your own playbooks.
+Without ``-e cassandra_hosts=<group>``, the playbooks run on the group ``cassandra`` when the inventory has one with
+hosts, else on the inventory's cluster group when it holds one cluster laid out as the import writes it: the group
+whose name starts every other group's and that holds their hosts (``orders`` here, for ``orders_dc1`` and
+``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out). Any other group
+(a second cluster, ``monitoring``, ``linux``, a group of your own) makes them stop with the top groups listed rather
+than guess: give ``-e cassandra_hosts=<group>`` then. Keep one inventory per cluster
+(``inventories/<cluster>/hosts.yml``, as the import writes it) and the playbooks need no ``cassandra_hosts``. The
+same rule is the lookup ``community.cassandra.cassandra_hosts``; the groups are read each time, so a group your own
+plays add earlier in the same run (``group_by``) makes it stop the same way.
 
 .. code-block:: yaml
 
@@ -689,19 +690,24 @@ is not run. A virtualenv found through a login profile is reported: the roles le
 Medusa installed by a package is not managed (the report says so).
 
 Passwords found in the configuration go to separate ``secrets.yml`` files, encrypted with ansible-vault as a whole
-with Ansible's vault password file (``vault_password_file`` in ``ansible.cfg``, see `Project setup`_, or
-``ANSIBLE_VAULT_PASSWORD_FILE``), or with ``import_cluster_vault_password_file`` (and ``import_cluster_vault_id``)
-when given. ``--vault-password-file`` on the command line is not seen by the playbook: set the file in
-``ansible.cfg`` instead. An executable password file is run, as Ansible does. Without a password file, they are
-written in clear with mode ``0600``, and the report and the end of the run give the ``ansible-vault encrypt``
-command to run. A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
+with ``import_cluster_vault_password_file`` (and ``import_cluster_vault_id``) when given, else with Ansible's vault
+password file (``vault_password_file`` in ``ansible.cfg``, see `Project setup`_, or ``ANSIBLE_VAULT_PASSWORD_FILE``).
+``--vault-password-file`` and ``--vault-id`` on the command line, and ``vault_identity_list``, are not seen by the
+playbook: set the file in ``ansible.cfg`` instead. An executable password file is run, as Ansible does (a
+``<name>-client`` script with ``--vault-id <import_cluster_vault_id or default>``); an empty password is refused.
+Without a password file, they are written in clear with mode ``0600``, and the report and the end of the run give the
+``ansible-vault encrypt`` command to run; a vaulted ``secrets.yml`` already there is then never overwritten in clear
+(the import stops). A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
 
 Every file the import writes starts with ``# Written by community.cassandra.import_cluster``. An existing
-``import_cluster_dir`` is refused unless ``import_cluster_force=true``; then the import replaces the files it wrote,
-removes those it no longer writes (the ``host_vars`` of a node gone from the ring), and keeps every other file there:
-your ``group_vars/all/*.yml`` (a mirror, a vault), an ``ansible.cfg``, notes. The report lists the files removed and
-the files kept. A file of the import you edit by hand is replaced by the next import: put your own settings in files
-of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
+``import_cluster_dir`` is refused unless ``import_cluster_force=true``; then the import writes the files at its own
+paths (``hosts.yml``, ``report.txt``, ``group_vars``/``host_vars`` ``main.yml`` and ``secrets.yml``), removes the
+files with its header it no longer writes (the ``host_vars`` of a node gone from the ring; a vaulted one only when it
+decrypts with the password at hand), and keeps every other file there: your ``group_vars/all/*.yml`` (a mirror, a
+vault), an ``ansible.cfg``, notes; dot-dirs (``.git``) are not looked into, and no directory is removed. The report
+lists the files removed, the files kept, and the files replaced at its paths that did not have its header. A file of
+the import you edit by hand is replaced by the next import: put your own settings in files of your own
+(``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
 Then check what the roles would change:
 

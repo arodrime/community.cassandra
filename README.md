@@ -28,7 +28,7 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 #### Playbooks
 
 Operations on a cluster, described by one inventory group (`cassandra_hosts`,
-by default the inventory's cluster group when it has only one; per-cluster
+by default the group `cassandra`, else the inventory's cluster group as the import lays it out; per-cluster
 settings such as `cassandra_seeds` in its group_vars). Run them with
 `ansible-playbook community.cassandra.<name>`.
 
@@ -54,7 +54,7 @@ settings such as `cassandra_seeds` in its group_vars). Run them with
 
     ansible-playbook -i inventory community.cassandra.create_cluster
 
-`import_cluster` takes any reachable nodes (`ansible-playbook -i node1,node2 community.cassandra.import_cluster`) and finds the others in the ring. It writes `hosts.yml` (one group per cluster, then per datacenter and rack), `group_vars/`, `host_vars/` and `report.txt` to `import_cluster_dir` (default `./<cluster name>`). Settings shared by every node go to the cluster group; the others go to the datacenter, rack or node where they are shared, and the report lists them as drift. `cassandra.yaml` settings that have no variable are kept in `cassandra_extra_settings`. Passwords go to separate `secrets.yml` files, encrypted with Ansible's vault password file (`vault_password_file` in `ansible.cfg`) or `import_cluster_vault_password_file`, else mode `0600` with a warning and the `ansible-vault` command to run. A re-import (`import_cluster_force=true`) replaces only the files it wrote, and keeps the others (`group_vars/all/*.yml`, `ansible.cfg`, notes). The report also lists, per node, the Cassandra and Java versions and the hand edits nothing can keep, which `cassandra_config` would revert.
+`import_cluster` takes any reachable nodes (`ansible-playbook -i node1,node2 community.cassandra.import_cluster`) and finds the others in the ring. It writes `hosts.yml` (one group per cluster, then per datacenter and rack), `group_vars/`, `host_vars/` and `report.txt` to `import_cluster_dir` (default `./<cluster name>`). Settings shared by every node go to the cluster group; the others go to the datacenter, rack or node where they are shared, and the report lists them as drift. `cassandra.yaml` settings that have no variable are kept in `cassandra_extra_settings`. Passwords go to separate `secrets.yml` files, encrypted with `import_cluster_vault_password_file` or Ansible's vault password file (`vault_password_file` in `ansible.cfg`), else mode `0600` with a warning and the `ansible-vault` command to run. A re-import (`import_cluster_force=true`) writes the files at its own paths, removes the ones of an earlier import it no longer writes, and keeps the others (`group_vars/all/*.yml`, `ansible.cfg`, notes). The report also lists, per node, the Cassandra and Java versions and the hand edits nothing can keep, which `cassandra_config` would revert.
 
 #### Modules
 
