@@ -260,6 +260,12 @@
         cassandra_config_confirm: false
         _cassandra_config_no_restart_warning: true
 
+    - name: Say the cluster is not checked (--check)
+      ansible.builtin.debug:
+        msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
+      run_once: true
+      when: ansible_check_mode
+
     - name: Check the cluster
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -267,6 +273,7 @@
         apply:
           run_once: true
       run_once: true
+      when: not ansible_check_mode  # its nodes were not started
 
     - name: Say what is left to do
       ansible.builtin.debug:
@@ -274,3 +281,4 @@
           {{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }} is up with its data. Make one node
           per rack of it a seed (cassandra_seeds, then change_seeds), and point that region's clients at it.
       run_once: true
+      when: not ansible_check_mode

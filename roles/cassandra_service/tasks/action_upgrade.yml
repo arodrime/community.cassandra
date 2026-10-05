@@ -33,14 +33,17 @@
   vars:
     cassandra_service_state: started
 
+# --check upgrades nothing: no new version to find
 - name: Read the version it runs
   ansible.builtin.command: "{{ _cassandra_service_nodetool }} version"
   register: cassandra_upgrade_version
   changed_when: false
+  when: not ansible_check_mode
 
 - name: Check it runs the target version
   ansible.builtin.assert:
     that: >-
       cassandra_upgrade_version.stdout is search('ReleaseVersion: ' ~ cassandra_package_version | regex_escape ~ '$', multiline=True)
-    fail_msg: "{{ inventory_hostname }} runs {{ cassandra_upgrade_version.stdout | trim }}, not {{ cassandra_package_version }}"
+    fail_msg: "{{ inventory_hostname }} runs {{ cassandra_upgrade_version.stdout | default('') | trim }}, not {{ cassandra_package_version }}"
     quiet: true
+  when: not ansible_check_mode

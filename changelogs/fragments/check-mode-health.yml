@@ -1,0 +1,2 @@
+bugfixes:
+  - "create_cluster, add_datacenter, start_rack, decommission_node, remove_datacenter, remove_dead_node and upgrade playbooks - under ``--check``, no longer fail in the cluster check after the nodes they would start, add, remove or upgrade (``--check`` changes none of them): the check is skipped with a note, or the version check of the upgrade. The schema agreement check of the health checks runs under ``--check`` too."

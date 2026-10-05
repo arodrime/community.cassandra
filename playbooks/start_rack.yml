@@ -59,8 +59,16 @@
   gather_facts: true
   gather_subset: [network]
   tasks:
+    - name: Say the cluster is not checked (--check)
+      ansible.builtin.debug:
+        msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
+      run_once: true
+      when: ansible_check_mode
+
     - name: Check the whole cluster from one node
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: cluster_health.yml
-      when: inventory_hostname == ansible_play_hosts[0]
+      when:
+        - inventory_hostname == ansible_play_hosts[0]
+        - not ansible_check_mode  # the rack was not started

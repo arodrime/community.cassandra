@@ -344,6 +344,8 @@
       vars:
         cassandra_service_health_report_only: "{{ _method == 'removenode_force' }}"
       run_once: true
+      # --check removes nothing: the dead node is still there (removenode_force only reports)
+      when: not ansible_check_mode or _method == 'removenode_force'
 
     - name: Stop on an unhealthy cluster (removenode_force)
       ansible.builtin.fail:

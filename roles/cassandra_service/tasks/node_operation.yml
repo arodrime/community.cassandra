@@ -33,10 +33,11 @@
     - name: Run the action
       ansible.builtin.include_tasks: "action_{{ cassandra_service_node_action }}.yml"
 
-    # --check starts nothing: a node being added or replaced is not there to check
+    # --check starts or removes nothing: a node being added or replaced is not there to check, a
+    # decommissioned one still is
     - name: Check the cluster with this node back
       ansible.builtin.include_tasks: cluster_health.yml
-      when: not (ansible_check_mode and cassandra_service_node_action in ['add', 'replace'])
+      when: not (ansible_check_mode and cassandra_service_node_action in ['add', 'replace', 'decommission'])
       vars:
         cassandra_service_health_node_checks: "{{ cassandra_service_node_checks_after | default(true) }}"
         cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_after | default(_cassandra_group_size) }}"
