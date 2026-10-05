@@ -73,6 +73,12 @@
     state: present
   retries: 3
   register: cassandra_timesync_install
+  # --check: without the repositories cassandra_repository removes (no_repository.yml)
+  module_defaults:
+    ansible.builtin.dnf:
+      disablerepo: "{{ _cassandra_repository_check_removed | default([]) }}"
+    ansible.legacy.dnf:
+      disablerepo: "{{ _cassandra_repository_check_removed | default([]) }}"
   when:
     - cassandra_linux_timesync | bool
     - not cassandra_offline | bool

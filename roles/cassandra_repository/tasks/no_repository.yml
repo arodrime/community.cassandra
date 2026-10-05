@@ -5,7 +5,20 @@
     state: absent
   diff: false  # they may hold a password
   loop: "{{ ([cassandra_version] + ['311x', '40x', '41x', '50x']) | unique }}"
+  register: _cassandra_repository_removed_yum
   when: ansible_facts['os_family'] == "RedHat"
+
+# --check removes nothing: the next dnf calls (cassandra_install,
+# cassandra_linux) leave out the ones the real run removes, as one on a plain
+# directory makes dnf fail
+- name: Under --check, the repositories dnf leaves out
+  ansible.builtin.set_fact:
+    _cassandra_repository_check_removed: >-
+      {{ _cassandra_repository_removed_yum.results | selectattr('changed') | map(attribute='item')
+         | map('regex_replace', '^', 'cassandra-') | list }}
+  when:
+    - ansible_check_mode
+    - ansible_facts['os_family'] == "RedHat"
 
 - name: Remove the Cassandra apt sources and their credentials (Debian & Ubuntu)
   ansible.builtin.file:
