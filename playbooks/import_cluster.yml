@@ -177,7 +177,7 @@
           [ -e "$f" ] && { echo "own_repo=yes"; break; }
         done
         # a configured repository offers the cassandra package (else it was installed from a file: new nodes
-        # need cassandra_install_method packages); apt: a source besides the installed package's status
+        # need cassandra_install_method packages); apt: a source besides the status of the installed package
         if command -v apt-cache >/dev/null 2>&1; then
           # (read from the local lists: none, nothing to conclude)
           ls /var/lib/apt/lists/*_Packages* >/dev/null 2>&1 && echo "pkg_query=ok"

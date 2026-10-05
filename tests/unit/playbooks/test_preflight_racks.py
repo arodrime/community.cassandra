@@ -155,7 +155,7 @@ def test_create_cluster_starts_in_the_order_preflight_checks():
     with open(os.path.join(TOP, "playbooks", "create_cluster.yml"), encoding="utf-8") as f:
         plays = yaml.safe_load(f)
     order = next(p for p in plays if p.get("name") == "Order the starts")
-    task = order["tasks"][0]
+    task = next(t for t in order["tasks"] if "ansible.builtin.add_host" in t)
     assert task["ansible.builtin.add_host"]["groups"] == "cassandra_create_start_order"
     assert "community.cassandra.cassandra_start_order(" in task["loop"] and task["run_once"] is True
     starts = [p for p in plays if "cassandra_service" in str(p.get("roles"))]
