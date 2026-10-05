@@ -150,6 +150,17 @@ one joined before the next. Running it again on a running cluster starts nothing
 On a new node, :ansplugin:`community.cassandra.cassandra_install#role` doesn't let the package start Cassandra
 with its stock configuration, so the node first starts with its real configuration.
 
+A node keeps its snitch, datacenter and rack for life once it has joined, so moving a cluster to other ones means
+building it again. ``-e cassandra_create_cluster_reset=true`` does that on a cluster that runs already, ALL ITS DATA
+LOST: it is refused when ``--limit`` leaves a host of the group out, when no node answers ``nodetool status``, when
+the ring has a node the group does not have (never wipe part of a cluster that keeps running), when a running node
+is not in that ring or the running nodes see different rings, when a node holding data is not in that ring, when a
+Cassandra runs that its unit did not start, or when a node's live ``cassandra.yaml`` names another cluster. With one token per node, the new tokens are shown and confirmed first. Each node's plan is shown (see
+`Resetting a node`_), then the operator types the cluster name (for a run without a terminal,
+``-e '{"cassandra_create_cluster_reset_confirm": "<cluster name>"}' -e cassandra_operation_confirm=false``); every
+node is stopped, kept from starting at boot and emptied, then the cluster is created with the inventory's settings.
+``--check`` shows the plan only. If the create fails after the wipe, run ``create_cluster`` again without the option.
+
 
 Adding a node
 -------------

@@ -4,7 +4,7 @@ __metaclass__ = type
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
-    cassandra_node_reset_dirs, cassandra_node_reset_real, cassandra_node_reset_ring, reset_path_problem)
+    cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real, cassandra_node_reset_ring, reset_path_problem)
 
 INVENTORY = [["data", "/var/lib/cassandra/data"], ["commitlog", "/var/lib/cassandra/commitlog"],
              ["saved_caches", "/var/lib/cassandra/saved_caches"], ["hints", "/var/lib/cassandra/hints"]]
@@ -383,3 +383,62 @@ def test_replace_other_address_of_this_host_refused():
     out = cassandra_node_reset_ring(answers, ME, replace_address="10.100.100.9", host="n9")
     assert out["problems"] == ["n1 sees 172.17.0.9 in its ring (DN, host ID id-9): n9 is a member of the cluster, never"
                                " reset it. A node leaves with decommission_node (remove_dead_node when dead), then can be reset"]
+
+
+HOSTS = {"n1": ["10.100.100.1"], "n2": ["10.100.100.2", "172.17.0.2"], "n3": ["10.100.100.3"]}
+
+
+def test_cluster_reset_whole_ring_in_the_group():
+    ring = _ring(N1, N2, ("10.100.100.3", "D", "N", "id-3"))
+    out = cassandra_cluster_reset_check([{"host": "n1", "status": ring}, {"host": "n2", "status": None}], HOSTS, "orders")
+    assert out == {"problems": [], "info": ["the ring (n1=10.100.100.1, n2=10.100.100.2, n3=10.100.100.3) is all in orders"],
+                   "ring": ["10.100.100.1", "10.100.100.2", "10.100.100.3"]}
+
+
+def test_cluster_reset_node_outside_the_group_refused():
+    ring = _ring(N1, N2, ("10.100.100.4:7000", "U", "N", "id-4"))
+    answers = [{"host": "n1", "status": ring}, {"host": "n2", "status": ring}]
+    out = cassandra_cluster_reset_check(answers, HOSTS, "orders")
+    assert out == {"problems": ["n1, n2 sees 10.100.100.4 in its ring, a node no host of orders has: the inventory must cover"
+                                " the whole cluster (a node left out would keep running with its data)"], "info": [],
+                   "ring": ["10.100.100.1", "10.100.100.2", "10.100.100.4"]}
+
+
+def test_cluster_reset_no_answer_refused():
+    out = cassandra_cluster_reset_check([{"host": "n1", "status": None}], HOSTS, "orders")
+    assert out == {"problems": ["no node of orders answers nodetool status: the ring can't be checked against the"
+                                " inventory. Start at least one node, then run again (if an earlier reset emptied them"
+                                " already, run create_cluster without cassandra_create_cluster_reset)"], "info": [], "ring": []}
+    assert cassandra_cluster_reset_check([], HOSTS)["problems"][0].startswith("no node of the group answers")
+
+
+def test_cluster_reset_running_host_outside_the_ring_refused():
+    # n3 runs in another cluster (same name): its nodetool does not answer, or its ring is not this one
+    ring = _ring(N1, N2)
+    out = cassandra_cluster_reset_check([{"host": "n1", "status": ring}, {"host": "n3", "status": None}], HOSTS, "orders",
+                                        running=["n1", "n3"])
+    assert out["problems"] == ["n3 runs Cassandra but nodetool status does not answer there: whether it is a node of this"
+                               " cluster can't be checked"]
+    other = _ring(("10.100.100.3", "U", "N", "id-3"), ("10.100.100.9", "U", "N", "id-9"))
+    HOSTS9 = dict(HOSTS, n9=["10.100.100.9"])
+    out = cassandra_cluster_reset_check([{"host": "n1", "status": ring}, {"host": "n3", "status": other}], HOSTS9, "orders",
+                                        running=["n1", "n2", "n3"])
+    assert out["problems"] == [
+        "the running nodes see different rings (n1: 10.100.100.1, 10.100.100.2; n3: 10.100.100.3, 10.100.100.9): another"
+        " cluster among them, or one still joining or leaving",
+        "n2 runs Cassandra but nodetool status does not answer there: whether it is a node of this cluster can't be checked"]
+    # a host that does not run and is not in the ring (new in the rebuild, or holding data: reset_node.yml refuses
+    # it then, with the ring returned here): fine here
+    out = cassandra_cluster_reset_check([{"host": "n1", "status": ring}], HOSTS, "orders", running=["n1"])
+    assert out["problems"] == []
+
+
+def test_whole_cluster_reset_needs_data_holders_in_the_ring():
+    ring = ["10.100.100.1", "10.100.100.2", "10.100.100.9:7000"]
+    assert cassandra_node_reset_ring([], ME, has_data=True, cluster_ring=ring) == {
+        "problems": [], "info": ["the whole cluster is reset"]}
+    out = cassandra_node_reset_ring([], ME, has_data=True, cluster_ring=ring[:2], host="n9")
+    assert out == {"problems": ["n9 holds data but none of its addresses (10.100.100.9, 172.17.0.9) is in the ring of the"
+                                " cluster: a node of another cluster?"], "info": []}
+    # blank (a new host in the rebuild): fine
+    assert cassandra_node_reset_ring([], ME, has_data=False, cluster_ring=ring[:2])["problems"] == []

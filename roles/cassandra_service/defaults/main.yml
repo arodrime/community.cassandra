@@ -81,6 +81,11 @@ cassandra_add_node_cleanup: none
 # holds data, typically a host replacing itself (same address).
 cassandra_add_node_reset: false
 cassandra_replace_node_reset: false
+# create_cluster: true rebuilds a cluster that runs already, all its data
+# lost (another snitch, datacenters, racks); the operator types the cluster
+# name, or gives it in cassandra_create_cluster_reset_confirm (no terminal)
+cassandra_create_cluster_reset: false
+cassandra_create_cluster_reset_confirm: ""
 # One token per node (cassandra_num_tokens: 1): where add_node puts the new
 # nodes without cassandra_initial_token (false: refused; bisect; balanced;
 # true: shows both, asks), the replication factor the shares assume when no

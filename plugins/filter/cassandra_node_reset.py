@@ -7,6 +7,8 @@ cassandra_node_reset_dirs: the directories to empty, from the inventory and
     the live cassandra.yaml, and the paths refused as too risky to empty.
 cassandra_node_reset_real: the same checks where the directories really
     are, once links are resolved.
+cassandra_cluster_reset_check: create_cluster's reset of a whole cluster, only
+    when every node of the ring is a host of the inventory's group.
 cassandra_node_reset_ring: whether the node may be reset, from the rings
     other nodes of the cluster see and, when Cassandra runs there, its own.
 """
@@ -106,7 +108,7 @@ def _live_dirs(text):
     try:
         data = yaml.safe_load(text) or {}
     except yaml.YAMLError as e:
-        return None, None, "the live cassandra.yaml is not valid YAML (%s): its directories are unknown" % str(e).split("\n")[0]
+        return None, None, "the live cassandra.yaml is not valid YAML (%s): its directories are unknown" % str(e).split("\n", 1)[0]
     if not isinstance(data, dict):
         return None, None, "the live cassandra.yaml is not a mapping: its directories are unknown"
     out = []
@@ -213,7 +215,7 @@ def _nodes(status):
 
 
 def cassandra_node_reset_ring(answers, addresses, replace_address="", running=False, own=None, host="", known=None,
-                              has_data=False):
+                              has_data=False, cluster_ring=None):
     """answers: [{'host', 'addresses', 'status'}]: the ring (cassandra_status
     cluster_status, None when it did not answer) other nodes of the cluster
     see, and their own addresses; addresses: this node's addresses;
@@ -221,10 +223,17 @@ def cassandra_node_reset_ring(answers, addresses, replace_address="", running=Fa
     rings, down; running: Cassandra runs here; own: then its own ring (None:
     it did not answer); known: the addresses of the cluster group's hosts;
     has_data: the node holds data (a down node no host of the inventory
-    accounts for may be this one under an old address). Returns
-    {'problems', 'info'}."""
+    accounts for may be this one under an old address); cluster_ring: the
+    whole cluster is reset (create_cluster), these are the addresses of its
+    ring: the rings are not read, a node holding data must be in that one.
+    Returns {'problems', 'info'}."""
     mine = set(_addr(a) for a in addresses or [] if a and not _loopback(_addr(a)))
     name = host or "this node"
+    if cluster_ring is not None:
+        if has_data and not mine & set(_addr(a) for a in cluster_ring):
+            return {"problems": ["%s holds data but none of its addresses (%s) is in the ring of the cluster: a node of"
+                                 " another cluster?" % (name, ", ".join(sorted(mine)))], "info": []}
+        return {"problems": [], "info": ["the whole cluster is reset"]}
     problems, info = [], []
     own_ids = set()
     if running:
@@ -271,9 +280,52 @@ def cassandra_node_reset_ring(answers, addresses, replace_address="", running=Fa
     return {"problems": sorted(set(problems), key=problems.index), "info": info}
 
 
+def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None):
+    """create_cluster's reset of a whole cluster. answers: [{'host',
+    'status'}] the rings the running nodes of the group see (status None: no
+    answer); addresses_of: {host: [its addresses]} for every host of the
+    group; running: the hosts where Cassandra runs. Returns {'problems',
+    'info', 'ring': the addresses in it}: refused unless a node answered, every node of the ring is a host
+    of the group (never wipe part of a cluster that keeps running) and every
+    running host is in that ring (not in another cluster)."""
+    known = dict((_addr(a), h) for h, addrs in (addresses_of or {}).items() for a in addrs or [])
+    problems, info = [], []
+    answered = [a for a in answers or [] if a.get("status")]
+    if not answered:
+        problems.append("no node of %s answers nodetool status: the ring can't be checked against the inventory. Start at"
+                        " least one node, then run again (if an earlier reset emptied them already, run create_cluster"
+                        " without cassandra_create_cluster_reset)" % (group or "the group"))
+    ring = {}
+    for a in answered:
+        for n in _nodes(a.get("status")):
+            ring.setdefault(_addr(n.get("address")), set()).add(a.get("host"))
+    for address in sorted(ring):
+        if address not in known:
+            problems.append("%s sees %s in its ring, a node no host of %s has: the inventory must cover the whole cluster"
+                            " (a node left out would keep running with its data)"
+                            % (", ".join(sorted(ring[address])), address, group or "the group"))
+    # nodes of one cluster see the same nodes: another ring is another cluster
+    seen = dict((a.get("host"), sorted(set(_addr(n.get("address")) for n in _nodes(a.get("status"))))) for a in answered)
+    if len(set(tuple(v) for v in seen.values())) > 1:
+        problems.append("the running nodes see different rings (%s): another cluster among them, or one still joining or"
+                        " leaving" % "; ".join("%s: %s" % (h, ", ".join(v)) for h, v in sorted(seen.items())))
+    for host in running or []:
+        mine = set(_addr(a) for a in (addresses_of or {}).get(host) or [])
+        if not any(a.get("host") == host for a in answered):
+            problems.append("%s runs Cassandra but nodetool status does not answer there: whether it is a node of this"
+                            " cluster can't be checked" % host)
+        elif answered and not mine & set(ring):
+            problems.append("%s runs Cassandra but is not in the ring the others see: a node of another cluster?" % host)
+    result_ring = sorted(ring)
+    if answered and not problems:
+        info.append("the ring (%s) is all in %s" % (", ".join("%s=%s" % (known[a], a) for a in sorted(ring)), group or "the group"))
+    return {"problems": problems, "info": info, "ring": result_ring}
+
+
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_cluster_reset_check": cassandra_cluster_reset_check,
             "cassandra_node_reset_dirs": cassandra_node_reset_dirs,
             "cassandra_node_reset_real": cassandra_node_reset_real,
             "cassandra_node_reset_ring": cassandra_node_reset_ring,

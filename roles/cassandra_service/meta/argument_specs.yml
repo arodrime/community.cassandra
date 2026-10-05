@@ -168,6 +168,25 @@ argument_specs:
             host replacing itself (the dead node's address is its own, e.g. a lost disk or a reinstall).
             C(false) refuses it, C(true) resets it first as C(cassandra_add_node_reset) does. The other nodes
             may list the host's address only as the dead node being replaced, down.
+      cassandra_create_cluster_reset:
+        type: bool
+        default: false
+        description:
+          - C(true) makes the C(create_cluster) playbook rebuild a cluster that runs already, ALL ITS DATA
+            LOST, e.g. to move it to another snitch, datacenters or racks (a node keeps them for life once it
+            has joined). Every node is stopped, kept from starting at boot and emptied as by the C(reset_node)
+            playbook, then the cluster is created with the inventory's settings.
+          - Refused when C(--limit) leaves a host of the group out, when no node answers C(nodetool status),
+            when the ring has a node the group does not have, when a running node is not in that ring or the
+            running nodes see different rings, when a node holding data is not in that ring, or when a node's
+            live C(cassandra.yaml) names another cluster. The plan is shown, then the operator types the cluster name. C(--check) shows
+            the plan only.
+      cassandra_create_cluster_reset_confirm:
+        type: str
+        default: ""
+        description:
+          - The cluster name, for C(cassandra_create_cluster_reset) without a terminal (it replaces typing
+            it). Any other value is refused.
       cassandra_token_auto:
         type: raw
         default: false

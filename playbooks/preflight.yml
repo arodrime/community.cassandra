@@ -180,7 +180,8 @@
 
         - name: Every seed is up
           ansible.builtin.assert:
-            that: _addr in _up
+            # a cluster about to be wiped: a seed of the group, up or not
+            that: _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ ("A new node can't be a seed (seeds don't bootstrap, it would join without its data): add it as a"
@@ -237,7 +238,10 @@
         quiet: true
       vars:
         _hint: "{{ cassandra_allocate_tokens_for_local_replication_factor }}"
-        _ring_nodes: "{{ ((cassandra_preflight_status.cluster_status | default({}, true))[item] | default({})).nodes | default([]) }}"
+        # create_cluster's reset: the ring there now is wiped, the nodes start as a new cluster
+        _ring_nodes: >-
+          {{ [] if _cassandra_preflight_cluster_reset | default(false) | bool
+             else ((cassandra_preflight_status.cluster_status | default({}, true))[item] | default({})).nodes | default([]) }}
         _ring_racks: "{{ _ring_nodes | map(attribute='rack') | unique | list }}"
         _inventory: >-
           {{ ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | selectattr('cassandra_dc', 'equalto', item) | list }}

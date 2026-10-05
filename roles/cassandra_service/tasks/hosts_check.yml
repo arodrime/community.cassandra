@@ -16,7 +16,8 @@
              cassandra_dead_node_address, cassandra_dead_node_new_removal, cassandra_replace_address,
              cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
              cassandra_allow_down_nodes, cassandra_accept_default_identity, cassandra_reset_nodes,
-             cassandra_add_node_reset, cassandra_replace_node_reset]
+             cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
+             cassandra_create_cluster_reset_confirm]
 
 - name: The cluster's group is in the inventory
   ansible.builtin.assert:

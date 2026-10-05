@@ -22,7 +22,13 @@
 #   directory inside another (links resolved, checked again just before the
 #   delete), a live cassandra.yaml that can't be read.
 # What it deletes is shown, then confirmed once for all the hosts of the play
-# (cassandra_operation_confirm: false skips the question). --check shows it
+# (cassandra_operation_confirm: false skips the question).
+# _cassandra_node_reset_whole_cluster (create_cluster with
+# cassandra_create_cluster_reset, which checks first that the play's hosts are
+# the whole ring, passed in _cassandra_node_reset_cluster_ring): the rings are
+# not read (a node holding data must be in that ring), every node is stopped before any is
+# emptied, and the operator types the cluster name instead of yes
+# (cassandra_create_cluster_reset_confirm gives it for a run without a terminal). --check shows it
 # and changes nothing; a second run finds nothing to do.
 # Vars: cassandra_node_reset_replace_address (replace_node: the dead node's
 # address). The rings read are those of every other node of the cluster group
@@ -159,6 +165,7 @@
   register: cassandra_node_reset_rings
   failed_when: false  # a node that does not answer is left out
   ignore_unreachable: true
+  when: not _cassandra_node_reset_whole_cluster | default(false) | bool
   vars:
     _aside_pattern: "{{ [cassandra_new_nodes | default([]), cassandra_reset_nodes | default([])] | flatten | select | join(',') }}"
     _aside: >-
@@ -177,7 +184,9 @@
     community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
   register: cassandra_node_reset_own
   failed_when: false
-  when: cassandra_node_reset_jvm.rc == 0
+  when:
+    - cassandra_node_reset_jvm.rc == 0
+    - not _cassandra_node_reset_whole_cluster | default(false) | bool
 
 # stat fails on a directory that can't be reached (no root, -b missing): find would skip it silently
 - name: Look at the directories
@@ -199,6 +208,7 @@
   register: cassandra_node_reset_found
   when: cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length > 0
 
+# The whole cluster (create_cluster's reset): every node is wiped, the caller checked the ring
 - name: Work out whether this node may be reset
   ansible.builtin.set_fact:
     _cassandra_node_reset_ring: >-
@@ -208,8 +218,10 @@
            own=cassandra_node_reset_own.cluster_status | default(none),
            host=inventory_hostname,
            known=_addresses_of.values() | flatten | unique,
-           has_data=cassandra_node_reset_found.files | default([]) | rejectattr('path', 'search', '/lost[+]found$') | list | length > 0) }}
+           has_data=_has_data,
+           cluster_ring=_cassandra_node_reset_cluster_ring if _cassandra_node_reset_whole_cluster | default(false) | bool else none) }}
   vars:
+    _has_data: "{{ cassandra_node_reset_found.files | default([]) | rejectattr('path', 'search', '/lost[+]found$') | list | length > 0 }}"
     _addresses_of: >-
       {%- set out = {} -%}
       {%- for h in groups[cassandra_hosts | default('cassandra')] | default([]) -%}
@@ -242,8 +254,8 @@
               | map(attribute='key') | map('regex_replace', '$', ': can not be read (run with become?)') | list)
            + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
               | map(attribute='item') | map('regex_replace', '$', ': can not be checked (run with become?)') | list)
-           + (['a Cassandra JVM runs with no cassandra unit to stop it (started by hand?): stop it first']
-              if cassandra_node_reset_jvm.rc == 0 and _status.LoadState | default('not-found') == 'not-found' else []) }}
+           + (['a Cassandra JVM runs that the cassandra unit did not start (by hand?), so it can not stop it: stop it first']
+              if cassandra_node_reset_jvm.rc == 0 and not _active | bool else []) }}
       info: "{{ _cassandra_node_reset_ring.info }}"
       stop: "{{ _active or cassandra_node_reset_jvm.rc == 0 }}"
       disable: >-
@@ -296,6 +308,7 @@
   when:
     - not ansible_check_mode
     - _todo | length > 0
+    - not _cassandra_node_reset_whole_cluster | default(false) | bool
   vars:
     # the hosts with something to delete, to stop or to disable
     _todo: >-
@@ -316,6 +329,45 @@
       {%- set _ = l.append('Only for a node that never joined the cluster, or one being replaced. Reset ' ~ _todo | join(', ') ~ '?') -%}
       {{ l | join(_nl) }}
     _nl: "\n"  # a real newline (a folded scalar keeps the backslash)
+
+# The whole cluster: the operator types its name (or gives it, for a run without a terminal)
+- name: Confirm the reset of the whole cluster
+  when:
+    - _cassandra_node_reset_whole_cluster | default(false) | bool
+    - not ansible_check_mode
+  vars:
+    _given: "{{ cassandra_create_cluster_reset_confirm | default('') | string }}"
+  block:
+    - name: The cluster name given is this cluster's
+      ansible.builtin.assert:
+        that:
+          - cassandra_cluster_name | length > 0
+          - _given in ['', cassandra_cluster_name]
+          - _given != '' or cassandra_operation_confirm | bool
+        fail_msg: >-
+          {{ ('cassandra_create_cluster_reset_confirm is ' ~ _given | to_json ~ ", not this cluster's name") if _given
+             else 'cassandra_operation_confirm is false: give the cluster name instead' }}
+          (-e {{ {'cassandra_create_cluster_reset_confirm': cassandra_cluster_name} | to_json | quote }}): nothing was changed.
+        quiet: true
+      run_once: true
+
+    - name: Type the cluster name
+      ansible.builtin.pause:
+        prompt: |-
+          DATA LOSS: every node of cluster '{{ cassandra_cluster_name }}' ({{ ansible_play_hosts | join(', ') }}) is stopped
+          and EMPTIED for good (no snapshot, no backup), as listed above. Type the cluster name to go on, anything else stops
+      register: _cassandra_node_reset_typed
+      run_once: true
+      when: _given == ''
+
+    - name: The name typed is this cluster's
+      ansible.builtin.assert:
+        that: _given != '' or _cassandra_node_reset_typed.user_input | default('') | trim == cassandra_cluster_name
+        fail_msg: >-
+          Not the cluster name, stopped, nothing changed (without a terminal:
+          -e {{ {'cassandra_create_cluster_reset_confirm': cassandra_cluster_name} | to_json | quote }}).
+        quiet: true
+      run_once: true
 
 - name: Stop Cassandra
   ansible.builtin.systemd_service:
