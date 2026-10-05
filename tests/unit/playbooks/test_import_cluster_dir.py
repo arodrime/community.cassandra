@@ -4,8 +4,10 @@ __metaclass__ = type
 # import_cluster: the output dir is made absolute on the controller, from the
 # dir the playbook was run from; the modules writing the files run elsewhere.
 
+import base64
 import os
 
+import pytest
 import yaml
 
 from ansible import constants as C
@@ -135,3 +137,33 @@ def test_every_file_written_is_marked():
     """hosts.yml, the vars files and report.txt start with the line that tells a re-import they are its own."""
     for name in ("Write hosts.yml", "Write group_vars and host_vars", "Write report.txt"):
         assert "community.cassandra.cassandra_inventory_generated" in str(TASKS[name]), name
+
+
+@pytest.mark.parametrize("path, client", [("/k/vault-client", True), ("/k/vault-client.py", True),
+                                          ("/k/vault.sh", False), ("/k/client-vault", False)])
+def test_client_script_gets_the_vault_id(path, client):
+    argv = render(TASKS["Run the vault password script"]["ansible.builtin.command"]["argv"], _vault_file=path,
+                  import_cluster_vault_id="prod")
+    assert argv == ([path, "--vault-id", "prod"] if client else [path])
+
+
+def test_files_in_dot_dirs_are_not_looked_at():
+    found = render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_found"], _dir="/inv",
+                   import_cluster_existing={"files": [{"path": "/inv/.git/HEAD"}, {"path": "/inv/host_vars/.x/main.yml"},
+                                                      {"path": "/inv/notes"}, {"path": "/inv/host_vars/n1/main.yml"}]})
+    assert found == ["notes", "host_vars/n1/main.yml"]
+
+
+def test_no_clear_secrets_over_a_vaulted_file():
+    task = TASKS["Stop rather than write in clear over a vaulted file"]
+    vaulted = base64.b64encode(b"$ANSIBLE_VAULT;1.1;AES256\n00").decode()
+    clear = base64.b64encode(b"a: 1\n").decode()
+    variables = {"_files": [{"path": "group_vars/p/secrets.yml", "secret": True},
+                            {"path": "group_vars/p/main.yml", "secret": False}],
+                 "import_cluster_existing_vars": {"results": [
+                     {"item": "group_vars/p/secrets.yml", "content": vaulted},
+                     {"item": "group_vars/p/main.yml", "content": vaulted},     # not a secret path: not guarded
+                     {"item": "host_vars/x/secrets.yml", "content": vaulted}]}}  # not written: not guarded
+    assert render(task["vars"]["_vaulted"], **variables) == ["group_vars/p/secrets.yml"]
+    variables["import_cluster_existing_vars"]["results"][0]["content"] = clear
+    assert render(task["vars"]["_vaulted"], **variables) == []

@@ -104,7 +104,7 @@ Without ``-e cassandra_hosts=<group>``, the playbooks run on the group ``cassand
 hosts, else on the inventory's cluster group when it holds one cluster laid out as the import writes it: the group
 whose name starts every other group's and that holds their hosts (``orders`` here, for ``orders_dc1`` and
 ``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out). Any other group
-(a second cluster, ``monitoring``, ``linux``, a group of your own) makes them stop with the top groups listed rather
+(a second cluster, ``monitoring``, ``linux``, a group of your own not named ``<cluster>_...``) makes them stop with the top groups listed rather
 than guess: give ``-e cassandra_hosts=<group>`` then. Keep one inventory per cluster
 (``inventories/<cluster>/hosts.yml``, as the import writes it) and the playbooks need no ``cassandra_hosts``. The
 same rule is the lookup ``community.cassandra.cassandra_hosts``; the groups are read each time, so a group your own
@@ -774,8 +774,8 @@ Medusa installed by a package is not managed (the report says so).
 Passwords found in the configuration go to separate ``secrets.yml`` files, encrypted with ansible-vault as a whole
 with ``import_cluster_vault_password_file`` (and ``import_cluster_vault_id``) when given, else with Ansible's vault
 password file (``vault_password_file`` in ``ansible.cfg``, see `Project setup`_, or ``ANSIBLE_VAULT_PASSWORD_FILE``).
-``--vault-password-file`` and ``--vault-id`` on the command line, and ``vault_identity_list``, are not seen by the
-playbook: set the file in ``ansible.cfg`` instead. An executable password file is run, as Ansible does (a
+``--vault-password-file`` and ``--vault-id`` on the command line, and ``vault_identity_list``, are not used: set the
+file in ``ansible.cfg`` instead. An executable password file is run, as Ansible does (a
 ``<name>-client`` script with ``--vault-id <import_cluster_vault_id or default>``); an empty password is refused.
 Without a password file, they are written in clear with mode ``0600``, and the report and the end of the run give the
 ``ansible-vault encrypt`` command to run; a vaulted ``secrets.yml`` already there is then never overwritten in clear
@@ -787,7 +787,8 @@ paths (``hosts.yml``, ``report.txt``, ``group_vars``/``host_vars`` ``main.yml`` 
 files with its header it no longer writes (the ``host_vars`` of a node gone from the ring; a vaulted one only when it
 decrypts with the password at hand), and keeps every other file there: your ``group_vars/all/*.yml`` (a mirror, a
 vault), an ``ansible.cfg``, notes; dot-dirs (``.git``) are not looked into, and no directory is removed. The report
-lists the files removed, the files kept, and the files replaced at its paths that did not have its header. A file of
+lists the files removed, the files kept (down to ``group_vars/<group>/``), and the files replaced at its paths that
+did not have its header, each kept as a ``<file>.<timestamp>~`` backup. A file of
 the import you edit by hand is replaced by the next import: put your own settings in files of your own
 (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
