@@ -121,7 +121,7 @@
             _cassandra_new_node_plan: "{{ lookup('ansible.builtin.template', 'new_node_checks_plan.j2') | from_json }}"
           # URLs with credentials or a signature
           no_log: >-
-            {{ [cassandra_java_tarball, cassandra_medusa_pip_index_url, cassandra_repository_rpm_url, cassandra_repository_deb_url,
+            {{ [cassandra_java_tarball, cassandra_medusa_pip_index_url, cassandra_install_url,
                 cassandra_repository_key_url] | select('search', '@|[?]') | list | length > 0 }}
 
         - name: Look for the apt package lists (Debian)
@@ -167,7 +167,7 @@
           vars:
             _auth:
               none: ["", ""]
-              repository: ["{{ cassandra_repository_username }}", "{{ cassandra_repository_password }}"]
+              repository: ["{{ cassandra_install_username }}", "{{ cassandra_install_password }}"]
               java: ["{{ cassandra_java_tarball_username }}", "{{ cassandra_java_tarball_password }}"]
               pip: ["{{ cassandra_medusa_pip_username }}", "{{ cassandra_medusa_pip_password }}"]
 
