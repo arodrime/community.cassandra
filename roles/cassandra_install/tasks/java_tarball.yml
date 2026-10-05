@@ -83,6 +83,7 @@
         content: "{{ cassandra_java_tarball }}\n"
         dest: "{{ _cassandra_java_home }}/.unpacking"
         mode: "0644"
+      when: not ansible_check_mode  # the directory is not really made under --check
 
     # Under --check nothing was downloaded or created
     - name: Unpack Java
@@ -100,6 +101,7 @@
         content: "{{ cassandra_java_tarball }}\n"
         dest: "{{ _cassandra_java_home }}/.unpacked"
         mode: "0644"
+      when: not ansible_check_mode  # the directory is not really made under --check
 
     - name: Remove the started mark
       ansible.builtin.file:

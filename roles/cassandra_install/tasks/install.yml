@@ -242,6 +242,7 @@
       when:
         - ansible_facts['os_family'] == 'Debian'
         - cassandra_package_version != ""
+        - not ansible_check_mode or item in _cassandra_install_before  # not installed under --check
   always:
     - name: Remove the temporary policy-rc.d (Debian)
       ansible.builtin.file:

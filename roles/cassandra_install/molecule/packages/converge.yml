@@ -58,20 +58,16 @@
             that: "'not supported yet' in ansible_failed_result.msg"
 
 # Then the first converge only: install, upgrade (the idempotence run skips them)
+# A real --check (ansible_check_mode is only set by the command line)
 - name: --check on a blank host
-  hosts: all
-  check_mode: true
+  hosts: localhost
+  gather_facts: false
   tags: molecule-idempotence-notest
-  vars: &packages
-    cassandra_install_method: packages
-    cassandra_install_url: http://127.0.0.1:8080/
-    cassandra_package_version: 5.0.6
-    cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
-    cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
-    cassandra_java_version: "17"
-  roles:
-    - role: community.cassandra.cassandra_repository
-    - role: community.cassandra.cassandra_install
+  tasks:
+    - name: Run the roles with --check
+      ansible.builtin.command:
+        argv: [ansible-playbook, -i, "{{ ansible_inventory_sources[0] }}", --check, "{{ playbook_dir }}/check.yml"]
+      changed_when: false
 
 - name: Nothing installed by --check; a repository on the directory, as an older role left it
   hosts: all
@@ -110,7 +106,13 @@
 - name: Install 5.0.6
   hosts: all
   tags: molecule-idempotence-notest
-  vars: *packages
+  vars: &packages
+    cassandra_install_method: packages
+    cassandra_install_url: http://127.0.0.1:8080/
+    cassandra_package_version: 5.0.6
+    cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+    cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+    cassandra_java_version: "17"
   roles:
     - role: community.cassandra.cassandra_repository
     - role: community.cassandra.cassandra_install

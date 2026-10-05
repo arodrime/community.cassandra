@@ -4,3 +4,5 @@ minor_changes:
   - "cassandra_repository - the URL is checked to be a yum or apt repository before it is added; a plain directory of package files is refused with a message pointing at ``cassandra_install_method: packages``, instead of a repository that breaks every later dnf/apt call."
   - "import_cluster playbook - a node whose Cassandra package no configured repository offers (installed from a file) is reported so, and gets ``cassandra_install_method: packages`` with a note to set ``cassandra_install_url`` for new nodes."
   - "upgrade playbook - with ``cassandra_install_method: packages``, the target version's files are checked to be there before any node is stopped."
+bugfixes:
+  - "cassandra_install - ``--check`` on a blank host no longer fails with a Java tarball (the unpack marks were written to a directory not made under ``--check``) nor on Debian/Ubuntu with ``cassandra_package_version`` (the hold of packages not installed yet)."
