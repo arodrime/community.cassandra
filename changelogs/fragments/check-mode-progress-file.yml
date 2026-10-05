@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - cassandra_service - under ``--check``, the operations that keep a progress file (decommission_node, rolling_restart, cleanup, ...) failed reading the progress file that check mode did not create.

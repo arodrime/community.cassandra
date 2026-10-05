@@ -167,3 +167,10 @@ def test_no_become_on_the_controller(tmp_path):
                     "-e", "ansible_python_interpreter=" + sys.executable, "-b", str(tmp_path / "check.yml")],
                    env=env, cwd=str(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300, check=True)
     assert (tmp_path / "bin" / "sudo.log").exists()
+
+
+def test_check_mode_creates_and_reads_no_file(tmp_path):
+    # --check: the new progress file is not created, and reading it must not fail
+    rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "--check")
+    assert rc == 0, out
+    assert list((tmp_path / "inv").glob(".cassandra_progress/*.done")) == []

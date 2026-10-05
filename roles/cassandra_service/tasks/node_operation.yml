@@ -51,7 +51,7 @@
       become: false  # the controller: no sudo there
       vars:
         ansible_become: false  # an inventory ansible_become beats the become keyword
-      when: cassandra_progress_file is defined
+      when: cassandra_progress_file is defined and not ansible_check_mode  # --check made no file
 
     - name: Record the result
       ansible.builtin.set_fact:
