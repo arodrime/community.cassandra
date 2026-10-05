@@ -126,3 +126,8 @@ def test_runtime_groups_of_the_playbooks_are_known():
     for key in keys:
         name = re.sub(r"\{\{.*?\}\}", "True", key.strip())
         assert RUNTIME.match(name), key
+
+
+def test_a_cluster_named_like_a_runtime_group():
+    groups = {"all": ["n1"], "cassandra_seed_cluster": ["n1"], "cassandra_seed_cluster_dc1": ["n1"]}
+    assert cluster_group(None, groups) == "cassandra_seed_cluster"

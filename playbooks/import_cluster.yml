@@ -12,7 +12,7 @@
 # Passwords found in the config go to secrets.yml files next to the other
 # variables: encrypted with ansible-vault with the vault password file of
 # Ansible (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not
-# --vault-password-file, which the playbook cannot see) or
+# --vault-password-file, which is not used) or
 # import_cluster_vault_password_file (and optionally import_cluster_vault_id),
 # else written 0600 for you to encrypt.
 # JMX access: the cassandra_service variables (cassandra_jmx_port,
@@ -700,7 +700,8 @@
       {{ out }}
     # import_cluster_vault_password_file, else Ansible's (ansible.cfg vault_password_file, ANSIBLE_VAULT_PASSWORD_FILE)
     # (made absolute here: the modules would take a relative path from their own working directory)
-    _vault_file: "{{ (_vault_given | realpath) if _vault_given else '' }}"
+    # (its dir only: a <name>-client symlink keeps its name, as for Ansible)
+    _vault_file: "{{ ((_vault_given | dirname | default('.', true) | realpath) ~ '/' ~ _vault_given | basename) if _vault_given else '' }}"
     _vault_given: >-
       {{ (import_cluster_vault_password_file | default('', true)
           or lookup('ansible.builtin.config', 'DEFAULT_VAULT_PASSWORD_FILE') | default('', true)) | string | expanduser }}
@@ -766,7 +767,8 @@
       KEPT as they are (not written by the import): {{ _leftovers.kept | join(', ') }}
       {% endif %}
       {% if _leftovers.replaced | default([]) %}
-      REPLACED (at a path the import writes, without its header): {{ _leftovers.replaced | join(', ') }}
+      REPLACED (at a path the import writes, without its header; the old file kept as <file>.<timestamp>~):
+        {{ _leftovers.replaced | join(', ') }}
       {% endif %}
 
       Not read from the nodes, set them in group_vars if they apply (see the guide's air-gapped section):
@@ -1024,7 +1026,7 @@
         - name: Run the vault password script
           ansible.builtin.command:
             argv: >-
-              {{ [_vault_file] + (['--vault-id', import_cluster_vault_id | default('default')]
+              {{ [_vault_file] + (['--vault-id', import_cluster_vault_id | default(lookup('ansible.builtin.config', 'DEFAULT_VAULT_IDENTITY'))]
                  if _vault_file | basename | splitext | first is match('.*-client$') else []) }}
           register: import_cluster_vault_script
           changed_when: false
@@ -1121,6 +1123,7 @@
                       ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false)) | community.cassandra.cassandra_inventory_generated }}"
         dest: "{{ _dir }}/hosts.yml"
         mode: "0644"
+        backup: "{{ 'hosts.yml' in _leftovers.replaced | default([]) }}"  # not an import's
 
     # secrets.yml: encrypted as a whole (Ansible reads vaulted vars files), or 0600 in clear
     - name: Write group_vars and host_vars
@@ -1131,6 +1134,7 @@
              if item.secret and _vault | bool else item.content | community.cassandra.cassandra_inventory_generated }}
         dest: "{{ _dir }}/{{ item.path }}"
         mode: "{{ '0600' if item.secret else '0644' }}"
+        backup: "{{ item.path in _leftovers.replaced | default([]) }}"  # not an import's: kept as <file>.<date>~
         decrypt: false  # the content is already encrypted, write it as is
       loop: "{{ _files }}"
       loop_control:
