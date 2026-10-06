@@ -8,6 +8,13 @@
       - cassandra_jvm_gc in ["G1", "CMS", "custom"]
     fail_msg: "cassandra_version must be one of 40x, 41x, 50x; cassandra_jvm_gc one of G1, CMS, custom"
 
+- name: Warn about a variable under its former name
+  ansible.builtin.debug:
+    msg: >-
+      DEPRECATION WARNING: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
+      (the former name still wins while it is set).
+  when: cassandra_config_owner is defined
+
 - name: Refuse extra settings the template already has
   ansible.builtin.assert:
     that: _taken | length == 0

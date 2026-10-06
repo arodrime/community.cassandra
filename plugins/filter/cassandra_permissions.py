@@ -66,7 +66,7 @@ def mode_text(mode):
 
 def cassandra_file_permissions(name, settings):
     """name: a file cassandra_config writes; settings: {owner, group, mode,
-    public_mode, files, user, user_group} (cassandra_config_owner, _group,
+    public_mode, files, user, user_group} (cassandra_config_user, _group,
     _mode, _public_mode, _file_permissions, cassandra_user, cassandra_group)
     -> {owner, group, mode}: cassandra.yaml and the JVM options files get
     mode, the other config files public_mode, the JMX users' files are
@@ -213,7 +213,7 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
         public = [found[n]["mode"] for n in config if not restricted(n)]
         settings["mode"] = _common(closed, yaml_file.get("mode")) if closed else DEFAULTS["mode"]
         settings["public_mode"] = _common(public, DEFAULTS["public_mode"]) if public else DEFAULTS["public_mode"]
-        for key, var, default in (("owner", "cassandra_config_owner", DEFAULTS["owner"]),
+        for key, var, default in (("owner", "cassandra_config_user", DEFAULTS["owner"]),
                                   ("group", "cassandra_config_group", group),  # its default: cassandra_group
                                   ("mode", "cassandra_config_mode", DEFAULTS["mode"]),
                                   ("public_mode", "cassandra_config_public_mode", DEFAULTS["public_mode"])):

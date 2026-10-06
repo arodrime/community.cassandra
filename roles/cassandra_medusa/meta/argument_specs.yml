@@ -81,25 +81,33 @@ argument_specs:
         description:
           - Air-gapped hosts. The packages the virtualenv needs are checked instead of installed, and Medusa must
             already be in the virtualenv, unless O(cassandra_medusa_pip_index_url) is a mirror the hosts reach.
+      cassandra_medusa_config_user:
+        type: str
+        description:
+          - Owner of medusa.ini (and by default of the S3 credentials file). Defaults to the account Cassandra runs as
+            (O(cassandra_user), or C(cassandra_service_user) when set), else C(cassandra).
       cassandra_medusa_config_owner:
         type: str
-        default: cassandra
         description:
-          - Owner of medusa.ini (and by default of the S3 credentials file).
+          - Former name of O(cassandra_medusa_config_user), deprecated. Wins when set; the role warns to rename it.
       cassandra_medusa_config_group:
         type: str
-        default: cassandra
         description:
-          - Their group, and the group of a new C(/etc/medusa).
+          - Their group, and the group of a new C(/etc/medusa). Defaults to the group Cassandra runs as
+            (O(cassandra_group), or C(cassandra_service_group) when set), else C(cassandra).
       cassandra_medusa_config_mode:
         type: str
         default: "0600"
         description:
           - Their mode (they hold secrets).
+      cassandra_medusa_key_file_user:
+        type: str
+        description:
+          - Owner of the S3 credentials file. Defaults to O(cassandra_medusa_config_user).
       cassandra_medusa_key_file_owner:
         type: str
         description:
-          - Owner of the S3 credentials file. Defaults to O(cassandra_medusa_config_owner).
+          - Former name of O(cassandra_medusa_key_file_user), deprecated. Wins when set; the role warns to rename it.
       cassandra_medusa_key_file_group:
         type: str
         description:

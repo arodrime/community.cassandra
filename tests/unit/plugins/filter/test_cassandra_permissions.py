@@ -82,7 +82,7 @@ def test_defaults_are_the_roles():
     """The import writes a variable when the node differs from these: they must be the role's."""
     with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
         role = yaml.safe_load(f)
-    assert (role["cassandra_user"], role["cassandra_group"], role["cassandra_config_owner"], role["cassandra_config_group"],
+    assert (role["cassandra_user"], role["cassandra_group"], role["cassandra_config_user"], role["cassandra_config_group"],
             role["cassandra_config_mode"], role["cassandra_config_public_mode"]) == (
         IMPORT_DEFAULTS["user"], IMPORT_DEFAULTS["group"], IMPORT_DEFAULTS["owner"], "{{ cassandra_group }}",
         IMPORT_DEFAULTS["mode"], IMPORT_DEFAULTS["public_mode"])
@@ -113,7 +113,7 @@ def test_a_stat_not_read_is_a_difference():
 def test_service_account_group_files_0640():
     """Files owned by the service account and its own group, all 0640."""
     out = cassandra_permissions_import(node("cassandra", "dbgrp", "0640"), {"user": "cassandra", "group": "dbgrp"}, "50x")
-    assert out["vars"] == {"cassandra_group": "dbgrp", "cassandra_config_owner": "cassandra",
+    assert out["vars"] == {"cassandra_group": "dbgrp", "cassandra_config_user": "cassandra",
                            "cassandra_config_public_mode": "0640"}
     assert not any(n.startswith("The account") for n in out["notes"])
     # the config group is cassandra_group's default: not written

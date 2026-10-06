@@ -1,18 +1,24 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_close_names: the variables set that look like a misspelt
-variable of the playbooks (cassandra_host for cassandra_hosts)."""
+variable of the playbooks (cassandra_host for cassandra_hosts).
+cassandra_unknown_names: the cassandra_* variables set that the collection
+does not know, each with the known variable it is close to (or "")."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import difflib
+import functools
 import glob
 import os
+import re
 
 import yaml
 
 _ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "roles")
+_PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
+_NAME = re.compile(r"\bcassandra_\w+")
 
 
 def _role_variables():
@@ -45,6 +51,35 @@ def cassandra_close_names(names, known, cutoff=0.9):
     return close
 
 
+@functools.lru_cache(maxsize=None)
+def _used_names():
+    """Every cassandra_* name the roles and playbooks use (their own facts and results too)."""
+    names = set()
+    paths = (glob.glob(os.path.join(_ROLES, "*", "*", "*.yml"))
+             + glob.glob(os.path.join(_ROLES, "*", "templates", "**", "*.j2"), recursive=True)
+             + glob.glob(os.path.join(_PLAYBOOKS, "*.yml")))
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            names.update(_NAME.findall(f.read()))
+    return frozenset(names)
+
+
+def cassandra_unknown_names(names, known, cutoff=0.8):
+    """names: the cassandra_* variables a host has; known: the playbooks'
+    own (-e). Returns {name: the documented variable it is close to, or ""}
+    for the names no role (argument specs, defaults) or playbook knows nor
+    uses (e.g. cassandra_config_usr, a typo, or a name from another version)."""
+    documented = sorted(_role_variables() | set(known or []))
+    used = _used_names()
+    out = {}
+    for name in names or []:
+        if name in documented or name in used:
+            continue
+        match = difflib.get_close_matches(name, documented, n=1, cutoff=cutoff)
+        out[name] = match[0] if match else ""
+    return out
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_close_names": cassandra_close_names}
+        return {"cassandra_close_names": cassandra_close_names, "cassandra_unknown_names": cassandra_unknown_names}

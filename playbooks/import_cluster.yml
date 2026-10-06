@@ -500,7 +500,9 @@
               {{ import_cluster_medusa_ini.content | b64decode | community.cassandra.cassandra_medusa_import(
                    import_cluster_medusa_key_file.content | default('') | b64decode,
                    _found | combine({'key_owner': _key.pw_name | default(''), 'key_group': _key.gr_name | default(''),
-                                     'key_mode': _key.mode | default('')})) }}
+                                     'key_mode': _key.mode | default(''),
+                                     'account_user': import_cluster_account.user | default(''),
+                                     'account_group': import_cluster_account.group | default('')})) }}
           vars:
             _key: "{{ import_cluster_medusa_key_stat.stat | default({}) }}"
           no_log: "{{ not import_cluster_debug | default(false) | bool }}"

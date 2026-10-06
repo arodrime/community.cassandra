@@ -141,7 +141,7 @@ cassandra_cql_password: ""
 # Owner, group and mode cassandra_config gives the config files (its defaults
 # when it is not in the play), for the check that the account can read them
 _cassandra_service_config_perms:
-  owner: "{{ cassandra_config_owner | default('root') }}"
+  owner: "{{ cassandra_config_owner | default(cassandra_config_user | default('root')) }}"
   group: "{{ cassandra_config_group | default(cassandra_group) }}"
   mode: "{{ cassandra_config_mode | default('0640') }}"
   public_mode: "{{ cassandra_config_public_mode | default('0644') }}"
@@ -180,3 +180,13 @@ cassandra_rolling_resume: false
 cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
 
+# The variables the playbooks are run with (-e): a name set close to one of them
+# is pointed out (hosts_check.yml), and preflight warns about cassandra_*
+# variables no role or playbook knows
+_cassandra_playbook_variables: [cassandra_hosts, cassandra_new_nodes, cassandra_leaving_nodes, cassandra_target_dc, cassandra_target_rack,
+                                cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
+                                cassandra_dead_node_address, cassandra_dead_node_new_removal, cassandra_replace_address,
+                                cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
+                                cassandra_allow_down_nodes, cassandra_accept_default_identity, cassandra_reset_nodes,
+                                cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
+                                cassandra_create_cluster_reset_confirm]

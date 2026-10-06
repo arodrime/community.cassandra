@@ -12,14 +12,7 @@
   loop_control:
     label: "{{ item.key }}"
   vars:
-    # the variables the playbooks are run with (-e)
-    _known: [cassandra_hosts, cassandra_new_nodes, cassandra_leaving_nodes, cassandra_target_dc, cassandra_target_rack,
-             cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
-             cassandra_dead_node_address, cassandra_dead_node_new_removal, cassandra_replace_address,
-             cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
-             cassandra_allow_down_nodes, cassandra_accept_default_identity, cassandra_reset_nodes,
-             cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
-             cassandra_create_cluster_reset_confirm]
+    _known: "{{ _cassandra_playbook_variables }}"
 
 - name: The cluster's group is in the inventory
   ansible.builtin.assert:

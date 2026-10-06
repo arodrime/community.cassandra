@@ -108,7 +108,7 @@ def _perm(name, value):
 
 def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     """found: {venv, python, version, link_dir, package, bin, login, profile_d, hint_missing, version_unread,
-    ini_owner, ini_group, ini_mode, key_owner, key_group, key_mode}
+    ini_owner, ini_group, ini_mode, key_owner, key_group, key_mode, account_user, account_group}
     (what import_cluster read on the node, "" when unknown).
     -> {'vars': cassandra_medusa variables, 'notes': [report lines], 'keep': the ones for this node
     only (host_vars: new nodes get the role's)}"""
@@ -153,14 +153,17 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
         else:
             notes.append("Medusa key file %s kept as it is (not an AWS credentials file with only the two"
                          " keys, or unreadable): the role does not manage it" % key_file)
-    # owner and mode of medusa.ini, and of the key file the role manages when they differ
-    for name in ("owner", "group", "mode"):
-        config = _perm(name, found.get("ini_" + name, "")) or _perm(name, defaults["cassandra_medusa_config_" + name])
-        if config != _perm(name, defaults["cassandra_medusa_config_" + name]):
-            out["cassandra_medusa_config_" + name] = config
+    # owner and mode of medusa.ini, and of the key file the role manages when they differ; the role's
+    # default owner and group: the account Cassandra runs as (account_user, account_group)
+    role = {"owner": found.get("account_user") or "cassandra", "group": found.get("account_group") or "cassandra",
+            "mode": _perm("mode", defaults["cassandra_medusa_config_mode"])}
+    for name, var in (("owner", "user"), ("group", "group"), ("mode", "mode")):
+        config = _perm(name, found.get("ini_" + name, "")) or role[name]
+        if config != role[name]:
+            out["cassandra_medusa_config_" + var] = config
         key = _perm(name, found.get("key_" + name, ""))
         if "cassandra_medusa_s3_access_key_id" in out and key and key != config:
-            out["cassandra_medusa_key_file_" + name] = key
+            out["cassandra_medusa_key_file_" + var] = key
 
     version, venv, package = found.get("version", ""), found.get("venv", ""), found.get("package", "")
     keep = {}

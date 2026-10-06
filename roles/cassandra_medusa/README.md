@@ -14,7 +14,9 @@ virtualenv keeps its Python.
 variable; a variable set to `""` leaves the setting out, and Medusa's default
 applies. The file is only rewritten when its settings change: comments, order
 and spacing don't count, so a file written by hand with the same settings stays.
-It and the S3 credentials file are readable by the `cassandra` user only.
+It and the S3 credentials file are readable only by the account Cassandra runs
+as (`cassandra_user`, `cassandra_group`; `cassandra_medusa_config_user` and
+`_group` set them apart).
 
 The role schedules no backup.
 

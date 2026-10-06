@@ -157,7 +157,9 @@ Operation playbooks
 The collection has playbooks for the usual operations on a cluster. Each one works on one inventory group
 (the inventory's cluster group, or ``-e cassandra_hosts=<group>``, see `Inventory`_) and starts with ``preflight``, which checks that the settings that must match do
 match on every node, that the racks suit the token allocator, and that the seeds are a sensible layout (it suggests
-a seed list when they are not).
+a seed list when they are not). It also checks that the account Cassandra runs as can read the config files, and
+warns about the ``cassandra_*`` variables set that no role or playbook knows (a typo, or a name from another version:
+they have no effect), with the known one they are close to.
 
 .. code-block:: console
 
@@ -729,7 +731,7 @@ roles then keep that Java and install no Java package.
 The account Cassandra runs as (the user and group of its running process) becomes ``cassandra_user`` and
 ``cassandra_group`` when it is not ``cassandra``. The owner, group and mode of the config files (``cassandra.yaml``,
 ``cassandra-env.sh``, the JVM options, rackdc, logback) and of the JMX users' files are read too, and kept:
-``cassandra_config_owner`` and ``cassandra_config_group`` (what most files have), ``cassandra_config_mode``
+``cassandra_config_user`` and ``cassandra_config_group`` (what most files have), ``cassandra_config_mode``
 (``cassandra.yaml`` and the JVM options files) and ``cassandra_config_public_mode`` (the others), each written when it
 is not the roles' default, and ``cassandra_config_file_permissions`` for a file that differs from the others. Nodes
 that differ from each other get them per datacenter, rack or node, listed with the other differences. So files owned

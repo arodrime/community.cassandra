@@ -295,7 +295,7 @@ cassandra_group: cassandra
 # options files (their extra options, e.g. -Djavax.net.ssl.keyStorePassword=)
 # are not readable by others. The other files hold no secret and are readable
 # by all: nodetool, run by any user, reads the JMX port from cassandra-env.sh.
-cassandra_config_owner: root
+cassandra_config_user: root  # cassandra_config_owner, its former name, still wins when set
 cassandra_config_group: "{{ cassandra_group }}"
 cassandra_config_mode: "0640"  # cassandra.yaml, jvm*-server.options
 cassandra_config_public_mode: "0644"  # cassandra-env.sh, cassandra-rackdc.properties, logback.xml

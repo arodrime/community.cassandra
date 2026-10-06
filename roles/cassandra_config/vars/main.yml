@@ -25,7 +25,7 @@ _cassandra_config_snitches_without_rackdc: [SimpleSnitch, RackInferringSnitch, P
 _cassandra_config_perm: >-
   {{ _cassandra_config_perm_file | community.cassandra.cassandra_file_permissions(_cassandra_config_perm_settings) }}
 _cassandra_config_perm_settings:
-  owner: "{{ cassandra_config_owner }}"
+  owner: "{{ cassandra_config_owner | default(cassandra_config_user) }}"  # the former name wins when set
   group: "{{ cassandra_config_group }}"
   mode: "{{ cassandra_config_mode }}"
   public_mode: "{{ cassandra_config_public_mode }}"

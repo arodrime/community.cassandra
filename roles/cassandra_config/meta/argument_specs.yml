@@ -1127,11 +1127,16 @@ argument_specs:
         description:
         - The group Cassandra runs as. Group of the directories the role creates,
           the JMX users' files and, by default, the config files.
-      cassandra_config_owner:
+      cassandra_config_user:
         type: str
         default: root
         description:
         - Owner of the config files.
+      cassandra_config_owner:
+        type: str
+        description:
+        - Former name of O(cassandra_config_user), deprecated. Wins when set; the
+          role warns to rename it.
       cassandra_config_group:
         type: str
         description:

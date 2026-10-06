@@ -40,7 +40,7 @@ are set all the same.
 
 Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are
-owned by `root`, group `cassandra_group` (`cassandra_config_owner`,
+owned by `root`, group `cassandra_group` (`cassandra_config_user`,
 `cassandra_config_group`): Cassandra reads them, but cannot rewrite them.
 `cassandra.yaml` may hold keystore passwords, and the `jvm*-server.options`
 files too (extra options such as `-Djavax.net.ssl.keyStorePassword=`): mode
