@@ -53,7 +53,8 @@ Role Variables
 * Streaming operations (the bootstrap of `add_node` and `replace_node`,
   `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`)
   and cleanups are waited for as long as they make progress: every
-  `cassandra_stream_check_interval` seconds (default 300) `nodetool netstats`
+  `cassandra_stream_check_interval` seconds (default 300; the first checks
+  sooner, after 10 s, 30 s, 1, 2 and 4 minutes) `nodetool netstats`
   (`compactionstats` for a cleanup) is read and the progress printed, a
   short first line then one item per line (a single line once done), e.g.
 

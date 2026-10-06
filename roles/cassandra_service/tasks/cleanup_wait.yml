@@ -1,6 +1,6 @@
 ---
 # Waits for the cleanups of a batch (cleanup_batch.yml) as long as they make
-# progress: every cassandra_stream_check_interval seconds, reads nodetool
+# progress: every cassandra_stream_check_interval seconds (sooner at first), reads nodetool
 # compactionstats on the batch's nodes, prints the progress (bytes cleaned
 # by the running Cleanup tasks, cassandra_stream_report), and fails only after
 # cassandra_stream_stall_checks checks in a row without progress. Rounds of
@@ -12,7 +12,7 @@
   ansible.builtin.set_fact:
     _cassandra_cleanup_status: going
 
-- name: Check the progress, every {{ cassandra_stream_check_interval }}s
+- name: Check the progress, then every {{ cassandra_stream_check_interval }}s
   ansible.builtin.include_tasks: cleanup_check.yml
   loop: "{{ range(_cassandra_stream_round_size | int) | list }}"
   loop_control:

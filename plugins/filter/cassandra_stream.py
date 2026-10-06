@@ -16,6 +16,9 @@ _GIB = 1024.0 ** 3
 _WINDOW = 3
 # beyond this, the end is shown as unknown
 _ETA_MAX = 30 * 86400
+# the waits between the first checks, seconds (then the check interval): a short
+# operation ends in seconds, a long one is checked every interval
+_BACKOFF = (10, 30, 60, 120, 240)
 # the longest report line: the default stdout callback prints a msg list
 # indented and quoted, 100 columns in all
 _WIDTH = 88
@@ -78,14 +81,18 @@ def _clock(epoch, now):
     return time.strftime("%H:%M" if when[:3] == time.localtime(now)[:3] else "%Y-%m-%d %H:%M", when) + " " + zone
 
 
-def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4):
+def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4,
+                              interval=0):
     """views: the results of cassandra_netstats looped over hosts (item: the
     host, then the module's return values); state: what
     the previous call returned (None the first time); now: epoch seconds.
     operations: the session operations to follow (e.g. ['Bootstrap']), peer:
     only the sessions with this peer (a node read from the other side).
     Progress is bytes or files streamed, or a session started or finished,
-    since the previous call. Returns the new state, for the next call and for
+    since the previous call. interval: the check interval, seconds; the
+    first checks come sooner (_BACKOFF) and a check without progress counts
+    towards a stall only interval seconds or more after the previous one.
+    Returns the new state, for the next call and for
     cassandra_stream_report: streams (per session: total, done, files_total,
     files_done, other: the node at the other end, way: 'from' when the data
     comes from it, 'to' when it goes to it, 'on' for a local task, gone),
@@ -95,8 +102,9 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     left, stall_checks * quiet_factor otherwise), transferring, sessions
     (sessions in netstats now), answered (at least one view answered),
     bytes_done/bytes_total, first_done (bytes done at the first answer),
-    samples (time and bytes done of the last checks) and rate (bytes per
-    second over the last 3 checks, None while unknown or when nothing moved)."""
+    samples (time and bytes done of the last checks), rate (bytes per
+    second over the last 3 checks, None while unknown or when nothing moved),
+    checks (calls so far) and wait (seconds before the next check)."""
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
     start = state.get("start", now)
@@ -135,7 +143,10 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
                 progressed = True
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
-    idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + 1
+    # an early check (shorter wait) without progress does not count towards a stall
+    full = not interval or now - state.get("now", now) >= int(interval)
+    idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + (1 if full else 0)
+    checks = state.get("checks", 0) + 1
     # Nothing left to transfer in netstats (no session yet, or every one at 100%): phases
     # that show no bytes (ring delay, schema, the write path of tables with views or CDC,
     # index builds, hints of a decommission, a task queued behind other compactions) get
@@ -157,6 +168,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
         "idle_checks": idle_checks, "limit": limit, "stalled": idle_checks >= limit, "sessions": len(current),
         "transferring": transferring, "answered": bool(answered), "bytes_done": done, "bytes_total": total,
         "first_done": state["first_done"] if state.get("samples") else done, "samples": samples, "rate": rate,
+        "checks": checks, "wait": min(int(interval), _BACKOFF[checks - 1] if checks <= len(_BACKOFF) else int(interval)),
     }
 
 

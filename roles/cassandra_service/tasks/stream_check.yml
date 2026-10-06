@@ -69,7 +69,8 @@
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
                now=now().timestamp() | int, operations=_cassandra_stream_operations,
-               peer=(_address if _blind else None), stall_checks=cassandra_stream_stall_checks | int) }}
+               peer=(_address if _blind else None), stall_checks=cassandra_stream_stall_checks | int,
+               interval=cassandra_stream_check_interval | int) }}
       vars:
         _blind: "{{ _cassandra_stream_blind | bool }}"
         # the address the other nodes see this node by in their netstats
@@ -127,7 +128,8 @@
       ansible.builtin.set_fact:
         _cassandra_stream_status: "{{ _cassandra_stream_now }}"
 
+    # 10 s, 30 s, 1, 2 and 4 minutes, then every cassandra_stream_check_interval
     - name: Wait before the next check
       ansible.builtin.pause:
-        seconds: "{{ cassandra_stream_check_interval | int }}"
+        seconds: "{{ _cassandra_stream_state.wait }}"
       when: _cassandra_stream_status == 'going'

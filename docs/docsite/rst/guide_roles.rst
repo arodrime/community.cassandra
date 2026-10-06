@@ -258,7 +258,8 @@ nodes then hold different shares of the data), and a run not inside ``tmux`` or 
 SSH session stops the run).
 
 Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints its progress
-every ``cassandra_stream_check_interval`` seconds (300 by default): a first line with the node, a bar, the percentage
+every ``cassandra_stream_check_interval`` seconds (300 by default; the first checks sooner, after 10 s, 30 s, 1, 2
+and 4 minutes, so a short operation ends in seconds): a first line with the node, a bar, the percentage
 and the rate over the last 3 checks, then the bytes and files streamed, each node it streams from with its own
 progress, and the times on the controller (now, started, expected end); a single line with the total time and average
 rate once done. It waits as long as the streams make

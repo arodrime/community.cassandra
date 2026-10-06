@@ -245,7 +245,8 @@ argument_specs:
         description:
           - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
-            C(move_node)).
+            C(move_node)) and of a cleanup; the first checks come sooner (after 10 s, 30 s, 1, 2 and 4
+            minutes, each at most this long), so a short operation ends in seconds.
             Each check reads C(nodetool netstats) and prints the progress, a short line (bar, percentage,
             rate) then the data, the other nodes and the times, one item per line.
       cassandra_stream_stall_checks:
@@ -255,6 +256,7 @@ argument_specs:
           - A streaming operation fails only after this many checks in a row without any progress in
             C(nodetool netstats) (no byte or file streamed, no session started or ended), 4 times as
             many while nothing is left to transfer (before the first session, index or view builds).
+            Only the checks C(cassandra_stream_check_interval) apart count, not the sooner first ones.
             Nothing is stopped then; the node stays as it is.
       cassandra_stream_max_time:
         type: int

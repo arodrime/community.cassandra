@@ -587,3 +587,20 @@ def test_host_addresses():
         def get(self, key, default=None):
             raise ValueError("an undefined variable")
     assert cassandra_host_addresses(["n4"], {"n4": Broken()}) == {"n4": "n4"}
+
+
+def test_first_checks_come_sooner_and_do_not_count_towards_a_stall():
+    views = [read("n4", session("10.0.0.1", 10, 100))]
+    s, now, waits = None, 0, []
+    for _ in range(8):
+        s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
+        waits.append(s["wait"])
+        now += s["wait"]
+    assert waits == [10, 30, 60, 120, 240, 300, 300, 300]
+    # nothing moved: only the checks 300 s after the previous one count
+    assert s["idle_checks"] == 2 and not s["stalled"] and s["checks"] == 8
+    s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
+    assert s["stalled"]
+    # a check interval shorter than the first waits caps them
+    s = cassandra_stream_progress(views, None, now=0, interval=20)
+    assert s["wait"] == 10 and cassandra_stream_progress(views, s, now=10, interval=20)["wait"] == 20
