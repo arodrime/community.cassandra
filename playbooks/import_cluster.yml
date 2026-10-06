@@ -159,8 +159,10 @@
         done
         # the unit of an init script is "generated": is-enabled asks the init system
         echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
-        bin=$(readlink -f /proc/$pid/exe)
-        echo "java=$($bin -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
+        # (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
+        # directory went too)
+        bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
+        echo "java=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
         echo "javabin=$bin"
         # the package the running java comes from, empty when none (a tarball)
         pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
@@ -293,8 +295,8 @@
               | map('b64decode') | map('regex_findall', '(?m)^(?:gpgkey\s*=\s*file://|Signed-By:\s*)(\S+)') | flatten)
            | unique }}
       register: import_cluster_repo_stat
-      when: import_cluster_repo_files | default([]) | length > 0
       no_log: true  # the checksum of the credentials file
+      when: import_cluster_repo_files | default([]) | length > 0
 
     - name: Tell whether cassandra_repository would write them as they are
       ansible.builtin.set_fact:
@@ -329,10 +331,20 @@
         - "'cassandra_service_unit_manage' not in import_cluster_keep"
         - import_cluster_unit.file != ''
 
+    # its Java removed since it started (a JDK update took its directory): what it runs is unknown
+    - name: Note a running Java that cannot be read
+      ansible.builtin.set_fact:
+        import_cluster_error: >-
+          its Java ({{ import_cluster_java_bin or '?' }}) cannot be run any more (removed since Cassandra started,
+          e.g. by a JDK update): restart Cassandra (rolling_restart), then import again
+      when:
+        - import_cluster_series is defined
+        - import_cluster_java | default('') == ''
+
     # no_log hides the error too: the rescue says what failed, without the values
     # a skipped loop registers results too: the series, not them, says it was read
     - name: Read this node's config
-      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x'] and import_cluster_error is not defined
       block:
         # without it the role defaults would be imported (cluster name, seeds...)
         - name: Check cassandra.yaml was read

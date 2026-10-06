@@ -1,0 +1,2 @@
+bugfixes:
+  - update_java - a node already running ``cassandra_java_version`` is left alone, its Java read from the running Cassandra found by its process and the major version that Java reports (the unit's main PID may be another process or none, and a package path may not name the version, e.g. zulu17).

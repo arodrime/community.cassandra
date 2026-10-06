@@ -150,6 +150,47 @@ def test_jvm_found_by_its_main_class(tmp_path):
         proc.wait()
 
 
+def test_jvm_whose_java_was_removed(tmp_path):
+    # a JDK update removed the directory of the running java: its path is still given, without " (deleted)"
+    import shutil
+    jdk = tmp_path / "jdk" / "bin"
+    jdk.mkdir(parents=True)
+    java = jdk / "java"
+    shutil.copy(os.path.realpath(sys.executable), str(java))
+    proc = subprocess.Popen([str(java), "-c", "import time; time.sleep(30)", "org.apache.cassandra.service.CassandraDaemon"])
+    try:
+        for dummy in range(100):
+            with open("/proc/%d/cmdline" % proc.pid, "rb") as f:
+                if b"CassandraDaemon" in f.read():
+                    break
+            time.sleep(0.05)
+        shutil.rmtree(str(tmp_path / "jdk"))
+        script = task("jvm_started.yml", "Find the running Cassandra JVM")["ansible.builtin.shell"]
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "pgrep").write_text("#!/bin/sh\n[ \"$*\" = '-x java' ] && echo %d\n" % proc.pid)
+        (tmp_path / "bin" / "pgrep").chmod(0o755)
+        env = dict(os.environ, PATH="%s:%s" % (tmp_path / "bin", os.environ["PATH"]))
+        out = subprocess.run(["sh", "-c", script], stdout=subprocess.PIPE, check=True, universal_newlines=True,
+                             env=env).stdout
+        assert dict(line.split("=", 1) for line in out.splitlines())["exe"] == str(java)
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_import_does_not_read_a_node_whose_java_was_removed():
+    # its Java cannot run any more: what it runs is unknown, the node is not read (the import fails, strict)
+    playbook = os.path.join(ROLE, "..", "..", "playbooks", "import_cluster.yml")
+    with open(playbook) as f:
+        plays = yaml.safe_load(f)
+    found = dict((t.get("name"), t) for p in plays for t in p.get("tasks", []))
+    note = found["Note a running Java that cannot be read"]
+    assert "import_cluster_java | default('') == ''" in note["when"]
+    assert "rolling_restart" in render(note["ansible.builtin.set_fact"]["import_cluster_error"],
+                                       {"import_cluster_java_bin": "/usr/lib/jvm/java-17-openjdk-17.0.9/bin/java"})
+    assert "import_cluster_error is not defined" in found["Read this node's config"]["when"]
+
+
 def test_import_lists_the_config_files_written_since_the_start(tmp_path):
     # import_cluster reports them (the node may not run what they say), with the same start as jvm_started.yml
     playbook = os.path.join(ROLE, "..", "..", "playbooks", "import_cluster.yml")

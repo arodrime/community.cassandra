@@ -16,8 +16,8 @@
       now=$(date +%s.%N) up=$(cut -d' ' -f1 /proc/uptime)
       echo "pid=$p"
       echo "start=$(awk -v n="$now" -v u="$up" -v t="$ticks" -v h="$(getconf CLK_TCK)" 'BEGIN {printf "%.2f", n - u + t / h}')"
-      # (a java replaced since, e.g. a JDK update: "<path> (deleted)")
-      echo "exe=$(readlink -f /proc/$p/exe | sed 's/ (deleted)$//')"
+      # (a java replaced since, e.g. a JDK update: "<path> (deleted)"; readlink -f prints nothing once its directory went)
+      echo "exe=$(readlink /proc/$p/exe | sed 's/ (deleted)$//')"
       echo "storagedir=$(tr '\0' '\n' < /proc/$p/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
       break
     done
