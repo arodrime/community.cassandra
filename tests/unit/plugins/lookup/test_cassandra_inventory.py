@@ -56,6 +56,7 @@ def test_reads_the_cluster(tmp_path):
                                             "cassandra_cluster_name": "Orders"}
     assert model["options"] == ["-b"]
     assert model["vault_skipped"] == [] and model["imported"] is False
+    assert model["vault_prompt_added"] is False
 
 
 def test_vaulted_file_skipped_not_decrypted(tmp_path):
@@ -138,6 +139,7 @@ def test_value_from_an_inline_vault_masked(tmp_path):
     vars_ = host(model, "node1")["vars"]
     assert vars_["cassandra_cluster_name"] == "(vaulted)" and vars_["cassandra_dc"] == "(vaulted)"
     assert model["options"] == ["-b", "--ask-vault-pass"]  # the operations decrypt it
+    assert model["vault_prompt_added"] is True
 
 
 def test_lookup_not_run(tmp_path):
@@ -171,9 +173,10 @@ def test_lookup_through_another_variable_not_run(tmp_path):
 def test_transformed_vault_value_masked(tmp_path):
     value = "\n".join("  " + line for line in vaulted("TOPSECRET").splitlines())
     source = inventory(tmp_path, orders="the_secret: !vault |\n%s\ncassandra_cluster_name: \"{{ the_secret | b64encode }}\"\n"
-                       "cassandra_dc: \"{{ the_secret[1:] }}\"\n" % value)
+                       "cassandra_dc: \"{{ the_secret[1:] }}\"\ncassandra_rack: \"{{ the_secret[:8] }}\"\n" % value)
     vars_ = host(read([source]), "node1")["vars"]
     assert vars_["cassandra_cluster_name"] == "(vaulted)" and vars_["cassandra_dc"] == "(vaulted)"
+    assert vars_["cassandra_rack"] == "(vaulted)"  # a prefix of the mask: the other mask differs from its start
 
 
 def test_empty_group(tmp_path):
