@@ -20,6 +20,7 @@ import difflib
 import glob
 import os
 import re
+import shlex
 
 import yaml
 
@@ -35,7 +36,8 @@ THEMES = (("read-only", "Read-only (change nothing)"), ("nodes", "Nodes"), ("clu
 # args: what the command needs, {placeholders} filled from the inventory
 # (UPPERCASE: a value only you know); options: the other variables;
 # cql: reads the replication with cassandra_cql_username/_password when
-# authentication is on; single_token: only for num_tokens 1.
+# authentication is on ("plan": plans without it, as if every keyspace had
+# replicas everywhere); single_token: only for num_tokens 1.
 OPERATIONS = [
     {"name": "help", "theme": "read-only",
      "summary": "This overview, from the inventory alone (no node contacted).",
@@ -54,7 +56,7 @@ OPERATIONS = [
     {"name": "preflight", "theme": "read-only",
      "summary": "Checks the nodes against the inventory before a change: settings that must match, racks for the"
                 " token allocator, versions, seeds."},
-    {"name": "add_node", "theme": "nodes",
+    {"name": "add_node", "theme": "nodes", "cql": "plan",
      "summary": "Adds new hosts to the running cluster, one at a time. Put them in their rack's group first, not in"
                 " cassandra_seeds.",
      "args": ["-e cassandra_new_nodes=NEW_NODE"],
@@ -89,7 +91,7 @@ OPERATIONS = [
                 " fresh start.",
      "args": ["-e cassandra_reset_nodes=NODE"],
      "options": {"cassandra_reset_nodes": "the nodes to empty (comma-separated)"}},
-    {"name": "move_node", "theme": "nodes", "single_token": True,
+    {"name": "move_node", "theme": "nodes", "single_token": True, "cql": "plan",
      "summary": "One token per node: moves nodes to new tokens, one at a time (by default the fewest moves that even"
                 " out each datacenter).",
      "options": {"cassandra_move_tokens": "{node: token}: only those nodes move",
@@ -104,6 +106,8 @@ OPERATIONS = [
     {"name": "rolling_restart", "theme": "cluster", "cql": True,
      "summary": "Drains and restarts the nodes one at a time, the cluster checked before and after each one.",
      "options": {"cassandra_rolling_mode": "rack: the nodes of a rack together, rack by rack",
+                 "cassandra_rack_force": "rack mode: true goes on although keyspaces would lose more than one"
+                                         " replica",
                  "cassandra_rolling_resume": "true resumes an interrupted run"}},
     {"name": "rolling_reboot", "theme": "cluster",
      "summary": "Same as rolling_restart, rebooting the hosts (OS patching).",
@@ -151,14 +155,19 @@ OPERATIONS = [
      "args": ["-e cassandra_target_dc=DC_TO_REMOVE"],
      "options": {"cassandra_target_dc": "the datacenter to remove"}},
     {"name": "import_cluster", "theme": "takeover",
-     "summary": "Reads the running cluster into an inventory, changing nothing on the nodes. Here: a re-import into"
-                " this inventory's dir, which keeps the files it did not write.",
+     "summary": "Reads the running cluster into an inventory, changing nothing on the nodes; a re-import into"
+                " an inventory it wrote keeps the files it did not write.",
      "options": {"import_cluster_dir": "where to write the inventory",
                  "import_cluster_force": "true writes into a dir that exists (a re-import)",
                  "import_cluster_runbook": "true also writes RUNBOOK.md there (the help playbook)"}},
 ]
 
 BY_NAME = dict((op["name"], op) for op in OPERATIONS)
+# shown in section 1 or used in the commands: said when their template could not be resolved
+UNRESOLVED_CHECKED = ("cassandra_cluster_name", "cassandra_version", "cassandra_package_version",
+                      "cassandra_install_method", "cassandra_java_version", "cassandra_dc", "cassandra_rack",
+                      "cassandra_seeds", "cassandra_num_tokens", "cassandra_authenticator", "cassandra_endpoint_snitch",
+                      "cassandra_allocate_tokens_for_local_replication_factor", "cassandra_node_state")
 _PLACEHOLDER = re.compile(r"\b[A-Z][A-Z_]{3,}\b")
 
 
@@ -199,7 +208,8 @@ def _seeds(value):
 
 
 def _resolved(value):
-    return value not in (None, "") and "{{" not in str(value) and "{%" not in str(value)
+    return (value not in (None, "", "(vaulted)") and "{{" not in str(value) and "{%" not in str(value)
+            and "!vault" not in str(value))
 
 
 class _Cluster(object):
@@ -305,43 +315,60 @@ def _options(model, cwd):
     for i, option in enumerate(out[:-1]):
         if option in ("--vault-password-file", "--private-key"):
             out[i + 1] = _path(out[i + 1], cwd)
+        elif option == "--vault-id" and "@" in out[i + 1] and out[i + 1].split("@", 1)[1] != "prompt":
+            label, path = out[i + 1].split("@", 1)
+            out[i + 1] = "%s@%s" % (label, _path(path, cwd))
     return out
 
 
 def _command(op, model, cluster, cwd):
     """The command of op for this cluster, its placeholders filled."""
-    inv = " ".join("-i %s" % _path(s, cwd) for s in model.get("sources") or [])
+    inv = " ".join("-i %s" % shlex.quote(_path(s, cwd)) for s in model.get("sources") or [])
     if op["name"] == "import_cluster":
         # -u, --private-key, -K only: the import becomes root itself, and reads its own vault password file
-        options, user = _options(model, cwd), []
+        options, user = [shlex.quote(o) for o in _options(model, cwd)], []
         for i, option in enumerate(options):
             if option in ("-u", "--private-key"):
                 user += options[i:i + 2]
             elif option == "-K":
                 user.append(option)
-        # the inventory's connection user and key, and JMX login: -i ADDRESS, reads none of them
+        # the inventory's connection settings and JMX login: -i ADDRESS, reads none of them
+        # (ansible_ssh_common_args, a bastion: from ansible.cfg only)
         host = (cluster.present or cluster.hosts)[0]
         v = host["vars"]
         if "-u" not in user and _resolved(v.get("ansible_user")):
-            user += ["-u", str(v["ansible_user"])]
+            user += ["-u", shlex.quote(str(v["ansible_user"]))]
         if "--private-key" not in user and _resolved(v.get("ansible_ssh_private_key_file")):
-            user += ["--private-key", str(v["ansible_ssh_private_key_file"])]
-        jmx = ["-e %s=%s" % (k, v[k]) for k in ("cassandra_jmx_username", "cassandra_jmx_password_file")
-               if _resolved(v.get(k))]
-        if v.get("cassandra_jmx_password") and not _resolved(v.get("cassandra_jmx_password_file")):
+            user += ["--private-key", shlex.quote(str(v["ansible_ssh_private_key_file"]))]
+        if _resolved(v.get("ansible_port")):
+            user += ["-e ansible_port=%s" % shlex.quote(str(v["ansible_port"]))]
+        jmx = []
+        for key, placeholder in (("cassandra_jmx_username", "JMX_USER"), ("cassandra_jmx_password_file", "")):
+            if _resolved(v.get(key)):
+                jmx.append("-e %s=%s" % (key, shlex.quote(str(v[key]))))
+            elif key in host["names"] and placeholder:  # vaulted, or from a file help could not read
+                jmx.append("-e %s=%s" % (key, placeholder))
+        if "cassandra_jmx_password" in host["names"] and not _resolved(v.get("cassandra_jmx_password_file")):
             jmx.append("-e cassandra_jmx_password=JMX_PASSWORD")
-        parts = ["ansible-playbook", "-i %s," % host["address"]] + user + [
-            "community.cassandra.import_cluster", "-e import_cluster_dir=%s" % _path(_inventory_dir(model), cwd),
-            "-e import_cluster_force=true"] + jmx
+        address = next(str(v[k]) for k in ("ansible_host", "cassandra_listen_address") if _resolved(v.get(k))) \
+            if any(_resolved(v.get(k)) for k in ("ansible_host", "cassandra_listen_address")) else host["name"]
+        # into this inventory's dir only when the import wrote it and it holds this cluster alone: a re-import
+        # writes hosts.yml with this cluster's nodes only
+        here = model.get("imported") and len(model.get("clusters") or []) == 1
+        target = ["-e import_cluster_dir=%s" % shlex.quote(_path(_inventory_dir(model), cwd)),
+                  "-e import_cluster_force=true"] \
+            if here else ["-e import_cluster_dir=NEW_DIR"]
+        parts = ["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user + ["community.cassandra.import_cluster"] + target + jmx
         return " ".join(p for p in parts if p)
     present = cluster.present or cluster.hosts
     first_dc = sorted(cluster.dcs)[0] if cluster.dcs else "DC"
     racks = sorted(cluster.dcs.get(first_dc, {})) or ["RACK"]
     absent = [h["name"] for h in cluster.hosts if h["absent"]]
     others = [h["name"] for h in present if not h["seed"]]
-    fill = {"dc": first_dc, "rack": racks[-1],
-            "leaving": ",".join(absent) if absent else (others[-1] if others else "NODE")}
-    options = [o for o in _options(model, cwd) if o != "-b" or op["name"] != "help"]  # help needs no root
+    fill = dict((k, shlex.quote(v)) for k, v in (
+        ("dc", first_dc), ("rack", racks[-1]),
+        ("leaving", ",".join(absent) if absent else (others[-1] if others else "NODE"))))
+    options = [shlex.quote(o) for o in _options(model, cwd) if o != "-b" or op["name"] != "help"]  # no root
     parts = ["ansible-playbook", inv] + options + ["community.cassandra.%s" % op["name"]]
     if model.get("auto") != cluster.name:
         parts.append("-e cassandra_hosts=%s" % cluster.name)
@@ -349,18 +376,12 @@ def _command(op, model, cluster, cwd):
     return " ".join(p for p in parts if p)
 
 
-def _rel(path, model):
-    base = _inventory_dir(model)
-    rel = os.path.relpath(path, base)
-    return path if rel.startswith("..") else rel
-
-
 def _advice(model, cluster, playbooks, cwd, known):
     out = []
     absent = [h for h in cluster.hosts if h["absent"]]
     if absent:
         names = ", ".join(h["name"] for h in absent)
-        if "topology" in playbooks:
+        if "topology" in playbooks:  # the playbook of the desired state, when the collection has it
             out.append(("Marked cassandra_node_state: absent: %s. topology --check shows the plan to remove"
                         " them, then topology without --check does it:" % names,
                         _command({"name": "topology"}, model, cluster, cwd) + " --check"))
@@ -376,12 +397,25 @@ def _advice(model, cluster, playbooks, cwd, known):
     auth = cluster.values("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])
     if any("PasswordAuthenticator" in str(a) for a in auth) and not any(
             h["vars"].get("cassandra_cql_username") for h in cluster.hosts):
-        needs = [op["name"] for op in OPERATIONS if op.get("cql") and op["name"] in playbooks]
+        needs = [op["name"] for op in OPERATIONS if op.get("cql") is True and op["name"] in playbooks]
+        plans = [op["name"] for op in OPERATIONS if op.get("cql") == "plan" and op["name"] in playbooks]
         out.append("Authentication is on (PasswordAuthenticator) but cassandra_cql_username is not set%s:"
                    " %s read the replication over CQL and need cassandra_cql_username and cassandra_cql_password"
-                   " (in a vaulted file of the cluster's group_vars)."
+                   " (in a vaulted file of the cluster's group_vars)%s."
                    % (" in the files read (a vaulted one may set it)" if model.get("vault_skipped") else "",
-                      ", ".join(needs)))
+                      ", ".join(needs),
+                      "; without them, %s plan as if every keyspace had replicas everywhere" % " and ".join(plans)
+                      if plans else ""))
+
+    unresolved = {}
+    for host in cluster.hosts:
+        for key in UNRESOLVED_CHECKED:
+            if key in host["vars"] and not _resolved(host["vars"][key]):
+                unresolved.setdefault(key, []).append(host["name"])
+    for key, hosts in sorted(unresolved.items()):
+        out.append("%s could not be read without the vault or the node's facts (%s): shown above as the role"
+                   " default, and the commands filled from it may be wrong."
+                   % (key, ", ".join(hosts) if len(hosts) < len(cluster.hosts) else "every node"))
 
     names = set()
     for host in cluster.hosts:
@@ -418,7 +452,7 @@ def _advice(model, cluster, playbooks, cwd, known):
 
     rf = cluster.rf()
     for dc in sorted(cluster.dcs):
-        count = len(cluster.dcs[dc])
+        count = len([r for r, hosts in cluster.dcs[dc].items() if any(not h["absent"] for h in hosts)])
         if rf and 1 < count < rf:
             out.append("%s has %d racks with allocate_tokens_for_local_replication_factor %d: the token allocator"
                        " needs one rack or at least %d (preflight refuses it)." % (dc, count, rf, rf))
@@ -469,8 +503,10 @@ def _cluster_lines(cluster):
         racks = cluster.dcs[dc]
         count = sum(len(h) for h in racks.values())
         lines.append("")
-        lines.append("  %s: %d node%s, %d rack%s" % (dc, count, "s" if count != 1 else "", len(racks),
-                                                      "s" if len(racks) != 1 else ""))
+        absent = sum(1 for hosts in racks.values() for h in hosts if h["absent"])
+        lines.append("  %s: %d node%s%s, %d rack%s" % (dc, count, "s" if count != 1 else "",
+                                                        " (%d marked absent)" % absent if absent else "",
+                                                        len(racks), "s" if len(racks) != 1 else ""))
         for rack in sorted(racks):
             nodes = []
             for host in racks[rack]:
@@ -527,9 +563,10 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
     known = _known_names()
     advice = []
     if model.get("vault_skipped"):
-        advice.append("Vault-encrypted files not read (no vault password for this run): %s. help does not need"
-                      " them; the operations do: vault_password_file in ansible.cfg, or --ask-vault-pass (added to"
-                      " the commands above)." % ", ".join(_rel(p, model) for p in model["vault_skipped"]))
+        advice.append("Vault-encrypted files not read (help decrypts nothing): %s. The values they set are not"
+                      " shown above; the operations read them: vault_password_file in ansible.cfg, or the vault"
+                      " option of the commands above."
+                      % ", ".join(_path(p, _inventory_dir(model)) for p in model["vault_skipped"]))
     for cluster in clusters:
         for item in _advice(model, cluster, playbooks, cwd, known):
             prefix = "%s: " % cluster.name if len(clusters) > 1 else ""
@@ -569,10 +606,12 @@ def _text(header, sections, model, cwd):
 
 
 def _markdown(header, sections, model, cwd):
+    where = os.path.relpath(cwd, _inventory_dir(model))
     out = ["# RUNBOOK", "",
-           "Written by `community.cassandra.help -e help_write=true` from the inventory alone: run it again after"
-           " changing the inventory (%s)." % header.split(" (")[0].replace("Cassandra help for the", "the"), "",
-           _INTRO, ""]
+           "Written by `community.cassandra.help -e help_write=true` from the inventory alone (%s): run it again"
+           " after changing the inventory." % ", ".join(_path(src, cwd) for src in model.get("sources") or []), "",
+           _INTRO.replace("the directory help was run from", "this file's directory" if where == "." else
+                          "`%s` from this file's directory (where help was run)" % where), ""]
     for title, lines in sections:
         out += ["## %s" % title, ""]
         if title.startswith("1."):
@@ -587,7 +626,7 @@ def _markdown(header, sections, model, cwd):
                 if kind == "cluster":
                     out += ["### %s" % text, ""]
                 elif kind == "theme":
-                    out += ["### %s" % text, ""]
+                    out += ["%s %s" % ("####" if len(model.get("clusters") or []) > 1 else "###", text), ""]
                 elif kind == "op":
                     name, summary = text.split(" - ", 1)
                     out += ["**%s** - %s" % (name, summary), ""]

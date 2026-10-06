@@ -220,13 +220,17 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
 
 ``-e help_topic=<operation>`` shows one operation in detail: its documentation (the comment that starts the
 playbook), its variables and its command. ``-e help_write=true`` also writes the same content as ``RUNBOOK.md`` in
-the inventory's dir, with the commands ready to copy: commit it with the inventory. It changes only when its content
-does (run ``help`` again after changing the inventory); ``--check --diff`` shows the difference. The commands are
-written as run from the directory ``help`` was run from (the one with ``ansible.cfg``). ``import_cluster`` writes it
-at the end of an import with ``-e import_cluster_runbook=true``.
+the inventory's dir (the first ``-i`` one), with the commands ready to copy: commit it with the inventory. It is
+written only when its content changes (run ``help`` again after changing the inventory); ``--check --diff`` shows the
+difference. Its commands are as run from the directory ``help`` was run from (the one with ``ansible.cfg``; the file
+says where that is from its own dir), with the ``-i`` path and the vault and connection options ``help`` was given:
+run it the same way each time, or the file changes. ``import_cluster`` writes it at the end of an import with
+``-e import_cluster_runbook=true``.
 
-Without the vault password, the vault-encrypted vars files are skipped and named in the advice: ``help`` needs no
-secret and reads none (the variables it shows hold none), and the printed commands then carry ``--ask-vault-pass``.
+``help`` decrypts nothing, even when given the vault password: the vault-encrypted vars files are skipped and named
+in the advice, inline vaulted values are shown as ``(vaulted)``, so no secret reaches its output or ``RUNBOOK.md``.
+A shown setting that can't be read without them is named in the advice. When the run has no vault password, the
+printed commands carry ``--ask-vault-pass``.
 
 
 Creating a cluster

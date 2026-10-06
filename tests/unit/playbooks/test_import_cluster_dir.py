@@ -76,7 +76,7 @@ def test_home(tmp_path, monkeypatch):
 
 TASKS = dict((t.get("name"), t) for play in PLAYS for t in play.get("tasks", []) + [
     sub for task in play.get("tasks", []) for sub in task.get("block", [])])
-WRITE_VARS = PLAYS[-1]["vars"]
+WRITE_VARS = next(p for p in PLAYS if p.get("name") == "Write the inventory")["vars"]
 
 
 def secret(tmp_path, monkeypatch, **variables):

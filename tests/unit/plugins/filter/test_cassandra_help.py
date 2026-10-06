@@ -33,6 +33,7 @@ def node(name, address, rack, **more):
 
 MODEL = {
     "sources": ["/work/inventories/orders/hosts.yml"], "vault_skipped": [], "auto": "orders", "options": ["-b"],
+    "imported": True,
     "clusters": [{"name": "orders", "hosts": [
         node("node1", "192.0.2.11", "rack1"), node("node2", "192.0.2.12", "rack1"),
         node("node3", "192.0.2.13", "rack2"), node("node4", "192.0.2.14", "rack2", cassandra_node_state="absent"),
@@ -55,7 +56,7 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
   Snitch: GossipingPropertyFileSnitch, num_tokens: 16, authenticator: PasswordAuthenticator
   Seeds: 192.0.2.11, 192.0.2.13, 192.0.2.15
 
-  dc1: 5 nodes, 3 racks
+  dc1: 5 nodes (1 marked absent), 3 racks
     rack1: node1 192.0.2.11 (seed), node2 192.0.2.12
     rack2: node3 192.0.2.13 (seed), node4 192.0.2.14 (absent)
     rack3: node5 192.0.2.15 (seed)
@@ -131,8 +132,8 @@ Cluster:
     $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
 
 Takeover:
-  import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes. Here:
-    a re-import into this inventory's dir, which keeps the files it did not write.
+  import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes; a
+    re-import into an inventory it wrote keeps the files it did not write.
     $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_cluster_dir=inventories/orders -e import_cluster_force=true
 
 3. Advice
@@ -180,16 +181,12 @@ def test_every_operation_has_a_theme_and_a_summary():
 def test_operation_variables_are_the_playbooks_own():
     # each -e variable named by a command or an option is in the playbook (or the roles it runs)
     for op in OPERATIONS:
-        if op["name"] == "help":
-            continue
         with open(os.path.join(TOP, "playbooks", op["name"] + ".yml"), encoding="utf-8") as f:
             text = f.read()
         for arg in op.get("args") or []:
             name = re.search(r"cassandra_\w+", arg).group(0)
             assert name in text, (op["name"], name)
         for name in op.get("options") or {}:
-            if name.startswith("import_cluster_runbook"):
-                continue
             assert name in text or name in ("cassandra_rolling_resume", "cassandra_reboot_timeout",
                                             "cassandra_cleanup_jobs"), (op["name"], name)
 
@@ -316,7 +313,7 @@ def test_two_clusters_name_their_group():
 def test_vault_skipped():
     text = cassandra_help(model(vault_skipped=["/work/inventories/orders/group_vars/orders/secrets.yml"],
                                 options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
-    assert "- Vault-encrypted files not read (no vault password for this run): group_vars/orders/secrets.yml." in text
+    assert "- Vault-encrypted files not read (help decrypts nothing): group_vars/orders/secrets.yml." in text
     assert "$ ansible-playbook -i inventories/orders/hosts.yml -b --ask-vault-pass community.cassandra.status" in text
 
 
@@ -353,3 +350,60 @@ def test_inventory_outside_the_current_dir():
 def test_runbook_path(tmp_path):
     assert cassandra_help_runbook(MODEL) == "/work/inventories/orders/RUNBOOK.md"
     assert cassandra_help_runbook({"sources": [str(tmp_path)]}) == str(tmp_path / "RUNBOOK.md")
+
+
+def test_password_authenticator_planning_operations():
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    for host in hosts:
+        del host["vars"]["cassandra_cql_username"]
+    text = " ".join(advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
+    assert "without them, add_node and move_node plan as if every keyspace had replicas everywhere." in text
+
+
+def test_reimport_only_into_an_inventory_the_import_wrote():
+    for changed in (model(imported=False), model(clusters=MODEL["clusters"] * 2, auto="")):
+        text = cassandra_help(changed, PLAYBOOKS, cwd=CWD)
+        assert "community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n" in text
+        assert "import_cluster_force" not in text
+
+
+def test_import_command_placeholders_for_what_help_could_not_read():
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    hosts[0]["vars"].update(cassandra_jmx_username="(vaulted)", cassandra_jmx_password=True,
+                            cassandra_listen_address="10.9.9.9", ansible_port="2222")
+    hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
+    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
+            " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e cassandra_jmx_username=JMX_USER"
+            " -e cassandra_jmx_password=JMX_PASSWORD") in text
+    assert "(vaulted)" not in text.split("1. The cluster")[0]
+
+
+def test_unresolved_values_named():
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    for host in hosts:
+        host["vars"]["cassandra_rack"] = "{{ vault_rack }}"
+    text = " ".join(advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
+    assert ("- cassandra_rack could not be read without the vault or the node's facts (every node): shown above as"
+            " the role default, and the commands filled from it may be wrong.") in text
+
+
+def test_values_are_quoted_for_the_shell():
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    for host in hosts:
+        host["vars"]["cassandra_dc"] = "dc one"
+    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    assert "community.cassandra.stop_rack -e cassandra_target_dc='dc one' -e cassandra_target_rack=rack3" in text
+
+
+def test_runbook_says_where_to_run_from():
+    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    assert "Run the commands from `../..` from this file's directory (where help was run) (the one with" in runbook
+    assert "/work" not in runbook
+    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd="/work/inventories/orders", markdown=True)
+    assert "Run the commands from this file's directory (the one with" in runbook
+
+
+def test_vault_id_path_relative():
+    text = cassandra_help(model(options=["-b", "--vault-id", "prod@/work/vault_pass"]), PLAYBOOKS, cwd=CWD)
+    assert "-b --vault-id prod@vault_pass community.cassandra.status" in text

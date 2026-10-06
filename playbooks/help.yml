@@ -18,8 +18,11 @@
 # (changed only when its content changes; --check --diff shows the difference),
 # to commit with the inventory. -e help_inventory=<path> reads that inventory
 # instead of the run's.
-# Without the vault password, vault-encrypted vars files are skipped (named in
-# the advice): help reads no secret.
+# help decrypts nothing, even with the vault password: vault-encrypted vars
+# files are skipped (named in the advice), inline vaulted values shown as
+# (vaulted), so no secret reaches the output or RUNBOOK.md. The commands carry
+# the vault and connection options help was run with (-b unless ansible.cfg
+# or the inventory become).
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts), else every top
 # group (one per cluster).
@@ -45,6 +48,7 @@
     - name: Show the help
       ansible.builtin.debug:
         msg: "{{ _text if _yaml | bool else _text.split('\n') }}"
+      when: help_show | default(true) | bool  # false: RUNBOOK.md only (import_cluster_runbook)
       vars:
         _yaml: >-
           {{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') in ['default', 'ansible.builtin.default']
@@ -61,5 +65,4 @@
         content: "{{ _cassandra_help_model | community.cassandra.cassandra_help(_playbooks, markdown=true) }}"
         dest: "{{ _cassandra_help_model | community.cassandra.cassandra_help_runbook }}"
         mode: "0644"
-      diff: true
       when: help_write | default(false) | bool

@@ -1220,3 +1220,4 @@
   vars:
     help_inventory: "{{ _dir }}/hosts.yml"
     help_write: true
+    help_show: false  # the import's report is the screen; help's text goes to RUNBOOK.md

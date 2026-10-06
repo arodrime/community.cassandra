@@ -6,16 +6,20 @@ __metaclass__ = type
 
 DOCUMENTATION = r"""
 name: cassandra_inventory
-short_description: The clusters of an inventory, read without the vault password and without the nodes
+short_description: The clusters of an inventory, read without decrypting anything and without the nodes
 version_added: 2.1.0
 description:
   - Reads an inventory as Ansible does (its groups, C(group_vars), C(host_vars) and C(-e) variables) and returns,
     per cluster group, its hosts with the variables the C(help) playbook shows (the cluster's name, versions,
     install method, Java, datacenter, rack, seeds, addresses, C(cassandra_node_state)) and the names of the
     C(cassandra_*) variables set.
-  - Connects to no host. A vault-encrypted vars file that can't be decrypted (no vault password given) is
-    skipped and named in C(vault_skipped); the other files are read. Secrets are never returned,
-    only the variables listed above are templated.
+  - Connects to no host and decrypts nothing, even when the run has the vault password, so that no secret
+    can end up in the output (or in a RUNBOOK.md written from it). A vault-encrypted vars file is skipped and
+    named in C(vault_skipped); an inline vaulted value is returned as C((vaulted)). Only the variables listed above
+    are templated; a value whose template can't be resolved (a vaulted variable, a fact of the node) is returned
+    as its raw text.
+  - Like the operation playbooks, it reads the C(group_vars) and C(host_vars) next to the inventory and next to
+    the playbooks (C(playbook_dir)), not the ones of the current directory.
   - The cluster groups are C(cassandra_hosts) when it is set, else the group found by
     the lookup M(community.cassandra.cassandra_hosts#lookup), else every top group of the inventory
     (one per cluster when the inventory holds several, as C(all) > C(<cluster>) > C(<cluster>_<dc>)).
@@ -36,9 +40,9 @@ EXAMPLES = r"""
 RETURN = r"""
 _raw:
   description:
-    - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(clusters) (a list of C(name), C(hosts): C(name), C(vars), C(names))."
+    - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters) (a list of C(name), C(hosts): C(name), C(vars), C(names))."
     - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) (empty when none);
-      C(options) is the list of the command line options the printed commands need (C(-b), the vault and user options of this run).
+      C(imported) whether import_cluster wrote it; C(options) is the list of the command line options the printed commands need (C(-b), the vault and user options of this run).
   type: list
   elements: dict
 """
@@ -48,6 +52,7 @@ import os
 from ansible import constants as C
 from ansible import context
 from ansible.errors import AnsibleError, AnsibleLookupError
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.inventory.manager import InventoryManager
 from ansible.parsing.dataloader import DataLoader
 from ansible.parsing.vault import is_encrypted_file
@@ -55,10 +60,11 @@ from ansible.plugins.lookup import LookupBase
 from ansible.template import Templar
 from ansible.vars.manager import VariableManager
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import cluster_group, top_groups
 
 # the only variables templated and returned: none of them holds a secret
-SHOWN = ("ansible_host", "ansible_become", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
+SHOWN = ("ansible_host", "ansible_port", "ansible_become", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
          "cassandra_jmx_password_file", "cassandra_cluster_name", "cassandra_version", "cassandra_package_version",
          "cassandra_install_method", "cassandra_java_version", "cassandra_java_home", "cassandra_dc", "cassandra_rack",
          "cassandra_seeds", "cassandra_listen_address", "cassandra_node_state", "cassandra_authenticator",
@@ -69,7 +75,7 @@ SET = ("cassandra_java_tarball", "cassandra_cql_username", "cassandra_jmx_passwo
 
 
 class _Loader(DataLoader):
-    """A loader that skips the vault-encrypted files it can't decrypt."""
+    """A loader that skips the vault-encrypted files (it has no vault secret)."""
 
     def __init__(self, *args, **kwargs):
         super(_Loader, self).__init__(*args, **kwargs)
@@ -91,9 +97,14 @@ class _Loader(DataLoader):
             return {}
 
 
+def _vaulted(value):
+    """An inline !vault value: read, it would be decrypted (and fail without the password)."""
+    return type(value).__name__ in ("EncryptedString", "AnsibleVaultEncryptedUnicode")
+
+
 def _value(templar, value):
     """The value templated; the raw text when it can't be (a fact of the node, a vaulted variable)."""
-    if type(value).__name__ in ("EncryptedString", "AnsibleVaultEncryptedUnicode"):
+    if _vaulted(value):
         return "(vaulted)"
     try:
         value = templar.template(value)
@@ -125,10 +136,11 @@ def _options():
     return out
 
 
-def read(sources, given=None, loader_secrets=None):
-    loader = _Loader()
-    if loader_secrets:
-        loader.set_vault_secrets(loader_secrets)
+def read(sources, given=None, basedir=None):
+    """basedir: the playbooks' dir (its group_vars/host_vars apply, as for the operations)."""
+    loader = _Loader()  # no vault secret: nothing is decrypted
+    if basedir:
+        loader.set_basedir(basedir)
     inventory = InventoryManager(loader=loader, sources=sources)
     manager = VariableManager(loader=loader, inventory=inventory)
     groups = dict((name, [h.name for h in group.get_hosts()]) for name, group in inventory.groups.items())
@@ -146,20 +158,32 @@ def read(sources, given=None, loader_secrets=None):
             variables = manager.get_vars(host=host, include_hostvars=False)
             templar = Templar(loader=loader, variables=variables)
             shown = dict((k, _value(templar, variables[k])) for k in SHOWN if k in variables)
-            shown.update((k, bool(variables.get(k))) for k in SET if k in variables)
+            shown.update((k, _vaulted(variables[k]) or bool(variables[k])) for k in SET if k in variables)
             hosts.append({"name": host.name, "vars": shown,
                           "names": sorted(k for k in variables if k.startswith("cassandra_"))})
         clusters.append({"name": name, "hosts": hosts})
     options = _options()
     # -b of this run is not enough: the commands are run on their own
-    if not C.DEFAULT_BECOME and not all(h["vars"].get("ansible_become") in (True, "true", "True", "yes")
-                              for c in clusters for h in c["hosts"]):
+    if not C.DEFAULT_BECOME and not all(boolean(h["vars"].get("ansible_become"), strict=False)
+                                        for c in clusters for h in c["hosts"]):
         options.insert(0, "-b")
-    if loader.skipped and not C.DEFAULT_VAULT_PASSWORD_FILE and not any(o.startswith("--") and "vault" in o
-                                                                       for o in options):
+    vault_given = C.DEFAULT_VAULT_PASSWORD_FILE or C.DEFAULT_VAULT_IDENTITY_LIST or any(
+        o.startswith("--") and "vault" in o for o in options)
+    if loader.skipped and not vault_given:
         options.append("--ask-vault-pass")  # the operations read the vaulted files help skipped
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
-            "options": options}
+            "options": options, "imported": _imported(sources)}
+
+
+def _imported(sources):
+    """Whether the inventory is one import_cluster wrote (its hosts.yml starts with the import's line)."""
+    first = sources[0] if sources else ""
+    path = os.path.join(first, "hosts.yml") if os.path.isdir(first) else first
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.readline().rstrip("\n") == GENERATED
+    except (IOError, OSError, UnicodeDecodeError):
+        return False
 
 
 class LookupModule(LookupBase):
@@ -172,5 +196,4 @@ class LookupModule(LookupBase):
         given = variables.get("cassandra_hosts")
         if isinstance(given, str):
             given = self._templar.template(given)
-        vault = getattr(self._loader, "_vault", None)
-        return [read(sources, given or None, getattr(vault, "secrets", None))]
+        return [read(sources, given or None, variables.get("playbook_dir"))]
