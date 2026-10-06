@@ -1,0 +1,2 @@
+minor_changes:
+  - add_node and replace_node - with ``cassandra_add_node_reset`` or ``cassandra_replace_node_reset``, what the reset deletes is on their screen (a data loss warning per node) and their one question covers it, instead of a second question.

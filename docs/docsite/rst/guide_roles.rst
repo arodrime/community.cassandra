@@ -388,6 +388,8 @@ point, the config or the logs, one directory inside another (links resolved), or
 be read. The directories are checked again, links resolved, just before the delete.
 The run shows what it would stop and delete, directory by directory, then asks once (``cassandra_operation_confirm:
 false`` skips the question); ``--check`` shows it and changes nothing. A second run finds nothing to do.
+``add_node`` and ``replace_node`` (``cassandra_add_node_reset``, ``cassandra_replace_node_reset``) work out the reset
+before their screen, show what it deletes there (a ``data loss`` warning per node), and their one question covers it.
 
 
 When a node is dead for good and will not be replaced, take it out of the inventory and run ``remove_dead_node`` with

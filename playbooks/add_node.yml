@@ -11,8 +11,8 @@
 # -e cassandra_add_node_reset=true starts a new node over that has data but is
 # not in the ring (started once by mistake, a failed bootstrap): Cassandra
 # stopped, its directories emptied (reset_node.yml: refused on a node any up
-# node of the cluster sees in its ring; shown, then a confirmation of its
-# own), then added.
+# node of the cluster sees in its ring; what it deletes is on the screen, the
+# one question covers it), then added.
 # One screen first, one confirmation (cassandra_operation_confirm: false or
 # --check skips it): cluster, version, Java, Medusa, each new node (address, dc, rack, data
 # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
@@ -209,6 +209,15 @@
             fail_msg: "{{ cassandra_add_node_tokens.problems + (cassandra_add_node_tokens.balanced_problems if _auto == 'balanced' else []) }}"
             quiet: true
 
+    # Read-only: what each reset deletes goes on the screen, refused before any question
+    - name: Work out the reset of the new nodes (cassandra_add_node_reset)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: reset_node_plan.yml
+      when:
+        - cassandra_add_node_reset | default(false) | bool
+        - cassandra_new_node_state == 'new'
+
     - name: Check the cleanup choice
       ansible.builtin.assert:
         that: cassandra_add_node_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
@@ -295,16 +304,17 @@
                                ~ ' (until then the ring is uneven).') if cassandra_add_node_tokens.moves | default([]) else 'Following balanced: no node moves.',
                   'true': ('--check: a real run asks next, bisect or balanced; this one follows bisect.' if ansible_check_mode
                            else 'You choose next: bisect or balanced.')}[_auto] if _single | bool and _new else '' }}
-          warnings:
-            - label: reset
-              real_run: true
-              text: >-
-                {{ 'cassandra_add_node_reset: what the new nodes hold (a failed first start or bootstrap) is DELETED first,'
-                   ' shown and confirmed next.' if cassandra_add_node_reset | default(false) | bool and _new else '' }}
-            - label: racks
-              each: "{{ cassandra_add_node_plan.warnings }}"
-            - label: tokens
-              each: "{{ cassandra_add_node_tokens.warnings | default([]) if _single | bool and _new else [] }}"
+          # cassandra_add_node_reset: what each reset deletes (reset_node_plan.yml), covered by the one question
+          warnings: >-
+            {{ _resets | community.cassandra.cassandra_reset_warnings
+               + [{'label': 'racks', 'each': cassandra_add_node_plan.warnings},
+                  {'label': 'tokens', 'each': cassandra_add_node_tokens.warnings | default([]) if _single | bool and _new else []}] }}
+        _resets: >-
+          {%- set l = [] -%}
+          {%- for h in _new if hostvars[h]._cassandra_node_reset_plan is defined -%}
+          {%-   set _ = l.append({'name': h, 'plan': hostvars[h]._cassandra_node_reset_plan}) -%}
+          {%- endfor -%}
+          {{ l }}
 
     - name: Choose where the new nodes go
       ansible.builtin.pause:
@@ -349,6 +359,8 @@
       when:
         - cassandra_add_node_reset | default(false) | bool
         - cassandra_new_node_state == 'new'
+      vars:
+        _cassandra_node_reset_confirmed: true  # on the add_node screen, the one question
 
 - name: Add the new nodes, one at a time
   hosts: "{{ cassandra_new_nodes }}"
