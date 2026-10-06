@@ -56,9 +56,21 @@ def test_cassandra_not_started_by_package(host):
     assert host.run("pgrep -f [C]assandraDaemon").rc != 0
 
 
-def test_no_cqlsh_python_override_on_50x(host):
-    # 5.0's cqlsh supports the system python3: no wrapper installed
-    assert not host.file("/usr/local/bin/cqlsh").exists
+def test_cqlsh_python_override_on_50x(host):
+    wrapper = host.file("/usr/local/bin/cqlsh")
+    if host.system_info.distribution == "ubuntu" and host.system_info.release == "26.04":
+        # python3 is 3.14, past 5.0's cqlsh (3.13 at most): python3.11 from deadsnakes
+        assert 'CQLSH_PYTHON:-/usr/bin/python3.11}' in wrapper.content_string
+        assert host.run("/usr/bin/python3.11 -V").rc == 0
+    else:
+        # 5.0's cqlsh supports the system python3: no wrapper installed
+        assert not wrapper.exists
+
+
+def test_sudo_rs_on_ubuntu_2604(host):
+    if host.system_info.distribution != "ubuntu" or host.system_info.release != "26.04":
+        pytest.skip("Ubuntu 26.04 only")
+    assert "sudo-rs" in host.run("sudo --version").stdout
 
 
 def test_pinned_packages_held_on_debian(host):

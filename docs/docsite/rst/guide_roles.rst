@@ -75,6 +75,10 @@ Then, with the cluster group found from the inventory (see `Inventory`_):
 
 Ansible ignores an ``ansible.cfg`` in a world-writable dir; ``ANSIBLE_CONFIG=<path>`` names one explicitly.
 
+On Ubuntu 26.04, ``sudo`` is sudo-rs, whose password prompt Ansible's ``sudo`` become method does not recognise (the
+run stops on "timeout waiting for privilege escalation password prompt"). Passwordless sudo works; with a sudo
+password, use the classic sudo (package ``sudo``): ``ansible_become_exe: sudo.ws``.
+
 Inventory
 ---------
 
@@ -451,6 +455,11 @@ satisfy it (the tarball stays the system ``java``): exclude the cassandra packag
 (``excludepkgs``, versionlock).
 ``update_java`` moves a cluster to a new tarball the same way as to a new package.
 
+EL 10 (RHEL, Rocky, AlmaLinux 10) has no Java 11 or 17 package, only 21 and 25, which Cassandra 4.x and 5.0 do not
+run on: give a Java tarball there (``cassandra_install`` stops and says so otherwise), or ``cassandra_java_home`` for
+a Java installed by other means. Its ``python3`` (3.12) suits 5.0's cqlsh but not 4.x's, and EL 10 has no
+``python3.11``: with 4.x, install a Python 3.11 by other means and give it in ``cassandra_cqlsh_python``.
+
 
 Changing the seeds
 ------------------
@@ -592,11 +601,12 @@ Packages the roles need:
      - ``cassandra``, ``cassandra-tools``
    * - Java: 11 for 4.0/4.1, 17 for 5.0 (``cassandra_java_versions``)
      - ``openjdk-<N>-jre-headless``
-     - ``java-<N>-openjdk-headless`` (``java-<N>-amazon-corretto-headless`` on Amazon Linux)
+     - ``java-<N>-openjdk-headless`` (``java-<N>-amazon-corretto-headless`` on Amazon Linux; none on EL 10: a
+       Java tarball)
    * - Python for cqlsh, only when the system ``python3`` is outside cqlsh's range (4.x: 3.6-3.11, 5.0: 3.8-3.13),
-       e.g. Ubuntu 24.04 with 4.x, RHEL 8 with 5.0
+       e.g. Ubuntu 24.04 with 4.x, Ubuntu 26.04, RHEL 8 with 5.0
      - ``python3.11`` (deadsnakes on Ubuntu 24.04+)
-     - ``python3.11``
+     - ``python3.11`` (none on EL 10, see Java above)
    * - Time sync (``cassandra_linux``, optional in offline mode)
      - ``systemd-timesyncd``, or ``chrony`` (kept when installed)
      - ``chrony``
@@ -611,7 +621,10 @@ Packages the roles need:
      - none
    * - Repository setup (``cassandra_repository``, not used offline)
      - ``apt-transport-https``, ``curl``, ``gnupg``, ``python3-debian``
+     - ``gnupg2`` with ``cassandra_repository_key_url``
+   * - Java tarball with the repository method (downloads the Cassandra packages, not used offline)
      - none
+     - ``dnf-plugins-core`` (``dnf download``)
 
 Time sync keeps the servers configured in chrony or systemd-timesyncd: on air-gapped hosts, configure the site's NTP
 servers there (or set ``cassandra_linux_timesync: false`` and manage time sync yourself).
@@ -667,6 +680,8 @@ Medusa reaches Cassandra with the collection's logins (``cassandra_cql_username`
 ``cassandra_jmx_password_file``...) unless its own are set. Each ``medusa.ini`` setting has a variable, and
 ``cassandra_medusa_extra_settings`` takes any other. Medusa 0.30 runs on Python 3.10 to 3.12: on RHEL 8 and 9 the
 role installs ``python3.11`` for it (``python3.11`` and ``python3.11-pip``, from the OS repositories or their mirror).
+On Ubuntu 26.04 (Python 3.14), its virtualenv uses ``python3.11`` from the deadsnakes PPA, which ``cassandra_install``
+adds there when cqlsh needs it; without a virtualenv, give ``cassandra_medusa_python``.
 
 The role schedules no backup: run ``medusa backup`` from cron or a systemd timer, or ``medusa backup-cluster`` from
 one node.

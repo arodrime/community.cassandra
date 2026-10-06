@@ -40,14 +40,35 @@
       failed_when: false
       check_mode: false  # read-only
 
+    - name: Tell whether python3 fits
+      ansible.builtin.set_fact:
+        _cassandra_medusa_python3_fits: >-
+          {{ cassandra_medusa_python3_version.rc == 0
+             and cassandra_medusa_python3_version.stdout is version(cassandra_medusa_python_supported[0], '>=')
+             and cassandra_medusa_python3_version.stdout is version(cassandra_medusa_python_supported[1], '<=') }}
+
+    # Ubuntu 26.04 (python3 3.14): a virtualenv on python3.11, when a repository
+    # has it (the deadsnakes PPA cassandra_install adds there when cqlsh needs it)
+    - name: Look up python3.11 for the virtualenv (Debian & Ubuntu)
+      ansible.builtin.command: apt-cache policy python3.11
+      environment:
+        LC_ALL: C  # its labels are translated
+      register: cassandra_medusa_python311_policy
+      changed_when: false
+      check_mode: false  # read-only
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - cassandra_medusa_python == ''
+        - cassandra_medusa_venv != ''
+        - not _cassandra_medusa_python3_fits
+
     - name: Pick the Python
       ansible.builtin.set_fact:
         _cassandra_medusa_python: >-
           {{ cassandra_medusa_python if cassandra_medusa_python != ''
-             else '/usr/bin/python3' if (cassandra_medusa_python3_version.rc == 0
-                  and cassandra_medusa_python3_version.stdout is version(cassandra_medusa_python_supported[0], '>=')
-                  and cassandra_medusa_python3_version.stdout is version(cassandra_medusa_python_supported[1], '<='))
+             else '/usr/bin/python3' if _cassandra_medusa_python3_fits
              else '/usr/bin/python3.11' if ansible_facts['os_family'] == 'RedHat'
+                  or cassandra_medusa_python311_policy.stdout | default('') is search('(Installed|Candidate): [0-9]')
              else '' }}
 
     - name: Stop when no Python fits
@@ -56,7 +77,9 @@
         fail_msg: >-
           Medusa {{ cassandra_medusa_version }} runs on Python {{ cassandra_medusa_python_supported | join(' to ') }},
           python3 on {{ inventory_hostname }} is {{ cassandra_medusa_python3_version.stdout | default('') or 'missing' }}:
-          set cassandra_medusa_python to such an interpreter (installed by other means).
+          set cassandra_medusa_python to such an interpreter (installed by other means){{
+          ', or, with a virtualenv (cassandra_medusa_venv), make python3.11 available (e.g. the deadsnakes PPA,
+          which cassandra_install adds on Ubuntu when cqlsh needs it)' if ansible_facts['os_family'] == 'Debian' else '' }}.
         quiet: true
 
     # Without a virtualenv: nothing more to do when Medusa is there already

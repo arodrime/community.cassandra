@@ -10,6 +10,7 @@
             name: community.cassandra.cassandra_install
           vars:
             cassandra_offline: true
+            cassandra_java_tarball: ""  # EL 10's tarball URL is refused first offline
 
         - name: Should not be reached
           ansible.builtin.fail:
@@ -21,11 +22,78 @@
               - "'cassandra_offline downloads nothing' in ansible_failed_result.msg"
               - "'cassandra, cassandra-tools' in ansible_failed_result.msg"
 
+- name: EL 10 without a Java tarball
+  hosts: el10
+  tags: molecule-idempotence-notest
+  tasks:
+    - name: No Java 11 or 17 package there, said clearly
+      block:
+        - name: Run the role with the Java package
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_java_tarball: ""
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: the role went on without a Java package
+      rescue:
+        - name: Check the refusal names the way out
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Stop when no repository offers the Java package (RedHat)'
+              - "'java-17-openjdk-headless' in ansible_failed_result.msg"
+              - "'EL 10 has no Java 11 or 17 package' in ansible_failed_result.msg"
+              - "'cassandra_java_tarball' in ansible_failed_result.msg"
+
 - name: Converge
   hosts: all
   roles:
     - role: community.cassandra.cassandra_repository
     - role: community.cassandra.cassandra_install
+
+# 4.x's cqlsh needs Python 3.11 at most: EL 10 has 3.12 and no python3.11
+- name: EL 10 with a 4.x cqlsh
+  hosts: el10
+  tags: molecule-idempotence-notest
+  tasks:
+    - name: No Python for cqlsh, said clearly
+      block:
+        - name: Run the role for 4.1 (Cassandra 5.0 stays installed)
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_version: 41x
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: the role went on without a Python for cqlsh
+      rescue:
+        - name: Check the refusal names the way out
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Stop when no repository offers python3.11 (RedHat)'
+              - "'3.6 to 3.11' in ansible_failed_result.msg"
+              - "'cassandra_cqlsh_python' in ansible_failed_result.msg"
+
+# Ubuntu 26.04's sudo is sudo-rs (prepare.yml), and its cqlsh runs through
+# the wrapper (python3 is 3.14). (The RHEL 9 images' PAM refuses sudo to the
+# rpm's cassandra user.)
+- name: cqlsh through become
+  hosts: all
+  tasks:
+    - name: Run cqlsh as cassandra (Ubuntu)
+      ansible.builtin.command: cqlsh --version
+      become: true
+      become_user: cassandra
+      register: cassandra_test_cqlsh_become
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: It ran
+      ansible.builtin.assert:
+        that: cassandra_test_cqlsh_become.stdout is search('cqlsh')
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
 - name: Pinned version
   hosts: all

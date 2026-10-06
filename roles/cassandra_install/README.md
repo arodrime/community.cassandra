@@ -71,7 +71,8 @@ Role Variables
   (`cassandra_cqlsh_python_supported`: 3.6-3.11 for 4.x, 3.8-3.13 for 5.0);
   then `python3.11` is installed next to it and cqlsh is pointed at it
   (`/usr/local/bin/cqlsh` wrapper, `CQLSH_PYTHON` in `/etc/profile.d`).
-  The system `python3` is never changed.
+  The system `python3` is never changed. On the RedHat family the role stops
+  when no repository offers `python3.11` (EL 10 with 4.x): set this then.
 * `cassandra_cqlsh_python_manage`: `false` leaves cqlsh's Python as it is on
   this node (nothing above is added or removed). The `import_cluster`
   playbook sets it on the nodes whose cqlsh has no wrapper of this role.
