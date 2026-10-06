@@ -106,6 +106,8 @@ argument_specs:
           - Python interpreter used by cqlsh.
           - When empty, C(python3) is used if the series' cqlsh supports it,
             otherwise C(python3.11) is installed next to it and cqlsh is pointed at it.
+          - On the RedHat family, the role stops when no repository offers C(python3.11) (EL 10 with Cassandra 4.x);
+            set this to a Python cqlsh supports, installed by other means.
       cassandra_cqlsh_python_manage:
         type: bool
         default: true

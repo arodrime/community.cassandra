@@ -23,6 +23,33 @@
         update_cache: true
       when: ansible_facts['os_family'] == 'Debian'
 
+    # Ubuntu 26.04's python3 (3.14) is past Medusa's range: python3.11 from the
+    # PPA cassandra_install adds there for cqlsh, as on a real node
+    - name: Add the deadsnakes PPA (Ubuntu 26.04)
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - ansible_facts['distribution_version'] is version('26.04', '>=')
+      block:
+        - name: Install python3-debian (deb822_repository needs it)
+          ansible.builtin.apt:
+            name: python3-debian
+            state: present
+          retries: 3
+
+        - name: Add the repository
+          ansible.builtin.deb822_repository:
+            name: deadsnakes
+            types: deb
+            uris: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
+            suites: "{{ ansible_facts['distribution_release'] }}"
+            components: main
+            signed_by: "{{ lookup('ansible.builtin.file', '../../../cassandra_install/files/deadsnakes.asc') }}"
+
+        - name: Update the apt cache
+          ansible.builtin.apt:
+            update_cache: true
+          retries: 3
+
     # The Cassandra package creates it on a real node
     - name: Create the cassandra user
       ansible.builtin.user:

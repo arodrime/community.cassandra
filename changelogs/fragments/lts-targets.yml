@@ -1,0 +1,9 @@
+---
+minor_changes:
+  - "cassandra_install - stops with a clear message when no repository offers the Java package (EL 10 has no Java 11 or 17: give ``cassandra_java_tarball`` there) or the ``python3.11`` cqlsh needs (EL 10 with Cassandra 4.x)."
+  - "cassandra_medusa - a virtualenv on Debian/Ubuntu whose ``python3`` Medusa does not support (Ubuntu 26.04) uses ``python3.11`` when a repository offers it, such as the deadsnakes PPA ``cassandra_install`` adds there when cqlsh needs it (under ``--check``, before that PPA is added, too); the new node checks of cassandra_service plan it the same way."
+  - "roles - molecule tests on Ubuntu 26.04 and Rocky Linux 10, plus AlmaLinux 10 and RHEL 10 (UBI) for some roles."
+bugfixes:
+  - "cassandra_install - with Java from a tarball on the RedHat family, the Cassandra packages are downloaded with ``dnf download``, without resolving their Java dependency, which failed where no repository offers a Java package they accept (EL 10)."
+  - "cassandra_install - under ``--check`` on Ubuntu without ``python3.11`` (24.04 with Cassandra 4.x, 26.04), no longer fails on its install: apt cannot find it before the deadsnakes PPA is really added."
+  - "cassandra_repository - with ``cassandra_repository_key_url``, installs gnupg2 when gpg is missing (AlmaLinux 10 images), before reading the downloaded keys' fingerprints."

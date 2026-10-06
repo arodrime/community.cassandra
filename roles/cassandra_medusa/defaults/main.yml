@@ -11,7 +11,8 @@ cassandra_medusa_link_dir: /usr/local/bin
 # PATH of login shells (users' own profiles are never edited)
 cassandra_medusa_profile_d: false
 # Python of the virtualenv (or the one pip installs into without one): "" picks python3 when Medusa supports it, else
-# python3.11 (installed on the RedHat family, e.g. RHEL 8 and 9).
+# python3.11 (installed on the RedHat family, e.g. RHEL 8 and 9; for a virtualenv on Debian/Ubuntu when a repository
+# offers it, e.g. the deadsnakes PPA cassandra_install adds on Ubuntu 26.04 when cqlsh needs it).
 cassandra_medusa_python: ""
 # Python versions Medusa 0.30.x supports (its requires-python: >=3.10,<3.13)
 cassandra_medusa_python_supported: ["3.10", "3.12"]

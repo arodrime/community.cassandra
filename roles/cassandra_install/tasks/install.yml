@@ -33,6 +33,36 @@
     mode: "0755"
   when: ansible_facts['os_family'] == 'Debian'
 
+# EL 10 has Java 21 and 25 packages only, none the Cassandra series run on (11,
+# 17): say so, rather than let dnf fail on the package name
+- name: Look up the Java package in the enabled repos (RedHat)
+  ansible.builtin.command:
+    # --check: without the repositories cassandra_repository removes
+    argv: >-
+      {{ ['dnf', '-q', 'repoquery'] + _cassandra_repository_check_removed | default([]) | map('regex_replace', '^', '--disablerepo=') | list
+         + ['--whatprovides', cassandra_java_package] }}
+  register: cassandra_java_query
+  changed_when: false
+  check_mode: false  # read-only
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
+    - not cassandra_offline | bool
+    - cassandra_java_package not in _cassandra_install_before
+
+- name: Stop when no repository offers the Java package (RedHat)
+  ansible.builtin.assert:
+    that: cassandra_java_query.stdout | trim != ''
+    fail_msg: >-
+      No repository of {{ inventory_hostname }} offers {{ cassandra_java_package }} (Java {{ cassandra_java_version }},
+      for Cassandra {{ cassandra_version }}){{ ': EL 10 has no Java 11 or 17 package'
+      if ansible_facts['distribution_major_version'] == '10' and cassandra_java_version | string in ['11', '17'] else '' }}.
+      Set cassandra_java_tarball to a Java {{ cassandra_java_version }} tarball (e.g. Eclipse Temurin), or
+      cassandra_java_home to a Java {{ cassandra_java_version }} installed by other means.
+    quiet: true
+  when: cassandra_java_query is not skipped
+
 - name: Install Java
   ansible.builtin.package:
     name: "{{ cassandra_java_package }}"
@@ -180,15 +210,24 @@
             state: absent
           changed_when: false
 
-        # download_only resolves the dependencies too: a Java package is
-        # downloaded (not installed), so the repositories must offer one
+        # dnf download, not the dnf module's download_only: that one resolves
+        # the dependencies, and fails where no repository offers the Java
+        # package they need (EL 10 has no Java 11 or 17)
+        - name: Install the dnf download command
+          ansible.builtin.package:
+            name: dnf-command(download)
+            state: present
+          retries: 3
+
         - name: Download the Cassandra packages
-          ansible.builtin.dnf:
-            name: "{{ _cassandra_install_names }}"
-            download_only: true
-            download_dir: "{{ _rpms }}"
+          ansible.builtin.command:
+            # excludepkgs/versionlock (kept from routine upgrades) don't apply here
+            argv: "{{ ['dnf', '-q', 'download', '--disableexcludes=all', '--destdir', _rpms] + _cassandra_install_names }}"
+          register: cassandra_install_download
+          until: cassandra_install_download is succeeded
           retries: 3
           changed_when: false
+          when: not ansible_check_mode
 
         - name: Find them among the downloads
           ansible.builtin.find:
@@ -345,6 +384,8 @@
   block:
     - name: Check whether the distro repos have python3.11 (Ubuntu)
       ansible.builtin.command: apt-cache policy python3.11
+      environment:
+        LC_ALL: C  # its labels are translated
       register: cassandra_python311_policy
       changed_when: false
       check_mode: false  # read-only
@@ -383,11 +424,41 @@
             update_cache: true
           retries: 3
 
+    - name: Look up python3.11 in the enabled repos (RedHat)
+      ansible.builtin.command:
+        # --check: without the repositories cassandra_repository removes
+        argv: >-
+          {{ ['dnf', '-q', 'repoquery'] + _cassandra_repository_check_removed | default([]) | map('regex_replace', '^', '--disablerepo=') | list
+             + ['python3.11'] }}
+      register: cassandra_python311_query
+      changed_when: false
+      check_mode: false  # read-only
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - "'python3.11' not in _cassandra_install_before"
+        - cassandra_cqlsh_python == ''  # picked by the role, not given
+
+    # EL 10: python3 is 3.12, and no python3.11 package exists
+    - name: Stop when no repository offers python3.11 (RedHat)
+      ansible.builtin.assert:
+        that: cassandra_python311_query.stdout | trim != ''
+        fail_msg: >-
+          cqlsh of Cassandra {{ cassandra_version }} runs on Python {{ cassandra_cqlsh_python_supported[cassandra_version] | join(' to ') }},
+          python3 on {{ inventory_hostname }} is {{ cassandra_python3_version.stdout | default('') or 'missing' }}, and no
+          repository offers python3.11 to run it with. Install a Python cqlsh supports by other means and set
+          cassandra_cqlsh_python to it, or set cassandra_cqlsh_python_manage to false to leave cqlsh as it is.
+        quiet: true
+      when: cassandra_python311_query is not skipped
+
+    # --check: apt can't resolve it before the PPA above is really added
     - name: Install python3.11
       ansible.builtin.package:
         name: python3.11
         state: present
       retries: 3
+      when: >-
+        not (ansible_check_mode and ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != ''
+             and cassandra_python311_policy.stdout is not search('Candidate: [0-9]'))
 
 # The rpm installs cqlshlib for python3.6 only: link it into the Pythons
 # cqlsh may run with (CASSANDRA-19206).

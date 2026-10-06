@@ -18,8 +18,10 @@
           ansible.builtin.fail:
             msg: pip was let install into an externally managed Python
       rescue:
+        # Ubuntu 26.04's python3 (3.14) is past Medusa's range, before PEP 668 counts
         - name: Check the refusal
           ansible.builtin.assert:
-            that:
-              - ansible_failed_task.name == 'Refuse an externally managed Python'
-              - "'Set cassandra_medusa_venv' in ansible_failed_result.msg"
+            that: >-
+              ansible_failed_task.name == 'Stop when no Python fits' and 'deadsnakes' in ansible_failed_result.msg
+              if ansible_facts['distribution_version'] is version('26.04', '>=') else
+              ansible_failed_task.name == 'Refuse an externally managed Python' and 'Set cassandra_medusa_venv' in ansible_failed_result.msg

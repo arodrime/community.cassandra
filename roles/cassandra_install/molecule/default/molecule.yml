@@ -20,8 +20,27 @@ platforms:
     privileged: true
     pre_build_image: true
     user: root
+  - name: ubuntu2604
+    image: geerlingguy/docker-ubuntu2604-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
   - name: almalinux9
     image: mullholland/docker-almalinux-systemd:9
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: almalinux10
+    groups: [el10]
+    image: mullholland/docker-almalinux-systemd:10
     command: ${MOLECULE_DOCKER_COMMAND:-""}
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
@@ -38,7 +57,24 @@ platforms:
     privileged: true
     pre_build_image: true
     user: root
+  - name: rockylinux10
+    groups: [el10]
+    image: geerlingguy/docker-rockylinux10-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
 provisioner:
   name: ansible
+  inventory:
+    group_vars:
+      # EL 10 has no Java 11 or 17 package (21 and 25 only): Java 17 from a tarball
+      el10:
+        cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+        cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+        cassandra_java_version: "17"
 verifier:
   name: testinfra

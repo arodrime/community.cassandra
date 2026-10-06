@@ -38,8 +38,10 @@ def test_medusa_in_path(host):
 
 
 def test_virtualenv_python(host):
-    # RHEL 8's python3 is 3.6: python3.11 there; Ubuntu 24.04's python3 (3.12) fits
-    expected = "3.11" if host.system_info.distribution in ("rhel", "redhat") else "3.12"
+    # RHEL 8's python3 is 3.6 and Ubuntu 26.04's 3.14: python3.11 there;
+    # Ubuntu 24.04's and EL 10's python3 (3.12) fits
+    ubuntu_2604 = host.system_info.distribution == "ubuntu" and host.system_info.release == "26.04"
+    expected = "3.11" if host.system_info.distribution in ("rhel", "redhat") or ubuntu_2604 else "3.12"
     cmd = host.run(VENV + "/bin/python -c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'")
     assert cmd.stdout.strip() == expected
 
@@ -53,7 +55,7 @@ def test_config_file_private(host):
 
 
 def test_medusa_reads_the_config(host):
-    conf = "/etc/cassandra/conf" if host.system_info.distribution in ("rhel", "redhat") else "/etc/cassandra"
+    conf = "/etc/cassandra" if host.system_info.distribution in ("ubuntu", "debian") else "/etc/cassandra/conf"
     host.run("cat > /tmp/medusa_load.py <<'EOF'\n" + LOAD + "EOF\n")
     cmd = host.run(VENV + "/bin/python /tmp/medusa_load.py")
     assert cmd.rc == 0, cmd.stderr

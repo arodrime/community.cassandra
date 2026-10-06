@@ -40,7 +40,8 @@ argument_specs:
         default: ""
         description:
           - Python of a new virtualenv, or the one Medusa is installed into without a virtualenv. When empty, C(python3) if Medusa supports its version,
-            else C(python3.11), installed on the RedHat family (e.g. RHEL 8 and 9). An existing virtualenv keeps its own.
+            else C(python3.11), installed on the RedHat family (e.g. RHEL 8 and 9), and for a virtualenv on Debian/Ubuntu when a
+            repository offers it (e.g. Ubuntu 26.04 with the deadsnakes PPA C(cassandra_install) adds when cqlsh needs it). An existing virtualenv keeps its own.
       cassandra_medusa_python_supported:
         type: list
         elements: str

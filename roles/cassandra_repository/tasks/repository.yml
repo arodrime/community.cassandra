@@ -140,6 +140,23 @@
       until: _cassandra_repository_key_download is succeeded
       changed_when: false  # a temp file: the install below reports the change
 
+    # Minimal images (AlmaLinux 10) come without it; Amazon Linux's
+    # gnupg2-minimal has it, and conflicts with gnupg2
+    - name: Look for gpg (RedHat)
+      ansible.builtin.stat:
+        path: /usr/bin/gpg
+      register: _cassandra_repository_gpg
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Install gpg to read them (RedHat)
+      ansible.builtin.package:
+        name: gnupg2
+        state: present
+      retries: 3
+      when:
+        - ansible_facts['os_family'] == "RedHat"
+        - not _cassandra_repository_gpg.stat.exists
+
     - name: Read the fingerprints of the downloaded keys
       ansible.builtin.shell: >-
         set -o pipefail;
