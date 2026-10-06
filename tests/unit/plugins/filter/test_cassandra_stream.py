@@ -9,7 +9,7 @@ import pytest
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
     cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress,
-    cassandra_stream_report, cassandra_host_addresses)
+    cassandra_stream_report, cassandra_host_addresses, cassandra_stream_progress_by_host, cassandra_cleanup_report)
 
 GIB = 1024 ** 3
 MIB = 1024 ** 2
@@ -422,25 +422,47 @@ def test_eta_says_the_day_when_the_end_is_tomorrow():
     assert finish(s) == "in 45m  - 1970-01-02 00:20 UTC"
 
 
-def test_cleanup_report():
-    view = cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_50_cleanup.txt")}, "n1"))
-    s = cassandra_stream_progress([view], None, now=0, operations=["Cleanup"])
-    for v in view["sessions"]:
-        v["bytes_done"] += 3 * MIB
-    s = cassandra_stream_progress([view], s, now=100, operations=["Cleanup"])
-    assert report(s, node="n1, n2", what="cleanup", files_label="tasks",
-                  extra=[["cleaning", "1 of 2 nodes (Finish counts the running tasks only)"]]) == """\
-n1, n2  cleanup  [###-----------------]  15%   61 KiB/s
+def test_cleanup_report_a_block_per_node():
+    views = [cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_%s_cleanup.txt" % v)}, h))
+             for h, v in (("n1", "50"), ("n4", "41"), ("n5", "40"))]
+    s = cassandra_stream_progress_by_host(views, None, now=0, operations=["Cleanup"])
+    for view in views:
+        for task in view["sessions"]:
+            task["bytes_done"] += 3 * MIB
+    views[2]["sessions"] = []  # n5's tasks ended
+    s = cassandra_stream_progress_by_host(views, s, now=100, operations=["Cleanup"], interval=300)
+    jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n4"}, "finished": 0},
+            {"item": {"item": "n5"}, "finished": 1}]
+    lines = cassandra_cleanup_report(s, jobs)
+    assert all(len(line) <= 88 for line in lines)
+    assert "\n".join(lines) == """\
+3 nodes in parallel: n1, n4, n5
+Finish counts the cleanup tasks running now, not the ones queued after them.
+
+n1  cleanup  [###-----------------]  15%   61 KiB/s
 
       data:      7.0 MiB / 44.2 MiB
                  0 / 2 tasks
-      cleaning:  1 of 2 nodes (Finish counts the running tasks only)
 
-      on:        n1   15% done  (7.0 / 44.2 MiB)
+      Finish:    in 10m - 00:11 UTC
+
+n4  cleanup  [#######-------------]  39%   61 KiB/s
+
+      data:      7.9 MiB / 20.2 MiB
+                 0 / 2 tasks
+
+      Finish:    in 3m - 00:05 UTC
+
+n5  cleanup  done  88.2 MiB in 1m (90.1 MiB in all), 903 KiB/s on average
 
       Now:       current - 00:01 UTC
-      Started:   1m ago  - 00:00 UTC
-      Finish:    in 10m  - 00:11 UTC"""
+      Started:   1m ago  - 00:00 UTC"""
+    # one node: no batch line, its clocks in its block; a stalled batch, a job that can't be followed
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, jobs[:1], status="stalled")
+    assert lines[0].startswith("Finish counts") and lines[2].startswith("n1  cleanup  STALLED  [###")
+    assert "      Started:   1m ago  - 00:00 UTC" in lines
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, [{"item": {"item": "n1"}, "msg": "lost"}], status="failed")
+    assert lines[2].startswith("n1  cleanup  FAILED  [###")
 
 
 NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.3": "node5"}
@@ -510,7 +532,7 @@ def test_report_done():
     assert report(bootstrap([1.0]), status="done") == "n4  bootstrap  done  100.0 GiB, at the first check"
     s = cassandra_stream_progress([read("n4", mode="NORMAL")], None, now=0)
     s = cassandra_stream_progress([read("n4", mode="NORMAL")], s, now=65)
-    assert report(s, status="done") == "n4  bootstrap  done  nothing streamed in 1m"
+    assert report(s, status="done") == "n4  bootstrap  done  in 1m, nothing seen in progress"
 
 
 def test_report_very_large_and_very_small_rates():

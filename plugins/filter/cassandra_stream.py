@@ -186,6 +186,15 @@ def _header(words, done, total, rate):
     return "%s  [%s%s] %s%s" % (head, "#" * filled, "-" * (width - filled), pct, tail)
 
 
+def _times(rows, now):
+    """[label, relative, epoch or None] rows as lines after a blank one, the
+    clocks in one column (a row without clock does not widen it)."""
+    width = max([len(r[1]) for r in rows if r[2] is not None] or [0])
+    return ([""] if rows else []) + [
+        (_ITEM % (label, relative.ljust(width) + (" - " + _clock(epoch, now) if epoch is not None else ""))).rstrip()
+        for label, relative, epoch in rows]
+
+
 def _peers(streams):
     """The other ends, the most data first, with their own progress: "node1  52% done
     (9.6 / 18.4 GiB)", the ones beyond _PEERS summed up on one line."""
@@ -205,21 +214,23 @@ def _peers(streams):
             for name, size, moved in ranked]
 
 
-def cassandra_stream_report(state, node="", what="", status="going", names=None, files_label="files", extra=None):
+def cassandra_stream_report(state, node="", what="", status="going", names=None, files_label="files", extra=None,
+                            clocks=True):
     """The lines to print for a cassandra_stream_progress state (a debug msg
     list prints one per line): a header with node, what, bar, percent and
     rate, then the data, the other ends and the times, an item per line; a
     single line once done. status: as in stream_wait.yml (going, done,
     stalled, too_long, stopped, *_failed...); names: {address: inventory
     name} for the other ends; files_label: what the files are called;
-    extra: more [label, text] lines after the data."""
+    extra: more [label, text] lines after the data; clocks: False leaves
+    out Now and Started (a batch shows them once)."""
     total, done, now = state.get("bytes_total", 0), state.get("bytes_done", 0), state.get("now", 0)
     start = state.get("start", now)
     rate = state.get("rate")
     if status == "done":
         moved, elapsed = done - state.get("first_done", 0), now - start
         if not total:
-            summary = "nothing streamed" + (" in %s" % _duration(elapsed) if elapsed > 0 else "")
+            summary = ("in %s, " % _duration(elapsed) if elapsed > 0 else "") + "nothing seen in progress"
         elif moved <= 0 or elapsed <= 0:
             # streamed before the first check
             summary = "%s, %s" % (_size(done, total), ("after %s" % _duration(elapsed)) if elapsed > 0 else "at the first check")
@@ -250,10 +261,10 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
     block("data:", data)
     for label, text in extra or []:
         lines.append(_ITEM % (label + ":", text))
-    if total:
+    if total and set(s["other"] for s in streams) != set([node]):  # not a node's own tasks (cleanup)
         ways = set(s["way"] for s in streams)
         block((ways.pop() if len(ways) == 1 else "with") + ":", _peers(streams))
-    times = [("Now:", "current", now), ("Started:", "%s ago" % _duration(now - start), start)]
+    times = [("Now:", "current", now), ("Started:", "%s ago" % _duration(now - start), start)] if clocks else []
     if going and total:
         left = (total - done) / rate if rate and total > done else None
         if done >= total:
@@ -262,11 +273,7 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
             times.append(("Finish:", "in %s" % _duration(left), now + left))
         else:
             times.append(("Finish:", "unknown, " + ("too slow to tell" if left else "no rate yet"), None))
-    # the clocks in one column; a Finish without a clock does not widen it
-    width = max(len(t[1]) for t in times if t[2] is not None)
-    lines.append("")
-    for label, relative, epoch in times:
-        lines.append((_ITEM % (label, relative.ljust(width) + (" - " + _clock(epoch, now) if epoch is not None else ""))).rstrip())
+    lines.extend(_times(times, now))
     idle = state.get("idle_checks", 0)
     if idle:
         lines.append("")
@@ -285,6 +292,41 @@ def _host_var(hostvars, host, *path):
     except Exception:  # pylint: disable=broad-except  # an undefined or broken template in that host's variables
         return ""
     return value if isinstance(value, str) else ""
+
+
+def cassandra_stream_progress_by_host(views, states=None, **kwargs):
+    """cassandra_stream_progress for each host of views on its own: {host:
+    state}; states: what the previous call returned."""
+    states = states or {}
+    return dict((str(v.get("item", "")), cassandra_stream_progress([v], states.get(str(v.get("item", ""))), **kwargs))
+                for v in views)
+
+
+def cassandra_cleanup_report(states, jobs, status="going"):
+    """The lines to print for the cleanups of a batch: states from
+    cassandra_stream_progress_by_host, jobs: async_status results looped over
+    the started jobs (item.item: the host), status: the batch's
+    (cleanup_check.yml). One block per node, its own done line once its job
+    has ended; with several nodes, a line that names them first and the
+    clocks once at the end."""
+    hosts = [str(j["item"]["item"]) for j in jobs]
+    lines = ["%d nodes in parallel: %s" % (len(hosts), ", ".join(hosts))] if len(hosts) > 1 else []
+    lines.append("Finish counts the cleanup tasks running now, not the ones queued after them.")
+    for host, job in zip(hosts, jobs):
+        if job.get("finished") == 1 and not job.get("failed"):
+            own = "done"
+        elif job.get("failed") or ("finished" not in job and not job.get("unreachable")):
+            own = "failed"  # failed, or a job that can't be followed
+        else:
+            own = "stalled" if status == "stalled" else "going"
+        lines.append("")
+        lines.extend(cassandra_stream_report(states.get(host) or {}, node=host, what="cleanup", status=own,
+                                             files_label="tasks", clocks=len(hosts) == 1))
+    if len(hosts) > 1 and states:
+        state = next(iter(states.values()))
+        now, start = state.get("now", 0), state.get("start", 0)
+        lines.extend(_times([("Now:", "current", now), ("Started:", "%s ago" % _duration(now - start), start)], now))
+    return lines
 
 
 def cassandra_host_addresses(hosts, hostvars):
@@ -436,6 +478,8 @@ class FilterModule(object):
         return {"cassandra_stream_progress": cassandra_stream_progress,
                 "cassandra_stream_report": cassandra_stream_report,
                 "cassandra_host_addresses": cassandra_host_addresses,
+                "cassandra_stream_progress_by_host": cassandra_stream_progress_by_host,
+                "cassandra_cleanup_report": cassandra_cleanup_report,
                 "cassandra_add_node_plan": cassandra_add_node_plan,
                 "cassandra_compactionstats": cassandra_compactionstats,
                 "cassandra_cleanup_view": cassandra_cleanup_view}

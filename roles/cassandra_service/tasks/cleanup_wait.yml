@@ -34,7 +34,8 @@
       no cleanup progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s apart
       (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
       {% endif %}
-      Last progress: {{ _cassandra_stream_report | first }}
+      Last progress: {{ (_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
+                          status=_cassandra_cleanup_status) | first).strip() }}
   when: _cassandra_cleanup_status in ['failed', 'stalled']
 
 - name: Next round of checks

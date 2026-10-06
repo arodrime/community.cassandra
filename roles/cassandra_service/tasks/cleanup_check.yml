@@ -29,10 +29,15 @@
       ignore_errors: true  # a failed job is reported below
       ignore_unreachable: true  # read again at the next check
 
+    # the batch's (when to stop, the next wait), and each node's (what is printed)
     - name: Work out the progress
       ansible.builtin.set_fact:
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
+               now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
+               interval=cassandra_stream_check_interval | int) }}
+        _cassandra_cleanup_states: >-
+          {{ _views | community.cassandra.cassandra_stream_progress_by_host(_cassandra_cleanup_states | default({}),
                now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
                interval=cassandra_stream_check_interval | int) }}
       vars:
@@ -55,17 +60,12 @@
         _reached: "{{ cassandra_cleanup_job.results | rejectattr('unreachable', 'defined') | list }}"
         _ended: "{{ _reached | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
 
-    # A list: the default callback prints one line each; once done, a single line
+    # A list: the default callback prints one line each; a block per node, a line once its cleanup is done
     - name: Write the progress
       ansible.builtin.set_fact:
         _cassandra_stream_report: >-
-          {{ _cassandra_stream_state | community.cassandra.cassandra_stream_report(node=_node, what='cleanup',
-               status=_cassandra_cleanup_now, files_label='tasks', extra=[['cleaning', _cleaning]]) }}
-      vars:
-        _hosts: "{{ cassandra_cleanup_jobs_started.results | map(attribute='item') | list }}"
-        _node: "{{ _hosts | join(', ') if _hosts | join(', ') | length <= 30 else (_hosts | length) ~ ' nodes' }}"
-        _left: "{{ cassandra_cleanup_job.results | rejectattr('finished', 'equalto', 1) | list | length }}"
-        _cleaning: "{{ _left }} of {{ _hosts | length }} nodes (Finish counts the running tasks only)"
+          {{ _cassandra_cleanup_states | community.cassandra.cassandra_cleanup_report(cassandra_cleanup_job.results,
+               status=_cassandra_cleanup_now) }}
 
     - name: Progress of the cleanups
       ansible.builtin.debug:
