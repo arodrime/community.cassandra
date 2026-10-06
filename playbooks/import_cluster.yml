@@ -166,6 +166,12 @@
         # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
         case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
         echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
+        # config files written since the JVM started: it may not run what they say (a restart pending, or not)
+        btime=$(awk '$1 == "btime" {print $2}' /proc/stat)
+        ticks=$(sed 's/^.*) //' /proc/$pid/stat | awk '{print $20}')
+        start=$(awk -v b="$btime" -v t="$ticks" -v h="$(getconf CLK_TCK)" 'BEGIN {printf "%.2f", b + t / h}')
+        echo "newer=$(find "$d/" -maxdepth 1 -type f \( -name cassandra.yaml -o -name cassandra-env.sh -o -name 'jvm*-server.options' \
+          -o -name cassandra-rackdc.properties -o -name logback.xml \) -newermt "@$start" -printf '%f ' 2>/dev/null)"
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
           && echo "own_unit=yes"
@@ -215,6 +221,7 @@
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
         import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
+        import_cluster_newer_files: "{{ _kv.newer | default('') | split | sort }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
@@ -928,7 +935,10 @@
                    + ([('reached at ' ~ _hv.ansible_host ~ ', hosts.yml has its ring address ' ~ item.address
                         ~ ' (import_cluster_set_ansible_host: false leaves ansible_host out)')]
                       if _host != item.address and _hv.ansible_host | default(item.address) != item.address
-                         and import_cluster_set_ansible_host | default(true) | bool else []) }}
+                         and import_cluster_set_ansible_host | default(true) | bool else [])
+                   + ([(_hv.import_cluster_newer_files | join(', ') ~ ' written after Cassandra started: it may not run'
+                        ~ ' what they say. apply_config does not restart it for them; rolling_restart applies them')]
+                      if _read and _hv.import_cluster_newer_files | default([]) else []) }}
             _versions: >-
               {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
                  ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')

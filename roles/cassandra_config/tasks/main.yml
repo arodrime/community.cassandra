@@ -412,6 +412,16 @@
         - not ansible_check_mode
         - _cassandra_config_ask | bool
 
+    # a running node started another way (e.g. imported): what it runs with, before the change
+    # (apply_config then knows the change waits for a restart)
+    - name: Record the config the running Cassandra started with
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: config_seed.yml
+      when:
+        - not ansible_check_mode
+        - _cassandra_config_changes | length > 0
+
     # PyYAML is not an Ansible requirement on the nodes: validate when it is there
     - name: Look for PyYAML on the node
       ansible.builtin.command:
