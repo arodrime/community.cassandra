@@ -135,9 +135,11 @@
   when: cassandra_java_tarball == ""
 
 # Resolved, both: the directory itself may be a link (e.g. a "current" link)
+# -m: a /usr/bin/java that leads nowhere (an alternative of a removed Java)
+# still prints a line, so it is told apart from this one
 - name: Resolve the system java and this one
   ansible.builtin.command:
-    argv: [readlink, -f, /usr/bin/java, "{{ _cassandra_java_home }}/bin/java"]
+    argv: [readlink, -m, /usr/bin/java, "{{ _cassandra_java_home }}/bin/java"]
   register: cassandra_java_resolved
   changed_when: false
   failed_when: false
@@ -153,7 +155,8 @@
     priority: 100
   when:
     - not (ansible_check_mode and not cassandra_java_home_java.stat.exists)
-    - cassandra_java_resolved.stdout_lines | unique | length != 1
+    - cassandra_java_resolved.rc != 0 or cassandra_java_resolved.stdout_lines | length != 2
+      or cassandra_java_resolved.stdout_lines[0] != cassandra_java_resolved.stdout_lines[1]
 
 # The Debian/Ubuntu Cassandra package depends on a Java package or a
 # javaN-runtime virtual one: a local package provides the latter for the

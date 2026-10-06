@@ -15,6 +15,82 @@
     - role: community.cassandra.cassandra_repository
     - role: community.cassandra.cassandra_install
 
+# /usr/bin/java an alternative of a Java removed since (the java group left
+# behind by removed packages, in manual mode): leads nowhere, so the tarball's
+# java is made the system one again. Once (idempotence run).
+- name: System java leading nowhere
+  hosts: all
+  vars:
+    _gone: /opt/gone-java
+    _home: /opt/cassandra-java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1
+  tasks:
+    - name: Tested already (idempotence run)
+      ansible.builtin.stat:
+        path: /root/dangling-java-tested
+      register: cassandra_test_dangling_done
+
+    - name: Test it
+      when: not cassandra_test_dangling_done.stat.exists
+      block:
+        - name: A Java to be removed
+          ansible.builtin.file:
+            path: "{{ _gone }}/bin"
+            state: directory
+            mode: "0755"
+
+        - name: Its java
+          ansible.builtin.copy:
+            content: "#!/bin/sh\nexit 1\n"
+            dest: "{{ _gone }}/bin/java"
+            mode: "0755"
+
+        - name: Made the java alternative (manual mode)
+          community.general.alternatives:
+            name: java
+            path: "{{ _gone }}/bin/java"
+            link: /usr/bin/java
+            priority: 5000
+
+        - name: Then removed
+          ansible.builtin.file:
+            path: "{{ _gone }}"
+            state: absent
+
+        - name: Mark it tested
+          ansible.builtin.file:
+            path: /root/dangling-java-tested
+            state: touch
+            mode: "0644"
+
+        - name: Read /usr/bin/java
+          ansible.builtin.stat:
+            path: /usr/bin/java
+          register: cassandra_test_dangling
+
+        - name: It leads nowhere
+          ansible.builtin.assert:
+            that: cassandra_test_dangling.stat.exists and cassandra_test_dangling.stat.lnk_source == _gone ~ '/bin/java'
+
+        - name: Run the role (twice, the second to see it settled)
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_java_tarballs: {"17": {url: "http://127.0.0.1:8000/java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz"}}
+            cassandra_java_version: "17"
+          loop: [1, 2]
+
+        - name: Ask java its version
+          ansible.builtin.command:
+            argv: [java, -version]
+          register: cassandra_test_dangling_java
+          changed_when: false
+
+        - name: The tarball's java, and the second run had nothing to set
+          ansible.builtin.assert:
+            that:
+              - cassandra_test_dangling_java.stderr is search('"17[.]0[.]20[.]1"')
+              - cassandra_java_resolved.stdout_lines == [_home ~ '/bin/java'] * 2
+
 # An imported node: Java already there, reached through a link, and a
 # /usr/bin/java made by hand. The role must leave both alone.
 - name: Java already unpacked (cassandra_java_home)
