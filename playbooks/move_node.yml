@@ -20,7 +20,7 @@
 # Run it again to resume: the plan is worked out again from the ring (the
 # nodes already moved stay), a move an earlier run left going is waited for.
 # The nodes that lost ranges keep that data until a cleanup: the commands are
-# printed, or cassandra_move_cleanup: one, rack, dc or all runs it here. They
+# printed, or cassandra_move_cleanup: sequential (or one), rack, dc or all runs it here. They
 # are recorded next to the progress files (<cassandra_hosts>-move.cleanup),
 # before each move, until a move_node run cleans them up: an interrupted run
 # forgets none.
@@ -50,8 +50,11 @@
 
     - name: Check the cleanup choice
       ansible.builtin.assert:
-        that: cassandra_move_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
-        fail_msg: "cassandra_move_cleanup must be none, one, rack, dc or all (got {{ cassandra_move_cleanup | default('') }})"
+        that: cassandra_move_cleanup | default('none') in ['none', 'sequential', 'one', 'rack', 'dc', 'all']
+        fail_msg: >-
+          cassandra_move_cleanup must be none (print the command), sequential (one node at a time; one is the same),
+          rack (a rack at a time), dc (a datacenter at a time) or all (every node at once: heavy I/O)
+          (got {{ cassandra_move_cleanup | default('') }})
         quiet: true
       run_once: true
 
@@ -194,7 +197,8 @@
           after:
             - pre: "{{ _plan.lines }}"
             - >-
-              {{ ('Cleanup afterwards (cassandra_move_cleanup=' ~ cassandra_move_cleanup | default('none') ~ ').')
+              {{ ('Cleanup afterwards (cassandra_move_cleanup='
+                  ~ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) ~ ').')
                  if _plan.steps else 'Nothing to move.' }}
           warnings:
             - label: tokens
@@ -285,7 +289,7 @@
 
 # The nodes that lost ranges (worked out from the plan) still hold that data
 # until a cleanup. cassandra_move_cleanup: none (default) prints the command;
-# one, rack, dc or all runs it here, by batches, the cluster checked before each.
+# sequential (or one), rack, dc or all runs it here, by batches, the cluster checked before each.
 - name: Clean up the nodes that lost ranges
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
@@ -298,7 +302,7 @@
          | select | unique | list }}
     _targets: "{{ _listed | select('in', ansible_play_hosts) | list }}"
     _left: "{{ _listed | reject('in', ansible_play_hosts) | list }}"
-    _mode: "{{ cassandra_move_cleanup | default('none') }}"
+    _mode: "{{ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) }}"
     # not "move-...": a resume of the moves must not pick this file
     cassandra_service_node_action: cleanup_after_move
     cassandra_service_resume_hint: >-
@@ -363,7 +367,7 @@
           {%- set batches = {} -%}
           {%- for h in _targets -%}
           {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set key = {'one': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
+          {%-   set key = {'sequential': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
           {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
           {%- endfor -%}
           {{ batches.values() | list }}

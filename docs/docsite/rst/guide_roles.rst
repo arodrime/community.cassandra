@@ -273,8 +273,8 @@ again with ``-e cassandra_add_node_reset=true`` (see `Resetting a node`_). ``rep
 
 Once the new nodes have joined, the others still hold the data they handed over: ``add_node`` prints the ``cleanup``
 command for the nodes concerned (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
-replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``one`` (a node at a time), ``rack``, ``dc``
-or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
+replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``sequential`` (a node at a time, ``one`` is
+the same), ``rack``, ``dc`` or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
 
@@ -311,7 +311,7 @@ playbooks work them out:
   cluster is checked, and the nodes that receive data must keep ``cassandra_move_min_free_percent`` (20) of their data
   disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
   again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
-  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``one``, ``rack``, ``dc``, ``all``), or the
+  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``sequential``, ``rack``, ``dc``, ``all``), or the
   command is printed; they stay listed next to the progress files (``<cassandra_hosts>-move.cleanup``) until a ``move_node``
   run cleans them up, so an interrupted run forgets none. A moved node keeps its old ``initial_token`` in
   ``cassandra.yaml`` (it is not read again); the run says which ``cassandra_initial_token`` of the inventory to

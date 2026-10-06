@@ -140,13 +140,14 @@ argument_specs:
       cassandra_add_node_cleanup:
         type: str
         default: none
-        choices: [none, one, rack, dc, all]
+        choices: [none, sequential, one, rack, dc, all]
         description:
           - What the C(add_node) playbook does, after the add, about the cleanup of the nodes that handed
             data over (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
-            replicas as racks there). C(none) prints the command; C(one) runs it one node at a time;
-            C(rack) and C(dc) clean the nodes of a rack, of a datacenter together, one batch after the other;
-            C(all) cleans them all at once. The cluster is checked before each batch.
+            replicas as racks there), with the words of the C(cleanup) playbook's C(cassandra_cleanup_mode).
+            C(none) prints the command; C(sequential) runs it one node at a time (C(one) is the same);
+            C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
+            The cluster is checked before each batch.
       cassandra_add_node_reset:
         type: bool
         default: false
@@ -218,7 +219,7 @@ argument_specs:
       cassandra_move_cleanup:
         type: str
         default: none
-        choices: [none, one, rack, dc, all]
+        choices: [none, sequential, one, rack, dc, all]
         description:
           - What C(move_node) does about the cleanup of the nodes that lost ranges (this run's and the ones an
             interrupted run recorded), as C(cassandra_add_node_cleanup).

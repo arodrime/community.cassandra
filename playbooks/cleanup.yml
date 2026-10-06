@@ -23,7 +23,9 @@
     - name: Check the mode
       ansible.builtin.assert:
         that: cassandra_cleanup_mode in ['sequential', 'rack', 'dc', 'all']
-        fail_msg: "cassandra_cleanup_mode must be sequential, rack, dc or all (got {{ cassandra_cleanup_mode }})"
+        fail_msg: >-
+          cassandra_cleanup_mode must be sequential (one node at a time, default), rack (a rack at a time),
+          dc (a datacenter at a time) or all (every node at once: heavy I/O) (got {{ cassandra_cleanup_mode }})
         quiet: true
       run_once: true
 

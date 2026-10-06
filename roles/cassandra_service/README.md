@@ -91,9 +91,10 @@ Role Variables
   bootstrap leaves the node JOINING with no stream: the wait then ends as a
   stall, see `system.log` (`nodetool bootstrap resume` retries it).
 * `cassandra_add_node_cleanup` (default `none`): after `add_node`, the
-  cleanup of the nodes that handed data over. `none` prints the command,
-  `one` runs it one node at a time, `rack` and `dc` the nodes of a rack, of a
-  datacenter together, batch after batch, `all` every node at once.
+  cleanup of the nodes that handed data over, with the words of the
+  `cleanup` playbook's `cassandra_cleanup_mode`. `none` prints the command,
+  `sequential` runs it one node at a time (`one` is the same), `rack` a rack
+  at a time, `dc` a datacenter at a time, `all` every node at once (heavy I/O).
 * One token per node (`cassandra_num_tokens: 1`): `cassandra_token_auto`
   (default `false`), where `add_node` puts new nodes without
   `cassandra_initial_token`: `bisect` (no node moves), `balanced` (even ring,

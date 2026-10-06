@@ -107,6 +107,16 @@ def test_shown_and_confirmed_when_there_is_something_to_do(new, joining, cleanup
     assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(condition)) is shown
 
 
+@pytest.mark.parametrize("cleanup, said", [
+    ("none", "Cleanup afterwards (cassandra_add_node_cleanup=none): none, the commands are printed at the end"),
+    ("sequential", "Cleanup afterwards (cassandra_add_node_cleanup=sequential): one node at a time"),
+    ("one", "Cleanup afterwards (cassandra_add_node_cleanup=sequential): one node at a time"),  # the same, cleanup.yml's word
+    ("all", "Cleanup afterwards (cassandra_add_node_cleanup=all): every node at once: heavy I/O"),
+])
+def test_cleanup_choice_in_the_cleanup_playbook_words(cleanup, said):
+    assert said in flat(summary(cassandra_add_node_cleanup=cleanup))
+
+
 def test_medusa_on_when_only_the_new_node_has_it():
     text = summary(node7={"cassandra_medusa_enabled": True})
     assert "Medusa on (" in flat(text) and "    Medusa fqdn " in text

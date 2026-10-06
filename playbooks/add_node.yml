@@ -20,7 +20,8 @@
 # A bootstrap can take hours: a progress line every cassandra_stream_check_interval
 # seconds (300); the run stops only after cassandra_stream_stall_checks checks (3)
 # in a row with nothing streamed. Afterwards the cleanup command is printed, or
-# run with cassandra_add_node_cleanup: one, rack, dc or all (default none).
+# run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
+# all (default none), the words of cassandra_cleanup_mode.
 # One token per node (cassandra_num_tokens: 1): each new node needs
 # cassandra_initial_token, or -e cassandra_token_auto=bisect (each one splits
 # the largest range, nothing moves), balanced (an even ring: move_node then
@@ -211,8 +212,11 @@
 
     - name: Check the cleanup choice
       ansible.builtin.assert:
-        that: cassandra_add_node_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
-        fail_msg: "cassandra_add_node_cleanup must be none, one, rack, dc or all (got {{ cassandra_add_node_cleanup | default('') }})"
+        that: cassandra_add_node_cleanup | default('none') in ['none', 'sequential', 'one', 'rack', 'dc', 'all']
+        fail_msg: >-
+          cassandra_add_node_cleanup must be none (print the command), sequential (one node at a time; one is the same),
+          rack (a rack at a time), dc (a datacenter at a time) or all (every node at once: heavy I/O)
+          (got {{ cassandra_add_node_cleanup | default('') }})
         quiet: true
       run_once: true
 
@@ -228,7 +232,7 @@
         _running: >-
           {{ (hostvars[_existing[0]].cassandra_preflight_describe.stdout | default('') ~ '\n').split('Database versions:')[1:]
              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
-        _cleanup: "{{ cassandra_add_node_cleanup | default('none') }}"
+        _cleanup: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
         # cassandra_medusa's defaults are not loaded here: the version and virtualenv defaults are copied
         # on when a new node gets it (each node's line says which)
         _medusa: >-
@@ -278,8 +282,8 @@
           after:
             - >-
               Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
-                'one': 'one node at a time', 'rack': 'the nodes of a rack together, rack after rack',
-                'dc': 'the nodes of a datacenter together', 'all': 'every node at once (heavy I/O everywhere)'}[_cleanup] }}
+                'sequential': 'one node at a time', 'rack': 'a rack at a time', 'dc': 'a datacenter at a time',
+                'all': 'every node at once: heavy I/O'}[_cleanup] }}
               ({{ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length }} nodes: {{
               cassandra_add_node_plan.scope | dict2items | map(attribute='key') | zip(cassandra_add_node_plan.scope | dict2items
               | map(attribute='value') | map('replace', 'rack', "the new nodes' racks") | map('replace', 'dc', 'whole datacenter'))
@@ -405,9 +409,9 @@
 # The nodes that handed ranges over still hold that data until a cleanup: the
 # datacenter's nodes, or only the new nodes' racks when every keyspace has as
 # many replicas there as racks. cassandra_add_node_cleanup: none (default)
-# prints the command; one, rack, dc or all runs it here, by batches (one node,
-# the nodes of a rack, of a datacenter, or all of them at once), the cluster
-# checked before each batch.
+# prints the command; sequential (or one), rack, dc or all runs it here, by
+# batches (one node, the nodes of a rack, of a datacenter, or all of them at
+# once), the cluster checked before each batch.
 - name: Clean up the nodes that handed data over
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
   gather_facts: false
@@ -416,7 +420,7 @@
       {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) | first].cassandra_add_node_plan | default({}) }}
     _targets: >-
       {{ _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten | select('in', ansible_play_hosts) | list }}
-    _mode: "{{ cassandra_add_node_cleanup | default('none') }}"
+    _mode: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
     cassandra_service_node_action: cleanup
     cassandra_cleanup_jobs: 2
   tasks:
@@ -460,7 +464,7 @@
           {%- set batches = {} -%}
           {%- for h in _targets -%}
           {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set key = {'one': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
+          {%-   set key = {'sequential': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
           {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
           {%- endfor -%}
           {{ batches.values() | list }}

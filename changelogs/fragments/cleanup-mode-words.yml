@@ -1,0 +1,2 @@
+minor_changes:
+  - "add_node, move_node - ``cassandra_add_node_cleanup`` and ``cassandra_move_cleanup`` take the words of the cleanup playbook's ``cassandra_cleanup_mode``: ``sequential`` (one node at a time; ``one`` still works and means the same), ``rack``, ``dc`` or ``all``, besides ``none``; the screens and error messages describe the values the same way everywhere."
