@@ -29,29 +29,28 @@
       ignore_errors: true  # a failed job is reported below
       ignore_unreachable: true  # read again at the next check
 
+    # the batch's (when to stop, the next wait), and each node's (what is printed)
     - name: Work out the progress
       ansible.builtin.set_fact:
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
                now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
-                 eta_label='ETA of the running tasks') }}
+               interval=cassandra_stream_check_interval | int) }}
+        _cassandra_cleanup_states: >-
+          {{ _views | community.cassandra.cassandra_stream_progress_by_host(_cassandra_cleanup_states | default({}),
+               now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
+               interval=cassandra_stream_check_interval | int) }}
       vars:
         _views: >-
           {{ cassandra_cleanup_read.results | zip(cassandra_cleanup_jobs_started.results | map(attribute='item'))
              | map('community.cassandra.cassandra_cleanup_view') | list }}
 
-    - name: Progress of the cleanups
-      ansible.builtin.debug:
-        msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state.line }}  ({{ _left | length }} of {{ _all | length }} nodes still cleaning)"
-      vars:
-        _all: "{{ cassandra_cleanup_job.results }}"
-        _left: "{{ _all | rejectattr('finished', 'equalto', 1) | list }}"
-
     - name: Where it stands
       ansible.builtin.set_fact:
         # kept as a fact: the skipped tasks of the next checks overwrite registered results
         _cassandra_cleanup_jobs: "{{ cassandra_cleanup_job.results }}"
-        _cassandra_cleanup_status: >-
+        # the block's condition reads _cassandra_cleanup_status: set after the progress
+        _cassandra_cleanup_now: >-
           {{ 'failed' if _ended | selectattr('failed', 'defined') | selectattr('failed') | list
              else 'failed' if _reached | rejectattr('finished', 'defined') | list
              else 'done' if _ended | length == cassandra_cleanup_job.results | length
@@ -61,7 +60,23 @@
         _reached: "{{ cassandra_cleanup_job.results | rejectattr('unreachable', 'defined') | list }}"
         _ended: "{{ _reached | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
 
+    # A list: the default callback prints one line each; a block per node, a line once its cleanup is done
+    - name: Write the progress
+      ansible.builtin.set_fact:
+        _cassandra_stream_report: >-
+          {{ _cassandra_cleanup_states | community.cassandra.cassandra_cleanup_report(cassandra_cleanup_job.results,
+               _cassandra_stream_state, status=_cassandra_cleanup_now) }}
+
+    - name: Progress of the cleanups
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_stream_report }}"
+
+    - name: Keep where it stands
+      ansible.builtin.set_fact:
+        _cassandra_cleanup_status: "{{ _cassandra_cleanup_now }}"
+
+    # 10 s, 30 s, 1, 2 and 4 minutes, then every cassandra_stream_check_interval
     - name: Wait before the next check
       ansible.builtin.pause:
-        seconds: "{{ cassandra_stream_check_interval | int }}"
+        seconds: "{{ _cassandra_stream_state.wait }}"
       when: _cassandra_cleanup_status == 'going'

@@ -30,6 +30,7 @@
     - name: Start following the cleanups
       ansible.builtin.set_fact:
         _cassandra_stream_state: {}
+        _cassandra_cleanup_states: {}
 
     - name: Follow the cleanups
       ansible.builtin.include_tasks: cleanup_wait.yml

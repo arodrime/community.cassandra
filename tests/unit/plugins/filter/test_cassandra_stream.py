@@ -8,7 +8,8 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
-    cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress)
+    cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress,
+    cassandra_stream_report, cassandra_host_addresses, cassandra_stream_progress_by_host, cassandra_cleanup_report)
 
 GIB = 1024 ** 3
 MIB = 1024 ** 2
@@ -49,29 +50,58 @@ def read(host, *sessions, **kwargs):
     return result
 
 
-def test_progress_and_line():
+def report(s, **kwargs):
+    """The report as printed, one line each, 88 columns at most (100 in a debug msg list)."""
+    lines = cassandra_stream_report(s, **dict({"node": "n4", "what": "bootstrap"}, **kwargs))
+    assert all(len(line) <= 88 for line in lines) or len(kwargs.get("node", "")) > 20, lines
+    return "\n".join(lines)
+
+
+def header(s, **kwargs):
+    return report(s, **kwargs).split("\n", maxsplit=1)[0]
+
+
+def finish(s, **kwargs):
+    """The Finish line's text, None without one."""
+    found = [line.split("Finish:", 1)[1].strip() for line in report(s, **kwargs).split("\n") if "Finish:" in line]
+    return found[0] if found else None
+
+
+def test_progress_and_report():
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 0, 100 * GIB), session("10.0.0.2", 0, 100 * GIB))],
                                   None, now=1000, operations=["Bootstrap"])
-    assert s["progressed"] and not s["stalled"] and s["line"].startswith("[--------------------]   0%  0.0/200.0 GiB  ETA ?  ")
+    assert s["progressed"] and not s["stalled"]
+    assert report(s).startswith("n4  bootstrap  [--------------------]   0%\n\n      data:      0.0 GiB / 200.0 GiB\n")
+    assert finish(s) == "unknown, no rate yet"
     files = [{"path": "/d/ks/t-%s/nb-1-big-Data.db" % ("0" * 32), "table": "ks.t", "done": 5, "total": 10}]
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 60 * GIB, 100 * GIB, files=files),
                                         session("10.0.0.2", 40 * GIB, 100 * GIB))],
                                   s, now=1300, operations=["Bootstrap"])
     assert s["progressed"] and s["last_progress"] == 1300
     # 100 GiB in 300s
-    assert s["line"] == ("[##########----------]  50%  100.0/200.0 GiB  341 MiB/s  ETA 5m00s (ends ~00:26)"
-                         "  tables: 0 done, 1 streaming  2 sessions  now: ks.t (from 10.0.0.1)")
+    assert report(s, names={"10.0.0.1": "n1"}) == """\
+n4  bootstrap  [##########----------]  50%   341 MiB/s
+
+      data:      100.0 GiB / 200.0 GiB
+                 10 / 20 files
+
+      from:      10.0.0.2   40% done  (40.0 / 100.0 GiB)
+                 n1         60% done  (60.0 / 100.0 GiB)
+
+      Now:       current - 00:21 UTC
+      Started:   5m ago  - 00:16 UTC
+      Finish:    in 5m   - 00:26 UTC"""
 
 
 def test_stall_after_checks_in_a_row_without_bytes():
     views = [read("n4", session("10.0.0.1", 10, 100))]
     s = cassandra_stream_progress(views, None, now=0, stall_checks=3)
     s = cassandra_stream_progress(views, s, now=300, stall_checks=3)
-    assert not s["progressed"] and not s["stalled"] and "NO PROGRESS for 5m00s (1/3 checks)" in s["line"]
+    assert not s["progressed"] and not s["stalled"] and report(s).endswith("\n\n      Progress:  none for 1 check (5m), stops after 3")
     s = cassandra_stream_progress(views, s, now=600, stall_checks=3)
     assert not s["stalled"] and s["idle_checks"] == 2
-    # the line once it has ended (DECOMMISSIONED, NORMAL...): no no-progress count
-    assert "NO PROGRESS" not in s["line_done"] and s["line"].startswith(s["line_done"] + "  NO PROGRESS for 10m00s")
+    # once it has ended (DECOMMISSIONED, NORMAL...): one line, no no-progress count
+    assert report(s, status="done") == "n4  bootstrap  done  10 B, after 10m"
     # one more byte resets the count
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=900, stall_checks=3)
     assert s["progressed"] and s["idle_checks"] == 0
@@ -89,9 +119,25 @@ def test_finished_session_counts_as_done_and_as_progress():
 
 def test_no_session_yet_then_no_answer():
     s = cassandra_stream_progress([read("n4")], None, now=0)
-    assert "(nothing in progress yet)" in s["line"] and s["bytes_total"] == 0
+    assert s["bytes_total"] == 0 and report(s) == """\
+n4  bootstrap  total unknown
+
+      data:      nothing in progress yet
+
+      Now:       current - 00:00 UTC
+      Started:   0s ago  - 00:00 UTC"""
     s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=100, stall_checks=1, quiet_factor=1)
-    assert not s["answered"] and s["stalled"] and "(no answer from nodetool netstats)" in s["line"]
+    assert not s["answered"] and s["stalled"]
+    assert report(s, status="stalled") == """\
+n4  bootstrap  STALLED  total unknown
+
+      data:      no answer at this check, the figures are from the last answer
+                 nothing in progress yet
+
+      Now:       current - 00:01 UTC
+      Started:   1m ago  - 00:00 UTC
+
+      Progress:  none for 1 check (1m)"""
 
 
 def test_filters_operation_and_peer():
@@ -210,7 +256,8 @@ def test_cleanup_progress_line_and_failed_read():
              cassandra_cleanup_view(({"rc": 1, "stdout": "", "stderr": "Connection refused", "msg": "non-zero"}, "n2"))]
     assert views[1]["failed"]
     s = cassandra_stream_progress(views, None, now=0, operations=["Cleanup"])
-    assert s["bytes_total"] == 4194304 and "now: orders.items (on n1)" in s["line"]
+    assert s["bytes_total"] == 4194304
+    assert "      on:        n1   25% done  (1.0 / 4.0 MiB)\n" in report(s, files_label="tasks")
 
 
 def test_quiet_phases_get_more_checks():
@@ -221,7 +268,7 @@ def test_quiet_phases_get_more_checks():
             s = cassandra_stream_progress(views, s, now=i * 300, stall_checks=3, quiet_factor=4)
         assert not s["transferring"] and s["idle_checks"] == 11 and not s["stalled"]
         s = cassandra_stream_progress(views, s, now=12 * 300, stall_checks=3, quiet_factor=4)
-        assert s["stalled"] and "(12/12 checks)" in s["line"]
+        assert s["stalled"] and report(s, status="stalled").endswith("\n      Progress:  none for 12 checks (1h00m)")
 
 
 def test_simple_strategy_user_keyspace_cleans_every_dc():
@@ -265,54 +312,56 @@ def eta(done, now, s, total=710 * GIB):
 
 def test_eta_unknown_until_two_checks_or_when_nothing_moves():
     s = eta(40 * GIB, 0, None)
-    assert "  ETA ?  " in s["line"] and "/s" not in s["line"]
+    assert header(s).endswith("]   5%") and "/s" not in report(s) and finish(s) == "unknown, no rate yet"
     s = eta(40 * GIB, 300, s)  # no byte since the first check: rate 0
-    assert "  ETA ?  " in s["line"]
-    # nothing left: no ETA
-    assert "ETA" not in eta(710 * GIB, 600, s)["line"]
+    assert header(s).endswith("]   5%") and finish(s) == "unknown, no rate yet"
+    # nothing left: no time left, the sessions finish
+    s = eta(710 * GIB, 600, s)
+    assert header(s).startswith("n4  bootstrap  [####################] 100%   ") and finish(s) == "all sent, finishing"
 
 
 def test_eta_from_the_rate_of_the_last_three_checks():
     # 12 MiB/s for 3 checks, after a first check at 40 GiB
     s = eta(40 * GIB, 0, None)
     s = eta(40 * GIB + 3600 * 12 * MIB, 3600, s)
-    assert "  12 MiB/s  ETA " in s["line"]
+    assert header(s).endswith("]  11%   12 MiB/s")
     s = eta(40 * GIB + 7200 * 12 * MIB, 7200, s)
     s = eta(40 * GIB + 10800 * 12 * MIB, 10800, s)
     left = (710 * GIB - (40 * GIB + 10800 * 12 * MIB)) / (12.0 * MIB)
-    assert "  12 MiB/s  ETA %dh%02d (ends ~%s)" % (left // 3600, left % 3600 // 60,
-                                                   time.strftime("%H:%M", time.gmtime(10800 + left))) in s["line"]
+    assert header(s).endswith("   12 MiB/s") and finish(s) == "in %dh%02dm - %s UTC" % (
+        left // 3600, left % 3600 // 60, time.strftime("%H:%M", time.gmtime(10800 + left)))
     # then 6 MiB/s: the first 12 MiB/s hour leaves the window after three more checks
     for i in (1, 2, 3):
         s = eta(s["bytes_done"] + 3600 * 6 * MIB, 10800 + 3600 * i, s)
-        assert ("  %s MiB/s  " % {1: 10, 2: "8.0", 3: "6.0"}[i]) in s["line"], s["line"]
+        assert header(s).endswith("   %s MiB/s" % {1: 10, 2: "8.0", 3: "6.0"}[i]), header(s)
     assert len(s["samples"]) == 3
 
 
 def test_eta_over_a_day_shows_the_date():
     s = eta(0, 0, None, total=100 * GIB)
     s = eta(100 * MIB, 100, s, total=100 * GIB)  # 1 MiB/s: 99.9 GiB left, about 28h
-    assert "  1.0 MiB/s  ETA 1d04h (ends ~1970-01-02 04:26)" in s["line"]
+    assert header(s).endswith("   1.0 MiB/s") and finish(s) == "in 1d04h - 1970-01-02 04:26 UTC"
 
 
 def test_eta_ignores_a_check_without_answer():
     s = eta(0, 0, None, total=100 * GIB)
     s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=300)
-    assert s["samples"] == [[0, 0]] and "ETA ?" in s["line"]
+    assert s["samples"] == [[0, 0]] and header(s).endswith("]   0%") and finish(s) == "unknown, no rate yet"
     s = eta(300 * MIB, 600, s, total=100 * GIB)
-    assert "  512 KiB/s  ETA " in s["line"]
+    assert header(s).endswith("   512 KiB/s")
     # no answer after two good checks: no made-up rate
     s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=900)
-    assert "  ETA ?  (no answer" in s["line"] and "/s" not in s["line"]
+    assert header(s).endswith("]   0%") and "/s" not in report(s) and "      data:      no answer at this check" in report(s)
 
 
 def test_eta_unknown_beyond_30_days():
     s = eta(0, 0, None, total=100 * 1024 * GIB)
     s = eta(1, 3600, s, total=100 * 1024 * GIB)  # 1 byte an hour: no absurd date, no error
-    assert "  0 KiB/s  ETA ?  " in s["line"]
+    assert header(s).endswith("   0 B/s") and finish(s) == "unknown, too slow to tell"
     s = eta(0, 0, None, total=100 * GIB)
-    assert "  40 KiB/s  ETA ?" in eta(40 * 1024, 1, s, total=100 * GIB)["line"]  # 30.3 days
-    assert "  50 KiB/s  ETA 24d06h (ends ~1970-01-25 06:32)" in eta(50 * 1024, 1, s, total=100 * GIB)["line"]
+    assert finish(eta(40 * 1024, 1, s, total=100 * GIB)) == "unknown, too slow to tell"  # 30.3 days
+    s = eta(50 * 1024, 1, s, total=100 * GIB)
+    assert header(s).endswith("   50 KiB/s") and finish(s) == "in 24d06h - 1970-01-25 06:32 UTC"
 
 
 def test_nodes_added_in_the_same_run_clean_up_for_the_later_ones():
@@ -336,7 +385,7 @@ def test_real_compactionstats_40_41_50():
         assert [(s["bytes_done"], s["bytes_total"], s["files"][0]["table"]) for s in view["sessions"]] == [
             (d, t, "ks.orders") for d, t in tasks], version
         s = cassandra_stream_progress([view], None, now=0, operations=["Cleanup"])
-        assert "2 sessions" in s["line"] and "now: ks.orders (on n1)" in s["line"]
+        assert s["sessions"] == 2 and "\n      on:        n1  " in report(s)
 
 
 def test_real_40_41_bootstrap_progress_between_two_checks():
@@ -347,7 +396,8 @@ def test_real_40_41_bootstrap_progress_between_two_checks():
         s = cassandra_stream_progress([netstats_view("n2", "nodetool_netstats_%s_bootstrap_receiving_late.txt" % version)],
                                       s, now=300, operations=["Bootstrap"])
         assert s["progressed"] and s["idle_checks"] == 0 and not s["stalled"]
-        assert s["line"].startswith("[#########-----------]  4") and "/91." in s["line"] and "MiB" in s["line"] and "/s  ETA " in s["line"]
+        assert header(s).startswith("n4  bootstrap  [#########-----------]  4") and header(s).endswith(" KiB/s")
+        assert "      data:      4" in report(s) and " MiB / 9" in report(s) and "      from:      192.168.0.2   4" in report(s)
 
 
 def test_an_unreachable_node_keeps_its_cleanup_running():
@@ -355,7 +405,7 @@ def test_an_unreachable_node_keeps_its_cleanup_running():
     s = cassandra_stream_progress([cassandra_cleanup_view(running)], None, now=0, operations=["Cleanup"])
     s = cassandra_stream_progress([cassandra_cleanup_view(({"unreachable": True, "msg": "ssh timeout"}, "n1"))], s,
                                   now=300, operations=["Cleanup"])
-    assert not s["progressed"] and not s["answered"] and s["idle_checks"] == 1 and "100%" not in s["line"]
+    assert not s["progressed"] and not s["answered"] and s["idle_checks"] == 1 and "100%" not in header(s)
 
 
 def test_run_again_for_the_cleanup_keeps_the_earlier_new_nodes():
@@ -369,14 +419,238 @@ def test_run_again_for_the_cleanup_keeps_the_earlier_new_nodes():
 def test_eta_says_the_day_when_the_end_is_tomorrow():
     s = eta(0, 84600, None, total=10 * GIB)  # 23:30
     s = eta(1024 * MIB, 84900, s, total=10 * GIB)  # 1 GiB in 5 minutes: 45 minutes left
-    assert "  ETA 45m00s (ends ~1970-01-02 00:20)" in s["line"]
+    assert finish(s) == "in 45m  - 1970-01-02 00:20 UTC"
 
 
-def test_cleanup_eta_is_for_the_running_tasks():
-    view = cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_50_cleanup.txt")}, "n1"))
-    s = cassandra_stream_progress([view], None, now=0, operations=["Cleanup"], eta_label="ETA of the running tasks")
-    assert "  ETA of the running tasks ?  " in s["line"]
-    for v in view["sessions"]:
-        v["bytes_done"] += MIB
-    s = cassandra_stream_progress([view], s, now=100, operations=["Cleanup"], eta_label="ETA of the running tasks")
-    assert "  ETA of the running tasks " in s["line"] and "(ends ~" in s["line"]
+def test_cleanup_report_a_block_per_node():
+    views = [cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_%s_cleanup.txt" % v)}, h))
+             for h, v in (("n1", "50"), ("n4", "41"), ("n5", "40"))]
+    s = cassandra_stream_progress_by_host(views, None, now=0, operations=["Cleanup"])
+    batch = cassandra_stream_progress(views, None, now=0, operations=["Cleanup"])
+    for view in views:
+        for task in view["sessions"]:
+            task["bytes_done"] += 3 * MIB
+    views[2]["sessions"] = []  # n5's tasks ended
+    s = cassandra_stream_progress_by_host(views, s, now=100, operations=["Cleanup"], interval=300)
+    batch = cassandra_stream_progress(views, batch, now=100, operations=["Cleanup"], interval=300)
+    jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n4"}, "finished": 0},
+            {"item": {"item": "n5"}, "finished": 1}]
+    lines = cassandra_cleanup_report(s, jobs, batch)
+    assert all(len(line) <= 88 for line in lines)
+    assert "\n".join(lines) == """\
+3 nodes in parallel: n1, n4, n5
+Finish counts the cleanup tasks running now, not the ones queued after them.
+
+n1  cleanup  [###-----------------]  15%   61 KiB/s
+
+      data:      7.0 MiB / 44.2 MiB
+                 0 / 2 tasks
+
+      Finish:    in 10m - 00:11 UTC
+
+n4  cleanup  [#######-------------]  39%   61 KiB/s
+
+      data:      7.9 MiB / 20.2 MiB
+                 0 / 2 tasks
+
+      Finish:    in 3m - 00:05 UTC
+
+n5  cleanup  done  88.2 MiB in 1m (90.1 MiB in all), 903 KiB/s on average
+
+      Now:       current - 00:01 UTC
+      Started:   1m ago  - 00:00 UTC"""
+    # one node: no batch line, its clocks in its block; a stalled batch, a job that can't be followed
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, jobs[:1], dict(batch, idle_checks=3, limit=3), status="stalled")
+    assert lines[1].startswith("n1  cleanup  STALLED  [###") and "Finish counts" not in lines[0]
+    assert "      Started:   1m ago  - 00:00 UTC" in lines and lines[-1] == "      Progress:  none for 3 checks (0s)"
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, [{"item": {"item": "n1"}, "msg": "lost"}], batch, status="failed")
+    assert lines[1].startswith("n1  cleanup  FAILED  [###")
+
+
+def test_cleanup_report_the_batch_decides_the_stall():
+    def view(host, done):
+        return {"item": host, "sessions": [session(host, done, 100 * MIB, op="Cleanup", direction="local")]}
+    jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n2"}, "finished": 0}]
+    states = batch = None
+    for i in range(6):  # n1 stays at 10 MiB, n2 moves
+        views = [view("n1", 10 * MIB), view("n2", (10 + i) * MIB)]
+        states = cassandra_stream_progress_by_host(views, states, now=i * 300, operations=["Cleanup"], interval=300)
+        batch = cassandra_stream_progress(views, batch, now=i * 300, operations=["Cleanup"], interval=300)
+    assert states["n1"]["idle_checks"] == 5 and batch["idle_checks"] == 0
+    text = "\n".join(cassandra_cleanup_report(states, jobs, batch))
+    assert "Progress:" not in text and "n1  cleanup  [##------------------]  10%" in text
+    # n2's job failed: the run stops, n1's cleanup goes on without it; an unreachable job is still followed
+    jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n2"}, "finished": 1, "failed": True, "msg": "x"}]
+    lines = cassandra_cleanup_report(states, jobs, batch, status="failed")
+    assert "n1  cleanup  STILL RUNNING  [##------------------]  10%" in lines
+    assert any(line.startswith("n2  cleanup  FAILED  [") for line in lines)
+    jobs = [{"item": {"item": "n1"}, "unreachable": True}, {"item": {"item": "n2"}, "finished": 0}]
+    assert "n1  cleanup  [##------------------]  10%" in cassandra_cleanup_report(states, jobs, batch)
+    # a big batch: the names cut to the width
+    hosts = ["cassandra-node-%02d" % i for i in range(12)]
+    lines = cassandra_cleanup_report({}, [{"item": {"item": h}, "finished": 0} for h in hosts], batch)
+    assert lines[0].startswith("12 nodes in parallel: cassandra-node-00, ") and lines[0].endswith(" more)")
+    assert len(lines[0]) <= 88
+
+
+NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.3": "node5"}
+
+
+def bootstrap(fractions, step=300, sizes=((u"10.0.0.1", 52 * GIB), (u"10.0.0.2", 31 * GIB), (u"10.0.0.3", 17 * GIB)),
+              pace=None):
+    """A bootstrap from three peers, checked every step seconds from 13:14, at the given
+    fractions (times pace, per peer)."""
+    s = None
+    for i, frac in enumerate(fractions):
+        sessions = []
+        for n, (peer, size) in enumerate(sizes):
+            part = min(1.0, frac * (pace[n] if pace else 1))
+            sessions.append(dict(session(peer, int(part * size), size, plan="p%d" % n), files_total=1000,
+                                 files_done=int(part * 1000)))
+        sessions[0]["files"] = [{"path": "", "table": "ks.orders", "done": 1, "total": 2},
+                                {"path": "", "table": "ks.items", "done": 2, "total": 2}]
+        s = cassandra_stream_progress([read("n4", *sessions)], s, now=47640 + i * step, operations=["Bootstrap"])
+    return s
+
+
+def test_report_going():
+    s = bootstrap([0.0, 0.25, 0.5], pace=(1.25, 1.0, 0.5))
+    assert report(s, names=NAMES) == """\
+n4  bootstrap  [##########----------]  52%   89 MiB/s
+
+      data:      52.2 GiB / 100.0 GiB
+                 1 375 / 3 000 files
+
+      from:      node1   62% done  (32.5 / 52.0 GiB)
+                 node2   50% done  (15.5 / 31.0 GiB)
+                 node5   25% done  (4.2 / 17.0 GiB)
+
+      Now:       current - 13:24 UTC
+      Started:   10m ago - 13:14 UTC
+      Finish:    in 9m   - 13:33 UTC"""
+
+
+def test_report_stalled_then_failed():
+    s = bootstrap([0.125, 0.25, 0.375, 0.375, 0.375, 0.375])
+    assert s["stalled"] and report(s, status="stalled", names=NAMES) == """\
+n4  bootstrap  STALLED  [#######-------------]  37%
+
+      data:      37.5 GiB / 100.0 GiB
+                 1 125 / 3 000 files
+
+      from:      node1   37% done  (19.5 / 52.0 GiB)
+                 node2   37% done  (11.6 / 31.0 GiB)
+                 node5   37% done  (6.4 / 17.0 GiB)
+
+      Now:       current - 13:39 UTC
+      Started:   25m ago - 13:14 UTC
+
+      Progress:  none for 3 checks (15m)"""
+    for status, label in (("join_failed", "FAILED"), ("job_lost", "FAILED"), ("too_long", "TOO LONG"), ("stopped", "STOPPED")):
+        assert header(s, status=status) == "n4  bootstrap  %s  [#######-------------]  37%%" % label
+
+
+def test_report_done():
+    s = bootstrap([0.125, 0.5, 1.0])
+    s = cassandra_stream_progress([read("n4", mode="NORMAL")], s, now=47640 + 900, operations=["Bootstrap"])
+    # the first 12.5 GiB were there at the first check (a wait resumed by a run again)
+    assert report(s, status="done") == "n4  bootstrap  done  87.5 GiB in 15m (100.0 GiB in all), 99 MiB/s on average"
+    s = bootstrap([0.0, 1.0])
+    assert report(s, status="done") == "n4  bootstrap  done  100.0 GiB in 5m, 341 MiB/s on average"
+    assert report(bootstrap([1.0]), status="done") == "n4  bootstrap  done  100.0 GiB, at the first check"
+    s = cassandra_stream_progress([read("n4", mode="NORMAL")], None, now=0)
+    s = cassandra_stream_progress([read("n4", mode="NORMAL")], s, now=65)
+    assert report(s, status="done") == "n4  bootstrap  done  in 1m, nothing seen in progress"
+
+
+def test_report_very_large_and_very_small_rates():
+    big = ((u"10.0.0.1", 8 * 1024 * GIB), (u"10.0.0.2", 4 * 1024 * GIB))
+    s = bootstrap([0.125, 0.25], step=60, sizes=big)
+    assert report(s) == """\
+n4  bootstrap  [#####---------------]  25%   25.6 GiB/s
+
+      data:      3.0 TiB / 12.0 TiB
+                 500 / 2 000 files
+
+      from:      10.0.0.1   25% done  (2.0 / 8.0 TiB)
+                 10.0.0.2   25% done  (1.0 / 4.0 TiB)
+
+      Now:       current - 13:15 UTC
+      Started:   1m ago  - 13:14 UTC
+      Finish:    in 6m   - 13:21 UTC"""
+    small = ((u"10.0.0.1", 2 * MIB),)
+    s = bootstrap([0.5, 0.5 + 300.0 / (2 * MIB)], step=300, sizes=small)  # 300 bytes in 5 minutes
+    assert report(s) == """\
+n4  bootstrap  [##########----------]  50%   1 B/s
+
+      data:      1.0 MiB / 2.0 MiB
+                 500 / 1 000 files
+
+      from:      10.0.0.1   50% done  (1.0 / 2.0 MiB)
+
+      Now:       current   - 13:19 UTC
+      Started:   5m ago    - 13:14 UTC
+      Finish:    in 12d03h - 1970-01-13 16:30 UTC"""
+
+
+def test_report_zero_eta():
+    s = bootstrap([0.5, 1.0 - 1.0 / (100 * GIB)], sizes=((u"10.0.0.1", 100 * GIB),))
+    assert header(s) == "n4  bootstrap  [###################-]  99%   170 MiB/s" and finish(s) == "in 0s   - 13:19 UTC"
+
+
+def test_report_long_names_narrow_the_bar_and_sum_up_the_peers():
+    sizes = tuple(("2001:db8:85a3::8a2e:370:%04x" % i, (16 + i) * GIB) for i in range(6))
+    s = bootstrap([0.125, 0.25], sizes=sizes)
+    assert "\n".join(report(s, node="cass-node-17", what="removenode of 2001:db8::7334").split("\n")[:9]) == """\
+cass-node-17  removenode of 2001:db8::7334  [#####---------------]  25%   47 MiB/s
+
+      data:      27.8 GiB / 111.0 GiB
+                 1 500 / 6 000 files
+
+      from:      2001:db8:85a3::8a2e:370:0005   25% done  (5.2 / 21.0 GiB)
+                 2001:db8:85a3::8a2e:370:0004   25% done  (5.0 / 20.0 GiB)
+                 2001:db8:85a3::8a2e:370:0003   25% done  (4.8 / 19.0 GiB)
+                 3 more                         25% done  (12.8 / 51.0 GiB)"""
+    # too long for even the narrowest bar: the line is longer, the bar no narrower
+    assert header(s, node="cassandra-eu-west-1-node-17", what="removenode of 2001:db8:85a3::8a2e:370:7334") == (
+        "cassandra-eu-west-1-node-17  removenode of 2001:db8:85a3::8a2e:370:7334  [##--------]  25%   47 MiB/s")
+
+
+def test_report_clock_shows_the_zone(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    time.tzset()
+    s = bootstrap([0.0, 0.5], step=3600)  # 1970-01-01 at 14:14 in Paris
+    assert "      Now:       current   - 15:14 CET\n" in report(s) and finish(s) == "in 1h00m  - 16:14 CET"
+    monkeypatch.setenv("TZ", "<+0530>-5:30")  # a zone without abbreviation: its offset
+    time.tzset()
+    assert "      Now:       current   - 19:44 +05:30\n" in report(s)
+
+
+def test_host_addresses():
+    hostvars = {"n1": {"ansible_host": "10.0.0.1", "cassandra_listen_address": "10.1.0.1"},
+                "n2": {"ansible_facts": {"default_ipv4": {"address": "10.0.0.2"}}, "cassandra_listen_address": "localhost"},
+                "10.0.0.3": {}}
+    assert cassandra_host_addresses(["n1", "n2", "10.0.0.3"], hostvars) == {
+        "10.1.0.1": "n1", "10.0.0.1": "n1", "n1": "n1", "10.0.0.2": "n2", "n2": "n2", "10.0.0.3": "10.0.0.3"}
+
+    class Broken(dict):
+        def get(self, key, default=None):
+            raise ValueError("an undefined variable")
+    assert cassandra_host_addresses(["n4"], {"n4": Broken()}) == {"n4": "n4"}
+
+
+def test_first_checks_come_sooner_and_do_not_count_towards_a_stall():
+    views = [read("n4", session("10.0.0.1", 10, 100))]
+    s, now, waits = None, 0, []
+    for dummy in range(8):
+        s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
+        waits.append(s["wait"])
+        now += s["wait"]
+    assert waits == [10, 30, 60, 120, 240, 300, 300, 300]
+    # nothing moved: only the checks 300 s after the previous one count
+    assert s["idle_checks"] == 2 and not s["stalled"] and s["checks"] == 8
+    s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
+    assert s["stalled"]
+    # a check interval shorter than the first waits caps them
+    s = cassandra_stream_progress(views, None, now=0, interval=20)
+    assert s["wait"] == 10 and cassandra_stream_progress(views, s, now=10, interval=20)["wait"] == 20

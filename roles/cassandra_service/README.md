@@ -53,11 +53,32 @@ Role Variables
 * Streaming operations (the bootstrap of `add_node` and `replace_node`,
   `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`)
   and cleanups are waited for as long as they make progress: every
-  `cassandra_stream_check_interval` seconds (default 300) `nodetool netstats`
-  (`compactionstats` for a cleanup) is read and one line printed, e.g.
-  `14:05 [########------------]  41%  290.4/710.2 GiB  38 MiB/s  ETA 3h08 (ends ~17:13)  tables: 12 done, 2 streaming  2 sessions  now: orders.items (from 10.0.0.3)`.
+  `cassandra_stream_check_interval` seconds (default 300; the first checks
+  sooner, after 10 s, 30 s, 1, 2 and 4 minutes) `nodetool netstats`
+  (`compactionstats` for a cleanup) is read and the progress printed, a
+  short first line then one item per line (a single line once done), e.g.
+
+  ```
+  node4  bootstrap  [########------------]  40%   82 MiB/s
+
+        data:      168.2 GiB / 420.0 GiB
+                   720 / 1 799 files
+
+        from:      node1   40% done  (88.1 / 220.0 GiB)
+                   node2   40% done  (52.1 / 130.0 GiB)
+                   node5   40% done  (28.0 / 70.0 GiB)
+
+        Now:       current - 13:35 CEST
+        Started:   35m ago - 13:00 CEST
+        Finish:    in 52m  - 14:27 CEST
+  ```
+
+  The times are the controller's. A line `Progress: none for 2 checks (10m), stops after 3`
+  shows up once a check sees nothing move; once done, a single line with the
+  total time and average rate.
+
   The run fails only after `cassandra_stream_stall_checks` checks in a row
-  (default 3) with nothing streamed: no byte or file, no session started or
+  (default 3), a full interval apart, with nothing streamed: no byte or file, no session started or
   ended; 4 times as many while nothing is left to transfer (before the first
   session, index or view builds after the streams). Nothing is stopped then.
   Entire-SSTable streaming (4.0+) counts a file only once whole: with very
@@ -70,9 +91,10 @@ Role Variables
   bootstrap leaves the node JOINING with no stream: the wait then ends as a
   stall, see `system.log` (`nodetool bootstrap resume` retries it).
 * `cassandra_add_node_cleanup` (default `none`): after `add_node`, the
-  cleanup of the nodes that handed data over. `none` prints the command,
-  `one` runs it one node at a time, `rack` and `dc` the nodes of a rack, of a
-  datacenter together, batch after batch, `all` every node at once.
+  cleanup of the nodes that handed data over, with the words of the
+  `cleanup` playbook's `cassandra_cleanup_mode`. `none` prints the command,
+  `sequential` runs it one node at a time (`one` is the same), `rack` a rack
+  at a time, `dc` a datacenter at a time, `all` every node at once (heavy I/O).
 * One token per node (`cassandra_num_tokens: 1`): `cassandra_token_auto`
   (default `false`), where `add_node` puts new nodes without
   `cassandra_initial_token`: `bisect` (no node moves), `balanced` (even ring,

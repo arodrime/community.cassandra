@@ -140,13 +140,14 @@ argument_specs:
       cassandra_add_node_cleanup:
         type: str
         default: none
-        choices: [none, one, rack, dc, all]
+        choices: [none, sequential, one, rack, dc, all]
         description:
           - What the C(add_node) playbook does, after the add, about the cleanup of the nodes that handed
             data over (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
-            replicas as racks there). C(none) prints the command; C(one) runs it one node at a time;
-            C(rack) and C(dc) clean the nodes of a rack, of a datacenter together, one batch after the other;
-            C(all) cleans them all at once. The cluster is checked before each batch.
+            replicas as racks there), with the words of the C(cleanup) playbook's C(cassandra_cleanup_mode).
+            C(none) prints the command; C(sequential) runs it one node at a time (C(one) is the same);
+            C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
+            The cluster is checked before each batch.
       cassandra_add_node_reset:
         type: bool
         default: false
@@ -218,7 +219,7 @@ argument_specs:
       cassandra_move_cleanup:
         type: str
         default: none
-        choices: [none, one, rack, dc, all]
+        choices: [none, sequential, one, rack, dc, all]
         description:
           - What C(move_node) does about the cleanup of the nodes that lost ranges (this run's and the ones an
             interrupted run recorded), as C(cassandra_add_node_cleanup).
@@ -245,8 +246,10 @@ argument_specs:
         description:
           - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
-            C(move_node)).
-            Each check reads C(nodetool netstats) and prints one progress line.
+            C(move_node)) and of a cleanup; the first checks come sooner (after 10 s, 30 s, 1, 2 and 4
+            minutes, each at most this long), so a short operation ends in seconds.
+            Each check reads C(nodetool netstats) and prints the progress, a short line (bar, percentage,
+            rate) then the data, the other nodes and the times, one item per line.
       cassandra_stream_stall_checks:
         type: int
         default: 3
@@ -254,6 +257,7 @@ argument_specs:
           - A streaming operation fails only after this many checks in a row without any progress in
             C(nodetool netstats) (no byte or file streamed, no session started or ended), 4 times as
             many while nothing is left to transfer (before the first session, index or view builds).
+            Only the checks C(cassandra_stream_check_interval) apart count, not the sooner first ones.
             Nothing is stopped then; the node stays as it is.
       cassandra_stream_max_time:
         type: int

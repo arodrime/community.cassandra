@@ -196,7 +196,9 @@ reset (see `Resetting a node`_) shows each node's plan under ``--check``, not th
 Rolling operations record each node done in a progress file on the controller, in ``.cassandra_progress`` next to
 the inventory (in the current dir when the inventory's dir is not writable and has no ``.cassandra_progress`` yet, or
 with ``-i host1,host2``), or in ``cassandra_rolling_progress_dir``. An interrupted run resumes where it stopped with
-``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. The
+``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. A node the interrupted
+``rolling_restart``, ``rolling_reboot``, ``apply_config`` or ``update_java`` (one node at a time) left drained or
+stopped is restarted first: it may be down then, any other node down still stops the run. The
 files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
 ``.gitignore``.
 
@@ -257,10 +259,13 @@ estimate of the data it will receive (from ``nodetool status``) and its Medusa f
 nodes then hold different shares of the data), and a run not inside ``tmux`` or ``screen`` on the controller (a lost
 SSH session stops the run).
 
-Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints a progress line
-every ``cassandra_stream_check_interval`` seconds (300 by default), with the percentage, bytes and tables streamed,
-the rate over the last 3 checks, the time left and the expected end time, and waits as long as the streams make
-progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3) with nothing streamed (4 times as
+Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints its progress
+every ``cassandra_stream_check_interval`` seconds (300 by default; the first checks sooner, after 10 s, 30 s, 1, 2
+and 4 minutes, so a short operation ends in seconds): a first line with the node, a bar, the percentage
+and the rate over the last 3 checks, then the bytes and files streamed, each node it streams from with its own
+progress, and the times on the controller (now, started, expected end); a single line with the total time and average
+rate once done. It waits as long as the streams make
+progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3), a full interval apart, with nothing streamed (4 times as
 many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
@@ -270,8 +275,8 @@ again with ``-e cassandra_add_node_reset=true`` (see `Resetting a node`_). ``rep
 
 Once the new nodes have joined, the others still hold the data they handed over: ``add_node`` prints the ``cleanup``
 command for the nodes concerned (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
-replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``one`` (a node at a time), ``rack``, ``dc``
-or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
+replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``sequential`` (a node at a time, ``one`` is
+the same), ``rack``, ``dc`` or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
 
@@ -308,7 +313,7 @@ playbooks work them out:
   cluster is checked, and the nodes that receive data must keep ``cassandra_move_min_free_percent`` (20) of their data
   disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
   again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
-  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``one``, ``rack``, ``dc``, ``all``), or the
+  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``sequential``, ``rack``, ``dc``, ``all``), or the
   command is printed; they stay listed next to the progress files (``<cassandra_hosts>-move.cleanup``) until a ``move_node``
   run cleans them up, so an interrupted run forgets none. A moved node keeps its old ``initial_token`` in
   ``cassandra.yaml`` (it is not read again); the run says which ``cassandra_initial_token`` of the inventory to

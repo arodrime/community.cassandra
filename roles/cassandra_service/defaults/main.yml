@@ -60,10 +60,11 @@ cassandra_service_wait_timeout: 600  # seconds
 
 # Streaming operations (add_node, replace_node, decommission_node,
 # remove_dead_node, add_datacenter's rebuild) are waited for as long as they
-# make progress: every cassandra_stream_check_interval seconds nodetool
-# netstats is read and a progress line printed; the run fails only after
-# cassandra_stream_stall_checks checks in a row with nothing streamed (no
-# byte, no file, no session started or ended), 4 times as many while nothing
+# make progress: every cassandra_stream_check_interval seconds (the first
+# checks sooner: after 10 s, 30 s, 1, 2 and 4 minutes) nodetool netstats is
+# read and the progress printed; the run fails only after
+# cassandra_stream_stall_checks checks in a row, that interval apart, with
+# nothing streamed (no byte, no file, no session started or ended), 4 times as many while nothing
 # is left to transfer (before the first session, index or view builds after
 # the streams, hints of a decommission, a cleanup queued behind compactions). No overall limit
 # unless cassandra_stream_max_time is set (seconds, 0: none).
@@ -71,8 +72,8 @@ cassandra_stream_check_interval: 300  # seconds
 cassandra_stream_stall_checks: 3
 cassandra_stream_max_time: 0  # seconds, 0: no limit
 # add_node: the cleanup of the nodes that handed data over. none: print the
-# command; one: run it one node at a time; rack, dc: the nodes of a rack, of a
-# datacenter together, one batch after the other; all: every node at once.
+# command; sequential: run it one node at a time (one: the same); rack, dc: a
+# rack, a datacenter at a time; all: every node at once (heavy I/O).
 cassandra_add_node_cleanup: none
 # add_node: a new node with data but not in the ring (started once by
 # mistake, a failed bootstrap) is refused; true empties it first (stops

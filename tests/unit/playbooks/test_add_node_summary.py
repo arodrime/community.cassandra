@@ -107,6 +107,16 @@ def test_shown_and_confirmed_when_there_is_something_to_do(new, joining, cleanup
     assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(condition)) is shown
 
 
+@pytest.mark.parametrize("cleanup, said", [
+    ("none", "Cleanup afterwards (cassandra_add_node_cleanup=none): none, the commands are printed at the end"),
+    ("sequential", "Cleanup afterwards (cassandra_add_node_cleanup=sequential): one node at a time"),
+    ("one", "Cleanup afterwards (cassandra_add_node_cleanup=sequential): one node at a time"),  # the same, cleanup.yml's word
+    ("all", "Cleanup afterwards (cassandra_add_node_cleanup=all): every node at once: heavy I/O"),
+])
+def test_cleanup_choice_in_the_cleanup_playbook_words(cleanup, said):
+    assert said in flat(summary(cassandra_add_node_cleanup=cleanup))
+
+
 def test_medusa_on_when_only_the_new_node_has_it():
     text = summary(node7={"cassandra_medusa_enabled": True})
     assert "Medusa on (" in flat(text) and "    Medusa fqdn " in text
@@ -115,7 +125,7 @@ def test_medusa_on_when_only_the_new_node_has_it():
 def test_a_run_again_for_a_joining_node_says_it_waits():
     text = summary(new_nodes=(), joining=("node7",))
     assert "Still bootstrapping, waited for first: node7" in flat(text)
-    assert "with a progress line" in flat(text) and "No node to add" not in text
+    assert "its progress printed every 300s (sooner at first)" in flat(text) and "No node to add" not in text
     assert "No node to add (node7 already in the ring)" in flat(summary(new_nodes=()))
 
 
