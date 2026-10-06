@@ -1070,6 +1070,9 @@ BLOCKS = [
         "cassandra_conf_dir", "cassandra_rpm_conf_alternative", "cassandra_data_dir", "cassandra_data_file_directories", "cassandra_commitlog_dir",
         "cassandra_hints_dir", "cassandra_saved_caches_dir", "cassandra_cdc_raw_dir", "cassandra_log_dir",
         "cassandra_heap_dump_dir"]),
+    ("Account & file owners", [
+        "cassandra_user", "cassandra_group", "cassandra_config_owner", "cassandra_config_group", "cassandra_config_mode",
+        "cassandra_config_public_mode", "cassandra_config_file_permissions"]),
     ("Network & ports", [
         "cassandra_listen_address", "cassandra_broadcast_address", "cassandra_rpc_address",
         "cassandra_broadcast_rpc_address", "cassandra_storage_port", "cassandra_ssl_storage_port",

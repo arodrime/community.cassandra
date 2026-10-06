@@ -150,6 +150,11 @@
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
         echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
+        # the account it runs as: its effective user and group (a name, else the number)
+        uid=$(awk '/^Uid:/ {print $3}' /proc/$pid/status 2>/dev/null)
+        gid=$(awk '/^Gid:/ {print $3}' /proc/$pid/status 2>/dev/null)
+        [ -n "$uid" ] && echo "run_user=$(getent passwd "$uid" | cut -d: -f1 | grep . || echo "$uid")"
+        [ -n "$gid" ] && echo "run_group=$(getent group "$gid" | cut -d: -f1 | grep . || echo "$gid")"
         # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
         for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
@@ -215,6 +220,9 @@
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
         import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
+        import_cluster_account:
+          user: "{{ _kv.run_user | default('') }}"
+          group: "{{ _kv.run_group | default('') }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
@@ -313,6 +321,43 @@
               else '. Its error is above.' if import_cluster_debug | default(false) | bool
               else '. The rest of the error is hidden (the config holds passwords):'
                    ~ ' rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+
+    # owner, group and mode of what cassandra_config writes or creates, read only
+    - name: Read the owner and mode of the config files and directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: true
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      loop: >-
+        {{ _files | map('regex_replace', '^', import_cluster_conf_dir ~ '/') | list
+           + ['/etc/cassandra/jmxremote.password', '/etc/cassandra/jmxremote.access'] + _dirs }}
+      register: import_cluster_perm_stat
+      failed_when: false  # not read (e.g. a data dir on NFS root can't read): left out
+      when: import_cluster_config is defined
+      vars:
+        _cfg: "{{ import_cluster_config.vars | default({}) }}"
+        _dirs: >-
+          {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
+             + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),
+                _cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),
+                _cfg.cassandra_saved_caches_dir | default('/var/lib/cassandra/saved_caches'),
+                import_cluster_log_dir | default('', true) or _cfg.cassandra_log_dir | default('/var/log/cassandra')] }}
+
+    - name: Turn them into variables
+      ansible.builtin.set_fact:
+        import_cluster_perms: >-
+          {{ _file_stats | community.cassandra.cassandra_permissions_import(import_cluster_account, import_cluster_series,
+                                                                            _dir_stats, 'cassandra_jmx_users' in import_cluster_config.vars) }}
+      vars:
+        # the files by their name, then the dirs by their path (the loop above)
+        _names: "{{ _files + ['jmxremote.password', 'jmxremote.access'] }}"
+        _paths: "{{ import_cluster_perm_stat.results | map(attribute='item') | list }}"
+        _stats: "{{ import_cluster_perm_stat.results | map(attribute='stat', default={}) | list }}"
+        _file_stats: "{{ dict(_names | zip(_stats[:_names | length])) }}"
+        _dir_stats: "{{ dict(_paths[_names | length:] | zip(_stats[_names | length:])) }}"
+      when: import_cluster_config is defined
 
     # Cassandra Medusa (backups): its install and /etc/medusa/medusa.ini
     - name: Look for Medusa
@@ -738,8 +783,8 @@
       SELF-CHECK PASSED: with these variables, the roles write the config of the {{ _self_check | length }} node(s) read
       as it is today (cassandra.yaml, cassandra-env.sh, the jvm options, rackdc, logback, and the JMX users, the unit and
       medusa.ini when the roles manage them: compared setting by setting, as Cassandra, the JVM, bash and systemd read
-      them; their content, not their owner or mode). Not compared: the OS tuning (see OS TUNING below),
-      /etc/default/cassandra, cassandra-topology.properties.
+      them; and the owner, group and mode of the config and JMX files). Not compared: the OS tuning (see OS TUNING
+      below), /etc/default/cassandra, cassandra-topology.properties, the owner and mode of the unit and medusa.ini.
       {% else %}
       SELF-CHECK FAILED: THIS INVENTORY IS NOT VALID. With it, the roles would change the settings below on the
       nodes (the import misread them, or no variable covers them). Fix the variables (or the nodes) before any run.
@@ -909,6 +954,7 @@
                    else 'unsupported version ' ~ _hv.import_cluster_version)) }}
               vars: >-
                 {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx,
+                                                             _hv.import_cluster_perms.vars | default({}),
                                                              _hv.import_cluster_medusa.vars | default({}),
                                                              _hv.import_cluster_os.vars | default({})))
                    if _read else {} }}
@@ -924,6 +970,7 @@
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
               notes: >-
                 {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
+                   + _hv.import_cluster_perms.notes | default([])
                    + _hv.import_cluster_medusa.notes | default([])
                    + ([('reached at ' ~ _hv.ansible_host ~ ', hosts.yml has its ring address ' ~ item.address
                         ~ ' (import_cluster_set_ansible_host: false leaves ansible_host out)')]
@@ -1005,7 +1052,8 @@
                                                                           _hv.import_cluster_unit.env | default({}),
                                                                           _hv.import_cluster_storage_dir | default(''),
                                                                           _hv.import_cluster_java | default(''),
-                                                                          _hv.import_cluster_conf_dir) }}
+                                                                          _hv.import_cluster_conf_dir,
+                                                                          _hv.import_cluster_perms.files | default(none)) }}
       rescue:
         - name: Keep why for the report
           ansible.builtin.set_fact:

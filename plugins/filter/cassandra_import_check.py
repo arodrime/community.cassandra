@@ -10,7 +10,8 @@ cassandra_import_self_check: the files import_cluster writes (group_vars,
     text as Ansible merges them, over the roles' defaults), compared with the
     node's as the program that reads each file does (YAML, properties, INI,
     JVM options, shell words, XML elements, unit keys), not as text: the
-    settings that differ, values of secrets masked.
+    settings that differ, values of secrets masked; and the owner, group and
+    mode cassandra_config would give its files, against the node's.
 
 Their unexpected errors do not quote the error message, which may show a
 value read from the nodes (a password).
@@ -45,6 +46,8 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import Unsafe, _mask, _values_hidden
+from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
+    cassandra_file_permissions, permission_differences)
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -444,13 +447,25 @@ def _render(variables, facts, live, conf_dir=""):
             rendered[name] = lookup.run([os.path.join(ROLES, path)], variables=ctx)[0]
         except Exception as exc:  # pylint: disable=broad-except
             errors.append("%s: the roles could not write it with these variables (%s)" % (name, type(exc).__name__))
+    # owner, group and mode cassandra_config gives its files (not the unit's nor medusa.ini's)
+    permissions = {}
+    try:
+        settings = value("_cassandra_config_perm_settings")
+        for name in rendered:
+            if name not in ("cassandra.service", "medusa.ini"):
+                permissions[name] = cassandra_file_permissions(name, settings)
+    except AnsibleFilterError as exc:  # cassandra_file_permissions': a file name or a mode, no secret
+        errors.append("owner, group and mode: %s" % exc)
+    except Exception as exc:  # pylint: disable=broad-except
+        errors.append("owner, group and mode: the roles could not work them out with these variables (%s)"
+                      % type(exc).__name__)
     # the environment Cassandra would get from the unit: the roles' one, else the node's, kept
-    return rendered, errors, value("cassandra_service_environment") if unit_managed else None
+    return rendered, errors, value("cassandra_service_environment") if unit_managed else None, permissions
 
 
 @_values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
-                                conf_dir=""):
+                                conf_dir="", permissions=None):
     """files, hosts, name: the inventory files, hosts.yml's data and the node's
     name there (the variables it gets: cassandra_inventory_host_vars); facts: its ansible_facts;
     live: {file: text the node has}; node_environment: what the node's unit
@@ -458,12 +473,18 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     are set); storage_dir: the JVM's -Dcassandra.storagedir, where the
     directories cassandra.yaml leaves out are; java: the running Java's major
     version (the jvm<N>-server.options it reads); conf_dir: where the node
-    reads its config. -> {'differences', 'notes'}."""
+    reads its config; permissions: {file: {owner, group, mode, uid, gid}} the
+    node's files have (cassandra_permissions_import's files), None: not read.
+    -> {'differences', 'notes'}."""
     variables = cassandra_inventory_host_vars(files, hosts, name)
-    rendered, errors, role_environment = _render(variables, facts, live, conf_dir)
+    rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
     out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java)
+    if permissions is None:
+        out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
+    else:
+        out["differences"] += permission_differences(wanted, permissions)
     return {"differences": errors + out["differences"], "notes": out["notes"]}
 
 
