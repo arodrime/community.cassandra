@@ -220,6 +220,8 @@
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
         import_cluster_held: "{{ _kv.held | default('') | split }}"
         import_cluster_repo_files: "{{ _kv.repo_files | default('') | split }}"
+        # the package query answered (dnf repoquery, apt lists): else an air-gapped host, or repositories down
+        import_cluster_repos_answer: "{{ _kv.pkg_query is defined }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
         # installed, but no configured repository offers it (the query ran): from a package file
@@ -1055,6 +1057,9 @@
                       if _host != item.address and _hv.ansible_host | default(item.address) != item.address
                          and import_cluster_set_ansible_host | default(true) | bool else [])
                    + ([('Cassandra repository files left as they are: ' ~ _repo.why)] if _read and not _repo.manage else [])
+                   + (['no repository answered the package query (an air-gapped host?): set cassandra_offline: true'
+                       ~ ' (group_vars) unless the roles may download from the mirror']
+                      if _read and not _hv.import_cluster_repos_answer | default(true) | bool else [])
                    + ([(_hv.import_cluster_newer_files | join(', ') ~ ' written after Cassandra started: it may not run'
                         ~ ' what they say. apply_config does not restart it for them; rolling_restart applies them')]
                       if _read and _hv.import_cluster_newer_files | default([]) else []) }}

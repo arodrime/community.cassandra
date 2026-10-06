@@ -57,3 +57,17 @@ def test_report_and_stop_name_them():
     report = WRITE["vars"]["_report"]
     assert "THE IMPORT FAILS" in report and "import_cluster_allow_unread=true" in report
     assert "import_cluster_strict | default(true) | bool" in STOP["when"]
+
+
+def test_air_gapped_node_noted():
+    todo = [t for p in PLAYS for t in p.get("tasks", [])]
+    match = None
+    while todo:
+        t = todo.pop(0)
+        if t.get("name") == "Match the ring with the hosts":
+            match = t["vars"]
+        todo += t.get("block", [])
+    hv = {"import_cluster_repos_answer": False, "import_cluster_newer_files": []}
+    notes = render(match["_node"]["notes"], _hv=hv, _read=True, _versions="v", _install="i", _started="s",
+                   _host="10.0.0.1", item={"address": "10.0.0.1"}, _repo={"manage": True})
+    assert [n for n in notes if "cassandra_offline: true" in n]
