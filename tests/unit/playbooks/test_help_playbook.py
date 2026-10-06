@@ -114,9 +114,40 @@ def test_help_decrypts_nothing_even_with_the_vault_password(tmp_path):
     runbook = (inv / "RUNBOOK.md").read_text()
     assert SECRET not in out and SECRET not in runbook
     assert "Vault-encrypted files not read (help decrypts nothing)" in out
-    assert "cassandra_rack could not be read without the vault" in out
+    assert "cassandra_rack could not be read from the inventory alone" in out
     assert "-b --vault-password-file vault_pass community.cassandra.status" in out  # no --ask-vault-pass added
     assert "--ask-vault-pass" not in out
+
+
+def test_no_secret_from_inline_vault_extra_vars_or_lookups(tmp_path):
+    # with the vault password: an inline !vault a shown setting templates, a vaulted -e @file, a lookup
+    inv = inventory(tmp_path)
+    secret = "\n".join("  " + line for line in VaultLib([("default", VaultSecret(b"pw"))]).encrypt(SECRET)
+                       .decode().splitlines())
+    (inv / "group_vars" / "orders" / "main.yml").write_text(
+        CLUSTER_VARS.replace("cassandra_cluster_name: Orders\n", "") + "the_secret: !vault |\n%s\n" % secret
+        + 'cassandra_cluster_name: "{{ the_secret }}"\n'
+        + "ansible_user: \"{{ lookup('ansible.builtin.file', '%s') }}\"\n" % (tmp_path / "secret_file"))
+    (tmp_path / "secret_file").write_text(SECRET)
+    (tmp_path / "extra.yml").write_text(
+        VaultLib([("default", VaultSecret(b"pw"))]).encrypt("cassandra_dc: %s\n" % SECRET).decode())
+    (tmp_path / "vault_pass").write_text("pw\n")
+    rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml", "--vault-password-file", "vault_pass",
+                  "-e", "@extra.yml", "-e", "help_write=true")
+    assert rc == 0, out
+    runbook = (inv / "RUNBOOK.md").read_text()
+    assert SECRET not in out and SECRET not in runbook
+    assert "Cluster '(vaulted)' (inventory group orders)" in runbook
+
+
+def test_inline_vault_without_password_asks_for_it(tmp_path):
+    inv = inventory(tmp_path)
+    secret = "\n".join("  " + line for line in VaultLib([("default", VaultSecret(b"pw"))]).encrypt(SECRET)
+                       .decode().splitlines())
+    (inv / "group_vars" / "orders" / "secrets.yml").write_text("cassandra_cql_password: !vault |\n%s\n" % secret)
+    rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml")
+    assert rc == 0, out
+    assert "-b --ask-vault-pass community.cassandra.status" in out
 
 
 def test_help_topic_under_the_yaml_result_format(tmp_path):

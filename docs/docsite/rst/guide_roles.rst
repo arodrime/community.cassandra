@@ -207,7 +207,7 @@ Help and runbook
 as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
-several clusters, a node of it, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
+several clusters, its datacenters and racks, the nodes marked absent, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
 user options the run was given; UPPERCASE words are values only you know); and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
@@ -229,8 +229,12 @@ run it the same way each time, or the file changes. ``import_cluster`` writes it
 
 ``help`` decrypts nothing, even when given the vault password: the vault-encrypted vars files are skipped and named
 in the advice, inline vaulted values are shown as ``(vaulted)``, so no secret reaches its output or ``RUNBOOK.md``.
-A shown setting that can't be read without them is named in the advice. When the run has no vault password, the
-printed commands carry ``--ask-vault-pass``.
+A value templated from a vaulted one is shown as ``(vaulted)`` too, a template that would run a lookup is shown as
+written, and the ``-e`` variables of the ``help`` run are not read. A shown setting that can't be read from the
+inventory alone is named in the advice. When the inventory has vaulted values and the run has no vault password
+(``--vault-password-file``, ``--vault-id``, ``--ask-vault-pass``, or one in ``ansible.cfg``), the printed commands
+carry ``--ask-vault-pass``. ``cassandra_node_state: absent`` marks a host to remove: ``help`` lists it apart and
+names it in the ``decommission_node`` command; the other operations still treat it as a node of the cluster.
 
 
 Creating a cluster

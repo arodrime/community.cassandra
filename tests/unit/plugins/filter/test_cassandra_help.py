@@ -134,7 +134,7 @@ Cluster:
 Takeover:
   import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes; a
     re-import into an inventory it wrote keeps the files it did not write.
-    $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_cluster_dir=inventories/orders -e import_cluster_force=true
+    $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true
 
 3. Advice
 ---------
@@ -238,8 +238,8 @@ def test_password_authenticator_without_cql_user():
         del host["vars"]["cassandra_cql_username"]
     text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert ("- Authentication is on (PasswordAuthenticator) but cassandra_cql_username is not set:\n"
-            "  decommission_node, remove_dead_node, rolling_restart, stop_rack, add_datacenter, remove_datacenter\n"
-            "  read the replication over CQL") in text
+            "  decommission_node, remove_dead_node, rolling_restart (rack mode), stop_rack, add_datacenter,\n"
+            "  remove_datacenter read the replication over CQL") in text
 
 
 def test_close_variable_name():
@@ -323,7 +323,8 @@ def test_import_command_keeps_the_connection_and_jmx():
                             cassandra_jmx_password_file="/etc/cassandra/jmxremote.password")
     text = cassandra_help(model(hosts=hosts, options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -u admin community.cassandra.import_cluster"
-            " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e cassandra_jmx_username=monitor"
+            " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true"
+            " -e cassandra_jmx_username=monitor"
             " -e cassandra_jmx_password_file=/etc/cassandra/jmxremote.password") in text
 
 
@@ -348,8 +349,11 @@ def test_inventory_outside_the_current_dir():
 
 
 def test_runbook_path(tmp_path):
-    assert cassandra_help_runbook(MODEL) == "/work/inventories/orders/RUNBOOK.md"
+    (tmp_path / "hosts.yml").write_text("")
+    assert cassandra_help_runbook({"sources": [str(tmp_path / "hosts.yml")]}) == str(tmp_path / "RUNBOOK.md")
     assert cassandra_help_runbook({"sources": [str(tmp_path)]}) == str(tmp_path / "RUNBOOK.md")
+    with pytest.raises(AnsibleFilterError, match="not a file or a dir"):
+        cassandra_help_runbook({"sources": ["192.0.2.11,"]})
 
 
 def test_password_authenticator_planning_operations():
@@ -374,8 +378,8 @@ def test_import_command_placeholders_for_what_help_could_not_read():
     hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
     text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
-            " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e cassandra_jmx_username=JMX_USER"
-            " -e cassandra_jmx_password=JMX_PASSWORD") in text
+            " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true"
+            " -e cassandra_jmx_username=JMX_USER -e cassandra_jmx_password_file=JMX_PASSWORD_FILE") in text
     assert "(vaulted)" not in text.split("1. The cluster")[0]
 
 
@@ -384,8 +388,8 @@ def test_unresolved_values_named():
     for host in hosts:
         host["vars"]["cassandra_rack"] = "{{ vault_rack }}"
     text = " ".join(advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
-    assert ("- cassandra_rack could not be read without the vault or the node's facts (every node): shown above as"
-            " the role default, and the commands filled from it may be wrong.") in text
+    assert ("- cassandra_rack could not be read from the inventory alone (a vaulted value, a fact of the node, a"
+            " lookup; every node): what is shown above for it, and the commands filled from it, may be wrong.") in text
 
 
 def test_values_are_quoted_for_the_shell():
@@ -393,17 +397,44 @@ def test_values_are_quoted_for_the_shell():
     for host in hosts:
         host["vars"]["cassandra_dc"] = "dc one"
     text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
-    assert "community.cassandra.stop_rack -e cassandra_target_dc='dc one' -e cassandra_target_rack=rack3" in text
+    # as JSON: Ansible's key=value parsing would cut 'dc one' at the space
+    assert ("community.cassandra.stop_rack -e '{\"cassandra_target_dc\": \"dc one\"}' -e cassandra_target_rack=rack3"
+            in text)
 
 
 def test_runbook_says_where_to_run_from():
     runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
-    assert "Run the commands from `../..` from this file's directory (where help was run) (the one with" in runbook
+    assert "Run the commands from `../..`, relative to this file (where help was run, with its ansible.cfg" in runbook
     assert "/work" not in runbook
     runbook = cassandra_help(MODEL, PLAYBOOKS, cwd="/work/inventories/orders", markdown=True)
-    assert "Run the commands from this file's directory (the one with" in runbook
+    assert "Run the commands from this file's directory (where help was run, with its ansible.cfg" in runbook
 
 
 def test_vault_id_path_relative():
     text = cassandra_help(model(options=["-b", "--vault-id", "prod@/work/vault_pass"]), PLAYBOOKS, cwd=CWD)
     assert "-b --vault-id prod@vault_pass community.cassandra.status" in text
+
+
+def test_no_node_chosen_for_removal():
+    # without a node marked absent, a placeholder: never a real node nobody chose
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    del hosts[3]["vars"]["cassandra_node_state"]
+    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    assert "community.cassandra.decommission_node -e cassandra_leaving_nodes=NODE\n" in text
+    topic = cassandra_help(model(hosts=hosts), PLAYBOOKS, topic="decommission_node", cwd=CWD)
+    assert "Replace NODE with your own value." in topic
+
+
+def test_topic_names_the_placeholders_of_the_command():
+    text = cassandra_help(model(imported=False), PLAYBOOKS, topic="import_cluster", cwd=CWD)
+    assert "Replace NEW_DIR with your own value." in text
+
+
+def test_seeds_from_a_template():
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    for host in hosts:
+        host["vars"]["cassandra_seeds"] = "{{ groups['orders'] | map('extract', hostvars, 'ansible_host') | join(',') }}"
+    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    assert "  Seeds: not readable from the inventory alone\n" in text
+    assert "seed" not in advice(text).replace("cassandra_seeds could not be read", "")
+    assert "(seed)" not in text

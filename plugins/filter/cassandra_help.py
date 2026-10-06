@@ -18,6 +18,7 @@ __metaclass__ = type
 
 import difflib
 import glob
+import json
 import os
 import re
 import shlex
@@ -103,7 +104,7 @@ OPERATIONS = [
                 " Starts nothing on a running cluster.",
      "options": {"cassandra_accept_default_identity": "true goes on with identity settings left to the defaults",
                  "cassandra_create_cluster_reset": "true rebuilds a running cluster, ALL ITS DATA LOST"}},
-    {"name": "rolling_restart", "theme": "cluster", "cql": True,
+    {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode",
      "summary": "Drains and restarts the nodes one at a time, the cluster checked before and after each one.",
      "options": {"cassandra_rolling_mode": "rack: the nodes of a rack together, rack by rack",
                  "cassandra_rack_force": "rack mode: true goes on although keyspaces would lose more than one"
@@ -208,8 +209,15 @@ def _seeds(value):
 
 
 def _resolved(value):
-    return (value not in (None, "", "(vaulted)") and "{{" not in str(value) and "{%" not in str(value)
-            and "!vault" not in str(value))
+    return value not in (None, "", "(vaulted)") and "{{" not in str(value) and "{%" not in str(value)
+
+
+def _e(name, value):
+    """-e name=value as the shell and Ansible's key=value parsing both take it (else as JSON)."""
+    value = str(value)
+    if re.match(r"^[\w.:/@,+-]+$", value):
+        return "-e %s=%s" % (name, value)
+    return "-e " + shlex.quote(json.dumps({name: value}))
 
 
 class _Cluster(object):
@@ -231,7 +239,12 @@ class _Cluster(object):
         for host in self.hosts:
             self.dcs.setdefault(host["dc"], {}).setdefault(host["rack"], []).append(host)
         self.seeds = []
+        # a template help can't resolve (e.g. from hostvars): no seed advice then
+        self.seeds_unread = any("cassandra_seeds" in h["vars"] and not _resolved(h["vars"]["cassandra_seeds"])
+                                for h in self.hosts)
         for host in self.hosts:
+            if not _resolved(host["vars"].get("cassandra_seeds")):
+                continue
             for seed in _seeds(host["vars"].get("cassandra_seeds")):
                 if seed not in self.seeds:
                     self.seeds.append(seed)
@@ -245,14 +258,15 @@ class _Cluster(object):
         out = {}
         for host in self.present or self.hosts:
             value = host["vars"].get(key)
-            if not _resolved(value):
+            if not _resolved(value) and value != "(vaulted)":
                 value = default
             out.setdefault(value, []).append(host["name"])
         return out
 
     def show(self, key, default=None):
         found = self.values(key, default)
-        unset = [h["name"] for h in self.present or self.hosts if not _resolved(h["vars"].get(key))]
+        unset = [h["name"] for h in self.present or self.hosts
+                 if not _resolved(h["vars"].get(key)) and h["vars"].get(key) != "(vaulted)"]
         if len(found) == 1:
             value = list(found)[0]
             if value is None:
@@ -318,6 +332,8 @@ def _options(model, cwd):
         elif option == "--vault-id" and "@" in out[i + 1] and out[i + 1].split("@", 1)[1] != "prompt":
             label, path = out[i + 1].split("@", 1)
             out[i + 1] = "%s@%s" % (label, _path(path, cwd))
+        elif option == "--vault-id" and "@" not in out[i + 1]:
+            out[i + 1] = _path(out[i + 1], cwd)
     return out
 
 
@@ -341,38 +357,37 @@ def _command(op, model, cluster, cwd):
         if "--private-key" not in user and _resolved(v.get("ansible_ssh_private_key_file")):
             user += ["--private-key", shlex.quote(str(v["ansible_ssh_private_key_file"]))]
         if _resolved(v.get("ansible_port")):
-            user += ["-e ansible_port=%s" % shlex.quote(str(v["ansible_port"]))]
+            user += [_e("ansible_port", v["ansible_port"])]
         jmx = []
-        for key, placeholder in (("cassandra_jmx_username", "JMX_USER"), ("cassandra_jmx_password_file", "")):
+        for key, placeholder in (("cassandra_jmx_username", "JMX_USER"),
+                                 ("cassandra_jmx_password_file", "JMX_PASSWORD_FILE")):
             if _resolved(v.get(key)):
-                jmx.append("-e %s=%s" % (key, shlex.quote(str(v[key]))))
-            elif key in host["names"] and placeholder:  # vaulted, or from a file help could not read
-                jmx.append("-e %s=%s" % (key, placeholder))
-        if "cassandra_jmx_password" in host["names"] and not _resolved(v.get("cassandra_jmx_password_file")):
-            jmx.append("-e cassandra_jmx_password=JMX_PASSWORD")
-        address = next(str(v[k]) for k in ("ansible_host", "cassandra_listen_address") if _resolved(v.get(k))) \
-            if any(_resolved(v.get(k)) for k in ("ansible_host", "cassandra_listen_address")) else host["name"]
+                jmx.append(_e(key, v[key]))
+            elif key in host["names"] or (key.endswith("_file") and "cassandra_jmx_password" in host["names"]):
+                # vaulted or unread; a password in clear on the command line: its file on the nodes instead
+                jmx.append(_e(key, placeholder))
+        address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
+                        if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
         # into this inventory's dir only when the import wrote it and it holds this cluster alone: a re-import
         # writes hosts.yml with this cluster's nodes only
         here = model.get("imported") and len(model.get("clusters") or []) == 1
-        target = ["-e import_cluster_dir=%s" % shlex.quote(_path(_inventory_dir(model), cwd)),
-                  "-e import_cluster_force=true"] \
-            if here else ["-e import_cluster_dir=NEW_DIR"]
-        parts = ["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user + ["community.cassandra.import_cluster"] + target + jmx
+        target = [_e("import_cluster_dir", _path(_inventory_dir(model), cwd)), "-e import_cluster_force=true",
+                  "-e import_cluster_runbook=true"] if here else ["-e import_cluster_dir=NEW_DIR"]
+        parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
+                 + ["community.cassandra.import_cluster"] + target + jmx)
         return " ".join(p for p in parts if p)
-    present = cluster.present or cluster.hosts
-    first_dc = sorted(cluster.dcs)[0] if cluster.dcs else "DC"
-    racks = sorted(cluster.dcs.get(first_dc, {})) or ["RACK"]
+    first_dc = sorted(cluster.dcs)[0]
     absent = [h["name"] for h in cluster.hosts if h["absent"]]
-    others = [h["name"] for h in present if not h["seed"]]
-    fill = dict((k, shlex.quote(v)) for k, v in (
-        ("dc", first_dc), ("rack", racks[-1]),
-        ("leaving", ",".join(absent) if absent else (others[-1] if others else "NODE"))))
+    # a real node only when the inventory marks it for removal: never one nobody chose
+    fill = {"dc": first_dc, "rack": sorted(cluster.dcs[first_dc])[-1],
+            "leaving": ",".join(absent) if absent else "NODE"}
     options = [shlex.quote(o) for o in _options(model, cwd) if o != "-b" or op["name"] != "help"]  # no root
     parts = ["ansible-playbook", inv] + options + ["community.cassandra.%s" % op["name"]]
     if model.get("auto") != cluster.name:
-        parts.append("-e cassandra_hosts=%s" % cluster.name)
-    parts += [a.format(**fill) for a in op.get("args") or []]
+        parts.append(_e("cassandra_hosts", cluster.name))
+    for arg in op.get("args") or []:
+        filled = re.match(r"^-e (\w+)=\{(\w+)\}$", arg)
+        parts.append(_e(filled.group(1), fill[filled.group(2)]) if filled else arg.format())
     return " ".join(p for p in parts if p)
 
 
@@ -397,7 +412,8 @@ def _advice(model, cluster, playbooks, cwd, known):
     auth = cluster.values("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])
     if any("PasswordAuthenticator" in str(a) for a in auth) and not any(
             h["vars"].get("cassandra_cql_username") for h in cluster.hosts):
-        needs = [op["name"] for op in OPERATIONS if op.get("cql") is True and op["name"] in playbooks]
+        needs = [op["name"] + (" (%s)" % op["cql_when"] if op.get("cql_when") else "")
+                 for op in OPERATIONS if op.get("cql") is True and op["name"] in playbooks]
         plans = [op["name"] for op in OPERATIONS if op.get("cql") == "plan" and op["name"] in playbooks]
         out.append("Authentication is on (PasswordAuthenticator) but cassandra_cql_username is not set%s:"
                    " %s read the replication over CQL and need cassandra_cql_username and cassandra_cql_password"
@@ -413,8 +429,8 @@ def _advice(model, cluster, playbooks, cwd, known):
             if key in host["vars"] and not _resolved(host["vars"][key]):
                 unresolved.setdefault(key, []).append(host["name"])
     for key, hosts in sorted(unresolved.items()):
-        out.append("%s could not be read without the vault or the node's facts (%s): shown above as the role"
-                   " default, and the commands filled from it may be wrong."
+        out.append("%s could not be read from the inventory alone (a vaulted value, a fact of the node, a lookup;"
+                   " %s): what is shown above for it, and the commands filled from it, may be wrong."
                    % (key, ", ".join(hosts) if len(hosts) < len(cluster.hosts) else "every node"))
 
     names = set()
@@ -430,13 +446,15 @@ def _advice(model, cluster, playbooks, cwd, known):
     inventory_names = set()
     for host in cluster.hosts:
         inventory_names.update([host["name"], host["address"], str(host["vars"].get("ansible_host") or "")])
-    if not cluster.seeds:
+    if cluster.seeds_unread:
+        pass
+    elif not cluster.seeds:
         out.append("No cassandra_seeds in the inventory: set it in the cluster's group_vars, one node per rack, two"
                    " or three per datacenter.")
-    strangers = [s for s in cluster.seeds if s not in inventory_names]
+    strangers = [] if cluster.seeds_unread else [s for s in cluster.seeds if s not in inventory_names]
     if strangers:
         out.append("Seeds that are no node of the inventory: %s." % ", ".join(strangers))
-    for dc in sorted(cluster.dcs):
+    for dc in sorted(cluster.dcs) if not cluster.seeds_unread else []:
         racks = cluster.dcs[dc]
         seeded = dict((rack, [h["name"] for h in hosts if h["seed"]]) for rack, hosts in racks.items())
         if cluster.seeds and not any(seeded.values()):
@@ -481,9 +499,9 @@ def _clusters(model):
 def _cluster_lines(cluster):
     lines = []
     present = cluster.present or cluster.hosts
-    lines += _wrap("Cluster '%s' (inventory group %s): %d nodes%s"
+    lines += _wrap("Cluster '%s' (inventory group %s): %d node%s%s"
                    % (cluster.show("cassandra_cluster_name", cluster.defaults["cassandra_cluster_name"]),
-                      cluster.name, len(present),
+                      cluster.name, len(present), "s" if len(present) != 1 else "",
                       ", %d more marked absent" % (len(cluster.hosts) - len(present))
                       if len(present) < len(cluster.hosts) else ""), "", "  ")
     package = cluster.show("cassandra_package_version")
@@ -498,7 +516,8 @@ def _cluster_lines(cluster):
                       cluster.show("cassandra_num_tokens", cluster.defaults["cassandra_num_tokens"]),
                       cluster.show("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])),
                    "  ", "    ")
-    lines += _wrap("Seeds: %s" % (", ".join(cluster.seeds) or "none"), "  ", "    ")
+    lines += _wrap("Seeds: %s" % ("not readable from the inventory alone" if cluster.seeds_unread and not cluster.seeds
+                                  else ", ".join(cluster.seeds) or "none"), "  ", "    ")
     for dc in sorted(cluster.dcs):
         racks = cluster.dcs[dc]
         count = sum(len(h) for h in racks.values())
@@ -610,8 +629,10 @@ def _markdown(header, sections, model, cwd):
     out = ["# RUNBOOK", "",
            "Written by `community.cassandra.help -e help_write=true` from the inventory alone (%s): run it again"
            " after changing the inventory." % ", ".join(_path(src, cwd) for src in model.get("sources") or []), "",
-           _INTRO.replace("the directory help was run from", "this file's directory" if where == "." else
-                          "`%s` from this file's directory (where help was run)" % where), ""]
+           _INTRO.replace("the directory help was run from (the one with ansible.cfg, if any)",
+                          "this file's directory (where help was run, with its ansible.cfg if any)" if where == "."
+                          else "`%s`, relative to this file (where help was run, with its ansible.cfg if any)"
+                          % where), ""]
     for title, lines in sections:
         out += ["## %s" % title, ""]
         if title.startswith("1."):
@@ -651,7 +672,7 @@ def _topic(topic, header, model, clusters, cwd):
         if op.get("single_token") and cluster.num_tokens() != 1:
             cmds.append("    (not for this cluster: num_tokens %s)" % (cluster.num_tokens() or "mixed"))
     blocks.append(["Command for this inventory:"] + [c for c in cmds if c])
-    placeholders = sorted(set(_PLACEHOLDER.findall(" ".join(op.get("args") or []))))
+    placeholders = sorted(set(_PLACEHOLDER.findall(" ".join(c.split("community.cassandra.", 1)[-1] for c in cmds))))
     if placeholders:
         blocks.append(_wrap("Replace %s with your own value%s." % (", ".join(placeholders),
                                                                   "s" if len(placeholders) > 1 else ""), "", "  "))
@@ -686,7 +707,11 @@ def _topic(topic, header, model, clusters, cwd):
 
 
 def cassandra_help_runbook(model):
-    return os.path.join(_inventory_dir(model or {}), "RUNBOOK.md")
+    first = ((model or {}).get("sources") or [""])[0]
+    if not os.path.exists(first):
+        raise AnsibleFilterError("help_write: the inventory %s is not a file or a dir to write RUNBOOK.md next to"
+                                 % (first or "(none)"))
+    return os.path.join(_inventory_dir(model), "RUNBOOK.md")
 
 
 class FilterModule(object):

@@ -128,3 +128,21 @@ def test_imported(tmp_path):
     source = inventory(tmp_path, hosts=GENERATED + "\n" + HOSTS)
     assert read([source])["imported"] is True
     assert read([os.path.dirname(source)])["imported"] is True
+
+
+def test_value_from_an_inline_vault_masked(tmp_path):
+    value = "\n".join("  " + line for line in vaulted("TOPSECRET").splitlines())
+    source = inventory(tmp_path, orders="the_secret: !vault |\n%s\ncassandra_cluster_name: \"{{ the_secret }}\"\n"
+                       "cassandra_dc: \"x-{{ the_secret }}\"\n" % value)
+    model = read([source])
+    vars_ = host(model, "node1")["vars"]
+    assert vars_["cassandra_cluster_name"] == "(vaulted)" and vars_["cassandra_dc"] == "(vaulted)"
+    assert "TOPSECRET" not in repr(model)
+    assert model["options"] == ["-b", "--ask-vault-pass"]  # the operations decrypt it
+
+
+def test_lookup_not_run(tmp_path):
+    (tmp_path / "marker").write_text("TOPSECRET")
+    source = inventory(tmp_path, orders="ansible_user: \"{{ lookup('ansible.builtin.file', '%s') }}\"\n"
+                       % (tmp_path / "marker"))
+    assert host(read([source]), "node1")["vars"]["ansible_user"].startswith("{{ lookup(")

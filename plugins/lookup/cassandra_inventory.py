@@ -9,15 +9,15 @@ name: cassandra_inventory
 short_description: The clusters of an inventory, read without decrypting anything and without the nodes
 version_added: 2.1.0
 description:
-  - Reads an inventory as Ansible does (its groups, C(group_vars), C(host_vars) and C(-e) variables) and returns,
+  - Reads an inventory as Ansible does (its groups, C(group_vars) and C(host_vars)) and returns,
     per cluster group, its hosts with the variables the C(help) playbook shows (the cluster's name, versions,
     install method, Java, datacenter, rack, seeds, addresses, C(cassandra_node_state)) and the names of the
     C(cassandra_*) variables set.
   - Connects to no host and decrypts nothing, even when the run has the vault password, so that no secret
     can end up in the output (or in a RUNBOOK.md written from it). A vault-encrypted vars file is skipped and
-    named in C(vault_skipped); an inline vaulted value is returned as C((vaulted)). Only the variables listed above
-    are templated; a value whose template can't be resolved (a vaulted variable, a fact of the node) is returned
-    as its raw text.
+    named in C(vault_skipped); an inline vaulted value, or a value templated from one, is returned as C((vaulted)).
+    Only the variables listed above are templated; a value whose template can't be resolved (a fact of the node, a
+    variable of a skipped file) or would run a lookup is returned as its raw text. The C(-e) variables are not read.
   - Like the operation playbooks, it reads the C(group_vars) and C(host_vars) next to the inventory and next to
     the playbooks (C(playbook_dir)), not the ones of the current directory.
   - The cluster groups are C(cassandra_hosts) when it is set, else the group found by
@@ -48,6 +48,9 @@ _raw:
 """
 
 import os
+import re
+
+from collections.abc import Mapping
 
 from ansible import constants as C
 from ansible import context
@@ -97,19 +100,42 @@ class _Loader(DataLoader):
             return {}
 
 
+VAULTED = "(vaulted)"
+# a template that would run a lookup on the controller (a file, a command, a secret store): kept as text
+_LOOKUP = re.compile(r"\b(lookup|query|q)\s*\(")
+
+
 def _vaulted(value):
-    """An inline !vault value: read, it would be decrypted (and fail without the password)."""
+    """An inline !vault value: read, it would be decrypted (with the run's vault password, if any)."""
     return type(value).__name__ in ("EncryptedString", "AnsibleVaultEncryptedUnicode")
 
 
-def _value(templar, value):
-    """The value templated; the raw text when it can't be (a fact of the node, a vaulted variable)."""
+def _masked(value):
+    """value with every inline vaulted value replaced by VAULTED, and whether there was one."""
     if _vaulted(value):
-        return "(vaulted)"
-    try:
-        value = templar.template(value)
-    except Exception:  # pylint: disable=broad-except
-        pass
+        return VAULTED, True
+    if isinstance(value, Mapping):
+        out, found = {}, False
+        for key, item in value.items():
+            out[key], one = _masked(item)
+            found = found or one
+        return out, found
+    if isinstance(value, (list, tuple)):
+        pairs = [_masked(item) for item in value]
+        return [p[0] for p in pairs], any(p[1] for p in pairs)
+    return value, False
+
+
+def _value(templar, value):
+    """The value templated; the raw text when it can't be (a fact of the node) or would run a lookup;
+    VAULTED when it comes from a vaulted value."""
+    if not _LOOKUP.search(str(value)):
+        try:
+            value = templar.template(value)
+        except Exception:  # pylint: disable=broad-except
+            pass
+    if VAULTED in str(value):
+        return VAULTED
     if isinstance(value, (list, tuple)):
         return [str(v) for v in value]
     if isinstance(value, bool) or value is None:
@@ -143,22 +169,25 @@ def read(sources, given=None, basedir=None):
         loader.set_basedir(basedir)
     inventory = InventoryManager(loader=loader, sources=sources)
     manager = VariableManager(loader=loader, inventory=inventory)
+    # the -e variables are left out: the run's loader read (and decrypted) them already
+    manager._extra_vars = {}  # pylint: disable=protected-access
     groups = dict((name, [h.name for h in group.get_hosts()]) for name, group in inventory.groups.items())
     try:
         auto = cluster_group(None, groups)
     except ValueError:
         auto = ""
     names = [given] if given else ([auto] if auto else top_groups(groups))
-    clusters = []
+    clusters, vaulted = [], False
     for name in names:
         if name not in inventory.groups:
             raise AnsibleLookupError("cassandra_hosts: group '%s' not found in the inventory" % name)
         hosts = []
         for host in inventory.groups[name].get_hosts():
-            variables = manager.get_vars(host=host, include_hostvars=False)
+            variables, found = _masked(manager.get_vars(host=host, include_hostvars=False))
+            vaulted = vaulted or found
             templar = Templar(loader=loader, variables=variables)
             shown = dict((k, _value(templar, variables[k])) for k in SHOWN if k in variables)
-            shown.update((k, _vaulted(variables[k]) or bool(variables[k])) for k in SET if k in variables)
+            shown.update((k, bool(variables[k])) for k in SET if k in variables)
             hosts.append({"name": host.name, "vars": shown,
                           "names": sorted(k for k in variables if k.startswith("cassandra_"))})
         clusters.append({"name": name, "hosts": hosts})
@@ -169,7 +198,7 @@ def read(sources, given=None, basedir=None):
         options.insert(0, "-b")
     vault_given = C.DEFAULT_VAULT_PASSWORD_FILE or C.DEFAULT_VAULT_IDENTITY_LIST or any(
         o.startswith("--") and "vault" in o for o in options)
-    if loader.skipped and not vault_given:
+    if (loader.skipped or vaulted) and not vault_given:
         options.append("--ask-vault-pass")  # the operations read the vaulted files help skipped
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
             "options": options, "imported": _imported(sources)}
