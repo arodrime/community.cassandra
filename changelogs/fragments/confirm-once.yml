@@ -1,0 +1,2 @@
+minor_changes:
+  - Operation playbooks - the confirmation prints each of its steps once, not one line per node.

@@ -5,9 +5,12 @@
 # yes or y goes on, no or n stops; any other answer asks again, 3 times at most.
 # cassandra_operation_confirm: false skips the question (non-interactive runs),
 # and so does --check (nothing changes: the plan only, see screen.yml).
+# Controller bookkeeping: each task runs once (run_once), its facts set on
+# every host of the play.
 - name: Start the count of answers
   ansible.builtin.set_fact:
     _cassandra_confirm_tries: 0
+  run_once: true
   when: cassandra_operation_confirm | bool and not ansible_check_mode
 
 - name: Ask for confirmation

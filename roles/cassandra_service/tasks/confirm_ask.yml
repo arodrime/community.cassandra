@@ -4,6 +4,7 @@
 - name: Count the answers
   ansible.builtin.set_fact:
     _cassandra_confirm_tries: "{{ _cassandra_confirm_tries | int + 1 }}"
+  run_once: true
 
 - name: Confirm the operation
   ansible.builtin.pause:
@@ -16,6 +17,7 @@
 - name: Read the answer
   ansible.builtin.set_fact:
     _cassandra_confirm_answer: "{{ _cassandra_confirm_reply | community.cassandra.cassandra_confirm_answer }}"
+  run_once: true
 
 - name: Stop, no terminal to answer on
   ansible.builtin.fail:
