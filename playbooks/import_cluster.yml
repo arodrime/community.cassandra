@@ -238,10 +238,6 @@
           boot: >-
             {{ _kv.unit_IsEnabled | default('') if _kv.unit_UnitFileState | default('') in ['', 'generated']
                else _kv.unit_UnitFileState }}
-          # the heap set in the unit (Environment=MAX_HEAP_SIZE=...), lost when cassandra_service replaces it
-          heap: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)MAX_HEAP_SIZE=(\\S+)') | first | default('') }}"
-          newsize: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)HEAP_NEWSIZE=(\\S+)') | first | default('') }}"
-          cms: "{{ _kv.cms | default('0') != '0' }}"
           # everything else the unit sets (e.g. LOCAL_JMX=no), and the files it reads variables from
           env: "{{ _kv.unit_Environment | default('') | community.cassandra.cassandra_unit_environment }}"
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
@@ -883,7 +879,6 @@
                            if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
                  | combine({'cassandra_service_enabled': false}
                            if _read and _hv.import_cluster_unit.boot | default('') == 'disabled' else {})
-                 | combine(_unit_heap)
                  | combine({'cassandra_service_environment': _unit_env} if _unit_env else {}) }}
             # cassandra_config's default (without facts: either)
             _default_conf_dirs: >-
@@ -906,26 +901,12 @@
               {{ {'cassandra_java_set_default': false}
                  if _read and _hv.import_cluster_java_bin | default('') != '' and _hv.import_cluster_system_java | default('') != ''
                     and _hv.import_cluster_system_java != _hv.import_cluster_java_bin else {} }}
-            # the rest of the unit's Environment, kept in cassandra_service's unit
+            # the unit's Environment (its heap too: cassandra-env.sh stays as it is), kept in cassandra_service's unit
             _unit_env: >-
               {{ {} if not _read else _hv.import_cluster_unit.env | default({}) | dict2items
-                 | rejectattr('key', 'in', (['MAX_HEAP_SIZE'] if 'cassandra_heap_size' in _unit_heap else [])
-                                           + (['HEAP_NEWSIZE'] if 'cassandra_heap_newsize' in _unit_heap else []))
                  | rejectattr('key', 'equalto', 'CASSANDRA_LOG_DIR' if _hv.import_cluster_unit.env.CASSANDRA_LOG_DIR | default('')
                                                 == _hv.import_cluster_log_dir | default('') else '')
                  | items2dict }}
-            # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
-            # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE. A unit
-            # kept as it is keeps it (cassandra-env.sh unchanged, the same in new nodes' unit)
-            _unit_heap: >-
-              {{ {} if not _read or 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
-                 else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
-                  if _hv.import_cluster_unit.heap | default('') != ''
-                     and _hv.import_cluster_config.vars.cassandra_heap_size | default('') == ''
-                     and not (_hv.import_cluster_series == '50x' and _hv.import_cluster_unit.cms | default(false) | bool) else {})
-                 | combine({'cassandra_heap_newsize': _hv.import_cluster_unit.newsize}
-                           if _hv.import_cluster_unit.newsize | default('') != '' and _hv.import_cluster_series != '50x'
-                              and _hv.import_cluster_config.vars.cassandra_heap_newsize | default('') == '' else {}) }}
             _node:
               name: "{{ _name }}"
               address: "{{ item.address }}"
@@ -983,7 +964,6 @@
                  ~ (' (kept on this node; new nodes get the unit of cassandra_service, with the restart policy'
                     if 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
                     else ' (cassandra_service replaces it with its own unit, keeping the restart policy')
-                 ~ ((', its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
                  ~ ((', its Environment ' ~ _unit_env.keys() | join(', ') ~ ' as cassandra_service_environment') if _unit_env else '')
                  ~ ((', NOT its EnvironmentFile ' ~ _hv.import_cluster_unit.env_files ~ ': put what it sets in cassandra_service_environment')
                     if _hv.import_cluster_unit.env_files | default('') else '') ~ ')' }}
