@@ -138,6 +138,7 @@
 
 # Under --check nothing is unpacked, so there is no java to point at yet.
 # Already pointing there (an alternative, or a plain link made by hand): left as is.
+# cassandra_java_set_default false: left as it is (Cassandra then needs JAVA_HOME).
 - name: Make it the system java
   community.general.alternatives:
     name: java
@@ -145,6 +146,7 @@
     link: /usr/bin/java
     priority: 100
   when:
+    - cassandra_java_set_default | bool
     - not (ansible_check_mode and not cassandra_java_home_java.stat.exists)
     - cassandra_java_resolved.stdout_lines | unique | length != 1
 

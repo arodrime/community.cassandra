@@ -212,6 +212,7 @@
         # not from a package: the directory above bin/java
         import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
+        import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
         # installed, but no configured repository offers it (the query ran): from a package file
@@ -898,6 +899,13 @@
                     and _conf.cassandra_log_dir | default('') not in ['', _hv.import_cluster_config.vars.cassandra_log_dir
                                                                            | default('/var/log/cassandra')]
                  else {} }}
+            # /usr/bin/java is another java than the running one (Cassandra finds its Java through JAVA_HOME):
+            # left as it is on this node, the system java of the other programs. None (or leading nowhere):
+            # the roles make it the running one, as nodetool needs one
+            _java_link: >-
+              {{ {'cassandra_java_set_default': false}
+                 if _read and _hv.import_cluster_java_bin | default('') != '' and _hv.import_cluster_system_java | default('') != ''
+                    and _hv.import_cluster_system_java != _hv.import_cluster_java_bin else {} }}
             # the rest of the unit's Environment, kept in cassandra_service's unit
             _unit_env: >-
               {{ {} if not _read else _hv.import_cluster_unit.env | default({}) | dict2items
@@ -942,9 +950,11 @@
               os: "{{ _hv.import_cluster_os | default({}) if _read else {} }}"
               # a node not read is an existing node too: nothing of it is taken over
               keep: >-
-                {{ (_hv.import_cluster_keep | default({}) | combine(_env_log_dir, _hv.import_cluster_medusa.keep | default({})) if _read
+                {{ (_hv.import_cluster_keep | default({}) | combine(_env_log_dir, _java_link, _hv.import_cluster_medusa.keep | default({}))
+                    if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
-                          'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false}) }}
+                          'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,
+                          'cassandra_java_set_default': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
@@ -961,10 +971,11 @@
             _versions: >-
               {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
                  ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')
-                 ~ ((', but /usr/bin/java is ' ~ (_hv.import_cluster_system_java or 'missing')
-                     ~ ': the roles will point it at the running Java')
-                    if _hv.import_cluster_java_home | default('')
-                       and _hv.import_cluster_system_java | default('') != _hv.import_cluster_java_home ~ '/bin/java' else '') }}
+                 ~ ((', /usr/bin/java is ' ~ _hv.import_cluster_system_java
+                     ~ ': left as it is on this node (new nodes get the running Java as their system java)') if _java_link
+                    else ', /usr/bin/java is missing: the roles will point it at the running Java'
+                         if _hv.import_cluster_java_bin | default('') != '' and _hv.import_cluster_system_java | default('') == ''
+                    else '') }}
             _started: >-
               {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
                  ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')

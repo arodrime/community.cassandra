@@ -94,6 +94,7 @@ KEEP = {
     "cassandra_cqlsh_python_manage": "cqlsh's Python (python3.11, cqlshlib link, wrapper)",
     "cassandra_linux_manage": "the OS settings (kernel, limits, THP, swap, time sync, disks)",
     "cassandra_service_unit_manage": "the systemd unit (or init script) Cassandra is started by",
+    "cassandra_java_set_default": "the system java (/usr/bin/java), which is not the running one",
 }
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 HOSTNAME = "{{ ansible_facts['hostname'] }}"
