@@ -161,7 +161,7 @@ a seed list when they are not).
 
 .. code-block:: console
 
-    $ ansible-playbook -i inventory community.cassandra.preflight
+    $ ansible-playbook -i inventory -b community.cassandra.preflight
     $ ansible-playbook -i inventory community.cassandra.create_cluster
     $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.rolling_restart
@@ -196,7 +196,9 @@ reset (see `Resetting a node`_) shows each node's plan under ``--check``, not th
 Rolling operations record each node done in a progress file on the controller, in ``.cassandra_progress`` next to
 the inventory (in the current dir when the inventory's dir is not writable and has no ``.cassandra_progress`` yet, or
 with ``-i host1,host2``), or in ``cassandra_rolling_progress_dir``. An interrupted run resumes where it stopped with
-``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. The
+``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. A node the interrupted
+``rolling_restart``, ``rolling_reboot``, ``apply_config`` or ``update_java`` (one node at a time) left drained or
+stopped is restarted first: it may be down then, any other node down still stops the run. The
 files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
 ``.gitignore``.
 
@@ -824,7 +826,7 @@ Then check what the roles would change:
 
 .. code-block:: console
 
-    $ ansible-playbook -i orders/hosts.yml community.cassandra.preflight
+    $ ansible-playbook -i orders/hosts.yml -b community.cassandra.preflight
     $ ansible-playbook -i orders/hosts.yml site.yml --check
 
 Repeat until the diff only shows what you intend to change. The confirmation prompt is a last safety net, not a

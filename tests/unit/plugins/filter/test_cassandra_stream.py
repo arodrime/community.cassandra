@@ -58,7 +58,7 @@ def report(s, **kwargs):
 
 
 def header(s, **kwargs):
-    return report(s, **kwargs).split("\n")[0]
+    return report(s, **kwargs).split("\n", maxsplit=1)[0]
 
 
 def finish(s, **kwargs):
@@ -642,7 +642,7 @@ def test_host_addresses():
 def test_first_checks_come_sooner_and_do_not_count_towards_a_stall():
     views = [read("n4", session("10.0.0.1", 10, 100))]
     s, now, waits = None, 0, []
-    for _ in range(8):
+    for dummy in range(8):
         s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
         waits.append(s["wait"])
         now += s["wait"]

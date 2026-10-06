@@ -36,10 +36,12 @@
   vars:
     _node_checks: "{{ cassandra_service_health_node_checks | default(true) | bool }}"
     _down_ok: "{{ cassandra_service_health_down_ok | default([]) + cassandra_service_health_resumed_down | default([]) }}"
+    # waits for down nodes to come back, not for the one a resumed run left down (one read)
+    _poll: "{{ 1 if cassandra_service_health_resumed_down | default([]) else [cassandra_service_health_timeout | int // 10, 1] | max }}"
   block:
     - name: Read the ring from this node (waits for down nodes)
       community.cassandra.cassandra_status:
-        poll: "{{ [cassandra_service_health_timeout | int // 10, 1] | max }}"
+        poll: "{{ _poll }}"
         interval: 10
         down: "{{ _down_ok | length }}"
       register: cassandra_health_self
@@ -49,7 +51,7 @@
 
     - name: Read the ring from {{ _cassandra_health_peer }}
       community.cassandra.cassandra_status:
-        poll: "{{ [cassandra_service_health_timeout | int // 10, 1] | max }}"
+        poll: "{{ _poll }}"
         interval: 10
         down: "{{ _down_ok | length }}"
       register: cassandra_health_peer

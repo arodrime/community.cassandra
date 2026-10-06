@@ -5,9 +5,6 @@
   community.cassandra.cassandra_drain:
   module_defaults:
     community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
-  register: cassandra_service_drain
-  # the node a resumed run stopped at may be drained or stopped already (node_operation.yml)
-  failed_when: cassandra_service_drain is failed and not _cassandra_resumed_node | default(false) | bool
 
 - name: Stop Cassandra
   ansible.builtin.systemd_service:

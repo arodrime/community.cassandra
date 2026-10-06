@@ -796,7 +796,7 @@
 
       Next steps:
         1. Review the report above and the variables (hand edits, drift).
-        2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml community.cassandra.preflight
+        2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml -b community.cassandra.preflight
         3. See what the roles would change, changing nothing:
            ansible-playbook -i {{ _dir }}/hosts.yml <your site playbook> --check --diff
   tasks:

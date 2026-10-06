@@ -211,9 +211,9 @@ def _peers(streams):
         rest = ranked[_PEERS - 1:]
         ranked = ranked[:_PEERS - 1] + [("%d more" % len(rest), sum(r[1] for r in rest), sum(r[2] for r in rest))]
     width = max([len(r[0]) for r in ranked] or [0])
-    return ["%s  %3d%% done  (%s / %s)" % (name.ljust(width), int(100 * min(moved, size) / size),
-                                          _size(moved, size).split()[0], _size(size, size))
-            for name, size, moved in ranked]
+    return ["%s  %3d%% done  (%s / %s)" % (
+        name.ljust(width), int(100 * min(moved, size) / size), _size(moved, size).split()[0], _size(size, size))
+        for name, size, moved in ranked]
 
 
 def cassandra_stream_report(state, node="", what="", status="going", names=None, files_label="files", clocks=True,
@@ -345,7 +345,7 @@ def cassandra_cleanup_report(states, jobs, batch, status="going"):
 
 
 def _fit(names, room):
-    """names joined with ", ", as many as fit in room characters, then "(+N more)"."""
+    """names joined with ", ", as many as fit in room characters, then ", ... (+N more)"."""
     for count in range(len(names), 0, -1):
         text = ", ".join(names[:count]) + ((", ... (+%d more)" % (len(names) - count)) if count < len(names) else "")
         if len(text) <= room or count == 1:

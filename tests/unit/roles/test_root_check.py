@@ -13,6 +13,15 @@ import sys
 import pytest
 import yaml
 
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
+
+try:  # ansible-core 2.19+ renders trusted templates only
+    from ansible.template import trust_as_template
+except ImportError:
+    def trust_as_template(template):
+        return template
+
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 COLLECTIONS = os.path.abspath(os.path.join(TOP, "..", "..", ".."))
 
@@ -66,3 +75,13 @@ def test_a_restart_writes_the_unit_before_draining():
     unit = [t for t in main if t["name"] == "Install the cassandra systemd unit"][0]
     assert unit["ansible.builtin.include_tasks"] == "unit.yml"
     assert unit["when"] == "not _cassandra_service_unit_written | default(false) | bool"
+
+
+def test_every_node_without_root_is_named():
+    check = [t for t in load("roles", "cassandra_service", "tasks", "root_check.yml") if "ansible.builtin.assert" in t][0]
+    hostvars = {"n1": {"cassandra_root_check": {"stdout": "0"}}, "n2": {"cassandra_root_check": {"stdout": "1000"}},
+                "n3": {"cassandra_root_check": {"stdout": "0"}}, "n4": {"cassandra_root_check": {"stdout": "1001"}}}
+    templar = Templar(loader=DataLoader(), variables={"hostvars": hostvars, "ansible_play_hosts": ["n1", "n2", "n3", "n4"]})
+    assert templar.template(trust_as_template(check["vars"]["_not_root"])) == ["n2", "n4"]
+    templar = Templar(loader=DataLoader(), variables={"hostvars": hostvars, "ansible_play_hosts": ["n1", "n3"]})
+    assert templar.template(trust_as_template(check["vars"]["_not_root"])) == []

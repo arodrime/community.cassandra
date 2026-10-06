@@ -10,8 +10,11 @@
     community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
   when: cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool  # a kept unit may not drain
   register: cassandra_service_drain
-  # the node a resumed run stopped at may be drained or stopped already (node_operation.yml)
-  failed_when: cassandra_service_drain is failed and not _cassandra_resumed_node | default(false) | bool
+  # the node a resumed run stopped at may be stopped already (node_operation.yml); drained again, it does nothing
+  failed_when: >-
+    cassandra_service_drain is failed
+    and not (_cassandra_resumed_node | default(false) | bool
+             and 'Connection refused' in cassandra_service_drain.stderr | default('') ~ cassandra_service_drain.msg | default(''))
 
 - name: Restart it and wait until it has joined
   ansible.builtin.include_tasks: main.yml

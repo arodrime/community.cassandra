@@ -1,6 +1,6 @@
 ---
 # Checks one cluster (an inventory group) before changing it:
-#   ansible-playbook -i inventory community.cassandra.preflight
+#   ansible-playbook -i inventory -b community.cassandra.preflight (root on the nodes, as the operations)
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
 # Fails on settings that must match across the cluster, on rack layouts the

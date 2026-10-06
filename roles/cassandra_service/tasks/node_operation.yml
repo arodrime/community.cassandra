@@ -9,10 +9,11 @@
 # cassandra_service_joining_before/after: addresses expected UJ (add_node),
 # cassandra_service_leaving_before: UL (decommission_node resuming).
 # A resumed run (cassandra_rolling_resume) of an operation that drains a node
-# and brings it back may find the node it stopped at drained or stopped (DN
-# for the others): that node, the first one not done, is checked from another
-# node only and may be down; its action then brings it back. Any other node
-# down still stops the run.
+# and restarts it may find the node it stopped at (the first one not done)
+# drained or stopped, DN for the others: when its own netstats says so (Mode
+# DRAINED, or JMX refusing the connection), it is checked from another node
+# only and may be down, and its action brings it back. Any other node down,
+# or that node down for another reason, still stops the run.
 - name: Skip a node the interrupted run already did
   ansible.builtin.set_fact:
     cassandra_op_result: "{{ cassandra_service_node_action }} skipped, done in the interrupted run"
@@ -22,14 +23,27 @@
   when: inventory_hostname not in cassandra_progress_done | default([])
   vars:
     _cassandra_group_size: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length }}"
-    _cassandra_resumed_node: >-
+    _cassandra_resume_candidate: >-
       {{ cassandra_rolling_resume | default(false) | bool
-         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java', 'upgrade']
+         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java']
          and inventory_hostname == ansible_play_hosts_all | reject('in', cassandra_progress_done | default([])) | first | default('') }}
+    _cassandra_resumed_node: >-
+      {{ _cassandra_resume_candidate | bool
+         and (cassandra_service_resume_state.mode | default('') == 'DRAINED'
+              or 'Connection refused' in cassandra_service_resume_state.stderr | default('') ~ cassandra_service_resume_state.msg | default('')) }}
   block:
     - name: Note the start time
       ansible.builtin.set_fact:
         _cassandra_op_start: "{{ now().timestamp() | int }}"
+
+    - name: Read the state of the node the interrupted run stopped at
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+      register: cassandra_service_resume_state
+      failed_when: false  # a stopped node: JMX refuses the connection
+      check_mode: false  # read-only
+      when: _cassandra_resume_candidate | bool
 
     - name: Check the cluster before touching this node
       ansible.builtin.include_tasks: cluster_health.yml
