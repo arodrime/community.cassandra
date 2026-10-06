@@ -161,7 +161,7 @@ def test_boot_setting_read(kv, boot):
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
     assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={},
-                  _repo={"manage": True}) == {"cassandra_medusa_link_dir": "", "cassandra_firewall_manage": False}
+                  _repo={"manage": True}, _installed={}) == {"cassandra_medusa_link_dir": "", "cassandra_firewall_manage": False}
 
 
 def test_os_baseline_is_the_roles_defaults_not_the_inventory():
@@ -203,4 +203,4 @@ def test_package_installed_from_a_file(installed, kv, from_file):
 ])
 def test_install_method_of_a_package_installed_from_a_file(from_file, read, pkg):
     hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": from_file}
-    assert render(MATCH["_pkg"], _hv=hv, _read=read, _installed={}, _repo={"vars": {}}) == pkg
+    assert render(MATCH["_pkg"], _hv=hv, _read=read, _repo={"vars": {}}) == pkg

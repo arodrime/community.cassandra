@@ -946,7 +946,7 @@
                  | combine({'cassandra_install_method': 'packages'}
                            if _read and _hv.import_cluster_package | default('') and _hv.import_cluster_package_from_file | default(false) | bool
                            else {})
-                 | combine(_installed, _repo.vars if _read else {}) }}
+                 | combine(_repo.vars if _read else {}) }}
             # import_cluster_keep_hand_edits: the config files with hand edits no variable covers are left as
             # they are on this node (cassandra_config_keep_files), rather than failing the self-check
             _hand_kept: >-
@@ -962,7 +962,8 @@
             # cassandra_repository takes over the node's Cassandra repository files only if it would write them as
             # they are (with their URL, credentials and key path); else they are left as they are
             _repo: "{{ _hv.import_cluster_repo | default({'manage': true, 'vars': {}, 'why': ''}) }}"
-            # what cassandra_install adds next to the Cassandra package, left out where the node has none
+            # what cassandra_install adds next to the Cassandra package, left out where the node has none (its
+            # host_vars: nodes added later get them)
             _installed: >-
               {%- set pkgs = _hv.ansible_facts.packages | default({}) -%}
               {%- set out = {} -%}
@@ -1041,7 +1042,7 @@
               keep: >-
                 {{ (_hv.import_cluster_keep | default({})
                     | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}),
-                              {} if _repo.manage else {'cassandra_repository_manage': false}, _hand_kept)
+                              {} if _repo.manage else {'cassandra_repository_manage': false}, _hand_kept, _installed)
                     if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,

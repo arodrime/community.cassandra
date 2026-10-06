@@ -81,10 +81,13 @@ def test_not_read_or_not_a_package():
     assert installed([], package="") == {}  # a tarball install: no package to keep company
 
 
-def test_written_with_the_package_vars():
-    hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": True}
-    assert render(MATCH["_pkg"], _hv=hv, _read=True, _installed={"cassandra_install_tools": False}, _repo={"vars": {}}) == {
-        "cassandra_package_version": "5.0.7", "cassandra_install_method": "packages", "cassandra_install_tools": False}
+def test_written_in_the_host_vars():
+    # this node's: nodes added later get cassandra-tools, jemalloc and the hold
+    hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
+    keep = render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={},
+                  _repo={"manage": True}, _installed={"cassandra_install_tools": False})
+    assert keep == {"cassandra_firewall_manage": False, "cassandra_install_tools": False}
+    assert "_installed" not in MATCH["_pkg"]
 
 
 def test_role_installs_the_inventory_packages():
