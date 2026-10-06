@@ -27,6 +27,7 @@ import yaml
 
 from ansible.errors import AnsibleFilterError
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import _wrap
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -63,8 +64,18 @@ OPERATIONS = [
      "args": ["-e cassandra_new_nodes=NEW_NODE"],
      "options": {"cassandra_new_nodes": "the hosts to add (comma-separated), already in the inventory",
                  "cassandra_add_node_reset": "true empties a new node that has data but is not in the ring first",
-                 "cassandra_add_node_cleanup": "none (default), one, rack, dc or all: runs the cleanup afterwards",
+                 "cassandra_add_node_cleanup": "none (default), sequential, rack, dc or all: runs the cleanup afterwards",
                  "cassandra_token_auto": "one token per node: bisect, balanced or true (shows both, asks)"}},
+    {"name": "topology", "theme": "nodes", "cql": True, "cql_when": "to remove nodes",
+     "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, removes"
+                " the hosts marked cassandra_node_state: absent; one node at a time, --check shows the plan.",
+     "options": {"cassandra_add_node_reset": "true empties a host to add that has data but is not in the ring first",
+                 "cassandra_token_auto": "one token per node: bisect or balanced for the hosts to add",
+                 "cassandra_decommission_force": "true goes on when a datacenter would keep fewer nodes than"
+                                                 " replicas",
+                 "cassandra_topology_max_removals": "most nodes removed in one run (2)",
+                 "cassandra_topology_allow_large_removal": "true goes on with more removals than that, or more"
+                                                           " than half of a datacenter"}},
     {"name": "decommission_node", "theme": "nodes",
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"
                 " refuses seeds.",
@@ -96,7 +107,7 @@ OPERATIONS = [
      "summary": "One token per node: moves nodes to new tokens, one at a time (by default the fewest moves that even"
                 " out each datacenter).",
      "options": {"cassandra_move_tokens": "{node: token}: only those nodes move",
-                 "cassandra_move_cleanup": "none (default), one, rack, dc or all: runs the cleanup afterwards",
+                 "cassandra_move_cleanup": "none (default), sequential, rack, dc or all: runs the cleanup afterwards",
                  "cassandra_move_force_disk": "true goes on when a node would keep less free disk than"
                                               " cassandra_move_min_free_percent (20)"}},
     {"name": "create_cluster", "theme": "cluster",
@@ -289,12 +300,27 @@ class _Cluster(object):
             else:
                 s = next(k for k, hs in series.items() if host["name"] in hs)
                 java = "%s (role default)" % versions.get(str(s), "17")
-            how = ("tarball" if v.get("cassandra_java_tarball") else
-                   "at %s" % v["cassandra_java_home"] if _resolved(v.get("cassandra_java_home")) else "package")
+            how = self._java_how(v, java.split()[0])
             out.setdefault("%s, %s" % (java, how), []).append(host["name"])
         if len(out) == 1:
             return list(out)[0]
         return "MIXED: " + "; ".join("%s (%s)" % (k, ", ".join(h)) for k, h in sorted(out.items()))
+
+    @staticmethod
+    def _java_how(v, java):
+        """Where the Java comes from, as cassandra_install decides it."""
+        install = str(v.get("cassandra_install_java", True)).lower() not in ("false", "no", "off", "0")
+        tarballs = v.get("cassandra_java_tarballs")
+        if "cassandra_java_tarball" in v:
+            tarball = _resolved(v["cassandra_java_tarball"])
+        else:  # the cassandra_java_tarballs entry of this Java (a mirror file shared by every cluster)
+            tarball = install and isinstance(tarballs, dict) and any(
+                cassandra_java_major(k) == cassandra_java_major(java) for k in tarballs)
+        if tarball:
+            return "tarball"
+        if _resolved(v.get("cassandra_java_home")):
+            return "at %s" % v["cassandra_java_home"]
+        return "package" if install else "set up by other means"
 
     def num_tokens(self):
         found = self.values("cassandra_num_tokens", self.defaults["cassandra_num_tokens"])

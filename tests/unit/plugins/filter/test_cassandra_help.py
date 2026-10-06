@@ -82,6 +82,10 @@ Nodes:
   add_node - Adds new hosts to the running cluster, one at a time. Put them in their rack's group
     first, not in cassandra_seeds.
     $ $PLAY -b $C.add_node -e cassandra_new_nodes=NEW_NODE
+  topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the
+    ring, removes the hosts marked cassandra_node_state: absent; one node at a time, --check shows
+    the plan.
+    $ $PLAY -b $C.topology
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
     the others; refuses seeds.
     $ $PLAY -b $C.decommission_node -e cassandra_leaving_nodes=node4
@@ -139,9 +143,9 @@ Takeover:
 
 3. Advice
 ---------
-- Marked cassandra_node_state: absent: node4. decommission_node removes them from the ring (--check
-  first), then take them out of the inventory:
-    $ $PLAY -b $C.decommission_node -e cassandra_leaving_nodes=node4
+- Marked cassandra_node_state: absent: node4. topology --check shows the plan to remove them, then
+  topology without --check does it:
+    $ $PLAY -b $C.topology --check
 - dc1: racks of different sizes (1, 1, 2 nodes): the data is not shared evenly; add or remove nodes
   rack by rack.""".replace("$PLAY", "ansible-playbook -i inventories/orders/hosts.yml").replace("$C.", "community.cassandra.")
 
@@ -238,9 +242,9 @@ def test_password_authenticator_without_cql_user():
     for host in hosts:
         del host["vars"]["cassandra_cql_username"]
     text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
-    assert ("- Authentication is on (PasswordAuthenticator) but cassandra_cql_username is not set:\n"
-            "  decommission_node, remove_dead_node, rolling_restart (rack mode), stop_rack, add_datacenter,\n"
-            "  remove_datacenter read the replication over CQL") in text
+    assert ("- Authentication is on (PasswordAuthenticator) but cassandra_cql_username is not set: topology (to\n"
+            "  remove nodes), decommission_node, remove_dead_node, rolling_restart (rack mode), stop_rack,\n"
+            "  add_datacenter, remove_datacenter read the replication over CQL") in text
 
 
 def test_close_variable_name():
@@ -455,3 +459,19 @@ def test_help_command_without_root_or_the_vault_prompt_help_added():
     # given by the user (a vaulted group_vars/all): help needs it too
     text = cassandra_help(model(options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.help\n" in text
+
+
+@pytest.mark.parametrize("more, java", [
+    ({}, "Java: 11, package"),
+    ({"cassandra_java_tarballs": {"11": {"url": "https://mirror.example.com/jdk-11.tar.gz"}}}, "Java: 11, tarball"),
+    ({"cassandra_java_tarballs": {17: {"url": "https://mirror.example.com/jdk-17.tar.gz"}}}, "Java: 11, package"),
+    ({"cassandra_java_tarballs": {"11": {"url": "u"}}, "cassandra_java_tarball": ""}, "Java: 11, package"),
+    ({"cassandra_java_tarballs": {"11": {"url": "u"}}, "cassandra_install_java": False}, "Java: 11, set up by other means"),
+    ({"cassandra_java_tarball": "https://mirror.example.com/jdk.tar.gz"}, "Java: 11, tarball"),
+    ({"cassandra_java_home": "/opt/jdk-11"}, "Java: 11, at /opt/jdk-11"),
+])
+def test_java_origin(more, java):
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    for host in hosts:
+        host["vars"].update(more)
+    assert "\n  %s\n" % java in cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)

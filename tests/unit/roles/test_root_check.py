@@ -58,7 +58,7 @@ def test_the_root_check_comes_before_any_node_action():
     start = [p for p in load("playbooks", "start_rack.yml") if p["name"] == "Start the rack"][0]["tasks"]
     assert start[0]["ansible.builtin.include_role"]["tasks_from"] == "root_check.yml"
     # every playbook that changes nodes goes through preflight (or is start_rack)
-    readonly = {"health_check.yml", "import_cluster.yml", "preflight.yml", "start_rack.yml", "status.yml"}
+    readonly = {"health_check.yml", "help.yml", "import_cluster.yml", "preflight.yml", "start_rack.yml", "status.yml"}
     for name in sorted(os.listdir(os.path.join(TOP, "playbooks"))):
         if name.endswith(".yml") and name not in readonly:
             plays = load("playbooks", name)
