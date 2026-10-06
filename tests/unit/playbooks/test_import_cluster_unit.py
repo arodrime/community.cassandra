@@ -132,7 +132,7 @@ def test_node_not_read_is_left_as_it_is():
     keep = render(MATCH["_node"]["keep"], _hv={}, _read=False)
     assert keep == {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                     "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
-                    "cassandra_java_set_default": False}
+                    "cassandra_java_set_default": False, "cassandra_firewall_manage": False}
 
 
 @pytest.mark.parametrize("keep, env, config_vars, expected", [
@@ -160,7 +160,8 @@ def test_boot_setting_read(kv, boot):
 
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
-    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}) == {"cassandra_medusa_link_dir": ""}
+    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}) == {
+        "cassandra_medusa_link_dir": "", "cassandra_firewall_manage": False}
 
 
 def test_os_baseline_is_the_roles_defaults_not_the_inventory():

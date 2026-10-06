@@ -768,7 +768,8 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
 
 THP, swap, ``tuned``, the time servers and the firewall are only reported: the role disables THP and swap the same
 way whatever the nodes use, does not write time servers, and only opens the firewall with
-``cassandra_manage_firewall: true``. A node the role set up keeps the values of the role's own files (its sysctl
+``cassandra_manage_firewall: true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or
+none, is left as it is; nodes added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl
 file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that running the roles again changes
 nothing on it; when those files do not hold them, the values in effect are carried, and a node without time sync gets
 ``cassandra_linux_timesync: false`` rather than a chrony it does not have.

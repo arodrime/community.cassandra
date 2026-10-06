@@ -937,13 +937,15 @@
                    if _read else {} }}
               # the OS tuning found on it, for the report
               os: "{{ _hv.import_cluster_os | default({}) if _read else {} }}"
-              # a node not read is an existing node too: nothing of it is taken over
+              # a node not read is an existing node too: nothing of it is taken over. The firewall (or none)
+              # is the node's: no mark tells one the role set up
               keep: >-
-                {{ (_hv.import_cluster_keep | default({}) | combine(_env_log_dir, _java_link, _hv.import_cluster_medusa.keep | default({}))
+                {{ (_hv.import_cluster_keep | default({})
+                    | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}))
                     if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,
-                          'cassandra_java_set_default': false}) }}
+                          'cassandra_java_set_default': false, 'cassandra_firewall_manage': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
