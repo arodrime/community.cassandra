@@ -61,6 +61,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.parsing.vault import is_encrypted_file
 from ansible.plugins.lookup import LookupBase
 from ansible.template import Templar
+from ansible.utils.unsafe_proxy import wrap_var
 from ansible.vars.manager import VariableManager
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
@@ -101,8 +102,10 @@ class _Loader(DataLoader):
 
 
 VAULTED = "(vaulted)"
-# a template that would run a lookup on the controller (a file, a command, a secret store): kept as text
-_LOOKUP = re.compile(r"\b(lookup|query|q)\s*\(")
+_OTHER_MASK = "(vaulted!)"  # templated with each mask: a result that differs comes from a vaulted value
+# a template that would run a lookup on the controller (a file, a command, a secret store): never templated,
+# directly or through another variable
+_LOOKUP = re.compile(r"\b(lookup|query|q)\b")
 
 
 def _vaulted(value):
@@ -110,32 +113,41 @@ def _vaulted(value):
     return type(value).__name__ in ("EncryptedString", "AnsibleVaultEncryptedUnicode")
 
 
-def _masked(value):
-    """value with every inline vaulted value replaced by VAULTED, and whether there was one."""
+def _masked(value, mask=VAULTED):
+    """value with every inline vaulted value replaced by mask, every template that runs a lookup made
+    unsafe (kept as text), and whether there was a vaulted value."""
     if _vaulted(value):
-        return VAULTED, True
+        return mask, True
     if isinstance(value, Mapping):
         out, found = {}, False
         for key, item in value.items():
-            out[key], one = _masked(item)
+            out[key], one = _masked(item, mask)
             found = found or one
         return out, found
     if isinstance(value, (list, tuple)):
-        pairs = [_masked(item) for item in value]
+        pairs = [_masked(item, mask) for item in value]
         return [p[0] for p in pairs], any(p[1] for p in pairs)
+    if isinstance(value, str) and ("{{" in value or "{%" in value) and _LOOKUP.search(value):
+        return wrap_var(str(value)), False
     return value, False
 
 
-def _value(templar, value):
-    """The value templated; the raw text when it can't be (a fact of the node) or would run a lookup;
-    VAULTED when it comes from a vaulted value."""
-    if not _LOOKUP.search(str(value)):
-        try:
-            value = templar.template(value)
-        except Exception:  # pylint: disable=broad-except
-            pass
-    if VAULTED in str(value):
+def _template(templar, value):
+    try:
+        return templar.template(value)
+    except Exception:  # pylint: disable=broad-except
+        return value
+
+
+def _value(templars, value, other):
+    """The value templated (with each mask); the raw text when it can't be (a fact of the node) or would run
+    a lookup; VAULTED when it comes from a vaulted value. other: the same value, masked with _OTHER_MASK."""
+    if _LOOKUP.search(str(value)):
+        return str(value)
+    first, second = _template(templars[0], value), _template(templars[1], other)
+    if first != second or VAULTED in str(first):
         return VAULTED
+    value = first
     if isinstance(value, (list, tuple)):
         return [str(v) for v in value]
     if isinstance(value, bool) or value is None:
@@ -181,12 +193,16 @@ def read(sources, given=None, basedir=None):
     for name in names:
         if name not in inventory.groups:
             raise AnsibleLookupError("cassandra_hosts: group '%s' not found in the inventory" % name)
+        if not inventory.groups[name].get_hosts():
+            raise AnsibleLookupError("cassandra_hosts: group '%s' has no host" % name)
         hosts = []
         for host in inventory.groups[name].get_hosts():
-            variables, found = _masked(manager.get_vars(host=host, include_hostvars=False))
+            raw = manager.get_vars(host=host, include_hostvars=False)
+            variables, found = _masked(raw)
+            other = _masked(raw, _OTHER_MASK)[0]
             vaulted = vaulted or found
-            templar = Templar(loader=loader, variables=variables)
-            shown = dict((k, _value(templar, variables[k])) for k in SHOWN if k in variables)
+            templars = (Templar(loader=loader, variables=variables), Templar(loader=loader, variables=other))
+            shown = dict((k, _value(templars, variables[k], other[k])) for k in SHOWN if k in variables)
             shown.update((k, bool(variables[k])) for k in SET if k in variables)
             hosts.append({"name": host.name, "vars": shown,
                           "names": sorted(k for k in variables if k.startswith("cassandra_"))})

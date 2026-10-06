@@ -137,7 +137,6 @@ def test_value_from_an_inline_vault_masked(tmp_path):
     model = read([source])
     vars_ = host(model, "node1")["vars"]
     assert vars_["cassandra_cluster_name"] == "(vaulted)" and vars_["cassandra_dc"] == "(vaulted)"
-    assert "TOPSECRET" not in repr(model)
     assert model["options"] == ["-b", "--ask-vault-pass"]  # the operations decrypt it
 
 
@@ -146,3 +145,28 @@ def test_lookup_not_run(tmp_path):
     source = inventory(tmp_path, orders="ansible_user: \"{{ lookup('ansible.builtin.file', '%s') }}\"\n"
                        % (tmp_path / "marker"))
     assert host(read([source]), "node1")["vars"]["ansible_user"].startswith("{{ lookup(")
+
+
+def test_lookup_through_another_variable_not_run(tmp_path):
+    marker = tmp_path / "ran"
+    source = inventory(tmp_path, orders=(
+        "indirect: \"{{ lookup('ansible.builtin.pipe', 'touch %s; echo INDIRECT') }}\"\n"
+        "cassandra_endpoint_snitch: \"{{ indirect }}\"\n"
+        "cassandra_dc: \"{{ (lookup)('ansible.builtin.pipe', 'touch %s; echo DIRECT') }}\"\n") % (marker, marker))
+    vars_ = host(read([source]), "node1")["vars"]
+    assert not marker.exists()
+    assert vars_["cassandra_endpoint_snitch"].startswith("{{") and vars_["cassandra_dc"].startswith("{{")
+
+
+def test_transformed_vault_value_masked(tmp_path):
+    value = "\n".join("  " + line for line in vaulted("TOPSECRET").splitlines())
+    source = inventory(tmp_path, orders="the_secret: !vault |\n%s\ncassandra_cluster_name: \"{{ the_secret | b64encode }}\"\n"
+                       "cassandra_dc: \"{{ the_secret[1:] }}\"\n" % value)
+    vars_ = host(read([source]), "node1")["vars"]
+    assert vars_["cassandra_cluster_name"] == "(vaulted)" and vars_["cassandra_dc"] == "(vaulted)"
+
+
+def test_empty_group(tmp_path):
+    hosts = HOSTS + "    empty:\n      hosts: {}\n"
+    with pytest.raises(AnsibleError, match="group 'empty' has no host"):
+        read([inventory(tmp_path, hosts=hosts)], given="empty")

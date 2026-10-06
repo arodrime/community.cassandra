@@ -35,7 +35,7 @@ THEMES = (("read-only", "Read-only (change nothing)"), ("nodes", "Nodes"), ("clu
           ("takeover", "Takeover"))
 
 # args: what the command needs, {placeholders} filled from the inventory
-# (UPPERCASE: a value only you know); options: the other variables;
+# (PLACEHOLDERS: a value only you know); options: the other variables;
 # cql: reads the replication with cassandra_cql_username/_password when
 # authentication is on ("plan": plans without it, as if every keyspace had
 # replicas everywhere); single_token: only for num_tokens 1.
@@ -169,7 +169,10 @@ UNRESOLVED_CHECKED = ("cassandra_cluster_name", "cassandra_version", "cassandra_
                       "cassandra_install_method", "cassandra_java_version", "cassandra_dc", "cassandra_rack",
                       "cassandra_seeds", "cassandra_num_tokens", "cassandra_authenticator", "cassandra_endpoint_snitch",
                       "cassandra_allocate_tokens_for_local_replication_factor", "cassandra_node_state")
-_PLACEHOLDER = re.compile(r"\b[A-Z][A-Z_]{3,}\b")
+# the values only the operator knows, written in the commands as is
+PLACEHOLDERS = ("NEW_NODE", "DEAD_NODE_ADDRESS", "NODE", "NEW_DC_GROUP", "KEYSPACE", "DC_TO_REMOVE", "NEW_DIR",
+                "JMX_USER", "JMX_PASSWORD_FILE")
+_PLACEHOLDER = re.compile(r"(?<![\w-])(%s)(?![\w-])" % "|".join(PLACEHOLDERS))
 
 
 def _role_defaults():
@@ -381,7 +384,9 @@ def _command(op, model, cluster, cwd):
     # a real node only when the inventory marks it for removal: never one nobody chose
     fill = {"dc": first_dc, "rack": sorted(cluster.dcs[first_dc])[-1],
             "leaving": ",".join(absent) if absent else "NODE"}
-    options = [shlex.quote(o) for o in _options(model, cwd) if o != "-b" or op["name"] != "help"]  # no root
+    # help needs no root, and decrypts nothing
+    options = [shlex.quote(o) for o in _options(model, cwd)
+               if op["name"] != "help" or o not in ("-b", "--ask-vault-pass")]
     parts = ["ansible-playbook", inv] + options + ["community.cassandra.%s" % op["name"]]
     if model.get("auto") != cluster.name:
         parts.append(_e("cassandra_hosts", cluster.name))
@@ -597,7 +602,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
 
 _INTRO = ("Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each"
           " operation shows its plan first; --check runs it without changing anything. One operation in detail:"
-          " -e help_topic=<operation>. UPPERCASE words in a command: your own values.")
+          " -e help_topic=<operation>. Placeholders such as NEW_NODE or NODE: your own values.")
 
 
 def _text(header, sections, model, cwd):

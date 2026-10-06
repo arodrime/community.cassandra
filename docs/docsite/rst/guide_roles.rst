@@ -207,8 +207,8 @@ Help and runbook
 as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
-several clusters, its datacenters and racks, the nodes marked absent, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
-user options the run was given; UPPERCASE words are values only you know); and advice from the inventory (nodes
+several clusters, a datacenter and rack of it, the nodes marked absent, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
+user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know); and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
 
@@ -235,6 +235,8 @@ inventory alone is named in the advice. When the inventory has vaulted values an
 (``--vault-password-file``, ``--vault-id``, ``--ask-vault-pass``, or one in ``ansible.cfg``), the printed commands
 carry ``--ask-vault-pass``. ``cassandra_node_state: absent`` marks a host to remove: ``help`` lists it apart and
 names it in the ``decommission_node`` command; the other operations still treat it as a node of the cluster.
+A vault-encrypted file in ``group_vars/all`` is read by Ansible for every host, ``localhost`` too: ``help`` then
+needs the vault password as well (and still shows nothing from it).
 
 
 Creating a cluster

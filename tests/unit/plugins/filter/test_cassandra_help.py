@@ -46,7 +46,7 @@ Cassandra help for the inventory inventories/orders/hosts.yml (read from the inv
 
 Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each
 operation shows its plan first; --check runs it without changing anything. One operation in detail:
--e help_topic=<operation>. UPPERCASE words in a command: your own values.
+-e help_topic=<operation>. Placeholders such as NEW_NODE or NODE: your own values.
 
 1. The cluster as the inventory describes it
 --------------------------------------------
@@ -438,3 +438,16 @@ def test_seeds_from_a_template():
     assert "  Seeds: not readable from the inventory alone\n" in text
     assert "seed" not in advice(text).replace("cassandra_seeds could not be read", "")
     assert "(seed)" not in text
+
+
+def test_real_uppercase_values_are_not_placeholders():
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    for host in hosts:
+        host["vars"].update(cassandra_dc="EU_WEST", cassandra_rack="RACK_A")
+    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, topic="stop_rack", cwd=CWD)
+    assert "Replace" not in text
+
+
+def test_help_command_without_root_or_vault_prompt():
+    text = cassandra_help(model(options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help\n" in text

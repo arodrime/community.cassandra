@@ -7,7 +7,7 @@
 #    seeds, the nodes marked cassandra_node_state: absent;
 # 2. every operation playbook, by theme, with its command for this inventory
 #    (its path, the cluster's group when it is needed, a datacenter and rack, the -e
-#    variables it needs; UPPERCASE: a value only you know);
+#    variables it needs; NEW_NODE, NODE...: a value only you know);
 # 3. advice from the inventory: nodes marked absent, authentication on without
 #    cassandra_cql_username, a variable close to one the collection reads,
 #    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,
@@ -24,7 +24,9 @@
 # output or RUNBOOK.md. The commands carry the vault and connection options
 # help was run with (-b unless ansible.cfg or the inventory become;
 # --ask-vault-pass when the inventory has vaulted values and the run no vault
-# password).
+# password). A vault-encrypted file in group_vars/all is read by Ansible for
+# localhost too: then help needs the vault password as well (and still shows
+# nothing from it).
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts), else every top
 # group (one per cluster).
