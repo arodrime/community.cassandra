@@ -36,6 +36,11 @@
         _unreachable: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
       run_once: true
 
+    - name: Check the run has root on the nodes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: root_check.yml
+
     - name: Going on without the nodes that did not answer
       ansible.builtin.debug:
         msg: >-

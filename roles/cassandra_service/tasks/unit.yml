@@ -1,0 +1,10 @@
+---
+# Same name as the package's init script: systemd prefers a native unit
+# over the SysV-generated one, so service/systemctl both use this.
+- name: Install the cassandra systemd unit
+  ansible.builtin.template:
+    src: cassandra.service.j2
+    dest: /etc/systemd/system/cassandra.service
+    mode: "0644"
+  register: cassandra_service_unit
+  when: cassandra_service_unit_manage | bool

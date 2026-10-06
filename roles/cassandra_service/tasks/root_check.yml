@@ -1,0 +1,23 @@
+---
+# The operations write the systemd unit and Cassandra's files and drive
+# systemd on the nodes: a run without root there (no -b) could drain a node,
+# then stop on a file it can't write and leave it drained. Checked before
+# any node is touched, for every node of the play at once.
+- name: Read the user the run has on the nodes
+  ansible.builtin.command: id -u
+  register: cassandra_root_check
+  changed_when: false
+  check_mode: false  # read-only
+
+- name: Refuse a run without root on the nodes
+  ansible.builtin.assert:
+    that: _not_root | length == 0
+    fail_msg: >-
+      These operations need root on the nodes ({{ _not_root | join(', ') }} without it): add -b
+      (or become = true in ansible.cfg). Nothing was changed.
+    quiet: true
+  run_once: true
+  vars:
+    _not_root: >-
+      {{ ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['cassandra_root_check', 'stdout']))
+         | rejectattr('1', 'equalto', '0') | map(attribute='0') | list }}
