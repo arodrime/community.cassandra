@@ -50,7 +50,8 @@ def test_import_keeps_the_firewall_of_every_node():
         todo += t.get("block", [])
     keep = match["_node"]["keep"]
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
-    assert render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}) == {"cassandra_firewall_manage": False}
+    assert render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _repo={"manage": True}) == {
+        "cassandra_firewall_manage": False}
     assert render(keep, _hv={}, _read=False)["cassandra_firewall_manage"] is False
     base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
             "normalized": [], "notes": []}

@@ -778,6 +778,13 @@ A node of the ring the import could not read (down, unreachable, nodetool not fo
 give it the group variables unchecked, and start it if it is down. ``-e import_cluster_allow_unread=true`` accepts it;
 then keep it out of the runs (``--limit``) until an import reads it.
 
+The Cassandra repository files of a node (``cassandra-<series>`` in ``/etc/yum.repos.d`` or
+``/etc/apt/sources.list.d``, and ``/etc/apt/auth.conf.d/cassandra.conf``) are taken over only when
+``cassandra_repository`` would write them as they are: then their mirror URL, credentials (``secrets.yml``) and key
+path are imported. Files written another way (other keys or names, other signing keys, an apt credentials file without
+the role's header, another series' file, or any file when the package came from a file) get
+``cassandra_repository_manage: false`` on that node, and the report says why.
+
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as

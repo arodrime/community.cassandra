@@ -82,7 +82,9 @@ def test_not_read_or_not_a_package():
 
 
 def test_written_with_the_package_vars():
-    assert "combine(_installed)" in MATCH["_pkg"]
+    hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": True}
+    assert render(MATCH["_pkg"], _hv=hv, _read=True, _installed={"cassandra_install_tools": False}, _repo={"vars": {}}) == {
+        "cassandra_package_version": "5.0.7", "cassandra_install_method": "packages", "cassandra_install_tools": False}
 
 
 def test_role_installs_the_inventory_packages():

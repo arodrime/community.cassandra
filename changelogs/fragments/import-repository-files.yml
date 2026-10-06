@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    import_cluster - a node's Cassandra repository files are taken over by cassandra_repository only when it would write them as they are, with their mirror URL, credentials and key path imported; any other (a hand-written or mirror file, another series' file, an apt credentials file without the role's header, or any file when the package came from a file) gets ``cassandra_repository_manage: false`` on that node, with the reason in the report. A file named ``cassandra-*`` was enough before, and the role then reset the URL and removed the credentials.
+  - >-
+    cassandra_repository - removes ``/etc/apt/auth.conf.d/cassandra.conf`` only when it wrote it (its header).

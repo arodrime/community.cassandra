@@ -184,9 +184,12 @@
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf \
           && echo "own_os=yes"
         grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
+        rf=
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
-          [ -e "$f" ] && { echo "own_repo=yes"; break; }
+          [ -e "$f" ] && rf="$rf $f"
         done
+        # (each one checked below: the role takes over only files it would write as they are)
+        [ -n "$rf" ] && echo "own_repo=yes" && echo "repo_files=${rf# }"
         # a configured repository offers the cassandra package (else it was installed from a file: new nodes
         # need cassandra_install_method packages); apt: a source besides the status of the installed package
         if command -v apt-cache >/dev/null 2>&1; then
@@ -218,6 +221,7 @@
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
         import_cluster_newer_files: "{{ _kv.newer | default('') | split | sort }}"
         import_cluster_held: "{{ _kv.held | default('') | split }}"
+        import_cluster_repo_files: "{{ _kv.repo_files | default('') | split }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
         # installed, but no configured repository offers it (the query ran): from a package file
@@ -266,6 +270,52 @@
       failed_when: false
       no_log: true
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+
+    # the Cassandra repository files: cassandra_repository takes over only the ones it would write as they are
+    - name: Read the Cassandra repository files
+      ansible.builtin.slurp:
+        path: "{{ item }}"
+      loop: "{{ import_cluster_repo_files + (['/etc/apt/auth.conf.d/cassandra.conf'] if ansible_facts['os_family'] == 'Debian' else []) }}"
+      register: import_cluster_repo_slurp
+      failed_when: false  # no credentials file
+      no_log: true  # credentials
+      when: import_cluster_repo_files | default([]) | length > 0
+
+    - name: Read their mode and the signing keys they name
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha1
+        get_mime: false
+        get_attributes: false
+      loop: >-
+        {{ (import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='item') | list
+            + import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='content')
+              | map('b64decode') | map('regex_findall', '(?m)^(?:gpgkey\s*=\s*file://|Signed-By:\s*)(\S+)') | flatten)
+           | unique }}
+      register: import_cluster_repo_stat
+      when: import_cluster_repo_files | default([]) | length > 0
+      no_log: true  # the checksum of the credentials file
+
+    - name: Tell whether cassandra_repository would write them as they are
+      ansible.builtin.set_fact:
+        import_cluster_repo: >-
+          {{ _files | community.cassandra.cassandra_repository_import(
+               _stats, import_cluster_series, ansible_facts['os_family'],
+               lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/files/KEYS', rstrip=false) | hash('sha1'),
+               ansible_facts['packages'] | default({}), import_cluster_package_from_file | bool,
+               (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml') | from_yaml).debian_packages) }}
+      vars:
+        _read: "{{ import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | list }}"
+        _files: "{{ dict(_read | map(attribute='item') | zip(_read | map(attribute='content') | map('b64decode'))) }}"
+        _stats: >-
+          {{ dict(import_cluster_repo_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+                  | map(attribute='item')
+                  | zip(import_cluster_repo_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+                        | map(attribute='stat'))) }}
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+      when:
+        - import_cluster_series is defined
+        - import_cluster_repo_files | default([]) | length > 0
 
     # the unit cassandra_service wrote (its mark): the self-check compares it with the one it would write
     - name: Read the unit
@@ -862,7 +912,10 @@
                  | combine({'cassandra_install_method': 'packages'}
                            if _read and _hv.import_cluster_package | default('') and _hv.import_cluster_package_from_file | default(false) | bool
                            else {})
-                 | combine(_installed) }}
+                 | combine(_installed, _repo.vars if _read else {}) }}
+            # cassandra_repository takes over the node's Cassandra repository files only if it would write them as
+            # they are (with their URL, credentials and key path); else they are left as they are
+            _repo: "{{ _hv.import_cluster_repo | default({'manage': true, 'vars': {}, 'why': ''}) }}"
             # what cassandra_install adds next to the Cassandra package, left out where the node has none
             _installed: >-
               {%- set pkgs = _hv.ansible_facts.packages | default({}) -%}
@@ -941,7 +994,8 @@
               # is the node's: no mark tells one the role set up
               keep: >-
                 {{ (_hv.import_cluster_keep | default({})
-                    | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}))
+                    | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}),
+                              {} if _repo.manage else {'cassandra_repository_manage': false})
                     if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,
@@ -956,6 +1010,7 @@
                         ~ ' (import_cluster_set_ansible_host: false leaves ansible_host out)')]
                       if _host != item.address and _hv.ansible_host | default(item.address) != item.address
                          and import_cluster_set_ansible_host | default(true) | bool else [])
+                   + ([('Cassandra repository files left as they are: ' ~ _repo.why)] if _read and not _repo.manage else [])
                    + ([(_hv.import_cluster_newer_files | join(', ') ~ ' written after Cassandra started: it may not run'
                         ~ ' what they say. apply_config does not restart it for them; rolling_restart applies them')]
                       if _read and _hv.import_cluster_newer_files | default([]) else []) }}
@@ -980,9 +1035,7 @@
             _install: >-
               {{ ('package ' ~ _hv.import_cluster_package
                   ~ (' installed from a file, no configured repository offers it (cassandra_install_method: packages;'
-                     ~ ' set cassandra_install_url, the directory of the package files, for new nodes'
-                     ~ (('; cassandra_repository removes the cassandra-<series> repository it added on this node')
-                        if 'cassandra_repository_manage' not in _hv.import_cluster_keep | default({}) else '') ~ ')'
+                     ~ ' set cassandra_install_url, the directory of the package files, for new nodes)'
                      if _hv.import_cluster_package_from_file | default(false) | bool else ''))
                  if _hv.import_cluster_package | default('')
                  else 'NOT a package install: cassandra_install would install the package next to it' }}

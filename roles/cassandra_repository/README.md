@@ -46,6 +46,8 @@ cassandra_install_username / cassandra_install_password:
     for `cassandra_repository_key_url`. On RedHat they go in the yum repository
     file (then mode 0600), on Debian/Ubuntu in
     `/etc/apt/auth.conf.d/cassandra.conf` (0600). Keep the password in a vault.
+    Without credentials that file is removed, only when this role wrote it
+    (its header).
     Default to `cassandra_repository_username` / `cassandra_repository_password`
     (their older names, still read).
 
