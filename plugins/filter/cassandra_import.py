@@ -664,6 +664,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             path = "%s/%s" % (storage_dir.rstrip("/"), sub)
             if isinstance(data, dict) and data.get(key) is None and var not in changed and path != _default(ctx, var):
                 found[var] = changed[var] = path
+        # cassandra_config keeps such a file where it has the same directories, also while Cassandra is down
+        if isinstance(data, dict) and any(data.get(key) is None for key in STORAGE_DIRS if key != "cdc_raw_directory"):
+            changed["cassandra_config_storage_dir"] = storage_dir
     render_dirs = None
     if "cassandra.yaml" in live_files:
         # JBOD: the template's single line expands to one line per directory

@@ -19,9 +19,15 @@ cassandra_rpm_conf_alternative_priority: 100
 cassandra_config_confirm: auto
 
 # On a node already initialized, a file with the same settings as the role's
-# (only comments, blank lines or their layout differ, e.g. a config written by
-# hand, without the role's header) is left as it is. true rewrites it.
+# (read as Cassandra, bash, the JVM and logback read them: comments, layout,
+# the order of the JVM options and quotes that change nothing do not count,
+# e.g. a config written by hand, without the role's header) is left as it
+# is. true rewrites it.
 cassandra_config_normalize: false
+# Where the directories a cassandra.yaml leaves out are (-Dcassandra.storagedir
+# of the node, e.g. $CASSANDRA_HOME/data for a tarball), for the test above.
+# "": the running Cassandra's. import_cluster sets it for such files.
+cassandra_config_storage_dir: ""
 
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data

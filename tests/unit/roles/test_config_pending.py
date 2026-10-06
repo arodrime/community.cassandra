@@ -127,7 +127,8 @@ def test_jvm_found_by_its_main_class(tmp_path):
     java = tmp_path / "java"
     java.symlink_to(sys.executable)
     before = time.time()
-    proc = subprocess.Popen([str(java), "-c", "import time; time.sleep(30)", "org.apache.cassandra.service.CassandraDaemon"])
+    proc = subprocess.Popen([str(java), "-c", "import time; time.sleep(30)", "-Dcassandra.storagedir=/srv/c",
+                             "org.apache.cassandra.service.CassandraDaemon"])
     try:
         time.sleep(0.5)
         script = task("jvm_started.yml", "Find the running Cassandra JVM")["ansible.builtin.shell"]
@@ -143,6 +144,7 @@ def test_jvm_found_by_its_main_class(tmp_path):
         # to a tenth of a second or so (the boot time of /proc/stat alone is whole seconds)
         assert abs(float(found["start"]) - before) < 0.5
         assert found["exe"] == os.path.realpath(sys.executable)
+        assert found["storagedir"] == "/srv/c"  # where the directories cassandra.yaml leaves out are
     finally:
         proc.kill()
         proc.wait()
