@@ -489,7 +489,7 @@ def _advice(model, cluster, playbooks, cwd, known):
         if len(found) > 1:
             out.append("Mixed %s across the nodes: %s. An upgrade in progress? Finish it (upgrade), or make the"
                        " inventory agree." % (label, "; ".join("%s (%s)" % (v, ", ".join(h))
-                                                                 for v, h in sorted(found.items()))))
+                                                               for v, h in sorted(found.items()))))
     if cluster.java().startswith("MIXED"):
         out.append("Mixed Java across the nodes: update_java moves them all to cassandra_java_version.")
     return out
@@ -529,8 +529,8 @@ def _cluster_lines(cluster):
         lines.append("")
         absent = sum(1 for hosts in racks.values() for h in hosts if h["absent"])
         lines.append("  %s: %d node%s%s, %d rack%s" % (dc, count, "s" if count != 1 else "",
-                                                        " (%d marked absent)" % absent if absent else "",
-                                                        len(racks), "s" if len(racks) != 1 else ""))
+                                                       " (%d marked absent)" % absent if absent else "",
+                                                       len(racks), "s" if len(racks) != 1 else ""))
         for rack in sorted(racks):
             nodes = []
             for host in racks[rack]:
@@ -565,8 +565,9 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
         if lines:
             lines.append("")
         lines += _cluster_lines(cluster)
-    sections.append(("1. The cluster%s as the inventory describes %s" % (("s", "them") if len(clusters) > 1
-                                                                          else ("", "it")), lines))
+    several = len(clusters) > 1
+    sections.append(("1. The cluster%s as the inventory describes %s" % (("s", "them") if several else ("", "it")),
+                     lines))
 
     ops = []
     for cluster in clusters:
@@ -679,8 +680,8 @@ def _topic(topic, header, model, clusters, cwd):
     blocks.append(["Command for this inventory:"] + [c for c in cmds if c])
     placeholders = sorted(set(_PLACEHOLDER.findall(" ".join(c.split("community.cassandra.", 1)[-1] for c in cmds))))
     if placeholders:
-        blocks.append(_wrap("Replace %s with your own value%s." % (", ".join(placeholders),
-                                                                  "s" if len(placeholders) > 1 else ""), "", "  "))
+        plural = "s" if len(placeholders) > 1 else ""
+        blocks.append(_wrap("Replace %s with your own value%s." % (", ".join(placeholders), plural), "", "  "))
     doc = []
     for line in str(header or "").splitlines():
         if line.startswith("#"):

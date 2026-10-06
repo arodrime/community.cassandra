@@ -40,6 +40,7 @@ MODEL = {
         node("node5", "192.0.2.15", "rack3")]}]}
 PLAYBOOKS = [op["name"] for op in OPERATIONS]
 
+# $PLAY and $C. stand for the start of the commands and the collection (lines kept under 160)
 GOLDEN = """\
 Cassandra help for the inventory inventories/orders/hosts.yml (read from the inventory only: no node
   contacted)
@@ -66,83 +67,83 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
 
 Read-only (change nothing):
   help - This overview, from the inventory alone (no node contacted).
-    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help
+    $ $PLAY $C.help
   status - The ring as nodetool status shows it from one node, per datacenter; a down node is shown,
     not an error.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.status
+    $ $PLAY -b $C.status
   health_check - Checks the cluster from every node (ring, gossip, native transport, streams,
     schema, ports); fails on a problem, so it can be scheduled.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.health_check
+    $ $PLAY -b $C.health_check
   preflight - Checks the nodes against the inventory before a change: settings that must match,
     racks for the token allocator, versions, seeds.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.preflight
+    $ $PLAY -b $C.preflight
 
 Nodes:
   add_node - Adds new hosts to the running cluster, one at a time. Put them in their rack's group
     first, not in cassandra_seeds.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.add_node -e cassandra_new_nodes=NEW_NODE
+    $ $PLAY -b $C.add_node -e cassandra_new_nodes=NEW_NODE
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
     the others; refuses seeds.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.decommission_node -e cassandra_leaving_nodes=node4
+    $ $PLAY -b $C.decommission_node -e cassandra_leaving_nodes=node4
   replace_node - Replaces a dead node by a blank host, which takes over its tokens and data. In the
     inventory, the new host in, the dead one out.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.replace_node -e cassandra_new_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
+    $ $PLAY -b $C.replace_node -e cassandra_new_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
   remove_dead_node - Last resort for a dead node that will not be replaced: removenode (or
     assassinate). Take it out of the inventory first.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.remove_dead_node -e cassandra_dead_node_address=DEAD_NODE_ADDRESS
+    $ $PLAY -b $C.remove_dead_node -e cassandra_dead_node_address=DEAD_NODE_ADDRESS
   reset_node - Empties nodes that are not members of the ring (started once by mistake, a failed
     bootstrap) for a fresh start.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.reset_node -e cassandra_reset_nodes=NODE
+    $ $PLAY -b $C.reset_node -e cassandra_reset_nodes=NODE
   move_node - One token per node: moves nodes to new tokens, one at a time (by default the fewest
     moves that even out each datacenter). Not for this cluster (num_tokens 16).
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.move_node
+    $ $PLAY -b $C.move_node
 
 Cluster:
   create_cluster - Builds the cluster from blank hosts: prepared in parallel, then started one at a
     time, seeds first. Starts nothing on a running cluster.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.create_cluster
+    $ $PLAY -b $C.create_cluster
   rolling_restart - Drains and restarts the nodes one at a time, the cluster checked before and
     after each one.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.rolling_restart
+    $ $PLAY -b $C.rolling_restart
   rolling_reboot - Same as rolling_restart, rebooting the hosts (OS patching).
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.rolling_reboot
+    $ $PLAY -b $C.rolling_reboot
   stop_rack - Stops every node of one rack at once (maintenance), when the replication allows losing
     that rack.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+    $ $PLAY -b $C.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
   start_rack - Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+    $ $PLAY -b $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
   apply_config - Applies the inventory's config: shows every diff, asks once, then writes and
     restarts only the nodes that need it, one at a time.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.apply_config
+    $ $PLAY -b $C.apply_config
   change_seeds - Applies a new cassandra_seeds list to every node, live (no restart).
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.change_seeds
+    $ $PLAY -b $C.change_seeds
   update_java - Moves the cluster to the Java in cassandra_java_version, one node at a time.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.update_java
+    $ $PLAY -b $C.update_java
   upgrade - Upgrades the cluster to the version in the inventory, one phase per run: preflight,
     prepare, canary, rolling, sstables, cleanup.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.upgrade -e cassandra_upgrade_phase=preflight
+    $ $PLAY -b $C.upgrade -e cassandra_upgrade_phase=preflight
   cleanup - Runs nodetool cleanup (the data a node no longer owns, after nodes were added), the
     cluster checked before each batch.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.cleanup
+    $ $PLAY -b $C.cleanup
   add_datacenter - Adds a datacenter: its nodes join without streaming, the keyspaces get replicas
     there, then each node rebuilds from another datacenter.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.add_datacenter -e cassandra_new_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+    $ $PLAY -b $C.add_datacenter -e cassandra_new_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
   remove_datacenter - Removes a datacenter: the keyspaces stop keeping replicas there, then its
     nodes leave one at a time. Move its clients first.
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
+    $ $PLAY -b $C.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
 
 Takeover:
   import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes; a
     re-import into an inventory it wrote keeps the files it did not write.
-    $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true
+    $ ansible-playbook -i 192.0.2.11, $C.import_cluster -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true
 
 3. Advice
 ---------
 - Marked cassandra_node_state: absent: node4. decommission_node removes them from the ring (--check
   first), then take them out of the inventory:
-    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.decommission_node -e cassandra_leaving_nodes=node4
+    $ $PLAY -b $C.decommission_node -e cassandra_leaving_nodes=node4
 - dc1: racks of different sizes (1, 1, 2 nodes): the data is not shared evenly; add or remove nodes
-  rack by rack."""
+  rack by rack.""".replace("$PLAY", "ansible-playbook -i inventories/orders/hosts.yml").replace("$C.", "community.cassandra.")
 
 
 def model(**changes):
@@ -380,7 +381,7 @@ def test_import_command_placeholders_for_what_help_could_not_read():
     assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
             " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true"
             " -e cassandra_jmx_username=JMX_USER -e cassandra_jmx_password_file=JMX_PASSWORD_FILE") in text
-    assert "(vaulted)" not in text.split("1. The cluster")[0]
+    assert "(vaulted)" not in text.split("1. The cluster", maxsplit=1)[0]
 
 
 def test_unresolved_values_named():

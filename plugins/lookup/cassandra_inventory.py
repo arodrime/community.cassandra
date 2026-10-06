@@ -21,7 +21,7 @@ description:
   - Like the operation playbooks, it reads the C(group_vars) and C(host_vars) next to the inventory and next to
     the playbooks (C(playbook_dir)), not the ones of the current directory.
   - The cluster groups are C(cassandra_hosts) when it is set, else the group found by
-    the lookup M(community.cassandra.cassandra_hosts#lookup), else every top group of the inventory
+    the lookup P(community.cassandra.cassandra_hosts#lookup), else every top group of the inventory
     (one per cluster when the inventory holds several, as C(all) > C(<cluster>) > C(<cluster>_<dc>)).
 options:
   sources:
@@ -42,7 +42,9 @@ _raw:
   description:
     - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters) (a list of C(name), C(hosts): C(name), C(vars), C(names))."
     - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) (empty when none);
-      C(imported) whether import_cluster wrote it; C(options) is the list of the command line options the printed commands need (C(-b), the vault and user options of this run).
+      C(imported) whether import_cluster wrote it; C(options) is the list of the command line options the
+      printed commands need (C(-b), the vault and user options of this run); C(vault_prompt_added) whether
+      C(--ask-vault-pass) is there because help found vaulted values.
   type: list
   elements: dict
 """
