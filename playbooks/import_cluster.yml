@@ -174,12 +174,6 @@
         # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
         case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
         echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
-        # config files written since the JVM started: it may not run what they say (a restart pending, or not)
-        btime=$(awk '$1 == "btime" {print $2}' /proc/stat)
-        ticks=$(sed 's/^.*) //' /proc/$pid/stat | awk '{print $20}')
-        start=$(awk -v b="$btime" -v t="$ticks" -v h="$(getconf CLK_TCK)" 'BEGIN {printf "%.2f", b + t / h}')
-        echo "newer=$(find "$d/" -maxdepth 1 -type f \( -name cassandra.yaml -o -name cassandra-env.sh -o -name 'jvm*-server.options' \
-          -o -name cassandra-rackdc.properties -o -name logback.xml \) -newermt "@$start" -printf '%f ' 2>/dev/null)"
         # the Cassandra packages held (Debian, Ubuntu)
         command -v dpkg >/dev/null 2>&1 && echo "held=$(dpkg --get-selections 'cassandra*' 2>/dev/null | awk '$2 == "hold" {print $1}' | tr '\n' ' ')"
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
@@ -224,7 +218,6 @@
         import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
-        import_cluster_newer_files: "{{ _kv.newer | default('') | split | sort }}"
         import_cluster_held: "{{ _kv.held | default('') | split }}"
         import_cluster_repo_files: "{{ _kv.repo_files | default('') | split }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
@@ -256,6 +249,30 @@
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
       when: import_cluster_running.rc | default(1) == 0
+
+    # config files written since Cassandra started: it may not run what they say (a restart pending, or not)
+    - name: Find when the running Cassandra started
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: jvm_started.yml
+      when: import_cluster_series is defined
+
+    - name: Read when its config files were written
+      ansible.builtin.find:
+        paths: "{{ import_cluster_conf_dir }}"
+        patterns: "{{ _cassandra_service_config_files }}"
+        file_type: file
+      register: import_cluster_conf_files
+      when:
+        - import_cluster_series is defined
+        - cassandra_jvm.start is defined
+
+    - name: Note the ones written since it started
+      ansible.builtin.set_fact:
+        import_cluster_newer_files: >-
+          {{ import_cluster_conf_files.files | selectattr('ctime', '>', cassandra_jvm.start | float)
+             | map(attribute='path') | map('basename') | sort }}
+      when: import_cluster_conf_files.files is defined
 
     - name: Read the config files
       ansible.builtin.slurp:

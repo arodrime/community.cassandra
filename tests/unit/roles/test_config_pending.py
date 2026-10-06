@@ -130,7 +130,11 @@ def test_jvm_found_by_its_main_class(tmp_path):
     proc = subprocess.Popen([str(java), "-c", "import time; time.sleep(30)", "-Dcassandra.storagedir=/srv/c",
                              "org.apache.cassandra.service.CassandraDaemon"])
     try:
-        time.sleep(0.5)
+        for dummy in range(100):  # until the interpreter has the command line
+            with open("/proc/%d/cmdline" % proc.pid, "rb") as f:
+                if b"CassandraDaemon" in f.read():
+                    break
+            time.sleep(0.05)
         script = task("jvm_started.yml", "Find the running Cassandra JVM")["ansible.builtin.shell"]
         # pgrep sees this test's java only (a Cassandra of a container on this host would be found too)
         (tmp_path / "bin").mkdir()
@@ -191,22 +195,17 @@ def test_import_does_not_read_a_node_whose_java_was_removed():
     assert "import_cluster_error is not defined" in found["Read this node's config"]["when"]
 
 
-def test_import_lists_the_config_files_written_since_the_start(tmp_path):
-    # import_cluster reports them (the node may not run what they say), with the same start as jvm_started.yml
+def test_import_lists_the_config_files_written_since_the_start():
+    # import_cluster reports them (the node may not run what they say), with the start jvm_started.yml reads
     playbook = os.path.join(ROLE, "..", "..", "playbooks", "import_cluster.yml")
     with open(playbook) as f:
         plays = yaml.safe_load(f)
-    shell = next(t for p in plays for t in p.get("tasks", [])
-                 if t.get("name", "").startswith("Read the running Cassandra"))["ansible.builtin.shell"]
-    lines = shell.splitlines()
-    first = next(i for i, s in enumerate(lines) if "btime=" in s)
-    last = next(i for i, s in enumerate(lines) if "-newermt" in s)
-    script = "\n".join(lines[first:last + 1])
-    for name, age in [("cassandra.yaml", 3600), ("cassandra-env.sh", 3600), ("jvm17-server.options", 0),
-                      ("cassandra-topology.properties", 0), ("cassandra.yaml~", 0)]:
-        (tmp_path / name).write_text("x\n")
-        os.utime(str(tmp_path / name), (time.time() - age, time.time() - age))
-    # this test's own process started before the files of age 0, after the others
-    out = subprocess.run(["sh", "-c", "d=$1; pid=$2\n" + script, "sh", str(tmp_path), str(os.getpid())],
-                         stdout=subprocess.PIPE, check=True, universal_newlines=True).stdout
-    assert out.split("=", 1)[1].split() == ["jvm17-server.options"]
+    found = dict((t.get("name"), t) for p in plays for t in p.get("tasks", []))
+    assert found["Find when the running Cassandra started"]["ansible.builtin.include_role"]["tasks_from"] == "jvm_started.yml"
+    assert found["Read when its config files were written"]["ansible.builtin.find"]["patterns"] == \
+        "{{ _cassandra_service_config_files }}"
+    note = found["Note the ones written since it started"]["ansible.builtin.set_fact"]["import_cluster_newer_files"]
+    files = [{"path": "/etc/cassandra/conf/%s" % n, "ctime": m}
+             for n, m in [("cassandra.yaml", 90.0), ("jvm17-server.options", 100.6), ("cassandra-env.sh", 100.4)]]
+    assert render(note, {"import_cluster_conf_files": {"files": files}, "cassandra_jvm": {"start": "100.50"}}) == [
+        "jvm17-server.options"]
