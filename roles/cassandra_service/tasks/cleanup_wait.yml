@@ -1,8 +1,8 @@
 ---
 # Waits for the cleanups of a batch (cleanup_batch.yml) as long as they make
 # progress: every cassandra_stream_check_interval seconds, reads nodetool
-# compactionstats on the batch's nodes, prints one progress line (bytes
-# cleaned by the running Cleanup tasks), and fails only after
+# compactionstats on the batch's nodes, prints the progress (bytes cleaned
+# by the running Cleanup tasks, cassandra_stream_report), and fails only after
 # cassandra_stream_stall_checks checks in a row without progress. Rounds of
 # _cassandra_stream_round_size checks (cleanup_check.yml), then includes itself until
 # every cleanup job has ended. Run once; expects
@@ -34,7 +34,7 @@
       no cleanup progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s apart
       (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
       {% endif %}
-      Last progress: {{ _cassandra_stream_state.line }}
+      Last progress: {{ _cassandra_stream_report | first }}
   when: _cassandra_cleanup_status in ['failed', 'stalled']
 
 - name: Next round of checks

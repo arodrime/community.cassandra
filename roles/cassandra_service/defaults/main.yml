@@ -61,7 +61,7 @@ cassandra_service_wait_timeout: 600  # seconds
 # Streaming operations (add_node, replace_node, decommission_node,
 # remove_dead_node, add_datacenter's rebuild) are waited for as long as they
 # make progress: every cassandra_stream_check_interval seconds nodetool
-# netstats is read and a progress line printed; the run fails only after
+# netstats is read and the progress printed; the run fails only after
 # cassandra_stream_stall_checks checks in a row with nothing streamed (no
 # byte, no file, no session started or ended), 4 times as many while nothing
 # is left to transfer (before the first session, index or view builds after

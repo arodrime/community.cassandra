@@ -257,9 +257,11 @@ estimate of the data it will receive (from ``nodetool status``) and its Medusa f
 nodes then hold different shares of the data), and a run not inside ``tmux`` or ``screen`` on the controller (a lost
 SSH session stops the run).
 
-Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints a progress line
-every ``cassandra_stream_check_interval`` seconds (300 by default), with the percentage, bytes and tables streamed,
-the rate over the last 3 checks, the time left and the expected end time, and waits as long as the streams make
+Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints its progress
+every ``cassandra_stream_check_interval`` seconds (300 by default): a first line with the node, a bar, the percentage
+and the rate over the last 3 checks, then the bytes and files streamed, each node it streams from with its own
+progress, and the times on the controller (now, started, expected end); a single line with the total time and average
+rate once done. It waits as long as the streams make
 progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3) with nothing streamed (4 times as
 many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.

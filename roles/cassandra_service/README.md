@@ -54,8 +54,28 @@ Role Variables
   `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`)
   and cleanups are waited for as long as they make progress: every
   `cassandra_stream_check_interval` seconds (default 300) `nodetool netstats`
-  (`compactionstats` for a cleanup) is read and one line printed, e.g.
-  `14:05 [########------------]  41%  290.4/710.2 GiB  38 MiB/s  ETA 3h08 (ends ~17:13)  tables: 12 done, 2 streaming  2 sessions  now: orders.items (from 10.0.0.3)`.
+  (`compactionstats` for a cleanup) is read and the progress printed, a
+  short first line then one item per line (a single line once done), e.g.
+
+  ```
+  node4  bootstrap  [########------------]  40%   82 MiB/s
+
+        data:      168.2 GiB / 420.0 GiB
+                   720 / 1 799 files
+
+        from:      node1   40% done  (88.1 / 220.0 GiB)
+                   node2   40% done  (52.1 / 130.0 GiB)
+                   node5   40% done  (28.0 / 70.0 GiB)
+
+        Now:       current - 13:35 CEST
+        Started:   35m ago - 13:00 CEST
+        Finish:    in 52m  - 14:27 CEST
+  ```
+
+  The times are the controller's. A line `Progress: none for 2 checks (10m), stops after 3`
+  shows up once a check sees nothing move; once done, a single line with the
+  total time and average rate.
+
   The run fails only after `cassandra_stream_stall_checks` checks in a row
   (default 3) with nothing streamed: no byte or file, no session started or
   ended; 4 times as many while nothing is left to transfer (before the first

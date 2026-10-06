@@ -109,13 +109,19 @@
         _job_status: "{{ cassandra_stream_job_status | default({}) }}"
         _self_mode: "{{ _cassandra_stream_self.mode | default('') }}"
 
-    # Once it has ended, no no-progress count on the last line
+    # A list: the default callback prints one line each; once done, a single line
+    - name: Write the progress
+      ansible.builtin.set_fact:
+        _cassandra_stream_report: >-
+          {{ _cassandra_stream_state | community.cassandra.cassandra_stream_report(node=inventory_hostname,
+               what=_cassandra_stream_what, status=_cassandra_stream_now, names=_names) }}
+      vars:
+        # the other ends by their inventory names (netstats shows addresses)
+        _names: "{{ groups['all'] | community.cassandra.cassandra_host_addresses(hostvars) }}"
+
     - name: Progress of the {{ _cassandra_stream_what }}
       ansible.builtin.debug:
-        msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state[_line] }}{{ _mode }}"
-      vars:
-        _mode: "{{ ('  mode ' ~ _cassandra_stream_self.mode) if _cassandra_stream_self.mode | default('') else '' }}"
-        _line: "{{ 'line_done' if _cassandra_stream_now == 'done' else 'line' }}"
+        msg: "{{ _cassandra_stream_report }}"
 
     - name: Keep where it stands
       ansible.builtin.set_fact:

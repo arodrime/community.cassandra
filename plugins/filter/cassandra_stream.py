@@ -2,7 +2,8 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_stream_progress: the progress of a streaming operation (bootstrap,
 decommission, rebuild, removenode) from successive cassandra_netstats results,
-for the progress wait of roles/cassandra_service/tasks/stream_wait.yml."""
+for the progress wait of roles/cassandra_service/tasks/stream_wait.yml;
+cassandra_stream_report: the lines that print it."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -13,21 +14,45 @@ import time
 _GIB = 1024.0 ** 3
 # the rate is measured over this many check intervals
 _WINDOW = 3
-# beyond this, the ETA is shown as unknown
+# beyond this, the end is shown as unknown
 _ETA_MAX = 30 * 86400
+# the longest report line: the default stdout callback prints a msg list
+# indented and quoted, 100 columns in all
+_WIDTH = 88
+# the bar's widest and narrowest width (narrower when the header is long)
+_BAR = (20, 10)
+# the other ends listed one per line, the rest summed up on one more line
+_PEERS = 4
+# the word in the header when the wait stops (stream_wait.yml statuses), FAILED for the others
+_TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED"}
+# the report's item lines: "      data:      38.2 GiB / 93.1 GiB"
+_ITEM = "      %-11s%s"
 
 
-def _pair(done, total):
-    if total >= _GIB / 10:
-        return "%.1f/%.1f GiB" % (done / _GIB, total / _GIB)
-    return "%.1f/%.1f MiB" % (done / 1024.0 ** 2, total / 1024.0 ** 2)
+def _size(count, scale):
+    """count bytes in the unit that suits scale bytes: "41.2 GiB"."""
+    for unit, size, least in (("TiB", 1024.0 ** 4, 1024.0 ** 4), ("GiB", _GIB, _GIB / 10),
+                              ("MiB", 1024.0 ** 2, 1024.0 ** 2 / 10), ("KiB", 1024.0, 1024)):
+        if scale >= least:
+            return "%.1f %s" % (count / size, unit)
+    return "%d B" % count
+
+
+def _count(number):
+    """1240 as "1 240"."""
+    return "{0:,}".format(int(number)).replace(",", " ")
 
 
 def _duration(seconds):
+    """"45s", "12m", "1h12m", "2d04h"."""
     seconds = int(seconds)
+    if seconds >= 86400:
+        return "%dd%02dh" % (seconds // 86400, seconds % 86400 // 3600)
     if seconds >= 3600:
         return "%dh%02dm" % (seconds // 3600, seconds % 3600 // 60)
-    return "%dm%02ds" % (seconds // 60, seconds % 60)
+    if seconds >= 60:
+        return "%dm" % (seconds // 60)
+    return "%ds" % seconds
 
 
 def _rate(per_second):
@@ -36,67 +61,48 @@ def _rate(per_second):
     if per_second >= 1024.0 ** 2:
         mib = per_second / 1024.0 ** 2
         return ("%.1f MiB/s" if mib < 10 else "%d MiB/s") % mib
-    return "%d KiB/s" % (per_second / 1024.0)
+    if per_second >= 1024:
+        return "%d KiB/s" % (per_second / 1024.0)
+    return "%d B/s" % per_second
 
 
-def _eta(seconds):
-    """The time left, shorter than _duration's: "8h32", "1d04h"."""
-    seconds = int(seconds)
-    if seconds >= 86400:
-        return "%dd%02dh" % (seconds // 86400, seconds % 86400 // 3600)
-    if seconds >= 3600:
-        return "%dh%02d" % (seconds // 3600, seconds % 3600 // 60)
-    return "%dm%02ds" % (seconds // 60, seconds % 60)
+def _clock(epoch, now):
+    """The controller's local time of epoch with its zone, the date too when it
+    is not today: "19:03 CEST", "2026-10-07 04:26 CEST"."""
+    when = time.localtime(epoch)
+    zone = time.strftime("%Z", when)
+    if not zone or zone[0] in "+-":
+        # no abbreviation for this zone: its offset
+        offset = time.strftime("%z", when)
+        zone = offset[:3] + ":" + offset[3:]
+    return time.strftime("%H:%M" if when[:3] == time.localtime(now)[:3] else "%Y-%m-%d %H:%M", when) + " " + zone
 
 
-def _speed(samples, done, total, now, label="ETA"):
-    """The rate over the last _WINDOW check intervals (samples: [[time, bytes
-    done], ...] of the earlier checks that answered), the time left and the
-    end time (controller's local time): "12 MiB/s  ETA 8h32 (ends ~03:40)";
-    "ETA ?" while there are fewer than two checks, when nothing moved, or
-    when the ETA would be beyond _ETA_MAX."""
-    if total <= 0 or done >= total:
-        return None
-    first = samples[-_WINDOW:][0] if samples else None
-    if first is None or now <= first[0] or done <= first[1]:
-        return label + " ?"
-    per_second = (done - first[1]) / float(now - first[0])
-    left = (total - done) / per_second
-    if left > _ETA_MAX:
-        return "%s  %s ?" % (_rate(per_second), label)
-    # the date too when the end is on another day
-    end = time.localtime(now + left)
-    ends = time.strftime("%H:%M" if end[:3] == time.localtime(now)[:3] else "%Y-%m-%d %H:%M", end)
-    return "%s  %s %s (ends ~%s)" % (_rate(per_second), label, _eta(left), ends)
-
-
-def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4,
-                              width=20, eta_label="ETA"):
+def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4):
     """views: the results of cassandra_netstats looped over hosts (item: the
     host, then the module's return values); state: what
     the previous call returned (None the first time); now: epoch seconds.
     operations: the session operations to follow (e.g. ['Bootstrap']), peer:
     only the sessions with this peer (a node read from the other side).
     Progress is bytes or files streamed, or a session started or finished,
-    since the previous call. Returns the new state: streams (per session:
-    total, done, gone), tables ({keyspace.table: 'done'|'streaming'}),
-    progressed (since the previous call), last_progress, idle_checks (calls in
-    a row without progress), stalled (stall_checks calls in a row without
-    progress while some session has bytes left, stall_checks * quiet_factor
-    otherwise), transferring, sessions (sessions in netstats now),
-    answered (at least one view answered), bytes_done/bytes_total, samples
-    (time and bytes done of the last checks, for the rate), line (one readable
-    line: bar, bytes, rate, ETA from the rate over the last 3 checks...),
-    line_done (the line without the no-progress count, once it has ended).
-    eta_label: what the time left is called on the line."""
+    since the previous call. Returns the new state, for the next call and for
+    cassandra_stream_report: streams (per session: total, done, files_total,
+    files_done, other: the node at the other end, way: 'from' when the data
+    comes from it, 'to' when it goes to it, 'on' for a local task, gone),
+    progressed (since the previous call), start, now, last_progress,
+    idle_checks (calls in a row without progress), limit and stalled
+    (idle_checks reached limit: stall_checks while some session has bytes
+    left, stall_checks * quiet_factor otherwise), transferring, sessions
+    (sessions in netstats now), answered (at least one view answered),
+    bytes_done/bytes_total, first_done (bytes done at the first answer),
+    samples (time and bytes done of the last checks) and rate (bytes per
+    second over the last 3 checks, None while unknown or when nothing moved)."""
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
-    tables = dict(state.get("tables") or {})
     start = state.get("start", now)
     progressed = False
     answered = set()
     current = set()
-    now_files = []
     for result in views:
         if result.get("failed") or result.get("skipped") or "sessions" not in result:
             continue
@@ -112,27 +118,21 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
             done = s["bytes_done"] + s["files_done"]
             if before is None or done > before["mark"] or s["bytes_total"] != before["total"]:
                 progressed = True
-            streams[key] = {"total": s["bytes_total"], "done": s["bytes_done"], "mark": done, "gone": False}
-            for f in s["files"]:
-                if not f["table"]:
-                    continue
-                if f["done"] < f["total"]:
-                    tables[f["table"]] = "streaming"
-                    now_files.append("%s (%s %s)" % (f["table"], {"receiving": "from", "sending": "to"}.get(
-                        s["direction"], "on"), s["peer"]))
-                else:
-                    tables.setdefault(f["table"], "done")
+            # read from the other side (peer): the other end is the host read, and the
+            # data goes the other way
+            way = {"receiving": "from", "sending": "to"}.get(s["direction"], "on")
+            if peer and way != "on":
+                way = "to" if way == "from" else "from"
+            streams[key] = {"total": s["bytes_total"], "done": s["bytes_done"], "mark": done, "gone": False,
+                            "files_total": s["files_total"], "files_done": s["files_done"], "way": way,
+                            "other": str(result.get("item", "")) if peer else s["peer"]}
     if answered:
         for key, stream in streams.items():
             if key not in current and not stream["gone"] and key.split("|", 1)[0] in answered:
                 # a finished session leaves netstats: count it as fully streamed (not when its
                 # host did not answer this time)
-                stream.update(gone=True, done=stream["total"])
+                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"])
                 progressed = True
-        streaming_now = set(n.split(" ", 1)[0] for n in now_files)
-        for table, status in tables.items():
-            if status == "streaming" and table not in streaming_now:
-                tables[table] = "done"
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
     idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + 1
@@ -144,38 +144,151 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     limit = int(stall_checks) * (1 if transferring else int(quiet_factor))
     total = sum(s["total"] for s in streams.values())
     done = sum(s["done"] for s in streams.values())
-    pct = int(100 * done / total) if total else 0
-    filled = int(width * done / total) if total else 0
-    parts = ["[%s%s] %3d%%" % ("#" * filled, "-" * (width - filled), pct), _pair(done, total)]
     samples = [list(x) for x in state.get("samples") or []]
-    # a check without answer has no new count: no rate from it
-    speed = _speed(samples, done, total, now, eta_label) if answered else ((eta_label + " ?") if total > done else None)
-    if speed:
-        parts.append(speed)
+    rate = None
     if answered:
+        # over the last _WINDOW check intervals; a check without answer has no new count
+        oldest = samples[-_WINDOW:][0] if samples else None
+        if oldest and now > oldest[0] and done > oldest[1]:
+            rate = (done - oldest[1]) / float(now - oldest[0])
         samples = (samples + [[now, done]])[-_WINDOW:]
-    if tables:
-        parts.append("tables: %d done, %d streaming" % (list(tables.values()).count("done"),
-                                                        list(tables.values()).count("streaming")))
-    if not answered:
-        parts.append("(no answer from nodetool netstats)")
-    elif not streams:
-        parts.append("(nothing in progress yet)")
-    else:
-        parts.append("%d session%s" % (len(current), "" if len(current) == 1 else "s"))
-    if now_files:
-        parts.append("now: " + ", ".join(sorted(set(now_files))[:3]))
-    # without it: the line once the operation has ended (nothing left to progress)
-    line_done = "  ".join(parts)
-    if idle_checks:
-        parts.append("NO PROGRESS for %s (%d/%d checks)" % (_duration(now - last_progress), idle_checks, limit))
     return {
-        "start": start, "streams": streams, "tables": tables, "progressed": progressed,
-        "last_progress": last_progress, "idle_checks": idle_checks,
-        "stalled": idle_checks >= limit, "sessions": len(current), "transferring": transferring,
-        "answered": bool(answered), "bytes_done": done, "bytes_total": total, "samples": samples, "line": "  ".join(parts),
-        "line_done": line_done,
+        "start": start, "now": now, "streams": streams, "progressed": progressed, "last_progress": last_progress,
+        "idle_checks": idle_checks, "limit": limit, "stalled": idle_checks >= limit, "sessions": len(current),
+        "transferring": transferring, "answered": bool(answered), "bytes_done": done, "bytes_total": total,
+        "first_done": state["first_done"] if state.get("samples") else done, "samples": samples, "rate": rate,
     }
+
+
+def _header(words, done, total, rate):
+    """"node4  bootstrap  [########------------]  41%   82 MiB/s", the bar narrower
+    when the line would be too long; "total unknown" without a total."""
+    head = "  ".join(x for x in words if x)
+    tail = ("   " + _rate(rate)) if rate else ""
+    if not total:
+        return head + "  total unknown" + tail
+    done = min(done, total)
+    pct = "%3d%%" % int(100 * done / total)
+    width = max(_BAR[1], min(_BAR[0], _WIDTH - len(head) - len(pct) - len(tail) - 5))
+    filled = int(width * done / total)
+    return "%s  [%s%s] %s%s" % (head, "#" * filled, "-" * (width - filled), pct, tail)
+
+
+def _peers(streams):
+    """The other ends, the most data first, with their own progress: "node1  52% done
+    (9.6 / 18.4 GiB)", the ones beyond _PEERS summed up on one line."""
+    others = {}
+    for s in streams:
+        other = others.setdefault(s["other"], [0, 0])
+        other[0] += s["total"]
+        other[1] += s["done"]
+    ranked = sorted(others.items(), key=lambda x: (-x[1][0], x[0]))
+    if len(ranked) > _PEERS:
+        rest = ranked[_PEERS - 1:]
+        ranked = ranked[:_PEERS - 1] + [("%d more" % len(rest), [sum(r[1][0] for r in rest), sum(r[1][1] for r in rest)])]
+    ranked = [(name, size, moved) for name, (size, moved) in ranked if size]
+    width = max([len(r[0]) for r in ranked] or [0])
+    return ["%s  %3d%% done  (%s / %s)" % (name.ljust(width), int(100 * min(moved, size) / size),
+                                          _size(moved, size).split()[0], _size(size, size))
+            for name, size, moved in ranked]
+
+
+def cassandra_stream_report(state, node="", what="", status="going", names=None, files_label="files", extra=None):
+    """The lines to print for a cassandra_stream_progress state (a debug msg
+    list prints one per line): a header with node, what, bar, percent and
+    rate, then the data, the other ends and the times, an item per line; a
+    single line once done. status: as in stream_wait.yml (going, done,
+    stalled, too_long, stopped, *_failed...); names: {address: inventory
+    name} for the other ends; files_label: what the files are called;
+    extra: more [label, text] lines after the data."""
+    total, done, now = state.get("bytes_total", 0), state.get("bytes_done", 0), state.get("now", 0)
+    start = state.get("start", now)
+    rate = state.get("rate")
+    if status == "done":
+        moved, elapsed = done - state.get("first_done", 0), now - start
+        if not total:
+            summary = "nothing streamed" + (" in %s" % _duration(elapsed) if elapsed > 0 else "")
+        elif moved <= 0 or elapsed <= 0:
+            # streamed before the first check
+            summary = "%s, %s" % (_size(done, total), ("after %s" % _duration(elapsed)) if elapsed > 0 else "at the first check")
+        else:
+            summary = "%s in %s%s, %s on average" % (
+                _size(moved, total), _duration(elapsed),
+                # part of it streamed before the first check (a resumed wait)
+                (" (%s in all)" % _size(done, total)) if moved != done else "", _rate(moved / float(elapsed)))
+        return ["  ".join(x for x in [node, what, "done", summary] if x)]
+    going = status == "going"
+    lines = [_header([node, what] + ([] if going else [_TROUBLE.get(status, "FAILED")]), done, total, rate if going else None)]
+
+    def block(label, values):
+        lines.append("")
+        lines.extend(_ITEM % (label if i == 0 else "", v) for i, v in enumerate(values))
+
+    data = []
+    if not state.get("answered"):
+        data.append("no answer at this check, the figures are from the last answer")
+    streams = [dict(s, other=(names or {}).get(s["other"], s["other"])) for s in (state.get("streams") or {}).values()]
+    if total:
+        data.append("%s / %s" % (_size(done, total), _size(total, total)))
+        files_total = sum(s["files_total"] for s in streams)
+        if files_label and files_total:
+            data.append("%s / %s %s" % (_count(sum(s["files_done"] for s in streams)), _count(files_total), files_label))
+    else:
+        data.append("nothing in progress yet")
+    block("data:", data)
+    for label, text in extra or []:
+        lines.append(_ITEM % (label + ":", text))
+    if total:
+        ways = set(s["way"] for s in streams)
+        block((ways.pop() if len(ways) == 1 else "with") + ":", _peers(streams))
+    times = [("Now:", "current", now), ("Started:", "%s ago" % _duration(now - start), start)]
+    if going and total:
+        left = (total - done) / rate if rate and total > done else None
+        if done >= total:
+            times.append(("Finish:", "all sent, finishing", None))
+        elif left is not None and left <= _ETA_MAX:
+            times.append(("Finish:", "in %s" % _duration(left), now + left))
+        else:
+            times.append(("Finish:", "unknown, " + ("too slow to tell" if left else "no rate yet"), None))
+    # the clocks in one column; a Finish without a clock does not widen it
+    width = max(len(t[1]) for t in times if t[2] is not None)
+    lines.append("")
+    for label, relative, epoch in times:
+        lines.append((_ITEM % (label, relative.ljust(width) + (" - " + _clock(epoch, now) if epoch is not None else ""))).rstrip())
+    idle = state.get("idle_checks", 0)
+    if idle:
+        lines.append("")
+        lines.append(_ITEM % ("Progress:", "none for %d check%s (%s)%s" % (
+            idle, "" if idle == 1 else "s", _duration(now - state.get("last_progress", now)),
+            (", stops after %d" % state.get("limit", 0)) if going else "")))
+    return lines
+
+
+def _host_var(hostvars, host, *path):
+    """hostvars[host][path[0]][path[1]]... when it is a string, else ""."""
+    try:
+        value = hostvars[host]
+        for key in path:
+            value = value.get(key) or {}
+    except Exception:  # pylint: disable=broad-except  # an undefined or broken template in that host's variables
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def cassandra_host_addresses(hosts, hostvars):
+    """{address: inventory name} of hosts, from what their variables say they
+    broadcast or listen on, their ansible_host and default IPv4 fact (netstats
+    names the other ends by address). A variable that can't be read is skipped."""
+    names = {}
+    for host in hosts:
+        for path in (("cassandra_extra_settings", "broadcast_address"), ("_cassandra_preflight", "ring_address"),
+                     ("_cassandra_preflight", "address"), ("cassandra_listen_address",), ("ansible_host",),
+                     ("ansible_facts", "default_ipv4", "address")):
+            address = _host_var(hostvars, host, *path)
+            if address and address != "localhost":
+                names.setdefault(address, host)
+        names.setdefault(host, host)
+    return names
 
 
 _LOAD_UNITS = {"bytes": 1, "B": 1, "KiB": 1024, "KB": 1024, "MiB": 1024 ** 2, "MB": 1024 ** 2,
@@ -309,6 +422,8 @@ def cassandra_compactionstats(result, types=None):
 class FilterModule(object):
     def filters(self):
         return {"cassandra_stream_progress": cassandra_stream_progress,
+                "cassandra_stream_report": cassandra_stream_report,
+                "cassandra_host_addresses": cassandra_host_addresses,
                 "cassandra_add_node_plan": cassandra_add_node_plan,
                 "cassandra_compactionstats": cassandra_compactionstats,
                 "cassandra_cleanup_view": cassandra_cleanup_view}

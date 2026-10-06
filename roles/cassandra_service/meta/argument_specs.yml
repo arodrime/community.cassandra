@@ -246,7 +246,8 @@ argument_specs:
           - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
             C(move_node)).
-            Each check reads C(nodetool netstats) and prints one progress line.
+            Each check reads C(nodetool netstats) and prints the progress, a short line (bar, percentage,
+            rate) then the data, the other nodes and the times, one item per line.
       cassandra_stream_stall_checks:
         type: int
         default: 3

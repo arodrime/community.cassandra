@@ -205,15 +205,17 @@ def test_streams_left_by_removenode_force_are_not_a_failure():
                 **dict(variables, cassandra_service_health_force=True))
 
 
-def test_last_progress_line_without_no_progress_once_done():
-    # the block runs while _cassandra_stream_status is 'going': it is set after the progress line,
-    # which shows line_done (no "NO PROGRESS ... mode DECOMMISSIONED") once the operation has ended
-    block = load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
-    names = [t["name"] for t in block]
-    where, keep = block[names.index("Where it stands")], block[names.index("Keep where it stands")]
-    progress = next(t for t in block if t["name"].startswith("Progress of the"))
-    assert names.index("Where it stands") < block.index(progress) < names.index("Keep where it stands")
-    assert "_cassandra_stream_status" not in where["ansible.builtin.set_fact"]
-    assert keep["ansible.builtin.set_fact"]["_cassandra_stream_status"] == "{{ _cassandra_stream_now }}"
-    for now, line in (("done", "line_done"), ("going", "line"), ("stalled", "line")):
-        assert render(progress["vars"]["_line"], _cassandra_stream_now=now) == line
+def test_progress_report_knows_the_status_before_the_block_ends():
+    # the block runs while _cassandra_stream_status is 'going': it is set after the progress is printed,
+    # and the report gets the new status (a single done line, no "next check" once it has ended)
+    for name, status, now in (("stream_check.yml", "_cassandra_stream_status", "_cassandra_stream_now"),
+                              ("cleanup_check.yml", "_cassandra_cleanup_status", "_cassandra_cleanup_now")):
+        block = load("roles", "cassandra_service", "tasks", name)[0]["block"]
+        names = [t["name"] for t in block]
+        where, write, keep = (block[names.index(n)] for n in ("Where it stands", "Write the progress", "Keep where it stands"))
+        progress = next(t for t in block if t["name"].startswith("Progress of the"))
+        assert names.index("Where it stands") < names.index("Write the progress") < block.index(progress) < names.index("Keep where it stands")
+        assert status not in where["ansible.builtin.set_fact"] and now in where["ansible.builtin.set_fact"]
+        assert keep["ansible.builtin.set_fact"][status] == "{{ %s }}" % now
+        assert "status=%s" % now in write["ansible.builtin.set_fact"]["_cassandra_stream_report"]
+        assert progress["ansible.builtin.debug"]["msg"] == "{{ _cassandra_stream_report }}"
