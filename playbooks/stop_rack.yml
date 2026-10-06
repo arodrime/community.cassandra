@@ -17,7 +17,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check that the rack can go down
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _dc_nodes: >-

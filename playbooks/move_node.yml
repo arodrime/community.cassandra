@@ -30,7 +30,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Find moves an earlier run left going
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: Load the cassandra_service defaults
@@ -100,7 +100,7 @@
           stream: restarting Cassandra on it cancels it (the node keeps its old token), then run move_node again.
 
 - name: Plan the moves
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
@@ -158,7 +158,7 @@
         # every node of the group, the ones out of this run (--limit) by their inventory address or name
         _hosts: >-
           {%- set out = {} -%}
-          {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] -%}
+          {%- for h in query('community.cassandra.cassandra_nodes') -%}
           {%-   set _ = out.update({(hostvars[h]._cassandra_preflight.ring_address if hostvars[h]._cassandra_preflight is defined
                                     else hostvars[h].ansible_host | default(h)): h}) -%}
           {%- endfor -%}
@@ -291,7 +291,7 @@
 # until a cleanup. cassandra_move_cleanup: none (default) prints the command;
 # sequential (or one), rack, dc or all runs it here, by batches, the cluster checked before each.
 - name: Clean up the nodes that lost ranges
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"

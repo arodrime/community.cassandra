@@ -15,7 +15,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check the Java change
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   any_errors_fatal: true  # one node refused: none is changed
   gather_facts: false
   tasks:
@@ -142,7 +142,7 @@
         cassandra_service_node_action: update_java
 
 - name: Summary
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: Print the summary

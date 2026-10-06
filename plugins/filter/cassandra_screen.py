@@ -19,6 +19,9 @@ cassandra_screen: spec -> the text, the same layout for every operation:
     cluster's state show under --check too.
 cassandra_screen_title: name, preflight facts -> a block title,
     "node7  10.0.0.7  dc1 / rack1" (what is known of it).
+cassandra_reset_warnings: the warnings of the resets an operation runs
+    first (add_node, replace_node with their reset): one "data loss" warning
+    per node with something to delete, the directories and what they hold.
 cassandra_decommission_screen: the blocks of decommission_node: each node
     to remove with its dc/rack, load and share, where its data goes, where
     it runs and is checked from, and how it ends.
@@ -67,10 +70,11 @@ def _warning(warning):
     return out
 
 
-def cassandra_screen(spec, check=False, asks=True, session=""):
+def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
     """check: --check; asks: false when a question would be asked but
     cassandra_operation_confirm is false (said under the header); session:
-    the tmux/screen warning, if any."""
+    the tmux/screen warning, if any; asked_by: the playbook that showed the
+    whole plan and asked already (topology), said under the header."""
     spec = spec or {}
     header = str(spec.get("operation") or "")
     if spec.get("cluster"):
@@ -82,6 +86,8 @@ def cassandra_screen(spec, check=False, asks=True, session=""):
     sections = [_wrap(header, "", "  ")]
     if check:
         sections[0].append("--check: nothing will be changed (the plan only, no question).")
+    elif asked_by:
+        sections[0].append("A step of %s, confirmed on its screen: no question here." % asked_by)
     elif not asks:
         sections[0].append("cassandra_operation_confirm is false: no question, the run goes on.")
 
@@ -127,6 +133,29 @@ def cassandra_screen_title(name, preflight=None):
     if p.get("cassandra_dc"):
         parts.append("%s / %s" % (p["cassandra_dc"], p.get("cassandra_rack") or "?"))
     return "  ".join(x for x in parts if x)
+
+
+def cassandra_reset_warnings(plans):
+    """plans: [{name, plan}], plan: reset_node_plan.yml's _cassandra_node_reset_plan
+    ({stop, disable, delete: [paths], dirs: [lines]}). A node with nothing to
+    delete but a Cassandra to stop or disable gets a "reset" warning instead."""
+    warnings = []
+    for item in plans or []:
+        plan = item.get("plan") or {}
+        acts = (["Cassandra stopped"] if _true(plan.get("stop")) else []) \
+            + (["kept from starting at boot"] if _true(plan.get("disable")) else [])
+        if plan.get("delete"):
+            text = "%s: %s%d entries DELETED for good (no snapshot, no backup), in:" % (
+                item["name"], ", ".join(acts) + ", then " if acts else "", len(plan["delete"]))
+            warnings.append({"label": "data loss", "real_run": True, "text": [text, {"pre": plan.get("dirs") or []}]})
+        elif acts:
+            warnings.append({"label": "reset", "real_run": True,
+                             "text": "%s: %s first (nothing to delete)" % (item["name"], ", ".join(acts))})
+    return warnings
+
+
+def _true(value):
+    return str(value).strip().lower() in ("true", "yes", "1")
 
 
 def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, peer="", replication_problems=None):
@@ -234,4 +263,5 @@ class FilterModule(object):
             "cassandra_screen": cassandra_screen,
             "cassandra_screen_title": cassandra_screen_title,
             "cassandra_decommission_screen": cassandra_decommission_screen,
+            "cassandra_reset_warnings": cassandra_reset_warnings,
         }

@@ -96,12 +96,21 @@ def went_on(output):
     return len(re.findall(r'"msg": "went on"', output))
 
 
+def task_hosts(output, name):
+    """The hosts each run of the task named name printed a line for."""
+    runs = re.findall(r"TASK \[[^\]]*: %s\][^\n]*\n(.*?)(?=TASK \[|PLAY RECAP)" % re.escape(name), output, re.S)
+    return [re.findall(r"(?:ok|changed|skipping|fatal): \[(node\d)\]", run) for run in runs]
+
+
 def test_yes_goes_on(tmp_path):
     rc, output, seen = run_in_terminal(tmp_path, [" Yes "])
     assert rc == 0, output
     assert went_on(output) == 2
     assert seen == 1
     assert re.search(r"Remove node7 from the ring\?\r?\nAnswer yes to go on, no to stop", output)
+    # controller bookkeeping: one line per step, the facts on both hosts (both went on)
+    for name in ("Start the count of answers", "Count the answers", "Confirm the operation", "Read the answer"):
+        assert task_hosts(output, name) == [["node1"]], (name, output)
 
 
 def test_y_goes_on(tmp_path):
@@ -122,6 +131,7 @@ def test_typo_then_yes(tmp_path):
     assert rc == 0, output
     assert "Please answer yes or no" in output
     assert went_on(output) == 2
+    assert task_hosts(output, "Count the answers") == [["node1"], ["node1"]], output
 
 
 def test_three_typos_stop(tmp_path):

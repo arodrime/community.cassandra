@@ -13,7 +13,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Cleanup
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     cassandra_service_node_action: cleanup

@@ -8,7 +8,7 @@
 - name: Where {{ inventory_hostname }} stands
   vars:
     _from: >-
-      {{ groups[lookup('community.cassandra.cassandra_hosts')]
+      {{ query('community.cassandra.cassandra_nodes')
          | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)) | first | default('') }}
     # the address the other nodes see this node by
     _address: >-

@@ -218,9 +218,37 @@ def test_replace_node_screen():
         "    end state: node9 up and normal (UN) in its place\n\n"
         "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,\n"
         "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen.")
-    reset = screen(dict(variables, cassandra_replace_node_reset=True), t["vars"], play.get("vars"), check=True)
-    assert reset.endswith("\n\n(A real run would also warn about: reset, session.)")
-    assert "DELETED" not in reset
+    # the reset's plan (reset_node_plan.yml) on this screen: the one question covers it
+    plan = {"delete": ["/var/lib/cassandra/data/system"], "stop": True, "disable": False,
+            "dirs": ["/var/lib/cassandra/data (data; from the inventory): 1 entries: system"]}
+    reset_vars = dict(variables, cassandra_replace_node_reset=True, _cassandra_node_reset_plan=plan)
+    reset = screen(reset_vars, t["vars"], play.get("vars"))
+    assert reset.endswith(
+        "WARNING - data loss: node9: Cassandra stopped, then 1 entries DELETED for good (no snapshot, no\n"
+        "  backup), in:\n"
+        "    /var/lib/cassandra/data (data; from the inventory): 1 entries: system\n\n"
+        "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,\n"
+        "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen."), reset
+    reset = screen(reset_vars, t["vars"], play.get("vars"), check=True)
+    assert reset.endswith("\n\n(A real run would also warn about: data loss, session.)")
+
+
+def test_resets_asked_on_the_operation_screen_only():
+    # add_node and replace_node: the reset is planned before their screen, applied after their
+    # one question without a question of its own; reset_node alone asks its own
+    tasks = load("roles", "cassandra_service", "tasks", "reset_node.yml")
+    confirm = next(x for x in tasks if x.get("name") == "Confirm the reset")
+    assert "not _cassandra_node_reset_confirmed | default(false) | bool" in confirm["when"]
+    for playbook, screen_task in (("add_node.yml", "Show the plan and confirm the add"),
+                                  ("replace_node.yml", "Show the plan and confirm the replacement")):
+        names = [t.get("name") for play in load("playbooks", playbook) for t in walk(play.get("tasks", []))]
+        plan = [i for i, n in enumerate(names) if n and n.startswith("Work out the reset of")]
+        apply = [i for i, n in enumerate(names) if n and n.startswith("Reset the ")]
+        assert len(plan) == 1 and len(apply) == 1 and plan[0] < names.index(screen_task) < apply[0], playbook
+        t, play = task(playbook, names[apply[0]])
+        assert t["vars"]["_cassandra_node_reset_confirmed"] is True, playbook
+        assert task(playbook, names[plan[0]])[0]["ansible.builtin.include_role"]["tasks_from"] == "reset_node_plan.yml"
+    assert "_cassandra_node_reset_confirmed" not in open(os.path.join(TOP, "playbooks", "reset_node.yml")).read()
 
 
 @pytest.mark.parametrize("method, line, warning", [

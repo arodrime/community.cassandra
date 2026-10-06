@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
-    cassandra_decommission_screen, cassandra_screen)
+    cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen)
 
 SPEC = {
     "operation": "stop_rack", "cluster": "Orders", "version": "4.1.5", "summary": "stop dc1 / rack2",
@@ -150,3 +150,33 @@ def test_decommission_forced_replication():
     assert spec["warnings"] == [{"label": "replication", "text": [
         "cassandra_decommission_force is true: the removal goes on although too few nodes are left for some keyspaces;"
         " those replicas are lost and QUORUM can fail:", "orders needs 3 replicas in dc1, which would keep 2 node(s)"]}]
+
+
+def test_reset_warnings_one_per_node_with_something_to_do():
+    plans = [
+        {"name": "node7", "plan": {"stop": "True", "disable": True, "delete": ["/d/data/system", "/d/commitlog/a.log"],
+                                   "dirs": ["/d/data (data; from the inventory): 1 entries: system"]}},
+        {"name": "node8", "plan": {"stop": False, "disable": False, "delete": [], "dirs": ["/d/data: empty or missing"]}},
+        {"name": "node9", "plan": {"stop": False, "disable": "True", "delete": [], "dirs": []}},
+    ]
+    warnings = cassandra_reset_warnings(plans)
+    assert warnings == [
+        {"label": "data loss", "real_run": True,
+         "text": ["node7: Cassandra stopped, kept from starting at boot, then 2 entries DELETED for good"
+                  " (no snapshot, no backup), in:", {"pre": ["/d/data (data; from the inventory): 1 entries: system"]}]},
+        {"label": "reset", "real_run": True, "text": "node9: kept from starting at boot first (nothing to delete)"},
+    ]
+    text = cassandra_screen({"operation": "add_node", "warnings": warnings})
+    assert "WARNING - data loss: node7: Cassandra stopped, kept from starting at boot, then 2 entries DELETED" in text
+    assert "    /d/data (data; from the inventory): 1 entries: system" in text
+    assert "(A real run would also warn about: data loss, reset.)" in cassandra_screen(
+        {"operation": "add_node", "warnings": warnings}, check=True)
+    assert cassandra_reset_warnings([]) == []
+
+
+def test_a_step_of_another_playbook_asks_nothing():
+    text = cassandra_screen({"operation": "add_node", "summary": "add node7"}, asked_by="topology")
+    assert text == "add_node: add node7\nA step of topology, confirmed on its screen: no question here."
+    # --check says so first: nothing changes
+    assert cassandra_screen({"operation": "add_node"}, check=True, asked_by="topology").endswith(
+        "--check: nothing will be changed (the plan only, no question).")

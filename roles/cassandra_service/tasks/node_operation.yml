@@ -22,7 +22,7 @@
 - name: "{{ cassandra_service_node_action }} {{ inventory_hostname }}"
   when: inventory_hostname not in cassandra_progress_done | default([])
   vars:
-    _cassandra_group_size: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length }}"
+    _cassandra_group_size: "{{ query('community.cassandra.cassandra_nodes') | length }}"
     _cassandra_resume_candidate: >-
       {{ cassandra_rolling_resume | default(false) | bool
          and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java']

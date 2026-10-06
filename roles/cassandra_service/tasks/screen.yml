@@ -12,6 +12,9 @@
 # No question (empty): printed only (the caller asks its own way), and the
 # screen does not say that cassandra_operation_confirm false skips one.
 # The cluster's name and running versions come from preflight unless given.
+# _cassandra_screen_asked_by (topology, running add_node and decommission_node
+# as its steps): the screen is printed as a step's details, no question (the
+# caller showed the whole plan and asked once).
 - name: Show the plan, then ask
   vars:
     _cassandra_screen_defaults:
@@ -23,7 +26,9 @@
       {{ _cassandra_screen_defaults | combine(cassandra_screen)
          | community.cassandra.cassandra_screen(check=ansible_check_mode,
                                                  asks=cassandra_operation_confirm | bool or not cassandra_screen_question | default(''),
-                                                 session=_cassandra_session_warning if cassandra_screen_session_warning | default(false) | bool else '') }}
+                                                 session=_cassandra_session_warning if cassandra_screen_session_warning | default(false) | bool
+                                                         and not _cassandra_screen_asked_by | default('') else '',
+                                                 asked_by=_cassandra_screen_asked_by | default('')) }}
   block:
     - name: Show the plan
       ansible.builtin.debug:
@@ -32,6 +37,8 @@
 
     - name: Ask for confirmation
       ansible.builtin.include_tasks: confirm.yml
-      when: cassandra_screen_question | default('') | length > 0
+      when:
+        - cassandra_screen_question | default('') | length > 0
+        - not _cassandra_screen_asked_by | default('')
       vars:
         cassandra_confirm_prompt: "{{ cassandra_screen_question }}"

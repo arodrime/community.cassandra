@@ -44,6 +44,7 @@ settings such as `cassandra_seeds` in its group_vars). Run them with
 - `status`- Read-only view of the ring from one node (`nodetool status` per datacenter, a summary per datacenter, inventory hosts missing from the ring and the reverse); fails only when no node answers (or the `cassandra_status_from` node does not).
 - `cleanup`- Runs `nodetool cleanup` node by node, rack by rack, DC by DC or everywhere at once, checking the cluster before each batch.
 - `decommission_node`- Removes the nodes in `cassandra_leaving_nodes`, one at a time; refuses seeds and a datacenter left with fewer nodes than replicas.
+- `topology`- Makes the ring match the inventory (the desired state): adds the hosts of the cluster's group not in the ring (as `add_node`), decommissions the hosts marked `cassandra_node_state: absent` still in it (as `decommission_node`); one screen, one question, `--check` shows the plan. Every playbook leaves the hosts marked absent out.
 - `replace_node`- Replaces a dead node (`cassandra_replace_address`) by a blank host (`cassandra_new_nodes`), which takes over its tokens and data.
 - `reset_node`- Empties nodes that are not members of the cluster (`cassandra_reset_nodes`: started once by mistake, a failed bootstrap) for a fresh start; refused on any node the cluster sees in its ring. `add_node` and `replace_node` do the same with `cassandra_add_node_reset` / `cassandra_replace_node_reset`.
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.

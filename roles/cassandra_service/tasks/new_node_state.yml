@@ -10,7 +10,7 @@
   vars:
     _data: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}"
     _from: >-
-      {{ groups[lookup('community.cassandra.cassandra_hosts')]
+      {{ query('community.cassandra.cassandra_nodes')
          | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)) | first | default('') }}
     _address: >-
       {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
