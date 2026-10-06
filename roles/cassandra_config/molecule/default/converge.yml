@@ -130,6 +130,8 @@
             cassandra_data_dir: /tmp/initialized-node
             cassandra_rpm_conf_alternative: ""
             cassandra_config_confirm: false
+            # the rack is the node's under a snitch that reads cassandra-rackdc.properties
+            cassandra_endpoint_snitch: "{{ 'GossipingPropertyFileSnitch' if conf_dir == '/tmp/cassandra-identity' else 'SimpleSnitch' }}"
           loop: [/tmp/cassandra-secret, /tmp/cassandra-identity]
           loop_control:
             loop_var: conf_dir
@@ -166,6 +168,7 @@
                 cassandra_config_confirm: false
                 cassandra_num_tokens: 8
                 cassandra_rack: rack2
+                cassandra_endpoint_snitch: GossipingPropertyFileSnitch
 
             - name: Fail if the identity change went through
               ansible.builtin.fail:
@@ -188,6 +191,7 @@
             cassandra_config_confirm: false
             cassandra_config_force_identity_change: true
             cassandra_rack: rack2
+            cassandra_endpoint_snitch: GossipingPropertyFileSnitch
 
     - name: JMX users and cqlsh credentials
       ansible.builtin.include_role:
