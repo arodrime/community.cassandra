@@ -142,7 +142,7 @@ def test_value_from_an_inline_vault_masked(tmp_path):
 
 def test_lookup_not_run(tmp_path):
     (tmp_path / "marker").write_text("TOPSECRET")
-    source = inventory(tmp_path, orders="ansible_user: \"{{ lookup('ansible.builtin.file', '%s') }}\"\n"
+    source = inventory(tmp_path, orders="ansible_user: \"{{ lookup('file', '%s') }}\"\n"
                        % (tmp_path / "marker"))
     assert host(read([source]), "node1")["vars"]["ansible_user"].startswith("{{ lookup(")
 
@@ -150,11 +150,21 @@ def test_lookup_not_run(tmp_path):
 def test_lookup_through_another_variable_not_run(tmp_path):
     marker = tmp_path / "ran"
     source = inventory(tmp_path, orders=(
-        "indirect: \"{{ lookup('ansible.builtin.pipe', 'touch %s; echo INDIRECT') }}\"\n"
+        "indirect: \"{{ lookup('pipe', 'touch %s; echo INDIRECT') }}\"\n"
         "cassandra_endpoint_snitch: \"{{ indirect }}\"\n"
-        "cassandra_dc: \"{{ (lookup)('ansible.builtin.pipe', 'touch %s; echo DIRECT') }}\"\n") % (marker, marker))
+        "cassandra_dc: \"{{ (lookup)('pipe', 'touch %s; echo DIRECT') }}\"\n") % (marker, marker))
     vars_ = host(read([source]), "node1")["vars"]
     assert not marker.exists()
+    # control: the same template does run the lookup when templated plainly (the test can't pass vacuously)
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:
+        def trust_as_template(template):
+            return template
+    Templar(loader=DataLoader()).template(trust_as_template("{{ lookup('pipe', 'touch %s') }}" % marker))
+    assert marker.exists()
     assert vars_["cassandra_endpoint_snitch"].startswith("{{") and vars_["cassandra_dc"].startswith("{{")
 
 
@@ -170,3 +180,8 @@ def test_empty_group(tmp_path):
     hosts = HOSTS + "    empty:\n      hosts: {}\n"
     with pytest.raises(AnsibleError, match="group 'empty' has no host"):
         read([inventory(tmp_path, hosts=hosts)], given="empty")
+
+
+def test_random_value_not_taken_for_a_vaulted_one(tmp_path):
+    source = inventory(tmp_path, orders='cassandra_cluster_name: "c{{ 1000000 | random }}"\n')
+    assert host(read([source]), "node1")["vars"]["cassandra_cluster_name"].startswith("c")

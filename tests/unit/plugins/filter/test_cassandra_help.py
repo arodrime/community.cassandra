@@ -448,6 +448,9 @@ def test_real_uppercase_values_are_not_placeholders():
     assert "Replace" not in text
 
 
-def test_help_command_without_root_or_vault_prompt():
-    text = cassandra_help(model(options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+def test_help_command_without_root_or_the_vault_prompt_help_added():
+    text = cassandra_help(model(options=["-b", "--ask-vault-pass"], vault_prompt_added=True), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help\n" in text
+    # given by the user (a vaulted group_vars/all): help needs it too
+    text = cassandra_help(model(options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.help\n" in text

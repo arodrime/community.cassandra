@@ -102,7 +102,7 @@ class _Loader(DataLoader):
 
 
 VAULTED = "(vaulted)"
-_OTHER_MASK = "(vaulted!)"  # templated with each mask: a result that differs comes from a vaulted value
+_OTHER_MASK = "@@@@@@@@@@@@"  # templated with each mask (nothing in common): a result that differs comes from a vault
 # a template that would run a lookup on the controller (a file, a command, a secret store): never templated,
 # directly or through another variable
 _LOOKUP = re.compile(r"\b(lookup|query|q)\b")
@@ -139,13 +139,13 @@ def _template(templar, value):
         return value
 
 
-def _value(templars, value, other):
+def _value(templars, value, other, found=True):
     """The value templated (with each mask); the raw text when it can't be (a fact of the node) or would run
     a lookup; VAULTED when it comes from a vaulted value. other: the same value, masked with _OTHER_MASK."""
     if _LOOKUP.search(str(value)):
         return str(value)
     first, second = _template(templars[0], value), _template(templars[1], other)
-    if first != second or VAULTED in str(first):
+    if found and (first != second or VAULTED in str(first)):  # found: the host has a vaulted value
         return VAULTED
     value = first
     if isinstance(value, (list, tuple)):
@@ -202,7 +202,7 @@ def read(sources, given=None, basedir=None):
             other = _masked(raw, _OTHER_MASK)[0]
             vaulted = vaulted or found
             templars = (Templar(loader=loader, variables=variables), Templar(loader=loader, variables=other))
-            shown = dict((k, _value(templars, variables[k], other[k])) for k in SHOWN if k in variables)
+            shown = dict((k, _value(templars, variables[k], other[k], found)) for k in SHOWN if k in variables)
             shown.update((k, bool(variables[k])) for k in SET if k in variables)
             hosts.append({"name": host.name, "vars": shown,
                           "names": sorted(k for k in variables if k.startswith("cassandra_"))})
@@ -212,12 +212,14 @@ def read(sources, given=None, basedir=None):
     if not C.DEFAULT_BECOME and not all(boolean(h["vars"].get("ansible_become"), strict=False)
                                         for c in clusters for h in c["hosts"]):
         options.insert(0, "-b")
+    prompt_added = False
     vault_given = C.DEFAULT_VAULT_PASSWORD_FILE or C.DEFAULT_VAULT_IDENTITY_LIST or any(
         o.startswith("--") and "vault" in o for o in options)
     if (loader.skipped or vaulted) and not vault_given:
-        options.append("--ask-vault-pass")  # the operations read the vaulted files help skipped
+        options.append("--ask-vault-pass")  # the operations read the vaulted values help skipped
+        prompt_added = True
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
-            "options": options, "imported": _imported(sources)}
+            "options": options, "imported": _imported(sources), "vault_prompt_added": prompt_added}
 
 
 def _imported(sources):
