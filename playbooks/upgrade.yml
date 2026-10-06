@@ -104,7 +104,7 @@
         url_password: "{{ cassandra_install_password | default(omit, true) }}"
         force_basic_auth: "{{ cassandra_install_username != '' }}"
         timeout: 30
-      loop: "{{ ([cassandra_packages] | flatten + ['cassandra-tools']) | unique }}"  # the role's OS vars add cassandra-tools
+      loop: "{{ _cassandra_packages }}"
       register: cassandra_upgrade_files
       failed_when: false
       check_mode: false

@@ -218,4 +218,4 @@ def test_package_installed_from_a_file(installed, kv, from_file):
 ])
 def test_install_method_of_a_package_installed_from_a_file(from_file, read, pkg):
     hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": from_file}
-    assert render(MATCH["_pkg"], _hv=hv, _read=read) == pkg
+    assert render(MATCH["_pkg"], _hv=hv, _read=read, _installed={}) == pkg

@@ -1,9 +1,4 @@
 ---
-# tasks file for cassandra_linux
-- name: Include vars for OS family
-  ansible.builtin.include_vars:
-    file: "{{ ansible_facts['os_family'] }}.yml"
-
 - name: Check the install method
   ansible.builtin.assert:
     that:
@@ -159,8 +154,8 @@
     - not ansible_check_mode or cassandra_install_method == 'packages' or cassandra_install_available.rc == 0
   vars:
     _cassandra_install_names: >-
-      {{ cassandra_packages if cassandra_package_version == ''
-         else cassandra_packages | map('regex_replace', '$',
+      {{ _cassandra_packages if cassandra_package_version == ''
+         else _cassandra_packages | map('regex_replace', '$',
               ('=' if ansible_facts['os_family'] == 'Debian' else '-') ~ cassandra_package_version) | list }}
   block:
     - name: Block service starts during package install (Debian)
@@ -232,16 +227,16 @@
         - name: Find them among the downloads
           ansible.builtin.find:
             paths: "{{ _rpms }}"
-            patterns: "{{ cassandra_packages | map('regex_replace', '$', '-[0-9]*.rpm') | list }}"
+            patterns: "{{ _cassandra_packages | map('regex_replace', '$', '-[0-9]*.rpm') | list }}"
           register: cassandra_install_rpms
           when: not ansible_check_mode
 
         - name: Every package was downloaded
           ansible.builtin.assert:
-            that: cassandra_install_rpms.files | length == cassandra_packages | length
+            that: cassandra_install_rpms.files | length == _cassandra_packages | length
             fail_msg: >-
               Downloaded {{ cassandra_install_rpms.files | map(attribute='path') | map('basename') | join(', ') or 'nothing' }}
-              for {{ cassandra_packages | join(', ') }}.
+              for {{ _cassandra_packages | join(', ') }}.
             quiet: true
           when: not ansible_check_mode
 
@@ -277,10 +272,11 @@
       ansible.builtin.dpkg_selections:
         name: "{{ item }}"
         selection: hold
-      loop: "{{ cassandra_packages }}"
+      loop: "{{ _cassandra_packages }}"
       when:
         - ansible_facts['os_family'] == 'Debian'
         - cassandra_package_version != ""
+        - cassandra_package_hold | bool
         - not ansible_check_mode or item in _cassandra_install_before  # not installed under --check
   always:
     - name: Remove the temporary policy-rc.d (Debian)
@@ -302,9 +298,11 @@
          + ['jemalloc'] }}
   register: cassandra_jemalloc_query
   changed_when: false
+  failed_when: false  # no repository answers (air-gapped): no jemalloc
   check_mode: false  # read-only
   when:
     - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_install_jemalloc | bool
     - not cassandra_offline | bool
 
 - name: Install jemalloc
@@ -313,6 +311,7 @@
     state: present
   retries: 3
   when:
+    - cassandra_install_jemalloc | bool
     - not cassandra_offline | bool
     - ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout != ''
 
@@ -353,7 +352,7 @@
       vars:
         _needed: >-
           {{ ([cassandra_java_package] if cassandra_install_java | bool and _cassandra_java_home == '' else [])
-             + cassandra_packages + (['tar'] if cassandra_java_tarball != '' else []) }}
+             + _cassandra_packages + (['tar'] if cassandra_java_tarball != '' else []) }}
         _missing: "{{ _needed | reject('in', ansible_facts['packages']) | list }}"
 
     - name: Say python3.11 is missing (cqlsh only)
@@ -374,7 +373,9 @@
           allocator. Install it from your image or mirror to use it.
       vars:
         _jemalloc: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
-      when: _jemalloc not in ansible_facts['packages']
+      when:
+        - cassandra_install_jemalloc | bool
+        - _jemalloc not in ansible_facts['packages']
 
 - name: Install python3.11 for cqlsh
   when:

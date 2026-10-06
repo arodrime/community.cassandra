@@ -11,7 +11,28 @@ argument_specs:
         type: raw
         default: cassandra
         description:
-          - Package or list of packages to install. The OS vars add C(cassandra-tools).
+          - Package or list of packages to install. C(cassandra-tools) is added, see
+            O(cassandra_install_tools).
+      cassandra_install_tools:
+        type: bool
+        default: true
+        description:
+          - Install C(cassandra-tools) (the sstable tools) too.
+          - C(import_cluster) sets V(false) for the nodes without it.
+      cassandra_install_jemalloc:
+        type: bool
+        default: true
+        description:
+          - Install jemalloc, which C(bin/cassandra) preloads when it finds it (on the
+            RedHat family when a repository offers it, e.g. EPEL).
+          - C(import_cluster) sets V(false) for the nodes without it.
+      cassandra_package_hold:
+        type: bool
+        default: true
+        description:
+          - Debian and Ubuntu, hold the packages pinned to O(cassandra_package_version),
+            so routine upgrades leave them. A hold already there is never removed.
+          - C(import_cluster) sets V(false) for the nodes where they are not held.
       cassandra_install_method:
         type: str
         default: repository
@@ -181,7 +202,8 @@ argument_specs:
           - Exact Cassandra version (e.g. C(5.0.4)), so every node, including the
             ones added later, runs the same one. Empty installs the repository's latest.
           - An installed node is never moved to another version by this role
-            (that is an upgrade). On Debian and Ubuntu the pinned packages are held.
+            (that is an upgrade). On Debian and Ubuntu the pinned packages are held
+            (O(cassandra_package_hold)).
       cassandra_offline:
         type: bool
         default: false

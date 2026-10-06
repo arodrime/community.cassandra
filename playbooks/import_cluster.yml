@@ -172,6 +172,8 @@
         start=$(awk -v b="$btime" -v t="$ticks" -v h="$(getconf CLK_TCK)" 'BEGIN {printf "%.2f", b + t / h}')
         echo "newer=$(find "$d/" -maxdepth 1 -type f \( -name cassandra.yaml -o -name cassandra-env.sh -o -name 'jvm*-server.options' \
           -o -name cassandra-rackdc.properties -o -name logback.xml \) -newermt "@$start" -printf '%f ' 2>/dev/null)"
+        # the Cassandra packages held (Debian, Ubuntu)
+        command -v dpkg >/dev/null 2>&1 && echo "held=$(dpkg --get-selections 'cassandra*' 2>/dev/null | awk '$2 == "hold" {print $1}' | tr '\n' ' ')"
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
           && echo "own_unit=yes"
@@ -222,6 +224,7 @@
         import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
         import_cluster_newer_files: "{{ _kv.newer | default('') | split | sort }}"
+        import_cluster_held: "{{ _kv.held | default('') | split }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
@@ -853,7 +856,23 @@
                   if _read and _hv.import_cluster_package | default('') else {})
                  | combine({'cassandra_install_method': 'packages'}
                            if _read and _hv.import_cluster_package | default('') and _hv.import_cluster_package_from_file | default(false) | bool
-                           else {}) }}
+                           else {})
+                 | combine(_installed) }}
+            # what cassandra_install adds next to the Cassandra package, left out where the node has none
+            _installed: >-
+              {%- set pkgs = _hv.ansible_facts.packages | default({}) -%}
+              {%- set out = {} -%}
+              {%- if _read and _hv.import_cluster_package | default('') -%}
+              {%-   if 'cassandra-tools' not in pkgs -%}{%- set _ = out.update({'cassandra_install_tools': false}) -%}{%- endif -%}
+              {%-   if ('libjemalloc2' if _hv.ansible_facts.os_family | default('') == 'Debian' else 'jemalloc') not in pkgs -%}
+              {%-     set _ = out.update({'cassandra_install_jemalloc': false}) -%}
+              {%-   endif -%}
+              {%-   if _hv.ansible_facts.os_family | default('') == 'Debian'
+                       and ['cassandra', 'cassandra-tools'] | select('in', pkgs) | reject('in', _hv.import_cluster_held | default([])) | list -%}
+              {%-     set _ = out.update({'cassandra_package_hold': false}) -%}
+              {%-   endif -%}
+              {%- endif -%}
+              {{ out }}
             _conf: >-
               {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
                   if _read and _hv.import_cluster_conf_dir not in _default_conf_dirs else {})

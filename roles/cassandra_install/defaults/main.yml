@@ -1,6 +1,21 @@
 ---
 # defaults file for cassandra_install
+# Package or list of packages to install; cassandra-tools is added (see
+# cassandra_install_tools)
 cassandra_packages: cassandra
+# Install cassandra-tools (sstable tools) too. import_cluster sets false for
+# the nodes without it.
+cassandra_install_tools: true
+# Install jemalloc, which bin/cassandra preloads when it finds it (RedHat
+# family: when a repository offers it, e.g. EPEL). import_cluster sets false
+# for the nodes without it.
+cassandra_install_jemalloc: true
+# Debian and Ubuntu: hold the packages pinned to cassandra_package_version,
+# so routine upgrades leave them. import_cluster sets false for the nodes
+# where they are not held (a hold already there is never removed).
+cassandra_package_hold: true
+_cassandra_packages: >-
+  {{ ([cassandra_packages] | flatten + (['cassandra-tools'] if cassandra_install_tools | bool else [])) | unique }}
 
 # Cassandra series, same values as cassandra_repository ("40x", "41x", "50x").
 cassandra_version: "50x"
