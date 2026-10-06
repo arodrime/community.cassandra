@@ -28,6 +28,14 @@
          | map(attribute='inventory_hostname') | list }}
     _racks: "{{ _dc_nodes | map(attribute='_cassandra_preflight.cassandra_rack') | unique | list }}"
     _checker: "{{ ansible_play_hosts_all | reject('in', _rack_nodes) | first | default('') }}"
+    # what forbids the stop (cassandra_rack_force goes on), and what only warns
+    _problems: >-
+      {{ _cassandra_rack_check.problems
+         + (['already down in ' ~ cassandra_target_dc ~ ': ' ~ _cassandra_rack_down_here | join(', ')]
+            if _cassandra_rack_down_here else []) }}
+    _warnings: >-
+      {{ _cassandra_rack_check.warnings
+         + (['down in another datacenter: ' ~ _cassandra_rack_down_elsewhere | join(', ')] if _cassandra_rack_down_elsewhere else []) }}
   tasks:
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
@@ -90,16 +98,6 @@
         _rack_addresses: "{{ _rack_nodes | map('extract', hostvars, ['_cassandra_preflight', 'address']) | list }}"
       run_once: true
 
-    - name: Warnings
-      ansible.builtin.debug:
-        msg: >-
-          {{ (_cassandra_rack_check.warnings
-              + (['down in another datacenter: ' ~ _cassandra_rack_down_elsewhere | join(', ')]
-                 if _cassandra_rack_down_elsewhere else []))
-             | map('regex_replace', '^', 'WARNING: ') | list }}
-      run_once: true
-      when: (_cassandra_rack_check.warnings + _cassandra_rack_down_elsewhere) | length > 0
-
     - name: Refuse when a keyspace would lose more than one replica
       ansible.builtin.assert:
         that: _problems | length == 0 or cassandra_rack_force | default(false) | bool
@@ -107,23 +105,40 @@
           {{ ['Stopping ' ~ cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' (' ~ _rack_nodes | join(', ')
               ~ ') would take down more than one replica of some data:'] + _problems
              + ['Fix that first, or set cassandra_rack_force: true: reads and writes needing those replicas then fail,'
-                ~ ' and data only on them is unavailable until the rack is back.'] }}
+                ~ ' and data only on them is unavailable until the rack is back.']
+             + _warnings | map('regex_replace', '^', 'WARNING - ') | list }}
         quiet: true
-      vars:
-        _problems: >-
-          {{ _cassandra_rack_check.problems
-             + (['already down in ' ~ cassandra_target_dc ~ ': ' ~ _cassandra_rack_down_here | join(', ')]
-                if _cassandra_rack_down_here else []) }}
       run_once: true
 
-    - name: Confirm
+    - name: Show the plan and confirm
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: |-
-          stop_rack will stop Cassandra on every node of {{ cassandra_target_dc | default('(not set)') }}/{{ cassandra_target_rack | default('(not set)') }}
-          at once: {{ _rack_nodes | join(', ') }}. They stay down until start_rack.
+        _blocks: >-
+          {%- set l = [] -%}
+          {%- for h in _rack_nodes -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({}))}) -%}
+          {%- endfor -%}
+          {{ l }}
+        cassandra_screen_question: "Stop {{ _rack_nodes | join(', ') }}?"
+        cassandra_screen:
+          operation: stop_rack
+          summary: "stop {{ cassandra_target_dc | default('(not set)') }} / {{ cassandra_target_rack | default('(not set)') }}"
+          intro:
+            - >-
+              Stops Cassandra on every node of the rack at once; they stay down until start_rack.
+          blocks: "{{ _blocks }}"
+          warnings:
+            - label: replicas
+              text: >-
+                {{ (['cassandra_rack_force is true: the rack goes down although it takes more than one replica of some'
+                     ' data down:'] + _problems) if _problems and cassandra_rack_force | default(false) | bool else '' }}
+            - label: replication
+              each: "{{ _cassandra_rack_check.warnings }}"
+            - label: down nodes
+              text: >-
+                {{ ('down in another datacenter: ' ~ _cassandra_rack_down_elsewhere | join(', ')) if _cassandra_rack_down_elsewhere else '' }}
 
     - name: Group the rack's nodes
       ansible.builtin.group_by:

@@ -184,9 +184,14 @@ checks on its own, changing nothing, and fails when there is a problem, so it ca
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
 
-Risky operations ask for confirmation first: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
+Risky operations show one screen first, the same layout for each: a header (the operation, the cluster and its running
+version), one block per node concerned (when the operation works node by node), then the warnings, each one labelled
+(``WARNING - replication: ...``) and on its own paragraph. Then they ask for confirmation: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
 asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
-terminal; without one, a run that would ask fails at once.
+terminal; without one, a run that would ask fails at once. ``--check`` shows the screen, says that nothing will be
+changed and asks nothing (``add_node`` with ``cassandra_token_auto: true`` follows bisect instead of asking); the
+warnings that only concern a real run (the SSH session, data deleted for good) are named on one line instead. A
+reset (see `Resetting a node`_) shows each node's plan under ``--check``, not the screen.
 
 Rolling operations record each node done in a progress file on the controller, in ``.cassandra_progress`` next to
 the inventory (in the current dir when the inventory's dir is not writable and has no ``.cassandra_progress`` yet, or
@@ -332,6 +337,10 @@ authentication is on). Remove the hosts from the inventory afterwards. Run again
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
 decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
 the operator: ``nodetool decommission`` on the node resumes it, restarting Cassandra on it cancels it.
+Its screen shows the order, and for each node its address, datacenter and rack, load and share, the nodes its data
+goes to (the other nodes of its rack when the datacenter has as many racks as every keyspace has replicas there and
+the rack keeps a node, else the other nodes of its datacenter; SimpleStrategy keyspaces: any node of the cluster),
+the node the ring is checked from, and how it ends.
 
 
 Replacing a dead node

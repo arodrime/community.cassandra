@@ -1,0 +1,37 @@
+---
+# The screen of an operation playbook, then its confirmation, once per run:
+#   include_role: name=community.cassandra.cassandra_service tasks_from=screen.yml
+#   vars: cassandra_screen: {operation, summary, intro, blocks, after, warnings} (filter cassandra_screen)
+#         cassandra_screen_question: "Remove node7?"
+#         cassandra_screen_session_warning: true adds the warning of a run not inside tmux or screen
+#         (long operations: a lost SSH session stops the run)
+# The screen is printed in every mode (also in the logs, and before a run
+# without a terminal stops); then, on a real run with cassandra_operation_confirm
+# true, the question is asked below it. --check (nothing changes) and
+# cassandra_operation_confirm false ask nothing.
+# No question (empty): printed only (the caller asks its own way), and the
+# screen does not say that cassandra_operation_confirm false skips one.
+# The cluster's name and running versions come from preflight unless given.
+- name: Show the plan, then ask
+  vars:
+    _cassandra_screen_defaults:
+      cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+      version: >-
+        {{ ((cassandra_preflight_describe | default({})).stdout | default('') ~ '\n').split('Database versions:')[1:]
+           | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
+    _cassandra_screen_text: >-
+      {{ _cassandra_screen_defaults | combine(cassandra_screen)
+         | community.cassandra.cassandra_screen(check=ansible_check_mode,
+                                                 asks=cassandra_operation_confirm | bool or not cassandra_screen_question | default(''),
+                                                 session=_cassandra_session_warning if cassandra_screen_session_warning | default(false) | bool else '') }}
+  block:
+    - name: Show the plan
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_screen_text.split('\n') }}"
+      run_once: true
+
+    - name: Ask for confirmation
+      ansible.builtin.include_tasks: confirm.yml
+      when: cassandra_screen_question | default('') | length > 0
+      vars:
+        cassandra_confirm_prompt: "{{ cassandra_screen_question }}"
