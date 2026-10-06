@@ -65,3 +65,48 @@
     - role: community.cassandra.cassandra_install
     - role: community.cassandra.cassandra_config
     - role: community.cassandra.cassandra_service
+
+# A Cassandra that cannot start (a JVM option the JVM refuses): the wait stops
+# with the end of the journal as soon as the service is down, not after
+# cassandra_service_wait_timeout. Then started again as Converge left it.
+- name: Cassandra that does not start
+  hosts: all
+  tags: molecule-idempotence-notest
+  vars:
+    cassandra_cluster_name: "Molecule Cluster"
+    cassandra_heap_size: 256M
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_dc: dc_molecule
+  tasks:
+    - name: Note the time
+      ansible.builtin.set_fact:
+        cassandra_test_start: "{{ now().timestamp() | int }}"
+
+    - name: Start it with a JVM option it refuses
+      block:
+        - name: Run the role
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+          vars:
+            cassandra_service_environment: {JVM_EXTRA_OPTS: "-XX:+NoSuchOption"}
+            cassandra_service_state: restarted
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: the role waited for a Cassandra that cannot start
+          register: cassandra_test_not_stopped
+      rescue:
+        - name: Stopped at once, with the journal
+          ansible.builtin.assert:
+            that:
+              - cassandra_test_not_stopped is not defined
+              - ansible_failed_task.name == 'Cassandra is not running'
+              - ansible_failed_result.msg | join('\n') is search('NoSuchOption')
+              - now().timestamp() | int - cassandra_test_start | int < 120
+            fail_msg: "{{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+
+    - name: Back as Converge left it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+      vars:
+        cassandra_service_state: restarted

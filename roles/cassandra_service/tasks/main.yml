@@ -160,17 +160,18 @@
              else 'started' }}
       register: cassandra_service_started
 
+    # Stops early, with the end of the journal, when Cassandra stops (wait_normal.yml)
     - name: Wait for the node to be joined (Mode NORMAL)
-      community.cassandra.cassandra_netstats:
-      module_defaults:
-        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
-      register: cassandra_service_netstats
-      until: cassandra_service_netstats.mode | default('') == 'NORMAL'
-      retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
-      delay: 10
       when:
         - cassandra_service_wait_for_normal
         - not ansible_check_mode
+      block:
+        - name: Note until when to wait
+          ansible.builtin.set_fact:
+            _cassandra_service_wait_deadline: "{{ now().timestamp() | int + cassandra_service_wait_timeout | int }}"
+
+        - name: Wait for the node to be joined (Mode NORMAL)
+          ansible.builtin.include_tasks: wait_normal.yml
 
     # the config this start used, to tell later changes still to apply (apply_config)
     - name: Record the config Cassandra started with

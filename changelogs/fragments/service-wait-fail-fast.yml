@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - "cassandra_service - the wait for the started node to be NORMAL stops as soon as the service is down (Cassandra failed to start), with the end of its journal, instead of retrying nodetool for ``cassandra_service_wait_timeout``."
