@@ -187,8 +187,11 @@
 
         - name: Every seed is up
           ansible.builtin.assert:
-            # a cluster about to be wiped: a seed of the group, up or not
-            that: _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
+            # a cluster about to be wiped: a seed of the group, up or not; a resumed rolling run: a member
+            # drained or stopped by the interrupted run (each node's own check before it stops on any other)
+            that: >-
+              _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
+              or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ ("A new node can't be a seed (seeds don't bootstrap, it would join without its data): add it as a"

@@ -7,7 +7,8 @@
 # inventory's cluster group, see the lookup community.cassandra.cassandra_hosts).
 # cassandra_service_health_node_checks: false checks from the other node only
 # (this node has no Cassandra running yet, e.g. before it is added).
-# cassandra_service_health_down_ok: addresses expected down (a dead node being replaced).
+# cassandra_service_health_down_ok: addresses expected down (a dead node being replaced);
+# cassandra_service_health_resumed_down: the same, for the node a resumed run stopped at.
 # cassandra_service_health_joining_ok: addresses expected joining (UJ: a bootstrap to wait for).
 # cassandra_service_health_leaving_ok: addresses expected leaving (UL: a decommission to wait for).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
@@ -34,12 +35,13 @@
     community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
   vars:
     _node_checks: "{{ cassandra_service_health_node_checks | default(true) | bool }}"
+    _down_ok: "{{ cassandra_service_health_down_ok | default([]) + cassandra_service_health_resumed_down | default([]) }}"
   block:
     - name: Read the ring from this node (waits for down nodes)
       community.cassandra.cassandra_status:
         poll: "{{ [cassandra_service_health_timeout | int // 10, 1] | max }}"
         interval: 10
-        down: "{{ cassandra_service_health_down_ok | default([]) | length }}"
+        down: "{{ _down_ok | length }}"
       register: cassandra_health_self
       changed_when: false
       failed_when: false
@@ -49,7 +51,7 @@
       community.cassandra.cassandra_status:
         poll: "{{ [cassandra_service_health_timeout | int // 10, 1] | max }}"
         interval: 10
-        down: "{{ cassandra_service_health_down_ok | default([]) | length }}"
+        down: "{{ _down_ok | length }}"
       register: cassandra_health_peer
       delegate_to: "{{ _cassandra_health_peer }}"
       changed_when: false
@@ -116,7 +118,7 @@
                  netstats=cassandra_health_netstats if _node_checks else None,
                  schema=cassandra_health_schema,
                  ports=cassandra_health_ports if _node_checks else None,
-                 down_ok=cassandra_service_health_down_ok | default([]),
+                 down_ok=_down_ok,
                  joining_ok=cassandra_service_health_joining_ok | default([]),
                  leaving_ok=cassandra_service_health_leaving_ok | default([])) }}
 

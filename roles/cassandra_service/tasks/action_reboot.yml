@@ -6,6 +6,9 @@
   module_defaults:
     community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
   when: cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool  # a kept unit may not drain
+  register: cassandra_service_drain
+  # the node a resumed run stopped at may be drained or stopped already (node_operation.yml)
+  failed_when: cassandra_service_drain is failed and not _cassandra_resumed_node | default(false) | bool
 
 - name: Reboot the host
   ansible.builtin.reboot:

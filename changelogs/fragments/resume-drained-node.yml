@@ -1,0 +1,2 @@
+bugfixes:
+  - "rolling_restart, rolling_reboot, apply_config, update_java, upgrade - a run resumed with ``cassandra_rolling_resume`` after the interrupted run had drained or stopped a node refused to go on (that node DN for the others, or a seed down in the preflight); the node the run stopped at (the first one not done) is now checked from another node and may be down, its drain may fail, and its action brings it back. Any other node down still stops the run."
