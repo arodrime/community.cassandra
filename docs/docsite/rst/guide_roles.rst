@@ -536,7 +536,7 @@ their OS repositories. Point the roles at it:
 
    cassandra_repository_deb_url: https://mirror.example.com/cassandra-debian
    cassandra_repository_rpm_url: "https://mirror.example.com/cassandra-redhat/{{ cassandra_version }}/"
-   # Ubuntu 24.04+ with Cassandra 4.x only: python3.11 for cqlsh, "" if the OS mirror has it
+   # Ubuntu 24.04 with Cassandra 4.x, and 26.04: python3.11 for cqlsh (on 26.04 for Medusa's virtualenv too), "" if the OS mirror has it
    cassandra_cqlsh_python_repo_uri: https://mirror.example.com/deadsnakes
 
 ``cassandra_install_url`` sets the same, for the hosts' own OS family. A mirror that needs credentials to read (an
@@ -621,7 +621,8 @@ Packages the roles need:
      - none
    * - Repository setup (``cassandra_repository``, not used offline)
      - ``apt-transport-https``, ``curl``, ``gnupg``, ``python3-debian``
-     - ``gnupg2`` with ``cassandra_repository_key_url``
+     - ``gnupg2`` with ``cassandra_repository_key_url``, when ``gpg`` is missing (``gnupg2-minimal`` on Amazon Linux
+       is enough)
    * - Java tarball with the repository method (downloads the Cassandra packages, not used offline)
      - none
      - ``dnf-plugins-core`` (``dnf download``)

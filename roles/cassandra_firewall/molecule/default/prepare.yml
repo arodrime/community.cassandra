@@ -18,14 +18,14 @@
 
     # firewall-cmd talks to firewalld over the system bus, which a real host
     # always has, and the AlmaLinux 10 image not
-    - name: Install the system bus (RedHat)
+    - name: Install the system bus (EL 10)
       ansible.builtin.package:
         name: dbus-broker
         state: present
-      when: ansible_facts['os_family'] == 'RedHat'
+      when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution_major_version'] == '10'
 
-    - name: Start it (RedHat)
+    - name: Start it (EL 10)
       ansible.builtin.service:
         name: dbus-broker
         state: started
-      when: ansible_facts['os_family'] == 'RedHat'
+      when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution_major_version'] == '10'

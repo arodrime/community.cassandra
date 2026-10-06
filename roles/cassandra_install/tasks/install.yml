@@ -436,6 +436,7 @@
       when:
         - ansible_facts['os_family'] == 'RedHat'
         - "'python3.11' not in _cassandra_install_before"
+        - cassandra_cqlsh_python == ''  # picked by the role, not given
 
     # EL 10: python3 is 3.12, and no python3.11 package exists
     - name: Stop when no repository offers python3.11 (RedHat)

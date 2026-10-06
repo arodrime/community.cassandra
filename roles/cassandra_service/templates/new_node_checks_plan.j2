@@ -76,8 +76,11 @@
 {%- set range = cassandra_cqlsh_python_supported[cassandra_version] | default([]) -%}
 {%- set py311_need = {'name': 'python3.11', 'mode': 'warn' if offline else 'either',
                       'fallback': 'the deadsnakes PPA' if ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != '' else ''} -%}
+{#- set when cassandra_install adds the PPA (it installs python3.11 for cqlsh) -#}
+{%- set ppa = namespace(added=false) -%}
 {%- if cassandra_cqlsh_python == '/usr/bin/python3.11' and not have.get('/usr/bin/python3.11', false) -%}
 {%-   set _ = packages.append(dict(py311_need, why='cqlsh, cassandra_cqlsh_python')) -%}
+{%-   set ppa.added = cassandra_cqlsh_python_manage | bool -%}
 {%- elif cassandra_cqlsh_python != '' -%}
 {%-   if not have.get(cassandra_cqlsh_python, false) -%}
 {%-     set _ = problems.append('cassandra_cqlsh_python ' ~ cassandra_cqlsh_python ~ ' does not exist: cqlsh would not run') -%}
@@ -89,6 +92,7 @@
 {%-     set _ = info.append('cqlsh: python3 ' ~ py3 ~ ' does not fit, runs on /usr/bin/python3.11') -%}
 {%-   else -%}
 {%-     set _ = packages.append(dict(py311_need, why='cqlsh, python3 ' ~ py3 ~ ' is outside ' ~ range | join('-'))) -%}
+{%-     set ppa.added = cassandra_cqlsh_python_manage | bool -%}
 {%-   endif -%}
 {%- else -%}
 {%-   set _ = info.append('cqlsh: python3 ' ~ py3) -%}
@@ -122,6 +126,10 @@
 {%-       for p in ['python3.11', 'python3.11-pip'] -%}
 {%-         set _ = packages.append({'name': p, 'why': 'Medusa, python3 ' ~ py3 ~ ' is outside ' ~ mrange | join('-'), 'mode': mode}) -%}
 {%-       endfor -%}
+{%-     elif cassandra_medusa_venv != '' and debian -%}
+{#-       a virtualenv on python3.11 (Ubuntu 26.04: from the deadsnakes PPA cassandra_install adds for cqlsh) -#}
+{%-       set _ = packages.append({'name': 'python3.11-venv', 'mode': mode, 'fallback': py311_need.fallback if ppa.added else '',
+                                   'why': 'Medusa virtualenv, python3 ' ~ py3 ~ ' is outside ' ~ mrange | join('-')}) -%}
 {%-     else -%}
 {%-       set _ = problems.append('Medusa ' ~ cassandra_medusa_version ~ ' runs on Python ' ~ mrange | join(' to ') ~ ', python3 here is ' ~ py3 ~ ': set cassandra_medusa_python to such an interpreter (installed by other means)') -%}
 {%-     endif -%}
