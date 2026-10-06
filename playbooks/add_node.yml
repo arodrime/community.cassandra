@@ -62,11 +62,13 @@
       {{ _new | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_initial_token']) | zip(_new)
          | selectattr(0, 'equalto', '') | map(attribute=1) | list }}
   tasks:
-    - name: Load the cassandra_service defaults
+    # cassandra_install's: the summary names the Java the new nodes get
+    - name: Load the role defaults
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
+      loop: [cassandra_service, cassandra_install]
 
     - name: Check this node
       block:
@@ -246,7 +248,7 @@
             {% if cassandra_add_node_reset | default(false) | bool and _new %}
             cassandra_add_node_reset: what the new nodes hold (a failed first start or bootstrap) is DELETED first, shown and confirmed next.
             {% endif %}
-            Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }}, Java {{ cassandra_java_tarball | default('', true) or ('package, version ' ~ (cassandra_java_version | default('of the series'))) }}, Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa') or 'the system Python') ~ ')') if _medusa else 'off' }}
+            Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }}, Java {{ cassandra_java_version | default('of the series') }} ({{ ('tarball ' ~ cassandra_java_tarball) if cassandra_java_tarball | default('', true) else ('in ' ~ cassandra_java_home) if cassandra_java_home | default('', true) else 'package' if cassandra_install_java | default(true) | bool else 'set up by other means' }}), Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa') or 'the system Python') ~ ')') if _medusa else 'off' }}
             {% if _new or _joining %}
             One node at a time; each one streams its share of the data (hours on big nodes), with a progress line
             every {{ cassandra_stream_check_interval }}s; the run stops after {{ cassandra_stream_stall_checks }} checks in a row without progress.

@@ -431,7 +431,7 @@ allows losing a rack (see `Rack maintenance`_).
 
 To move a cluster to another Java, set ``cassandra_java_version`` in the cluster's ``group_vars`` and run
 ``update_java``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
-It refuses a Java the series does not support, and warns about ``cassandra_jvm<N>_*`` settings meant for the old
+It refuses a Java the series does not support (see below), and warns about ``cassandra_jvm<N>_*`` settings meant for the old
 Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
 ``systemctl stop cassandra`` or a reboot outside Ansible is clean too. A node's own unit kept as found
 (``cassandra_service_unit_manage: false``) may not: these playbooks drain it with ``nodetool`` even with
@@ -454,6 +454,44 @@ Java dependency as missing, and a plain ``dnf upgrade`` that finds a newer Cassa
 satisfy it (the tarball stays the system ``java``): exclude the cassandra packages from routine upgrades
 (``excludepkgs``, versionlock).
 ``update_java`` moves a cluster to a new tarball the same way as to a new package.
+
+With several clusters, the mirror can offer one tarball per Java major in ``cassandra_java_tarballs``, set once for
+all of them (here a ``group_vars/all`` file shared by the inventories), and each cluster only names its Java:
+
+.. code-block:: yaml
+
+   # inventories/_common/group_vars/all/mirror.yml
+   cassandra_java_tarballs:
+     "11":
+       url: https://mirror.example.com/java/OpenJDK11U-jre_x64_linux_hotspot_11.0.28_6.tar.gz
+       checksum: "sha256:..."
+     "17":
+       url: https://mirror.example.com/java/OpenJDK17U-jre_x64_linux_hotspot_17.0.16_8.tar.gz
+       checksum: "sha256:..."
+     "21":
+       url: https://mirror.example.com/java/OpenJDK21U-jre_x64_linux_hotspot_21.0.8_9.tar.gz
+       checksum: "sha256:..."
+
+   # inventories/<cluster>/group_vars/<cluster>/main.yml
+   cassandra_java_version: "17"
+
+``url`` may also be a file on the controller, and ``checksum`` is optional but recommended. Each tarball is unpacked
+in a directory named after its file: give each version a file of its own name. An entry may carry its own
+``username``/``password``; without them, a tarball on the same host as ``cassandra_install_url`` gets the mirror's
+credentials (see the air-gapped section). An explicit ``cassandra_java_tarball`` still wins. With tarballs on offer, a ``cassandra_java_version`` without one is
+refused (with the versions on offer), unless the node has ``cassandra_java_home`` or ``cassandra_install_java:
+false`` (Java set up by other means, no tarball taken). A cluster on Java packages moves
+to the tarball on its next run (the running nodes switch at their next restart; with ``cassandra_offline`` and a URL the
+run stops instead): ``cassandra_java_tarballs: {}`` in its
+``group_vars`` keeps it on packages; remove that line and run ``update_java`` to move it node by node. Once unpacked, the Java's ``release`` file must name that major version: a
+tarball of another Java is refused, and unpacked again on the next run once its entry is fixed. A Java already there
+(a tarball unpacked earlier, ``cassandra_java_home``) is checked the same way before anything changes, so
+``update_java`` and ``upgrade`` stop before stopping a node whose Java does not match. ``update_java``
+follows the same entries: change ``cassandra_java_version`` and run it.
+
+The Java each series runs on is checked by ``cassandra_install``, ``update_java`` and ``upgrade`` alike: 8 or 11 for
+4.0 and 4.1, 11 or 17 for 5.0. 5.0 starts on Java 21 (as on 17) but does not support it (that comes with 6.0):
+``cassandra_java_allow_unsupported: true`` installs it anyway, at your own risk.
 
 EL 10 (RHEL, Rocky, AlmaLinux 10) has no Java 11 or 17 package, only 21 and 25, which Cassandra 4.x and 5.0 do not
 run on: give a Java tarball there (``cassandra_install`` stops and says so otherwise), or ``cassandra_java_home`` for
@@ -719,7 +757,10 @@ nodes get the same form); otherwise each node keeps its value in ``host_vars``. 
 change the ``fqdn`` of an existing ``medusa.ini`` unless ``cassandra_medusa_fqdn_change: true``.
 
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
-roles then keep that Java and install no Java package.
+roles then keep that Java and install no Java package. A node whose Java is a package gets
+``cassandra_java_tarballs: {}``: it keeps its package even where a shared ``cassandra_java_tarballs`` offers tarballs
+(see Java above); remove that line and run ``update_java`` to move it to the tarball. A node with
+``cassandra_java_home`` needs no tarball either; the offer is for the nodes added later.
 
 What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
 the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python and the systemd unit (or init script)

@@ -1,9 +1,15 @@
 ---
+# The mirror (prepare.yml) offers Java 11 and 17; the cluster names its Java,
+# 17, and gets that tarball.
 - name: Converge
   hosts: all
   vars:
-    cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
-    cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+    cassandra_java_tarballs:
+      "11":
+        url: http://127.0.0.1:8000/java/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz
+      "17":
+        url: http://127.0.0.1:8000/java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+        checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
     cassandra_java_version: "17"
   roles:
     - role: community.cassandra.cassandra_repository
@@ -104,7 +110,7 @@
             name: community.cassandra.cassandra_install
           vars:
             cassandra_java_home: "{{ _home }}"
-            cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+            cassandra_java_tarball: http://127.0.0.1:8000/java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
             cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
             cassandra_java_version: "17"
 
@@ -117,3 +123,93 @@
         - name: Unpacked again, whole, and marked done
           ansible.builtin.assert:
             that: cassandra_test_redone.results | map(attribute='stat.exists') | list == [false, true, true, false]
+
+# Refused, before anything changes: a Java the series does not support, and a
+# Java the mirror offers no tarball for
+- name: Java refused
+  hosts: all
+  tasks:
+    - name: Run the role with {{ item.why }}
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        cassandra_test_refused: "{{ item }}"
+      loop:
+        - why: Java 21 on 5.0
+          vars: {cassandra_java_version: "21"}
+          message: Cassandra 50x runs on Java 11 or 17, not 21
+        - why: Java 11 with only 17 on offer
+          vars:
+            cassandra_java_version: "11"
+            cassandra_java_tarballs: {"17": {url: http://127.0.0.1:8000/java/none.tar.gz}}
+          message: cassandra_java_tarballs only offers Java 17
+      loop_control:
+        label: "{{ item.why }}"
+
+# The mirror's "17" is in fact a Java 11: refused once unpacked, before it is
+# marked unpacked or made the system java. Once (idempotence run).
+- name: Tarball of another Java refused
+  hosts: all
+  vars:
+    _dir: /opt/mismatch-java
+    _home: /opt/mismatch-java/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9
+  tasks:
+    - name: Tested already (idempotence run)
+      ansible.builtin.stat:
+        path: "{{ _dir }}"
+      register: cassandra_test_mismatch_done
+
+    - name: Test it
+      when: not cassandra_test_mismatch_done.stat.exists
+      block:
+        - name: Run the role with a "17" that is a Java 11
+          ansible.builtin.include_tasks: refused.yml
+          vars:
+            cassandra_test_refused:
+              vars:
+                cassandra_java_version: "17"
+                cassandra_java_tarball_dir: "{{ _dir }}"
+                cassandra_java_tarballs:
+                  "17": {url: http://127.0.0.1:8000/java/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz}
+              message: >-
+                The Java tarball OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz
+                (http://127.0.0.1:8000/java/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz) is Java 11
+
+        - name: Read what it left
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop: ["{{ _home }}/.unpacked", "{{ _home }}/.unpacking", /usr/bin/java]
+          register: cassandra_test_mismatch
+
+        - name: Not marked unpacked (redone once fixed), and not the system java
+          ansible.builtin.assert:
+            that:
+              - cassandra_test_mismatch.results | map(attribute='stat.exists') | list == [false, true, true]
+              - cassandra_test_mismatch.results[2].stat.lnk_source is search('OpenJDK17U')
+
+        # The mirror's file replaced by a real Java 17 under the same name: the
+        # same directory, unpacked again
+        - name: Run the role with the fixed "17"
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_install
+          vars:
+            cassandra_java_version: "17"
+            cassandra_java_tarball_dir: "{{ _dir }}"
+            cassandra_java_tarballs:
+              "17": {url: http://127.0.0.1:8000/fixed/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz}
+
+        - name: Read the directory again
+          ansible.builtin.stat:
+            path: "{{ _home }}/{{ item }}"
+          loop: [.unpacked, .unpacking, bin/java]
+          register: cassandra_test_fixed
+
+        - name: Unpacked whole, and marked done
+          ansible.builtin.assert:
+            that: cassandra_test_fixed.results | map(attribute='stat.exists') | list == [true, false, true]
+
+        - name: Back to the system java the plays above left (a link made by hand)
+          ansible.builtin.file:
+            src: /opt/cassandra-java/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1/bin/java
+            dest: /usr/bin/java
+            state: link
+            force: true

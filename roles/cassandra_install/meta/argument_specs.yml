@@ -95,6 +95,26 @@ argument_specs:
         type: str
         description:
           - Java version to install. Defaults to the series' entry in O(cassandra_java_versions).
+          - Refused when the series does not support it (4.0 and 4.1 run on 8 or 11, 5.0 on 11 or 17),
+            unless O(cassandra_java_allow_unsupported).
+      cassandra_java_allow_unsupported:
+        type: bool
+        default: false
+        description:
+          - Install a O(cassandra_java_version) the series does not support (for example 21 with 5.0),
+            at your own risk.
+      cassandra_java_tarballs:
+        type: dict
+        default: {}
+        description:
+          - Java tarballs on offer, by major version (C("17")), each a dict with C(url) (a URL or a file
+            on the controller) and optionally C(checksum) (for example C(sha256:0123...), recommended),
+            C(username) and C(password). Typically set
+            once for every cluster, next to the mirror settings.
+          - O(cassandra_java_tarball) defaults to the C(url) of the O(cassandra_java_version) entry,
+            and O(cassandra_java_tarball_checksum) and the credentials to its own.
+          - With tarballs on offer, a O(cassandra_java_version) without one is refused, unless
+            O(cassandra_java_home) is set or O(cassandra_install_java) is false.
       cassandra_java_package:
         type: str
         description:
@@ -128,7 +148,6 @@ argument_specs:
             Set to an empty string to rely on the configured repositories.
       cassandra_java_tarball:
         type: str
-        default: ""
         description:
           - Java from a tarball (a JDK or JRE C(.tar.gz)) instead of a package. A URL,
             downloaded by the nodes, or a file on the controller.
@@ -138,20 +157,23 @@ argument_specs:
             a local C(cassandra-java-tarball) package provides the Java they depend on; on the
             RedHat family they are installed without their dependencies (C(rpm --nodeps)),
             plus the ones they need to run (procps-ng, python3, shadow-utils).
-          - O(cassandra_java_version) must still name its major version.
+          - O(cassandra_java_version) must still name its major version; the C(release) file of
+            the unpacked Java must name it too, or the role stops.
+          - Defaults to the O(cassandra_java_tarballs) entry of O(cassandra_java_version), else none.
       cassandra_java_home:
         type: path
         default: ""
         description:
           - Java already unpacked in this directory by other means, not a package. It is
             made the system C(java), and the Cassandra packages are installed without a
-            Java package, as with O(cassandra_java_tarball).
+            Java package, as with O(cassandra_java_tarball). Its C(release) file, when it has
+            one, must name O(cassandra_java_version).
           - import_cluster sets it for nodes whose running Java is not a package.
       cassandra_java_tarball_checksum:
         type: str
-        default: ""
         description:
           - Checksum of the tarball, for example C(sha256:0123...). Recommended for a URL.
+          - Defaults to the checksum of the O(cassandra_java_tarballs) entry the tarball comes from, else none.
       cassandra_java_tarball_dir:
         type: path
         default: /opt/cassandra-java
@@ -160,13 +182,13 @@ argument_specs:
       cassandra_java_tarball_username:
         type: str
         description:
-          - User for the tarball URL. Defaults to O(cassandra_install_username) when the
+          - User for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_username) when the
             tarball is on the same host as O(cassandra_install_url), else none.
       cassandra_java_tarball_password:
         type: str
         no_log: true
         description:
-          - Password or token for the tarball URL. Defaults to O(cassandra_install_password)
+          - Password or token for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_password)
             when the tarball is on the same host as O(cassandra_install_url), else none.
       cassandra_java_set_default:
         type: bool

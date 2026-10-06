@@ -30,6 +30,13 @@
           {{ (cassandra_preflight_status.cluster_status | default({}) or {}).values() | map(attribute='nodes') | flatten
              | map(attribute='address') | list }}
 
+    # Before the other checks: no use reading the host for a Java it can't get
+    - name: The Java the node gets (the series runs on it, a tarball on offer)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_check.yml
+      when: _cassandra_new_node_check_it | bool
+
     - name: Gather what the checks need
       when: _cassandra_new_node_check_it | bool
       vars:

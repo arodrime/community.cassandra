@@ -791,7 +791,7 @@
       Not read from the nodes, set them in group_vars if they apply (see the guide's air-gapped section):
         cassandra_offline (hosts without network), the mirror (cassandra_install_url: the repository, or with
         cassandra_install_method packages the directory of the package files; cassandra_install_username, and its
-        password in a vaulted file), cassandra_java_tarball for new nodes, and the repository of a vendor Java
+        password in a vaulted file), cassandra_java_tarball (or the cassandra_java_tarballs offer) for new nodes, and the repository of a vendor Java
         package (cassandra_java_package) for new nodes.
 
       Next steps:
@@ -828,13 +828,21 @@
               {{ item.address if _host_names == 'ip'
                  else (_hv.ansible_facts[_host_names] | default(_host, true)) }}
             _host_names: "{{ import_cluster_host_names | default('hostname') }}"
+            # a Java package is kept (cassandra_java_tarballs: {}, not the tarballs a shared
+            # offer has); a Java the series does not support too (cassandra_java_allow_unsupported)
             _java: >-
               {{ ({'cassandra_java_version': _hv.import_cluster_java}
                   if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {})
                  | combine({'cassandra_java_home': _hv.import_cluster_java_home}
                            if _read and _hv.import_cluster_java_home | default('') != '' else {})
                  | combine({'cassandra_java_package': _hv.import_cluster_java_package}
-                           if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {}) }}
+                           if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {})
+                 | combine({'cassandra_java_tarballs': {}}
+                           if _read and _hv.import_cluster_java_home | default('') == '' else {})
+                 | combine({'cassandra_java_allow_unsupported': true}
+                           if _read and (_hv.import_cluster_series | community.cassandra.cassandra_java_supported | length > 0)
+                              and _hv.import_cluster_java not in _hv.import_cluster_series | community.cassandra.cassandra_java_supported
+                           else {}) }}
             # the package cassandra_install would install for that Java (its default)
             _java_package: >-
               {{ ('openjdk-' ~ _hv.import_cluster_java | default('') ~ '-jre-headless') if _hv.ansible_facts.os_family | default('') == 'Debian'

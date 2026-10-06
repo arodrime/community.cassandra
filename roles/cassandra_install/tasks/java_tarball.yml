@@ -96,6 +96,13 @@
         group: root
       when: not ansible_check_mode
 
+    # Before it is marked unpacked: once the tarball is fixed, it is unpacked again
+    - name: Check the unpacked Java is cassandra_java_version
+      ansible.builtin.include_tasks: java_release.yml
+      vars:
+        _cassandra_java_release_of_tarball: true
+      when: not ansible_check_mode
+
     - name: Mark it unpacked
       ansible.builtin.copy:
         content: "{{ cassandra_java_tarball }}\n"

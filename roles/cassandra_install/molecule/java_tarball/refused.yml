@@ -1,0 +1,26 @@
+---
+# The role fails with cassandra_test_refused.message, given the variables in
+# cassandra_test_refused.vars
+- name: Run the role, refused
+  vars:
+    _vars: "{{ cassandra_test_refused.vars }}"
+  block:
+    - name: Run the role
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+      vars:
+        cassandra_java_version: "{{ _vars.cassandra_java_version }}"
+        cassandra_java_tarballs: "{{ _vars.cassandra_java_tarballs | default({}) }}"
+        cassandra_java_tarball_dir: "{{ _vars.cassandra_java_tarball_dir | default('/opt/cassandra-java') }}"
+
+    - name: It should have failed
+      ansible.builtin.fail:
+        msg: "The role ran with {{ _vars }}"
+      register: cassandra_test_not_refused
+  rescue:
+    - name: Refused, for that reason
+      ansible.builtin.assert:
+        that:
+          - cassandra_test_not_refused is not defined
+          - ansible_failed_result.msg is search(cassandra_test_refused.message | regex_escape)
+        fail_msg: "{{ ansible_failed_result.msg | default(ansible_failed_result) }}"

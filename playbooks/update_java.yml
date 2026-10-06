@@ -8,15 +8,16 @@
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
 # Refused: a Java the series does not support (4.0/4.1: 8, 11; 5.0: 11, 17).
+# With cassandra_java_tarballs (Java tarballs by major, e.g. in a mirror file
+# shared by every cluster), the node gets the tarball of cassandra_java_version.
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check the Java change
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  any_errors_fatal: true  # one node refused: none is changed
   gather_facts: false
-  vars:
-    _supported: {40x: ["8", "11"], 41x: ["8", "11"], 50x: ["11", "17"]}
   tasks:
     - name: Load the role defaults
       ansible.builtin.include_role:
@@ -25,13 +26,10 @@
         public: true
       loop: [cassandra_install, cassandra_config, cassandra_service]
 
-    - name: The series supports this Java
-      ansible.builtin.assert:
-        that: cassandra_java_version | string in _supported[cassandra_version]
-        fail_msg: >-
-          Cassandra {{ cassandra_version }} runs on Java {{ _supported[cassandra_version] | join(' or ') }},
-          not {{ cassandra_java_version }}.
-        quiet: true
+    - name: The series supports this Java, and a tarball is on offer for it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_check.yml
 
     - name: Read the service
       ansible.builtin.systemd_service:

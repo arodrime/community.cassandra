@@ -43,19 +43,44 @@ cassandra_java_versions:
   41x: "11"
   50x: "17"
 cassandra_java_version: "{{ cassandra_java_versions[cassandra_version] | default('17') }}"
+# true: install a Java the series does not support (e.g. 21 with 5.0; see
+# the cassandra_java filters for the supported ones), at your own risk
+cassandra_java_allow_unsupported: false
+# Java tarballs on offer, by major version, e.g. set once for every cluster:
+#   {"11": {"url": "https://mirror/jdk-11.tar.gz", "checksum": "sha256:..."},
+#    "17": {"url": ..., "checksum": ...}}
+# (username/password per entry, else the defaults below). A cluster then
+# only sets cassandra_java_version, and gets that tarball (an explicit
+# cassandra_java_tarball wins). With tarballs on offer, a version without
+# one is refused, unless cassandra_java_home is set or cassandra_install_java
+# is false. A cluster on Java packages sets it to {}.
+cassandra_java_tarballs: {}
 # Java from a tarball (a JDK or JRE .tar.gz) instead of a package: a URL
 # (downloaded by the nodes) or a file on the controller. It
 # is unpacked into cassandra_java_tarball_dir/<tarball name> and made the
 # system java; the Cassandra packages are then installed without their Java
 # dependency. cassandra_java_version must still name its major version.
-cassandra_java_tarball: ""
-# e.g. "sha256:0123..." (recommended for a URL)
-cassandra_java_tarball_checksum: ""
+# Defaults to the cassandra_java_tarballs entry of cassandra_java_version
+# (none with cassandra_install_java false).
+cassandra_java_tarball: "{{ _cassandra_java_tarball_entry.url | default('') if cassandra_install_java | bool else '' }}"
+# e.g. "sha256:0123..." (recommended for a URL); defaults to the entry's
+cassandra_java_tarball_checksum: "{{ _cassandra_java_tarball_entry.checksum if _cassandra_java_tarball_from_entry else '' }}"
 cassandra_java_tarball_dir: /opt/cassandra-java
-# Credentials for the URL. By default cassandra_install_url's, when the
-# tarball is on the same host (the mirror)
-cassandra_java_tarball_username: "{{ cassandra_install_username if _cassandra_java_tarball_on_mirror else '' }}"
-cassandra_java_tarball_password: "{{ cassandra_install_password if _cassandra_java_tarball_on_mirror else '' }}"
+# Credentials for the URL. By default the entry's, else cassandra_install_url's
+# when the tarball is on the same host (the mirror)
+cassandra_java_tarball_username: >-
+  {{ _cassandra_java_tarball_entry.username | default('') if _cassandra_java_tarball_own_credentials
+     else cassandra_install_username if _cassandra_java_tarball_on_mirror else '' }}
+cassandra_java_tarball_password: >-
+  {{ _cassandra_java_tarball_entry.password | default('') if _cassandra_java_tarball_own_credentials
+     else cassandra_install_password if _cassandra_java_tarball_on_mirror else '' }}
+_cassandra_java_tarball_entry: "{{ cassandra_java_tarballs | community.cassandra.cassandra_java_tarball(cassandra_java_version) }}"
+_cassandra_java_tarball_from_entry: >-
+  {{ cassandra_java_tarball != '' and cassandra_java_tarball == _cassandra_java_tarball_entry.url | default('') }}
+# an entry with a username or a password has its own credentials, both
+_cassandra_java_tarball_own_credentials: >-
+  {{ _cassandra_java_tarball_from_entry
+     and (_cassandra_java_tarball_entry.username is defined or _cassandra_java_tarball_entry.password is defined) }}
 _cassandra_java_tarball_on_mirror: >-
   {{ cassandra_java_tarball is match('https?://')
      and (cassandra_java_tarball | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
