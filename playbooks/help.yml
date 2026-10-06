@@ -1,0 +1,65 @@
+---
+# What the inventory describes and what can be done with it, read from the
+# inventory alone (no node contacted, changing nothing):
+#   ansible-playbook -i inventory community.cassandra.help
+# 1. each cluster group of the inventory: cluster name, Cassandra series and
+#    package version, install method, Java, datacenters, racks and their nodes,
+#    seeds, the nodes marked cassandra_node_state: absent;
+# 2. every operation playbook, by theme, with its command for this inventory
+#    (its path, the cluster's group when it is needed, a node of it, the -e
+#    variables it needs; UPPERCASE: a value only you know);
+# 3. advice from the inventory: nodes marked absent, authentication on without
+#    cassandra_cql_username, a variable close to one the collection reads,
+#    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,
+#    mixed versions.
+# -e help_topic=<operation>: one operation in detail (its documentation, its
+# variables, its command).
+# -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir
+# (changed only when its content changes; --check --diff shows the difference),
+# to commit with the inventory. -e help_inventory=<path> reads that inventory
+# instead of the run's.
+# Without the vault password, vault-encrypted vars files are skipped (named in
+# the advice): help reads no secret.
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts), else every top
+# group (one per cluster).
+- name: Help
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+    ansible_connection: local  # never an inventory's ssh to localhost
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _model: >-
+      {{ lookup('community.cassandra.cassandra_inventory',
+                sources=[help_inventory] if help_inventory | default('', true) else []) }}
+    _playbooks: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/*.yml') | map('basename') | map('splitext') | map('first') | list }}"
+  tasks:
+    - name: Read the inventory
+      ansible.builtin.set_fact:
+        _cassandra_help_model: "{{ _model }}"
+
+    # one string under the yaml result format (shown as a block, not wrapped),
+    # else a list of lines (not one line with \n in it)
+    - name: Show the help
+      ansible.builtin.debug:
+        msg: "{{ _text if _yaml | bool else _text.split('\n') }}"
+      vars:
+        _yaml: >-
+          {{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') in ['default', 'ansible.builtin.default']
+             and lookup('ansible.builtin.config', 'result_format', plugin_type='callback', plugin_name='default',
+                        on_missing='skip') == 'yaml' }}
+        _text: >-
+          {{ _cassandra_help_model | community.cassandra.cassandra_help(
+               _playbooks, topic=help_topic | default(''),
+               header=lookup('ansible.builtin.file', playbook_dir ~ '/' ~ help_topic ~ '.yml')
+                      if help_topic | default('') in _playbooks else '') }}
+
+    - name: Write RUNBOOK.md next to the inventory
+      ansible.builtin.copy:
+        content: "{{ _cassandra_help_model | community.cassandra.cassandra_help(_playbooks, markdown=true) }}"
+        dest: "{{ _cassandra_help_model | community.cassandra.cassandra_help_runbook }}"
+        mode: "0644"
+      diff: true
+      when: help_write | default(false) | bool

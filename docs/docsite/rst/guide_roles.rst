@@ -200,6 +200,34 @@ with ``-i host1,host2``), or in ``cassandra_rolling_progress_dir``. An interrupt
 files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
 ``.gitignore``.
 
+Help and runbook
+----------------
+
+``help`` reads the inventory only (no node is contacted, nothing changes) and prints three sections: each cluster
+as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
+and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
+its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
+several clusters, a node of it, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
+user options the run was given; UPPERCASE words are values only you know); and advice from the inventory (nodes
+marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
+seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_topic=decommission_node
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_write=true
+
+``-e help_topic=<operation>`` shows one operation in detail: its documentation (the comment that starts the
+playbook), its variables and its command. ``-e help_write=true`` also writes the same content as ``RUNBOOK.md`` in
+the inventory's dir, with the commands ready to copy: commit it with the inventory. It changes only when its content
+does (run ``help`` again after changing the inventory); ``--check --diff`` shows the difference. The commands are
+written as run from the directory ``help`` was run from (the one with ``ansible.cfg``). ``import_cluster`` writes it
+at the end of an import with ``-e import_cluster_runbook=true``.
+
+Without the vault password, the vault-encrypted vars files are skipped and named in the advice: ``help`` needs no
+secret and reads none (the variables it shows hold none), and the printed commands then carry ``--ask-vault-pass``.
+
 
 Creating a cluster
 ------------------
