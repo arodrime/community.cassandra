@@ -9,7 +9,7 @@
 # Phases, in order:
 #   preflight  checks everything and shows the target config; changes nothing
 #   prepare    snapshot + config copy on every node, target repository; asks you
-#              to confirm backups and repairs are paused and the schema frozen
+#              (not under --check) to confirm backups and repairs are paused and the schema frozen
 #   canary     upgrades one node (cassandra_upgrade_canary, default: the first
 #              non-seed of the first datacenter), then stops: watch it
 #   rolling    upgrades the others, datacenter by datacenter, rack by rack, one
@@ -265,17 +265,23 @@
         public: true
       loop: [cassandra_config, cassandra_service]
 
-    - name: Confirm
+    - name: Show the plan and confirm
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: |-
-          Before upgrading {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }}, confirm that:
-            - backups are paused (they would copy the snapshot and the new files twice),
-            - repairs are paused (streaming between versions is not supported),
-            - the schema is frozen (no CREATE/ALTER/DROP until the upgrade is over).
-          prepare will now snapshot every node and copy its config.
+        cassandra_screen_question: "Backups, repairs and schema changes paused: go on with the snapshots?"
+        cassandra_screen:
+          operation: upgrade
+          summary: "phase prepare, {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }}"
+          intro:
+            - "Before the upgrade, check that:"
+            - pre:
+                - "  - backups are paused (they would copy the snapshot and the new files twice),"
+                - "  - repairs are paused (streaming between versions is not supported),"
+                - "  - the schema is frozen (no CREATE/ALTER/DROP until the upgrade is over)."
+          after:
+            - "prepare now snapshots every node (pre-upgrade-{{ cassandra_upgrade_from }}) and copies its config."
 
     - name: Snapshot every keyspace
       ansible.builtin.command: "{{ _cassandra_service_nodetool }} snapshot -t pre-upgrade-{{ cassandra_upgrade_from }}"

@@ -303,8 +303,9 @@
       Reset of {{ inventory_hostname }} refused, nothing was changed: {{ _cassandra_node_reset_plan.problems | join('; ') }}.
   when: _cassandra_node_reset_plan.problems | length > 0
 
+# --check: the plan of each host above is all there is to see
 - name: Confirm the reset
-  ansible.builtin.include_tasks: confirm.yml
+  ansible.builtin.include_tasks: screen.yml
   when:
     - not ansible_check_mode
     - _todo | length > 0
@@ -318,17 +319,26 @@
       {%-   if p.delete or p.stop | bool or p.disable | bool -%}{%- set _ = l.append(h) -%}{%- endif -%}
       {%- endfor -%}
       {{ l }}
-    cassandra_confirm_prompt: >-
-      {%- set l = ['DATA LOSS: the reset DELETES everything these directories hold, for good (no snapshot, no backup):'] -%}
+    _blocks: >-
+      {%- set l = [] -%}
       {%- for h in _todo -%}
       {%-   set p = hostvars[h]._cassandra_node_reset_plan -%}
-      {%-   set _ = l.append('  ' ~ h ~ ':' ~ (' stop Cassandra,' if p.stop | bool else '')
-                             ~ (' keep it from starting at boot,' if p.disable | bool else '') ~ ' ' ~ p.delete | length ~ ' entries to delete') -%}
-      {%-   for line in p.dirs -%}{%- set _ = l.append('    ' ~ line) -%}{%- endfor -%}
+      {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': (['stop Cassandra'] if p.stop | bool else [])
+                                                  + (['keep it from starting at boot'] if p.disable | bool else [])
+                                                  + [p.delete | length ~ ' entries to delete, in:', {'pre': p.dirs}]}) -%}
       {%- endfor -%}
-      {%- set _ = l.append('Only for a node that never joined the cluster, or one being replaced. Reset ' ~ _todo | join(', ') ~ '?') -%}
-      {{ l | join(_nl) }}
-    _nl: "\n"  # a real newline (a folded scalar keeps the backslash)
+      {{ l }}
+    cassandra_screen_question: "Reset {{ _todo | join(', ') }}?"
+    cassandra_screen:
+      operation: reset_node
+      summary: "empty {{ _todo | join(', ') }}"
+      blocks: "{{ _blocks }}"
+      warnings:
+        - label: data loss
+          real_run: true
+          text: >-
+            the reset DELETES everything these directories hold, for good (no snapshot, no backup). Only for a node that
+            never joined the cluster, or one being replaced.
 
 # The whole cluster: the operator types its name (or gives it, for a run without a terminal)
 - name: Confirm the reset of the whole cluster

@@ -60,17 +60,25 @@
       run_once: true
       when: _todo | length == 0
 
-    - name: Confirm the run
+    - name: Show the plan and confirm the run
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
-      vars:
-        cassandra_confirm_prompt: |-
-          apply_config will write the config and drain + restart these nodes, one at a time (diffs above):
-          {% for h in _todo %}
-            {{ h }}: {{ hostvars[h].cassandra_apply_config_reason }}
-          {% endfor %}
+        tasks_from: screen.yml
       when: _todo | length > 0
+      vars:
+        _blocks: >-
+          {%- set l = [] -%}
+          {%- for h in _todo -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': [hostvars[h].cassandra_apply_config_reason]}) -%}
+          {%- endfor -%}
+          {{ l }}
+        cassandra_screen_question: "Apply the config and restart {{ _todo | join(', ') }}?"
+        cassandra_screen:
+          operation: apply_config
+          summary: "apply the config on {{ _todo | join(', ') }}"
+          intro:
+            - Writes the config, then drains and restarts each node, one at a time (the diffs are above).
+          blocks: "{{ _blocks }}"
   vars:
     _todo: >-
       {%- set out = [] -%}{%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | default(false) | bool -%}{%-          set _ = out.append(h) -%}{%- endfor -%}{{ out }}

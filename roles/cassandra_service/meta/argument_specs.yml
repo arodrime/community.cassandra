@@ -195,7 +195,7 @@ argument_specs:
             C(cassandra_initial_token) go. C(false) refuses them; C(bisect) splits the largest ranges, no node
             moves; C(balanced) gives an even ring for the new node count, the new nodes join at their final
             tokens and C(move_node) moves the others afterwards; C(true) shows both plans and asks which
-            (refused when C(cassandra_operation_confirm) is false).
+            (refused when C(cassandra_operation_confirm) is false; C(--check) follows bisect without asking).
       cassandra_token_rf:
         type: int
         default: 3
@@ -314,7 +314,8 @@ argument_specs:
         type: bool
         default: true
         description:
-          - Ask the operator before a risky operation. C(false) for non-interactive runs.
+          - Ask the operator before a risky operation. C(false) for non-interactive runs. C(--check) never asks
+            (nothing changes, the plan only).
       cassandra_operation_drain:
         type: bool
         default: true

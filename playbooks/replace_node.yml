@@ -116,17 +116,41 @@
           ansible.builtin.fail:
             msg: Nothing was replaced.
 
-    - name: Confirm the replacement
+    - name: Show the plan and confirm the replacement
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: |-
-          replace_node will start {{ inventory_hostname }} in place of the dead node {{ cassandra_replace_address | default('(not set)') }}:
-          it takes over its tokens and streams their data from the other replicas (this can take hours).
-          {{ ('cassandra_replace_node_reset: what ' ~ inventory_hostname ~ ' holds is DELETED first, shown and confirmed next.')
-             if cassandra_replace_node_reset | default(false) | bool else '' }}
-          {{ _cassandra_session_warning }}
+        _p: "{{ _cassandra_preflight }}"
+        _dead: >-
+          {{ cassandra_replace_ring.cluster_status.values() | map(attribute='nodes') | flatten
+             | selectattr('address', 'equalto', cassandra_replace_address) | first | default({}) }}
+        _dead_dc: >-
+          {%- set out = [] -%}
+          {%- for dc, info in cassandra_replace_ring.cluster_status.items()
+                if info.nodes | default([]) | selectattr('address', 'equalto', cassandra_replace_address) | list -%}
+          {%-   set _ = out.append(dc) -%}
+          {%- endfor -%}
+          {{ out | first | default('?') }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: "Replace {{ cassandra_replace_address }} with {{ inventory_hostname }}?"
+        cassandra_screen:
+          operation: replace_node
+          summary: "replace the dead node {{ cassandra_replace_address | default('(not set)') }} with {{ inventory_hostname }}"
+          blocks:
+            - title: "{{ inventory_hostname | community.cassandra.cassandra_screen_title(_p) }}"
+              lines:
+                - >-
+                  replaces {{ cassandra_replace_address }} ({{ _dead.status | default('') }}{{ _dead.state | default('') }} in
+                  {{ _dead_dc }} / {{ _dead.rack | default('?') }}, load {{ _dead.load | default('?') }}, as {{ _from }} sees it)
+                - takes over its tokens and streams their data from the other replicas (hours on a big node)
+                - "end state: {{ inventory_hostname }} up and normal (UN) in its place"
+          warnings:
+            - label: reset
+              real_run: true
+              text: >-
+                {{ ('cassandra_replace_node_reset: what ' ~ inventory_hostname ~ ' holds is DELETED first, shown and confirmed next.')
+                   if cassandra_replace_node_reset | default(false) | bool else '' }}
 
     # The dead node's address may be this host's: seen down there, as expected
     - name: Reset the host first (cassandra_replace_node_reset)
