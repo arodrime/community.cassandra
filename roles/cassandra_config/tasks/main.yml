@@ -292,6 +292,13 @@
         _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
       when: cassandra_config_initialized.stat.exists
 
+    - name: Look for the files to keep as they are (cassandra_config_keep_files)
+      ansible.builtin.stat:
+        path: "{{ cassandra_conf_dir }}/{{ item }}"
+        get_checksum: false
+      loop: "{{ cassandra_config_keep_files | intersect(_cassandra_config_files[_cassandra_config_series]) }}"
+      register: cassandra_config_keep_stat
+
     # On a node already initialized, a file with the same settings (only comments,
     # blank lines or their layout differ, e.g. no header: set up by hand) is left as it is
     - name: List the files to change and whether to ask first
@@ -317,7 +324,11 @@
           {%-     set _ = out.append(f) -%}
           {%-   endif -%}
           {%- endfor -%}
-          {{ out }}
+          {{ out + _keep }}
+        # (where the node has them, on a node already initialized: a new one's are the package's)
+        _keep: >-
+          {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+             | map(attribute='item') | list if cassandra_config_initialized.stat.exists else [] }}
 
     - name: Show the config changes
       ansible.builtin.debug:
@@ -329,9 +340,18 @@
     - name: Say which files are left as they are
       ansible.builtin.debug:
         msg: >-
-          {{ inventory_hostname }}: {{ _cassandra_config_kept | join(', ') }} left as they are: same settings as the
+          {{ inventory_hostname }}: {{ _same | join(', ') }} left as they are: same settings as the
           role's, written another way (cassandra_config_normalize: true rewrites them).
-      when: _cassandra_config_kept | length > 0
+      vars:
+        _same: "{{ _cassandra_config_kept | reject('in', cassandra_config_keep_files) | list }}"
+      when: _same | length > 0
+
+    - name: Say which files are kept as they are (cassandra_config_keep_files)
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ _kept | join(', ') }} left as they are (cassandra_config_keep_files)"
+      vars:
+        _kept: "{{ _cassandra_config_kept | select('in', cassandra_config_keep_files) | list }}"
+      when: _kept | length > 0
 
     # The diffs are masked above: no password reaches the report
     - name: Record the changes for the report

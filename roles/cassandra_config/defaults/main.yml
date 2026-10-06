@@ -29,6 +29,13 @@ cassandra_config_normalize: false
 # "": the running Cassandra's. import_cluster sets it for such files.
 cassandra_config_storage_dir: ""
 
+# Config files left as they are on a node already initialized that has them
+# (not written nor compared), e.g. a logback.xml with appenders no variable covers: names of
+# the conf dir's files (cassandra.yaml, cassandra-env.sh, jvm-server.options,
+# jvm<N>-server.options, cassandra-rackdc.properties, logback.xml).
+# import_cluster sets it with import_cluster_keep_hand_edits.
+cassandra_config_keep_files: []
+
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data
 # data_file_directories (JBOD: one per disk); the first holds the system keyspaces

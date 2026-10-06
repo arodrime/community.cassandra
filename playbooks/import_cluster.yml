@@ -32,8 +32,11 @@
 # last in any virtualenv under /opt.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
-# A ring node it could not read (down, unreachable, nodetool not found)
-# fails the import, as its settings are unknown: -e
+# Hand edits no variable covers fail the self-check: -e
+# import_cluster_keep_hand_edits=true leaves those files as they are on their
+# node (cassandra_config_keep_files) instead.
+# A ring node it could not read (down, unreachable, nodetool not found, its
+# running Java removed by an update) fails the import, as its settings are unknown: -e
 # import_cluster_allow_unread=true accepts it.
 - name: Find the cluster from the given nodes
   hosts: all
@@ -925,6 +928,18 @@
                            if _read and _hv.import_cluster_package | default('') and _hv.import_cluster_package_from_file | default(false) | bool
                            else {})
                  | combine(_installed, _repo.vars if _read else {}) }}
+            # import_cluster_keep_hand_edits: the config files with hand edits no variable covers are left as
+            # they are on this node (cassandra_config_keep_files), rather than failing the self-check
+            _hand_kept: >-
+              {%- set out = [] -%}
+              {%- for line in _hv.import_cluster_config.hand_edits | default([]) if _read -%}
+              {%-   set f = line | regex_replace('[:,].*$', '') -%}
+              {%-   if f is match('^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties|logback[.]xml)$')
+                       and f not in out -%}
+              {%-     set _ = out.append(f) -%}
+              {%-   endif -%}
+              {%- endfor -%}
+              {{ {'cassandra_config_keep_files': out} if out and import_cluster_keep_hand_edits | default(false) | bool else {} }}
             # cassandra_repository takes over the node's Cassandra repository files only if it would write them as
             # they are (with their URL, credentials and key path); else they are left as they are
             _repo: "{{ _hv.import_cluster_repo | default({'manage': true, 'vars': {}, 'why': ''}) }}"
@@ -1007,7 +1022,7 @@
               keep: >-
                 {{ (_hv.import_cluster_keep | default({})
                     | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}),
-                              {} if _repo.manage else {'cassandra_repository_manage': false})
+                              {} if _repo.manage else {'cassandra_repository_manage': false}, _hand_kept)
                     if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,

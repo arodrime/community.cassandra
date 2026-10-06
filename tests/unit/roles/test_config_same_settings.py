@@ -187,7 +187,7 @@ def kept(files, storage_dir="", given_dir=""):
         results.append({"item": [name, "/tmp/t"], "content": b64(new)})
     variables = dict(cassandra_conf_dir="/etc/c", cassandra_config_tmp={"path": "/tmp/t"},
                      cassandra_config_compared={"results": results}, cassandra_jvm={"storagedir": storage_dir},
-                     cassandra_config_storage_dir=given_dir)
+                     cassandra_config_storage_dir=given_dir, _keep=[])
     return render(templates["_kept"], **variables)
 
 

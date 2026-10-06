@@ -786,6 +786,11 @@ path are imported. Files written another way (other keys or names, other signing
 the role's header, another series' file, or any file when the package came from a file) get
 ``cassandra_repository_manage: false`` on that node, and the report says why.
 
+Hand edits no variable covers (an extra logback appender, a ``-javaagent`` line in ``cassandra-env.sh``) fail the
+self-check. With ``-e import_cluster_keep_hand_edits=true`` the files that have them are left as they are on their
+node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither writes nor compares
+them); nodes added later get the role's files.
+
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as

@@ -241,7 +241,10 @@ def _render(variables, facts, live, conf_dir=""):
     series = SERIES.get(str(ctx.get("cassandra_version")))
     if series is None:
         raise AnsibleFilterError("cassandra_import_self_check: unsupported cassandra_version")
-    wanted = [(f, "cassandra_config/templates/%s/%s.j2" % (series, f)) for f in ctx["_cassandra_config_files"][series]]
+    # the files cassandra_config keeps as the node has them (cassandra_config_keep_files) are not written
+    keep = value("cassandra_config_keep_files") or []
+    wanted = [(f, "cassandra_config/templates/%s/%s.j2" % (series, f)) for f in ctx["_cassandra_config_files"][series]
+              if not (f in keep and f in live)]
     if value("cassandra_jmx_users"):
         wanted += [(f, "cassandra_config/templates/%s.j2" % f) for f in ("jmxremote.password", "jmxremote.access")]
     errors = []

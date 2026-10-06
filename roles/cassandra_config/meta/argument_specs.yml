@@ -56,6 +56,17 @@ argument_specs:
           - Where the directories a C(cassandra.yaml) leaves out are (the node's C(-Dcassandra.storagedir), e.g.
             C($CASSANDRA_HOME/data) for a tarball), for the "same settings" test of O(cassandra_config_normalize).
           - Empty, the running Cassandra's. C(import_cluster) sets it for such files.
+      cassandra_config_keep_files:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Config files left as they are on a node already initialized that has them, neither written nor compared, e.g. a
+            C(logback.xml) with appenders no variable covers. Names of the conf dir's files (C(cassandra.yaml),
+            C(cassandra-env.sh), C(jvm-server.options), C(jvm<N>-server.options), C(cassandra-rackdc.properties),
+            C(logback.xml)). A node without the file, or a new one, gets the role's.
+          - C(import_cluster) sets it with C(import_cluster_keep_hand_edits) for the files with hand edits no
+            variable covers.
       cassandra_data_dir:
         type: path
         default: /var/lib/cassandra/data

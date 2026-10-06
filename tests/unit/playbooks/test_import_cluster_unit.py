@@ -160,7 +160,7 @@ def test_boot_setting_read(kv, boot):
 
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
-    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={},
+    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={},
                   _repo={"manage": True}) == {"cassandra_medusa_link_dir": "", "cassandra_firewall_manage": False}
 
 

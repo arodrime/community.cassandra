@@ -55,8 +55,8 @@ def test_verdict_written():
     left = {"manage": False, "vars": {}, "why": "x"}
     taken = {"manage": True, "vars": {"cassandra_install_url": "https://m/"}, "why": ""}
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
-    assert render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _repo=left)["cassandra_repository_manage"] is False
-    assert "cassandra_repository_manage" not in render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _repo=taken)
+    assert render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={}, _repo=left)["cassandra_repository_manage"] is False
+    assert "cassandra_repository_manage" not in render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={}, _repo=taken)
     pkg = render(MATCH["_pkg"], _hv={"import_cluster_package": ""}, _read=True, _installed={}, _repo=taken)
     assert pkg == {"cassandra_install_url": "https://m/"}
 
