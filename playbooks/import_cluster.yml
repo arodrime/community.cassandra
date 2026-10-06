@@ -30,6 +30,8 @@
 # medusa script, a full path on the nodes), else in the PATH, else in the usual
 # places, else in the PATH of a login shell of cassandra, then of root, and
 # last in any virtualenv under /opt.
+# -e import_cluster_runbook=true also writes RUNBOOK.md there (the help
+# playbook: the cluster, every operation's command for this inventory, advice).
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
 # A host marked cassandra_node_state: absent (an inventory given back) is not read
@@ -1268,3 +1270,13 @@
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
+
+# -e import_cluster_runbook=true: RUNBOOK.md in import_cluster_dir too (the
+# help playbook on the inventory just written; not under --check)
+- name: Write RUNBOOK.md
+  ansible.builtin.import_playbook: help.yml
+  when: import_cluster_runbook | default(false) | bool and not ansible_check_mode
+  vars:
+    help_inventory: "{{ _dir }}/hosts.yml"
+    help_write: true
+    help_show: false  # the import's report is the screen; help's text goes to RUNBOOK.md

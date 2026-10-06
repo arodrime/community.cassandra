@@ -205,6 +205,44 @@ stopped is restarted first: it may be down then, any other node down still stops
 files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
 ``.gitignore``.
 
+Help and runbook
+----------------
+
+``help`` reads the inventory only (no node is contacted, nothing changes) and prints three sections: each cluster
+as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
+and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
+its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
+several clusters, a datacenter and rack of it, the nodes marked absent, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
+user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know); and advice from the inventory (nodes
+marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
+seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_topic=decommission_node
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_write=true
+
+``-e help_topic=<operation>`` shows one operation in detail: its documentation (the comment that starts the
+playbook), its variables and its command. ``-e help_write=true`` also writes the same content as ``RUNBOOK.md`` in
+the inventory's dir (the first ``-i`` one), with the commands ready to copy: commit it with the inventory. It is
+written only when its content changes (run ``help`` again after changing the inventory); ``--check --diff`` shows the
+difference. Its commands are as run from the directory ``help`` was run from (the one with ``ansible.cfg``; the file
+says where that is from its own dir), with the ``-i`` path and the vault and connection options ``help`` was given:
+run it the same way each time, or the file changes. ``import_cluster`` writes it at the end of an import with
+``-e import_cluster_runbook=true``.
+
+``help`` decrypts nothing, even when given the vault password: the vault-encrypted vars files are skipped and named
+in the advice, inline vaulted values are shown as ``(vaulted)``, so no secret reaches its output or ``RUNBOOK.md``.
+A value templated from a vaulted one is shown as ``(vaulted)`` too, a template that would run a lookup is shown as
+written, and the ``-e`` variables of the ``help`` run are not read. A shown setting that can't be read from the
+inventory alone is named in the advice. When the inventory has vaulted values and the run has no vault password
+(``--vault-password-file``, ``--vault-id``, ``--ask-vault-pass``, or one in ``ansible.cfg``), the printed commands
+carry ``--ask-vault-pass``. ``cassandra_node_state: absent`` marks a host to remove: ``help`` lists it apart and
+names it in the ``decommission_node`` command; the other operations still treat it as a node of the cluster.
+A vault-encrypted file in ``group_vars/all`` is read by Ansible for every host, ``localhost`` too: ``help`` then
+needs the vault password as well (and still shows nothing from it).
+
 
 Creating a cluster
 ------------------

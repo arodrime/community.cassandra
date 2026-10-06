@@ -52,6 +52,11 @@ RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|move_left_going|move_order|
                      r"|upgrade_nodes|(seed|apply_config|update_java)_(True|False))$")
 
 
+def _candidates(groups):
+    return dict((name, frozenset(hosts)) for name, hosts in groups.items()
+                if hosts and name not in ("all", "ungrouped") and not RUNTIME.match(name))
+
+
 def cluster_group(given, groups):
     """given: cassandra_hosts or None; groups: {name: [hosts]}. Returns the
     group name, or raises ValueError naming the candidates."""
@@ -59,8 +64,7 @@ def cluster_group(given, groups):
         return given
     if groups.get(DEFAULT):
         return DEFAULT
-    cands = dict((name, frozenset(hosts)) for name, hosts in groups.items()
-                 if hosts and name not in ("all", "ungrouped") and not RUNTIME.match(name))
+    cands = _candidates(groups)
     if not cands:
         raise ValueError("cassandra_hosts is not set and the inventory has no group with hosts."
                          " Put the nodes in a group (all > <cluster> > <dc> > <rack>, as the import writes it)")
@@ -69,11 +73,18 @@ def cluster_group(given, groups):
              if all(o == name or (o.startswith(name + "_") and h <= hosts) for o, h in cands.items())]
     if len(heads) == 1:
         return heads[0]
-    top = [name for name, hosts in cands.items() if not any(hosts < other for other in cands.values())]
-    top = sorted(n for n in top if not any(n.startswith(o + "_") for o in top))  # orders, not orders_dc1 too
     raise ValueError("cassandra_hosts is not set and the inventory's groups are not one cluster's"
                      " (<cluster>, <cluster>_<dc>, <cluster>_<dc>_<rack>; top groups: %s)."
-                     " Run with -e cassandra_hosts=<the cluster's group>" % ", ".join(top))
+                     " Run with -e cassandra_hosts=<the cluster's group>" % ", ".join(top_groups(groups)))
+
+
+def top_groups(groups):
+    """The groups with hosts that no other group holds (all, ungrouped and
+    the runtime groups left out), sorted: one per cluster in an inventory of
+    several clusters laid out as the import writes them."""
+    cands = _candidates(groups)
+    top = [name for name, hosts in cands.items() if not any(hosts < other for other in cands.values())]
+    return sorted(n for n in top if not any(n.startswith(o + "_") for o in top))  # orders, not orders_dc1 too
 
 
 class LookupModule(LookupBase):
