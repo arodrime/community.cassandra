@@ -2,9 +2,10 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # A rolling run that stopped after draining a node (DN for the others):
-# resumed, that node only (the first one not done) is checked from another
-# node and may be down, its drain may fail (drained or stopped already), and
-# its action brings it back. Any other node down still stops the run.
+# resumed, that node only (the first one not done), and only when its netstats
+# says DRAINED or JMX refuses the connection, is checked from another node and
+# may be down; its drain may fail only with Connection refused; its action
+# brings it back. Any other node down still stops the run.
 
 import os
 
@@ -69,9 +70,17 @@ def test_relaxed_only_when_the_node_says_it_is_drained_or_stopped(state, resumed
     read = [t for t in OPERATION["block"] if t["name"] == "Read the state of the node the interrupted run stopped at"][0]
     names = [t["name"] for t in OPERATION["block"]]
     assert names.index(read["name"]) < names.index(BEFORE["name"]) and read["failed_when"] is False
+    assert read["when"] == "_cassandra_resume_candidate | bool" and read["check_mode"] is False
     checks = {"_cassandra_resumed_node": resumed, "_cassandra_preflight": {"ring_address": "10.0.0.2"}}
     assert render(BEFORE["vars"]["cassandra_service_health_node_checks"], **checks) is (not resumed)
     assert render(BEFORE["vars"]["cassandra_service_health_resumed_down"], **checks) == (["10.0.0.2"] if resumed else [])
+    # after the action: as usual on a real run, still down under --check (nothing was restarted)
+    after = [t for t in OPERATION["block"] if t["name"] == "Check the cluster with this node back"][0]
+    for check in (False, True):
+        relaxed = resumed and check
+        values = dict(checks, ansible_check_mode=check)
+        assert render(after["vars"]["cassandra_service_health_node_checks"], **values) is (not relaxed)
+        assert render(after["vars"]["cassandra_service_health_resumed_down"], **values) == (["10.0.0.2"] if relaxed else [])
 
 
 def test_the_health_check_lets_that_node_only_be_down():

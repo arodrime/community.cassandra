@@ -161,7 +161,7 @@ a seed list when they are not).
 
 .. code-block:: console
 
-    $ ansible-playbook -i inventory -b community.cassandra.preflight
+    $ ansible-playbook -i inventory community.cassandra.preflight
     $ ansible-playbook -i inventory community.cassandra.create_cluster
     $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.rolling_restart
@@ -826,7 +826,7 @@ Then check what the roles would change:
 
 .. code-block:: console
 
-    $ ansible-playbook -i orders/hosts.yml -b community.cassandra.preflight
+    $ ansible-playbook -i orders/hosts.yml community.cassandra.preflight
     $ ansible-playbook -i orders/hosts.yml site.yml --check
 
 Repeat until the diff only shows what you intend to change. The confirmation prompt is a last safety net, not a

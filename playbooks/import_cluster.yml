@@ -798,7 +798,7 @@
         1. Review the report above and the variables (hand edits, drift).
         2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml -b community.cassandra.preflight
         3. See what the roles would change, changing nothing:
-           ansible-playbook -i {{ _dir }}/hosts.yml <your site playbook> --check --diff
+           ansible-playbook -i {{ _dir }}/hosts.yml -b <your site playbook> --check --diff
   tasks:
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory

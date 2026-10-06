@@ -64,7 +64,11 @@
       ansible.builtin.include_tasks: cluster_health.yml
       when: not (ansible_check_mode and cassandra_service_node_action in ['add', 'replace', 'decommission'])
       vars:
-        cassandra_service_health_node_checks: "{{ cassandra_service_node_checks_after | default(true) }}"
+        # --check did not restart the node a resumed run found drained or stopped: still down
+        cassandra_service_health_node_checks: >-
+          {{ cassandra_service_node_checks_after | default(true) | bool and not (ansible_check_mode and _cassandra_resumed_node | bool) }}
+        cassandra_service_health_resumed_down: >-
+          {{ [_cassandra_preflight.ring_address] if ansible_check_mode and _cassandra_resumed_node | bool else [] }}
         cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_after | default(_cassandra_group_size) }}"
         cassandra_service_health_joining_ok: "{{ cassandra_service_joining_after | default([]) }}"
 
