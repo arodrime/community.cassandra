@@ -96,7 +96,7 @@ def test_multi_dc_fixture_grouped_by_dc():
 
 def test_token_per_node_fixture_down_node_unknown_load():
     lines = cassandra_ring_report(fixture("nodetool_status_token_per_node.txt"),
-                                  {"a": ["10.118.154.136"], "b": ["10.118.154.137"]})
+                                  {"a": ["10.100.100.136"], "b": ["10.100.100.137"]})
     assert "  datacenter1: 2 node(s), 1 up, 1 down; load 648.19 GiB (1 unknown)" in lines
 
 

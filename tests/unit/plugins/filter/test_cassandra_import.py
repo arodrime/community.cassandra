@@ -55,7 +55,7 @@ def test_ring_multi_dc():
 
 
 def test_ring_load_unknown():
-    assert [(n["address"], n["rack"]) for n in ring("nodetool_status_vnodes_load_unknown.txt")] == [("10.118.154.136", "rack1")]
+    assert [(n["address"], n["rack"]) for n in ring("nodetool_status_vnodes_load_unknown.txt")] == [("10.100.100.136", "rack1")]
 
 
 def test_inventory_files_keep_passwords_apart():
