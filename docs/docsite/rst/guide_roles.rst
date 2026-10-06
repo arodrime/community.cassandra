@@ -170,6 +170,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.status
     $ ansible-playbook -i inventory community.cassandra.cleanup
     $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.topology --check
     $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
     $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_reset_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.change_seeds
@@ -341,6 +342,46 @@ Its screen shows the order, and for each node its address, datacenter and rack, 
 goes to (the other nodes of its rack when the datacenter has as many racks as every keyspace has replicas there and
 the rack keeps a node, else the other nodes of its datacenter; SimpleStrategy keyspaces: any node of the cluster),
 the node the ring is checked from, and how it ends.
+
+
+The inventory as the desired state
+----------------------------------
+
+``topology`` makes the ring match the inventory, so adding and removing nodes is an edit of the inventory, reviewed
+and committed like any other change:
+
+1. Edit the inventory: a new host goes in its datacenter's (or rack's) group, not in ``cassandra_seeds``; a node to
+   remove gets ``cassandra_node_state: absent`` (a host var, or a group var for several).
+2. ``ansible-playbook -i inventory community.cassandra.topology --check`` shows the plan and changes nothing.
+3. ``ansible-playbook -i inventory community.cassandra.topology`` shows the same plan, asks once, then does it.
+4. Commit the inventory. Delete the lines of the hosts removed, or leave them marked absent.
+
+A host of the cluster's group that is not in the ring is added as ``add_node`` adds it (its checks,
+``cassandra_add_node_reset``, ``cassandra_initial_token`` or ``cassandra_token_auto=bisect|balanced`` with one token
+per node). A host marked absent that is still in the ring is decommissioned as ``decommission_node`` does it (refused:
+a seed, a datacenter left with fewer nodes than a keyspace has replicas there unless ``cassandra_decommission_force``).
+A host marked absent, out of the ring and stopped needs nothing ("already removed"). A node of the ring no host of the
+inventory has is never touched: it is reported (a mistyped address, a host missing from the inventory, a dead node to
+remove with ``remove_dead_node``), and a plan with something to do is refused while it is there.
+
+One node at a time, the adds first (the cluster never has fewer nodes than it ends with), then the removals, the
+cluster checked before and after each node; the run stops at the first problem. One screen lists every step, with
+the data each node streams, and asks once; each step then shows its own screen as it starts, without a question.
+Refused before anything changes: a ``--limit`` that leaves out a host of the group (the plan needs them all), a plan
+removing more nodes than ``cassandra_topology_max_removals`` (2) or more than half of a datacenter
+(``cassandra_topology_allow_large_removal: true`` goes on: a group var marking hosts absent by mistake is the case it
+catches), an add while a decommission is still running, two hosts with one address, a host marked absent still in the
+ring that does not answer or is down (``remove_dead_node`` then), a node of the group that does not answer, one token
+per node with adds and removals in one run (add first, then mark the hosts absent, then ``move_node``), and
+``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or ``cassandra_reset_nodes`` on the command line (the plan says
+which nodes). The cleanup of the nodes that handed data over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked
+out again from the ring, a bootstrap or a decommission still running is waited for. Nothing to add or remove: it says so.
+
+``add_node``, ``decommission_node`` and ``remove_dead_node`` stay for explicit use. Every playbook leaves the hosts
+marked absent out: preflight, the health checks and the node counts they expect, rolling operations, ``status`` (which
+names them while they are still in the ring) and ``import_cluster``. While one is still in the ring, the health checks
+count one node too many and stop, naming it: run ``topology``. The lookup ``community.cassandra.cassandra_nodes`` gives
+the hosts of the cluster without them.
 
 
 Replacing a dead node

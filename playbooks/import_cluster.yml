@@ -32,8 +32,9 @@
 # last in any virtualenv under /opt.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
+# A host marked cassandra_node_state: absent (an inventory given back) is not read
 - name: Find the cluster from the given nodes
-  hosts: all
+  hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
   gather_facts: true
   gather_subset: [network]
   become: true  # nodetool reads the JMX password file (cassandra's, 0400)
@@ -107,7 +108,7 @@
       run_once: true
 
 - name: Read every node
-  hosts: all
+  hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
   gather_facts: false
   ignore_unreachable: true
   become: true

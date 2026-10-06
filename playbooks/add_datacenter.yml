@@ -25,7 +25,7 @@
   any_errors_fatal: true
   vars:
     _new_dc: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }}"
-    _existing: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | list }}"
+    _existing: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
     _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
   tasks:
@@ -181,9 +181,9 @@
         _cassandra_join_over: run add_datacenter again.
         _done: "{{ 0 if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname) }}"  # --check: none added
         cassandra_service_expected_before: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - ansible_play_hosts_all | length + _done | int }}
+          {{ query('community.cassandra.cassandra_nodes') | length - ansible_play_hosts_all | length + _done | int }}
         cassandra_service_expected_after: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - ansible_play_hosts_all | length + _done | int + 1 }}
+          {{ query('community.cassandra.cassandra_nodes') | length - ansible_play_hosts_all | length + _done | int + 1 }}
 
 - name: Give the datacenter its replicas and data
   hosts: "{{ cassandra_new_nodes }}"

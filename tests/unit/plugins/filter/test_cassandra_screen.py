@@ -172,3 +172,11 @@ def test_reset_warnings_one_per_node_with_something_to_do():
     assert "(A real run would also warn about: data loss, reset.)" in cassandra_screen(
         {"operation": "add_node", "warnings": warnings}, check=True)
     assert cassandra_reset_warnings([]) == []
+
+
+def test_a_step_of_another_playbook_asks_nothing():
+    text = cassandra_screen({"operation": "add_node", "summary": "add node7"}, asked_by="topology")
+    assert text == "add_node: add node7\nA step of topology, confirmed on its screen: no question here."
+    # --check says so first: nothing changes
+    assert cassandra_screen({"operation": "add_node"}, check=True, asked_by="topology").endswith(
+        "--check: nothing will be changed (the plan only, no question).")

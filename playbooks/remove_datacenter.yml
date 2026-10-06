@@ -14,7 +14,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Check the datacenter to remove
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _leaving: >-
@@ -110,8 +110,8 @@
         cassandra_service_node_action: decommission
         cassandra_service_node_checks_after: false
         _gone: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
-        cassandra_service_expected_before: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int }}"
-        cassandra_service_expected_after: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int - 1 }}"
+        cassandra_service_expected_before: "{{ query('community.cassandra.cassandra_nodes') | length - _gone | int }}"
+        cassandra_service_expected_after: "{{ query('community.cassandra.cassandra_nodes') | length - _gone | int - 1 }}"
 
 - name: Summary
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_leaving_dc"

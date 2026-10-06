@@ -25,7 +25,7 @@
     cassandra_allow_mixed_versions: "{{ cassandra_upgrade_phase | default('') in ['rolling', 'sstables', 'cleanup'] }}"
 
 - name: Upgrade checks
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: true
   gather_subset: [network, hardware]
   vars:
@@ -251,7 +251,7 @@
       when: _phase == 'preflight'
 
 - name: Prepare
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') if cassandra_upgrade_phase | default('') == 'prepare' else 'localhost:!localhost' }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') == 'prepare' else 'localhost:!localhost' }}"
   gather_facts: false
   tasks:
     - name: Load the role defaults
@@ -299,7 +299,7 @@
       run_once: true
 
 - name: Pick the nodes and their order
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
   gather_facts: false
   vars:
     _order: >-
@@ -371,7 +371,7 @@
         cassandra_service_node_action: upgradesstables
 
 - name: Cleanup
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') if cassandra_upgrade_phase | default('') == 'cleanup' else 'localhost:!localhost' }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') == 'cleanup' else 'localhost:!localhost' }}"
   gather_facts: false
   tasks:
     - name: Load the role defaults

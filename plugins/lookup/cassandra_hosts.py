@@ -48,7 +48,7 @@ DEFAULT = "cassandra"
 
 # groups the playbooks make with group_by/add_host while they run: never the
 # cluster group, even when they hold every host
-RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|move_left_going|move_order|leaving_dc|create_start_order"
+RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|move_left_going|move_order|leaving_dc|create_start_order|topology_(add|remove)"
                      r"|upgrade_nodes|(seed|apply_config|update_java)_(True|False))$")
 
 

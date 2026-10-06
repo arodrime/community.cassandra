@@ -168,6 +168,28 @@ argument_specs:
             host replacing itself (the dead node's address is its own, e.g. a lost disk or a reinstall).
             C(false) refuses it, C(true) resets it first as C(cassandra_add_node_reset) does. The other nodes
             may list the host's address only as the dead node being replaced, down.
+      cassandra_node_state:
+        type: str
+        default: present
+        choices: [present, absent]
+        description:
+          - The state this host should be in, the inventory being the desired state of the cluster. C(absent)
+            (a host var, or a group var for a group of hosts) takes the host out of the cluster - every operation
+            playbook leaves it out (preflight, health checks and their node counts, rolling operations, status,
+            import), and the C(topology) playbook decommissions it if it is still in the ring.
+          - Delete the host from the inventory once C(topology) has removed it, or leave it marked absent.
+      cassandra_topology_max_removals:
+        type: int
+        default: 2
+        description:
+          - C(topology) - the most nodes one run removes from the ring; a plan that removes more is refused
+            (a group var marking hosts absent by mistake), as is one that removes more than half of a datacenter.
+      cassandra_topology_allow_large_removal:
+        type: bool
+        default: false
+        description:
+          - C(topology) - C(true) goes on with a plan the guard refuses (more removals than
+            C(cassandra_topology_max_removals), or more than half of a datacenter).
       cassandra_create_cluster_reset:
         type: bool
         default: false

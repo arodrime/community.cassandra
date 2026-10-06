@@ -36,13 +36,13 @@
 # A cluster keeps these for life: a role default that changes in a later
 # release must not silently change what the next node of this cluster gets
 - name: Refuse an identity left to the role defaults
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     # the one there is wiped first (cassandra_create_cluster_reset), or a cluster never started: every
     # host of the group in the run (no --limit), checked by the preflight (it answered) and below, none
     # running, none with a system keyspace (a cluster stopped as a whole is not new)
-    _group: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | default([]) }}"
+    _group: "{{ query('community.cassandra.cassandra_nodes') | default([]) }}"
     _new_cluster: >-
       {%- set fresh = [] -%}
       {%- for h in ansible_play_hosts_all -%}
@@ -135,7 +135,7 @@
 # split the largest ranges). A rerun after a create that stopped half way
 # gives the same tokens: the nodes already running must have them.
 - name: Work out the tokens (one token per node)
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: Work out the tokens
@@ -215,7 +215,7 @@
 
 # After the token plan (shown and confirmed before anything is wiped)
 - name: Reset the whole cluster first (cassandra_create_cluster_reset)
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   any_errors_fatal: true  # every node stopped before any is emptied, none if one is refused
   strategy: linear  # each task on every node before the next one
@@ -329,7 +329,7 @@
           when: not ansible_check_mode
 
 - name: Prepare the nodes
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   pre_tasks:
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play
@@ -349,7 +349,7 @@
 # cassandra_allocate_tokens_for_local_replication_factor: seeds first, but a
 # node of a new rack before one it would refuse
 - name: Order the starts
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: The plan only (--check with cassandra_create_cluster_reset)
@@ -379,7 +379,7 @@
     - community.cassandra.cassandra_service
 
 - name: Check the new cluster
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: The plan only (--check with cassandra_create_cluster_reset)

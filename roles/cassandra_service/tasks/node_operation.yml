@@ -16,7 +16,7 @@
 - name: "{{ cassandra_service_node_action }} {{ inventory_hostname }}"
   when: inventory_hostname not in cassandra_progress_done | default([])
   vars:
-    _cassandra_group_size: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length }}"
+    _cassandra_group_size: "{{ query('community.cassandra.cassandra_nodes') | length }}"
   block:
     - name: Note the start time
       ansible.builtin.set_fact:

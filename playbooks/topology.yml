@@ -1,0 +1,363 @@
+---
+# Makes the ring match the inventory, which is the desired state:
+#   ansible-playbook -i inventory community.cassandra.topology --check   (the plan only)
+#   ansible-playbook -i inventory community.cassandra.topology
+# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
+# cluster group (lookup community.cassandra.cassandra_hosts).
+# - A host of the cluster's group (its rack group) that is not in the ring is
+#   added, as add_node adds it (its checks, cassandra_add_node_reset, one
+#   token per node: cassandra_initial_token or cassandra_token_auto=bisect or
+#   balanced).
+# - A host marked cassandra_node_state: absent (a host var, or a group var)
+#   that is still in the ring is removed, as decommission_node removes it
+#   (refused: a seed, a datacenter left with fewer nodes than a keyspace has
+#   replicas there, unless cassandra_decommission_force). Once it is out, every
+#   playbook leaves it out: delete its lines from the inventory, or leave them.
+#   A host marked absent, out of the ring and stopped: nothing to do.
+# - A node of the ring no host of the inventory has is never touched: it is
+#   reported (a mistyped address, a host missing, a dead node to remove with
+#   remove_dead_node), and stops a plan with something to do.
+# One node at a time, the adds first (the cluster never has fewer nodes than
+# it ends with), then the removals; the cluster is checked before and after
+# each node, the run stops at the first problem. One screen with every step,
+# one question (cassandra_operation_confirm: false skips it); --check shows
+# the plan and changes nothing; nothing to add or remove: says so, changes nothing.
+# Refused before anything changes: a --limit that leaves out a host of the
+# group (the plan needs them all), more removals than
+# cassandra_topology_max_removals (2) or more than half of a datacenter
+# (cassandra_topology_allow_large_removal: true goes on), an add while a
+# decommission is still running, two hosts with one address (absent or not),
+# a node that does not answer, one token per node with adds and removals in
+# one run, cassandra_new_nodes/cassandra_leaving_nodes/cassandra_reset_nodes
+# given (the plan says which nodes). The cleanup of the nodes that handed data
+# over to the new ones is left to you (its command is printed).
+# Interrupted: run it again (cassandra_rolling_resume=true or not), the plan is
+# worked out again from the ring: a bootstrap or a decommission still running
+# is waited for, a node done is no longer in the plan.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+# Out of preflight: they are not part of the cluster any more, and may be gone
+- name: Read the hosts marked absent
+  hosts: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+  gather_facts: false
+  ignore_unreachable: true  # a host gone for good is reported, not a failure
+  vars:
+    _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+  tasks:
+    - name: Not every host of the group is marked absent
+      ansible.builtin.assert:
+        that: query('community.cassandra.cassandra_nodes') | length > 0
+        fail_msg: >-
+          Every host of {{ lookup('community.cassandra.cassandra_hosts') }} is marked cassandra_node_state: absent (a group
+          var?): topology removes nodes, not a whole cluster. Nothing was changed.
+        quiet: true
+      run_once: true
+
+    - name: Gather the network facts
+      ansible.builtin.setup:
+        gather_subset: [network]
+      register: cassandra_topology_setup
+      ignore_errors: true  # no facts (no python?): as one that does not answer
+
+    - name: Note whether it answers
+      ansible.builtin.set_fact:
+        _cassandra_topology_reachable: "{{ not cassandra_topology_setup.unreachable | default(false) and not cassandra_topology_setup.failed | default(false) }}"
+
+    - name: Read where it stands
+      when: _cassandra_topology_reachable | bool
+      block:
+        - name: Read its settings
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: node_facts.yml
+            public: true
+
+        # normal, leaving (a decommission running) or decommissioned (out of the ring, still running)
+        - name: Where its decommission stands
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: leaving_node_state.yml
+          when: _cassandra_preflight_running | bool
+          vars:
+            cassandra_leaving_nodes: "{{ _tp_absent | join(',') }}"
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            _cassandra_topology_refused: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+
+    # Not reached: its address from the inventory, when it gives one
+    - name: Its address from the inventory
+      ansible.builtin.set_fact:
+        _cassandra_topology_address: >-
+          {{ [(cassandra_extra_settings | default({})).broadcast_address | default(''), cassandra_listen_address | default(''),
+              ansible_host | default('')] | select('match', '^[0-9.]+$|^[0-9a-fA-F:]+:[0-9a-fA-F:]*$') | first | default('') }}
+      when: not _cassandra_topology_reachable | bool
+      ignore_errors: true  # an address templated from facts it does not have: unknown, the plan says so
+
+- name: Work out the plan and confirm it
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  any_errors_fatal: true  # nothing changes if one check fails
+  vars:
+    _tp_group: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+    _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+    _tp_ring: "{{ (cassandra_preflight_status | default({})).cluster_status | default({}, true) }}"
+    _tp_ring_addresses: >-
+      {{ _tp_ring.values() | map(attribute='nodes') | flatten | rejectattr('state', 'equalto', 'J') | map(attribute='address') | list }}
+    # present hosts not in the ring as a member (a bootstrap still running: waited for)
+    _tp_candidates: >-
+      {{ ansible_play_hosts_all | map('extract', hostvars) | rejectattr('_cassandra_preflight.ring_address', 'in', _tp_ring_addresses)
+         | map(attribute='inventory_hostname') | list }}
+    # the node the replication is read from: up and normal in the ring, not one being added
+    _tp_cql_node: >-
+      {{ ansible_play_hosts_all | map('extract', hostvars)
+         | selectattr('_cassandra_preflight.ring_address', 'in', _tp_ring.values() | map(attribute='nodes') | flatten
+                      | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list)
+         | map(attribute='inventory_hostname') | first | default('') }}
+    _tp_single: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_num_tokens | int == 1 }}"
+    _tp_todo: "{{ (cassandra_topology_plan.add + cassandra_topology_plan.remove) | length > 0 }}"
+    # the datacenters left with fewer nodes than a keyspace has replicas there (as decommission_node checks it)
+    _tp_replication: >-
+      {{ cassandra_keyspaces | community.cassandra.cassandra_replication_problems(cassandra_topology_plan.nodes_left)
+         if cassandra_topology_plan.in_ring and cassandra_keyspaces | default(none) is not none else [] }}
+  tasks:
+    - name: Load the cassandra_service defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
+    - name: The run sees the whole group, and a cluster that runs
+      ansible.builtin.assert:
+        that:
+          - _tp_left_out | length == 0
+          - _tp_ring | length > 0
+          - _tp_step_vars | length == 0
+          - _tp_no_facts | length == 0
+        fail_msg: >-
+          {{ ('--limit leaves out ' ~ _tp_left_out | join(', ') ~ ': topology works out its plan from every host of '
+              ~ _tp_group ~ ', run it without --limit. Nothing was changed.') if _tp_left_out
+             else ('topology works out which nodes to add and remove from the inventory: run it without '
+                   ~ _tp_step_vars | join(', ') ~ '. Nothing was changed.') if _tp_step_vars
+             else ('topology needs every node of ' ~ _tp_group ~ ' to answer (' ~ _tp_no_facts | join(', ')
+                   ~ ' did not; cassandra_allow_down_nodes does not apply). Nothing was changed.') if _tp_no_facts
+             else 'No node of ' ~ _tp_group ~ ' runs Cassandra: a new cluster is made with create_cluster.' }}
+        quiet: true
+      vars:
+        # the steps' own host lists: an -e would make them run on other hosts than the plan's, without a question
+        _tp_step_vars: >-
+          {{ query('ansible.builtin.varnames', '^cassandra_(new|leaving|reset)_nodes$') }}
+        _tp_no_facts: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | rejectattr('_cassandra_preflight', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+        _tp_left_out: >-
+          {{ groups[_tp_group] | reject('in', ansible_play_hosts_all + _tp_absent | select('in', query('ansible.builtin.inventory_hostnames', ansible_limit)) | list)
+             | list if ansible_limit is defined else [] }}
+      run_once: true
+
+    # The checks add_node runs first, on the hosts to add: refused here, before the question.
+    # Each host on its own (ansible_play_hosts_all, never ansible_play_hosts nor a rescued run_once:
+    # on ansible-core 2.19+ a rescued failure narrows or drops the play's hosts)
+    - name: Check the hosts to add
+      when: inventory_hostname in _tp_candidates
+      block:
+        - name: Check this host
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: new_node_checks.yml
+          vars:
+            _cassandra_new_node_skip_in_ring: true  # a bootstrap still running
+            _cassandra_new_node_reset: "{{ cassandra_add_node_reset | bool }}"
+
+        - name: Find where it stands
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: new_node_state.yml
+          vars:
+            cassandra_new_nodes: "{{ _tp_candidates | join(',') }}"
+
+        - name: Work out its reset (cassandra_add_node_reset)
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: reset_node_plan.yml
+          when:
+            - cassandra_add_node_reset | bool
+            - cassandra_new_node_state == 'new'
+          vars:
+            cassandra_new_nodes: "{{ _tp_candidates | join(',') }}"
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            _cassandra_topology_refused: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+
+    - name: Work out the plan
+      ansible.builtin.set_fact:
+        cassandra_topology_plan: >-
+          {{ _tp_hosts | community.cassandra.cassandra_topology_plan(_tp_ring, max_removals=cassandra_topology_max_removals,
+               allow_large=cassandra_topology_allow_large_removal | bool, token_auto=cassandra_token_auto) }}
+        cassandra_topology_hosts: "{{ _tp_hosts }}"
+      run_once: true
+      vars:
+        _tp_hosts: >-
+          {%- set l = [] -%}
+          {%- for h in groups[_tp_group] -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set p = v._cassandra_preflight | default({}) -%}
+          {%-   set absent = h in _tp_absent -%}
+          {%-   set reachable = (h in ansible_play_hosts_all) if not absent else v._cassandra_topology_reachable | default(false) | bool -%}
+          {%-   set _ = l.append({'name': h, 'absent': absent, 'reachable': reachable,
+                                  'address': p.ring_address | default(v._cassandra_topology_address | default(''), true),
+                                  'dc': p.cassandra_dc | default('?'), 'rack': p.cassandra_rack | default('?'),
+                                  'seed': v._cassandra_service_is_seed | default(false) | bool,
+                                  'running': v._cassandra_preflight_running | default(false) | bool,
+                                  'state': (v.cassandra_leaving_node.state | default(none)) if absent
+                                           else v.cassandra_new_node_state | default(none),
+                                  'refused': v._cassandra_topology_refused | default(''),
+                                  'single': _tp_single | bool, 'token': p.cassandra_initial_token | default(''),
+                                  'reset': v._cassandra_node_reset_plan | default(none)
+                                           if not absent and v._cassandra_node_reset_plan is defined
+                                              and (v._cassandra_node_reset_plan.delete or v._cassandra_node_reset_plan.stop | bool
+                                                   or v._cassandra_node_reset_plan.disable | bool) else none}) -%}
+          {%- endfor -%}
+          {{ l }}
+
+    # Without the replication (no CQL access), a removal can't be checked: refused below
+    # On one host without run_once: a run_once task that fails in a rescued block drops the other
+    # hosts of the play on ansible-core 2.19+
+    - name: Read the keyspaces' replication
+      when:
+        - _tp_todo | bool
+        - inventory_hostname == _tp_cql_node
+      block:
+        - name: Read the keyspaces' replication
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: keyspaces.yml
+      rescue:
+        - name: Go on without it
+          ansible.builtin.set_fact:
+            cassandra_keyspaces: null
+            _cassandra_topology_keyspaces_error: "{{ (ansible_failed_result.err | default(ansible_failed_result.msg) | default('') | trim).splitlines() | last | default('') }}"
+
+    - name: Share the replication with every node
+      ansible.builtin.set_fact:
+        cassandra_keyspaces: "{{ hostvars[_tp_cql_node].cassandra_keyspaces | default(none) }}"
+        _cassandra_topology_keyspaces_error: >-
+          {{ hostvars[_tp_cql_node]._cassandra_topology_keyspaces_error | default('') if _tp_cql_node
+             else 'no node of the inventory is up and normal in the ring to read it from' }}
+      run_once: true
+      when: _tp_todo | bool
+
+    - name: Refuse a plan that can't be done
+      ansible.builtin.assert:
+        that: _tp_problems | length == 0
+        fail_msg: "{{ ['Nothing was changed, the plan is refused:'] + _tp_problems }}"
+        quiet: true
+      run_once: true
+      vars:
+        _tp_problems: >-
+          {{ cassandra_topology_plan.problems
+             + (["the keyspaces' replication could not be read (" ~ _cassandra_topology_keyspaces_error | default('')
+                 ~ '): a removal is not checked blind. With CQL authentication on, set cassandra_cql_username and'
+                 ~ ' cassandra_cql_password.']
+                if cassandra_topology_plan.in_ring and cassandra_keyspaces is none else [])
+             + ((['Removing ' ~ cassandra_topology_plan.in_ring | join(', ') ~ ' leaves too few nodes:'] + _tp_replication
+                 + ['Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:'
+                    ~ ' those replicas are then lost, and QUORUM can fail.'])
+                if _tp_replication and not cassandra_decommission_force | default(false) | bool else []) }}
+
+    - name: Say there is nothing to do
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['Nothing to add or remove: the ring has the nodes of the inventory (' ~ ansible_play_hosts_all | length ~ ' nodes of ' ~ _tp_group ~ ').']
+             + (['Already removed (marked absent, out of the ring, Cassandra stopped): ' ~ cassandra_topology_plan.gone | join(', ')
+                 ~ '. Delete them from the inventory, or leave them: the playbooks leave them out.'] if cassandra_topology_plan.gone else [])
+             + (['Marked absent, out of the ring, not answering: ' ~ cassandra_topology_plan.silent | join(', ') ~ '.']
+                if cassandra_topology_plan.silent else [])
+             + (['WARNING: in the ring but in no host of the inventory, never touched: ' ~ cassandra_topology_plan.unknown | join(', ')
+                 ~ '. A typo in an address, a host missing from the inventory, or a dead node (remove_dead_node).']
+                if cassandra_topology_plan.unknown else []) }}
+      run_once: true
+      when: not _tp_todo | bool
+
+    - name: Show the plan and confirm it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: screen.yml
+      when: _tp_todo | bool
+      vars:
+        _tp_names: >-
+          {{ dict(cassandra_topology_hosts | map(attribute='address') | zip(cassandra_topology_hosts | map(attribute='name'))) }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: >-
+          {{ ('Add ' ~ cassandra_topology_plan.add | join(', ')
+              ~ ((', then remove ' ~ cassandra_topology_plan.remove | join(', ')) if cassandra_topology_plan.remove else ''))
+             if cassandra_topology_plan.add else ('Remove ' ~ cassandra_topology_plan.remove | join(', ')) }}?
+        cassandra_screen: >-
+          {{ cassandra_topology_plan | community.cassandra.cassandra_topology_screen(cassandra_topology_hosts, ring=_tp_ring,
+               keyspaces=cassandra_keyspaces | default(none), names=_tp_names,
+               replication_problems=_tp_replication,
+               force=cassandra_decommission_force | default(false) | bool) }}
+
+    # --check: the plan only, the steps below have no host
+    - name: Line up the nodes to add, in order
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: cassandra_topology_add
+      loop: "{{ cassandra_topology_plan.add }}"
+      run_once: true
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Line up the nodes to remove, in order
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: cassandra_topology_remove
+      loop: "{{ cassandra_topology_plan.remove }}"
+      run_once: true
+      changed_when: false
+      when: not ansible_check_mode
+
+# Each step as its playbook does it, without its preflight (done above) nor its
+# question (asked above); its screen shows the step's details
+- name: Add the nodes
+  ansible.builtin.import_playbook: community.cassandra.add_node
+  vars:
+    cassandra_new_nodes: "{{ groups['cassandra_topology_add'] | default([]) | join(',') or 'localhost:!localhost' }}"
+    cassandra_new_node_checks: false  # checked above
+    cassandra_add_node_cleanup: none  # after the removals, which move data again: printed
+    _cassandra_preflight_skip: true
+    _cassandra_screen_asked_by: topology
+    # the hosts marked absent still in the ring until the removals, after the adds
+    _cassandra_ring_extra: "{{ groups['cassandra_topology_remove'] | default([]) | map('extract', hostvars) | selectattr('cassandra_leaving_node', 'defined')
+                               | selectattr('cassandra_leaving_node.in_ring') | list | length }}"
+    cassandra_service_resume_hint: "Once fixed, run topology again: it works out what is left to do."
+
+- name: Remove the nodes
+  ansible.builtin.import_playbook: community.cassandra.decommission_node
+  vars:
+    cassandra_leaving_nodes: "{{ groups['cassandra_topology_remove'] | default([]) | join(',') or 'localhost:!localhost' }}"
+    _cassandra_preflight_skip: true
+    _cassandra_screen_asked_by: topology
+    _cassandra_progress_resume: false  # the plan is worked out again at each run
+    cassandra_service_resume_hint: "Once fixed, run topology again: it works out what is left to do."
+
+- name: Say what is left to do
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  tasks:
+    - name: Say what is left to do
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['The ring matches the inventory: ' ~ ((('added ' ~ _plan.add | join(', ')) if _plan.add else '')
+              ~ ('; ' if _plan.add and _plan.remove else '') ~ (('removed ' ~ _plan.remove | join(', ')) if _plan.remove else '')) ~ '.']
+             + (['Delete ' ~ (_plan.remove + _plan.gone + _plan.silent) | join(', ') ~ ' from the inventory, or leave them marked absent'
+                 ~ ' (the playbooks leave them out); wipe their data directories before reusing the hosts.']
+                if (_plan.remove + _plan.gone + _plan.silent) | length > 0 else []) }}
+      run_once: true
+      when:
+        - not ansible_check_mode
+        - (_plan.add + _plan.remove) | length > 0
+      vars:
+        _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"

@@ -20,7 +20,7 @@
         tasks_from: hosts_check.yml
 
 - name: Find the rack's nodes
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: Load the cassandra_config defaults (dc and rack)
@@ -57,7 +57,7 @@
         cassandra_service_state: started
 
 - name: Check the cluster
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: true
   gather_subset: [network]
   tasks:

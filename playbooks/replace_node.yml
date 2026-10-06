@@ -37,7 +37,7 @@
   any_errors_fatal: true
   vars:
     _from: >-
-      {{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | first | default('') }}
+      {{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | first | default('') }}
   tasks:
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:

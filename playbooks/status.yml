@@ -25,7 +25,7 @@
         tasks_from: hosts_check.yml
 
 - name: Cluster status
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   ignore_unreachable: true  # a down server is part of the view
   vars:
@@ -154,7 +154,8 @@
           {{ ['Seen from ' ~ _view.from ~ ':']
              + _view.result.cluster_status | community.cassandra.cassandra_ring_report(_addresses,
                  ansible_play_hosts_all | reject('in', _reached) | list, ansible_limit is defined,
-                 group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside) }}
+                 group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
+                 absent=query('community.cassandra.cassandra_nodes', state='absent')) }}
       vars:
         # the other hosts of the inventory, by the addresses it gives them
         _outside: >-

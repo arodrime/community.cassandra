@@ -17,7 +17,7 @@
   vars:
     _unchecked: >-
       {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
-         | reject('in', groups[lookup('community.cassandra.cassandra_hosts')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+         | reject('in', query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
                               | map(attribute='inventory_hostname') | list)
          | list }}
 
@@ -26,7 +26,7 @@
   vars:
     _receivers: >-
       {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
-         | select('in', groups[lookup('community.cassandra.cassandra_hosts')] | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+         | select('in', query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
                               | map(attribute='inventory_hostname') | list)
          | list }}
   block:

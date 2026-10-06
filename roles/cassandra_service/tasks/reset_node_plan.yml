@@ -2,14 +2,16 @@
 # The plan of reset_node.yml, read-only: what the reset of this node would
 # stop, disable and delete (_cassandra_node_reset_plan), shown per node, and
 # the refusal, if any. A caller that confirms the reset on its own screen
-# (add_node, replace_node, topology: cassandra_reset_warnings) runs it before
-# that screen, then reset_node.yml with _cassandra_node_reset_confirmed: true.
+# (add_node, replace_node: cassandra_reset_warnings; topology for the hosts it
+# adds, its add_node step keeping that plan) runs it before that screen, then
+# reset_node.yml with _cassandra_node_reset_confirmed: true.
 - name: The node belongs to the cluster's group
   ansible.builtin.assert:
-    that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] | default([])
+    that: inventory_hostname in query('community.cassandra.cassandra_nodes')
     fail_msg: >-
-      {{ inventory_hostname }} is not in the group {{ lookup('community.cassandra.cassandra_hosts') }} (cassandra_hosts): the reset
-      checks the ring of that group's nodes, so it only resets a node of that group.
+      {{ inventory_hostname }} is not a node of the group {{ lookup('community.cassandra.cassandra_hosts') }} (cassandra_hosts{{
+      ', marked cassandra_node_state: absent' if inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] else '' }}):
+      the reset checks the ring of that group's nodes, so it only resets a node of that group.
     quiet: true
 
 - name: Load the cassandra_config defaults (directories)
@@ -138,9 +140,10 @@
   when: not _cassandra_node_reset_whole_cluster | default(false) | bool
   vars:
     _aside_pattern: "{{ [cassandra_new_nodes | default([]), cassandra_reset_nodes | default([])] | flatten | select | join(',') }}"
+    # the nodes being added or reset (the play's hosts when not named: topology runs this on every node)
     _aside: >-
-      {{ ansible_play_hosts_all + (query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else []) }}
-    _others: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | default([]) | reject('in', _aside + [inventory_hostname]) | list }}"
+      {{ query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else ansible_play_hosts_all }}
+    _others: "{{ query('community.cassandra.cassandra_nodes') | default([]) | reject('in', _aside + [inventory_hostname]) | list }}"
     _stopped: >-
       {{ _others | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
          | rejectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list }}

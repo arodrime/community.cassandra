@@ -70,10 +70,11 @@ def _warning(warning):
     return out
 
 
-def cassandra_screen(spec, check=False, asks=True, session=""):
+def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
     """check: --check; asks: false when a question would be asked but
     cassandra_operation_confirm is false (said under the header); session:
-    the tmux/screen warning, if any."""
+    the tmux/screen warning, if any; asked_by: the playbook that showed the
+    whole plan and asked already (topology), said under the header."""
     spec = spec or {}
     header = str(spec.get("operation") or "")
     if spec.get("cluster"):
@@ -85,6 +86,8 @@ def cassandra_screen(spec, check=False, asks=True, session=""):
     sections = [_wrap(header, "", "  ")]
     if check:
         sections[0].append("--check: nothing will be changed (the plan only, no question).")
+    elif asked_by:
+        sections[0].append("A step of %s, confirmed on its screen: no question here." % asked_by)
     elif not asks:
         sections[0].append("cassandra_operation_confirm is false: no question, the run goes on.")
 

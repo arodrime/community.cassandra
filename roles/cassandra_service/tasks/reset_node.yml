@@ -37,6 +37,13 @@
 # address). The rings read are those of every other node of the cluster group
 # the preflight did not find stopped, but the nodes being added or reset.
 # Needs the facts of the cluster's nodes (the preflight play gathers them).
+# confirmed by the caller without a plan shown: nothing to stand for
+- name: A reset confirmed elsewhere was shown there
+  ansible.builtin.assert:
+    that: _cassandra_node_reset_plan is defined or not _cassandra_node_reset_confirmed | default(false) | bool
+    fail_msg: "{{ inventory_hostname }}: a reset confirmed on another screen that did not show it: nothing was changed."
+    quiet: true
+
 - name: Work out the reset
   ansible.builtin.include_tasks: reset_node_plan.yml
   # planned and confirmed on the caller's screen: what was shown is what is done
