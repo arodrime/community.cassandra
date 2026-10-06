@@ -8,6 +8,13 @@
       - cassandra_jvm_gc in ["G1", "CMS", "custom"]
     fail_msg: "cassandra_version must be one of 40x, 41x, 50x; cassandra_jvm_gc one of G1, CMS, custom"
 
+- name: Warn about a variable under its former name
+  ansible.builtin.debug:
+    msg: >-
+      DEPRECATION WARNING: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
+      (the former name still wins while it is set).
+  when: cassandra_config_owner is defined
+
 - name: Refuse extra settings the template already has
   ansible.builtin.assert:
     that: _taken | length == 0
@@ -372,13 +379,31 @@
           role's, only comments or layout differ (cassandra_config_normalize: true rewrites them).
       when: _cassandra_config_kept | length > 0
 
+    # (the JMX users' files when the role writes them)
+    - name: Read the owner and mode of the live files
+      ansible.builtin.stat:
+        path: >-
+          {{ ('/etc/cassandra' if cassandra_config_file in ['jmxremote.password', 'jmxremote.access'] else cassandra_conf_dir)
+             ~ '/' ~ cassandra_config_file }}
+        follow: true
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      loop: >-
+        {{ _cassandra_config_files[_cassandra_config_series]
+           + (['jmxremote.password', 'jmxremote.access'] if cassandra_jmx_users | length > 0 else []) }}
+      loop_control:
+        loop_var: cassandra_config_file
+      register: cassandra_config_live_stat
+
     # The diffs are masked above: no password reaches the report
     - name: Record the changes for the report
       ansible.builtin.set_fact:
         _cassandra_config_items: >-
           {{ ([{'item': '/etc/cassandra/conf', 'before': _conf_target, 'after': cassandra_rpm_conf_alternative}]
               if _conf_target | default(cassandra_rpm_conf_alternative, true) != cassandra_rpm_conf_alternative else [])
-             + _files }}
+             + _files
+             + cassandra_config_live_stat.results | community.cassandra.cassandra_permission_changes(_cassandra_config_perm_settings) }}
       vars:
         _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
         _files: >-
@@ -425,9 +450,9 @@
       ansible.builtin.template:
         src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
         dest: "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
-        owner: "{{ cassandra_config_owner }}"
-        group: "{{ cassandra_config_group }}"
-        mode: "{{ cassandra_config_mode }}"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
         backup: "{{ cassandra_config_backup }}"
         validate: >-
           {{ (_cassandra_config_python ~ ' -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" %s')
@@ -436,8 +461,23 @@
       loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
       loop_control:
         loop_var: cassandra_config_file
+      vars:
+        _cassandra_config_perm_file: "{{ cassandra_config_file }}"
       register: cassandra_config_applied
       when: cassandra_config_file not in _cassandra_config_kept
+
+    # their content stays, not their owner, group and mode
+    - name: Set the owner and mode of the files left as they are
+      ansible.builtin.file:
+        path: "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+      loop: "{{ _cassandra_config_kept }}"
+      loop_control:
+        loop_var: cassandra_config_file
+      vars:
+        _cassandra_config_perm_file: "{{ cassandra_config_file }}"
 
     # The package creates the stock directories only: others (a data disk, a
     # log dir) must exist, owned by the service user, before the node first
@@ -498,8 +538,8 @@
       ansible.builtin.file:
         path: "{{ item.item }}"
         state: directory
-        owner: "{{ cassandra_service_user | default('cassandra') }}"
-        group: "{{ cassandra_service_group | default('cassandra') }}"
+        owner: "{{ _cassandra_config_perm_settings.user }}"
+        group: "{{ _cassandra_config_perm_settings.user_group }}"
         mode: "0750"
       loop: "{{ cassandra_config_dirs.results | rejectattr('stat.exists') | list }}"
       loop_control:
@@ -531,6 +571,7 @@
           {{ inventory_hostname }}: {{ _cassandra_config_changes | join(', ') }} changed while Cassandra is running;
           the new settings apply at the next restart (not done by this role).
       when:
+        - _cassandra_config_changes | length > 0  # not for an owner or mode alone
         - cassandra_config_applied.changed
         - ansible_facts.services['cassandra.service'].state | default('') == 'running'
         - not _cassandra_config_no_restart_warning | default(false)  # apply_config restarts itself

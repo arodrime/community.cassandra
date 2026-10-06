@@ -34,14 +34,24 @@ Cassandra: when it changed files of a running node, it says so.
 
 On a node already initialized, a file whose settings are the same as the
 role's (only comments, blank lines or their layout differ, e.g. a config
-written by hand, without the role's header line) is left as it is, owner
-and mode included: `cassandra_config_normalize: true` rewrites it.
+written by hand, without the role's header line) is left as it is:
+`cassandra_config_normalize: true` rewrites it. Its owner, group and mode
+are set all the same.
 
 Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are
-written `root:cassandra` mode `0640` (`cassandra_config_owner`,
-`cassandra_config_group`, `cassandra_config_mode`), since `cassandra.yaml`
-may hold keystore passwords.
+owned by `root`, group `cassandra_group` (`cassandra_config_user`,
+`cassandra_config_group`): Cassandra reads them, but cannot rewrite them.
+`cassandra.yaml` may hold keystore passwords, and the `jvm*-server.options`
+files too (extra options such as `-Djavax.net.ssl.keyStorePassword=`): mode
+`0640` (`cassandra_config_mode`). The others (`cassandra-env.sh`, rackdc,
+logback) hold no secret: mode `0644` (`cassandra_config_public_mode`), so that
+`nodetool`, run by any user, can read the JMX port in `cassandra-env.sh` (else
+it prints `grep: .../cassandra-env.sh: Permission denied`).
+`cassandra_config_file_permissions` sets a file apart, e.g.
+`{logback.xml: {mode: "0600"}}`. A change of owner, group or mode alone is
+listed in the report and needs no confirmation nor restart: `apply_config`,
+which restarts nodes, leaves it to the next run of the role.
 
 On a node that already joined a cluster, the role refuses to change
 `cluster_name`, `num_tokens`, `partitioner`, `endpoint_snitch`, `dc` or
@@ -97,12 +107,19 @@ Role Variables
   defaults to `NONE` (5.0 formats and features, right for a new cluster).
   A cluster upgraded from 4.x must set `CASSANDRA_4`, then move through
   `UPGRADING` to `NONE` with rolling restarts.
+* `cassandra_user`, `cassandra_group` (default `cassandra`): the account
+  Cassandra runs as (`cassandra_service` runs it so). The directories the
+  role creates (`0750`) and the JMX users' files are theirs
+  (`cassandra_service_user` / `_group` when set), and `cassandra_group` is
+  the default group of the config files. The role does not create them.
 * `cassandra_jmx_users`: remote JMX users (with `cassandra_local_jmx: false`),
   as `{name, password, access}` (`readwrite`, the default, or
   `readonly`; a `readwrite` user also gets the `create` and `unregister`
   rights of the JDK's controlRole, unless `create_unregister: false`),
   written to `/etc/cassandra/jmxremote.password` and `.access`, mode `0400`
-  owned by cassandra. Keep the passwords in a vault.
+  owned by `cassandra_user` (the JVM refuses a password file others can
+  read; `cassandra_config_file_permissions` can set them apart too). Keep the
+  passwords in a vault.
 * `cassandra_cqlsh_credentials`: cqlsh set up for OS users, as
   `{os_user, username, password}`: `~/.cassandra/cqlshrc` points cqlsh at this
   node (`cassandra_rpc_address`), and from 4.1 the password goes to

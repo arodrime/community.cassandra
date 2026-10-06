@@ -60,16 +60,29 @@ argument_specs:
         description:
           - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
             there. The new host checks use it to tell those switches from the operator's own.
+      cassandra_user:
+        type: str
+        default: cassandra
+        description:
+          - The account Cassandra runs as (the unit's C(User=)), also the owner of the directories and JMX users' files
+            of C(cassandra_config). The role does not create it.
+      cassandra_group:
+        type: str
+        default: cassandra
+        description:
+          - The group Cassandra runs as (the unit's C(Group=)), also the default group of the config files of
+            C(cassandra_config).
       cassandra_service_user:
         type: str
-        default: cassandra
         description:
-          - User running Cassandra.
+          - The unit's C(User=), and the owner of the directories and JMX users' files of C(cassandra_config).
+            Defaults to O(cassandra_user); set that one instead.
       cassandra_service_group:
         type: str
-        default: cassandra
         description:
-          - Group running Cassandra.
+          - The unit's C(Group=), and the group of the directories and JMX users' files of C(cassandra_config) (not of
+            its config files). Defaults to O(cassandra_group); set that one instead. The role refuses an account that
+            could not read the config files C(cassandra_config) writes.
       cassandra_service_unit_manage:
         type: bool
         default: true

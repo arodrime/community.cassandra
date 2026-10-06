@@ -193,6 +193,38 @@
             cassandra_rack: rack2
             cassandra_endpoint_snitch: GossipingPropertyFileSnitch
 
+    # Not idempotent by design (a hand edit, then the role): first converge only
+    - name: Owner, group and mode of the files whose content is kept
+      tags: molecule-idempotence-notest
+      block:
+        - name: First render on an initialized node
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+          vars:
+            cassandra_conf_dir: /tmp/cassandra-perms
+            cassandra_data_dir: /tmp/initialized-node
+            cassandra_rpm_conf_alternative: ""
+            cassandra_config_confirm: false
+
+        - name: Add a comment to cassandra-env.sh by hand, owner and mode changed
+          ansible.builtin.lineinfile:
+            path: /tmp/cassandra-perms/cassandra-env.sh
+            line: "# hand comment"
+            owner: cassandra
+            group: cassandra
+            mode: "0600"
+
+        - name: Run the role with another group and a mode for logback.xml
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+          vars:
+            cassandra_conf_dir: /tmp/cassandra-perms
+            cassandra_data_dir: /tmp/initialized-node
+            cassandra_rpm_conf_alternative: ""
+            cassandra_config_confirm: false
+            cassandra_group: dbgrp
+            cassandra_config_file_permissions: {logback.xml: {mode: "0600"}}
+
     - name: JMX users and cqlsh credentials
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config

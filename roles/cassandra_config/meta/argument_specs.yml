@@ -1114,21 +1114,62 @@ argument_specs:
         - Also send the logs to stdout (the C(STDOUT) appender of C(logback.xml)).
           Under systemd that is a second copy of C(system.log) in journald; JVM
           errors before logback starts go to stdout either way.
-      cassandra_config_owner:
+      cassandra_user:
+        type: str
+        default: cassandra
+        description:
+        - The account Cassandra runs as (C(cassandra_service) runs it so). It owns
+          the directories the role creates and the JMX users' files. The role does
+          not create it.
+      cassandra_group:
+        type: str
+        default: cassandra
+        description:
+        - The group Cassandra runs as. Group of the directories the role creates,
+          the JMX users' files and, by default, the config files.
+      cassandra_config_user:
         type: str
         default: root
         description:
         - Owner of the config files.
+      cassandra_config_owner:
+        type: str
+        description:
+        - Former name of O(cassandra_config_user), deprecated. Wins when set; the
+          role warns to rename it.
       cassandra_config_group:
         type: str
-        default: cassandra
         description:
-        - Group of the config files (Cassandra reads them through it).
+        - Group of the config files (Cassandra reads them through it). Defaults
+          to O(cassandra_group).
       cassandra_config_mode:
         type: str
         default: "0640"
         description:
-        - Mode of the config files. C(cassandra.yaml) may hold keystore passwords.
+        - Mode of C(cassandra.yaml), which may hold keystore passwords, and of the
+          C(jvm*-server.options) files, whose extra options may too (e.g.
+          C(-Djavax.net.ssl.keyStorePassword=)). Octal, quoted.
+      cassandra_config_public_mode:
+        type: str
+        default: "0644"
+        description:
+        - Mode of the other config files (C(cassandra-env.sh),
+          C(cassandra-rackdc.properties), C(logback.xml)), which hold no secret.
+          C(nodetool), run by any user, reads the JMX port in C(cassandra-env.sh).
+          Octal, quoted.
+      cassandra_config_file_permissions:
+        type: dict
+        default: {}
+        description:
+        - >-
+          Per file, over the above, C({file name: {owner, group, mode}}) (any of
+          the three), e.g. C({logback.xml: {mode: "0600"}}). Also for
+          C(jmxremote.password) and C(jmxremote.access) (default O(cassandra_user),
+          O(cassandra_group), C(0400); the JVM refuses a password file its group
+          or others can read or write). Another file name is refused. Modes in
+          octal, quoted.
+        - C(import_cluster) writes it for the files whose owner, group or mode
+          differ from the others on a node.
       cassandra_config_force_identity_change:
         type: bool
         default: false

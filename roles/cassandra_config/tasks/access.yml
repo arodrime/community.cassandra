@@ -40,21 +40,36 @@
       ansible.builtin.copy:
         content: "{{ _cassandra_jmx_password_content }}"
         dest: /etc/cassandra/jmxremote.password
-        owner: cassandra
-        group: cassandra
-        mode: "0400"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
       no_log: true
       diff: false
+      vars:
+        _cassandra_config_perm_file: jmxremote.password
       when: "'password' not in cassandra_config_jmx_same.stdout | default('[]') | from_json"
 
     - name: Write jmxremote.access
       ansible.builtin.copy:
         content: "{{ _cassandra_jmx_access_content }}"
         dest: /etc/cassandra/jmxremote.access
-        owner: cassandra
-        group: cassandra
-        mode: "0400"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+      vars:
+        _cassandra_config_perm_file: jmxremote.access
       when: "'access' not in cassandra_config_jmx_same.stdout | default('[]') | from_json"
+
+    # their content stays, not their owner, group and mode
+    - name: Set the owner and mode of the JMX files left as they are
+      ansible.builtin.file:
+        path: /etc/cassandra/{{ _cassandra_config_perm_file }}
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+      loop: "{{ cassandra_config_jmx_same.stdout | default('[]') | from_json }}"
+      vars:
+        _cassandra_config_perm_file: jmxremote.{{ item }}
 
 # cqlsh for OS users: ~/.cassandra/cqlshrc pointing at this node, with the CQL
 # credentials (4.1+: in a separate credentials file, as cqlsh wants)

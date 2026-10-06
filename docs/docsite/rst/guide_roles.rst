@@ -157,7 +157,9 @@ Operation playbooks
 The collection has playbooks for the usual operations on a cluster. Each one works on one inventory group
 (the inventory's cluster group, or ``-e cassandra_hosts=<group>``, see `Inventory`_) and starts with ``preflight``, which checks that the settings that must match do
 match on every node, that the racks suit the token allocator, and that the seeds are a sensible layout (it suggests
-a seed list when they are not).
+a seed list when they are not). It also checks that the account Cassandra runs as can read the config files, and
+warns about the ``cassandra_*`` variables set that no role or playbook knows (a typo, or a name from another version:
+they have no effect), with the known one they are close to.
 
 .. code-block:: console
 
@@ -570,7 +572,12 @@ To change the configuration of a running cluster, use ``apply_config`` instead o
 diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
-restart): it is restarted too.
+restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is
+restarted too.
+
+Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
+``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``
+creates. Set them once for both roles. ``cassandra_service`` refuses an account that could not read the config files.
 
 
 Restricted networks (air-gapped)
@@ -776,6 +783,19 @@ roles then keep that Java and install no Java package. A node whose Java is a pa
 (see Java above); remove that line and run ``update_java`` to move it to the tarball. A node with
 ``cassandra_java_home`` needs no tarball either; the offer is for the nodes added later.
 
+The account Cassandra runs as (the user and group of its running process) becomes ``cassandra_user`` and
+``cassandra_group`` when it is not ``cassandra``. The owner, group and mode of the config files (``cassandra.yaml``,
+``cassandra-env.sh``, the JVM options, rackdc, logback) and of the JMX users' files are read too, and kept:
+``cassandra_config_user`` and ``cassandra_config_group`` (what most files have), ``cassandra_config_mode``
+(``cassandra.yaml`` and the JVM options files) and ``cassandra_config_public_mode`` (the others), each written when it
+is not the roles' default, and ``cassandra_config_file_permissions`` for a file that differs from the others. Nodes
+that differ from each other get them per datacenter, rack or node, listed with the other differences. So files owned
+``cassandra:dbgrp`` mode ``0640`` stay so, rather than going back to the roles' ``root:cassandra``, ``0640`` for
+``cassandra.yaml`` and the JVM options, ``0644`` for the others. The report says when ``cassandra-env.sh`` is not
+readable by other users (``nodetool`` run by them cannot read the JMX port in it), and lists the data, commitlog,
+hints, saved caches and log directories not owned by that account (``cassandra_config`` leaves the directories there
+as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
+
 What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
 the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python and the systemd unit (or init script)
 Cassandra is started by. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
@@ -786,8 +806,8 @@ after a ``--check --diff``; a host rebuilt under the same name must lose them an
 (``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before
 touching a node whose repositories are not managed and lack the target version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
 already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
-unregister rights keeps them that way, and ``cassandra_config`` leaves a file (the JMX users' files too) alone on an
-initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
+unregister rights keeps them that way, and ``cassandra_config`` leaves the content of a file (the JMX users' files
+too) alone on an initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
 the roles change nothing on the imported nodes.
 
 The OS tuning already on the nodes (set by hand, by another tool or in the image) is read too, and listed in the
@@ -824,10 +844,12 @@ nothing on it; when those files do not hold them, the values in effect are carri
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as
-Cassandra, the JVM, bash and systemd read them. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+Cassandra, the JVM, bash and systemd read them; and the owner, group and mode ``cassandra_config`` would give the
+config and JMX files with the node's (one line per file that differs). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in ``hosts.yml`` and the playbook fails
 (``-e import_cluster_strict=false`` writes the same files without failing). Fix the variables or the nodes before any
-run. The OS tuning, ``/etc/default/cassandra`` and ``cassandra-topology.properties`` are not compared.
+run. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
+and ``medusa.ini`` are not compared.
 
 When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and settings are imported and
 ``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path

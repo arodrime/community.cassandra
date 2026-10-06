@@ -19,3 +19,9 @@
         rm -rf /var/lib/cassandra/*
         true
       changed_when: false
+
+    # Cassandra runs with this group (cassandra_group), the cassandra user being outside it
+    - name: Create a group for Cassandra other than the package's
+      ansible.builtin.group:
+        name: dbgrp
+        system: true

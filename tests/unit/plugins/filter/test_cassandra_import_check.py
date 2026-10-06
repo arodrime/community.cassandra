@@ -21,6 +21,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
     cassandra_import_self_check,
     cassandra_inventory_host_vars,
 )
+from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_permissions_import
 
 STOCK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "molecule",
                      "default", "files", "stock-%s")
@@ -74,12 +75,69 @@ def host_vars(files, series, facts=None):
 
 
 def check(files, series, facts=None, tamper=None, env=None, storage_dir="/var/lib/cassandra", java=None, conf_dir="",
-          keep=None):
+          keep=None, permissions=None):
+    """permissions: the node's files' owner, group and mode (None: none compared)."""
     facts = facts or FACTS
     inventory, layout = import_node(files, series, facts, tamper, storage_dir, keep)
     java = java or {"40x": "11", "41x": "11", "50x": "17"}[series]
     return cassandra_import_self_check(inventory, layout["hosts"], "n1", facts, files, env or {}, storage_dir, java,
-                                       conf_dir)
+                                       conf_dir, {} if permissions is None else permissions)
+
+
+# --- owner, group and mode -------------------------------------------------
+
+def stats(files, owner, group, mode):
+    return dict((name, {"exists": True, "pw_name": owner, "gr_name": group, "mode": mode, "uid": 990, "gid": 990})
+                for name in files)
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_imported_owner_group_and_mode_pass(series):
+    """Config files owned by the service account and its own group, 0640: imported, nothing to change."""
+    files = seeded(stock(series))
+    perms = cassandra_permissions_import(stats(files, "cassandra", "dbgrp", "0640"), {"user": "cassandra", "group": "dbgrp"},
+                                         series)
+    out = check(files, series, tamper=perms["vars"], permissions=perms["files"])
+    assert out["differences"] == []
+
+
+def test_owner_group_and_mode_not_imported_are_caught():
+    files = seeded(stock("50x"))
+    perms = cassandra_permissions_import(stats(files, "cassandra", "dbgrp", "0640"), {"user": "cassandra", "group": "dbgrp"},
+                                         "50x")
+    out = check(files, "50x", permissions=perms["files"])
+    assert "cassandra.yaml: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0640" \
+        in out["differences"]
+    assert "cassandra-env.sh: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0644" \
+        in out["differences"]
+    assert len(out["differences"]) == 7  # one line per file
+
+
+def test_owner_group_and_mode_the_roles_cannot_work_out():
+    files = seeded(stock("50x"))
+    out = check(files, "50x", tamper={"cassandra_config_file_permissions": {"logbak.xml": {"mode": "0600"}}}, permissions={})
+    assert len(out["differences"]) == 1
+    assert out["differences"][0].startswith("owner, group and mode: cassandra_config_file_permissions: logbak.xml not a"
+                                            " file cassandra_config writes")
+
+
+def test_owner_group_and_mode_not_read_are_a_difference():
+    files = seeded(stock("50x"))
+    inventory, layout = import_node(files, "50x")
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17")
+    assert out["differences"] == ["owner, group and mode: not read on the node, the roles may change them"]
+
+
+def test_mixed_modes_pass_with_per_file_permissions():
+    files = seeded(stock("41x"))
+    found = stats(files, "root", "cassandra", "0644")
+    for name in found:
+        if name == "cassandra.yaml" or name.startswith("jvm"):
+            found[name]["mode"] = "0640"
+    found["logback.xml"]["mode"] = "0600"
+    perms = cassandra_permissions_import(found, {"user": "cassandra", "group": "cassandra"}, "41x")
+    assert perms["vars"] == {"cassandra_config_file_permissions": {"logback.xml": {"mode": "0600"}}}
+    assert check(files, "41x", tamper=perms["vars"], permissions=perms["files"])["differences"] == []
 
 
 # --- the variables a host gets from the files -------------------------------
@@ -134,7 +192,7 @@ def test_addresses_written_as_facts_render_the_node_address():
     inventory, layout = import_node(files, "50x")
     other = dict(FACTS, default_ipv4={"address": "10.0.0.9"})
     assert cassandra_import_self_check(inventory, layout["hosts"], "n1", other, files, {}, "/var/lib/cassandra",
-                                       "17")["differences"] == [
+                                       "17", "", {})["differences"] == [
         "cassandra.yaml: listen_address: node has '10.0.0.1', import would write '10.0.0.9'"]
 
 
@@ -391,7 +449,7 @@ def test_a_template_in_a_value_read_back_is_caught():
     files["cassandra.yaml"] = re.sub(r"(?m)^cluster_name:.*$", "cluster_name: 'Prod{#x#}'", files["cassandra.yaml"])
     inventory, layout = import_node(files, "41x")
     inventory.append({"path": "host_vars/n1/main.yml", "content": "cassandra_cluster_name: 'Prod{#x#}'\n"})
-    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11")
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11", "", {})
     assert out["differences"] == ["cassandra.yaml: cluster_name: node has 'Prod{#x#}', import would write 'Prod'"]
 
 
@@ -567,7 +625,8 @@ def ring_import(series, members):
     layout = cassandra_inventory_layout(nodes, "my_cluster")
     inventory = cassandra_inventory_files(layout)
     checks = dict((name, cassandra_import_self_check(inventory, layout["hosts"], name, facts, files, {},
-                                                     "/var/lib/cassandra", {"40x": "11", "41x": "11", "50x": "17"}[series]))
+                                                     "/var/lib/cassandra", {"40x": "11", "41x": "11", "50x": "17"}[series],
+                                                     "", {}))
                   for name, (files, facts) in files_of.items())
     return inventory, layout, checks
 

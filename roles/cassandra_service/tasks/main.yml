@@ -29,6 +29,9 @@
     quiet: true
   when: cassandra_service_drain_on_stop
 
+- name: Check the account Cassandra runs as can read the config
+  ansible.builtin.include_tasks: account_check.yml
+
 # Written already when a restart wrote it before draining (action_restart.yml)
 - name: Install the cassandra systemd unit
   ansible.builtin.include_tasks: unit.yml

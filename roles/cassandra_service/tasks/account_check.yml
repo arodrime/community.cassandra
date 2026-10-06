@@ -1,0 +1,69 @@
+---
+# The account Cassandra runs as must be able to read the config files
+# cassandra_config writes (their owner, group and mode from its variables), or
+# Cassandra stops at once on "cassandra-env.sh: Permission denied". The role's
+# unit runs it as cassandra_service_user/_group; a kept unit
+# (cassandra_service_unit_manage: false) as its own User=/Group= (none: a SysV
+# script, not checked). Read only; run by cassandra_service before it writes
+# the unit, and by preflight before any operation.
+- name: Read the account Cassandra runs as
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - |
+        user=$1 group=$2
+        if [ "$3" != True ]; then
+          user=$(systemctl show cassandra -p User --value 2>/dev/null)
+          group=$(systemctl show cassandra -p Group --value 2>/dev/null)
+          [ -n "$user" ] || { echo "kept=none"; exit 0; }
+          [ -n "$group" ] || group=$(id -gn -- "$user" 2>/dev/null)
+        fi
+        echo "user=$user"
+        echo "group=$group"
+        id -u -- "$user" >/dev/null 2>&1 || { echo "nouser=yes"; exit 0; }
+        gent=$(getent group "$group") || { echo "nogroup=yes"; exit 0; }
+        echo "uid=$(id -u -- "$user")"
+        echo "gid=$(echo "$gent" | cut -d: -f3)"
+        echo "gname=$(echo "$gent" | cut -d: -f1)"
+        # Group= replaces the user's primary group: its other groups stay
+        p=$(id -g -- "$user")
+        echo "others=$(for g in $(id -G -- "$user"); do [ "$g" = "$p" ] || getent group "$g" | cut -d: -f1,3 | tr ':' ' '; done | tr '\n' ' ')"
+      - sh
+      - "{{ cassandra_service_user }}"
+      - "{{ cassandra_service_group }}"
+      - "{{ cassandra_service_unit_manage | bool }}"
+  register: cassandra_service_account
+  changed_when: false
+  check_mode: false
+
+- name: Refuse an account that could not read the config
+  ansible.builtin.assert:
+    that:
+      # --check on a blank host, or preflight before a new node gets the package: no package user yet
+      - _account.nouser is not defined or ansible_check_mode or not _cassandra_account_must_exist | default(true)
+      - _account.nogroup is not defined or ansible_check_mode or not _cassandra_account_must_exist | default(true)
+      - _unreadable | length == 0
+    fail_msg: >-
+      {{ ('the user ' ~ _account.user ~ ' does not exist on ' ~ inventory_hostname
+          ~ (': create it (the Cassandra package creates cassandra), or set cassandra_user'
+             if cassandra_service_unit_manage | bool else ' (the User= of its own unit, kept): create it, or fix the unit'))
+         if _account.nouser is defined
+         else ('the group ' ~ _account.group ~ ' does not exist on ' ~ inventory_hostname
+               ~ (': create it, or set cassandra_group'
+                  if cassandra_service_unit_manage | bool else ' (the Group= of its own unit, kept): create it, or fix the unit'))
+         if _account.nogroup is defined
+         else ('Cassandra ' ~ ('would run' if cassandra_service_unit_manage | bool else 'runs (its own unit, kept)')
+               ~ ' as ' ~ _account.user ~ ':' ~ _account.group ~ ' (groups: ' ~ _groups | join(', ')
+               ~ '), which could not read ' ~ _unreadable | join(', ')
+               ~ '. Set cassandra_user and cassandra_group (one setting for the unit and the config files),'
+               ~ ' or make the group of the unit and cassandra_config_group agree.') }}
+    quiet: true
+  vars:
+    _account: "{{ dict(cassandra_service_account.stdout_lines | select('search', '=') | map('split', '=', 1)) }}"
+    _groups: "{{ ([_account.gname | default(''), _account.gid | default('')] + _account.others | default('') | split) | select | list }}"
+    _unreadable: >-
+      {{ [] if _account.uid is not defined
+         else cassandra_version | default('50x') | community.cassandra.cassandra_unreadable_config(
+                _cassandra_service_config_perms, [_account.user, _account.uid], _groups) }}
+  when: "'kept=none' not in cassandra_service_account.stdout_lines"

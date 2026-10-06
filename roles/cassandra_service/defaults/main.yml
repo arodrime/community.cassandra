@@ -17,8 +17,15 @@ cassandra_service_allow_new_seed: false
 # sets it on the nodes it finds started another way)
 cassandra_service_unit_manage: true
 
-cassandra_service_user: cassandra
-cassandra_service_group: cassandra
+# The account Cassandra runs as: cassandra_user and cassandra_group drive the
+# unit, the config files' group and the directories and JMX files of
+# cassandra_config. cassandra_service_user/_group override them for the unit and
+# those directories and files, not the config files' group: set cassandra_user
+# and cassandra_group instead.
+cassandra_user: cassandra
+cassandra_group: cassandra
+cassandra_service_user: "{{ cassandra_user }}"
+cassandra_service_group: "{{ cassandra_group }}"
 # systemd Restart=. "no": a node that died stays down until a human looks
 # (disk/commit failure policies and OOM kill it on purpose). "on-failure"
 # is capped at cassandra_service_start_limit_burst restarts per interval.
@@ -132,6 +139,16 @@ cassandra_jmx_password_file: ""
 # decommission), when authentication is on
 cassandra_cql_username: ""
 cassandra_cql_password: ""
+# Owner, group and mode cassandra_config gives the config files (its defaults
+# when it is not in the play), for the check that the account can read them
+_cassandra_service_config_perms:
+  owner: "{{ cassandra_config_owner | default(cassandra_config_user | default('root')) }}"
+  group: "{{ cassandra_config_group | default(cassandra_group) }}"
+  mode: "{{ cassandra_config_mode | default('0640') }}"
+  public_mode: "{{ cassandra_config_public_mode | default('0644') }}"
+  files: "{{ cassandra_config_file_permissions | default({}) }}"
+  user: "{{ cassandra_service_user }}"
+  user_group: "{{ cassandra_service_group }}"
 # Where the config Cassandra runs with is, and the checksums it started with
 _cassandra_service_conf_dir: >-
   {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
@@ -164,3 +181,14 @@ cassandra_operation_drain: true
 cassandra_rolling_resume: false
 cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
+
+# The variables the playbooks are run with (-e): a name set close to one of them
+# is pointed out (hosts_check.yml), and preflight warns about cassandra_*
+# variables no role or playbook knows
+_cassandra_playbook_variables: [cassandra_hosts, cassandra_new_nodes, cassandra_leaving_nodes, cassandra_target_dc, cassandra_target_rack,
+                                cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
+                                cassandra_dead_node_address, cassandra_dead_node_new_removal, cassandra_replace_address,
+                                cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
+                                cassandra_allow_down_nodes, cassandra_accept_default_identity, cassandra_reset_nodes,
+                                cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
+                                cassandra_create_cluster_reset_confirm]

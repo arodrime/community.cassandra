@@ -1,0 +1,4 @@
+minor_changes:
+  - preflight playbook (run first by the operation playbooks) - warns about the ``cassandra_*`` variables set that no role or playbook knows, which have no effect (a typo, or a name from another version), with the known variable they are close to.
+  - 'cassandra_config role - the owner of the config files is ``cassandra_config_user``; ``cassandra_config_owner``, its former name, still wins when set, with a warning to rename it.'
+  - 'cassandra_medusa role - medusa.ini and the S3 credentials file belong by default to the account Cassandra runs as (``cassandra_user``, ``cassandra_group``), no longer always to ``cassandra``; their owners are ``cassandra_medusa_config_user`` and ``cassandra_medusa_key_file_user``, the former names ``cassandra_medusa_config_owner`` and ``cassandra_medusa_key_file_owner`` still win when set, with a warning to rename them.'
