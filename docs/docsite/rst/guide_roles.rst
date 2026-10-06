@@ -773,6 +773,10 @@ file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that
 nothing on it; when those files do not hold them, the values in effect are carried, and a node without time sync gets
 ``cassandra_linux_timesync: false`` rather than a chrony it does not have.
 
+A node of the ring the import could not read (down, unreachable, nodetool not found) makes it fail: the roles would
+give it the group variables unchecked, and start it if it is down. ``-e import_cluster_allow_unread=true`` accepts it;
+then keep it out of the runs (``--limit``) until an import reads it.
+
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as

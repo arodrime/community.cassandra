@@ -1,0 +1,2 @@
+minor_changes:
+  - import_cluster - a ring node the import could not read (down, unreachable, nodetool not found) fails the import, listed in the report, unless ``import_cluster_allow_unread`` is true; its host_vars also keep ``/usr/bin/java`` as it is.

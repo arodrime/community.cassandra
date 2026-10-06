@@ -32,6 +32,9 @@
 # last in any virtualenv under /opt.
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
+# A ring node it could not read (down, unreachable, nodetool not found)
+# fails the import, as its settings are unknown: -e
+# import_cluster_allow_unread=true accepts it.
 - name: Find the cluster from the given nodes
   hosts: all
   gather_facts: true
@@ -213,6 +216,8 @@
         import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
+        import_cluster_newer_files: "{{ _kv.newer | default('') | split | sort }}"
+        import_cluster_held: "{{ _kv.held | default('') | split }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
         # installed, but no configured repository offers it (the query ran): from a package file
@@ -224,8 +229,6 @@
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
         import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
-        import_cluster_newer_files: "{{ _kv.newer | default('') | split | sort }}"
-        import_cluster_held: "{{ _kv.held | default('') | split }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
@@ -732,10 +735,12 @@
     _vault: "{{ _vault_file != '' }}"
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
-    # not one node read: nothing checked, nothing valid
+    # not one node read: nothing checked, nothing valid; a ring node not read (down, unreachable): not
+    # checked, the roles would give it the group variables (and start it), unless import_cluster_allow_unread
     _self_check_ok: >-
       {{ _self_check_error is not defined and _self_check | default({}) | length > 0
-         and _self_check | dict2items | map(attribute='value.differences') | select | list | length == 0 }}
+         and _self_check | dict2items | map(attribute='value.differences') | select | list | length == 0
+         and (_unchecked | length == 0 or import_cluster_allow_unread | default(false) | bool) }}
     _unchecked: >-
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
@@ -764,7 +769,10 @@
       {% endfor %}
       {% endif %}
       {% if _unchecked %}
-      NOT CHECKED (not read): {{ _unchecked | join(', ') }}: the roles would give them the group variables unchecked.
+      NOT CHECKED (not read): {{ _unchecked | join(', ') }}: the roles would give them the group variables unchecked
+      (and start a node that is down).{{ ' Accepted (import_cluster_allow_unread).' if import_cluster_allow_unread | default(false) | bool
+      else ' THE IMPORT FAILS: read them (start Cassandra, fix the access), or set -e import_cluster_allow_unread=true'
+           ~ ' to accept it (then exclude them from the runs, e.g. --limit, until a new import reads them).' }}
       {% endif %}
       {% for name, check in _self_check | default({}) | dictsort if check.notes %}
       {% for line in check.notes %}
@@ -1224,7 +1232,9 @@
       ansible.builtin.fail:
         msg: >-
           SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
-          roles would change settings on the nodes. See SELF-CHECK in {{ _dir }}/report.txt.
+          roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
+          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See SELF-CHECK and
+          NOT CHECKED in {{ _dir }}/report.txt.
           (-e import_cluster_strict=false: the same inventory and report, without this failure)
       when:
         - not _self_check_ok | bool
