@@ -317,16 +317,23 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg:
-          - "Once the cluster is fine, clean up the nodes that lost ranges, e.g. one at a time:"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup
-            -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }} --limit {{ _targets | join(',') }}"
-          - "  (-e cassandra_cleanup_mode=rack|dc|all for batches of nodes together; listed in {{ _move_record }} until a
-            move_node run with cassandra_move_cleanup cleans them up)"
+          - "Once the cluster is fine, clean up the nodes that lost ranges (listed in {{ _move_record }} until a move_node
+            run with cassandra_move_cleanup cleans them up):"
+          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup{{ _hosts_option }}
+            --limit {{ _targets | join(',') }} -e cassandra_cleanup_mode={{ cassandra_cleanup_mode | default('sequential') }}
+            -e cassandra_cleanup_jobs={{ cassandra_cleanup_jobs }}"
+          - ""
+          - "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)"
+          - "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)"
+          - "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)"
       run_once: true
       when:
         - _targets | length > 0
         - _mode == 'none'
         - not ansible_check_mode
+      vars:
+        # the group the lookup finds by itself is left out
+        _hosts_option: "{{ (' -e cassandra_hosts=' ~ cassandra_hosts) if cassandra_hosts is defined else '' }}"
 
     - name: Say which recorded cleanups this run can't reach
       ansible.builtin.debug:

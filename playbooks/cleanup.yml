@@ -7,8 +7,8 @@
 # cassandra_cleanup_mode: sequential (default, one node at a time), rack (the
 # nodes of one rack together, rack by rack), dc (one datacenter at a time) or
 # all (every node at once: heavy disk I/O everywhere). cassandra_cleanup_jobs:
-# compaction threads per node (default 2). Resume an interrupted run with
-# -e cassandra_rolling_resume=true.
+# compaction threads per node (default 2, 0: all the compaction threads).
+# Resume an interrupted run with -e cassandra_rolling_resume=true.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
