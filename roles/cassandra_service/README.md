@@ -78,7 +78,7 @@ Role Variables
   total time and average rate.
 
   The run fails only after `cassandra_stream_stall_checks` checks in a row
-  (default 3) with nothing streamed: no byte or file, no session started or
+  (default 3), a full interval apart, with nothing streamed: no byte or file, no session started or
   ended; 4 times as many while nothing is left to transfer (before the first
   session, index or view builds after the streams). Nothing is stopped then.
   Entire-SSTable streaming (4.0+) counts a file only once whole: with very

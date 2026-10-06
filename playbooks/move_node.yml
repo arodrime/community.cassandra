@@ -14,7 +14,7 @@
 # Each move: the cluster checked (all nodes up and normal, no stream), the
 # nodes that receive data keep cassandra_move_min_free_percent (20) of their
 # data disk free (cassandra_move_force_disk: true goes on anyway), nodetool
-# move followed like a bootstrap (a progress line every
+# move followed like a bootstrap (its progress printed every
 # cassandra_stream_check_interval seconds), the cluster checked again. The
 # run stops at the first problem.
 # Run it again to resume: the plan is worked out again from the ring (the

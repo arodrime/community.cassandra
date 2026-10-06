@@ -35,7 +35,7 @@
       (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
       {% endif %}
       Last progress: {{ (_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
-                          status=_cassandra_cleanup_status) | first).strip() }}
+                          status=_cassandra_cleanup_status) | first) }}
   when: _cassandra_cleanup_status in ['failed', 'stalled']
 
 - name: Next round of checks

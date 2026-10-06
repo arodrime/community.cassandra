@@ -17,9 +17,9 @@
 # --check skips it): cluster, version, Java, Medusa, each new node (address, dc, rack, data
 # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
 # outside tmux/screen).
-# A bootstrap can take hours: a progress line every cassandra_stream_check_interval
-# seconds (300); the run stops only after cassandra_stream_stall_checks checks (3)
-# in a row with nothing streamed. Afterwards the cleanup command is printed, or
+# A bootstrap can take hours: its progress printed every cassandra_stream_check_interval
+# seconds (300, the first checks sooner); the run stops only after
+# cassandra_stream_stall_checks checks (3) that far apart in a row with nothing streamed. Afterwards the cleanup command is printed, or
 # run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
 # all (default none), the words of cassandra_cleanup_mode.
 # One token per node (cassandra_num_tokens: 1): each new node needs
@@ -273,9 +273,9 @@
               Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa')
               or 'the system Python') ~ ')') if _medusa else 'off' }}.
             - >-
-              {{ ('One node at a time; each one streams its share of the data (hours on big nodes), with a progress line every '
-                  ~ cassandra_stream_check_interval ~ 's; the run stops after ' ~ cassandra_stream_stall_checks
-                  ~ ' checks in a row without progress.') if _new or _joining
+              {{ ('One node at a time; each one streams its share of the data (hours on big nodes), its progress printed every '
+                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after ' ~ cassandra_stream_stall_checks
+                  ~ ' checks that far apart in a row without progress.') if _new or _joining
                  else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
             - "{{ ('Still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
           blocks: "{{ _blocks }}"

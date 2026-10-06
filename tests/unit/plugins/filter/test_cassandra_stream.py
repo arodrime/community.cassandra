@@ -426,14 +426,16 @@ def test_cleanup_report_a_block_per_node():
     views = [cassandra_cleanup_view(({"rc": 0, "stdout": fixture("nodetool_compactionstats_%s_cleanup.txt" % v)}, h))
              for h, v in (("n1", "50"), ("n4", "41"), ("n5", "40"))]
     s = cassandra_stream_progress_by_host(views, None, now=0, operations=["Cleanup"])
+    batch = cassandra_stream_progress(views, None, now=0, operations=["Cleanup"])
     for view in views:
         for task in view["sessions"]:
             task["bytes_done"] += 3 * MIB
     views[2]["sessions"] = []  # n5's tasks ended
     s = cassandra_stream_progress_by_host(views, s, now=100, operations=["Cleanup"], interval=300)
+    batch = cassandra_stream_progress(views, batch, now=100, operations=["Cleanup"], interval=300)
     jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n4"}, "finished": 0},
             {"item": {"item": "n5"}, "finished": 1}]
-    lines = cassandra_cleanup_report(s, jobs)
+    lines = cassandra_cleanup_report(s, jobs, batch)
     assert all(len(line) <= 88 for line in lines)
     assert "\n".join(lines) == """\
 3 nodes in parallel: n1, n4, n5
@@ -458,11 +460,37 @@ n5  cleanup  done  88.2 MiB in 1m (90.1 MiB in all), 903 KiB/s on average
       Now:       current - 00:01 UTC
       Started:   1m ago  - 00:00 UTC"""
     # one node: no batch line, its clocks in its block; a stalled batch, a job that can't be followed
-    lines = cassandra_cleanup_report({"n1": s["n1"]}, jobs[:1], status="stalled")
-    assert lines[0].startswith("Finish counts") and lines[2].startswith("n1  cleanup  STALLED  [###")
-    assert "      Started:   1m ago  - 00:00 UTC" in lines
-    lines = cassandra_cleanup_report({"n1": s["n1"]}, [{"item": {"item": "n1"}, "msg": "lost"}], status="failed")
-    assert lines[2].startswith("n1  cleanup  FAILED  [###")
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, jobs[:1], dict(batch, idle_checks=3, limit=3), status="stalled")
+    assert lines[1].startswith("n1  cleanup  STALLED  [###") and "Finish counts" not in lines[0]
+    assert "      Started:   1m ago  - 00:00 UTC" in lines and lines[-1] == "      Progress:  none for 3 checks (0s)"
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, [{"item": {"item": "n1"}, "msg": "lost"}], batch, status="failed")
+    assert lines[1].startswith("n1  cleanup  FAILED  [###")
+
+
+def test_cleanup_report_the_batch_decides_the_stall():
+    def view(host, done):
+        return {"item": host, "sessions": [session(host, done, 100 * MIB, op="Cleanup", direction="local")]}
+    jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n2"}, "finished": 0}]
+    states = batch = None
+    for i in range(6):  # n1 stays at 10 MiB, n2 moves
+        views = [view("n1", 10 * MIB), view("n2", (10 + i) * MIB)]
+        states = cassandra_stream_progress_by_host(views, states, now=i * 300, operations=["Cleanup"], interval=300)
+        batch = cassandra_stream_progress(views, batch, now=i * 300, operations=["Cleanup"], interval=300)
+    assert states["n1"]["idle_checks"] == 5 and batch["idle_checks"] == 0
+    text = "\n".join(cassandra_cleanup_report(states, jobs, batch))
+    assert "Progress:" not in text and "n1  cleanup  [##------------------]  10%" in text
+    # n2's job failed: the run stops, n1's cleanup goes on without it; an unreachable job is still followed
+    jobs = [{"item": {"item": "n1"}, "finished": 0}, {"item": {"item": "n2"}, "finished": 1, "failed": True, "msg": "x"}]
+    lines = cassandra_cleanup_report(states, jobs, batch, status="failed")
+    assert "n1  cleanup  STILL RUNNING  [##------------------]  10%" in lines
+    assert any(line.startswith("n2  cleanup  FAILED  [") for line in lines)
+    jobs = [{"item": {"item": "n1"}, "unreachable": True}, {"item": {"item": "n2"}, "finished": 0}]
+    assert "n1  cleanup  [##------------------]  10%" in cassandra_cleanup_report(states, jobs, batch)
+    # a big batch: the names cut to the width
+    hosts = ["cassandra-node-%02d" % i for i in range(12)]
+    lines = cassandra_cleanup_report({}, [{"item": {"item": h}, "finished": 0} for h in hosts], batch)
+    assert lines[0].startswith("12 nodes in parallel: cassandra-node-00, ") and lines[0].endswith(" more)")
+    assert len(lines[0]) <= 88
 
 
 NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.3": "node5"}

@@ -125,7 +125,7 @@ def test_medusa_on_when_only_the_new_node_has_it():
 def test_a_run_again_for_a_joining_node_says_it_waits():
     text = summary(new_nodes=(), joining=("node7",))
     assert "Still bootstrapping, waited for first: node7" in flat(text)
-    assert "with a progress line" in flat(text) and "No node to add" not in text
+    assert "its progress printed every 300s (sooner at first)" in flat(text) and "No node to add" not in text
     assert "No node to add (node7 already in the ring)" in flat(summary(new_nodes=()))
 
 

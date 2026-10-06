@@ -1,2 +1,2 @@
 minor_changes:
-  - "add_node, move_node - the cleanup command printed at the end gives both ``cassandra_cleanup_mode`` and ``cassandra_cleanup_jobs`` at their defaults, followed by the values they take (``cassandra_cleanup_jobs: 0`` uses all the compaction threads); ``-e cassandra_hosts`` is in it only when the run was given one."
+  - "add_node, move_node - the cleanup command printed at the end gives both ``cassandra_cleanup_mode`` and ``cassandra_cleanup_jobs`` at their defaults, followed by the values they take (``cassandra_cleanup_jobs: 0`` uses all the compaction threads); ``-e cassandra_hosts`` is in it only when ``cassandra_hosts`` is set."

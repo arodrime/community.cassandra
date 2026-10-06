@@ -65,7 +65,7 @@
       ansible.builtin.set_fact:
         _cassandra_stream_report: >-
           {{ _cassandra_cleanup_states | community.cassandra.cassandra_cleanup_report(cassandra_cleanup_job.results,
-               status=_cassandra_cleanup_now) }}
+               _cassandra_stream_state, status=_cassandra_cleanup_now) }}
 
     - name: Progress of the cleanups
       ansible.builtin.debug:
