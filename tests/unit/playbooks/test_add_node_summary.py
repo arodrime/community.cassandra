@@ -140,3 +140,16 @@ def test_token_choice_checked(auto, confirm, no_token, ok, says):
     assert passed is ok
     if not ok:
         assert says in templar.template(trust_as_template(CHOICE["ansible.builtin.assert"]["fail_msg"]))
+
+
+@pytest.mark.parametrize("inventory, java", [
+    # cassandra_install's defaults are loaded: the tarball of the offer, resolved
+    ({"cassandra_java_version": "17", "cassandra_java_tarball": "https://mirror.example.com/java/jdk-17.tar.gz"},
+     "Java 17 (tarball https://mirror.example.com/java/jdk-17.tar.gz)"),
+    ({"cassandra_java_version": "11", "cassandra_java_tarball": "", "cassandra_java_home": "/opt/jdk-11"}, "Java 11 (in /opt/jdk-11)"),
+    ({"cassandra_java_version": "17", "cassandra_java_tarball": "", "cassandra_java_home": "", "cassandra_install_java": True},
+     "Java 17 (package)"),
+    ({"cassandra_java_version": "17", "cassandra_install_java": False}, "Java 17 (set up by other means)"),
+])
+def test_java_line(inventory, java):
+    assert ", %s, Medusa" % java in summary(**inventory)

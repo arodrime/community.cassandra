@@ -41,7 +41,8 @@ Role Variables
   (default) installs the repository's latest. An installed node is never moved
   to another version by the role (that is an upgrade); on Debian and Ubuntu the
   pinned packages are held (`apt-mark hold`).
-* `cassandra_java_tarball` (default `""`): Java from a tarball (a JDK or JRE
+* `cassandra_java_tarball` (default: the `cassandra_java_tarballs` entry of
+  `cassandra_java_version`, else `""`): Java from a tarball (a JDK or JRE
   `.tar.gz`) instead of a package: a URL downloaded by the
   nodes (`cassandra_java_tarball_checksum` recommended, credentials in
   `cassandra_java_tarball_username`/`_password`), or a file on the controller.
@@ -51,8 +52,22 @@ Role Variables
   package: on Debian/Ubuntu a local `cassandra-java-tarball` package provides
   the Java they depend on; on the RedHat family they are installed with
   `rpm --nodeps` (plus procps-ng, python3 and shadow-utils).
-  `cassandra_java_version` must still name its major version; `update_java`
-  moves the nodes to a new tarball.
+  `cassandra_java_version` must still name its major version (the `release`
+  file of the unpacked Java, or of `cassandra_java_home`, is checked against
+  it); `update_java` moves the nodes to a new tarball.
+* `cassandra_java_tarballs` (default `{}`): Java tarballs on offer, by major
+  version, e.g. `{"17": {url: ..., checksum: "sha256:..."}}` (`url` a URL or a
+  file on the controller; `checksum`, `username`, `password` optional), set once
+  for every cluster. A cluster then
+  only sets `cassandra_java_version`; `cassandra_java_tarball` (and its
+  checksum and credentials) default to that entry, unless
+  `cassandra_install_java` is false. A version without one is refused, unless
+  `cassandra_java_home` is set. Each tarball needs a file name of its own (its
+  directory is named after it). A node on a Java package moves to the tarball
+  on its next run: `cassandra_java_tarballs: {}` keeps a cluster on packages.
+* `cassandra_java_allow_unsupported` (default `false`): install a
+  `cassandra_java_version` the series does not support (e.g. 21 with 5.0),
+  which is refused otherwise.
 * `cassandra_java_home` (default `""`): Java already unpacked in this
   directory by other means, not a package: made the system `java`, and the
   Cassandra packages installed without a Java package, as with a tarball.

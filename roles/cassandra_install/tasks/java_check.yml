@@ -1,0 +1,44 @@
+---
+# cassandra_java_version: a Java the series runs on, and a tarball for it when
+# tarballs are on offer. Also run by update_java, upgrade and the new node
+# checks before they change anything.
+- name: The series runs on this Java
+  ansible.builtin.assert:
+    that: _why == ''
+    fail_msg: "{{ inventory_hostname }}: {{ _why }}"
+    quiet: true
+  vars:
+    _why: >-
+      {{ cassandra_java_version | community.cassandra.cassandra_java_check(cassandra_version,
+                                                                          cassandra_java_allow_unsupported | bool) }}
+
+# A Java given by its directory (cassandra_java_home, e.g. imported) needs no tarball
+- name: A tarball on offer for this Java
+  ansible.builtin.assert:
+    that: >-
+      (cassandra_java_tarballs or {}) | length == 0 or cassandra_java_tarball != '' or cassandra_java_home != ''
+      or not cassandra_install_java | bool
+    fail_msg: >-
+      {{ inventory_hostname }}: cassandra_java_version is {{ cassandra_java_version }}, and cassandra_java_tarballs
+      only offers Java {{ (cassandra_java_tarballs or {}).keys() | map('string') | sort | join(', ') }}.
+      Add a "{{ cassandra_java_version }}" entry there, pick one of those, or set cassandra_java_tarball
+      (cassandra_java_tarballs: {} for a Java package).
+    quiet: true
+
+# A Java already there (cassandra_java_home, e.g. imported, or a tarball
+# unpacked on an earlier run) must be that Java: checked before anything
+# changes (upgrade and update_java check it before the node is stopped). Not
+# one this role left half unpacked (a refused tarball): it is unpacked again.
+- name: Look for an unpack left half done
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacking"
+  register: cassandra_java_check_unpacking
+  when: _cassandra_java_home != ''
+
+- name: Check the Java already there is cassandra_java_version
+  ansible.builtin.include_tasks: java_release.yml
+  vars:
+    _cassandra_java_release_of_tarball: "{{ cassandra_java_home == '' }}"
+  when:
+    - _cassandra_java_home != ''
+    - not cassandra_java_check_unpacking.stat.exists

@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - "cassandra_install - a Java tarball unpacked with private directories (its own modes, or a restrictive umask) is made readable and runnable by every user, also when found unpacked so by an earlier run: the cassandra user could not run java."

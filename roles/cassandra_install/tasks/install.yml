@@ -16,6 +16,9 @@
          else 'cassandra_install_method packages needs cassandra_package_version (e.g. "5.0.7"): it names the files to download.' }}
     quiet: true
 
+- name: Check the Java
+  ansible.builtin.import_tasks: java_check.yml
+
 - name: Snapshot installed packages (change report)
   ansible.builtin.package_facts:
   check_mode: false
@@ -58,7 +61,7 @@
       No repository of {{ inventory_hostname }} offers {{ cassandra_java_package }} (Java {{ cassandra_java_version }},
       for Cassandra {{ cassandra_version }}){{ ': EL 10 has no Java 11 or 17 package'
       if ansible_facts['distribution_major_version'] == '10' and cassandra_java_version | string in ['11', '17'] else '' }}.
-      Set cassandra_java_tarball to a Java {{ cassandra_java_version }} tarball (e.g. Eclipse Temurin), or
+      Set cassandra_java_tarball (or a cassandra_java_tarballs entry) to a Java {{ cassandra_java_version }} tarball (e.g. Eclipse Temurin), or
       cassandra_java_home to a Java {{ cassandra_java_version }} installed by other means.
     quiet: true
   when: cassandra_java_query is not skipped
@@ -353,7 +356,7 @@
       vars:
         _needed: >-
           {{ ([cassandra_java_package] if cassandra_install_java | bool and _cassandra_java_home == '' else [])
-             + cassandra_packages + (['tar'] if cassandra_java_tarball != '' else []) }}
+             + cassandra_packages + (['tar'] if cassandra_java_tarball != '' and cassandra_java_home == '' else []) }}
         _missing: "{{ _needed | reject('in', ansible_facts['packages']) | list }}"
 
     - name: Say python3.11 is missing (cqlsh only)

@@ -26,12 +26,12 @@
 
 - name: Upgrade checks
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  any_errors_fatal: true  # one node refused: none is changed
   gather_facts: true
   gather_subset: [network, hardware]
   vars:
     _phase: "{{ cassandra_upgrade_phase | default('') }}"
     _paths: {40x: [41x, 50x], 41x: [50x], 50x: []}
-    _java: {40x: ["8", "11"], 41x: ["8", "11"], 50x: ["11", "17"]}
   tasks:
     - name: Load the role defaults
       ansible.builtin.include_role:
@@ -165,14 +165,18 @@
           - "'cassandra_java_version' in hostvars[inventory_hostname]"
           - cassandra_version in _paths[cassandra_upgrade_from_series] + [cassandra_upgrade_from_series]
           - cassandra_upgrade_done | bool or cassandra_package_version is version(cassandra_upgrade_from, '>')
-          - cassandra_java_version | string in _java[cassandra_version]
         fail_msg: >-
           Set the target in the inventory: cassandra_package_version (exact version, newer than the
           {{ cassandra_upgrade_from }} this node runs), cassandra_version (from {{ cassandra_upgrade_from_series }}:
           {{ (_paths[cassandra_upgrade_from_series] + [cassandra_upgrade_from_series]) | join(' or ') }}) and
-          cassandra_java_version, explicitly (one {{ cassandra_version }} runs on: {{ _java[cassandra_version] | default([]) | join(', ') }};
+          cassandra_java_version, explicitly (one {{ cassandra_version }} runs on: {{ cassandra_version | community.cassandra.cassandra_java_supported | join(', ') }};
           left to the default, it would change with the series).
         quiet: true
+
+    - name: The target series runs on the target Java, a tarball on offer for it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_check.yml
 
     - name: One version before the upgrade
       ansible.builtin.assert:
