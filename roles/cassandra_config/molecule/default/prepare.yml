@@ -23,6 +23,11 @@
         system: true
         create_home: false
 
+    - name: Create a group for a service account outside the cassandra group
+      ansible.builtin.group:
+        name: dbgrp
+        system: true
+
     - name: Create config dirs (normally created by the Cassandra package)
       ansible.builtin.file:
         path: "{{ item }}"
@@ -41,6 +46,7 @@
         - /tmp/cassandra-identity
         - /tmp/cassandra-secret
         - /tmp/cassandra-access
+        - /tmp/cassandra-perms
         - /tmp/initialized-node/system
 
     # What the rpm's %post does: /etc/cassandra/conf -> alternatives -> default.conf

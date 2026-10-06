@@ -13,8 +13,8 @@ StartLimitBurst={{ cassandra_service_start_limit_burst }}
 
 [Service]
 Type=simple
-User={{ cassandra_service_user }}
-Group={{ cassandra_service_group }}
+User={{ cassandra_user }}
+Group={{ cassandra_group }}
 {% for name, value in cassandra_service_environment.items() %}
 Environment="{{ name }}={{ value }}"
 {% endfor %}

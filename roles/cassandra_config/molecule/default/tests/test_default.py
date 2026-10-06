@@ -115,7 +115,8 @@ def test_40x_overrides(host):
 def test_defaults_file_mode(host, name):
     f = host.file(f"{conf_dir(host)}/{name}")
 
-    assert f.mode == 0o640
+    # cassandra.yaml and the JVM options may hold passwords; the others none (nodetool reads cassandra-env.sh)
+    assert f.mode == (0o640 if name == "cassandra.yaml" or name.startswith("jvm") else 0o644)
     assert f.user == "root"
     assert f.group == "cassandra"
 
@@ -264,3 +265,14 @@ def test_missing_data_dir_created(host):
     for parent in ("/data", "/data/cassandra"):
         d = host.file(parent)
         assert d.is_directory and d.user == "root" and d.mode == 0o755
+
+
+def test_owner_and_mode_set_on_a_file_whose_content_is_kept(host):
+    env = host.file("/tmp/cassandra-perms/cassandra-env.sh")
+    # same settings as the role's: its content kept, its owner, group and mode set
+    assert "# hand comment" in env.content_string
+    assert (env.user, env.group, env.mode) == ("root", "dbgrp", 0o644)
+    conf = host.file("/tmp/cassandra-perms/cassandra.yaml")
+    assert (conf.user, conf.group, conf.mode) == ("root", "dbgrp", 0o640)
+    logback = host.file("/tmp/cassandra-perms/logback.xml")
+    assert (logback.user, logback.group, logback.mode) == ("root", "dbgrp", 0o600)

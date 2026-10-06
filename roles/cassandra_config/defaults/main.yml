@@ -286,10 +286,25 @@ cassandra_debug_log_enabled: true
 # still reach stdout).
 cassandra_log_console: false
 
-# Config files may hold keystore passwords: readable by the cassandra group only
+# The account Cassandra runs as (cassandra_service's unit runs it so): it gets
+# the directories the role creates and the JMX users' files
+cassandra_user: cassandra
+cassandra_group: cassandra
+# The config files: owned by root, group cassandra_group (Cassandra reads them
+# but cannot rewrite them). cassandra.yaml (keystore passwords) and the JVM
+# options files (their extra options, e.g. -Djavax.net.ssl.keyStorePassword=)
+# are not readable by others. The other files hold no secret and are readable
+# by all: nodetool, run by any user, reads the JMX port from cassandra-env.sh.
 cassandra_config_owner: root
-cassandra_config_group: cassandra
-cassandra_config_mode: "0640"
+cassandra_config_group: "{{ cassandra_group }}"
+cassandra_config_mode: "0640"  # cassandra.yaml, jvm*-server.options
+cassandra_config_public_mode: "0644"  # cassandra-env.sh, cassandra-rackdc.properties, logback.xml
+# Per file, over the above: {file name: {owner, group, mode}}, any of the three,
+# e.g. {logback.xml: {mode: "0600"}}. Also for jmxremote.password and
+# jmxremote.access (cassandra_user, cassandra_group, 0400 by default; the JVM
+# refuses a password file its group or others can read). import_cluster
+# writes it for the files that differ from the others on a node.
+cassandra_config_file_permissions: {}
 # Keep a timestamped copy of each file the role replaces, next to it (to roll back)
 cassandra_config_backup: true
 

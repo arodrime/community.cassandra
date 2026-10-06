@@ -60,16 +60,16 @@ argument_specs:
         description:
           - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
             there. The new host checks use it to tell those switches from the operator's own.
-      cassandra_service_user:
+      cassandra_user:
         type: str
         default: cassandra
         description:
-          - User running Cassandra.
-      cassandra_service_group:
+          - The account Cassandra runs as (the unit's C(User=)). The role does not create it.
+      cassandra_group:
         type: str
         default: cassandra
         description:
-          - Group running Cassandra.
+          - The group Cassandra runs as (the unit's C(Group=)).
       cassandra_service_unit_manage:
         type: bool
         default: true

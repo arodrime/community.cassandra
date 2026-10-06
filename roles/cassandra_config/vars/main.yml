@@ -20,3 +20,15 @@ _cassandra_config_python: >-
 _cassandra_config_snitches_without_rackdc: [SimpleSnitch, RackInferringSnitch, PropertyFileSnitch, Ec2Snitch,
                                             Ec2MultiRegionSnitch, GoogleCloudSnitch, CloudstackSnitch,
                                             AlibabaCloudSnitch, AzureSnitch]
+# Owner, group and mode the role gives a file it writes (its name in
+# _cassandra_config_perm_file); import_cluster's self-check uses the same filter
+_cassandra_config_perm: >-
+  {{ _cassandra_config_perm_file | community.cassandra.cassandra_file_permissions(_cassandra_config_perm_settings) }}
+_cassandra_config_perm_settings:
+  owner: "{{ cassandra_config_owner }}"
+  group: "{{ cassandra_config_group }}"
+  mode: "{{ cassandra_config_mode }}"
+  public_mode: "{{ cassandra_config_public_mode }}"
+  files: "{{ cassandra_config_file_permissions }}"
+  user: "{{ cassandra_user }}"
+  user_group: "{{ cassandra_group }}"

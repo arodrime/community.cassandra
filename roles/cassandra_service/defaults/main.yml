@@ -17,8 +17,8 @@ cassandra_service_allow_new_seed: false
 # sets it on the nodes it finds started another way)
 cassandra_service_unit_manage: true
 
-cassandra_service_user: cassandra
-cassandra_service_group: cassandra
+cassandra_user: cassandra
+cassandra_group: cassandra
 # systemd Restart=. "no": a node that died stays down until a human looks
 # (disk/commit failure policies and OOM kill it on purpose). "on-failure"
 # is capped at cassandra_service_start_limit_burst restarts per interval.

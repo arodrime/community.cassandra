@@ -22,7 +22,7 @@ Role Variables
 * `cassandra_service_restart_on_change`: restart a running node when the
   unit changes. Default `false`: restarting is a cluster operation, do it
   node by node yourself.
-* `cassandra_service_user` / `cassandra_service_group`: default `cassandra`.
+* `cassandra_user` / `cassandra_group`: default `cassandra`.
 * `cassandra_service_unit_manage`: `false` keeps the node's own unit (or the
   package's init script) instead of writing the role's: the unit variables
   have no effect on it, and the playbooks drain the node with `nodetool`
