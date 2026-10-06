@@ -149,3 +149,20 @@ def test_preflight_stops_the_whole_run_on_a_refused_node():
     block = next(t for t in tasks if any(sub.get("ansible.builtin.include_role", {}).get("tasks_from") == "account_check.yml"
                                          for sub in t.get("block", [])))
     assert block["any_errors_fatal"] is True
+
+
+def test_checked_before_the_unit_is_written_and_before_a_drain():
+    """A restart writes the unit before draining: a refused account must stop the run before both."""
+    def tasks(name):
+        with open(os.path.join(ROLE, "tasks", name)) as f:
+            return yaml.safe_load(f)
+
+    unit = tasks("unit.yml")
+    assert unit[0].get("ansible.builtin.include_tasks") == "account_check.yml"
+    assert "ansible.builtin.template" in unit[1]
+    restart = tasks("action_restart.yml")
+    assert restart[0].get("ansible.builtin.include_tasks") == "unit.yml"
+    assert any("community.cassandra.cassandra_drain" in t for t in restart[1:])
+    main = tasks("main.yml")
+    assert not any(t.get("ansible.builtin.include_tasks") == "account_check.yml" for t in main)
+    assert any(t.get("ansible.builtin.include_tasks") == "unit.yml" for t in main)

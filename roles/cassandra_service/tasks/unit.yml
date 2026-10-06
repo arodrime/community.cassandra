@@ -1,4 +1,9 @@
 ---
+# Checked before the unit is written: a restart writes it before draining,
+# so an account that cannot read the config stops the run with the node running
+- name: Check the account Cassandra runs as can read the config
+  ansible.builtin.include_tasks: account_check.yml
+
 # Same name as the package's init script: systemd prefers a native unit
 # over the SysV-generated one, so service/systemctl both use this.
 - name: Install the cassandra systemd unit
