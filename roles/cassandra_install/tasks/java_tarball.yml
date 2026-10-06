@@ -127,6 +127,21 @@
     path: "{{ _cassandra_java_home }}/bin/java"
   register: cassandra_java_home_java
 
+# Cassandra runs java as its own user: a tarball with private directories
+# (0700), or unpacked under a restrictive umask, leaves it no java. Only adds
+# read and traverse rights; a Java installed by other means is left as it is.
+- name: Let every user read and run the unpacked Java
+  ansible.builtin.file:
+    path: "{{ _cassandra_java_home }}"
+    state: directory
+    recurse: true
+    mode: go+rX
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_home_java.stat.exists
+    - cassandra_java_tarball_done.stat.exists or not (cassandra_java_home_present.stat.exists | default(false))
+      or cassandra_java_tarball_started.stat.exists | default(false)
+
 - name: A Java given by its directory must be there
   ansible.builtin.assert:
     that: cassandra_java_home_java.stat.exists
