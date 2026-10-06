@@ -3,8 +3,9 @@
 # shown first and the whole run is confirmed once; then the nodes are done one
 # at a time: cluster checked, config written, node drained and restarted,
 # cluster checked again. Only the nodes whose config changes, or whose running
-# Cassandra is older than its config files (written by cassandra_config, which
-# never restarts, or by a run stopped before the restart), are touched.
+# Cassandra is older than its config files or its systemd unit (written by
+# cassandra_config or cassandra_service, which do not restart, or by a run
+# stopped before the restart), are touched.
 # Stops at the first problem.
 #   ansible-playbook -i inventory community.cassandra.apply_config
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's

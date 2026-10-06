@@ -7,6 +7,8 @@ cassandra_file_permissions: a file name, the role's variables -> the owner,
 cassandra_permission_changes: the stat of the files on a node, the role's
     variables -> the changes of owner, group or mode the role makes there, for
     its report.
+cassandra_unreadable_config: the config files the account Cassandra runs as
+    could not read with these variables (cassandra_service's check).
 cassandra_permissions_import: what import_cluster read on a node (the account
     Cassandra runs as, the stat of the config files, the JMX users' files and
     the directories) -> {'vars', 'notes', 'files'}: the variables that give the
@@ -144,6 +146,28 @@ def cassandra_permission_changes(results, settings, name_key="cassandra_config_f
     return out
 
 
+def cassandra_unreadable_config(version, settings, users, groups):
+    """version: cassandra_version; settings: as for cassandra_file_permissions;
+    users: the account Cassandra runs as (its name and its number); groups: its
+    groups (names and numbers) -> the config files of that series it could not
+    read, as 'file (owner:group mode)': as the kernel decides, by the owner's
+    bits for the owner, else the group's for a member, else the others'; root reads all."""
+    if version not in SERIES:
+        return []  # not a series cassandra_config writes
+    users = [str(u) for u in (users if isinstance(users, (list, tuple)) else [users])]
+    groups = [str(g) for g in groups]
+    if "0" in users or "root" in users:
+        return []
+    out = []
+    for name in _files_of(version):
+        p = cassandra_file_permissions(name, settings)
+        mode = int(p["mode"], 8)
+        bits = (mode & 0o400 if p["owner"] in users else mode & 0o040 if p["group"] in groups else mode & 0o004)
+        if not bits:
+            out.append("%s (%s:%s %s)" % (name, p["owner"], p["group"], p["mode"]))
+    return out
+
+
 def _common(values, prefer):
     """The value most files have; on a tie, prefer if it is one of them, else the first in order."""
     counts = dict((v, values.count(v)) for v in values)
@@ -232,4 +256,5 @@ class FilterModule(object):
             "cassandra_file_permissions": cassandra_file_permissions,
             "cassandra_permission_changes": cassandra_permission_changes,
             "cassandra_permissions_import": cassandra_permissions_import,
+            "cassandra_unreadable_config": cassandra_unreadable_config,
         }

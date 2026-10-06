@@ -56,6 +56,18 @@
         tasks_from: seed_facts.yml
         public: true
 
+    # before any operation (apply_config writes the config before it restarts);
+    # a node refused stops the whole run, not just that node
+    - name: Check the account Cassandra runs as can read the config
+      any_errors_fatal: true
+      block:
+        - name: Check the account Cassandra runs as can read the config
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: account_check.yml
+          vars:
+            _cassandra_account_must_exist: false  # a new node gets the package (and its user) later
+
     # cassandra_seed_True / cassandra_seed_False, used by the other playbooks
     - name: Group seeds and other nodes
       ansible.builtin.group_by:

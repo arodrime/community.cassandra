@@ -109,9 +109,9 @@ Role Variables
   `UPGRADING` to `NONE` with rolling restarts.
 * `cassandra_user`, `cassandra_group` (default `cassandra`): the account
   Cassandra runs as (`cassandra_service` runs it so). The directories the
-  role creates (`0750`) and the JMX users' files are theirs, and
-  `cassandra_group` is the default group of the config files. The role does
-  not create them.
+  role creates (`0750`) and the JMX users' files are theirs
+  (`cassandra_service_user` / `_group` when set), and `cassandra_group` is
+  the default group of the config files. The role does not create them.
 * `cassandra_jmx_users`: remote JMX users (with `cassandra_local_jmx: false`),
   as `{name, password, access}` (`readwrite`, the default, or
   `readonly`; a `readwrite` user also gets the `create` and `unregister`

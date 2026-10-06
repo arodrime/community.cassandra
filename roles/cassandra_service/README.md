@@ -22,7 +22,20 @@ Role Variables
 * `cassandra_service_restart_on_change`: restart a running node when the
   unit changes. Default `false`: restarting is a cluster operation, do it
   node by node yourself.
-* `cassandra_user` / `cassandra_group`: default `cassandra`.
+* `cassandra_user` / `cassandra_group` (default `cassandra`): the account
+  Cassandra runs as (the unit's `User=` and `Group=`). The same variables give
+  `cassandra_config`'s files their group and its directories and JMX users'
+  files their owner: set them once for both roles.
+  `cassandra_service_user` / `cassandra_service_group` override them for the
+  unit and `cassandra_config`'s directories and JMX users' files, not for the
+  config files' group. Before writing the unit (and in `preflight`, before any
+  operation), the role refuses an account that could not read the config
+  files `cassandra_config` writes (their owner, group and mode from its
+  variables, the account's groups from `id`), or that does not exist. With a
+  kept unit (`cassandra_service_unit_manage: false`), its own `User=` and
+  `Group=` are checked. A changed `User=`
+  or `Group=` takes effect at the next restart (`apply_config` restarts the
+  nodes whose unit changed since Cassandra started).
 * `cassandra_service_unit_manage`: `false` keeps the node's own unit (or the
   package's init script) instead of writing the role's: the unit variables
   have no effect on it, and the playbooks drain the node with `nodetool`

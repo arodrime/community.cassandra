@@ -518,7 +518,12 @@ To change the configuration of a running cluster, use ``apply_config`` instead o
 diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
-restart): it is restarted too.
+restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is
+restarted too.
+
+Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
+``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``
+creates. Set them once for both roles. ``cassandra_service`` refuses an account that could not read the config files.
 
 
 Restricted networks (air-gapped)

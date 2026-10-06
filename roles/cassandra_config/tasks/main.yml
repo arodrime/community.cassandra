@@ -531,8 +531,8 @@
       ansible.builtin.file:
         path: "{{ item.item }}"
         state: directory
-        owner: "{{ cassandra_user }}"
-        group: "{{ cassandra_group }}"
+        owner: "{{ _cassandra_config_perm_settings.user }}"
+        group: "{{ _cassandra_config_perm_settings.user_group }}"
         mode: "0750"
       loop: "{{ cassandra_config_dirs.results | rejectattr('stat.exists') | list }}"
       loop_control:

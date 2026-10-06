@@ -29,6 +29,9 @@
     quiet: true
   when: cassandra_service_drain_on_stop
 
+- name: Check the account Cassandra runs as can read the config
+  ansible.builtin.include_tasks: account_check.yml
+
 # Same name as the package's init script: systemd prefers a native unit
 # over the SysV-generated one, so service/systemctl both use this.
 - name: Install the cassandra systemd unit

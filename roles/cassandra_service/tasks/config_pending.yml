@@ -1,6 +1,6 @@
 ---
-# Whether the running Cassandra still has to pick up a config change: the
-# files differ from the ones it started with (checksums recorded by
+# Whether the running Cassandra still has to pick up a config change (or a
+# change of its systemd unit): the files differ from the ones it started with (checksums recorded by
 # config_snapshot.yml at each start), or, on a node started before that was
 # recorded, were written after the JVM started. Sets cassandra_config_restart_pending.
 - name: Checksum the config files
@@ -10,14 +10,23 @@
     get_checksum: true
   register: cassandra_pending_files
 
+- name: Checksum the unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cassandra.service
+  register: cassandra_pending_unit_file
+
 - name: Read the checksums recorded at the last start
   ansible.builtin.slurp:
     path: "{{ _cassandra_service_config_snapshot }}"
   register: cassandra_pending_snapshot
   failed_when: false
 
+# (or none for the unit: recorded before they included it)
 - name: Read when the JVM started (no checksums recorded)
-  when: cassandra_pending_snapshot.content is not defined
+  when: >-
+    cassandra_pending_snapshot.content is not defined
+    or (cassandra_pending_unit_file.stat.exists
+        and cassandra_pending_unit_file.stat.path not in cassandra_pending_snapshot.content | b64decode | from_json)
   block:
     - name: Read the service
       ansible.builtin.systemd_service:
@@ -40,8 +49,10 @@
     _started: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
     _changed: >-
       {%- set out = [] -%}
-      {%- for f in cassandra_pending_files.files -%}
-      {%-   if cassandra_pending_snapshot.content is defined -%}
+      {%- set unit = [cassandra_pending_unit_file.stat] if cassandra_pending_unit_file.stat.exists else [] -%}
+      {%- for f in cassandra_pending_files.files + unit -%}
+      {%-   set is_unit = f.path == cassandra_pending_unit_file.stat.path | default('') -%}
+      {%-   if cassandra_pending_snapshot.content is defined and (f.path in _started or not is_unit) -%}
       {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
       {%-   elif f.mtime > cassandra_pending_proc.stat.ctime | default(0) -%}
       {%-     set _ = out.append(f.path | basename) -%}

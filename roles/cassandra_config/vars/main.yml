@@ -30,5 +30,6 @@ _cassandra_config_perm_settings:
   mode: "{{ cassandra_config_mode }}"
   public_mode: "{{ cassandra_config_public_mode }}"
   files: "{{ cassandra_config_file_permissions }}"
-  user: "{{ cassandra_user }}"
-  user_group: "{{ cassandra_group }}"
+  # the account the unit runs Cassandra as (cassandra_service), else cassandra_user
+  user: "{{ cassandra_service_user | default(cassandra_user) }}"
+  user_group: "{{ cassandra_service_group | default(cassandra_group) }}"
