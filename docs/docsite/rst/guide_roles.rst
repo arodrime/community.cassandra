@@ -885,11 +885,14 @@ hints, saved caches and log directories not owned by that account (``cassandra_c
 as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
 
 What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
-the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python and the systemd unit (or init script)
-Cassandra is started by. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
+the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python, the systemd unit (or init script)
+Cassandra is started by, the system java and the firewall. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
 ``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
 ``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
-``group_vars``: nodes added later get the roles' full setup. Remove a line to let the role take that part over,
+``group_vars``: nodes added later get the roles' full setup. The same goes for a ``/usr/bin/java`` that is not the
+Java Cassandra runs (``cassandra_java_set_default: false``), the firewall (``cassandra_firewall_manage: false`` on
+every imported node) and the packages a node lacks: ``cassandra-tools``, jemalloc and, on Debian and Ubuntu, the
+hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_package_hold``). Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
 (``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before
 touching a node whose repositories are not managed and lack the target version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
