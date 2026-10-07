@@ -3,6 +3,11 @@ __metaclass__ = type
 
 import re
 
+try:
+    import ipaddress
+except ImportError:  # Python 2 without the backport: addresses compared as written
+    ipaddress = None
+
 
 # A node line of nodetool status: status (U, D or ?) and state (N, L, J, M)
 NODE_RE = re.compile(r'^[UD?][NLJM]\s+')
@@ -18,11 +23,24 @@ def address_part(address):
     return address
 
 
+def same_address(printed, ip_address):
+    """Whether the address nodetool printed (IPv6 in full: 0:0:0:0:0:0:0:1) is
+    ip_address, however that one is written (::1)."""
+    if printed == ip_address:
+        return True
+    if ipaddress is None:
+        return False
+    try:
+        return ipaddress.ip_address(u'%s' % printed) == ipaddress.ip_address(u'%s' % ip_address)
+    except ValueError:
+        return False
+
+
 def ring_state(status_out, ip_address):
     """Return the status and state (UN, DN...) of ip_address in nodetool
     status output, or None when it is not in the ring."""
     for line in status_out.splitlines():
-        if NODE_RE.match(line) and address_part(line.split()[1]) == ip_address:
+        if NODE_RE.match(line) and same_address(address_part(line.split()[1]), ip_address):
             return line[:2]
     return None
 
@@ -46,7 +64,7 @@ def gossip_status(gossipinfo_out, ip_address):
         if not line.startswith(' '):  # endpoint header: /10.0.0.1 or host/10.0.0.1
             if found:
                 break
-            found = address_part(line.strip().rsplit('/', 1)[-1]) == ip_address
+            found = same_address(address_part(line.strip().rsplit('/', 1)[-1]), ip_address)
         elif found:
             key, dummy, value = line.strip().partition(':')
             if key == 'STATUS_WITH_PORT' or (key == 'STATUS' and not status):
