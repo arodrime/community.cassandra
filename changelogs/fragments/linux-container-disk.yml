@@ -1,5 +1,5 @@
 minor_changes:
   - cassandra_linux - in containers, kernel settings (sysctl, swapoff, transparent huge pages) are no longer applied live, where they belong to the host, and the THP unit is no longer enabled at boot there; the files are still written. Containers are detected from Ansible's virtualization facts and the new cassandra_linux_container_types; cassandra_linux_apply_live forces it either way.
-  - cassandra_linux - new disk tuning of the Cassandra data disk, when cassandra_data_block_device or cassandra_data_dir is set - read-ahead (cassandra_data_readahead_kb, 4 KB), and the none IO scheduler on SSD/NVMe, applied now and kept across reboots with a udev rule.
+  - cassandra_linux - new disk tuning of the Cassandra data disk, on the disks given by cassandra_data_block_device(s), else on the ones backing cassandra_data_dir, cassandra_data_file_directories and cassandra_commitlog_dir - read-ahead (cassandra_data_readahead_kb, 4 KB), and the none IO scheduler on SSD/NVMe, applied now and kept across reboots with a udev rule.
 bugfixes:
   - cassandra_linux - ``--check`` on a fresh host no longer stops at the time sync service or the THP unit, whose package and file are not really installed in check mode.
