@@ -244,6 +244,7 @@
         cassandra_config_reload_seeds: false
         cassandra_change_report_dir: ""
         _cassandra_config_no_restart_warning: true
+        _cassandra_config_target_preview: true  # the former series is still installed
       when: _phase == 'preflight'
 
     - name: Say what the next phase is

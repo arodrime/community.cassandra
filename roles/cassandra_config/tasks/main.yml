@@ -114,8 +114,8 @@
       ansible.builtin.package_facts:
       check_mode: false
 
-    # Not under --check: the upgrade playbook's preflight shows the target
-    # series' config while the former one is still installed
+    # Not under --check, nor in the upgrade playbook's preflight (check_mode applied to the role, which
+    # ansible_check_mode does not tell): it shows the target series' config while the former one is installed
     - name: Refuse the templates of another series than the one installed
       ansible.builtin.assert:
         that: _installed == '' or (_installed ~ '.').startswith(_cassandra_config_series ~ '.')
@@ -125,7 +125,9 @@
         quiet: true
       vars:
         _installed: "{{ _cassandra_config_installed }}"
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - not _cassandra_config_target_preview | default(false) | bool
 
     - name: Say when Cassandra is newer than the templates
       ansible.builtin.debug:

@@ -49,3 +49,24 @@ def test_missing_files_and_unreachable_mirror():
                 "n3": {"inventory_hostname": "n3"}}
     assert render("_missing", hostvars) == ["n1", "n2"]
     assert sorted(render("_codes", hostvars)) == [-1, 404]
+
+
+def test_preflight_shows_the_target_config_with_the_former_series_installed():
+    # the role runs with check_mode applied, which ansible_check_mode does not tell: the series check is told apart
+    todo = [t for play in PLAYS for t in play.get("tasks", [])]
+    show = None
+    while todo:
+        t = todo.pop(0)
+        show = t if t.get("name") == "Show the target config (nothing is written)" else show
+        todo += t.get("block", [])
+    assert show["ansible.builtin.include_role"]["apply"]["check_mode"] is True
+    assert show["vars"]["_cassandra_config_target_preview"] is True
+    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_config", "tasks", "main.yml")) as f:
+        todo = list(yaml.safe_load(f))
+    while todo:
+        t = todo.pop(0)
+        if t.get("name") == "Refuse the templates of another series than the one installed":
+            assert "not _cassandra_config_target_preview | default(false) | bool" in t["when"]
+            return
+        todo += t.get("block", [])
+    raise AssertionError("series check not found")
