@@ -34,7 +34,7 @@
 # playbook: the cluster, every operation's command for this inventory, advice).
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
-# A host marked cassandra_node_state: absent (an inventory given back) is not read
+# A host marked cassandra_node_state: absent (an inventory given back) is not read.
 # Hand edits no variable covers fail the self-check: -e
 # import_cluster_keep_hand_edits=true leaves those files as they are on their
 # node (cassandra_config_keep_files) instead.
@@ -1104,7 +1104,9 @@
                     if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,
-                          'cassandra_java_set_default': false, 'cassandra_firewall_manage': false}) }}
+                          'cassandra_java_set_default': false, 'cassandra_firewall_manage': false,
+                          'cassandra_install_tools': false, 'cassandra_install_jemalloc': false,
+                          'cassandra_package_hold': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
