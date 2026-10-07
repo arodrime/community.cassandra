@@ -13,7 +13,8 @@
 #   _cassandra_stream_from: hosts whose netstats show the streams
 #   _cassandra_stream_join: true: done when this node is NORMAL (bootstrap, replace)
 #   _cassandra_stream_leave: true: done when this node is DECOMMISSIONED (decommission)
-#   _cassandra_stream_job: {'jid': ..., 'host': ...}: done when this async job ends
+#   _cassandra_stream_job: {'jid': ..., 'host': ...}: done when this async job ends (with _leave, when it
+#     changed something: a decommission of a node already LEAVING waits for DECOMMISSIONED)
 #   _cassandra_stream_removal_on: host whose nodetool removenode status says when
 #     a removenode an earlier run started is over (no job to follow)
 #   _cassandra_stream_peers: hosts to read instead, from the other side, when this
