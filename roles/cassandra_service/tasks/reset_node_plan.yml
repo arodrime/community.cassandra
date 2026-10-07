@@ -161,7 +161,7 @@
     - cassandra_node_reset_jvm.rc == 0
     - not _cassandra_node_reset_whole_cluster | default(false) | bool
 
-# stat fails on a directory that can't be reached (no root, -b missing): find would skip it silently
+# stat fails on a directory that can't be reached (no root: become turned off?): find would skip it silently
 - name: Look at the directories
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -224,9 +224,9 @@
         {{ _cassandra_node_reset_dirs.problems + _cassandra_node_reset_ring.problems
            + (cassandra_node_reset_found.skipped_paths | default({}) | dict2items
               | rejectattr('value', 'search', 'not a directory|No such file')
-              | map(attribute='key') | map('regex_replace', '$', ': can not be read (run with become?)') | list)
+              | map(attribute='key') | map('regex_replace', '$', ': can not be read (without root?)') | list)
            + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
-              | map(attribute='item') | map('regex_replace', '$', ': can not be checked (run with become?)') | list)
+              | map(attribute='item') | map('regex_replace', '$', ': can not be checked (without root?)') | list)
            + (['a Cassandra JVM runs that the cassandra unit did not start (by hand?), so it can not stop it: stop it first']
               if cassandra_node_reset_jvm.rc == 0 and not _active | bool else []) }}
       info: "{{ _cassandra_node_reset_ring.info }}"

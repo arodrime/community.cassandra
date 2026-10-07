@@ -13,7 +13,7 @@
 {#- Access -#}
 {%- set uid = cassandra_new_node_uid.stdout | default('') | trim -%}
 {%- if uid != '0' -%}
-{%-   set _ = problems.append('Ansible runs as user ID ' ~ uid ~ ', not root: the roles install packages; run with --become (-b)') -%}
+{%-   set _ = problems.append('Ansible runs as user ID ' ~ uid ~ ', not root: the roles install packages (the playbooks ask for root: an inventory ansible_become: false or another ansible_become_user?)') -%}
 {%- endif -%}
 {%- set _ = info.append('Ansible: ' ~ (ansible_facts['python']['executable'] | default('python')) ~ ' ' ~ (ansible_facts['python_version'] | default('?')) ~ (', as root' if uid == '0' else '')) -%}
 

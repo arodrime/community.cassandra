@@ -461,6 +461,13 @@ def test_help_command_without_the_vault_prompt_help_added():
     assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.help\n" in text
 
 
+def test_help_command_without_the_sudo_password_prompt():
+    # help becomes root nowhere: no -K for it; the operations keep it
+    text = cassandra_help(model(options=["-K"]), PLAYBOOKS, cwd=CWD)
+    assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help\n" in text
+    assert "$ ansible-playbook -i inventories/orders/hosts.yml -K community.cassandra.status\n" in text
+
+
 @pytest.mark.parametrize("more, java", [
     ({}, "Java: 11, package"),
     ({"cassandra_java_tarballs": {"11": {"url": "https://mirror.example.com/jdk-11.tar.gz"}}}, "Java: 11, tarball"),
