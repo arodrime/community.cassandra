@@ -238,8 +238,10 @@ argument_specs:
         description:
           - Air-gapped hosts, nothing is downloaded. Java (with O(cassandra_install_java))
             and the Cassandra packages are checked instead of installed, and the role
-            stops with the list of what is missing. The Python cqlsh may need and
-            jemalloc are optional (a warning when missing).
+            stops with the list of what is missing. The Python cqlsh may need,
+            jemalloc and dsbulk are optional (a warning when missing).
+          - dsbulk is still installed from a copy on the node (O(cassandra_dsbulk_url)
+            C(file://...)).
       cassandra_install_java:
         type: bool
         default: true
@@ -247,3 +249,32 @@ argument_specs:
           - false when Java is installed by other means (an internal package,
             the system image). The Cassandra package still needs a Java package
             that satisfies its dependency.
+      cassandra_dsbulk_install:
+        type: bool
+        default: true
+        description:
+          - Install the DataStax Bulk Loader (dsbulk) like the packaged tools, in
+            C(/usr/share/dsbulk-<version>), with the links C(/usr/share/dsbulk) and
+            C(/usr/bin/dsbulk). The versions this role installed before are removed.
+          - A C(/usr/share/dsbulk) or C(/usr/bin/dsbulk) that is not a link (a dsbulk
+            installed by other means) fails the role; V(false) leaves dsbulk alone.
+      cassandra_dsbulk_version:
+        type: str
+        default: "1.11.2"
+        description:
+          - dsbulk release, quoted (e.g. C("1.11.2")). Set O(cassandra_dsbulk_checksum) with it.
+      cassandra_dsbulk_url:
+        type: str
+        description:
+          - Where the dsbulk tarball is downloaded from. Defaults to its GitHub release
+            for O(cassandra_dsbulk_version).
+          - A mirror (with C(cassandra_install_username) and C(cassandra_install_password)
+            when it is on the host of C(cassandra_install_url)), or a copy on the node
+            (C(file:///path/to/dsbulk-<version>.tar.gz)), the way to install it with
+            O(cassandra_offline).
+      cassandra_dsbulk_checksum:
+        type: str
+        default: "sha256:249e494c7820ee8f212c47531f77ddd6664404d78e4addadf16159d78c983e5e"
+        description:
+          - Checksum of the dsbulk tarball (C(sha256:...)), the default version's by
+            default. Empty means not checked.

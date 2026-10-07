@@ -30,17 +30,26 @@ Role Variables
   `cassandra_data_file_directories`) and `cassandra_commitlog_dir` with
   `findmnt` and `lsblk`; without those either, nothing is tuned. LVM, md
   RAID and dm-crypt devices are not guessed: the role says so, set the
-  disks. A disk set here that can't be tuned fails the role.
+  disks. A disk set here that can't be tuned fails the role (not in
+  containers, where the disks are left alone).
 * `cassandra_data_readahead_kb`: read-ahead in KB for those disks
   (`queue/read_ahead_kb`, not `blockdev --setra` sectors). Defaults to `4`,
   the practical minimum: read-ahead brings nothing to Cassandra's random
-  reads and fills the page cache with data it doesn't need.
+  reads and fills the page cache with data it doesn't need. The kernel
+  rounds it down to whole memory pages (0 with 64 KB pages).
 * `cassandra_linux_apply_live`: apply the kernel settings (sysctl, swapoff,
   THP, disk tuning) live, not only persist them. Defaults to `auto`: live
   everywhere except in containers (Ansible's virtualization facts, and
   `cassandra_linux_container_types`), where `/proc/sys` and `/sys` belong to
-  the host. Set `true` to tune the host from a dedicated privileged
-  container, `false` to only persist.
+  the host; what runs at boot (the THP unit, the disks' udev rule) is
+  left out there too. Set `true` to tune the host from a dedicated
+  privileged container, `false` to only persist (in containers, only the
+  files). Ansible doesn't detect every container (e.g. Kubernetes pods on
+  cgroup v2): set `false` there, the THP unit and the disks' udev rule are
+  then still set up.
+* `cassandra_linux_container_types`: `virtualization_type` values taken as
+  containers, besides Ansible's own container detection. Defaults to
+  `docker`, `podman`, `container`, `containerd`, `lxc`.
 * `cassandra_linux_sysctl`: kernel settings (swappiness, max_map_count, TCP
   keepalive and buffers...), written to `cassandra_linux_sysctl_file`
   (default `/etc/sysctl.d/60-cassandra.conf`). The same keys are removed from
@@ -57,8 +66,9 @@ The read-ahead is set on the disks, and the IO scheduler set to `none` on
 SSD/NVMe disks only (`queue/rotational` 0): spinning disks keep theirs. Both
 are applied immediately through sysfs, then kept across reboots with a udev
 rule (`/etc/udev/rules.d/61-cassandra-data-disk.rules`) matching each disk by
-its serial number (`ID_SERIAL`), or by its name when udev doesn't know one.
-In containers, the disks are not tuned (they are the host's).
+the first stable id udev knows for it (`ID_WWN_WITH_EXTENSION`, `ID_WWN`,
+`ID_SERIAL`, `ID_PATH`), or else by its name. In containers, the disks are
+not tuned (they are the host's).
 
 Dependencies
 ------------

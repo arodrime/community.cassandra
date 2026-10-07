@@ -17,6 +17,8 @@ Role Variables
 
 cassandra_version:
   - Which version of Cassandra to install, e.g. "50x", "41x", "40x".
+  - Default "50x". cassandra_install reads it too: set it for both (e.g. in
+    group_vars), not as a parameter of this role only.
   - See the distribution names available at:
       - https://debian.cassandra.apache.org (Debian & Ubuntu)
       - https://redhat.cassandra.apache.org/ (RedHat)
@@ -66,7 +68,8 @@ cassandra_repository_key_url:
     (`files/KEYS`), so nothing is downloaded.
   - A URL (e.g. a local mirror) is downloaded instead, and every key it holds
     must be listed in `cassandra_repository_key_fingerprints` (primary key
-    fingerprints, defaults to the keys of the shipped copy).
+    fingerprints, defaults to the keys of the shipped copy). Reading them
+    needs GnuPG 2.2.8 or later on the node (`gpg --show-keys`).
 
 cassandra_apt_keyring_path / cassandra_rpm_key_path:
   - Where the keys are installed (Debian & Ubuntu / RedHat).

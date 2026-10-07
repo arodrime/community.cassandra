@@ -1,8 +1,9 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# cassandra_config creates the missing Cassandra directories, but never on a
-# mount point of /etc/fstab that is not mounted (the root filesystem).
+# cassandra_config refuses Cassandra directories on a mount point of /etc/fstab
+# that is not mounted (they would be on the root filesystem), and reloads the
+# seed list of a running node.
 
 import os
 
@@ -32,24 +33,27 @@ def task(name):
     raise KeyError(name)
 
 
-def on_unmounted(missing, unmounted):
+def on_unmounted(dirs, unmounted):
     variables = {
-        "cassandra_config_dirs": {"results": [{"item": d, "stat": {"exists": False}} for d in missing]
-                                  + [{"item": "/var/lib/cassandra/hints", "stat": {"exists": True}}]},
+        "cassandra_config_dirs": {"results": [{"item": d, "stat": {"exists": exists}} for d, exists in dirs]},
         "cassandra_config_unmounted": {"stdout_lines": unmounted},
     }
-    template = task("Refuse to create them on a disk that is not mounted")["vars"]["_on_unmounted"]
+    template = task("Refuse directories on a disk that is not mounted")["vars"]["_on_unmounted"]
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-@pytest.mark.parametrize("missing, unmounted, refused", [
-    (["/data/cassandra/data"], ["/data"], ["/data/cassandra/data (/data)"]),
-    (["/data"], ["/data"], ["/data (/data)"]),
-    (["/data/cassandra/data"], ["/data2", "/dat"], []),  # not a prefix of a path component
-    (["/data/cassandra/data"], [], []),
+@pytest.mark.parametrize("dirs, unmounted, refused", [
+    ([("/data/cassandra/data", False)], ["/data"], ["/data/cassandra/data (/data)"]),
+    ([("/data", False)], ["/data"], ["/data (/data)"]),
+    # there already: the empty mount point, or dirs left below it on the root filesystem
+    ([("/data", True)], ["/data"], ["/data (/data)"]),
+    ([("/var/lib/cassandra/data", True), ("/var/lib/cassandra/hints", True)], ["/var/lib/cassandra"],
+     ["/var/lib/cassandra/data (/var/lib/cassandra)", "/var/lib/cassandra/hints (/var/lib/cassandra)"]),
+    ([("/data/cassandra/data", False)], ["/data2", "/dat"], []),  # not a prefix of a path component
+    ([("/data/cassandra/data", False), ("/var/lib/cassandra/hints", True)], [], []),
 ])
-def test_refused_on_unmounted_disk(missing, unmounted, refused):
-    assert on_unmounted(missing, unmounted) == refused
+def test_refused_on_unmounted_disk(dirs, unmounted, refused):
+    assert on_unmounted(dirs, unmounted) == refused
 
 
 def test_seed_reload_logs_in_to_jmx():

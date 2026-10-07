@@ -16,6 +16,41 @@
           - cassandra_data_findmnt.results | map(attribute='stdout') | select | list | length > 0
           - cassandra_data_disk_stat.results | selectattr('stat.exists') | list | length == 0
 
+    - name: Check the container is detected, nothing applied live or at boot
+      ansible.builtin.assert:
+        that:
+          - _cassandra_linux_container is true
+          - _cassandra_linux_live is false
+          - _cassandra_linux_boot is false
+
+    - name: Run cassandra_linux with cassandra_linux_apply_live false
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_linux_apply_live: false
+
+    - name: Check nothing is applied live or at boot
+      ansible.builtin.assert:
+        that:
+          - _cassandra_linux_live is false
+          - _cassandra_linux_boot is false
+
+    - name: A cassandra_linux_apply_live that is not auto or a boolean is refused
+      block:
+        - name: Run cassandra_linux with cassandra_linux_apply_live maybe
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_linux
+          vars:
+            cassandra_linux_apply_live: maybe
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: cassandra_linux_apply_live maybe was accepted
+      rescue:
+        - name: Check the refusal
+          ansible.builtin.assert:
+            that: "'must be auto, true or false' in ansible_failed_result.msg"
+
     - name: An explicit device that can't be tuned is refused
       block:
         - name: Run cassandra_linux with a device missing from sysfs
@@ -33,6 +68,52 @@
           ansible.builtin.assert:
             that: "'be tuned' in ansible_failed_result.msg"
 
+    # The real /sys/block is the host's: the disk is not tuned, nor refused
+    - name: Run cassandra_linux in the container with a device it doesn't see
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_block_device: /dev/sdx
+
+    - name: Check it was neither tuned nor refused
+      ansible.builtin.assert:
+        that:
+          - _cassandra_data_tuned_here is false
+          - cassandra_data_disk_stat.results | selectattr('stat.exists') | list | length == 0
+
+    # udev ids faked (the fake disk has none): on SCSI, ID_WWN is shared by
+    # the LUNs of an array, the rule must match the WWN with its extension
+    - name: Run cassandra_linux with the udev ids of a SAN LUN
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+      vars:
+        cassandra_data_block_device: /dev/sdz
+        cassandra_sysfs_block_root: /tmp/fake-sys/block
+        cassandra_data_udev_info:
+          results:
+            - item: sdz
+              stdout_lines:
+                - ID_PATH=pci-0000:00:10.0-scsi-0:0:0:1
+                - ID_SERIAL=3600a098038303053453f463045727a6b
+                - ID_WWN=0x600a098038303053
+                - ID_WWN_WITH_EXTENSION=0x600a098038303053453f463045727a6b
+      tags: molecule-idempotence-notest  # the next run rewrites the udev rule by name
+
+    - name: Read the udev rule of the SAN LUN
+      ansible.builtin.slurp:
+        src: /etc/udev/rules.d/61-cassandra-data-disk.rules
+      register: _san_rule
+      when: not ansible_check_mode
+      tags: molecule-idempotence-notest
+
+    - name: Check the rule matches the WWN with its extension
+      ansible.builtin.assert:
+        that:
+          - "'ENV{ID_WWN_WITH_EXTENSION}==\"0x600a098038303053453f463045727a6b\"' in _san_rule.content | b64decode"
+          - "'ENV{ID_WWN}==' not in _san_rule.content | b64decode"
+      when: not ansible_check_mode
+      tags: molecule-idempotence-notest
+
     - name: Run cassandra_linux with an explicit data disk on the fake sysfs tree
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_linux
@@ -47,6 +128,26 @@
       vars:
         cassandra_data_block_devices: [/dev/sdz, /dev/sdy]
         cassandra_sysfs_block_root: /tmp/fake-sys/block
+
+    # molecule's check step runs on the fresh host
+    - name: Under --check, the disks and the udev rule are left untouched
+      when: ansible_check_mode
+      block:
+        - name: Read the SSD's read-ahead
+          ansible.builtin.slurp:
+            src: /tmp/fake-sys/block/sdz/queue/read_ahead_kb
+          register: _check_readahead
+
+        - name: Look for the udev rule
+          ansible.builtin.stat:
+            path: /etc/udev/rules.d/61-cassandra-data-disk.rules
+          register: _check_rule
+
+        - name: Check nothing was written
+          ansible.builtin.assert:
+            that:
+              - _check_readahead.content | b64decode | trim == '128'
+              - not _check_rule.stat.exists
 
     - name: Run cassandra_linux leaving time sync alone
       ansible.builtin.include_role:

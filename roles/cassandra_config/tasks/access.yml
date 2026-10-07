@@ -33,7 +33,7 @@
       check_mode: false
       no_log: true
       when:
-        - cassandra_config_initialized.stat.exists | default(false)
+        - _cassandra_config_initialized | default(false) | bool
         - not cassandra_config_normalize | bool
 
     - name: Write jmxremote.password

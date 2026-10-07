@@ -1,6 +1,6 @@
 ---
 # Packages this run installs, with the version installed (or, with --check,
-# the repo's candidate), plus the cqlsh Python pointer.
+# the repo's candidate), plus the cqlsh Python pointer and dsbulk.
 - name: List the packages this role manages
   ansible.builtin.set_fact:
     _cassandra_install_new: >-
@@ -78,6 +78,13 @@
   ansible.builtin.set_fact:
     _cassandra_install_items: "{{ _cassandra_install_items | default([]) + [{'item': 'cqlsh Python', 'before': 'python3', 'after': _cassandra_cqlsh_python}] }}"
   when: cassandra_cqlsh_wrapper is changed
+
+- name: Add dsbulk to the change list
+  ansible.builtin.set_fact:
+    _cassandra_install_items: "{{ _cassandra_install_items | default([]) + [_cassandra_install_dsbulk_change] }}"
+  when:
+    - cassandra_dsbulk_install | bool
+    - _cassandra_install_dsbulk_change | default({}) | length > 0
 
 - name: Report
   ansible.builtin.include_role:

@@ -79,7 +79,8 @@
       name: rocky-baseos-chrony
       description: Rocky BaseOS (chrony only)
       baseurl: "https://dl.rockylinux.org/pub/rocky/{{ ansible_facts['distribution_major_version'] }}/BaseOS/$basearch/os/"
-      gpgcheck: false
+      gpgcheck: true
+      gpgkey: "https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-{{ ansible_facts['distribution_major_version'] }}"
       includepkgs: chrony
     when: ansible_facts['distribution'] == 'RedHat'
 

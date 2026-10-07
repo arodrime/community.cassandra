@@ -33,3 +33,20 @@ _cassandra_config_perm_settings:
   # the account the unit runs Cassandra as (cassandra_service), else cassandra_user
   user: "{{ cassandra_service_user | default(cassandra_user) }}"
   user_group: "{{ cassandra_service_group | default(cassandra_group) }}"
+# GC of each jvm<N>-server.options file of the series
+_cassandra_config_gcs: >-
+  {{ [cassandra_jvm8_gc | default(cassandra_jvm_gc), cassandra_jvm11_gc | default(cassandra_jvm_gc)]
+     if cassandra_version in ['40x', '41x']
+     else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
+# Where the package puts its config (RedHat: the alternatives target it ships)
+_cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
+# A duration above zero Cassandra 4.1+ reads in milliseconds (DurationSpec.IntMillisecondsBound)
+_cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
+# Installed Cassandra release ('' if not from a package)
+_cassandra_config_installed: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') | regex_replace('^([0-9.]+).*$', '\\1') }}"
+# A value (a password) that YAML would not read back as the same plain string:
+# single-quoted in cassandra.yaml
+_cassandra_config_quote: '(?s)^(?!(?!(?i:y|n|yes|no|true|false|on|off|null)$)[A-Za-z][A-Za-z0-9_./+=@-]*$)(.*)$'
+# data_file_directories when cassandra.yaml has none: <cassandra.storagedir>/data,
+# /var/lib/cassandra with the deb and rpm packages (cassandra.in.sh)
+_cassandra_config_default_data_dir: /var/lib/cassandra/data

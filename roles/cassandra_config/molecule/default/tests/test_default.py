@@ -111,6 +111,26 @@ def test_40x_overrides(host):
     assert conf["auto_bootstrap"] is False
 
 
+@pytest.mark.parametrize("series, period, window, value", [
+    ("40x", "commitlog_sync_period_in_ms", "commitlog_sync_group_window_in_ms", 15),
+    ("41x", "commitlog_sync_period", "commitlog_sync_group_window", "15ms"),
+    ("50x", "commitlog_sync_period", "commitlog_sync_group_window", "15ms"),
+])
+def test_commitlog_group_mode(host, series, period, window, value):
+    # Cassandra refuses to start in group mode with a sync period: only the window is set
+    content = host.file(f"/tmp/cassandra-{series}-group/cassandra.yaml").content_string
+    conf = yaml.safe_load(content)
+
+    assert conf["commitlog_sync"] == "group"
+    assert conf[window] == value
+    assert period not in conf
+    assert f"\n# {period}: " in content
+
+
+def test_commitlog_group_mode_without_window_refused(host):
+    assert not host.file("/tmp/cassandra-group-no-window").exists
+
+
 @pytest.mark.parametrize("name", FILES)
 def test_defaults_file_mode(host, name):
     f = host.file(f"{conf_dir(host)}/{name}")
@@ -196,6 +216,14 @@ def test_rpm_conf_alternative(host):
     assert "link currently points to /etc/cassandra/ansible.conf" in display
     assert host.file("/etc/cassandra/conf").linked_to == "/etc/cassandra/ansible.conf"
     assert host.file("/etc/cassandra/ansible.conf/cqlshrc.sample").content_string == "package file\n"  # seeded
+    # from the dir in use before (prepare on Rocky), not default.conf: its keystore came along, still Cassandra's only
+    keystore = host.file("/etc/cassandra/ansible.conf/.keystore")
+    if host.file("/etc/cassandra/prod.conf").exists:
+        assert (keystore.content_string, keystore.user, keystore.group, keystore.mode) == ("keystore\n", "cassandra", "cassandra", 0o400)
+        assert not host.file("/etc/cassandra/prod.conf/cassandra.yaml").exists  # the dir it came from, untouched
+    else:
+        assert not keystore.exists
+    assert not host.file("/etc/cassandra/ansible.conf.seed").exists  # the temp copy, moved in place
     assert host.file("/etc/cassandra/ansible.conf/cassandra.yaml").exists
     assert not host.file("/etc/cassandra/default.conf/cassandra.yaml").exists  # package dir untouched
 
@@ -205,6 +233,8 @@ def test_unconfirmed_change_not_applied(host):
 
     assert conf["num_tokens"] == 16
     assert "commitlog_total_space" not in conf  # the unconfirmed change was refused
+    assert conf["data_file_directories"] == ["/tmp/initialized-node"]  # also when the inventory moved the data dir
+    assert not host.file("/tmp/not-initialized").exists
 
 
 def test_masked_password_applied(host):
@@ -219,6 +249,12 @@ def test_identity_change_only_when_forced(host):
 
     assert conf["num_tokens"] == 16  # refused
     assert "rack=rack2" in rackdc  # forced
+
+
+def test_new_node_without_pyyaml_rendered(host):
+    conf = yaml.safe_load(host.file("/tmp/cassandra-new-node/cassandra.yaml").content_string)
+
+    assert conf["cluster_name"] == "Molecule Cluster"  # not refused as a joined node
 
 
 def test_preview_leaves_no_temp_dir(host):

@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 ROLES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
+# roles with defaults: each has an argument spec, every default documented, with the same value
 ROLES = sorted(
     role for role in os.listdir(ROLES_DIR)
     if os.path.isfile(os.path.join(ROLES_DIR, role, "defaults", "main.yml"))
@@ -60,3 +61,25 @@ def test_spec_defaults_match_role_defaults(role):
         elif option.get("default") != value:
             mismatches.append((name, value, option.get("default")))
     assert mismatches == []
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_descriptions_are_text(role):
+    # an unquoted "key: value" in a description is a dict: ansible-doc refuses the whole role
+    spec = load_yaml(role, "meta/argument_specs.yml")["argument_specs"]["main"]
+    entries = [("main", spec)] + list(spec.get("options", {}).items())
+    bad = []
+    for name, entry in entries:
+        description = entry.get("description", [])
+        for line in description if isinstance(description, list) else [description]:
+            if not isinstance(line, str):
+                bad.append(name)
+    assert bad == []
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_accounts_named_like_cassandra_user(role):
+    # accounts are *_user / *_group, like cassandra_user / cassandra_group (a former name still read: deprecated)
+    options = spec_options(role)
+    assert sorted(k for k in options if k.endswith(("_owner", "_uid", "_gid"))
+                  and "deprecated" not in " ".join(options[k].get("description", []))) == []

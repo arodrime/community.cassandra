@@ -3,10 +3,15 @@
   ansible.builtin.assert:
     that:
       - cassandra_conf_dir is defined and cassandra_conf_dir != ""
+      - cassandra_data_file_directories | length > 0
+      - cassandra_config_confirm | string | lower in ['auto', 'true', 'false', 'yes', 'no']
+      - _cassandra_config_gcs | reject('in', ['G1', 'CMS', 'custom']) | list | length == 0
       - cassandra_data_dir is defined and cassandra_data_dir != ""
       - cassandra_version in ["40x", "41x", "50x"]
-      - cassandra_jvm_gc in ["G1", "CMS", "custom"]
-    fail_msg: "cassandra_version must be one of 40x, 41x, 50x; cassandra_jvm_gc one of G1, CMS, custom"
+    fail_msg: >-
+      cassandra_conf_dir, cassandra_data_dir and cassandra_data_file_directories must not be empty,
+      cassandra_version must be one of 40x, 41x, 50x, cassandra_config_confirm auto, true or false, and
+      cassandra_jvm_gc (cassandra_jvm<N>_gc) one of G1, CMS, custom
 
 - name: Warn about a variable under its former name
   ansible.builtin.debug:
@@ -14,6 +19,34 @@
       DEPRECATION WARNING: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
       (the former name still wins while it is set).
   when: cassandra_config_owner is defined
+
+# Cassandra refuses to start without a period above zero in periodic mode
+# (4.1+: a duration in ms or a larger unit)
+- name: Assert the commit log sync settings
+  ansible.builtin.assert:
+    that:
+      - cassandra_commitlog_sync in ['periodic', 'group', 'batch']
+      - >-
+        cassandra_commitlog_sync != 'periodic'
+        or (cassandra_commitlog_sync_period_in_ms | int > 0 if cassandra_version == '40x'
+            else (cassandra_commitlog_sync_period | string) is match(_cassandra_config_duration_ms))
+    fail_msg: >-
+      cassandra_commitlog_sync must be periodic, group or batch, and in periodic mode
+      {{ 'cassandra_commitlog_sync_period_in_ms above zero (milliseconds)' if cassandra_version == '40x'
+         else 'cassandra_commitlog_sync_period above zero, in ms or a larger unit (e.g. 10000ms)' }}
+
+# Group mode has no default window, as in Cassandra, which refuses to start without one
+- name: Assert the commit log group window is set
+  ansible.builtin.assert:
+    that: >-
+      cassandra_commitlog_sync_group_window_in_ms | float > 0 if cassandra_version == '40x'
+      else (cassandra_commitlog_sync_group_window | string) is match(_cassandra_config_duration_ms)
+    fail_msg: >-
+      cassandra_commitlog_sync is group: set
+      {{ 'cassandra_commitlog_sync_group_window_in_ms (e.g. 15' if cassandra_version == '40x'
+         else 'cassandra_commitlog_sync_group_window (e.g. 15ms' }}; the time a write may wait for the group fsync),
+      above zero
+  when: cassandra_commitlog_sync == 'group'
 
 - name: Refuse extra settings the template already has
   ansible.builtin.assert:
@@ -40,24 +73,26 @@
       ({{ cassandra_dc }}) and cassandra_rack ({{ cassandra_rack }}). Remove them from the inventory.
     quiet: true
 
-# 4.x cassandra-env.sh exits if only one of the pair is set under CMS
-- name: Assert heap settings are consistent (4.x, CMS)
+# Unless G1 is in use, cassandra-env.sh exits when only one of MAX_HEAP_SIZE
+# and HEAP_NEWSIZE is set; 5.0's leaves HEAP_NEWSIZE commented out
+- name: Assert heap settings are consistent
   ansible.builtin.assert:
-    that: cassandra_heap_newsize != ""
-    fail_msg: "With CMS on 4.x, set cassandra_heap_newsize together with cassandra_heap_size"
-  when:
-    - cassandra_version in ["40x", "41x"]
-    - (cassandra_jvm11_gc | default(cassandra_jvm_gc)) == "CMS"
-    - cassandra_heap_size != ""
+    that: >-
+      _cassandra_config_gcs | reject('equalto', 'G1') | list | length == 0
+      or (cassandra_heap_size == '' and cassandra_heap_newsize == '')
+      or (cassandra_heap_size != '' and cassandra_heap_newsize != '' and cassandra_version != '50x')
+    fail_msg: >-
+      Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
+      together on 4.x, and neither on 5.0 (its cassandra-env.sh has no HEAP_NEWSIZE)
 
 - name: Check that the Cassandra package's config is there
   ansible.builtin.stat:
-    path: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
+    path: "{{ _cassandra_config_pkg_conf_dir }}"
   register: cassandra_config_pkg_conf
 
 - name: Stop if Cassandra is not installed
   ansible.builtin.fail:
-    msg: "{{ cassandra_config_pkg_conf.stat.path }} not found: install Cassandra first (cassandra_install)"
+    msg: "{{ _cassandra_config_pkg_conf_dir }} not found: install Cassandra first (cassandra_install)"
   when:
     - not cassandra_config_pkg_conf.stat.exists
     - not ansible_check_mode
@@ -79,84 +114,216 @@
       ansible.builtin.package_facts:
       check_mode: false
 
+    # Not under --check: the upgrade playbook's preflight shows the target
+    # series' config while the former one is still installed
+    - name: Refuse the templates of another series than the one installed
+      ansible.builtin.assert:
+        that: _installed == '' or (_installed ~ '.').startswith(_cassandra_config_series ~ '.')
+        fail_msg: >-
+          Cassandra {{ _installed }} is installed, not {{ _cassandra_config_series }} (cassandra_version {{ cassandra_version }}):
+          set cassandra_version to the installed series.
+        quiet: true
+      vars:
+        _installed: "{{ _cassandra_config_installed }}"
+      when: not ansible_check_mode
+
     - name: Say when Cassandra is newer than the templates
       ansible.builtin.debug:
         msg: >-
-          Cassandra {{ _installed }} is newer than {{ _templates }}, the release the {{ _cassandra_config_series }}
-          templates come from: settings it added are not variables, set them with cassandra_extra_settings.
+          Cassandra {{ _cassandra_config_installed }} is newer than {{ _templates }}, the release the
+          {{ _cassandra_config_series }} templates come from: settings it added are not variables, set them with
+          cassandra_extra_settings.
       vars:
-        _installed: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') | regex_replace('^([0-9.]+).*$', '\\1') }}"
         _templates: "{{ _cassandra_config_template_versions[_cassandra_config_series] }}"
       when:
-        - _installed != ''
-        - _installed is version(_templates, '>')
+        - _cassandra_config_installed != ''
+        - _cassandra_config_installed is version(_templates, '>')
 
-    - name: Set up the RPM conf dir alternative
-      when:
-        - ansible_facts['os_family'] == 'RedHat'
-        - cassandra_rpm_conf_alternative != ""
-      block:
-        - name: Check for the alternative conf dir
-          ansible.builtin.stat:
-            path: "{{ cassandra_rpm_conf_alternative }}"
-          register: cassandra_rpm_conf_alternative_stat
-
-        - name: Read where /etc/cassandra/conf points now
-          ansible.builtin.stat:
-            path: /etc/cassandra/conf
-          register: cassandra_config_conf_target
-
-        # Only seeded once: later runs must not overwrite files the templates don't manage
-        - name: Seed the alternative conf dir from default.conf
-          ansible.builtin.copy:
-            src: /etc/cassandra/default.conf/
-            dest: "{{ cassandra_rpm_conf_alternative }}/"
-            remote_src: true
-            mode: preserve
-          when: not cassandra_rpm_conf_alternative_stat.stat.exists
-
-        - name: Select the alternative conf dir
-          community.general.alternatives:
-            name: cassandra
-            link: /etc/cassandra/conf
-            path: "{{ cassandra_rpm_conf_alternative }}"
-            priority: "{{ cassandra_rpm_conf_alternative_priority }}"
-            state: selected
-          when: cassandra_rpm_conf_alternative_stat.stat.exists or not ansible_check_mode  # not seeded under --check
-
-    - name: Check whether this node was already initialized
+    # The package creates the stock directories only: others (a data disk, a
+    # log dir) must exist, owned by the service user, before the node first
+    # starts. Existing ones are left as they are; missing parents are made
+    # root-owned, 0755.
+    - name: Look for the Cassandra directories
       ansible.builtin.stat:
-        path: "{{ cassandra_data_dir }}/system"
-      register: cassandra_config_initialized
+        path: "{{ item }}"
+      loop: >-
+        {{ (cassandra_data_file_directories + [cassandra_commitlog_dir, cassandra_saved_caches_dir,
+            cassandra_hints_dir, cassandra_log_dir]) | select | unique | list }}
+      register: cassandra_config_dirs
+
+    # A disk in /etc/fstab that did not mount (e.g. nofail, after a reboot)
+    # leaves an empty mount point: the dirs made there would land on the root
+    # filesystem, and the node would start on empty dirs. Checked for every
+    # directory, before anything else: without its data, a joined node would
+    # also look new.
+    - name: Find the fstab mount points not mounted
+      ansible.builtin.shell: |
+        set -o pipefail
+        command -v mountpoint >/dev/null || exit 0
+        findmnt --fstab --noheadings --output TARGET | while read -r t; do
+          case "$t" in /?*) mountpoint -q "$t" || echo "$t";; esac
+        done
+      args:
+        executable: /bin/bash
+      register: cassandra_config_unmounted
+      changed_when: false
+      failed_when: false  # no findmnt: nothing to compare with
+      check_mode: false
+
+    - name: Refuse directories on a disk that is not mounted
+      ansible.builtin.assert:
+        that: _on_unmounted | length == 0
+        fail_msg: >-
+          {{ _on_unmounted | join(', ') }}: on a mount point of /etc/fstab that is not mounted (what is there
+          is on the filesystem below). Mount it first; nothing is changed.
+        quiet: true
+      vars:
+        _on_unmounted: >-
+          {%- set out = [] -%}
+          {%- for d in cassandra_config_dirs.results | map(attribute='item') -%}
+          {%-   for t in cassandra_config_unmounted.stdout_lines | default([]) -%}
+          {%-     if d == t or d.startswith(t ~ '/') -%}{%- set _ = out.append(d ~ ' (' ~ t ~ ')') -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # A node that holds a system keyspace has been initialized: in one of the
+    # data directories of the inventory, its local_system_data_file_directory
+    # (cassandra_extra_settings), the package's or a tarball's default one, or
+    # any absolute path written in the live cassandra.yaml outside comment
+    # lines (an inventory that does not match the node yet). Paths are picked
+    # from the text, no YAML parsing: no PyYAML needed on the node. A live
+    # cassandra.yaml that cannot be read counts as initialized, a running
+    # Cassandra too.
+    - name: Look for the live cassandra.yaml
+      ansible.builtin.stat:
+        path: "{{ cassandra_conf_dir }}/cassandra.yaml"
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      register: cassandra_config_live_yaml_stat
+
+    - name: Read the live cassandra.yaml
+      ansible.builtin.slurp:
+        src: "{{ cassandra_conf_dir }}/cassandra.yaml"
+      register: cassandra_config_live
+      failed_when: false
+      no_log: true  # it may hold passwords
+      when: cassandra_config_live_yaml_stat.stat.exists
+
+    - name: List the absolute paths of the live cassandra.yaml
+      ansible.builtin.set_fact:
+        # one expression, so the node's text is never in a var that could be templated; a path with a "{"
+        # is never kept in the fact either: a "{" item stands for it, and the node counts as initialized.
+        # Paths too long to exist are left out.
+        _cassandra_config_live_paths: >-
+          {%- set text = (cassandra_config_live.content | b64decode if cassandra_config_live.content is defined else '')
+                         | regex_replace(_comment_line, '') -%}
+          {%- set paths = (text | regex_findall(_plain) + text | regex_findall(_single_quoted)
+                           + text | regex_findall(_double_quoted) + text | regex_findall(_line_value) | map('trim') | list)
+                          | map('regex_replace', _trailing_slash, '') | reject('search', '[^/]{256}') | select('match', '.{1,4095}$')
+                          | unique | list -%}
+          {{ paths | reject('search', '{') | list + (['{'] if paths | select('search', '{') | list else []) }}
+      vars:
+        _comment_line: '(?m)^[ \t]*#.*$'
+        _plain: '(?<![^\s\[,''"])/[^\s''",\]}]*'
+        _single_quoted: '''(/[^''\n]*)'''
+        _double_quoted: '"(/[^"\n]*)"'
+        # the rest of a "- /path" or "key: /path" line (trimmed): a path with spaces
+        _line_value: '(?m)^[ \t]*(?:-|[\w"'']+[ \t]*:)[ \t]+(/[^#\n]*)'
+        _trailing_slash: '(?<=.)/+$'
+      no_log: true  # it may hold secrets
+
+    - name: Look for the system keyspace of an initialized node
+      ansible.builtin.stat:
+        path: "{{ item }}/system"
+        follow: true
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      loop: >-
+        {{ (cassandra_data_file_directories
+            + [cassandra_extra_settings.local_system_data_file_directory | default('', true) | string,
+               _cassandra_config_default_data_dir, (cassandra_conf_dir | regex_replace('(?<=.)/+$', '') | dirname) ~ '/data/data']
+            + _cassandra_config_live_paths | select('match', '/') | list)
+           | select | map('regex_replace', '(?<=.)/+$', '') | unique }}
+      register: cassandra_config_system
+      no_log: true  # the paths may hold secrets
+      failed_when: false  # a file (a keystore path), checked below
+      environment:
+        LC_ALL: C  # errors in English, as checked below
+
+    - name: Look for a running Cassandra
+      ansible.builtin.service_facts:
+
+    # Where it was found and, for a node started once by mistake (another
+    # config) that never joined the real cluster, the dirs to empty to start it over
+    - name: Tell whether this node was already initialized
+      ansible.builtin.set_fact:
+        _cassandra_config_initialized: "{{ _why | length > 0 }}"
+        _cassandra_config_initialized_why: "{{ _why | join(', ') }}"
+        _cassandra_config_reset: >-
+          {{ '' if not _found else "ONLY if this node never joined the real cluster (e.g. started once with the stock config),
+          it can start over, which DELETES its data: stop Cassandra, check these are this node's dirs (not another
+          instance's) and empty them: " ~ (_found + cassandra_data_file_directories
+          + [cassandra_commitlog_dir, cassandra_saved_caches_dir, cassandra_hints_dir]) | select
+          | map('regex_replace', '(?<=.)/+$', '') | unique | join(', ')
+          ~ ", then run again." }}
+      vars:
+        _found: >-
+          {{ cassandra_config_system.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
+             | map(attribute='item') | list }}
+        _running: >-
+          {{ (ansible_facts.services['cassandra.service'] | default(ansible_facts.services['cassandra'] | default({}))).state
+             | default('') == 'running' }}
+        # a stat that failed for another reason than "a file, not a dir" or "cannot exist": not checked
+        _unchecked: >-
+          {{ cassandra_config_system.results | rejectattr('stat', 'defined') | map(attribute='msg', default='')
+             | reject('search', 'Not a directory|too long') | list | length > 0 }}
+        _why: >-
+          {{ _found | map('regex_replace', '$', '/system') | list
+             + (['a data dir that could not be checked'] if _unchecked | bool else [])
+             + (['the live cassandra.yaml not readable'] if cassandra_config_live_yaml_stat.stat.exists
+                and cassandra_config_live.content is not defined else [])
+             + (['a path with "{" in the live cassandra.yaml'] if '{' in _cassandra_config_live_paths else [])
+             + (['Cassandra is running'] if _running | bool else []) }}
 
     # Cassandra reads initial_token at a node's first start only: a joined node
     # with none in the inventory keeps the one its cassandra.yaml has
-    - name: Read the token a joined node was started with
-      ansible.builtin.slurp:
-        src: "{{ cassandra_conf_dir }}/cassandra.yaml"
-      register: cassandra_config_live_yaml
-      no_log: true  # passwords
-      check_mode: false
-      failed_when: false  # no live file: nothing to keep
-      when:
-        - cassandra_initial_token | string in ['', 'None']
-        - cassandra_config_initialized.stat.exists
-
     - name: Keep the token a joined node was started with
       ansible.builtin.set_fact:
         cassandra_initial_token: "{{ _live }}"
       vars:
         _line: >-
-          {{ cassandra_config_live_yaml.content | b64decode
+          {{ cassandra_config_live.content | b64decode
              | regex_findall('(?m)^initial_token:[ \t]*(.*?)[ \t]*$') | last | default('') }}
         _live: >-
           {{ _line | regex_replace('\s+#.*$', '') | replace('"', '') | replace("'", '') | trim }}
       when:
-        - cassandra_config_live_yaml.content is defined
+        - cassandra_initial_token | string in ['', 'None']
+        - _cassandra_config_initialized | bool
+        - cassandra_config_live.content is defined
         - _live != ''
 
+    # PyYAML is not an Ansible requirement on the nodes: validate when it is there
+    - name: Look for PyYAML on the node
+      ansible.builtin.command:
+        argv: ["{{ _cassandra_config_python }}", -c, import yaml]
+      register: cassandra_config_pyyaml
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read where /etc/cassandra/conf points now
+      ansible.builtin.stat:
+        path: /etc/cassandra/conf
+      register: cassandra_config_conf_target
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - cassandra_rpm_conf_alternative != ""
+
     # Render into a temp dir and diff against the live files (Ansible's own
-    # diff skips files over 100KB, cassandra.yaml included)
+    # diff skips files over 100KB, like the 5.0 cassandra.yaml)
     - name: Preview config changes
       block:
         - name: Create a temp dir for the preview
@@ -179,6 +346,24 @@
           check_mode: false
           changed_when: false
 
+        # Before any file is written: a cassandra.yaml Cassandra cannot read stops the run
+        - name: Check the new cassandra.yaml is valid YAML
+          ansible.builtin.command:
+            argv:
+              - "{{ _cassandra_config_python }}"
+              - -c
+              - |
+                import io, sys, yaml
+                try:
+                    yaml.safe_load(io.open(sys.argv[1], encoding="utf-8", errors="replace"))
+                except yaml.YAMLError as e:  # its line only: the text may hold a password
+                    mark = getattr(e, "problem_mark", None)
+                    sys.exit("the new cassandra.yaml is not valid YAML (line %s)" % (mark.line + 1 if mark else "?"))
+              - "{{ cassandra_config_tmp.path }}/cassandra.yaml"
+          check_mode: false
+          changed_when: false
+          when: cassandra_config_pyyaml.rc == 0
+
         # difflib from the Python Ansible runs with: no diff binary needed
         - name: Diff them against the live files
           ansible.builtin.command:
@@ -186,15 +371,18 @@
               - "{{ _cassandra_config_python }}"
               - -c
               - |
-                import difflib, os, re, sys
+                import difflib, io, os, re, sys
                 live, new = sys.argv[1], sys.argv[2]
-                import io  # newline="": a \r stays in the text (bash reads X=8G\r as "8G\r")
-                a = io.open(live, newline="").read().splitlines(True) if os.path.exists(live) else []
-                b = io.open(new, newline="").read().splitlines(True)
+                # UTF-8 whatever the locale; newline="": a CRLF line differs from the LF one (bash reads X=8G\r as "8G\r")
+                def read(path):
+                    return io.open(path, encoding="utf-8", errors="replace", newline="").read().splitlines(True)
+                a = read(live) if os.path.exists(live) else []
+                b = read(new)
                 d = list(difflib.unified_diff(a, b, live + " (live)", "(new)"))
-                # values of password/secret keys never reach the output
-                secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*\s*[:=]\s*)([^\s#\"']+)")
-                sys.stdout.write("".join(secret.sub(r"\1****", line) for line in d))
+                # values of password/secret keys never reach the output: all of the line after the key
+                secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*[ \t]*[:=][ \t]*)\S[^\r\n]*")
+                out = "".join(secret.sub(r"\1****", line) for line in d)
+                getattr(sys.stdout, "buffer", sys.stdout).write(out.encode("utf-8", "replace"))  # a path not in UTF-8 too
                 sys.exit(1 if d else 0)
               - "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
               - "{{ cassandra_config_tmp.path }}/{{ cassandra_config_file }}"
@@ -219,7 +407,7 @@
           no_log: true  # passwords
           check_mode: false
           when:
-            - cassandra_config_initialized.stat.exists
+            - _cassandra_config_initialized | bool
             - not cassandra_config_normalize | bool
 
         # the directories cassandra.yaml leaves out are under its -Dcassandra.storagedir
@@ -232,14 +420,18 @@
             and cassandra_config_compared.results | default([]) | selectattr('content', 'defined')
                 | selectattr('item.0', 'equalto', 'cassandra.yaml') | list | length > 0
 
-        # Top-level keys and rackdc properties: plain text, no YAML parser needed on the node
+        # Top-level keys and rackdc properties: plain text, no YAML parser needed
+        # on the node. A file left as the node has it (cassandra_config_keep_files)
+        # changes none of them.
         - name: Compare the settings a joined node must keep
           ansible.builtin.command:
             argv:
               - "{{ _cassandra_config_python }}"
               - -c
               - |
-                import json, os, re, sys
+                import io, json, os, re, sys
+                def text(path):  # UTF-8 whatever the locale
+                    return io.open(path, encoding="utf-8", errors="replace").read()
                 def value(v):  # a YAML scalar's text: quotes undone, trailing comment dropped
                     m = re.match(r"'((?:[^']|'')*)'|\"((?:[^\"\\]|\\.)*)\"", v)
                     if m:
@@ -247,35 +439,51 @@
                             return m.group(1).replace("''", "'")
                         return re.sub(r"\\(.)", lambda e: {"n": "\n", "t": "\t"}.get(e.group(1), e.group(1)), m.group(2))
                     return re.sub(r"\s+#.*$", "", v)
-                def read(path, pattern):  # properties: no inline comment, as the snitch reads them
-                    get = value if pattern == yaml else lambda v: v.strip().strip("'\"")
-                    return {k: get(v.strip()) for k, v in re.findall(pattern, open(path).read(), re.M)}
-                yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch):[ \t]*(.*?)[ \t]*$"
-                rackdc = r"^[ \t]*(dc|rack)[ \t]*=[ \t]*(.*?)[ \t]*$"
+                def read(path, pattern):  # properties: no inline comment and no quoting, as the snitch reads them
+                    get = value if pattern == yaml else lambda v: v.strip()
+                    return {k: get(v.strip()) for k, v in re.findall(pattern, text(path), re.M)}
+                yaml = r"^(cluster_name|num_tokens|partitioner|endpoint_snitch|storage_compatibility_mode):[ \t]*(.*?)[ \t]*$"
+                rackdc = r"^[ \t]*(dc|rack|dc_suffix|ec2_naming_scheme)[ \t]*=[ \t]*(.*?)[ \t]*$"
                 def reads_rackdc(snitch):  # a name without a dot is in that package
                     return re.sub(r"^org\.apache\.cassandra\.locator\.", "", snitch or "") not in json.loads(sys.argv[5])
                 live, new = {}, {}
                 for live_file, new_file, pattern in ((sys.argv[1], sys.argv[2], yaml), (sys.argv[3], sys.argv[4], rackdc)):
-                    # rackdc's dc and rack: the node's only for a snitch that reads them
-                    if pattern == rackdc and not any(reads_rackdc(s.get("endpoint_snitch")) for s in (live, new)):
-                        continue
                     if os.path.exists(live_file):  # no live file: nothing to keep
                         live.update(read(live_file, pattern))
                         new.update(read(new_file, pattern))
-                        if pattern == yaml:  # no num_tokens: Cassandra's default
+                        if pattern == yaml:  # absent: Cassandra's default
                             live.setdefault("num_tokens", "1")
                             new.setdefault("num_tokens", "1")
+                            if "storage_compatibility_mode" in new:  # 5.0
+                                live.setdefault("storage_compatibility_mode", "CASSANDRA_4")
+                        else:
+                            # dc= and rack=: the node's only for a snitch that reads them
+                            if not any(reads_rackdc(s.get("endpoint_snitch")) for s in (live, new)):
+                                for d in (live, new):
+                                    d.pop("dc", None)
+                                    d.pop("rack", None)
+                            # cloud snitches: suffix and naming scheme of the dc/rack names
+                            for d in (live, new):
+                                d.setdefault("dc_suffix", "")
+                                d.setdefault("ec2_naming_scheme", "standard")
+                # 5.0 storage mode: one step forward at a time from what the file says, never back
+                steps = [("CASSANDRA_4", "UPGRADING"), ("UPGRADING", "NONE")]
+                mode = "storage_compatibility_mode"
+                if (live.get(mode), new.get(mode)) in steps and re.search(r"(?m)^" + mode + ":", text(sys.argv[1])):
+                    live[mode] = new[mode]
                 print(json.dumps(["%s: %s -> %s" % (k, live.get(k, "(unset)"), new.get(k, "(unset)"))
                                   for k in sorted(set(live) | set(new)) if live.get(k) != new.get(k)]))
               - "{{ cassandra_conf_dir }}/cassandra.yaml"
-              - "{{ cassandra_config_tmp.path }}/cassandra.yaml"
+              - "{{ cassandra_conf_dir if 'cassandra.yaml' in cassandra_config_keep_files else cassandra_config_tmp.path }}/cassandra.yaml"
               - "{{ cassandra_conf_dir }}/cassandra-rackdc.properties"
-              - "{{ cassandra_config_tmp.path }}/cassandra-rackdc.properties"
+              - >-
+                {{ cassandra_conf_dir if 'cassandra-rackdc.properties' in cassandra_config_keep_files
+                   else cassandra_config_tmp.path }}/cassandra-rackdc.properties
               - "{{ _cassandra_config_snitches_without_rackdc | to_json }}"
           register: cassandra_config_identity
           check_mode: false
           changed_when: false
-          when: cassandra_config_initialized.stat.exists
+          when: _cassandra_config_initialized | bool
       always:
         - name: Remove the preview temp dir
           ansible.builtin.file:
@@ -289,15 +497,17 @@
       ansible.builtin.assert:
         that: _changes | length == 0 or cassandra_config_force_identity_change | bool
         fail_msg: >-
-          {{ inventory_hostname }} has already joined a cluster ({{ cassandra_data_dir }}/system exists) and these
-          settings would change: {{ _changes | join('; ') }}. A node keeps them for life: a new cluster_name or
-          partitioner stops it from starting, a new num_tokens or dc/rack moves data ownership without
-          streaming. Fix the inventory to match the node, or follow the documented procedure and set
-          cassandra_config_force_identity_change: true.
+          {{ inventory_hostname }} was already initialized ({{ _cassandra_config_initialized_why }}) and these settings
+          would change: {{ _changes | join('; ') }}. A node keeps them for life: a new cluster_name, partitioner or
+          num_tokens stops it from starting, a new dc or rack too (unless forced), a new snitch or forced dc/rack moves
+          data ownership without streaming, and storage_compatibility_mode (5.0) only moves one step at a time,
+          CASSANDRA_4 (also when absent, write it first), UPGRADING, NONE, never back. Fix the inventory to match the
+          node, or follow the documented procedure and set cassandra_config_force_identity_change: true.
+          {{ _cassandra_config_reset }}
         quiet: true
       vars:
         _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
-      when: cassandra_config_initialized.stat.exists
+      when: _cassandra_config_initialized | bool
 
     - name: Look for the files to keep as they are (cassandra_config_keep_files)
       ansible.builtin.stat:
@@ -317,8 +527,8 @@
         _cassandra_config_ask: >-
           {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _kept)
              | list | length > 0
-             and (cassandra_config_confirm | string | lower == 'true'
-                  or (cassandra_config_confirm | string | lower == 'auto' and cassandra_config_initialized.stat.exists)) }}
+             and (_cassandra_config_initialized | bool if cassandra_config_confirm | string | lower == 'auto'
+                  else cassandra_config_confirm | bool) }}
       vars:
         _kept: >-
           {%- set out = [] -%}
@@ -335,7 +545,7 @@
         # (where the node has them, on a node already initialized: a new one's are the package's)
         _keep: >-
           {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
-             | map(attribute='item') | list if cassandra_config_initialized.stat.exists else [] }}
+             | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
 
     - name: Show the config changes
       ansible.builtin.debug:
@@ -412,7 +622,8 @@
       ansible.builtin.assert:
         that: (cassandra_config_answer.user_input | default('')) == 'yes'
         fail_msg: >-
-          Config changes not confirmed on {{ inventory_hostname }}. Run interactively and answer 'yes',
+          Config changes not confirmed on {{ inventory_hostname }}{{ (' (already initialized: ' ~ _cassandra_config_initialized_why ~ ')')
+          if _cassandra_config_initialized | bool else '' }}. Run interactively and answer 'yes',
           or set cassandra_config_confirm: false to apply without asking.
       when:
         - not ansible_check_mode
@@ -428,15 +639,49 @@
         - not ansible_check_mode
         - _cassandra_config_changes | length > 0
 
-    # PyYAML is not an Ansible requirement on the nodes: validate when it is there
-    - name: Look for PyYAML on the node
-      ansible.builtin.command:
-        argv: ["{{ _cassandra_config_python }}", -c, import yaml]
-      register: cassandra_config_pyyaml
-      changed_when: false
-      failed_when: false
-      check_mode: false
+    # Once the changes are confirmed, so that nothing changes on a refusal
+    - name: Set up the RPM conf dir alternative
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - cassandra_rpm_conf_alternative != ""
+      block:
+        - name: Check for the alternative conf dir
+          ansible.builtin.stat:
+            path: "{{ cassandra_rpm_conf_alternative }}"
+          register: cassandra_rpm_conf_alternative_stat
 
+        # Only seeded once: later runs must not overwrite files the templates
+        # don't manage. From the dir in use (default.conf on a new install,
+        # another alternative with keystores...), owners and modes kept; into
+        # a temp name first (<dir>.seed, replaced), so an interrupted copy is
+        # never selected.
+        - name: Seed the alternative conf dir from the one in use
+          ansible.builtin.command:
+            argv:
+              - sh
+              - -c
+              - >-
+                if [ ! -d "$1" ]; then echo "conf dir in use ($1) missing: restore it or pick another (alternatives --config cassandra)" >&2; exit 1; fi;
+                mkdir -p -- "$(dirname -- "$2")" && rm -rf -- "$2.seed" && cp -aT -- "$1" "$2.seed" && mv -T -- "$2.seed" "$2"
+              - sh
+              - "{{ cassandra_config_conf_target.stat.lnk_source | default('/etc/cassandra/conf')
+                    if cassandra_config_conf_target.stat.exists else '/etc/cassandra/default.conf' }}"
+              - "{{ _dest }}"
+            creates: "{{ _dest }}"
+          vars:
+            _dest: "{{ cassandra_rpm_conf_alternative | regex_replace('(?<=.)/+$', '') }}"
+          when: not cassandra_rpm_conf_alternative_stat.stat.exists
+
+        - name: Select the alternative conf dir
+          community.general.alternatives:
+            name: cassandra
+            link: /etc/cassandra/conf
+            path: "{{ cassandra_rpm_conf_alternative }}"
+            priority: "{{ cassandra_rpm_conf_alternative_priority }}"
+            state: selected
+          when: cassandra_rpm_conf_alternative_stat.stat.exists or not ansible_check_mode  # not seeded under --check
+
+    # (cassandra.yaml checked by the preview, when PyYAML is on the node)
     - name: Template Cassandra config files
       ansible.builtin.template:
         src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
@@ -445,9 +690,6 @@
         group: "{{ _cassandra_config_perm.group }}"
         mode: "{{ _cassandra_config_perm.mode }}"
         backup: "{{ cassandra_config_backup }}"
-        validate: >-
-          {{ (_cassandra_config_python ~ ' -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" %s')
-             if cassandra_config_file == 'cassandra.yaml' and cassandra_config_pyyaml.rc == 0 else omit }}
       diff: false  # shown above, with secrets masked
       loop: "{{ _cassandra_config_files[_cassandra_config_series] }}"
       loop_control:
@@ -470,53 +712,7 @@
       vars:
         _cassandra_config_perm_file: "{{ cassandra_config_file }}"
 
-    # The package creates the stock directories only: others (a data disk, a
-    # log dir) must exist, owned by the service user, before the node first
-    # starts. Existing ones are left as they are; missing parents are made
-    # root-owned, 0755.
-    - name: Look for the Cassandra directories
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      loop: >-
-        {{ (cassandra_data_file_directories + [cassandra_commitlog_dir, cassandra_saved_caches_dir,
-            cassandra_hints_dir, cassandra_log_dir]) | select | unique | list }}
-      register: cassandra_config_dirs
-
-    # A disk in /etc/fstab that did not mount (e.g. nofail, after a reboot)
-    # leaves an empty mount point: the dirs made there would land on the root
-    # filesystem, and the node would start on empty dirs
-    - name: Find the fstab mount points not mounted
-      ansible.builtin.shell: |
-        set -o pipefail
-        command -v mountpoint >/dev/null || exit 0
-        findmnt --fstab --noheadings --output TARGET | while read -r t; do
-          case "$t" in /?*) mountpoint -q "$t" || echo "$t";; esac
-        done
-      args:
-        executable: /bin/bash
-      register: cassandra_config_unmounted
-      changed_when: false
-      failed_when: false  # no findmnt: nothing to compare with
-      check_mode: false
-      when: cassandra_config_dirs.results | rejectattr('stat.exists') | list | length > 0
-
-    - name: Refuse to create them on a disk that is not mounted
-      ansible.builtin.assert:
-        that: _on_unmounted | length == 0
-        fail_msg: >-
-          {{ _on_unmounted | join(', ') }}: missing, on a mount point of /etc/fstab that is not mounted.
-          Mount it first; nothing is created there.
-        quiet: true
-      vars:
-        _on_unmounted: >-
-          {%- set out = [] -%}
-          {%- for d in cassandra_config_dirs.results | rejectattr('stat.exists') | map(attribute='item') -%}
-          {%-   for t in cassandra_config_unmounted.stdout_lines | default([]) -%}
-          {%-     if d == t or d.startswith(t ~ '/') -%}{%- set _ = out.append(d ~ ' (' ~ t ~ ')') -%}{%- endif -%}
-          {%-   endfor -%}
-          {%- endfor -%}
-          {{ out }}
-
+    # Missing directories (looked for above): created once the files are written
     - name: Create the parents of the missing ones
       ansible.builtin.command:
         argv: [sh, -c, 'umask 022 && mkdir -p "$1"', sh, "{{ item.item | dirname }}"]  # 0755 whatever the umask
@@ -552,7 +748,8 @@
       when:
         - cassandra_config_reload_seeds
         - cassandra_config_applied.changed
-        - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+        - (ansible_facts.services['cassandra.service'] | default(ansible_facts.services['cassandra'] | default({}))).state
+          | default('') == 'running'
         - cassandra_config_preview.results | selectattr('cassandra_config_file', 'equalto', 'cassandra.yaml')
           | map(attribute='stdout') | first | default('') is search('^\+\s*- seeds:', multiline=True)
 
@@ -564,7 +761,8 @@
       when:
         - _cassandra_config_changes | length > 0  # not for an owner or mode alone
         - cassandra_config_applied.changed
-        - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+        - (ansible_facts.services['cassandra.service'] | default(ansible_facts.services['cassandra'] | default({}))).state
+          | default('') == 'running'
         - not _cassandra_config_no_restart_warning | default(false)  # apply_config restarts itself
 
 - name: JMX users and cqlsh credentials
