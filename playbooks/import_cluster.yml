@@ -158,7 +158,6 @@
         echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
-        echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
         # the account it runs as: its effective user and group (a name, else the number)
         uid=$(awk '/^Uid:/ {print $3}' /proc/$pid/status 2>/dev/null)
         gid=$(awk '/^Gid:/ {print $3}' /proc/$pid/status 2>/dev/null)
