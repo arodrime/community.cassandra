@@ -647,11 +647,6 @@
         - ansible_facts['os_family'] == 'RedHat'
         - cassandra_rpm_conf_alternative != ""
       block:
-        - name: Check for the alternative conf dir
-          ansible.builtin.stat:
-            path: "{{ cassandra_rpm_conf_alternative }}"
-          register: cassandra_rpm_conf_alternative_stat
-
         # Only seeded once: later runs must not overwrite files the templates
         # don't manage. From the dir in use (default.conf on a new install,
         # another alternative with keystores...), owners and modes kept; into
@@ -672,7 +667,14 @@
             creates: "{{ _dest }}"
           vars:
             _dest: "{{ cassandra_rpm_conf_alternative | regex_replace('(?<=.)/+$', '') }}"
-          when: not cassandra_rpm_conf_alternative_stat.stat.exists
+
+        # Not seeded in check mode, --check or check_mode applied to the role
+        # (apply_config's compare, which ansible_check_mode does not tell): only
+        # a dir that is there is selected
+        - name: Check for the alternative conf dir
+          ansible.builtin.stat:
+            path: "{{ cassandra_rpm_conf_alternative }}"
+          register: cassandra_rpm_conf_alternative_stat
 
         - name: Select the alternative conf dir
           community.general.alternatives:
@@ -681,7 +683,7 @@
             path: "{{ cassandra_rpm_conf_alternative }}"
             priority: "{{ cassandra_rpm_conf_alternative_priority }}"
             state: selected
-          when: cassandra_rpm_conf_alternative_stat.stat.exists or not ansible_check_mode  # not seeded under --check
+          when: cassandra_rpm_conf_alternative_stat.stat.exists
 
     # (cassandra.yaml checked by the preview, when PyYAML is on the node)
     - name: Template Cassandra config files
