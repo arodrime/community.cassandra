@@ -124,6 +124,7 @@ def test_service_seeds_before_changing_the_unit():
     assert plan < seed < names.index("Install the cassandra systemd unit")
     unit = tasks("unit.yml")
     assert unit[plan]["check_mode"] is True
+    assert "mode" not in unit[plan]["ansible.builtin.template"]  # a mode change alone records nothing
     assert "not ansible_check_mode" in unit[plan]["when"]
     assert unit[seed]["ansible.builtin.include_tasks"] == "config_seed.yml"
     assert unit[seed]["when"] == "cassandra_service_unit_planned is changed"
