@@ -133,7 +133,8 @@ def test_node_not_read_is_left_as_it_is():
     assert keep == {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                     "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
                     "cassandra_java_set_default": False, "cassandra_firewall_manage": False,
-                    "cassandra_install_tools": False, "cassandra_install_jemalloc": False, "cassandra_package_hold": False}
+                    "cassandra_install_tools": False, "cassandra_install_jemalloc": False, "cassandra_package_hold": False,
+                    "cassandra_dsbulk_install": False}
 
 
 @pytest.mark.parametrize("keep, env, config_vars, expected", [

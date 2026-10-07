@@ -183,6 +183,8 @@
         echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
         # the Cassandra packages held (Debian, Ubuntu)
         command -v dpkg >/dev/null 2>&1 && echo "held=$(dpkg --get-selections 'cassandra*' 2>/dev/null | awk '$2 == "hold" {print $1}' | tr '\n' ' ')"
+        # dsbulk where cassandra_install puts it (/usr/share/dsbulk-<version>, linked from /usr/bin)
+        [ -e /usr/bin/dsbulk ] && echo "dsbulk=$(readlink -f /usr/bin/dsbulk)"
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
           && echo "own_unit=yes"
@@ -226,6 +228,7 @@
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
         import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
         import_cluster_held: "{{ _kv.held | default('') | split }}"
+        import_cluster_dsbulk: "{{ _kv.dsbulk | default('') }}"
         import_cluster_repo_files: "{{ _kv.repo_files | default('') | split }}"
         # the package query answered (dnf repoquery, apt lists): else an air-gapped host, or repositories down
         import_cluster_repos_answer: "{{ _kv.pkg_query is defined }}"
@@ -1034,6 +1037,10 @@
               {%-     set _ = out.update({'cassandra_package_hold': false}) -%}
               {%-   endif -%}
               {%- endif -%}
+              {%- set dsbulk = _hv.import_cluster_dsbulk | default('') | regex_search('^/usr/share/dsbulk-([0-9.]+)/bin/dsbulk$', '\\1') -%}
+              {%- if _read and dsbulk -%}{%- set _ = out.update({'cassandra_dsbulk_version': dsbulk[0]}) -%}
+              {%- elif _read -%}{%- set _ = out.update({'cassandra_dsbulk_install': false}) -%}
+              {%- endif -%}
               {{ out }}
             _conf: >-
               {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
@@ -1106,7 +1113,7 @@
                           'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,
                           'cassandra_java_set_default': false, 'cassandra_firewall_manage': false,
                           'cassandra_install_tools': false, 'cassandra_install_jemalloc': false,
-                          'cassandra_package_hold': false}) }}
+                          'cassandra_package_hold': false, 'cassandra_dsbulk_install': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"

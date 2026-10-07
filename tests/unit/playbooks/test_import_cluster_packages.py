@@ -42,10 +42,26 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def installed(packages, os_family="RedHat", held=None, read=True, package="5.0.7"):
+def installed(packages, os_family="RedHat", held=None, read=True, package="5.0.7", dsbulk="/usr/share/dsbulk-1.11.2/bin/dsbulk"):
     hv = {"ansible_facts": {"packages": {p: [{"version": "1"}] for p in packages}, "os_family": os_family},
-          "import_cluster_package": package, "import_cluster_held": held or []}
-    return render(MATCH["_installed"], _hv=hv, _read=read)
+          "import_cluster_package": package, "import_cluster_held": held or [], "import_cluster_dsbulk": dsbulk}
+    out = render(MATCH["_installed"], _hv=hv, _read=read)
+    if dsbulk == "/usr/share/dsbulk-1.11.2/bin/dsbulk":
+        assert out.pop("cassandra_dsbulk_version", None) == ("1.11.2" if read else None)
+    return out
+
+
+@pytest.mark.parametrize("dsbulk, expected", [
+    # where cassandra_install puts it: that version is kept
+    ("/usr/share/dsbulk-1.11.1/bin/dsbulk", {"cassandra_dsbulk_version": "1.11.1"}),
+    # none, or installed another way (the role would refuse to replace it): left as it is
+    ("", {"cassandra_dsbulk_install": False}),
+    ("/opt/dsbulk-1.11.2/bin/dsbulk", {"cassandra_dsbulk_install": False}),
+])
+def test_dsbulk_kept_as_the_node_has_it(dsbulk, expected):
+    assert installed(["cassandra", "cassandra-tools", "jemalloc"], dsbulk=dsbulk) == expected
+    # whatever the install method
+    assert installed([], package="", dsbulk=dsbulk) == expected
 
 
 def test_everything_there():
