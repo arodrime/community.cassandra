@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_config role - with the RPM conf dir alternative (``cassandra_rpm_conf_alternative``), check mode no longer fails with "path ... does not exist" when the directory has not been seeded yet. This happened in the compare phase of apply_config, where ``ansible_check_mode`` is false. A directory is now selected only once it exists.
