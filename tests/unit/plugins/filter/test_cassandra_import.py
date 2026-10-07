@@ -106,6 +106,20 @@ def test_variables_read_back(series):
     assert v["cassandra_rackdc_dc"] == "paris"  # SimpleSnitch: the file's, not the node's dc
 
 
+@pytest.mark.parametrize("series, window", [("50x", "cassandra_commitlog_sync_group_window"),
+                                            ("41x", "cassandra_commitlog_sync_group_window"),
+                                            ("40x", "cassandra_commitlog_sync_group_window_in_ms")])
+def test_commitlog_group_window_read_back(series, window):
+    # its line is on in group mode only (else a commented placeholder)
+    value = 15 if series == "40x" else "15ms"
+    out = cassandra_config_import(node_files(series, cassandra_commitlog_sync="group", **{window: value}), series, FACTS)
+    assert out["hand_edits"] == []
+    assert out["vars"]["cassandra_commitlog_sync"] == "group"
+    assert out["vars"][window] == value
+    out = cassandra_config_import(node_files(series), series, FACTS)
+    assert out["hand_edits"] == [] and window not in out["vars"]
+
+
 def test_hand_edit_and_normalized():
     files = node_files("50x")
     yaml_lines = files["cassandra.yaml"].split("\n")

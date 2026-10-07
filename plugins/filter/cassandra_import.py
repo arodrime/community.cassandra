@@ -165,7 +165,7 @@ def _read_line(tpl, live, ctx=None):
     m = re.fullmatch(pattern, live)
     if not m:
         return None
-    found, flags, values, gc = {}, {}, {}, {}
+    found, flags, values, gc, chosen = {}, {}, {}, {}, {}
     for expr, cap in zip(exprs, m.groups()):
         e = expr[2:-2].strip()
         if re.fullmatch(r"(\w+)", e):
@@ -201,10 +201,19 @@ def _read_line(tpl, live, ctx=None):
                 gc.setdefault(gcvar, set()).add(name)
             elif cap != off:
                 return None
+        elif re.fullmatch(r"(\w+) if (\w+) == '([^']*)' else '([^']*)'", e):
+            chosen[e.split()[0]] = re.fullmatch(r"\w+ if (\w+) == '([^']*)' else '([^']*)'", e).groups() + (cap,)
         elif re.fullmatch(r"\('\\n' ~ .*\) if \w+ else ''", e):
             if cap:
                 return None
         else:
+            return None
+    # a value written only for one value of another variable (the line on: '' if x == 'group' else '# '), else a
+    # placeholder: commitlog_sync_group_window
+    for var, (cond, val, off, cap) in chosen.items():
+        if gc.get(cond) == {val}:
+            found[var] = _value(cap)
+        elif cap != off:
             return None
     for var, on in flags.items():
         if not on:
