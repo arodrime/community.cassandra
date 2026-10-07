@@ -171,7 +171,10 @@ OPERATIONS = [
                 " an inventory it wrote keeps the files it did not write.",
      "options": {"import_cluster_dir": "where to write the inventory",
                  "import_cluster_force": "true writes into a dir that exists (a re-import)",
-                 "import_cluster_runbook": "true also writes RUNBOOK.md there (the help playbook)"}},
+                 "import_cluster_runbook": "true also writes RUNBOOK.md there (the help playbook)",
+                 "import_cluster_allow_unread": "true accepts a ring node it could not read (else the import fails)",
+                 "import_cluster_keep_hand_edits": "true leaves the config files with hand edits as they are on"
+                                                   " their node"}},
 ]
 
 BY_NAME = dict((op["name"], op) for op in OPERATIONS)
