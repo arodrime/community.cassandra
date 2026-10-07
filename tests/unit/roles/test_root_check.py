@@ -46,7 +46,7 @@ def test_rolling_restart_without_become_stops_before_any_drain(tmp_path):
     out = result.stdout.decode(errors="replace")
     assert result.returncode != 0, out
     assert ("These operations need root on the nodes (node1 without it): the playbook asks for it (become), check "
-            "the inventory does not turn it off there (ansible_become: false, another ansible_become_user). "
+            "the inventory or ansible.cfg does not turn it off there (ansible_become: false, another ansible_become_user). "
             "Nothing was changed.") in out
     assert "Drain the node" not in out
 

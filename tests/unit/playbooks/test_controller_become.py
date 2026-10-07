@@ -2,8 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # Tasks that run on the controller (delegate_to: localhost, plays on localhost)
-# must not become root there, whatever -b or an inventory ansible_become=true
-# asks for the nodes: root-owned progress files and reports can then not be
+# must not become root there, whatever the plays or an inventory
+# ansible_become=true ask for the nodes: root-owned progress files and reports can then not be
 # read by the controller-side lookups, which run as the user. The become
 # keyword is beaten by an inventory ansible_become, so both are needed.
 

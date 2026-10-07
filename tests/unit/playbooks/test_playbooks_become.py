@@ -43,7 +43,9 @@ def test_there_are_node_plays():
 def test_every_node_play_asks_for_root(name, play):
     assert play.get("become") == LESS.get((name, play["name"]), True)
     assert "become_user" not in play  # root, not another account
-    assert "ansible_become" not in (play.get("vars") or {})  # would beat the keyword
+    play_vars = play.get("vars") or {}
+    for var in ("ansible_become", "ansible_become_user", "ansible_become_method"):
+        assert var not in play_vars  # would beat the keyword, or not be root
 
 
 @pytest.mark.parametrize("name", sorted(os.path.basename(p) for p in glob.glob(os.path.join(TOP, "playbooks", "*.yml"))))

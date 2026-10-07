@@ -67,7 +67,9 @@ they need it (``status`` and ``health_check`` only to read ``cassandra_jmx_passw
 never on the controller; ad hoc ``ansible`` commands stay unprivileged. Add ``-K`` when sudo asks for a password.
 The roles need root too, but do not ask for it: your own playbook that applies them (``site.yml``) sets
 ``become: true`` on its play. An inventory ``ansible_become: false`` beats the playbooks' ``become``: the operations
-then stop before changing anything.
+then stop before changing anything, unless Ansible already logs in as root there (nodes without sudo:
+``ansible_user: root``, or ``ansible_become: false``). An inventory ``ansible_become: true`` makes ``status`` and
+``health_check`` run ``nodetool`` as root too, for nodes where it needs root.
 
 Then, with the cluster group found from the inventory (see `Inventory`_):
 

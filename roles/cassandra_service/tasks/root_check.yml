@@ -2,10 +2,10 @@
 # The operations write the systemd unit and Cassandra's files and drive
 # systemd on the nodes: a run without root there could drain a node, then
 # stop on a file it can't write and leave it drained. The playbooks ask for
-# root themselves (become: true); an inventory can still turn it off (an
-# ansible_become: false, another ansible_become_user), and a host where sudo
-# is refused fails here. Checked before any node is touched, for every node
-# of the play at once.
+# root themselves (become: true); an inventory or ansible.cfg can still turn
+# it off (an ansible_become: false, another become user): that fails here. A
+# host where sudo is refused or wants a password (-K) fails at its first task.
+# Checked before any node is touched, for every node of the play at once.
 - name: Read the user the run has on the nodes
   ansible.builtin.command: id -u
   register: cassandra_root_check
@@ -17,7 +17,7 @@
     that: _not_root | length == 0
     fail_msg: >-
       These operations need root on the nodes ({{ _not_root | join(', ') }} without it): the playbook
-      asks for it (become), check the inventory does not turn it off there (ansible_become: false,
+      asks for it (become), check the inventory or ansible.cfg does not turn it off there (ansible_become: false,
       another ansible_become_user). Nothing was changed.
     quiet: true
   run_once: true

@@ -61,7 +61,7 @@ def test_given_nodes_found_when_a_discovered_node_comes_first():
 
 
 def test_inventory_written_without_become():
-    # run with -b for the nodes: sudo on the controller would fail (password) or write root's files
+    # the nodes' plays become: sudo on the controller would fail (password) or write root's files
     write = next(play for play in PLAYS if play["name"] == "Write the inventory")
     assert write.get("become") is False
 
