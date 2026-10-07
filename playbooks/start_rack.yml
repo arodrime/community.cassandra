@@ -8,6 +8,10 @@
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Run a repair of the rack's nodes afterwards if they were down longer than
 # max_hint_window (3 hours by default): hints stop being kept after that.
+# The cluster name is first checked on a node of another rack; when none
+# answers (or the rack is the whole cluster) and cassandra_cluster_name is the
+# role default 'Test Cluster', the run stops (-e cassandra_accept_default_identity=true
+# goes on).
 - name: Check the cluster's group
   hosts: localhost
   gather_facts: false
@@ -45,6 +49,16 @@
         fail_msg: "No node declares cassandra_dc={{ cassandra_target_dc | default('(not set)') }} and cassandra_rack={{ cassandra_target_rack | default('(not set)') }}"
         quiet: true
       run_once: true
+
+    # before the unit is written: an inventory not loaded has the role defaults
+    - name: Check the running nodes belong to this cluster
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_name.yml
+      vars:
+        cassandra_service_cluster_candidates: >-
+          {{ query('community.cassandra.cassandra_nodes') | reject('in', groups['cassandra_target_rack_nodes']) | list }}
+        cassandra_service_cluster_required: true  # the rack is the whole cluster: nothing to read it from
 
 - name: Start the rack
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_target_rack_nodes"

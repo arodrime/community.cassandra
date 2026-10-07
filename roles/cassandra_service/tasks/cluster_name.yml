@@ -1,0 +1,88 @@
+---
+# The cluster the nodes run is the inventory's: the name nodetool
+# describecluster reports is cassandra_cluster_name. A run whose inventory was
+# not loaded (e.g. group_vars next to another inventory source than the one
+# given) has the role defaults, and would write them to the nodes.
+# The description comes from cassandra_service_cluster_describe ({from, stdout},
+# read already), else from the first host of cassandra_service_cluster_candidates
+# where nodetool answers, read by the play's first host. None answering: not
+# checked, said so; refused when cassandra_cluster_name is the role default
+# (-e cassandra_accept_default_identity=true goes on), as with an inventory not
+# loaded the JMX login fails too; with no candidate, refused the same way when
+# cassandra_service_cluster_required is true. Included on every host of the play, not under run_once: a delegated
+# task under run_once that finds its host unreachable ends the play, even with
+# ignore_unreachable. A refusal stops every host.
+- name: Start from the description given, if any
+  ansible.builtin.set_fact:
+    _cassandra_cluster_found: "{{ cassandra_service_cluster_describe | default({}) }}"
+    _cassandra_cluster_errors: []
+
+- name: Read the cluster description from a running node
+  ansible.builtin.include_tasks: cluster_name_read.yml
+  loop: "{{ cassandra_service_cluster_candidates | default([]) }}"
+  loop_control:
+    loop_var: _cassandra_cluster_candidate
+  when:
+    - inventory_hostname == ansible_play_hosts | first
+    - not _cassandra_cluster_found
+
+- name: Say the cluster name is not checked
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: no node of the cluster answered nodetool ({{ _errors | join('; ') }}):
+      the cluster name is not checked against cassandra_cluster_name ({{ cassandra_cluster_name }}).
+  run_once: true
+  vars:
+    _errors: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_errors }}"
+  when:
+    - not hostvars[ansible_play_hosts | first]._cassandra_cluster_found
+    - cassandra_service_cluster_candidates | default([]) | length > 0
+
+- name: Refuse an unchecked cluster under the role default name
+  ansible.builtin.assert:
+    that: >-
+      hostvars[ansible_play_hosts | first]._cassandra_cluster_found | length > 0
+      or (cassandra_service_cluster_candidates | default([]) | length == 0 and not cassandra_service_cluster_required | default(false) | bool)
+      or cassandra_cluster_name != 'Test Cluster'
+      or cassandra_accept_default_identity | default(false) | bool
+    fail_msg: >-
+      The cluster name could not be read ({{ 'no node answered nodetool' if cassandra_service_cluster_candidates | default([])
+      else 'no other node to read it from' }}) and cassandra_cluster_name is the role default
+      'Test Cluster': are the inventory's group_vars loaded? Check with ansible-inventory -i <inventory> --host
+      {{ ansible_play_hosts | first }} (group_vars are read next to the inventory file or directory given, not in its
+      subdirectories). Nothing was changed. If the cluster's name really is 'Test Cluster', add
+      -e cassandra_accept_default_identity=true.
+    quiet: true
+  run_once: true
+
+# The likely cause first: a name the inventory does not set (the role default)
+# is an inventory not loaded far more often than a node of another cluster
+- name: The running node belongs to this cluster
+  ansible.builtin.assert:
+    that: not _found or (_found.rc | default(0) == 0 and _name == cassandra_cluster_name)
+    fail_msg: "{{ _what }} (cassandra_cluster_name). Nothing was changed. {{ _hint }}"
+    quiet: true
+  run_once: true  # fails every host of the play
+  vars:
+    _found: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_found }}"
+    _from: "{{ _found.from | default('') }}"
+    _name: >-
+      {{ _found.stdout | default('') | regex_findall('(?m)^\s*Name: (.*)$') | first | default('') | trim }}
+    _error: >-
+      {{ ((_found.stderr | default('')).splitlines() | select | list or (_found.stdout | default('')).splitlines() | select | list)
+         | last | default('no output') }}
+    _what: >-
+      {{ (_from ~ " runs Cassandra for cluster '" ~ _name ~ "', not '" ~ cassandra_cluster_name ~ "'")
+         if _found.rc | default(0) == 0
+         else ('nodetool describecluster failed on ' ~ _from ~ ' (' ~ _error ~ "): the cluster name is not checked against '"
+               ~ cassandra_cluster_name ~ "'") }}
+    _hint: >-
+      {{ ("cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with"
+          ~ ' ansible-inventory -i <inventory> --host ' ~ _from ~ ' (group_vars are read next to the inventory file'
+          ~ ' or directory given, not in its subdirectories).')
+         if cassandra_cluster_name == 'Test Cluster'
+         else ("'Test Cluster' is the package's stock name: is " ~ _from ~ ' a new host the package started with its'
+               ~ " stock config? Check it is the right host; if it never joined '" ~ cassandra_cluster_name
+               ~ "', the reset_node playbook makes it ready to join.")
+         if _name == 'Test Cluster' and _found.rc | default(0) == 0
+         else 'Check the inventory (-i) and cassandra_cluster_name.' }}
