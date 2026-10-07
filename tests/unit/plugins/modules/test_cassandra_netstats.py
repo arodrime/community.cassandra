@@ -137,7 +137,7 @@ def test_nodetool_fails_no_debug():
     # stderr is returned on failure even without debug: it tells a stopped node
     # (Connection refused) from other failures
     exc = run_main('', rc=1, err="nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: "
-                               "'Connection refused'.")
+                           "'Connection refused'.")
     assert isinstance(exc, FailJson)
     assert "Connection refused" in exc.args[0]['stderr']
 
