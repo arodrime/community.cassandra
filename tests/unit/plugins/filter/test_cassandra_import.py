@@ -630,7 +630,15 @@ def test_layout_left_as_it_is_on_every_node_stays_per_node():
     assert out["group_vars"]["c"] == {"cassandra_num_tokens": 4}
     marked = dict(keep, cassandra_imported_host=True)
     assert out["host_vars"] == {"n1": marked, "n2": marked, "n3": marked}
-    assert "The roles leave their setup as it is" in out["report"]
+    assert "The roles leave their setup as it is (host_vars: cassandra_linux_manage false)" in out["report"]
+
+
+def test_layout_node_not_read_names_what_it_keeps():
+    # every switch its host_vars get, the package ones too
+    keep = {"cassandra_linux_manage": False, "cassandra_firewall_manage": False, "cassandra_install_tools": False}
+    out = cassandra_inventory_layout([node("n1", "dc1", "r1"), dict(node("n2", "dc1", "r1"), read=False, keep=keep)], "c")
+    assert ("The roles leave their setup as it is (host_vars: cassandra_firewall_manage, cassandra_linux_manage,"
+            " cassandra_install_tools false)") in out["report"]
 
 
 def test_layout_value_kept_on_a_node_is_reported():

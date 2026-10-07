@@ -978,8 +978,9 @@ def cassandra_inventory_layout(nodes, cluster_name):
     if unread:
         report.append("NOT READ (in the inventory, but not imported):")
         report += ["  %s: %s" % (n["name"], n.get("reason", "unreachable")) for n in unread]
-        if any(n.get("keep") for n in unread):
-            report.append("  The roles leave their setup as it is (host_vars: %s false)" % ", ".join(KEEP))
+        left = sorted(set(k for n in unread for k in n.get("keep") or {}), key=lambda k: (k not in KEEP, k))
+        if left:
+            report.append("  The roles leave their setup as it is (host_vars: %s false)" % ", ".join(left))
         report.append("")
     for n in nodes:
         if n.get("keep"):
