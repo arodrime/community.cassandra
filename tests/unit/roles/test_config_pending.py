@@ -58,9 +58,11 @@ def pending(snapshot, files, jvm=None):
         "cassandra_pending_snapshot": ({"content": base64.b64encode(json.dumps(snapshot).encode()).decode()}
                                        if snapshot is not None else {}),
     }
+    variables["cassandra_pending_unit_file"] = {"stat": {"exists": False}}
     if jvm is not None:
         variables["cassandra_jvm"] = jvm
-    variables["_started"] = trust_as_template(NOTE["vars"]["_started"])
+    for name in ("_started", "_files", "_newer"):
+        variables[name] = trust_as_template(NOTE["vars"][name])
     return render(NOTE["vars"]["_changed"], variables), render(NOTE["vars"]["_unknown"], variables)
 
 
