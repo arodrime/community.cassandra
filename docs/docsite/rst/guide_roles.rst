@@ -650,8 +650,9 @@ changed, or would change under ``--check``, to that directory on the controller.
 The role never restarts Cassandra. When it changed the files of a running node, it says so.
 
 Whether a running node still has to be restarted for its config is told by content: the roles record the checksums
-of the files Cassandra reads (``cassandra.yaml``, ``cassandra-env.sh``, the jvm options, rackdc, logback) at each
-start, and before the role first changes a node started another way (e.g. imported). Other files of the conf dir
+of the files Cassandra reads (``cassandra.yaml``, ``cassandra-env.sh``, the jvm options, rackdc, logback) and of its
+systemd unit at each start, and before the roles first change the config or the unit of a node started another way
+(e.g. imported). Other files of the conf dir
 (keystores, backups) do not count. A node with no record, whose files were written after Cassandra started by
 something else, is not restarted by ``apply_config``, which names those files: run ``rolling_restart`` if they
 changed a setting.
