@@ -342,11 +342,30 @@ def refusal(task_name, **variables):
 
 def test_identity_refusal_says_where_and_how_to_reset():
     msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
-                  cassandra_config_identity={"stdout": '["cluster_name: Test Cluster -> Prod"]'},
+                  cassandra_config_identity={"stdout": '["cluster_name: Test Cluster -> Prod"]'}, cassandra_cluster_name="Prod",
                   _cassandra_config_initialized_why="/var/lib/cassandra/data/system", _cassandra_config_reset="RESET-HINT.")
     assert msg.startswith("node1 was already initialized (/var/lib/cassandra/data/system) and these settings would change: "
                           "cluster_name: Test Cluster -> Prod. A node keeps them for life: ")
     assert msg.endswith("set cassandra_config_force_identity_change: true. RESET-HINT.")
+
+
+def test_identity_refusal_asks_first_whether_the_inventory_is_loaded():
+    # the role default against a joined node's name: most likely group_vars not read
+    msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
+                  cassandra_config_identity={"stdout": '["cluster_name: my_cluster -> Test Cluster"]'},
+                  cassandra_cluster_name="Test Cluster",
+                  _cassandra_config_initialized_why="Cassandra is running", _cassandra_config_reset="RESET-HINT.")
+    assert msg.startswith("node1 was already initialized (Cassandra is running) and these settings would change: "
+                          "cluster_name: my_cluster -> Test Cluster. cassandra_cluster_name is the role default 'Test Cluster':"
+                          " are the inventory's group_vars loaded? Check with ansible-inventory -i <inventory> --host node1"
+                          " (group_vars are read next to the inventory file or directory given, not in its subdirectories)."
+                          " A node keeps them for life: ")
+    # another setting, or another name: no such hint
+    for changes, name in (('["num_tokens: 16 -> 1"]', "Test Cluster"), ('["cluster_name: a -> b"]', "b")):
+        msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
+                      cassandra_config_identity={"stdout": changes}, cassandra_cluster_name=name,
+                      _cassandra_config_initialized_why="x", _cassandra_config_reset="")
+        assert "group_vars" not in msg
 
 
 @pytest.mark.parametrize("initialized, expected", [

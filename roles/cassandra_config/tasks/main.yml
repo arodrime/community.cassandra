@@ -500,7 +500,7 @@
         that: _changes | length == 0 or cassandra_config_force_identity_change | bool
         fail_msg: >-
           {{ inventory_hostname }} was already initialized ({{ _cassandra_config_initialized_why }}) and these settings
-          would change: {{ _changes | join('; ') }}. A node keeps them for life: a new cluster_name, partitioner or
+          would change: {{ _changes | join('; ') }}.{{ _not_loaded }} A node keeps them for life: a new cluster_name, partitioner or
           num_tokens stops it from starting, a new dc or rack too (unless forced), a new snitch or forced dc/rack moves
           data ownership without streaming, and storage_compatibility_mode (5.0) only moves one step at a time,
           CASSANDRA_4 (also when absent, write it first), UPGRADING, NONE, never back. Fix the inventory to match the
@@ -509,6 +509,12 @@
         quiet: true
       vars:
         _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
+        # the likely cause first
+        _not_loaded: >-
+          {{ " cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with
+          ansible-inventory -i <inventory> --host " ~ inventory_hostname ~ " (group_vars are read next to the inventory
+          file or directory given, not in its subdirectories)."
+          if cassandra_cluster_name == 'Test Cluster' and _changes | select('match', 'cluster_name: ') | list | length > 0 else '' }}
       when: _cassandra_config_initialized | bool
 
     - name: Look for the files to keep as they are (cassandra_config_keep_files)
