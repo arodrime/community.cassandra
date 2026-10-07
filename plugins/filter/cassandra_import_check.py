@@ -267,11 +267,13 @@ def _render(variables, facts, live, conf_dir=""):
             rendered[name] = lookup.run([os.path.join(ROLES, path)], variables=ctx)[0]
         except Exception as exc:  # pylint: disable=broad-except
             errors.append("%s: the roles could not write it with these variables (%s)" % (name, type(exc).__name__))
-    # owner, group and mode cassandra_config gives its files (not the unit's nor medusa.ini's)
+    # owner, group and mode cassandra_config gives its files (not the unit's nor medusa.ini's), the ones it keeps
+    # as they are too
+    kept = [f for f in ctx["_cassandra_config_files"][series] if f in keep and f in live]
     permissions = {}
     try:
         settings = value("_cassandra_config_perm_settings")
-        for name in rendered:
+        for name in list(rendered) + kept:
             if name not in ("cassandra.service", "medusa.ini"):
                 permissions[name] = cassandra_file_permissions(name, settings)
     except AnsibleFilterError as exc:  # cassandra_file_permissions': a file name or a mode, no secret

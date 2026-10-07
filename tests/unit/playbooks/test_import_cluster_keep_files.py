@@ -65,7 +65,14 @@ def stock():
     return files
 
 
-def check(files, keep):
+def role_permissions(files):
+    # what the roles give them: root:cassandra, cassandra.yaml and the JVM options 0640, the others 0644
+    return dict((name, {"owner": "root", "group": "cassandra", "uid": 0, "gid": 990,
+                        "mode": "0640" if name == "cassandra.yaml" or name.endswith(".options") else "0644"})
+                for name in files)
+
+
+def check(files, keep, permissions=None):
     imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
     node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
             "vars": dict(imported["vars"], cassandra_version="50x"), "hand_edits": imported["hand_edits"],
@@ -73,7 +80,8 @@ def check(files, keep):
             "keep": dict({"cassandra_service_unit_manage": False}, **keep)}
     layout = cassandra_inventory_layout([node], "c")
     out = cassandra_import_self_check(cassandra_inventory_files(layout), layout["hosts"], "n1", FACTS, files, {},
-                                      "/var/lib/cassandra", "17")
+                                      "/var/lib/cassandra", "17", "",
+                                      role_permissions(files) if permissions is None else permissions)
     return out, layout
 
 
@@ -112,3 +120,15 @@ def test_role_leaves_them():
                      "cassandra_config_initialized": {"stat": {"exists": initialized}}}
         variables["_keep"] = trust_as_template(note["vars"]["_keep"])
         assert render(note["vars"]["_kept"], **variables) == kept
+
+
+def test_self_check_compares_the_owner_and_mode_of_the_kept_files():
+    # cassandra_config keeps their content, not their owner, group and mode: those are compared
+    files = stock()
+    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<logger name="com.example" level="WARN"/>\n  <root level="INFO">',
+                                  files["logback.xml"], count=1)
+    permissions = role_permissions(files)
+    permissions["logback.xml"] = dict(permissions["logback.xml"], mode="0600")
+    out, layout = check(files, {"cassandra_config_keep_files": ["logback.xml"]}, permissions)
+    assert out["differences"] == ["logback.xml: owner:group mode: node has root:cassandra 0600,"
+                                  " import would write root:cassandra 0644"]
