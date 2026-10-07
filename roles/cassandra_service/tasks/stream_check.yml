@@ -87,12 +87,14 @@
         _cassandra_stream_job_result: >-
           {{ dict(cassandra_stream_job_status | default({}) | dict2items
                   | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
-        # the block's condition reads _cassandra_stream_status: set after the progress line
+        # the block's condition reads _cassandra_stream_status: set after the progress line. A decommission job that
+        # changed nothing (the node was LEAVING already) is not the end: its mode DECOMMISSIONED is
         _cassandra_stream_now: >-
           {{ 'done' if (_join and _self_mode == 'NORMAL') or (_leave and _self_mode == 'DECOMMISSIONED')
-                      or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
+                      or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false)
+                          and (_job_status.changed | default(false) or not _leave))
                       or (_removal and _removal_status.rc | default(1) == 0 and 'Removing token' not in _removal_status.stdout | default(''))
-             else 'job_failed' if _job and _job_status.finished | default(0) | int == 1
+             else 'job_failed' if _job and _job_status.finished | default(0) | int == 1 and _job_status.failed | default(false)
              else 'job_lost' if _job and _job_status.failed | default(false)
              else 'join_failed' if _join and _self_mode == 'JOINING_FAILED'
              else 'leave_failed' if _leave and _self_mode == 'DECOMMISSION_FAILED'

@@ -224,3 +224,19 @@ def test_progress_report_knows_the_status_before_the_block_ends():
         assert wait["ansible.builtin.pause"]["seconds"] == "{{ _cassandra_stream_state.wait }}"
         assert "interval=cassandra_stream_check_interval | int" in block[names.index("Work out the progress")][
             "ansible.builtin.set_fact"]["_cassandra_stream_state"]
+
+
+@pytest.mark.parametrize("job, mode, expected", [
+    ({"finished": 1, "changed": True}, "LEAVING", "done"),  # nodetool decommission returned
+    # the module changed nothing (the node was LEAVING already): its streams go on until DECOMMISSIONED
+    ({"finished": 1, "changed": False}, "LEAVING", "going"),
+    ({"finished": 1, "changed": False}, "DECOMMISSIONED", "done"),
+    ({"finished": 1, "failed": True}, "LEAVING", "job_failed"),
+])
+def test_decommission_job_that_changed_nothing_is_not_the_end(job, mode, expected):
+    block = load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
+    where = next(t for t in block if t["name"] == "Where it stands")
+    variables = dict(where["vars"], _cassandra_stream_leave=True, _cassandra_stream_job={"jid": "1"},
+                     cassandra_stream_job_status=job, _cassandra_stream_self={"mode": mode},
+                     _cassandra_stream_state={"stalled": False, "start": 0}, cassandra_stream_max_time=0)
+    assert render(where["ansible.builtin.set_fact"]["_cassandra_stream_now"], **variables) == expected
