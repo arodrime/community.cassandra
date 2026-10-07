@@ -116,7 +116,9 @@ Role Variables
   shipped in `files/deadsnakes.asc`; empty to rely on the configured
   repositories).
 * `cassandra_dsbulk_install`: install the DataStax Bulk Loader
-  ([dsbulk](https://github.com/datastax/dsbulk)) too. Default `true`. It is
+  ([dsbulk](https://github.com/datastax/dsbulk)) too. Default `true`
+  (`import_cluster` sets `false` for the nodes without one installed this
+  way, and keeps the version of the others). It is
   installed like the tools of the `cassandra-tools` package: unpacked in
   `/usr/share/dsbulk-<version>` (owned by root, read-only for others), with a
   `/usr/share/dsbulk` link to it and `/usr/bin/dsbulk`. It runs with
