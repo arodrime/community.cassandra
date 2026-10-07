@@ -40,7 +40,14 @@ Role Variables
   every node, including the ones added later, runs the same one. Empty
   (default) installs the repository's latest. An installed node is never moved
   to another version by the role (that is an upgrade); on Debian and Ubuntu the
-  pinned packages are held (`apt-mark hold`).
+  pinned packages are held (`apt-mark hold`), unless `cassandra_package_hold`
+  is `false` (a hold already there is never removed).
+* `cassandra_packages` (default `cassandra`): package or list of packages;
+  `cassandra-tools` is added unless `cassandra_install_tools` is `false`.
+* `cassandra_install_jemalloc` (default `true`): install jemalloc when
+  available, which `bin/cassandra` preloads.
+  `import_cluster` sets `cassandra_install_tools`, `cassandra_install_jemalloc`
+  and `cassandra_package_hold` to `false` for the nodes without them.
 * `cassandra_java_tarball` (default: the `cassandra_java_tarballs` entry of
   `cassandra_java_version`, else `""`): Java from a tarball (a JDK or JRE
   `.tar.gz`) instead of a package: a URL downloaded by the
@@ -76,7 +83,11 @@ Role Variables
   by other means (an internal package, the system image); the Cassandra
   package still needs a Java package that satisfies its dependency.
 * `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
-  the default `java` when several JDKs are installed.
+  the default `java` when several JDKs are installed, or the tarball /
+  `cassandra_java_home` Java the system `java`. `false` leaves `/usr/bin/java`
+  as it is (Cassandra then needs `JAVA_HOME`, e.g. in
+  `cassandra_service_environment`); `import_cluster` sets it for the nodes
+  whose `/usr/bin/java` is not the running Java.
 * `cassandra_java_version`: Java installed before Cassandra. Defaults to the
   series' version from `cassandra_java_versions` (11 for 4.x, 17 for 5.0).
 * `cassandra_java_package`: package name, derived from the OS and
@@ -98,7 +109,7 @@ Role Variables
   repositories).
 
 jemalloc is installed when available (Debian/Ubuntu, and RHEL-family with EPEL
-or Amazon Linux), and `cassandra-tools` on RHEL-family systems.
+or Amazon Linux).
 
 Example Playbook
 ----------------

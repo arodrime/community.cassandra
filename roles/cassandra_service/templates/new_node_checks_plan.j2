@@ -47,8 +47,8 @@
 {%- if files_method and not offline and cassandra_package_version == '' -%}
 {%-   set _ = problems.append('cassandra_install_method packages needs cassandra_package_version: it names the files to download') -%}
 {%- elif files_method and not offline -%}
-{#-   cassandra_install's OS vars add cassandra-tools -#}
-{%-   for p in ([cassandra_packages] | flatten + ['cassandra-tools']) | unique -%}
+{#-   with cassandra-tools unless cassandra_install_tools is false -#}
+{%-   for p in _cassandra_packages -%}
 {%-     set f = cassandra_install_package_file | replace('{name}', p) | replace('{version}', cassandra_package_version) -%}
 {%-     set _ = urls.append({'name': 'Cassandra package file ' ~ f, 'auth': 'repository', 'headers': {'Range': 'bytes=0-0'}, 'url': base ~ '/' ~ f}) -%}
 {%-   endfor -%}

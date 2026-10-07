@@ -13,6 +13,9 @@ good idea to mention in this section that the boto package is required.
 Role Variables
 --------------
 
+* `cassandra_firewall_manage`: `false` leaves the firewall as it is on this
+  node (nothing installed, started or opened). `import_cluster` sets it for
+  the nodes it imports. Default `true`.
 * `cassandra_offline`: `true` on air-gapped hosts: firewalld or ufw is
   checked instead of installed. Default `false`.
 * `open_ports`: ports open to everyone (SSH, JMX, storage, TLS storage, CQL).

@@ -3,7 +3,7 @@
 # shown first and the whole run is confirmed once; then the nodes are done one
 # at a time: cluster checked, config written, node drained and restarted,
 # cluster checked again. Only the nodes whose config changes, or whose running
-# Cassandra is older than its config files or its systemd unit (written by
+# Cassandra did not start with its config files or its systemd unit (written by
 # cassandra_config or cassandra_service, which do not restart, or by a run
 # stopped before the restart), are touched.
 # Stops at the first problem.
@@ -36,6 +36,15 @@
         name: community.cassandra.cassandra_service
         tasks_from: config_pending.yml
 
+    # no record of the files it started with: an edit made since may be applied or not
+    - name: Say which files changed since Cassandra started, with no record of the ones it started with
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ cassandra_config_unknown_files | join(', ') }} written after Cassandra started
+          (not by the roles, which keep a record of the files it starts with): not restarted for them. If they
+          changed a setting, run rolling_restart to apply it.
+      when: cassandra_config_unknown_files | length > 0
+
     - name: Note what this node needs
       ansible.builtin.set_fact:
         cassandra_apply_config_todo: >-
@@ -43,7 +52,7 @@
         cassandra_apply_config_reason: >-
           {{ ((_cassandra_config_changes | default([])) | join(', ') ~ ' to change')
              if _cassandra_config_changes | default([]) | length > 0
-             else ('restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' newer than the running Cassandra)') }}
+             else ('restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)') }}
 
     - name: Group the nodes to do
       ansible.builtin.group_by:

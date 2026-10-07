@@ -48,25 +48,20 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def unit_env(env, unit_heap, log_dir="/var/log/cassandra", read=True):
+def unit_env(env, log_dir="/var/log/cassandra", read=True):
     hv = {"import_cluster_unit": {"env": env}, "import_cluster_log_dir": log_dir}
-    return render(MATCH["_unit_env"], _hv=hv, _unit_heap=unit_heap, _read=read)
+    return render(MATCH["_unit_env"], _hv=hv, _read=read)
 
 
 def test_unit_environment_kept():
     env = {"LOCAL_JMX": "no", "MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "2G", "CASSANDRA_LOG_DIR": "/data/log"}
-    # heap imported as variables, the log dir as cassandra_log_dir: the rest stays in the unit
-    assert unit_env(env, {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "2G"}, "/data/log") == {"LOCAL_JMX": "no"}
-
-
-def test_heap_not_imported_stays_in_the_unit():
-    # e.g. 5.0 with CMS: MAX_HEAP_SIZE and HEAP_NEWSIZE only work as a pair, kept as they are
-    env = {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "2G"}
-    assert unit_env(env, {}) == env
+    # the log dir as cassandra_log_dir: the rest stays in the unit, its heap too (cassandra-env.sh
+    # stays as it is: moving the heap there would rewrite it and the unit)
+    assert unit_env(env, "/data/log") == {"LOCAL_JMX": "no", "MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "2G"}
 
 
 def test_unit_environment_of_an_unread_node():
-    assert unit_env({"LOCAL_JMX": "no"}, {}, read=False) == {}
+    assert unit_env({"LOCAL_JMX": "no"}, read=False) == {}
 
 
 WRITE = next(play for play in PLAYS if play["name"] == "Write the inventory")["vars"]
@@ -109,23 +104,11 @@ def test_where_the_config_really_is():
 KEEP_UNIT = {"cassandra_service_unit_manage": False}
 
 
-def unit_heap(keep):
-    hv = {"import_cluster_unit": {"heap": "8G", "newsize": "2G", "cms": False}, "import_cluster_series": "41x",
-          "import_cluster_config": {"vars": {}}, "import_cluster_keep": keep}
-    return render(MATCH["_unit_heap"], _hv=hv, _read=True)
-
-
-def test_heap_of_a_kept_unit_stays_in_it():
-    # cassandra-env.sh left as it is; new nodes get it through cassandra_service_environment
-    assert unit_heap(KEEP_UNIT) == {}
-    assert unit_heap({}) == {"cassandra_heap_size": "8G", "cassandra_heap_newsize": "2G"}
-
-
 def conf(boot, read=True, conf_dir="/etc/cassandra/conf", os_family="RedHat"):
     hv = {"import_cluster_conf_dir": conf_dir, "import_cluster_log_dir": "",
           "import_cluster_unit": {"restart": "", "boot": boot}, "ansible_facts": {"os_family": os_family}}
     defaults = render(MATCH["_default_conf_dirs"], _hv=hv)
-    return render(MATCH["_conf"], _hv=hv, _read=read, _unit_heap={}, _unit_env={}, _default_conf_dirs=defaults)
+    return render(MATCH["_conf"], _hv=hv, _read=read, _unit_env={}, _default_conf_dirs=defaults)
 
 
 def test_boot_setting_imported():
@@ -148,7 +131,8 @@ def test_conf_dir_imported_when_not_the_role_default(conf_dir, os_family, import
 def test_node_not_read_is_left_as_it_is():
     keep = render(MATCH["_node"]["keep"], _hv={}, _read=False)
     assert keep == {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
-                    "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False}
+                    "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
+                    "cassandra_java_set_default": False, "cassandra_firewall_manage": False}
 
 
 @pytest.mark.parametrize("keep, env, config_vars, expected", [
@@ -176,7 +160,8 @@ def test_boot_setting_read(kv, boot):
 
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
-    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}) == {"cassandra_medusa_link_dir": ""}
+    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={},
+                  _repo={"manage": True}, _installed={}) == {"cassandra_medusa_link_dir": "", "cassandra_firewall_manage": False}
 
 
 def test_os_baseline_is_the_roles_defaults_not_the_inventory():
@@ -218,4 +203,4 @@ def test_package_installed_from_a_file(installed, kv, from_file):
 ])
 def test_install_method_of_a_package_installed_from_a_file(from_file, read, pkg):
     hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": from_file}
-    assert render(MATCH["_pkg"], _hv=hv, _read=read) == pkg
+    assert render(MATCH["_pkg"], _hv=hv, _read=read, _repo={"vars": {}}) == pkg

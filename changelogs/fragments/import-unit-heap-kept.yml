@@ -1,0 +1,2 @@
+bugfixes:
+  - import_cluster - the heap set in the Environment of a unit written by cassandra_service stays there (cassandra_service_environment) instead of moving to cassandra-env.sh, which made the roles rewrite both files.

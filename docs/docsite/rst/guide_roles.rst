@@ -649,6 +649,13 @@ changed, or would change under ``--check``, to that directory on the controller.
 
 The role never restarts Cassandra. When it changed the files of a running node, it says so.
 
+Whether a running node still has to be restarted for its config is told by content: the roles record the checksums
+of the files Cassandra reads (``cassandra.yaml``, ``cassandra-env.sh``, the jvm options, rackdc, logback) at each
+start, and before the role first changes a node started another way (e.g. imported). Other files of the conf dir
+(keystores, backups) do not count. A node with no record, whose files were written after Cassandra started by
+something else, is not restarted by ``apply_config``, which names those files: run ``rolling_restart`` if they
+changed a setting.
+
 To change the configuration of a running cluster, use ``apply_config`` instead of running the role: it shows the
 diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
@@ -917,10 +924,28 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
 
 THP, swap, ``tuned``, the time servers and the firewall are only reported: the role disables THP and swap the same
 way whatever the nodes use, does not write time servers, and only opens the firewall with
-``cassandra_manage_firewall: true``. A node the role set up keeps the values of the role's own files (its sysctl
+``cassandra_manage_firewall: true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or
+none, is left as it is; nodes added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl
 file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that running the roles again changes
 nothing on it; when those files do not hold them, the values in effect are carried, and a node without time sync gets
 ``cassandra_linux_timesync: false`` rather than a chrony it does not have.
+
+A node of the ring the import could not read (down, unreachable, nodetool not found, or its running Java removed by
+an update since it started: restart it first) makes it fail: the roles would
+give it the group variables unchecked, and start it if it is down. ``-e import_cluster_allow_unread=true`` accepts it;
+then keep it out of the runs (``--limit``) until an import reads it.
+
+The Cassandra repository files of a node (``cassandra-<series>`` in ``/etc/yum.repos.d`` or
+``/etc/apt/sources.list.d``, and ``/etc/apt/auth.conf.d/cassandra.conf``) are taken over only when
+``cassandra_repository`` would write them as they are: then their mirror URL, credentials (``secrets.yml``) and key
+path are imported. Files written another way (other keys or names, other signing keys, an apt credentials file without
+the role's header, another series' file, or any file when the package came from a file) get
+``cassandra_repository_manage: false`` on that node, and the report says why.
+
+Hand edits no variable covers (an extra logback appender, a ``-javaagent`` line in ``cassandra-env.sh``) fail the
+self-check. With ``-e import_cluster_keep_hand_edits=true`` the files that have them are left as they are on their
+node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither writes nor compares
+them); nodes added later get the role's files.
 
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,

@@ -94,6 +94,8 @@ KEEP = {
     "cassandra_cqlsh_python_manage": "cqlsh's Python (python3.11, cqlshlib link, wrapper)",
     "cassandra_linux_manage": "the OS settings (kernel, limits, THP, swap, time sync, disks)",
     "cassandra_service_unit_manage": "the systemd unit (or init script) Cassandra is started by",
+    "cassandra_java_set_default": "the system java (/usr/bin/java), which is not the running one",
+    "cassandra_firewall_manage": "the firewall (its package, service and ports), or none",
 }
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 HOSTNAME = "{{ ansible_facts['hostname'] }}"
@@ -663,6 +665,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             path = "%s/%s" % (storage_dir.rstrip("/"), sub)
             if isinstance(data, dict) and data.get(key) is None and var not in changed and path != _default(ctx, var):
                 found[var] = changed[var] = path
+        # cassandra_config keeps such a file where it has the same directories, also while Cassandra is down
+        if isinstance(data, dict) and any(data.get(key) is None for key in STORAGE_DIRS if key != "cdc_raw_directory"):
+            changed["cassandra_config_storage_dir"] = storage_dir
     render_dirs = None
     if "cassandra.yaml" in live_files:
         # JBOD: the template's single line expands to one line per directory
@@ -890,6 +895,18 @@ def _without_ring_rackdc(node):
     return dict((k, node["vars"][k]) for k in node["vars"] if k not in ring or node["vars"][k] != ring[k])
 
 
+def _hand_edits_kept(node):
+    """A node's hand edit lines -> (the ones in files cassandra_config_keep_files keeps, the others); a
+    "<file>: ..." or "<file>, line N:" line starts the lines of a file."""
+    keep = (node.get("keep") or {}).get("cassandra_config_keep_files") or []
+    kept, edits, current = [], [], None
+    for line in node["hand_edits"]:
+        if not line.startswith(" "):
+            current = re.split(r"[:,]", line, maxsplit=1)[0]
+        (kept if current in keep else edits).append(line)
+    return kept, edits
+
+
 @_values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
@@ -979,10 +996,15 @@ def cassandra_inventory_layout(nodes, cluster_name):
             report += ["    %s (%s: false)" % (KEEP[k], k) for k in KEEP if k in n["keep"]]
             report += ["    %s: %s, as this node has it" % (k, _show(k, v))
                        for k, v in sorted(n["keep"].items()) if k not in KEEP]
-        if n["hand_edits"]:
+        kept, edits = _hand_edits_kept(n)
+        if kept:
+            report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
+                          " (cassandra_config_keep_files; nodes added later get the role's):")
+            report += ["    " + _mask(line) for line in kept]
+        if edits:
             report.append("  HAND EDITS no variable covers (cassandra_config would revert them):")
-            report += ["    " + _mask(line) for line in n["hand_edits"]]
-        else:
+            report += ["    " + _mask(line) for line in edits]
+        if not n["hand_edits"]:
             report.append("  No hand edit left: cassandra_config would not change the config.")
         if n.get("comments"):
             report.append("  Comments only, no setting (e.g. the stock comments of the release the file came from):"
@@ -1063,6 +1085,7 @@ BLOCKS = [
         "cassandra_storage_compatibility_mode"]),
     ("Versions & packages", [
         "cassandra_version", "cassandra_package_version", "cassandra_install_method", "cassandra_packages",
+        "cassandra_install_tools", "cassandra_install_jemalloc", "cassandra_package_hold",
         "cassandra_java_version",
         "cassandra_java_home", "cassandra_java_package", "cassandra_java_tarball", "cassandra_java_tarball_checksum",
         "cassandra_java_tarball_dir", "cassandra_install_java", "cassandra_java_set_default"]),

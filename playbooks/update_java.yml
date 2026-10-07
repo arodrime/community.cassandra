@@ -31,17 +31,20 @@
         name: community.cassandra.cassandra_install
         tasks_from: java_check.yml
 
-    - name: Read the service
-      ansible.builtin.systemd_service:
-        name: cassandra
-      register: cassandra_update_java_unit
+    # by its process, whatever started it (the unit's main PID may be another process, or none)
+    - name: Find the running Cassandra and its java
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: jvm_started.yml
 
-    - name: Read which java the running Cassandra uses
-      ansible.builtin.stat:
-        path: "/proc/{{ cassandra_update_java_unit.status.MainPID | default('0') }}/exe"
-        get_checksum: false
-      register: cassandra_update_java_exe
-      when: cassandra_update_java_unit.status.MainPID | default('0') | int > 0
+    - name: Read the Java version the running Cassandra uses
+      ansible.builtin.command:
+        argv: ["/proc/{{ cassandra_jvm.pid }}/exe", -XshowSettings:properties, -version]  # even replaced since
+      register: cassandra_update_java_spec
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only
+      when: cassandra_jvm.pid is defined
 
     # The running java is a resolved path: resolve the wanted home the same way
     - name: Resolve the wanted Java home
@@ -53,15 +56,20 @@
       check_mode: false
       when: _cassandra_java_home != ''
 
+    # its major version as the import reads it (a package path may not name it: zulu17, temurin-17-jdk)
     - name: Note what this node needs
       ansible.builtin.set_fact:
         cassandra_update_java_running: "{{ _running }}"
         cassandra_update_java_todo: >-
-          {{ (not _running.startswith((cassandra_update_java_home.stdout | default('', true) or _cassandra_java_home) ~ '/'))
-             if _cassandra_java_home != ''
-             else _running is not search('java-(1[.])?' ~ cassandra_java_version ~ '[.-]') }}
+          {{ _major != cassandra_java_version | string
+             or (_cassandra_java_home != ''
+                 and not _running.startswith((cassandra_update_java_home.stdout | default('', true) or _cassandra_java_home) ~ '/')) }}
       vars:
-        _running: "{{ cassandra_update_java_exe.stat.lnk_source | default('not running') }}"
+        _running: "{{ cassandra_jvm.exe | default('', true) or 'not running' }}"
+        _spec: >-
+          {{ cassandra_update_java_spec.stderr | default('') | regex_findall('java[.]specification[.]version = (\S+)')
+             | first | default('') }}
+        _major: "{{ _spec.split('.')[1] if _spec.startswith('1.') else _spec }}"
 
     - name: Settings that only apply to another Java
       ansible.builtin.debug:

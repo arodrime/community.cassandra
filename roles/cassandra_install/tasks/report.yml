@@ -4,16 +4,17 @@
 - name: List the packages this role manages
   ansible.builtin.set_fact:
     _cassandra_install_new: >-
-      {{ [] if cassandra_offline | bool else ((([cassandra_java_package] if cassandra_install_java | bool and _cassandra_java_home == '' else []) + ([cassandra_packages] | flatten)
+      {{ [] if cassandra_offline | bool else ((([cassandra_java_package] if cassandra_install_java | bool and _cassandra_java_home == '' else []) + _cassandra_packages
           + ([('libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc')]
-             if ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout | default('') != '' else [])
+             if cassandra_install_jemalloc | bool
+                and (ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout | default('') != '') else [])
           + (['python3.11'] if _cassandra_cqlsh_python == '/usr/bin/python3.11' else []))
          | reject('in', _cassandra_install_before) | list) }}
 
 # packages: the version is the one of the files, not a repository's
 - name: Packages installed from files
   ansible.builtin.set_fact:
-    _cassandra_install_files_pkgs: "{{ [cassandra_packages] | flatten if cassandra_install_method == 'packages' else [] }}"
+    _cassandra_install_files_pkgs: "{{ _cassandra_packages if cassandra_install_method == 'packages' else [] }}"
 
 - name: Refresh installed packages
   ansible.builtin.package_facts:

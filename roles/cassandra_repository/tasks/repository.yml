@@ -80,9 +80,7 @@
     - cassandra_install_username != ""
 
 - name: No credentials left for the Cassandra apt repository (Debian & Ubuntu)
-  ansible.builtin.file:
-    path: /etc/apt/auth.conf.d/cassandra.conf
-    state: absent
+  ansible.builtin.include_tasks: remove_apt_credentials.yml
   when:
     - ansible_facts['os_family'] == "Debian"
     - cassandra_install_username == ""
