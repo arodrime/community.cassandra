@@ -1,8 +1,9 @@
 ---
-# Before cassandra_config changes the config of a running Cassandra with no
-# record of the files it started with (started another way, e.g. imported):
-# records the files not written since its JVM started, which are the ones it
-# runs with, so config_pending.yml tells the change still to apply by content.
+# Before the roles change the config (or the systemd unit) of a running
+# Cassandra with no record of the files it started with (started another way,
+# e.g. imported): records the files not written since its JVM started, which
+# are the ones it runs with, so config_pending.yml tells the change still to
+# apply by content.
 - name: Look for the directory of the record of the config Cassandra started with
   ansible.builtin.stat:
     path: "{{ _cassandra_service_config_snapshot | dirname }}"
@@ -41,6 +42,14 @@
         - cassandra_jvm.start is defined
         - cassandra_seed_dir.stat.isdir | default(false)
 
+    - name: Checksum the unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cassandra.service
+      register: cassandra_seed_unit
+      when:
+        - cassandra_jvm.start is defined
+        - cassandra_seed_dir.stat.isdir | default(false)
+
     # a file written after the start is left out: what Cassandra read is unknown (its change time: a copy that
     # keeps the source's modification time, rsync -a, is one too)
     - name: Record the ones not written since it started
@@ -50,7 +59,9 @@
         dest: "{{ _cassandra_service_config_snapshot }}"
         mode: "0644"
       vars:
-        _files: "{{ cassandra_seed_files.files | rejectattr('ctime', '>', cassandra_jvm.start | float) | list }}"
+        _files: >-
+          {{ (cassandra_seed_files.files + ([cassandra_seed_unit.stat] if cassandra_seed_unit.stat.exists else []))
+             | rejectattr('ctime', '>', cassandra_jvm.start | float) | list }}
       when:
         - cassandra_jvm.start is defined
         - cassandra_seed_dir.stat.isdir | default(false)

@@ -46,6 +46,7 @@ def task(tasks_file, name):
 NOTE = task("config_pending.yml", "Note whether a restart is pending")
 YAML = "/etc/cassandra/conf/cassandra.yaml"
 ENV = "/etc/cassandra/conf/cassandra-env.sh"
+UNIT = "/etc/systemd/system/cassandra.service"
 
 
 def render(template, variables):
@@ -106,10 +107,26 @@ def test_seed_leaves_out_the_files_written_since_the_start():
     variables = {
         "cassandra_seed_files": {"files": [{"path": YAML, "checksum": "y1", "ctime": 90.0},
                                            {"path": ENV, "checksum": "e1", "ctime": 110.0}]},
+        "cassandra_seed_unit": {"stat": {"exists": True, "path": UNIT, "checksum": "u1", "ctime": 95.0}},
         "cassandra_jvm": {"start": "100.00"},
     }
     variables["_files"] = trust_as_template(rec["vars"]["_files"])
+    assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", UNIT: "u1"}
+    # the unit written since the start: left out too
+    variables["cassandra_seed_unit"]["stat"]["ctime"] = 105.0
     assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1"}
+
+
+def test_service_seeds_before_changing_the_unit():
+    # cassandra_service records what the JVM started with before it changes the unit of a node started another way
+    names = [t["name"] for t in tasks("unit.yml")]
+    plan, seed = names.index("Tell whether the unit changes"), names.index("Record the config the running Cassandra started with")
+    assert plan < seed < names.index("Install the cassandra systemd unit")
+    unit = tasks("unit.yml")
+    assert unit[plan]["check_mode"] is True
+    assert "not ansible_check_mode" in unit[plan]["when"]
+    assert unit[seed]["ansible.builtin.include_tasks"] == "config_seed.yml"
+    assert unit[seed]["when"] == "cassandra_service_unit_planned is changed"
 
 
 def test_config_seeds_before_writing():
