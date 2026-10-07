@@ -132,3 +132,11 @@ def test_role_switches_gate_the_tasks():
     for name in ["Install jemalloc", "Look up jemalloc in the enabled repos (RedHat)"]:
         assert "cassandra_install_jemalloc | bool" in found[name]["when"]
     assert found["Look up jemalloc in the enabled repos (RedHat)"]["failed_when"] is False
+
+
+def test_dsbulk_read_only_as_the_role_installs_it():
+    # its marker and both links: a dsbulk unpacked by hand under /usr/share is not the role's (it would relink it)
+    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
+    line = next(i for i, x in enumerate(script.split("\n")) if "dsbulk=$dsb" in x)
+    test = " ".join(script.split("\n")[line - 1:line + 1])
+    assert "-L /usr/share/dsbulk" in test and ".cassandra_install" in test
