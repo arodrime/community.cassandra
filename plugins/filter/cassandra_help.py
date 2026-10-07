@@ -134,8 +134,8 @@ OPERATIONS = [
      "summary": "Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.",
      "args": ["-e cassandra_target_dc={dc}", "-e cassandra_target_rack={rack}"]},
     {"name": "apply_config", "theme": "cluster",
-     "summary": "Applies the inventory's config: shows every diff, asks once, then writes and restarts only the"
-                " nodes that need it, one at a time.",
+     "summary": "Applies the inventory's config: shows every diff, asks once, then writes the nodes that need it,"
+                " one at a time, restarting only those that need it.",
      "options": {"cassandra_rolling_resume": "true resumes an interrupted run"}},
     {"name": "change_seeds", "theme": "cluster",
      "summary": "Applies a new cassandra_seeds list to every node, live (no restart)."},

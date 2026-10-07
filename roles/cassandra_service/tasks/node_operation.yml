@@ -13,7 +13,11 @@
 # drained or stopped, DN for the others: when its own netstats says so (Mode
 # DRAINED, or JMX refusing the connection), it is checked from another node
 # only and may be down, and its action brings it back. Any other node down,
-# or that node down for another reason, still stops the run.
+# or that node down for another reason, still stops the run. apply_config
+# also lets down a node where Cassandra is not running (cassandra_apply_config_then
+# start or write) and, for the nodes it does not restart, the others
+# (cassandra_service_health_down_ok); the second node the health checks
+# read the ring from is never one of them.
 - name: Skip a node the interrupted run already did
   ansible.builtin.set_fact:
     cassandra_op_result: "{{ cassandra_service_node_action }} skipped, done in the interrupted run"
@@ -31,6 +35,13 @@
       {{ _cassandra_resume_candidate | bool
          and (cassandra_service_resume_state.mode | default('') == 'DRAINED'
               or 'Connection refused' in cassandra_service_resume_state.stderr | default('') ~ cassandra_service_resume_state.msg | default('')) }}
+    # down before its action: that node, or apply_config's on a node not running (started if its unit
+    # failed, e.g. it could not read its config; else left stopped, down after its action too)
+    _cassandra_down_node: >-
+      {{ _cassandra_resumed_node | bool
+         or (cassandra_service_node_action == 'apply_config' and cassandra_apply_config_then | default('') in ['start', 'write']) }}
+    _cassandra_left_down: >-
+      {{ cassandra_service_node_action == 'apply_config' and cassandra_apply_config_then | default('') == 'write' }}
   block:
     - name: Note the start time
       ansible.builtin.set_fact:
@@ -49,8 +60,8 @@
       ansible.builtin.include_tasks: cluster_health.yml
       vars:
         cassandra_service_health_node_checks: >-
-          {{ cassandra_service_node_checks_before | default(true) | bool and not _cassandra_resumed_node | bool }}
-        cassandra_service_health_resumed_down: "{{ [_cassandra_preflight.ring_address] if _cassandra_resumed_node | bool else [] }}"
+          {{ cassandra_service_node_checks_before | default(true) | bool and not _cassandra_down_node | bool }}
+        cassandra_service_health_resumed_down: "{{ [_cassandra_preflight.ring_address] if _cassandra_down_node | bool else [] }}"
         cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_before | default(_cassandra_group_size) }}"
         cassandra_service_health_joining_ok: "{{ cassandra_service_joining_before | default([]) }}"
         cassandra_service_health_leaving_ok: "{{ cassandra_service_leaving_before | default([]) }}"
@@ -64,11 +75,13 @@
       ansible.builtin.include_tasks: cluster_health.yml
       when: not (ansible_check_mode and cassandra_service_node_action in ['add', 'replace', 'decommission'])
       vars:
-        # --check did not restart the node a resumed run found drained or stopped: still down
+        # --check did not bring back the node found down (a resumed run's, or one apply_config starts): still down
         cassandra_service_health_node_checks: >-
-          {{ cassandra_service_node_checks_after | default(true) | bool and not (ansible_check_mode and _cassandra_resumed_node | bool) }}
+          {{ cassandra_service_node_checks_after | default(true) | bool
+             and not ((ansible_check_mode and _cassandra_down_node | bool) or _cassandra_left_down | bool) }}
         cassandra_service_health_resumed_down: >-
-          {{ [_cassandra_preflight.ring_address] if ansible_check_mode and _cassandra_resumed_node | bool else [] }}
+          {{ [_cassandra_preflight.ring_address] if (ansible_check_mode and _cassandra_down_node | bool) or _cassandra_left_down | bool
+             else [] }}
         cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_after | default(_cassandra_group_size) }}"
         cassandra_service_health_joining_ok: "{{ cassandra_service_joining_after | default([]) }}"
 
