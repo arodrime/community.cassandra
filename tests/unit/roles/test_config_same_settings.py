@@ -209,7 +209,7 @@ def test_dirs_left_to_the_storage_dir_are_kept():
 
 def test_compared_on_a_running_node_only():
     read = task("Read the files that differ, to compare their settings")
-    assert "cassandra_config_initialized.stat.exists" in read["when"]
+    assert "_cassandra_config_initialized | bool" in read["when"]
     assert "not cassandra_config_normalize | bool" in read["when"]
 
 

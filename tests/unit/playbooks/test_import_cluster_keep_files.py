@@ -117,7 +117,7 @@ def test_role_leaves_them():
                               (False, [])]:  # a new node (e.g. rebuilt under that name): its files are the package's
         variables = {"cassandra_config_compared": {"results": []}, "cassandra_conf_dir": "/c", "cassandra_config_tmp": {"path": "/t"},
                      "cassandra_config_keep_stat": {"results": results},
-                     "cassandra_config_initialized": {"stat": {"exists": initialized}}}
+                     "_cassandra_config_initialized": initialized}
         variables["_keep"] = trust_as_template(note["vars"]["_keep"])
         assert render(note["vars"]["_kept"], **variables) == kept
 
