@@ -247,7 +247,7 @@
         {{ (cassandra_data_file_directories
             + [cassandra_extra_settings.local_system_data_file_directory | default('', true) | string,
                _cassandra_config_default_data_dir, (cassandra_conf_dir | regex_replace('(?<=.)/+$', '') | dirname) ~ '/data/data']
-            + _cassandra_config_live_paths | select('match', '/') | list)
+            + _cassandra_config_live_paths | default([]) | select('match', '/') | list)
            | select | map('regex_replace', '(?<=.)/+$', '') | unique }}
       register: cassandra_config_system
       no_log: true  # the paths may hold secrets

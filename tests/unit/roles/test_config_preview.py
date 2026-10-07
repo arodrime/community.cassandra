@@ -488,3 +488,10 @@ def test_seed_refused_when_the_dir_in_use_is_missing(tmp_path):
     out = seed(tmp_path / "gone", tmp_path / "ansible.conf")
     assert out.returncode == 1 and "conf dir in use (%s) missing" % (tmp_path / "gone") in out.stderr
     assert not (tmp_path / "ansible.conf").exists()
+
+
+def test_system_keyspace_loop_renders_before_the_live_paths_are_listed():
+    # --check before the package is installed: the block is skipped, but a loop is templated before its condition
+    # (an undefined is skipped with it, a list + undefined fails the run)
+    v = dict(INVENTORY)
+    assert render(task("Look for the system keyspace of an initialized node")["loop"], **v)
