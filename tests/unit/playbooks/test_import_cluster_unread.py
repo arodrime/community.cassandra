@@ -50,7 +50,7 @@ def test_unread_ring_node_fails_the_check(nodes, extra, expected):
 
 
 def test_report_and_stop_name_them():
-    variables = dict(_nodes=NODES, _layout=LAYOUT, _dir="/inv")
+    variables = dict(_nodes=NODES, _layout=LAYOUT, _dir="/inv", _report_dir="/inv")
     variables["_unchecked"] = trust_as_template(WRITE["vars"]["_unchecked"])
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables)
     assert "n2 not read" in msg

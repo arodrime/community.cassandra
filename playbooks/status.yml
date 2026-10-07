@@ -7,8 +7,10 @@
 # is health_check): fails only when no node answers (or the
 # cassandra_status_from node does not).
 #   ansible-playbook -i inventory community.cassandra.status
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo) only to read cassandra_jmx_password_file when it is
 # set (the playbook then asks for it itself, no -b needed); none otherwise.
 # -e cassandra_status_from=<host> reads the ring from that node,

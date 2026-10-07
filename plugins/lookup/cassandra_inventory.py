@@ -20,7 +20,7 @@ description:
     variable of a skipped file) or would run a lookup is returned as its raw text. The C(-e) variables are not read.
   - Like the operation playbooks, it reads the C(group_vars) and C(host_vars) next to the inventory and next to
     the playbooks (C(playbook_dir)), not the ones of the current directory.
-  - The cluster groups are C(cassandra_hosts) when it is set, else the group found by
+  - The cluster groups are C(cassandra_hosts) when it is set, else the one C(CASSANDRA_CLUSTER) names, else the group found by
     the lookup P(community.cassandra.cassandra_hosts#lookup), else every top group of the inventory
     (one per cluster when the inventory holds several, as C(all) > C(<cluster>) > C(<cluster>_<dc>)).
 options:
@@ -40,9 +40,12 @@ EXAMPLES = r"""
 RETURN = r"""
 _raw:
   description:
-    - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters) (a list of C(name), C(hosts): C(name), C(vars), C(names))."
+    - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(shared_imported), C(clusters)
+      (a list of C(name), C(hosts): C(name), C(vars), C(names))."
     - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) (empty when none);
-      C(imported) whether import_cluster wrote it; C(options) is the list of the command line options the
+      C(imported) whether import_cluster wrote it in a dir of its own (its C(hosts.yml)); C(shared_imported) the
+      clusters import_cluster wrote in a dir it shares with others (C(import_cluster_shared_dir), their
+      C(<cluster>.yml)); C(options) is the list of the command line options the
       printed commands need (the vault and user options of this run; no C(-b), the playbooks become root
       on the nodes themselves); C(vault_prompt_added) whether
       C(--ask-vault-pass) is there because help found vaulted values.
@@ -66,8 +69,8 @@ from ansible.template import Templar
 from ansible.utils.unsafe_proxy import wrap_var
 from ansible.vars.manager import VariableManager
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
-from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import cluster_group, top_groups
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import written_for
+from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import ENV, UNKNOWN, cluster_group, top_groups
 
 # the only variables templated and returned: none of them holds a secret
 SHOWN = ("ansible_host", "ansible_port", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
@@ -176,8 +179,9 @@ def _options():
     return out
 
 
-def read(sources, given=None, basedir=None):
-    """basedir: the playbooks' dir (its group_vars/host_vars apply, as for the operations)."""
+def read(sources, given=None, basedir=None, env=None):
+    """basedir: the playbooks' dir (its group_vars/host_vars apply, as for the operations); env: the value of
+    CASSANDRA_CLUSTER, when given is not set."""
     loader = _Loader()  # no vault secret: nothing is decrypted
     if basedir:
         loader.set_basedir(basedir)
@@ -190,6 +194,19 @@ def read(sources, given=None, basedir=None):
         auto = cluster_group(None, groups)
     except ValueError:
         auto = ""
+    if not given and env:
+
+        def cluster_name(name):
+            raw = manager.get_vars(host=inventory.get_host(name), include_hostvars=False)
+            try:
+                return Templar(loader=loader, variables=_masked(raw)[0]).template(raw.get("cassandra_cluster_name"))
+            except Exception:  # pylint: disable=broad-except
+                return UNKNOWN  # as the playbooks' lookup: not known from the inventory alone
+
+        try:
+            given = cluster_group(None, groups, env, cluster_name)
+        except ValueError as exc:
+            raise AnsibleLookupError(str(exc))
     names = [given] if given else ([auto] if auto else top_groups(groups))
     clusters, vaulted = [], False
     for name in names:
@@ -216,19 +233,29 @@ def read(sources, given=None, basedir=None):
     if (loader.skipped or vaulted) and not vault_given:
         options.append("--ask-vault-pass")  # the operations read the vaulted values help skipped
         prompt_added = True
+    own, shared = _imported(sources, [c["name"] for c in clusters])
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
-            "options": options, "imported": _imported(sources), "vault_prompt_added": prompt_added}
+            "options": options, "imported": own, "shared_imported": shared, "vault_prompt_added": prompt_added}
 
 
-def _imported(sources):
-    """Whether the inventory is one import_cluster wrote (its hosts.yml starts with the import's line)."""
-    first = sources[0] if sources else ""
-    path = os.path.join(first, "hosts.yml") if os.path.isdir(first) else first
+def _written_by_import(path):
     try:
         with open(path, encoding="utf-8") as f:
-            return f.readline().rstrip("\n") == GENERATED
+            return written_for(f.readline()) is not None
     except (IOError, OSError, UnicodeDecodeError):
         return False
+
+
+def _imported(sources, names):
+    """Whether import_cluster wrote the inventory in its own dir (its hosts.yml starts with the import's line),
+    and the clusters of names it wrote in a shared dir (their <cluster>.yml)."""
+    first = sources[0] if sources else ""
+    whole = os.path.isdir(first)
+    where = first if whole else os.path.dirname(first)
+    own = (whole or os.path.basename(first) == "hosts.yml") and _written_by_import(os.path.join(where, "hosts.yml"))
+    shared = [n for n in names if (whole or os.path.basename(first) == n + ".yml")
+              and _written_by_import(os.path.join(where, n + ".yml"))]
+    return own, shared
 
 
 class LookupModule(LookupBase):
@@ -241,4 +268,4 @@ class LookupModule(LookupBase):
         given = variables.get("cassandra_hosts")
         if isinstance(given, str):
             given = self._templar.template(given)
-        return [read(sources, given or None, variables.get("playbook_dir"))]
+        return [read(sources, given or None, variables.get("playbook_dir"), os.environ.get(ENV))]

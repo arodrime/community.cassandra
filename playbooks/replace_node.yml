@@ -3,8 +3,10 @@
 # streams their data from the replicas (replace_address_first_boot):
 #   ansible-playbook -i inventory community.cassandra.replace_node \
 #     -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.0.14
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # In the inventory, put the new host in the cluster's group and take the dead
 # one out (the new host may reuse its address). The dead node must be down

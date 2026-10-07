@@ -37,6 +37,11 @@ CHECK = next(t for t in load("roles", "cassandra_service", "tasks", "hosts_check
 GROUPS = {"all": ["n1", "n2"], "ungrouped": [], "prod": ["n1", "n2"], "empty": []}
 
 
+@pytest.fixture(autouse=True)
+def no_cluster_env(monkeypatch):
+    monkeypatch.delenv("CASSANDRA_CLUSTER", raising=False)
+
+
 def check(**variables):
     variables = dict(CHECK["vars"], groups=GROUPS, **variables)
     passed = render("{{ %s }}" % CHECK["ansible.builtin.assert"]["that"], **variables)
@@ -57,6 +62,17 @@ def test_default_is_the_cluster_group():
     # no -e cassandra_hosts: the inventory's only cluster group
     assert check()[0] is True
     assert render(CHECK["vars"]["_name"], groups=GROUPS) == "prod"
+
+
+def test_shows_the_group_and_where_it_comes_from(monkeypatch):
+    shown = CHECK["ansible.builtin.assert"]["success_msg"]
+    assert render(shown, groups=GROUPS) == "Cluster group prod (the inventory's cluster group)"
+    assert render(shown, groups=GROUPS, cassandra_hosts="prod") == "Cluster group prod (cassandra_hosts)"
+    monkeypatch.setenv("CASSANDRA_CLUSTER", "Prod")
+    hostvars = {"n1": {"cassandra_cluster_name": "Prod"}, "n2": {"cassandra_cluster_name": "Prod"}}
+    groups = dict(GROUPS, prod_dc1=["n1", "n2"])
+    assert render(shown, groups=groups, hostvars=hostvars) == "Cluster group prod (CASSANDRA_CLUSTER=Prod)"
+    assert render(shown, groups=groups, hostvars=hostvars, cassandra_hosts="empty") == "Cluster group empty (cassandra_hosts)"
 
 
 def test_empty_group():

@@ -4,8 +4,10 @@
 # disabled on it. The cluster is checked before and after each node; the run
 # stops at the first problem.
 #   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Refused: a seed (take it out of cassandra_seeds with change_seeds first), and
 # a datacenter left with fewer nodes than a keyspace has replicas there

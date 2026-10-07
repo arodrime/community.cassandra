@@ -919,7 +919,7 @@ def _hand_edits_kept(node):
 @_values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
-    vars, hand_edits, normalized, comments?, notes}] -> {'hosts', 'group_vars', 'host_vars',
+    vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
     'differences', 'report', 'names' (address -> name in hosts.yml)}. Nodes sharing a name are named by their address instead."""
     cluster = _slug(cluster_name)
     names = [n["name"] for n in nodes]
@@ -964,7 +964,8 @@ def cassandra_inventory_layout(nodes, cluster_name):
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
 
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
-              "Inventory group: %s (the playbooks find it in this inventory; elsewhere: -e cassandra_hosts=%s)" % (cluster, cluster), ""]
+              "Inventory group: %s (the playbooks find it in an inventory of this cluster alone; with other clusters:"
+              " -e cassandra_hosts=%s, or CASSANDRA_CLUSTER=%s)" % (cluster, cluster, cluster), ""]
     report += differences + [""]
     rackdc = [n for n in read if any(k in n["vars"] for k in RACKDC)]
     if rackdc:
@@ -1026,7 +1027,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
             report += ["    " + _mask(line) for line in n["normalized"]]
         report.append("")
     report += _os_section(read)
-    return {"cluster_group": cluster, "hosts": hosts, "group_vars": group_vars,
+    return {"cluster_group": cluster, "cluster_name": cluster_name, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
             "names": dict((n["address"], n["name"]) for n in nodes if n.get("address"))}
 
@@ -1256,14 +1257,25 @@ def cassandra_inventory_files(layout):
 
 
 # First line of every file the import writes: a re-import replaces or removes
-# only the files that start with it (and the vaulted secrets.yml next to one)
-GENERATED = "# Written by community.cassandra.import_cluster: the next import replaces it. Your own settings: other files."
+# only the files that start with it (and the vaulted secrets.yml next to one),
+# and only those of its own cluster, which the line names
+GENERATED = "# Written by community.cassandra.import_cluster for %s: the next import replaces it. Your own settings: other files."
+# the line of the releases before it named the cluster
+GENERATED_UNNAMED = "# Written by community.cassandra.import_cluster: the next import replaces it. Your own settings: other files."
+_HEADER = re.compile(r"# Written by community[.]cassandra[.]import_cluster(?: for ([^\s:]+))?: ")
 _OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main|secrets)\.yml$")
 
 
-def cassandra_inventory_generated(content):
-    """content, marked as written by the import."""
-    return GENERATED + "\n" + content
+def cassandra_inventory_generated(content, cluster):
+    """content, marked as written by the import of the cluster (its group)."""
+    return GENERATED % cluster + "\n" + content
+
+
+def written_for(text):
+    """The cluster group named by the import's first line of text, '' when the
+    line names none (an earlier release), None when text is not the import's."""
+    match = _HEADER.match(text or "")
+    return (match.group(1) or "") if match else None
 
 
 def _decrypt(text, password):
@@ -1277,30 +1289,188 @@ def _decrypt(text, password):
         return None
 
 
-def cassandra_inventory_leftovers(paths, read, written, password=""):
+class _TagsLoader(yaml.SafeLoader):  # pylint: disable=too-many-ancestors
+    """A YAML inventory's tags read as nothing (!vault), or as text (!unsafe): only names count here."""
+
+
+class _Unsafe(str):
+    """A value written !unsafe: its text, not a template."""
+
+
+_TagsLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
+_TagsLoader.add_constructor("!unsafe", lambda loader, node: _Unsafe(loader.construct_scalar(node)))
+# the files Ansible reads as inventory in a dir (not its own ignored extensions), other than YAML: INI
+_INVENTORY_IGNORED = re.compile(r"(\.(pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$")
+_INI_GROUP = re.compile(r"^\[([^:\]\s]+)(?::(\w+))?\]\s*(?:#.*)?$")  # a section, as Ansible's ini plugin reads it
+
+
+def _inventory_names(data):
+    """A YAML inventory (parsed) -> (its groups but all, its hosts)."""
+    groups, hosts = set(), set()
+
+    def walk(level):
+        for name, group in (level.items() if isinstance(level, dict) else []):
+            groups.add(name)
+            if isinstance(group, dict):
+                hosts.update(group["hosts"] if isinstance(group.get("hosts"), dict) else {})
+                walk(group.get("children"))
+    walk(data)
+    groups.difference_update(["all", "ungrouped"])
+    return groups, hosts
+
+
+def _yaml_names(text):
+    """A YAML inventory's text -> (its groups but all, its hosts); none when it does not parse."""
+    try:
+        return _inventory_names(yaml.load(text, Loader=_TagsLoader))  # nosec B506: the loader builds no object
+    except yaml.YAMLError:
+        return set(), set()
+
+
+def _defined_groups(level, seen=None):
+    """The groups a YAML inventory gives hosts, children or vars (not those it only names as a child)."""
+    seen = set() if seen is None else seen
+    out = set()
+    if not isinstance(level, dict) or id(level) in seen:  # an anchor that loops back
+        return out
+    seen.add(id(level))
+    for name, group in level.items():
+        if isinstance(group, dict):
+            if any(group.get(k) for k in ("hosts", "children", "vars")):
+                out.add(name)
+            out |= _defined_groups(group.get("children"), seen)
+    return out
+
+
+def _ini_groups(text):
+    """The sections of an INI inventory with something in them, as Ansible's ini plugin reads them."""
+    out, section = set(), None
+    for line in text.splitlines():
+        line = line.strip()
+        match = _INI_GROUP.match(line)
+        if match:
+            section = match.group(1)
+        elif section and line and not line.startswith((";", "#")):
+            out.add(section)
+    return out
+
+
+def _own_names(path, text):
+    """An inventory file of the user's -> the groups it gives hosts, children or vars: as Ansible reads it, JSON
+    or YAML (a .yml, .yaml, .json or no extension), else INI."""
+    data = None
+    if os.path.splitext(path)[1] in ("", ".yml", ".yaml", ".json"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            try:
+                data = yaml.load(text, Loader=_TagsLoader)  # nosec B506: the loader builds no object
+            except yaml.YAMLError:
+                data = None
+    groups = _defined_groups(data) if isinstance(data, dict) else _ini_groups(text)
+    return groups - set(["all", "ungrouped"]), set()
+
+
+def cassandra_inventory_leftovers(paths, read, written, cluster, password="", shared=False, inventory=None, cluster_name=None):
     """paths: the files in the inventory dir (relative paths); read: {path:
-    its first line (a vaulted file: all of it)} for those read; written: the
-    paths this import writes; password: the vault password, if any. Returns {'stale': the files
-    an earlier import wrote that this one does not (to remove), 'kept': the
-    files the import did not write (left as they are), 'replaced': the files at
-    a path it writes that no import wrote}."""
+    its first line (a vaulted file, and a hosts file in a shared dir: all of
+    it)} for those read; written: the paths this import writes; cluster: its
+    cluster group; password: the vault password, if any; shared: the dir holds
+    other clusters too, each with its <cluster group>.yml; inventory: the hosts
+    this import writes; cluster_name: its cassandra_cluster_name. Returns {'stale': the files an earlier import of this
+    cluster wrote that this one does not (to remove), 'kept': the files no
+    import wrote (left as they are), 'replaced': the files at a path it writes
+    that no import wrote, 'unsure': the files an earlier import wrote that may
+    be another cluster's (left as they are), 'conflicts': why this import
+    would write over another cluster's files, or share its hosts or groups}.
+    A file whose first line names no cluster (an earlier release) is this
+    cluster's in its own dir; in a shared dir, when this cluster's hosts file
+    alone names its group or host. Two clusters whose names make the same
+    group, the user's own inventory files with a group of this cluster's, and
+    a cluster group all or ungrouped in a shared dir are conflicts too."""
     found = dict((p, read.get(p)) for p in paths)
 
-    def generated(path):
+    def header(path):
         text = found.get(path)
-        if text is None:
-            return False
-        if text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its header
-            return (_decrypt(text, password) or "").startswith(GENERATED)
-        return text.startswith(GENERATED)
+        if text is not None and text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its line
+            text = _decrypt(text, password)
+        return written_for(text)
 
-    stale, kept = [], []
-    for path in sorted(found):
-        if path in written:
+    headers = dict((p, header(p)) for p in found)
+    # shared: the clusters' hosts files (the import's), by cluster, and the user's own inventory files
+    clusters, own, conflicts = {}, {}, []
+    if shared and cluster in ("all", "ungrouped", "cassandra"):
+        conflicts.append("cluster group %s: a group the playbooks or Ansible take on their own, not for a dir of"
+                         " several clusters" % cluster)
+    for path, name in sorted(headers.items()):
+        if name is None and shared and found[path] is not None and not any(
+                p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)
+                for p in path.split("/")):
+            own[path] = _own_names(path, found[path])
+        if "/" in path or not path.endswith(".yml") or name is None:
             continue
-        (stale if _OWNABLE.match(path) and generated(path) else kept).append(path)
-    replaced = sorted(p for p in found if p in written and not generated(p))
-    return {"stale": stale, "kept": kept, "replaced": replaced}
+        if not shared and path != "hosts.yml":
+            conflicts.append("%s: the hosts of a cluster in a shared dir, set import_cluster_shared_dir=true" % path)
+        elif shared and path == "hosts.yml":
+            conflicts.append("hosts.yml: the hosts of a dir of its own, rename it <cluster group>.yml for a shared dir")
+        elif shared:
+            clusters[path] = (name or path[:-len(".yml")], _yaml_names(found[path]))
+    # the same group for another cluster (names that differ only by case or punctuation)
+    previous = "group_vars/%s/main.yml" % cluster
+    if cluster_name is not None and headers.get(previous) in (cluster, ""):
+        try:
+            data = yaml.load(found[previous], Loader=_TagsLoader)  # nosec B506: the loader builds no object
+        except yaml.YAMLError:
+            data = None
+        theirs = data.get("cassandra_cluster_name") if isinstance(data, dict) else None
+        templated = not isinstance(theirs, _Unsafe) and re.search(r"\{[{%]", str(theirs))  # the user's: not told
+        if theirs is not None and str(theirs) != str(cluster_name) and not templated:
+            conflicts.append("%s: cluster '%s', not '%s' (two clusters, one group %s)" % (previous, theirs, cluster_name, cluster))
+
+    def named_by(path):
+        """The clusters whose hosts file names the group or host of a group_vars or host_vars path."""
+        parts = path.split("/")
+        if len(parts) < 2 or parts[0] not in ("group_vars", "host_vars"):
+            return set()
+        item = os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1]  # group_vars/<group>.yml too
+        return set(c for c, (groups, hosts) in clusters.values() if item in (groups if parts[0] == "group_vars" else hosts))
+
+    def owner(path):
+        name = headers[path]
+        if name or name is None:
+            return name
+        if not shared:  # a dir of its own: the earlier releases' files are its cluster's
+            return cluster
+        if path in clusters:  # a hosts file
+            return clusters[path][0]
+        if "/" not in path:
+            return cluster if path in written else ""
+        owners = named_by(path)
+        return owners.pop() if len(owners) == 1 else ""
+
+    stale, kept, unsure = [], [], []
+    for path in sorted(found):
+        who = owner(path)
+        if path in written:
+            if who not in (None, cluster):
+                conflicts.append("%s: written for %s" % (path, who) if who
+                                 else "%s: written by an earlier import, not known to be %s's" % (path, cluster))
+        elif who is None:
+            if not named_by(path) - set([cluster]):  # not in another cluster's group_vars or host_vars
+                kept.append(path)
+        elif who == cluster:
+            (stale if _OWNABLE.match(path) else kept).append(path)
+        elif who == "":
+            unsure.append(path)
+    if shared and inventory:
+        groups, hosts = _inventory_names(inventory)
+        for path, (who, (their_groups, their_hosts)) in sorted(clusters.items()):
+            if who != cluster:
+                conflicts += ["%s: in %s too" % (name, path) for name in sorted((groups & their_groups) | (hosts & their_hosts))]
+        for path, (their_groups, dummy) in sorted(own.items()):  # a host may be in groups of the user's too
+            conflicts += ["group %s: in %s too" % (name, path) for name in sorted(groups & their_groups)]
+    replaced = sorted(p for p in found if p in written and headers[p] is None)
+    return {"stale": stale, "kept": kept, "replaced": replaced, "unsure": unsure, "conflicts": conflicts}
 
 
 def cassandra_inventory_same_secret(existing, content, password):

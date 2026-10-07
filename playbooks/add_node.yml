@@ -2,8 +2,10 @@
 # Adds nodes to a running cluster, one at a time. Add them to the cluster's
 # inventory group first (not to cassandra_seeds), then:
 #   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7,node8
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # The cluster is checked before and after each node; the run stops at the
 # first problem. Nodes already in the ring are only checked (re-running is safe),

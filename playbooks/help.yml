@@ -16,8 +16,8 @@
 # variables, its command).
 # -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir
 # (changed only when its content changes; --check --diff shows the difference),
-# to commit with the inventory. -e help_inventory=<path> reads that inventory
-# instead of the run's.
+# to commit with the inventory (-e help_runbook_dir=<dir>: in that dir
+# instead). -e help_inventory=<path> reads that inventory instead of the run's.
 # help decrypts nothing, even with the vault password: vault-encrypted vars
 # files are skipped (named in the advice), inline vaulted values shown as
 # (vaulted), lookups not run, -e variables not read, so no secret reaches the
@@ -27,8 +27,10 @@
 # password). A vault-encrypted file in group_vars/all is read by Ansible for
 # localhost too: then help needs the vault password as well (and still shows
 # nothing from it).
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts), else every top
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts), else every top
 # group (one per cluster).
 # No root anywhere (no node contacted).
 - name: Help
@@ -42,6 +44,8 @@
     _model: >-
       {{ lookup('community.cassandra.cassandra_inventory',
                 sources=[help_inventory] if help_inventory | default('', true) else []) }}
+    # made absolute here: copy would take a relative path from its own working directory
+    _runbook_dir: "{{ help_runbook_dir | expanduser | realpath if help_runbook_dir | default('', true) else '' }}"
     _playbooks: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/*.yml') | map('basename') | map('splitext') | map('first') | list }}"
   tasks:
     - name: Read the inventory
@@ -67,7 +71,9 @@
 
     - name: Write RUNBOOK.md next to the inventory
       ansible.builtin.copy:
-        content: "{{ _cassandra_help_model | community.cassandra.cassandra_help(_playbooks, markdown=true) }}"
-        dest: "{{ _cassandra_help_model | community.cassandra.cassandra_help_runbook }}"
+        content: >-
+          {{ _cassandra_help_model | community.cassandra.cassandra_help(_playbooks, markdown=true,
+                                                                        runbook_dir=_runbook_dir) }}
+        dest: "{{ _cassandra_help_model | community.cassandra.cassandra_help_runbook(_runbook_dir) }}"
         mode: "0644"
       when: help_write | default(false) | bool

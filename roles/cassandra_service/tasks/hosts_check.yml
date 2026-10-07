@@ -1,8 +1,9 @@
 ---
 # Run on localhost before any play on the cluster's group: a group name that
 # is not in the inventory would otherwise run on no host, or stop later on a
-# raw template error. Without cassandra_hosts, the group is the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts), and a name close
+# raw template error. Without cassandra_hosts, the group is the one the
+# CASSANDRA_CLUSTER environment variable names, else the inventory's cluster
+# group (lookup community.cassandra.cassandra_hosts), and a name close
 # to a playbook variable (-e cassandra_host=...) is pointed out. A run with
 # --limit skips localhost, so this check too.
 - name: Variables close to the playbooks' own
@@ -20,6 +21,6 @@
     fail_msg: >-
       cassandra_hosts: group '{{ _name }}' {{ 'has no host' if _name in groups else 'not found in the inventory' }}
       (groups: {{ groups | list | reject('in', ['all', 'ungrouped']) | sort | join(', ') }}).
-    quiet: true
+    success_msg: "Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) }}"
   vars:
     _name: "{{ lookup('community.cassandra.cassandra_hosts') }}"

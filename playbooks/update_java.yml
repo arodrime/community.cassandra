@@ -5,8 +5,10 @@
 # node drained and restarted, cluster checked again. Nodes already running that
 # Java are skipped.
 #   ansible-playbook -i inventory community.cassandra.update_java
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Refused: a Java the series does not support (4.0/4.1: 8, 11; 5.0: 11, 17).
 # With cassandra_java_tarballs (Java tarballs by major, e.g. in a mirror file

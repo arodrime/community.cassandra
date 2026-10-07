@@ -26,6 +26,11 @@ GROUPS = {"all": ["n1", "n2", "n3", "m1"], "ungrouped": [], "prod": ["n1", "n2",
           "monitoring": ["m1"]}
 
 
+@pytest.fixture(autouse=True)
+def no_cluster_env(monkeypatch):
+    monkeypatch.delenv("CASSANDRA_CLUSTER", raising=False)
+
+
 def test_node_states():
     states = {"n1": None, "n2": "absent", "n3": " Present ", "n4": ""}
     assert node_states(["n1", "n2", "n3", "n4"], states.get) == {"n1": "present", "n2": "absent", "n3": "present",
@@ -49,6 +54,16 @@ def test_lookup():
     assert render("{{ query('community.cassandra.cassandra_nodes', state='absent') }}", hostvars) == ["n2"]
     assert render("{{ query('community.cassandra.cassandra_nodes', group='all') }}", hostvars) == ["n1", "n3", "m1"]
     assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, cassandra_hosts="prod_dc1") == ["n1", "n3"]
+
+
+def test_lookup_cluster_from_the_environment(monkeypatch):
+    hostvars = {"n1": {"cassandra_cluster_name": "Prod"}, "n2": {"cassandra_cluster_name": "Prod"},
+                "n3": {"cassandra_cluster_name": "Prod", "cassandra_node_state": "absent"}, "m1": {}}
+    monkeypatch.setenv("CASSANDRA_CLUSTER", "Prod")
+    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, cassandra_hosts=None) == ["n1", "n2"]
+    monkeypatch.setenv("CASSANDRA_CLUSTER", "monitoring")
+    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, cassandra_hosts=None) == ["m1"]
+    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars) == ["n1", "n2"]  # -e cassandra_hosts=prod
 
 
 def test_lookup_templated_state():

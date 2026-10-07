@@ -3,8 +3,10 @@
 # it out of the ring, its data rebuilt from the other replicas.
 #   ansible-playbook -i inventory community.cassandra.remove_dead_node \
 #     -e cassandra_dead_node_address=10.0.0.14
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Take the dead host out of the inventory first. Prefer replace_node (a new host
 # takes over its tokens and data). cassandra_dead_node_method: removenode

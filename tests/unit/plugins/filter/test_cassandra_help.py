@@ -376,6 +376,24 @@ def test_reimport_only_into_an_inventory_the_import_wrote():
         assert "import_cluster_force" not in text
 
 
+def test_reimport_into_a_shared_dir(tmp_path):
+    """A cluster the import wrote into a dir shared with others: its re-import goes there again, as a shared dir,
+    and every command names its group, even while it is alone there."""
+    (tmp_path / "inventories").mkdir()
+    sources = [str(tmp_path / "inventories")]
+    billing = {"name": "billing", "hosts": [node("node9", "192.0.2.19", "rack1", cassandra_cluster_name="Billing")]}
+    shared = model(sources=sources, imported=False, shared_imported=["orders"],
+                   clusters=MODEL["clusters"] + [billing], auto="")
+    text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))
+    assert ("$ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster -e import_cluster_dir=inventories"
+            " -e import_cluster_shared_dir=true -e import_cluster_force=true -e import_cluster_runbook=true\n") in text
+    assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n") in text
+    alone = model(sources=sources, imported=False, shared_imported=["orders"])
+    text = cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
+    assert "$ ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=orders\n" in text
+    assert "-e cassandra_hosts" not in cassandra_help(model(), PLAYBOOKS, cwd=CWD)
+
+
 def test_import_command_placeholders_for_what_help_could_not_read():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[0]["vars"].update(cassandra_jmx_username="(vaulted)", cassandra_jmx_password=True,

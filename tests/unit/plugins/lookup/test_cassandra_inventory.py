@@ -11,7 +11,7 @@ import pytest
 from ansible.errors import AnsibleError
 from ansible.parsing.vault import VaultLib, VaultSecret
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED, GENERATED_UNNAMED
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_inventory import read
 
 HOSTS = """\
@@ -117,6 +117,20 @@ def test_several_clusters(tmp_path):
     assert [c["name"] for c in model["clusters"]] == ["billing", "orders"]
 
 
+def test_cluster_from_the_environment(tmp_path):
+    hosts = HOSTS + ("    billing:\n      children:\n        billing_dc1:\n          hosts:\n"
+                     "            node9: {ansible_host: 192.0.2.19}\n")
+    source = inventory(tmp_path, hosts=hosts, orders="cassandra_cluster_name: Orders\n",
+                       billing="cassandra_cluster_name: \"{{ 'Bill' ~ 'ing' }}\"\n")
+    assert [c["name"] for c in read([source], env="Orders")["clusters"]] == ["orders"]
+    assert [c["name"] for c in read([source], env="Billing")["clusters"]] == ["billing"]
+    assert [c["name"] for c in read([source], env="billing")["clusters"]] == ["billing"]
+    assert [c["name"] for c in read([source], given="orders", env="Billing")["clusters"]] == ["orders"]
+    assert read([source], env="Billing")["auto"] == ""  # the commands still name the group
+    with pytest.raises(AnsibleError, match="CASSANDRA_CLUSTER=Nope: no group"):
+        read([source], env="Nope")
+
+
 def test_current_dir_group_vars_not_read(tmp_path, monkeypatch):
     # the operations read group_vars next to the inventory and the playbooks, not the current dir's
     source = inventory(tmp_path)
@@ -128,9 +142,26 @@ def test_current_dir_group_vars_not_read(tmp_path, monkeypatch):
 
 
 def test_imported(tmp_path):
-    source = inventory(tmp_path, hosts=GENERATED + "\n" + HOSTS)
-    assert read([source])["imported"] is True
-    assert read([os.path.dirname(source)])["imported"] is True
+    for i, line in enumerate((GENERATED % "orders", GENERATED_UNNAMED)):
+        source = inventory(tmp_path / str(i), hosts=line + "\n" + HOSTS)
+        assert read([source])["imported"] is True
+        assert read([os.path.dirname(source)])["imported"] is True
+        assert read([source])["shared_imported"] == []
+
+
+def test_imported_into_a_shared_dir(tmp_path):
+    """<cluster>.yml next to other clusters': the import wrote it with import_cluster_shared_dir."""
+    inv = tmp_path / "inv"
+    inv.mkdir()
+    (inv / "orders.yml").write_text(GENERATED % "orders" + "\n" + HOSTS)
+    (inv / "billing.yml").write_text("all:\n  children:\n    billing:\n      hosts:\n        node9: {}\n")
+    model = read([str(inv)])
+    assert model["imported"] is False and model["shared_imported"] == ["orders"]
+    assert read([str(inv / "orders.yml")])["shared_imported"] == ["orders"]
+    # the hosts file alone, named after another group: not the shared file of a cluster
+    assert read([str(inv / "billing.yml")])["shared_imported"] == []
+    (inv / "hosts.yml").write_text(GENERATED % "orders" + "\n" + HOSTS)
+    assert read([str(inv / "orders.yml")])["imported"] is False  # not this file
 
 
 def test_value_from_an_inline_vault_masked(tmp_path):
