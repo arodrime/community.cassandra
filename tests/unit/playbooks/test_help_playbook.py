@@ -71,7 +71,8 @@ def run(tmp_path, *extra, **kwargs):
                ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_TIMEOUT="3",
                ANSIBLE_STDOUT_CALLBACK="ansible.builtin.default",
                ANSIBLE_CALLBACK_RESULT_FORMAT=kwargs.get("result_format", "json"))
-    for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY"):
+    # (ansible-test --color sets ANSIBLE_FORCE_COLOR, which wins over ANSIBLE_NOCOLOR)
+    for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR"):
         env.pop(name, None)
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()",
             "community.cassandra.help"] + list(extra)
