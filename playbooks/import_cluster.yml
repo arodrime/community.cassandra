@@ -185,9 +185,10 @@
         command -v dpkg >/dev/null 2>&1 && echo "held=$(dpkg --get-selections 'cassandra*' 2>/dev/null | awk '$2 == "hold" {print $1}' | tr '\n' ' ')"
         # dsbulk as cassandra_install puts it: /usr/share/dsbulk-<version> with its marker, linked from
         # /usr/share/dsbulk and /usr/bin/dsbulk
-        dsb=$(readlink -f /usr/bin/dsbulk 2>/dev/null)
-        [ -e /usr/bin/dsbulk ] && [ -L /usr/share/dsbulk ] && [ "$(readlink -f /usr/share/dsbulk)/bin/dsbulk" = "$dsb" ] \
-          && [ -f "${dsb%/bin/dsbulk}/.cassandra_install" ] && echo "dsbulk=$dsb"
+        # (the links as the role writes them: else it would rewrite them)
+        dsb=$(readlink /usr/share/dsbulk 2>/dev/null)
+        [ "$(readlink /usr/bin/dsbulk 2>/dev/null)" = /usr/share/dsbulk/bin/dsbulk ] && [ -x "$dsb/bin/dsbulk" ] \
+          && [ -f "$dsb/.cassandra_install" ] && echo "dsbulk=$dsb/bin/dsbulk"
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
           && echo "own_unit=yes"
@@ -1041,7 +1042,7 @@
               {%-   endif -%}
               {%- endif -%}
               {%- set dsbulk = _hv.import_cluster_dsbulk | default('') -%}
-              {%- if _read and dsbulk is match('^/usr/share/dsbulk-[0-9.]+/bin/dsbulk$') -%}
+              {%- if _read and dsbulk is match('^/usr/share/dsbulk-[0-9]+([.][0-9]+)*/bin/dsbulk$') -%}
               {%-   set _ = out.update({'cassandra_dsbulk_version': (dsbulk | dirname | dirname | basename)[7:]}) -%}
               {%- elif _read -%}{%- set _ = out.update({'cassandra_dsbulk_install': false}) -%}
               {%- endif -%}

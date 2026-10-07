@@ -139,4 +139,4 @@ def test_dsbulk_read_only_as_the_role_installs_it():
     script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")["ansible.builtin.shell"]
     line = next(i for i, x in enumerate(script.split("\n")) if "dsbulk=$dsb" in x)
     test = " ".join(script.split("\n")[line - 1:line + 1])
-    assert "-L /usr/share/dsbulk" in test and ".cassandra_install" in test
+    assert "= /usr/share/dsbulk/bin/dsbulk" in test and ".cassandra_install" in test
