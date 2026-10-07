@@ -45,16 +45,20 @@ would otherwise repeat:
     project/
       ansible.cfg
       collections/                    # ansible-galaxy collection install -p ./collections <collection tarball or name>
-      inventories/orders/hosts.yml    # one dir per cluster, as import_cluster writes it
-      inventories/orders/group_vars/all/local.yml   # your own settings (mirror, ...): kept by a re-import
+      inventories/                    # one inventory for every cluster
+        orders.yml                    # the hosts of each cluster, as import_cluster writes them
+        billing.yml
+        group_vars/all/local.yml      # your own settings (mirror, ...): kept by a re-import
+        group_vars/orders/main.yml    # written by import_cluster, as the groups of each datacenter and rack
+        host_vars/node1/main.yml
+      reports/orders/report.txt       # the import's report (and RUNBOOK.md), outside the inventory
 
 .. code-block:: ini
 
     # ansible.cfg (a sample; relative paths are from this file's dir)
     [defaults]
     collections_path = ./collections
-    # the cluster most runs are on; -i inventories/<other>/hosts.yml for another one
-    inventory = ./inventories/orders/hosts.yml
+    inventory = ./inventories
     # read by Ansible for every run (which fails if it is missing), and by import_cluster to
     # encrypt the passwords it finds; keep it outside the project, mode 0600
     vault_password_file = ~/.ansible/vault_pass
@@ -71,13 +75,21 @@ then stop before changing anything, unless Ansible already logs in as root there
 ``ansible_user: root``, or ``ansible_become: false``). An inventory ``ansible_become: true`` makes ``status`` and
 ``health_check`` run ``nodetool`` as root too, for nodes where it needs root.
 
-Then, with the cluster group found from the inventory (see `Inventory`_):
+Then, naming the cluster on each run (see `Inventory`_):
 
 .. code-block:: console
 
-    $ ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_dir=inventories/orders
-    $ ansible-playbook community.cassandra.health_check
-    $ ansible-playbook community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_dir=inventories -e import_cluster_shared_dir=true
+    $ ansible-playbook community.cassandra.health_check -e cassandra_hosts=orders
+    $ CASSANDRA_CLUSTER=orders ansible-playbook community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+
+Ansible reads the ``group_vars`` and ``host_vars`` next to an inventory source only: with ``inventory =
+./inventories``, the ones of a subdirectory (``inventories/orders/group_vars``) are not read. Hence one flat
+directory: each cluster's hosts in ``<cluster>.yml``, every group's variables side by side in ``group_vars``
+(``orders``, ``orders_dc1``... the import prefixes each group with the cluster's). For a single cluster, the
+import's default layout works as well: its own directory, ``-e import_cluster_dir=inventories/orders`` without
+``import_cluster_shared_dir``, and ``inventory = ./inventories/orders/hosts.yml``; the playbooks then need no
+``cassandra_hosts``.
 
 Ansible ignores an ``ansible.cfg`` in a world-writable dir; ``ANSIBLE_CONFIG=<path>`` names one explicitly.
 
@@ -110,15 +122,33 @@ Use one group per cluster and one group per datacenter (the playbooks below take
                 node5:
                 node6:
 
-Without ``-e cassandra_hosts=<group>``, the playbooks run on the group ``cassandra`` when the inventory has one with
-hosts, else on the inventory's cluster group when it holds one cluster laid out as the import writes it: the group
+Without ``-e cassandra_hosts=<group>`` (nor ``CASSANDRA_CLUSTER``, below), the playbooks run on the group
+``cassandra`` when the inventory has one with hosts, else on the inventory's cluster group when it holds one cluster laid out as the import writes it: the group
 whose name starts every other group's and that holds their hosts (``orders`` here, for ``orders_dc1`` and
 ``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out). Any other group
 (a second cluster, ``monitoring``, ``linux``, a group of your own not named ``<cluster>_...``) makes them stop with the top groups listed rather
-than guess: give ``-e cassandra_hosts=<group>`` then. Keep one inventory per cluster
-(``inventories/<cluster>/hosts.yml``, as the import writes it) and the playbooks need no ``cassandra_hosts``. The
+than guess: give ``-e cassandra_hosts=<group>`` then. With one inventory per cluster
+(``inventories/<cluster>/hosts.yml``, as the import writes it by default) the playbooks need no ``cassandra_hosts``. The
 same rule is the lookup ``community.cassandra.cassandra_hosts``; the groups are read each time, so a group your own
 plays add earlier in the same run (``group_by``) makes it stop the same way.
+
+The environment variable ``CASSANDRA_CLUSTER`` names the cluster too, when ``cassandra_hosts`` is not set (which wins
+over it): a group of the inventory, or a ``cassandra_cluster_name`` (exact, case included), which stands for the
+group whose hosts are the ones with that name (a group laid out as a cluster's: ``cassandra``, or one with its
+``<group>_...`` groups). A value that matches nothing, a cluster name several groups have, or one some hosts may have
+without the inventory telling (a fact of the node), stops the run before anything is done. The first task of each operation shows the group and where it comes from.
+
+.. code-block:: console
+
+    $ export CASSANDRA_CLUSTER=orders
+    $ ansible-playbook community.cassandra.rolling_restart
+
+An exported ``CASSANDRA_CLUSTER`` stays set for every later command of the shell: show it in the prompt, e.g. at the
+end of the virtualenv's ``bin/activate``:
+
+.. code-block:: sh
+
+    PS1='${CASSANDRA_CLUSTER:+[$CASSANDRA_CLUSTER] }'"$PS1"
 
 .. code-block:: yaml
 
@@ -161,7 +191,7 @@ Operation playbooks
 -------------------
 
 The collection has playbooks for the usual operations on a cluster. Each one works on one inventory group
-(the inventory's cluster group, or ``-e cassandra_hosts=<group>``, see `Inventory`_) and starts with ``preflight``, which checks that the settings that must match do
+(the inventory's cluster group, ``-e cassandra_hosts=<group>`` or ``CASSANDRA_CLUSTER``, see `Inventory`_) and starts with ``preflight``, which checks that the settings that must match do
 match on every node, that the racks suit the token allocator, and that the seeds are a sensible layout (it suggests
 a seed list when they are not). It also checks that the account Cassandra runs as can read the config files, and
 warns about the ``cassandra_*`` variables set that no role or playbook knows (a typo, or a name from another version:
@@ -231,7 +261,7 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
 
 ``-e help_topic=<operation>`` shows one operation in detail: its documentation (the comment that starts the
 playbook), its variables and its command. ``-e help_write=true`` also writes the same content as ``RUNBOOK.md`` in
-the inventory's dir (the first ``-i`` one), with the commands ready to copy: commit it with the inventory. It is
+the inventory's dir (the first ``-i`` one), or in the existing dir given as ``-e help_runbook_dir=<dir>``, with the commands ready to copy: commit it with the inventory. It is
 written only when its content changes (run ``help`` again after changing the inventory); ``--check --diff`` shows the
 difference. Its commands are as run from the directory ``help`` was run from (the one with ``ansible.cfg``; the file
 says where that is from its own dir), with the ``-i`` path and the vault and connection options ``help`` was given:
@@ -991,16 +1021,29 @@ Without a password file, they are written in clear with mode ``0600``, and the r
 ``ansible-vault encrypt`` command to run; a vaulted ``secrets.yml`` already there is then never overwritten in clear
 (the import stops). A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
 
-Every file the import writes starts with ``# Written by community.cassandra.import_cluster``. An existing
-``import_cluster_dir`` is refused unless ``import_cluster_force=true``; then the import writes the files at its own
-paths (``hosts.yml``, ``report.txt``, ``group_vars``/``host_vars`` ``main.yml`` and ``secrets.yml``), removes the
-files with its header it no longer writes (the ``host_vars`` of a node gone from the ring; a vaulted one only when it
-decrypts with the password at hand), and keeps every other file there: your ``group_vars/all/*.yml`` (a mirror, a
-vault), an ``ansible.cfg``, notes; dot-dirs (``.git``) are not looked into, and no directory is removed. The report
-lists the files removed, the files kept (down to ``group_vars/<group>/``), and the files replaced at its paths that
-did not have its header, each kept as a ``<file>.<timestamp>~`` backup. A file of
+Every file the import writes starts with ``# Written by community.cassandra.import_cluster for <cluster group>``. An
+existing ``import_cluster_dir`` is refused unless ``import_cluster_force=true``; then the import writes the files at
+its own paths (``hosts.yml``, ``report.txt``, ``group_vars``/``host_vars`` ``main.yml`` and ``secrets.yml``), removes
+the files with its header for this cluster it no longer writes (the ``host_vars`` of a node gone from the ring; a
+vaulted one only when it decrypts with the password at hand), and keeps every other file there: your
+``group_vars/all/*.yml`` (a mirror, a vault), an ``ansible.cfg``, notes; dot-dirs (``.git``) are not looked into, and
+no directory is removed. The report lists the files removed, the files kept (down to ``group_vars/<group>/``), and
+the files replaced at its paths that did not have its header, each kept as a ``<file>.<timestamp>~`` backup. A file of
 the import you edit by hand is replaced by the next import: put your own settings in files of your own
-(``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
+(``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``). ``import_cluster_report_dir`` writes the report
+(and ``RUNBOOK.md``) elsewhere.
+
+Several clusters in one inventory directory (see `Project setup`_): ``-e import_cluster_shared_dir=true`` with
+``import_cluster_dir`` the shared directory. The hosts go to ``<cluster group>.yml`` there, which must not exist yet
+unless ``import_cluster_force=true`` (the directory itself may), the report to
+``./reports/<cluster group>/report.txt`` (``import_cluster_report_dir``), out of the inventory. A re-import removes
+only the files of its own cluster; the other clusters' files are neither removed nor written over: a host or group
+name another cluster has already, a group your own inventory files there give hosts, children or vars, or another
+cluster whose name makes the same group (``Prod A`` and ``prod-a``) stops the import, before anything is written
+(``import_cluster_host_names: fqdn`` or ``ip`` for host names). A file from an earlier release, whose first line names no cluster, is this cluster's when this
+cluster's hosts file alone names its group or host; otherwise it is kept as it is and listed in the report. To move a
+directory of the default layout into a shared one, rename its ``hosts.yml`` to ``<cluster group>.yml`` and move its
+``group_vars`` and ``host_vars`` in; the next import with ``import_cluster_force=true`` writes the new header.
 
 Then check what the roles would change:
 
@@ -1008,6 +1051,8 @@ Then check what the roles would change:
 
     $ ansible-playbook -i orders/hosts.yml community.cassandra.preflight
     $ ansible-playbook -i orders/hosts.yml site.yml --check
+
+(In a shared directory: ``-i inventories -e cassandra_hosts=orders``.)
 
 Repeat until the diff only shows what you intend to change. The confirmation prompt is a last safety net, not a
 replacement for this step.

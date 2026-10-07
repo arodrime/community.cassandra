@@ -3,8 +3,10 @@
 #   ansible-playbook -i inventory community.cassandra.add_datacenter \
 #     -e cassandra_new_nodes=my_cluster_dc3 -e cassandra_rebuild_source_dc=dc1 \
 #     -e '{"cassandra_datacenter_replication": {"orders": 3, "system_auth": 3}}'
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Put the new nodes in the cluster's inventory group first, all declaring the
 # new cassandra_dc. They join one at a time without streaming (auto_bootstrap:

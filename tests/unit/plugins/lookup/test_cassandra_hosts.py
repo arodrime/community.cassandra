@@ -13,13 +13,19 @@ from ansible.errors import AnsibleError
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
-from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import RUNTIME, cluster_group
+from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import ENV, RUNTIME, cluster_group, picked
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
 except ImportError:
     def trust_as_template(template):
         return template
+
+
+@pytest.fixture(autouse=True)
+def no_cluster_env(monkeypatch):
+    monkeypatch.delenv("CASSANDRA_CLUSTER", raising=False)
+
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 
@@ -104,6 +110,89 @@ def test_lookup():
     assert render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED) == "prod"
     assert render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED,
                   cassandra_hosts="prod_dc1") == "prod_dc1"
+
+
+# two clusters in one inventory (a shared dir), and their cassandra_cluster_name
+TWO = {"all": ["a1", "a2", "b1", "m1"], "ungrouped": [], "cluster_a": ["a1", "a2"], "cluster_a_dc1": ["a1", "a2"],
+       "cluster_a_dc1_r1": ["a1", "a2"], "cluster_b": ["b1"], "cluster_b_dc1": ["b1"], "monitoring": ["a1", "b1", "m1"]}
+NAMES = {"a1": "Cluster A", "a2": "Cluster A", "b1": "CLUSTER_B"}
+
+
+def test_env_names_the_group():
+    assert picked(None, TWO, "cluster_b", NAMES.get) == ("cluster_b", "CASSANDRA_CLUSTER=cluster_b")
+
+
+def test_env_names_the_cluster():
+    """Its cassandra_cluster_name, exact: the largest group of its hosts, not a dc or rack group of the same hosts."""
+    assert cluster_group(None, TWO, "Cluster A", NAMES.get) == "cluster_a"
+    assert cluster_group(None, TWO, "CLUSTER_B", NAMES.get) == "cluster_b"
+    with pytest.raises(ValueError, match="CASSANDRA_CLUSTER=cluster a: no group of that name with hosts, and no host"):
+        cluster_group(None, TWO, "cluster a", NAMES.get)
+
+
+def test_given_wins_over_env():
+    assert picked("cluster_a", TWO, "cluster_b", NAMES.get) == ("cluster_a", "cassandra_hosts")
+
+
+def test_env_unknown():
+    with pytest.raises(ValueError, match=r"CASSANDRA_CLUSTER=nope: no group .* \(top groups: cluster_a, monitoring\)"):
+        cluster_group(None, TWO, "nope", NAMES.get)
+
+
+def test_env_cluster_name_of_several_groups():
+    names = dict(NAMES, b1="Cluster A")  # two clusters with the same name
+    with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_a, cluster_b\): give the group instead"):
+        cluster_group(None, TWO, "Cluster A", names.get)
+    # its hosts in no group of their own
+    with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_b\)"):
+        cluster_group(None, TWO, "Cluster M", {"a1": "Cluster M", "b1": "Cluster M"}.get)
+
+
+def test_env_name_set_for_every_host():
+    """cassandra_cluster_name in group_vars/all: the group holding every host (linux) is not a cluster's."""
+    groups = {"all": ["n1", "n2", "m1"], "linux": ["n1", "n2", "m1"], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"],
+              "monitoring": ["m1"]}
+    with pytest.raises(ValueError, match=r"not one group's \(groups: prod\)"):
+        cluster_group(None, groups, "Prod", lambda h: "Prod")
+
+
+def test_env_name_not_known_for_some_hosts():
+    """A host whose name the inventory does not give may belong to it: no smaller group picked instead."""
+    from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import UNKNOWN
+    groups = {"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"], "prod_dc1": ["n1", "n2"],
+              "prod_dc1_r1": ["n1", "n2"], "prod_dc2": ["n3"], "prod_dc2_r1": ["n3"]}
+    names = {"n1": "Prod", "n2": "Prod", "n3": UNKNOWN}
+    with pytest.raises(ValueError, match="not one group's"):
+        cluster_group(None, groups, "Prod", names.get)
+    assert cluster_group(None, groups, "Prod", dict(names, n3="Prod").get) == "prod"
+
+
+def test_env_unset_or_empty():
+    assert picked(None, IMPORTED, None, NAMES.get) == ("prod", "the inventory's cluster group")
+    assert picked(None, IMPORTED, "", NAMES.get) == ("prod", "the inventory's cluster group")
+    with pytest.raises(ValueError, match="top groups: cluster_a, monitoring"):
+        cluster_group(None, TWO, None, NAMES.get)
+
+
+def test_env_before_the_cassandra_group():
+    assert cluster_group(None, dict(TWO, cassandra=["a1"]), "cluster_b", NAMES.get) == "cluster_b"
+
+
+def test_lookup_env(monkeypatch):
+    hostvars = dict((h, {"cassandra_cluster_name": n}) for h, n in NAMES.items())
+    hostvars["a2"] = {"cassandra_cluster_name": trust_as_template("{{ the_name }}")}
+    monkeypatch.setenv(ENV, "Cluster A")
+    lookup = "{{ lookup('community.cassandra.cassandra_hosts') }}"
+    assert render(lookup, groups=TWO, hostvars=hostvars, the_name="Cluster A") == "cluster_a"
+    assert render("{{ lookup('community.cassandra.cassandra_hosts', explain=true) }}", groups=TWO, hostvars=hostvars,
+                  the_name="Cluster A") == "cluster_a (CASSANDRA_CLUSTER=Cluster A)"
+    assert render(lookup, groups=TWO, hostvars=hostvars, cassandra_hosts="cluster_b") == "cluster_b"
+    monkeypatch.setenv(ENV, "nope")
+    with pytest.raises(AnsibleError, match="CASSANDRA_CLUSTER=nope: no group"):
+        render(lookup, groups=TWO, hostvars=hostvars)
+    monkeypatch.delenv(ENV)
+    assert render("{{ lookup('community.cassandra.cassandra_hosts', explain=true) }}", groups=IMPORTED) == \
+        "prod (the inventory's cluster group)"
 
 
 def test_lookup_error():

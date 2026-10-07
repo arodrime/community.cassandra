@@ -1,8 +1,10 @@
 ---
 # Upgrades a running cluster to the version in the inventory, one phase per run:
 #   ansible-playbook -i inventory community.cassandra.upgrade -e cassandra_upgrade_phase=<phase>
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Set the target first, in the cluster's group_vars: cassandra_version (series,
 # e.g. 50x), cassandra_package_version (e.g. 5.0.4) and cassandra_java_version

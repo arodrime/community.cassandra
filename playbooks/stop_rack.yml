@@ -4,8 +4,10 @@
 # cassandra_operation_drain: false only by the role's unit) then stopped:
 #   ansible-playbook -i inventory community.cassandra.stop_rack \
 #     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # With at least as many racks as replicas in the datacenter, one rack down is
 # one replica down. Refused when a keyspace would lose more than that (more

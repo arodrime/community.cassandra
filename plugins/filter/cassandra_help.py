@@ -10,7 +10,7 @@ cassandra_help: model (lookup community.cassandra.cassandra_inventory) ->
     the clusters as the inventory describes them, every operation with its
     command for this inventory, and advice; with topic, the detail of one
     operation; markdown true: the same as RUNBOOK.md.
-cassandra_help_runbook: model -> where RUNBOOK.md goes (the inventory's dir).
+cassandra_help_runbook: model -> where RUNBOOK.md goes (the inventory's dir, or runbook_dir).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -46,6 +46,7 @@ OPERATIONS = [
      "options": {"help_topic": "one operation in detail (its documentation, variables and command)",
                  "help_write": "true also writes RUNBOOK.md next to the inventory (changed only when its content"
                                " changes; --check --diff shows the difference)",
+                 "help_runbook_dir": "write RUNBOOK.md in this dir instead (an existing one)",
                  "help_inventory": "read this inventory instead of the run's (-i)"}},
     {"name": "status", "theme": "read-only",
      "summary": "The ring as nodetool status shows it from one node, per datacenter; a down node is shown, not an"
@@ -170,7 +171,10 @@ OPERATIONS = [
      "summary": "Reads the running cluster into an inventory, changing nothing on the nodes; a re-import into"
                 " an inventory it wrote keeps the files it did not write.",
      "options": {"import_cluster_dir": "where to write the inventory",
-                 "import_cluster_force": "true writes into a dir that exists (a re-import)",
+                 "import_cluster_shared_dir": "true: import_cluster_dir holds several clusters (<cluster>.yml each)",
+                 "import_cluster_report_dir": "where to write report.txt and RUNBOOK.md (default import_cluster_dir;"
+                                              " with import_cluster_shared_dir, ./reports/<cluster>)",
+                 "import_cluster_force": "true: a re-import (into a dir that exists; in a shared dir, over this cluster's files)",
                  "import_cluster_runbook": "true also writes RUNBOOK.md there (the help playbook)",
                  "import_cluster_allow_unread": "true accepts a ring node it could not read (else the import fails)",
                  "import_cluster_keep_hand_edits": "true leaves the config files with hand edits as they are on"
@@ -400,11 +404,13 @@ def _command(op, model, cluster, cwd):
                 jmx.append(_e(key, placeholder))
         address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
                         if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
-        # into this inventory's dir only when the import wrote it and it holds this cluster alone: a re-import
-        # writes hosts.yml with this cluster's nodes only
-        here = model.get("imported") and len(model.get("clusters") or []) == 1
-        target = [_e("import_cluster_dir", _path(_inventory_dir(model), cwd)), "-e import_cluster_force=true",
-                  "-e import_cluster_runbook=true"] if here else ["-e import_cluster_dir=NEW_DIR"]
+        # into this inventory's dir only when the import wrote it and it holds this cluster alone (a re-import
+        # writes hosts.yml with this cluster's nodes only), or wrote this cluster there among others
+        shared = cluster.name in (model.get("shared_imported") or [])
+        here = shared or (model.get("imported") and len(model.get("clusters") or []) == 1)
+        target = ([_e("import_cluster_dir", _path(_inventory_dir(model), cwd))]
+                  + (["-e import_cluster_shared_dir=true"] if shared else [])
+                  + ["-e import_cluster_force=true", "-e import_cluster_runbook=true"]) if here else ["-e import_cluster_dir=NEW_DIR"]
         parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
                  + ["community.cassandra.import_cluster"] + target + jmx)
         return " ".join(p for p in parts if p)
@@ -417,7 +423,8 @@ def _command(op, model, cluster, cwd):
     drop = ("-K", "--ask-vault-pass") if model.get("vault_prompt_added") else ("-K",)
     options = [shlex.quote(o) for o in _options(model, cwd) if op["name"] != "help" or o not in drop]
     parts = ["ansible-playbook", inv] + options + ["community.cassandra.%s" % op["name"]]
-    if model.get("auto") != cluster.name:
+    # in a dir shared with other clusters, even while it is alone there
+    if model.get("auto") != cluster.name or cluster.name in (model.get("shared_imported") or []):
         parts.append(_e("cassandra_hosts", cluster.name))
     for arg in op.get("args") or []:
         filled = re.match(r"^-e (\w+)=\{(\w+)\}$", arg)
@@ -575,10 +582,11 @@ def _header(model, cwd):
     return "Cassandra help for the inventory %s (read from the inventory only: no node contacted)" % sources
 
 
-def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None):
+def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None, runbook_dir=""):
     """model: lookup community.cassandra.cassandra_inventory; playbooks: the
     names of the playbooks there are; topic: one operation in detail, with
-    header the comment that starts its playbook; markdown: RUNBOOK.md."""
+    header the comment that starts its playbook; markdown: RUNBOOK.md, in
+    runbook_dir (default the inventory's dir)."""
     model = model or {}
     cwd = os.getcwd() if cwd is None else cwd
     playbooks = list(playbooks or [op["name"] for op in OPERATIONS])
@@ -627,7 +635,9 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
             advice.append((prefix + item[0], item[1]) if isinstance(item, tuple) else prefix + item)
     sections.append(("3. Advice", advice or ["Nothing to point out."]))
 
-    return (_markdown if markdown else _text)(_header(model, cwd), sections, model, cwd)
+    if markdown:
+        return _markdown(_header(model, cwd), sections, model, cwd, runbook_dir or _inventory_dir(model))
+    return _text(_header(model, cwd), sections, model, cwd)
 
 
 _INTRO = ("Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each"
@@ -659,8 +669,8 @@ def _text(header, sections, model, cwd):
     return "\n\n".join("\n".join(b) for b in blocks)
 
 
-def _markdown(header, sections, model, cwd):
-    where = os.path.relpath(cwd, _inventory_dir(model))
+def _markdown(header, sections, model, cwd, runbook_dir):
+    where = os.path.relpath(cwd, runbook_dir)
     out = ["# RUNBOOK", "",
            "Written by `community.cassandra.help -e help_write=true` from the inventory alone (%s): run it again"
            " after changing the inventory." % ", ".join(_path(src, cwd) for src in model.get("sources") or []), "",
@@ -741,12 +751,12 @@ def _topic(topic, header, model, clusters, cwd):
     return "\n\n".join("\n".join(b) for b in blocks)
 
 
-def cassandra_help_runbook(model):
+def cassandra_help_runbook(model, runbook_dir=""):
     first = ((model or {}).get("sources") or [""])[0]
-    if not os.path.exists(first):
+    if not runbook_dir and not os.path.exists(first):
         raise AnsibleFilterError("help_write: the inventory %s is not a file or a dir to write RUNBOOK.md next to"
                                  % (first or "(none)"))
-    return os.path.join(_inventory_dir(model), "RUNBOOK.md")
+    return os.path.join(runbook_dir or _inventory_dir(model), "RUNBOOK.md")
 
 
 class FilterModule(object):

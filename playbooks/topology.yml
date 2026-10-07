@@ -2,8 +2,10 @@
 # Makes the ring match the inventory, which is the desired state:
 #   ansible-playbook -i inventory community.cassandra.topology --check   (the plan only)
 #   ansible-playbook -i inventory community.cassandra.topology
-# Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
-# cluster group (lookup community.cassandra.cassandra_hosts).
+# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
+# variable names (its group or its cassandra_cluster_name), else the group
+# cassandra, else the inventory's cluster group (lookup
+# community.cassandra.cassandra_hosts).
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # - A host of the cluster's group (its rack group) that is not in the ring is
 #   added, as add_node adds it (its checks, cassandra_add_node_reset, one

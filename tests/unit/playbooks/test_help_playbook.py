@@ -72,7 +72,8 @@ def run(tmp_path, *extra, **kwargs):
                ANSIBLE_STDOUT_CALLBACK="ansible.builtin.default",
                ANSIBLE_CALLBACK_RESULT_FORMAT=kwargs.get("result_format", "json"))
     # (ansible-test --color sets ANSIBLE_FORCE_COLOR, which wins over ANSIBLE_NOCOLOR)
-    for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR"):
+    for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR",
+                 "CASSANDRA_CLUSTER"):
         env.pop(name, None)
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()",
             "community.cassandra.help"] + list(extra)
@@ -213,4 +214,25 @@ def test_import_cluster_writes_the_runbook_on_request():
         last = yaml.safe_load(f)[-1]
     assert last["ansible.builtin.import_playbook"] == "help.yml"
     assert last["when"] == "import_cluster_runbook | default(false) | bool and not ansible_check_mode"
-    assert last["vars"] == {"help_inventory": "{{ _dir }}/hosts.yml", "help_write": True, "help_show": False}
+    assert last["vars"] == {"help_inventory": "{{ _dir if import_cluster_shared_dir | default(false) | bool else _dir ~ '/hosts.yml' }}",
+                            "help_runbook_dir": "{{ _report_dir }}", "cassandra_hosts": "{{ _layout.cluster_group }}",
+                            "help_write": True, "help_show": False}
+
+
+def test_runbook_of_a_cluster_in_a_shared_dir(tmp_path):
+    # import_cluster_shared_dir: help reads the whole dir, for this cluster, and writes RUNBOOK.md with the report
+    inv = inventory(tmp_path)
+    shared = tmp_path / "inventories"
+    (inv / "hosts.yml").rename(shared / "orders.yml")
+    (inv / "group_vars").rename(shared / "group_vars")
+    inv.rmdir()
+    (shared / "billing.yml").write_text("all:\n  children:\n    billing:\n      hosts:\n        node9: {ansible_host: 192.0.2.19}\n")
+    (tmp_path / "reports" / "orders").mkdir(parents=True)
+    rc, out = run(tmp_path, "-i", "192.0.2.11,", "-e", "help_inventory=inventories", "-e", "cassandra_hosts=orders",
+                  "-e", "help_runbook_dir=reports/orders", "-e", "help_write=true", "-e", "help_show=false")
+    assert rc == 0, out
+    assert not (shared / "RUNBOOK.md").exists()
+    runbook = (tmp_path / "reports" / "orders" / "RUNBOOK.md").read_text()
+    assert "`../..`, relative to this file" in runbook
+    assert "-i inventories community.cassandra.status -e cassandra_hosts=orders" in runbook
+    assert "billing" not in runbook

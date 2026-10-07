@@ -27,7 +27,7 @@ PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks"
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 
-PICK = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == "Pick the output dir"][0]
+PICK = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == "Pick the output dirs"][0]
 
 
 def render(template, **variables):
@@ -35,9 +35,15 @@ def render(template, **variables):
 
 
 def pick(**variables):
+    return picked(**variables)["_dir"]
+
+
+def picked(**variables):
     variables["_layout"] = {"cluster_group": "prod"}
+    variables["_shared"] = variables.get("import_cluster_shared_dir", False)
     variables["_given_dir"] = render(PICK["vars"]["_given_dir"], **variables)
-    return render(PICK["ansible.builtin.set_fact"]["_dir"], **variables)
+    variables["_given_report_dir"] = render(PICK["vars"]["_given_report_dir"], **variables)
+    return dict((k, render(v, **variables)) for k, v in PICK["ansible.builtin.set_fact"].items())
 
 
 def test_relative_from_the_current_dir(tmp_path, monkeypatch):
@@ -61,6 +67,18 @@ def test_reached_through_a_symlink(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path / "home" / "project")
     monkeypatch.setenv("PWD", str(tmp_path / "home" / "project"))
     assert pick(import_cluster_dir="inventories/X") == str(tmp_path.resolve() / "data" / "project" / "inventories" / "X")
+
+
+def test_report_dir(tmp_path, monkeypatch):
+    """With the inventory in its own dir by default; for a shared dir, ./reports/<cluster group>."""
+    monkeypatch.chdir(tmp_path)
+    assert picked(import_cluster_dir="inv/prod")["_report_dir"] == str(tmp_path.resolve() / "inv" / "prod")
+    assert picked()["_report_dir"] == str(tmp_path.resolve() / "prod")
+    assert picked(import_cluster_dir="inv", import_cluster_shared_dir=True) == {
+        "_dir": str(tmp_path.resolve() / "inv"), "_report_dir": str(tmp_path.resolve() / "reports" / "prod")}
+    assert picked(import_cluster_dir="inv", import_cluster_report_dir="~/r")["_report_dir"] == os.path.expanduser("~/r")
+    assert picked(import_cluster_dir="inv", import_cluster_shared_dir=True,
+                  import_cluster_report_dir="out/r")["_report_dir"] == str(tmp_path.resolve() / "out" / "r")
 
 
 def test_absolute_kept(tmp_path, monkeypatch):
@@ -92,6 +110,7 @@ def secret(tmp_path, monkeypatch, **variables):
     if variables["_vault"]:
         variables["_vault_secret"] = Templar(loader=loader, variables=variables).template(trust_as_template(keep))
     variables["item"] = {"content": "a: b\n", "secret": True}
+    variables["_layout"] = {"cluster_group": "prod"}
     write = TASKS["Write group_vars and host_vars"]["ansible.builtin.copy"]["content"]
     return variables, str(Templar(loader=loader, variables=variables).template(trust_as_template(write)))
 
@@ -122,7 +141,7 @@ def test_no_vault_password_file(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "DEFAULT_VAULT_PASSWORD_FILE", None)
     variables, content = secret(tmp_path, monkeypatch)
     assert variables["_vault"] is False
-    assert content.startswith(GENERATED + "\na: b")
+    assert content.startswith(GENERATED % "prod" + "\na: b")
 
 
 def test_vault_password_script(tmp_path, monkeypatch):
@@ -137,8 +156,8 @@ def test_vault_password_script(tmp_path, monkeypatch):
 
 def test_every_file_written_is_marked():
     """hosts.yml, the vars files and report.txt start with the line that tells a re-import they are its own."""
-    for name in ("Write hosts.yml", "Write group_vars and host_vars", "Write report.txt"):
-        assert "community.cassandra.cassandra_inventory_generated" in str(TASKS[name]), name
+    for name in ("Write the hosts file", "Write group_vars and host_vars", "Write report.txt"):
+        assert "community.cassandra.cassandra_inventory_generated(_layout.cluster_group)" in str(TASKS[name]), name
 
 
 @pytest.mark.parametrize("path, client", [("/k/vault-client", True), ("/k/vault-client.py", True),
@@ -169,3 +188,102 @@ def test_no_clear_secrets_over_a_vaulted_file():
     assert render(task["vars"]["_vaulted"], **variables) == ["group_vars/p/secrets.yml"]
     variables["import_cluster_existing_vars"]["results"][0]["content"] = clear
     assert render(task["vars"]["_vaulted"], **variables) == []
+
+
+def write_vars(shared, **given):
+    variables = {"_layout": {"cluster_group": "cluster_a"}, "import_cluster_shared_dir": shared, "_dir": "/inv",
+                 "_report_dir": "/inv"}
+    variables.update(given)
+    for name in ("_shared", "_hosts_file", "_inventory_args"):
+        variables[name] = render(WRITE_VARS[name], **variables)
+    return variables
+
+
+def test_shared_dir_names_the_hosts_file_after_the_cluster():
+    assert write_vars(False)["_hosts_file"] == "hosts.yml"
+    assert write_vars(True)["_hosts_file"] == "cluster_a.yml"
+    assert write_vars(False)["_inventory_args"] == "-i /inv/hosts.yml"
+    assert write_vars(True)["_inventory_args"] == "-i /inv -e cassandra_hosts=cluster_a"
+
+
+@pytest.mark.parametrize("shared, force, dir_exists, hosts_exists, passed", [
+    (False, False, False, None, True),
+    (False, False, True, None, False),
+    (False, True, True, None, True),
+    (True, False, True, False, True),    # another cluster's dir: this cluster not there yet
+    (True, False, True, True, False),    # this cluster there already
+    (True, True, True, True, True),
+])
+def test_stop_rather_than_overwrite(shared, force, dir_exists, hosts_exists, passed):
+    task = TASKS["Stop rather than overwrite an inventory"]["ansible.builtin.assert"]
+    variables = write_vars(shared, import_cluster_force=force, import_cluster_dir_stat={"stat": {"exists": dir_exists}})
+    if hosts_exists is not None:
+        variables["import_cluster_hosts_stat"] = {"stat": {"exists": hosts_exists}}
+    else:
+        variables["import_cluster_hosts_stat"] = {"skipped": True}
+    assert render("{{ %s }}" % task["that"], **variables) is passed
+    msg = render(task["fail_msg"], **variables)
+    assert msg.startswith("/inv/cluster_a.yml exists: this cluster is imported there already" if shared else "/inv exists: pick")
+
+
+def test_files_read_and_written():
+    found = ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml", "group_vars/all/main.yml",
+             "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml"]
+    files = [{"path": "group_vars/cluster_a/main.yml"}]
+    task = TASKS["Read the group_vars and host_vars files already there"]
+    found += ["hosts", "mine.yaml", "README.md", "cluster_a.yml.2026-10-07@10:00:00~", "x.retry"]
+    for shared, read in ((False, ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml",
+                                  "group_vars/all/main.yml", "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml"]),
+                         (True, ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml",
+                                 "group_vars/all/main.yml", "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml",
+                                 "sub/x.yml", "hosts", "mine.yaml"])):
+        variables = write_vars(shared, _found=found)
+        variables["_top"] = render(task["vars"]["_top"], **variables)
+        assert render(task["loop"], **variables) == read
+    written = TASKS["Sort out the files an earlier import wrote"]["vars"]["_written"]
+    assert render(written, _files=files, **write_vars(False)) == ["hosts.yml", "report.txt", "group_vars/cluster_a/main.yml"]
+    variables = write_vars(True, _report_dir="/reports/cluster_a")
+    assert render(written, _files=files, **variables) == ["cluster_a.yml", "group_vars/cluster_a/main.yml"]
+
+
+def test_shared_dir_needs_the_dir():
+    task = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == "Check the shared dir is given"][0]
+    that = "{{ %s }}" % task["ansible.builtin.assert"]["that"]
+    assert render(that, import_cluster_shared_dir=True) is False
+    assert render(that, import_cluster_shared_dir=True, import_cluster_dir="") is False
+    assert render(that, import_cluster_shared_dir=True, import_cluster_dir="inventories") is True
+    assert render(that) is True
+
+
+def test_stop_on_another_clusters_files():
+    task = TASKS["Stop rather than write over another cluster's files"]["ansible.builtin.assert"]
+    conflicts = {"_leftovers": {"conflicts": ["node2: in cluster_b.yml too"]}, "_dir": "/inv"}
+    assert render("{{ %s }}" % task["that"], **conflicts) is False
+    assert render(task["fail_msg"], **conflicts).startswith("node2: in cluster_b.yml too. Nothing written: in /inv,")
+    assert render("{{ %s }}" % task["that"], _leftovers={"conflicts": []}, _dir="/inv") is True
+    # before any file is removed or written
+    names = [t.get("name") for play in PLAYS for t in play.get("tasks", [])]
+    assert names.index("Stop rather than write over another cluster's files") < names.index(
+        "Remove the files an earlier import wrote and this one does not")
+
+
+@pytest.mark.parametrize("report_dir, line", [("/inv", "# NOT VALID: the import self-check failed, see report.txt"),
+                                              ("/reports/cluster_a", "# NOT VALID: the import self-check failed,"
+                                                                     " see ../reports/cluster_a/report.txt")])
+def test_invalid_hosts_file_points_to_the_report(report_dir, line):
+    variables = write_vars(True, _report_dir=report_dir, _self_check_ok=False)
+    variables["_layout"]["hosts"] = {"all": {}}
+    content = render(TASKS["Write the hosts file"]["ansible.builtin.copy"]["content"], **variables)
+    assert content.split("\n")[1] == line
+
+
+def test_report_of_another_kept(tmp_path):
+    task = TASKS["Write report.txt"]
+    report = tmp_path / "report.txt"
+    variables = write_vars(True, _report_dir=str(tmp_path))
+    assert render(task["ansible.builtin.copy"]["backup"], **variables) is False  # none there yet
+    for text, backup in (("# Written by community.cassandra.import_cluster for cluster_a: x\n", False),
+                         ("# Written by community.cassandra.import_cluster for cluster_ab: x\n", True),
+                         ("my notes\n", True)):
+        report.write_text(text)
+        assert render(task["ansible.builtin.copy"]["backup"], **variables) is backup, text
