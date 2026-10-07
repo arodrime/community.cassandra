@@ -4,6 +4,7 @@
 #   ansible-playbook -i inventory community.cassandra.topology
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # - A host of the cluster's group (its rack group) that is not in the ring is
 #   added, as add_node adds it (its checks, cassandra_add_node_reset, one
 #   token per node: cassandra_initial_token or cassandra_token_auto=bisect or
@@ -41,6 +42,7 @@
 - name: Read the hosts marked absent
   hosts: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
   gather_facts: false
+  become: true
   ignore_unreachable: true  # a host gone for good is reported, not a failure
   vars:
     _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
@@ -98,6 +100,7 @@
 - name: Work out the plan and confirm it
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true  # nothing changes if one check fails
   vars:
     _tp_group: "{{ lookup('community.cassandra.cassandra_hosts') }}"
@@ -346,6 +349,7 @@
 - name: Say what is left to do
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Say what is left to do
       ansible.builtin.debug:

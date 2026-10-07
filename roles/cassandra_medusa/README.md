@@ -26,6 +26,12 @@ The playbooks of the collection (`create_cluster`, and `add_node`,
 it when it finds Medusa on the nodes, with the version and the settings of
 their `medusa.ini`.
 
+Requirements
+------------
+
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
+
 Role Variables
 --------------
 
@@ -75,6 +81,7 @@ Example Playbook
 ----------------
 
     - hosts: cassandra
+      become: true
       vars:
         cassandra_medusa_storage_provider: s3_compatible
         cassandra_medusa_host: s3.example.com

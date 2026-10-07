@@ -7,6 +7,7 @@
 #   ansible-playbook -i inventory community.cassandra.update_java
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Refused: a Java the series does not support (4.0/4.1: 8, 11; 5.0: 11, 17).
 # With cassandra_java_tarballs (Java tarballs by major, e.g. in a mirror file
 # shared by every cluster), the node gets the tarball of cassandra_java_version.
@@ -18,6 +19,7 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   any_errors_fatal: true  # one node refused: none is changed
   gather_facts: false
+  become: true
   tasks:
     - name: Load the role defaults
       ansible.builtin.include_role:
@@ -129,6 +131,7 @@
 - name: Set up the progress file
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_update_java_True"
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: update_java
   tasks:
@@ -141,6 +144,7 @@
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_update_java_True"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     - name: Update this node
       ansible.builtin.include_role:
@@ -152,6 +156,7 @@
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:

@@ -1,8 +1,10 @@
 ---
 # Checks one cluster (an inventory group) before changing it:
-#   ansible-playbook -i inventory -b community.cassandra.preflight (root on the nodes, as the operations)
+#   ansible-playbook -i inventory community.cassandra.preflight
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo), as the operations: the playbook asks for it
+# itself, no -b needed.
 # Fails on settings that must match across the cluster, on rack layouts the
 # token allocator refuses and on mixed Cassandra versions; warns on seed layouts
 # that are only risky.
@@ -27,6 +29,7 @@
              + (query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes) if cassandra_leaving_nodes | default('') | length > 0 else [])
                | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}
   gather_facts: true
+  become: true
   tasks:
     # An unreachable host would silently be left out of the rest of the run
     - name: Every node answers

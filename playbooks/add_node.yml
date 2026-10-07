@@ -4,6 +4,7 @@
 #   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7,node8
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # The cluster is checked before and after each node; the run stops at the
 # first problem. Nodes already in the ring are only checked (re-running is safe),
 # a node still bootstrapping (an earlier run that stopped waiting) is waited for
@@ -33,6 +34,7 @@
 - name: Check the new hosts are ready
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true  # a host that errors must not drop out of the run
   tasks:
     - name: A new node is a node of the cluster
@@ -56,6 +58,7 @@
 - name: Check the new nodes
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true  # add none of them if one is refused
   vars:
     # the new nodes not in the ring yet, the nodes of the cluster
@@ -389,6 +392,7 @@
   hosts: "{{ cassandra_new_nodes }}"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     - name: Add this node
       ansible.builtin.include_role:
@@ -418,6 +422,7 @@
 - name: Summary
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:
@@ -450,6 +455,7 @@
     {{ query('community.cassandra.cassandra_nodes') if query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
        else 'localhost:!localhost' }}
   gather_facts: false
+  become: true
   vars:
     _plan: >-
       {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) | first].cassandra_add_node_plan | default({}) }}

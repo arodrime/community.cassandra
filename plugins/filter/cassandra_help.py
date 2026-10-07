@@ -413,8 +413,8 @@ def _command(op, model, cluster, cwd):
     # a real node only when the inventory marks it for removal: never one nobody chose
     fill = {"dc": first_dc, "rack": sorted(cluster.dcs[first_dc])[-1],
             "leaving": ",".join(absent) if absent else "NODE"}
-    # help needs no root, nor the vault prompt help added for the operations
-    drop = ("-b", "--ask-vault-pass") if model.get("vault_prompt_added") else ("-b",)
+    # help needs no vault prompt help added for the operations
+    drop = ("--ask-vault-pass",) if model.get("vault_prompt_added") else ()
     options = [shlex.quote(o) for o in _options(model, cwd) if op["name"] != "help" or o not in drop]
     parts = ["ansible-playbook", inv] + options + ["community.cassandra.%s" % op["name"]]
     if model.get("auto") != cluster.name:

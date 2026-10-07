@@ -4,6 +4,7 @@
 #   ansible-playbook -i inventory community.cassandra.move_node
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Without cassandra_move_tokens, each datacenter is evened out with the fewest
 # moves (e.g. after add_node -e cassandra_token_auto=balanced); with
 #   -e '{"cassandra_move_tokens": {"node2": "-3074457345618258603"}}'
@@ -32,6 +33,7 @@
 - name: Find moves an earlier run left going
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
@@ -76,6 +78,7 @@
   serial: 1
   any_errors_fatal: true
   gather_facts: false
+  become: true
   tasks:
     - name: Say what is waited for
       ansible.builtin.debug:
@@ -102,6 +105,7 @@
 - name: Plan the moves
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
     _move_from: "{{ ansible_play_hosts | first }}"
@@ -218,6 +222,7 @@
 - name: Set up the progress files
   hosts: cassandra_move_order
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: move
   tasks:
@@ -249,6 +254,7 @@
   serial: 1
   any_errors_fatal: true
   gather_facts: false
+  become: true
   tasks:
     - name: Move this node
       ansible.builtin.include_role:
@@ -261,6 +267,7 @@
 - name: Summary
   hosts: cassandra_move_order
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:
@@ -293,6 +300,7 @@
 - name: Clean up the nodes that lost ranges
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
     _move_record: "{{ cassandra_progress_dir | default('') ~ '/' ~ lookup('community.cassandra.cassandra_hosts') ~ '-move.cleanup' }}"

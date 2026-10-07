@@ -54,7 +54,7 @@ def test_reads_the_cluster(tmp_path):
     assert [c["name"] for c in model["clusters"]] == ["orders"]
     assert host(model, "node1")["vars"] == {"ansible_host": "192.0.2.11", "cassandra_dc": "dc1",
                                             "cassandra_cluster_name": "Orders"}
-    assert model["options"] == ["-b"]
+    assert model["options"] == []
     assert model["vault_skipped"] == [] and model["imported"] is False
     assert model["vault_prompt_added"] is False
 
@@ -66,7 +66,7 @@ def test_vaulted_file_skipped_not_decrypted(tmp_path):
     model = read([source])
     assert model["vault_skipped"] == [str(secrets)]
     assert "cassandra_cql_username" not in host(model, "node1")["names"]
-    assert model["options"] == ["-b", "--ask-vault-pass"]
+    assert model["options"] == ["--ask-vault-pass"]
 
 
 def test_inline_vault_not_decrypted(tmp_path):
@@ -99,8 +99,10 @@ def test_yaml_error_not_hidden(tmp_path):
         read([source])
 
 
-def test_inventory_become_drops_b(tmp_path):
+def test_no_b_with_or_without_become(tmp_path):
+    # the playbooks ask for root on the nodes themselves
     assert read([inventory(tmp_path, orders="ansible_become: yes\n")])["options"] == []
+    assert read([inventory(tmp_path / "other", orders="ansible_become: no\n")])["options"] == []
 
 
 def test_given_group_missing(tmp_path):
@@ -138,7 +140,7 @@ def test_value_from_an_inline_vault_masked(tmp_path):
     model = read([source])
     vars_ = host(model, "node1")["vars"]
     assert vars_["cassandra_cluster_name"] == "(vaulted)" and vars_["cassandra_dc"] == "(vaulted)"
-    assert model["options"] == ["-b", "--ask-vault-pass"]  # the operations decrypt it
+    assert model["options"] == ["--ask-vault-pass"]  # the operations decrypt it
     assert model["vault_prompt_added"] is True
 
 

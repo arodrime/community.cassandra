@@ -10,6 +10,12 @@ On Debian/Ubuntu, the package would start Cassandra with its stock config as
 soon as it is installed; a temporary `policy-rc.d` prevents that, so the node
 only starts once it is configured.
 
+Requirements
+------------
+
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
+
 Role Variables
 --------------
 
@@ -158,6 +164,7 @@ Example Playbook
 ----------------
 
     - hosts: cassandra
+      become: true
       roles:
         - community.cassandra.cassandra_repository
         - community.cassandra.cassandra_install

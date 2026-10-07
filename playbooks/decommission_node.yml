@@ -6,6 +6,7 @@
 #   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Refused: a seed (take it out of cassandra_seeds with change_seeds first), and
 # a datacenter left with fewer nodes than a keyspace has replicas there
 # (cassandra_decommission_force: true goes on, at the cost of those replicas).
@@ -20,6 +21,7 @@
 - name: Check the nodes to remove
   hosts: "{{ cassandra_leaving_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true  # remove none of them if one is refused
   vars:
     # the nodes of the cluster and the ones to remove (they may be marked cassandra_node_state: absent)
@@ -139,6 +141,7 @@
 - name: Set up the progress file
   hosts: "{{ cassandra_leaving_nodes }}"
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: decommission
   tasks:
@@ -151,6 +154,7 @@
   hosts: "{{ cassandra_leaving_nodes }}"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     # read again: a decommission may have moved on since the checks (the confirmation, the nodes before this one)
     - name: Where this node stands now
@@ -192,6 +196,7 @@
 - name: Summary
   hosts: "{{ cassandra_leaving_nodes }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:

@@ -5,6 +5,7 @@
 #   ansible-playbook -i inventory community.cassandra.rolling_reboot
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 # cassandra_reboot_timeout (default 1800 s), cassandra_reboot_command and
 # cassandra_reboot_boot_time_command pass through to ansible.builtin.reboot.
@@ -14,6 +15,7 @@
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: reboot
   tasks:
@@ -26,6 +28,7 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     - name: Reboot this host
       ansible.builtin.include_role:
@@ -37,6 +40,7 @@
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:

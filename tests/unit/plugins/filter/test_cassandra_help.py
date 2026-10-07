@@ -32,7 +32,7 @@ def node(name, address, rack, **more):
 
 
 MODEL = {
-    "sources": ["/work/inventories/orders/hosts.yml"], "vault_skipped": [], "auto": "orders", "options": ["-b"],
+    "sources": ["/work/inventories/orders/hosts.yml"], "vault_skipped": [], "auto": "orders", "options": [],
     "imported": True,
     "clusters": [{"name": "orders", "hosts": [
         node("node1", "192.0.2.11", "rack1"), node("node2", "192.0.2.12", "rack1"),
@@ -70,71 +70,71 @@ Read-only (change nothing):
     $ $PLAY $C.help
   status - The ring as nodetool status shows it from one node, per datacenter; a down node is shown,
     not an error.
-    $ $PLAY -b $C.status
+    $ $PLAY $C.status
   health_check - Checks the cluster from every node (ring, gossip, native transport, streams,
     schema, ports); fails on a problem, so it can be scheduled.
-    $ $PLAY -b $C.health_check
+    $ $PLAY $C.health_check
   preflight - Checks the nodes against the inventory before a change: settings that must match,
     racks for the token allocator, versions, seeds.
-    $ $PLAY -b $C.preflight
+    $ $PLAY $C.preflight
 
 Nodes:
   add_node - Adds new hosts to the running cluster, one at a time. Put them in their rack's group
     first, not in cassandra_seeds.
-    $ $PLAY -b $C.add_node -e cassandra_new_nodes=NEW_NODE
+    $ $PLAY $C.add_node -e cassandra_new_nodes=NEW_NODE
   topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the
     ring, removes the hosts marked cassandra_node_state: absent; one node at a time, --check shows
     the plan.
-    $ $PLAY -b $C.topology
+    $ $PLAY $C.topology
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
     the others; refuses seeds.
-    $ $PLAY -b $C.decommission_node -e cassandra_leaving_nodes=node4
+    $ $PLAY $C.decommission_node -e cassandra_leaving_nodes=node4
   replace_node - Replaces a dead node by a blank host, which takes over its tokens and data. In the
     inventory, the new host in, the dead one out.
-    $ $PLAY -b $C.replace_node -e cassandra_new_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
+    $ $PLAY $C.replace_node -e cassandra_new_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
   remove_dead_node - Last resort for a dead node that will not be replaced: removenode (or
     assassinate). Take it out of the inventory first.
-    $ $PLAY -b $C.remove_dead_node -e cassandra_dead_node_address=DEAD_NODE_ADDRESS
+    $ $PLAY $C.remove_dead_node -e cassandra_dead_node_address=DEAD_NODE_ADDRESS
   reset_node - Empties nodes that are not members of the ring (started once by mistake, a failed
     bootstrap) for a fresh start.
-    $ $PLAY -b $C.reset_node -e cassandra_reset_nodes=NODE
+    $ $PLAY $C.reset_node -e cassandra_reset_nodes=NODE
   move_node - One token per node: moves nodes to new tokens, one at a time (by default the fewest
     moves that even out each datacenter). Not for this cluster (num_tokens 16).
-    $ $PLAY -b $C.move_node
+    $ $PLAY $C.move_node
 
 Cluster:
   create_cluster - Builds the cluster from blank hosts: prepared in parallel, then started one at a
     time, seeds first. Starts nothing on a running cluster.
-    $ $PLAY -b $C.create_cluster
+    $ $PLAY $C.create_cluster
   rolling_restart - Drains and restarts the nodes one at a time, the cluster checked before and
     after each one.
-    $ $PLAY -b $C.rolling_restart
+    $ $PLAY $C.rolling_restart
   rolling_reboot - Same as rolling_restart, rebooting the hosts (OS patching).
-    $ $PLAY -b $C.rolling_reboot
+    $ $PLAY $C.rolling_reboot
   stop_rack - Stops every node of one rack at once (maintenance), when the replication allows losing
     that rack.
-    $ $PLAY -b $C.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+    $ $PLAY $C.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
   start_rack - Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.
-    $ $PLAY -b $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+    $ $PLAY $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
   apply_config - Applies the inventory's config: shows every diff, asks once, then writes and
     restarts only the nodes that need it, one at a time.
-    $ $PLAY -b $C.apply_config
+    $ $PLAY $C.apply_config
   change_seeds - Applies a new cassandra_seeds list to every node, live (no restart).
-    $ $PLAY -b $C.change_seeds
+    $ $PLAY $C.change_seeds
   update_java - Moves the cluster to the Java in cassandra_java_version, one node at a time.
-    $ $PLAY -b $C.update_java
+    $ $PLAY $C.update_java
   upgrade - Upgrades the cluster to the version in the inventory, one phase per run: preflight,
     prepare, canary, rolling, sstables, cleanup.
-    $ $PLAY -b $C.upgrade -e cassandra_upgrade_phase=preflight
+    $ $PLAY $C.upgrade -e cassandra_upgrade_phase=preflight
   cleanup - Runs nodetool cleanup (the data a node no longer owns, after nodes were added), the
     cluster checked before each batch.
-    $ $PLAY -b $C.cleanup
+    $ $PLAY $C.cleanup
   add_datacenter - Adds a datacenter: its nodes join without streaming, the keyspaces get replicas
     there, then each node rebuilds from another datacenter.
-    $ $PLAY -b $C.add_datacenter -e cassandra_new_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+    $ $PLAY $C.add_datacenter -e cassandra_new_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
   remove_datacenter - Removes a datacenter: the keyspaces stop keeping replicas there, then its
     nodes leave one at a time. Move its clients first.
-    $ $PLAY -b $C.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
+    $ $PLAY $C.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
 
 Takeover:
   import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes; a
@@ -145,7 +145,7 @@ Takeover:
 ---------
 - Marked cassandra_node_state: absent: node4. topology --check shows the plan to remove them, then
   topology without --check does it:
-    $ $PLAY -b $C.topology --check
+    $ $PLAY $C.topology --check
 - dc1: racks of different sizes (1, 1, 2 nodes): the data is not shared evenly; add or remove nodes
   rack by rack.""".replace("$PLAY", "ansible-playbook -i inventories/orders/hosts.yml").replace("$C.", "community.cassandra.")
 
@@ -213,7 +213,7 @@ def test_topic():
     text = cassandra_help(MODEL, PLAYBOOKS, topic="decommission_node", header=header, cwd=CWD)
     lines = text.splitlines()
     assert lines[0].startswith("decommission_node (nodes): Removes nodes")
-    assert ("    $ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.decommission_node"
+    assert ("    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
             " -e cassandra_leaving_nodes=node4") in lines
     assert "What it does and checks (playbooks/decommission_node.yml):" in lines
     assert "  Removes nodes from a running cluster, one at a time: each one streams its" in lines
@@ -317,16 +317,16 @@ def test_two_clusters_name_their_group():
 
 def test_vault_skipped():
     text = cassandra_help(model(vault_skipped=["/work/inventories/orders/group_vars/orders/secrets.yml"],
-                                options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+                                options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert "- Vault-encrypted files not read (help decrypts nothing): group_vars/orders/secrets.yml." in text
-    assert "$ ansible-playbook -i inventories/orders/hosts.yml -b --ask-vault-pass community.cassandra.status" in text
+    assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.status" in text
 
 
 def test_import_command_keeps_the_connection_and_jmx():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[0]["vars"].update(ansible_user="admin", cassandra_jmx_username="monitor",
                             cassandra_jmx_password_file="/etc/cassandra/jmxremote.password")
-    text = cassandra_help(model(hosts=hosts, options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -u admin community.cassandra.import_cluster"
             " -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true"
             " -e cassandra_jmx_username=monitor"
@@ -336,7 +336,7 @@ def test_import_command_keeps_the_connection_and_jmx():
 def test_absent_nodes_with_topology():
     text = advice(cassandra_help(MODEL, PLAYBOOKS + ["topology"], cwd=CWD))
     assert "topology --check shows the plan" in text
-    assert "$ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.topology --check" in text
+    assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology --check" in text
 
 
 def test_single_token_cluster():
@@ -350,7 +350,7 @@ def test_single_token_cluster():
 
 def test_inventory_outside_the_current_dir():
     text = cassandra_help(MODEL, PLAYBOOKS, cwd="/elsewhere")
-    assert "$ ansible-playbook -i /work/inventories/orders/hosts.yml -b community.cassandra.status" in text
+    assert "$ ansible-playbook -i /work/inventories/orders/hosts.yml community.cassandra.status" in text
 
 
 def test_runbook_path(tmp_path):
@@ -416,8 +416,8 @@ def test_runbook_says_where_to_run_from():
 
 
 def test_vault_id_path_relative():
-    text = cassandra_help(model(options=["-b", "--vault-id", "prod@/work/vault_pass"]), PLAYBOOKS, cwd=CWD)
-    assert "-b --vault-id prod@vault_pass community.cassandra.status" in text
+    text = cassandra_help(model(options=["--vault-id", "prod@/work/vault_pass"]), PLAYBOOKS, cwd=CWD)
+    assert "--vault-id prod@vault_pass community.cassandra.status" in text
 
 
 def test_no_node_chosen_for_removal():
@@ -453,11 +453,11 @@ def test_real_uppercase_values_are_not_placeholders():
     assert "Replace" not in text
 
 
-def test_help_command_without_root_or_the_vault_prompt_help_added():
-    text = cassandra_help(model(options=["-b", "--ask-vault-pass"], vault_prompt_added=True), PLAYBOOKS, cwd=CWD)
+def test_help_command_without_the_vault_prompt_help_added():
+    text = cassandra_help(model(options=["--ask-vault-pass"], vault_prompt_added=True), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help\n" in text
     # given by the user (a vaulted group_vars/all): help needs it too
-    text = cassandra_help(model(options=["-b", "--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    text = cassandra_help(model(options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.help\n" in text
 
 

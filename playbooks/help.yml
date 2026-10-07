@@ -22,7 +22,7 @@
 # files are skipped (named in the advice), inline vaulted values shown as
 # (vaulted), lookups not run, -e variables not read, so no secret reaches the
 # output or RUNBOOK.md. The commands carry the vault and connection options
-# help was run with (-b unless ansible.cfg or the inventory become;
+# help was run with (no -b: the playbooks ask for root on the nodes themselves;
 # --ask-vault-pass when the inventory has vaulted values and the run no vault
 # password). A vault-encrypted file in group_vars/all is read by Ansible for
 # localhost too: then help needs the vault password as well (and still shows
@@ -30,6 +30,7 @@
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts), else every top
 # group (one per cluster).
+# No root anywhere (no node contacted).
 - name: Help
   hosts: localhost
   gather_facts: false

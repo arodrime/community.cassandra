@@ -92,7 +92,7 @@ def test_help_reads_the_inventory_only(tmp_path):
     assert list(recap(out)) == ["localhost"], out  # no node in the run
     assert '"Cluster \'Orders\' (inventory group orders): 4 nodes, 1 more marked absent",' in out  # a list of lines
     assert "rack2: node3 192.0.2.13 (seed), node4 192.0.2.14 (absent)" in out
-    assert ("$ ansible-playbook -i inventories/orders/hosts.yml -b --ask-vault-pass"
+    assert ("$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass"
             " community.cassandra.decommission_node -e cassandra_leaving_nodes=node4") in out
     assert "Vault-encrypted files not read (help decrypts nothing): group_vars/orders/secrets.yml." in out
     # the CQL user is in the file not read
@@ -116,7 +116,7 @@ def test_help_decrypts_nothing_even_with_the_vault_password(tmp_path):
     assert SECRET not in out and SECRET not in runbook
     assert "Vault-encrypted files not read (help decrypts nothing)" in out
     assert "cassandra_rack could not be read from the inventory alone" in out
-    assert "-b --vault-password-file vault_pass community.cassandra.status" in out  # no --ask-vault-pass added
+    assert "--vault-password-file vault_pass community.cassandra.status" in out  # no --ask-vault-pass added
     assert "--ask-vault-pass" not in out
 
 
@@ -148,7 +148,7 @@ def test_inline_vault_without_password_asks_for_it(tmp_path):
     (inv / "group_vars" / "orders" / "secrets.yml").write_text("cassandra_cql_password: !vault |\n%s\n" % secret)
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml")
     assert rc == 0, out
-    assert "-b --ask-vault-pass community.cassandra.status" in out
+    assert "--ask-vault-pass community.cassandra.status" in out
 
 
 def test_help_topic_under_the_yaml_result_format(tmp_path):
@@ -157,7 +157,7 @@ def test_help_topic_under_the_yaml_result_format(tmp_path):
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml", "-e", "help_topic=stop_rack", result_format="yaml")
     assert "    msg: |-\n        stop_rack (cluster): Stops every node" in out
     assert rc == 0, out
-    assert ("$ ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.stop_rack"
+    assert ("$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack"
             " -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3") in out
     assert "What it does and checks (playbooks/stop_rack.yml):" in out
     assert "  Stops every node of one rack at once (maintenance of the rack's hosts,\n" in out
@@ -178,7 +178,7 @@ def test_help_write_is_idempotent(tmp_path):
     assert recap(out) == {"localhost": "1"}, out
     runbook = (inv / "RUNBOOK.md").read_text()
     assert runbook.startswith("# RUNBOOK\n")
-    assert ("ansible-playbook -i inventories/orders/hosts.yml -b community.cassandra.decommission_node"
+    assert ("ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
             " -e cassandra_leaving_nodes=node4\n") in runbook
     assert SECRET not in runbook
 
@@ -203,7 +203,7 @@ def test_help_inventory_as_import_cluster_runs_it(tmp_path):
                   "-e", "help_write=true", "-e", "help_show=false")
     assert rc == 0, out
     assert "Cluster 'Orders'" not in out  # RUNBOOK.md only
-    assert "-i inventories/orders/hosts.yml -b community.cassandra.status" in (inv / "RUNBOOK.md").read_text()
+    assert "-i inventories/orders/hosts.yml community.cassandra.status" in (inv / "RUNBOOK.md").read_text()
 
 
 def test_import_cluster_writes_the_runbook_on_request():

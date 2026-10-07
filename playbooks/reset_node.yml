@@ -10,12 +10,14 @@
 # Shown, then confirmed once (cassandra_operation_confirm: false skips it);
 # --check shows it only. add_node (cassandra_add_node_reset) and
 # replace_node (cassandra_replace_node_reset) run the same reset themselves.
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Reset the nodes
   hosts: "{{ cassandra_reset_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true  # reset none of them if one is refused
   tasks:
     - name: Reset this node

@@ -3,6 +3,7 @@
 #   ansible-playbook -i inventory community.cassandra.create_cluster
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Nodes are prepared in parallel, then started one at a time: seeds first
 # (a node of a new rack earlier when the token allocator needs it), each one
 # joined before the next. Re-running it on a running cluster
@@ -38,6 +39,7 @@
 - name: Refuse an identity left to the role defaults
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     # the one there is wiped first (cassandra_create_cluster_reset), or a cluster never started: every
     # host of the group in the run (no --limit), checked by the preflight (it answered) and below, none
@@ -137,6 +139,7 @@
 - name: Work out the tokens (one token per node)
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Work out the tokens
       when: _cassandra_preflight.cassandra_num_tokens | int == 1
@@ -217,6 +220,7 @@
 - name: Reset the whole cluster first (cassandra_create_cluster_reset)
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true  # every node stopped before any is emptied, none if one is refused
   strategy: linear  # each task on every node before the next one
   tasks:
@@ -330,6 +334,7 @@
 
 - name: Prepare the nodes
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  become: true
   pre_tasks:
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play
@@ -351,6 +356,7 @@
 - name: Order the starts
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play
@@ -375,12 +381,14 @@
 - name: Start the nodes, one at a time
   hosts: cassandra_create_start_order
   serial: 1
+  become: true
   roles:
     - community.cassandra.cassandra_service
 
 - name: Check the new cluster
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play

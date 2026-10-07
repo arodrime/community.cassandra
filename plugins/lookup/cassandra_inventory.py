@@ -43,7 +43,8 @@ _raw:
     - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters) (a list of C(name), C(hosts): C(name), C(vars), C(names))."
     - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) (empty when none);
       C(imported) whether import_cluster wrote it; C(options) is the list of the command line options the
-      printed commands need (C(-b), the vault and user options of this run); C(vault_prompt_added) whether
+      printed commands need (the vault and user options of this run; no C(-b), the playbooks become root
+      on the nodes themselves); C(vault_prompt_added) whether
       C(--ask-vault-pass) is there because help found vaulted values.
   type: list
   elements: dict
@@ -57,7 +58,6 @@ from collections.abc import Mapping
 from ansible import constants as C
 from ansible import context
 from ansible.errors import AnsibleError, AnsibleLookupError
-from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.inventory.manager import InventoryManager
 from ansible.parsing.dataloader import DataLoader
 from ansible.parsing.vault import is_encrypted_file
@@ -70,7 +70,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import cluster_group, top_groups
 
 # the only variables templated and returned: none of them holds a secret
-SHOWN = ("ansible_host", "ansible_port", "ansible_become", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
+SHOWN = ("ansible_host", "ansible_port", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
          "cassandra_jmx_password_file", "cassandra_cluster_name", "cassandra_version", "cassandra_package_version",
          "cassandra_install_method", "cassandra_java_version", "cassandra_java_home", "cassandra_dc", "cassandra_rack",
          "cassandra_seeds", "cassandra_listen_address", "cassandra_node_state", "cassandra_authenticator",
@@ -209,11 +209,7 @@ def read(sources, given=None, basedir=None):
             hosts.append({"name": host.name, "vars": shown,
                           "names": sorted(k for k in variables if k.startswith("cassandra_"))})
         clusters.append({"name": name, "hosts": hosts})
-    options = _options()
-    # -b of this run is not enough: the commands are run on their own
-    if not C.DEFAULT_BECOME and not all(boolean(h["vars"].get("ansible_become"), strict=False)
-                                        for c in clusters for h in c["hosts"]):
-        options.insert(0, "-b")
+    options = _options()  # no -b: the playbooks ask for root on the nodes themselves
     prompt_added = False
     vault_given = C.DEFAULT_VAULT_PASSWORD_FILE or C.DEFAULT_VAULT_IDENTITY_LIST or any(
         o.startswith("--") and "vault" in o for o in options)

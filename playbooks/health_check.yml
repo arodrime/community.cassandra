@@ -6,6 +6,8 @@
 #   ansible-playbook -i inventory community.cassandra.health_check
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo) only to read cassandra_jmx_password_file when it is
+# set (the playbook then asks for it itself, no -b needed); none otherwise.
 - name: Check the cluster's group
   hosts: localhost
   gather_facts: false
@@ -22,6 +24,9 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: true
   gather_subset: [network]
+  # root only to read the JMX password file (the service account's, 0400);
+  # nodetool needs no root otherwise
+  become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
   tasks:
     - name: Load the cassandra_config defaults (ports)
       ansible.builtin.include_role:

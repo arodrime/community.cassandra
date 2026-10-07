@@ -14,7 +14,8 @@ If you like this collection please give us a rating on [Ansible Galaxy](https://
 
 ### Roles
 
-These roles prepare servers with Debian-based and RHEL-based distributions to run Cassandra.
+These roles prepare servers with Debian-based and RHEL-based distributions to run Cassandra. They need root on
+the hosts: apply them in a play with `become: true`.
 
 - `cassandra_change_report`- Used by the other roles: show and record what they change (before -> after), also under `--check`.
 - `cassandra_config`- Template Cassandra's configuration files from stock defaults.
@@ -30,7 +31,8 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 Operations on a cluster, described by one inventory group (`cassandra_hosts`,
 by default the group `cassandra`, else the inventory's cluster group as the import lays it out; per-cluster
 settings such as `cassandra_seeds` in its group_vars). Run them with
-`ansible-playbook community.cassandra.<name>`.
+`ansible-playbook community.cassandra.<name>`: they ask for root on the nodes themselves where they need it
+(no `-b`, no `become` in `ansible.cfg`).
 
 - `help`- Read-only, from the inventory alone (no node contacted): the clusters it describes, every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables).

@@ -5,6 +5,7 @@
 #   ansible-playbook -i inventory community.cassandra.rolling_restart
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 # -e cassandra_rolling_mode=rack restarts all the nodes of a rack together,
 # rack by rack: faster on big clusters, and only allowed when every datacenter
@@ -16,6 +17,7 @@
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: restart
   tasks:
@@ -35,6 +37,7 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_rolling_mode | default('node') == 'node' else 'localhost:!localhost' }}"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     - name: Restart this node
       ansible.builtin.include_role:
@@ -47,6 +50,7 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_rolling_mode | default('node') == 'rack' else 'localhost:!localhost' }}"
   gather_facts: true
   gather_subset: [network]
+  become: true
   any_errors_fatal: true
   tasks:
     - name: Load the cassandra_service defaults
@@ -124,6 +128,7 @@
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:

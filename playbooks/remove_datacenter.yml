@@ -6,6 +6,7 @@
 #     -e cassandra_target_dc=dc3
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Move that region's clients to another datacenter first: once the keyspaces
 # are altered, reads and writes there fail. Its nodes can't be seeds (take them
 # out with change_seeds first). A keyspace with replicas only there is refused.
@@ -16,6 +17,7 @@
 - name: Check the datacenter to remove
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     _leaving: >-
       {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_cassandra_preflight.cassandra_dc', 'equalto', cassandra_target_dc)
@@ -99,6 +101,7 @@
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_leaving_dc"
   serial: 1
   any_errors_fatal: true
+  become: true
   vars:
     cassandra_leaving_nodes: cassandra_leaving_dc  # the health check reads the ring from a node that stays
   tasks:
@@ -116,6 +119,7 @@
 - name: Summary
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_leaving_dc"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:

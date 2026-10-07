@@ -1,10 +1,11 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# A run without root on the nodes (no -b) stops before any node is touched:
-# the real rolling_restart playbook, run by ansible-playbook on a local host
-# as this (non-root) user, fails at the root check, before any drain. And a
-# restart writes the systemd unit before it drains the node.
+# A run without root on the nodes stops before any node is touched: the real
+# rolling_restart playbook (which asks for root itself), on a local host whose
+# inventory turns become off, run as this (non-root) user, fails at the root
+# check, before any drain. And a restart writes the systemd unit before it
+# drains the node.
 
 import os
 import subprocess
@@ -34,7 +35,7 @@ def load(*path):
 @pytest.mark.skipif(os.geteuid() == 0, reason="the run is root")
 def test_rolling_restart_without_become_stops_before_any_drain(tmp_path):
     inventory = tmp_path / "hosts.ini"
-    inventory.write_text("[cassandra]\nnode1 cassandra_dc=dc1 cassandra_rack=rack1\n")
+    inventory.write_text("[cassandra]\nnode1 cassandra_dc=dc1 cassandra_rack=rack1 ansible_become=false\n")
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
                ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_BECOME="False")
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(inventory), "-c", "local",
@@ -44,7 +45,8 @@ def test_rolling_restart_without_become_stops_before_any_drain(tmp_path):
                             timeout=300, check=False)
     out = result.stdout.decode(errors="replace")
     assert result.returncode != 0, out
-    assert ("These operations need root on the nodes (node1 without it): add -b (or become = true in ansible.cfg). "
+    assert ("These operations need root on the nodes (node1 without it): the playbook asks for it (become), check "
+            "the inventory does not turn it off there (ansible_become: false, another ansible_become_user). "
             "Nothing was changed.") in out
     assert "Drain the node" not in out
 

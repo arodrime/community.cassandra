@@ -14,6 +14,12 @@ the limits below. It is not restarted automatically when it dies
 stop it on purpose, and bringing a failing node back into the cluster, or
 looping on the same failure, is worse than an alert.
 
+Requirements
+------------
+
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
+
 Role Variables
 --------------
 
@@ -170,6 +176,7 @@ must join one at a time, and a new cluster starts its seeds first.
 
     # new cluster: seeds first, then the others, one at a time
     - hosts: cassandra
+      become: true
       serial: 1
       roles:
         - community.cassandra.cassandra_service
@@ -181,6 +188,7 @@ Example Playbook
 ----------------
 
     - hosts: cassandra
+      become: true
       serial: 1
       roles:
         - community.cassandra.cassandra_repository

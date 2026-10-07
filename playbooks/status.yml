@@ -9,6 +9,8 @@
 #   ansible-playbook -i inventory community.cassandra.status
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo) only to read cassandra_jmx_password_file when it is
+# set (the playbook then asks for it itself, no -b needed); none otherwise.
 # -e cassandra_status_from=<host> reads the ring from that node,
 # -e cassandra_status_raw=true prints nodetool's own output too.
 # JMX access: cassandra_jmx_port, cassandra_jmx_username, cassandra_jmx_password_file or _password.
@@ -27,6 +29,9 @@
 - name: Cluster status
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  # root only to read the JMX password file (the service account's, 0400);
+  # nodetool needs no root otherwise
+  become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
   ignore_unreachable: true  # a down server is part of the view
   vars:
     # the hosts Ansible reached (facts gathered now, not from a cache)

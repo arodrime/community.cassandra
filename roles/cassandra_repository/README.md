@@ -12,6 +12,9 @@ Requirements
 ansible-core 2.15 or later (the apt repository is written with
 `ansible.builtin.deb822_repository`).
 
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
+
 Role Variables
 --------------
 
@@ -88,6 +91,7 @@ Including an example of how to use your role (for instance, with variables
 passed in as parameters) is always nice for users too:
 
     - hosts: servers
+      become: true
       roles:
          - { role: cassandra_repository, x: 42 }
 

@@ -17,7 +17,10 @@
 # else written 0600 for you to encrypt.
 # JMX access: the cassandra_service variables (cassandra_jmx_port,
 # cassandra_jmx_username, cassandra_jmx_password_file...), written to the
-# inventory too; -b when only root can read the JMX password file.
+# inventory too.
+# Root on the nodes (sudo; nodetool reads the JMX password file, the service
+# account's): the playbook asks for it itself, no -b needed. None on the
+# controller: the files are written as the user running Ansible.
 # hosts.yml names each node by its hostname (import_cluster_host_names:
 # hostname, the short one as the node reports it, fqdn or ip) with
 # ansible_host set to its address in the ring (import_cluster_set_ansible_host:
@@ -951,7 +954,7 @@
 
       Next steps:
         1. Review the report above and the variables (hand edits, drift).
-        2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml -b community.cassandra.preflight
+        2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml community.cassandra.preflight
         3. See what the roles would change, changing nothing:
            ansible-playbook -i {{ _dir }}/hosts.yml -b <your site playbook> --check --diff
   tasks:

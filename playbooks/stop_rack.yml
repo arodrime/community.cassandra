@@ -6,6 +6,7 @@
 #     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # With at least as many racks as replicas in the datacenter, one rack down is
 # one replica down. Refused when a keyspace would lose more than that (more
 # replicas in the datacenter than racks, SimpleStrategy with RF > 1) or when a
@@ -19,6 +20,7 @@
 - name: Check that the rack can go down
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     _dc_nodes: >-
       {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_cassandra_preflight.cassandra_dc', 'equalto', cassandra_target_dc)
@@ -149,6 +151,7 @@
 - name: Stop the rack
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_target_rack_nodes"
   gather_facts: false
+  become: true
   any_errors_fatal: true
   tasks:
     - name: Load the cassandra_service defaults (JMX access)

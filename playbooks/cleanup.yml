@@ -4,6 +4,7 @@
 #   ansible-playbook -i inventory community.cassandra.cleanup
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # cassandra_cleanup_mode: sequential (default, one node at a time), rack (the
 # nodes of one rack together, rack by rack), dc (one datacenter at a time) or
 # all (every node at once: heavy disk I/O everywhere). cassandra_cleanup_jobs:
@@ -15,6 +16,7 @@
 - name: Cleanup
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: cleanup
     cassandra_cleanup_mode: sequential

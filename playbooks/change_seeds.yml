@@ -5,6 +5,7 @@
 #   ansible-playbook -i inventory community.cassandra.change_seeds
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # The preflight check refuses seeds that are not up members of the cluster.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
@@ -12,6 +13,7 @@
 - name: Update the seed list
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     _file: "{{ cassandra_conf_dir }}/cassandra.yaml"
     _new: "{{ cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(',') }}"  # as the template writes it

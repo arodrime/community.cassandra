@@ -13,11 +13,19 @@ The files are private (`0600`, directory `0700`): they hold config diffs,
 where password values are masked (`****`) like in the role output.
 
     - hosts: cassandra
+      become: true
       vars:
         cassandra_change_report_dir: "{{ playbook_dir }}/changes"
       roles:
         - community.cassandra.cassandra_install
         - community.cassandra.cassandra_config
+
+Requirements
+------------
+
+No root of its own: it runs in the play of the roles it reports on (which
+have `become: true`), and writes its files on the controller as the user
+running Ansible.
 
 Role Variables
 --------------

@@ -5,6 +5,7 @@
 #     -e cassandra_dead_node_address=10.0.0.14
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Take the dead host out of the inventory first. Prefer replace_node (a new host
 # takes over its tokens and data). cassandra_dead_node_method: removenode
 # (default: streams the dead node's ranges from the other replicas),
@@ -29,6 +30,7 @@
 - name: Remove the dead node
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   vars:
     _method: "{{ cassandra_dead_node_method | default('removenode') }}"
     # removenode(_force) on a node already out of the ring: nothing to do

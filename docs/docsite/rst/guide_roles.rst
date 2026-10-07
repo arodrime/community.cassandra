@@ -62,8 +62,12 @@ would otherwise repeat:
     callback_result_format = yaml
     interpreter_python = auto_silent
 
-    [privilege_escalation]
-    become = true
+No ``become`` in ``ansible.cfg`` (nor ``-b``): the collection's playbooks ask for root on the nodes themselves, where
+they need it (``status`` and ``health_check`` only to read ``cassandra_jmx_password_file``, ``help`` nowhere), and
+never on the controller; ad hoc ``ansible`` commands stay unprivileged. Add ``-K`` when sudo asks for a password.
+The roles need root too, but do not ask for it: your own playbook that applies them (``site.yml``) sets
+``become: true`` on its play. An inventory ``ansible_become: false`` beats the playbooks' ``become``: the operations
+then stop before changing anything.
 
 Then, with the cluster group found from the inventory (see `Inventory`_):
 
@@ -202,7 +206,7 @@ with ``-i host1,host2``), or in ``cassandra_rolling_progress_dir``. An interrupt
 ``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. A node the interrupted
 ``rolling_restart``, ``rolling_reboot``, ``apply_config`` or ``update_java`` (one node at a time) left drained or
 stopped is restarted first: it may be down then, any other node down still stops the run. The
-files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
+files are written as the user running Ansible, never as root: add ``.cassandra_progress`` to the inventory's
 ``.gitignore``.
 
 Help and runbook
@@ -212,7 +216,7 @@ Help and runbook
 as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
-several clusters, a datacenter and rack of it, the nodes marked absent, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
+several clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
 user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know); and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
@@ -467,7 +471,7 @@ normal (nothing to check against, e.g. a single-node cluster), when a node with 
 that no inventory host accounts for (it may be this node under an old address), when the node is not in the
 ``cassandra_hosts`` group or its live ``cassandra.yaml`` names another cluster than the inventory's (or the stock
 ``Test Cluster``), when Cassandra runs on the node with other nodes in its ring, does not answer, or runs without a
-``cassandra`` unit to stop it, when a directory can't be read (run with ``-b``), and for a path
+``cassandra`` unit to stop it, when a directory can't be read, and for a path
 that looks wrong: empty or relative, ``/``, a system directory, a top-level directory that is not a mount point, a
 home, the package's storage root, another program's directory under ``/var/lib``, a directory holding another mount
 point, the config or the logs, one directory inside another (links resolved), or a live ``cassandra.yaml`` that can't

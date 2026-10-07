@@ -5,6 +5,7 @@
 #     -e '{"cassandra_datacenter_replication": {"orders": 3, "system_auth": 3}}'
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Put the new nodes in the cluster's inventory group first, all declaring the
 # new cassandra_dc. They join one at a time without streaming (auto_bootstrap:
 # false), then the keyspaces in cassandra_datacenter_replication get that many
@@ -22,6 +23,7 @@
 - name: Check the new datacenter
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true
   vars:
     _new_dc: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }}"
@@ -162,6 +164,7 @@
   hosts: "{{ cassandra_new_nodes }}"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     # Computed first: a var can't be defined from itself (recursive template)
     - name: Add auto_bootstrap false to the settings
@@ -188,6 +191,7 @@
 - name: Give the datacenter its replicas and data
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true
   tasks:
     - name: Load the cassandra_service defaults
@@ -210,6 +214,7 @@
 - name: Stream each new node's data, one at a time
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   serial: 1
   any_errors_fatal: true
   tasks:
@@ -258,6 +263,7 @@
 - name: Finish the datacenter
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
+  become: true
   any_errors_fatal: true
   tasks:
     - name: Load the cassandra_service defaults

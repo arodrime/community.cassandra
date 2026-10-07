@@ -15,6 +15,12 @@ comments included. Rendered with the defaults, they give back the stock files
 (checked by the tests), except for the few values the deb/rpm packages change
 themselves (data directories, log directory).
 
+Requirements
+------------
+
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
+
 Changing an existing node
 -------------------------
 
@@ -249,6 +255,7 @@ Example Playbook
 ----------------
 
     - hosts: cassandra
+      become: true
       vars:
         cassandra_version: 50x  # the same series for all the roles
       roles:

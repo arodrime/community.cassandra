@@ -10,6 +10,7 @@
 #   ansible-playbook -i inventory community.cassandra.apply_config
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
+# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
@@ -17,6 +18,7 @@
 - name: Find what each node needs
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     # Check mode: shows the diffs, writes nothing
     - name: Compare the config
@@ -96,6 +98,7 @@
 - name: Set up the progress file
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_apply_config_True"
   gather_facts: false
+  become: true
   vars:
     cassandra_service_node_action: apply_config
   tasks:
@@ -108,6 +111,7 @@
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_apply_config_True"
   serial: 1
   any_errors_fatal: true
+  become: true
   tasks:
     - name: Apply the config on this node
       ansible.builtin.include_role:
@@ -119,6 +123,7 @@
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Print the summary
       ansible.builtin.include_role:

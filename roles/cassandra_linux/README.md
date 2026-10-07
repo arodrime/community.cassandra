@@ -6,9 +6,8 @@ Set Cassandra Linux OS customizations.
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should
-be mentioned here. For instance, if the role uses the EC2 module, it may be a
-good idea to mention in this section that the boto package is required.
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
 
 Role Variables
 --------------
@@ -84,6 +83,7 @@ Including an example of how to use your role (for instance, with variables
 passed in as parameters) is always nice for users too:
 
     - hosts: servers
+      become: true
       roles:
          - { role: cassandra_linux, x: 42 }
 
