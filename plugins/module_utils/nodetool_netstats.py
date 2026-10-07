@@ -34,6 +34,14 @@ def table_of(path):
     return "%s.%s" % (m.group(1), m.group(2)) if m else ""
 
 
+def node_mode(stdout):
+    """The mode of the "Mode: X" line of nodetool netstats, None if absent."""
+    for line in stdout.splitlines():
+        if line.startswith("Mode:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
 def parse_netstats(stdout):
     """(mode, stream lines, sessions): the Mode line, the raw lines of the
     stream sessions, and one dict per session and direction: operation,

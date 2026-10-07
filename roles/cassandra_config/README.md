@@ -20,39 +20,72 @@ Changing an existing node
 
 Every run first renders the files into a temp dir on the node and shows a
 `diff -u` against the live files (Ansible's own `--diff` skips files over
-100KB, which includes `cassandra.yaml`). Settings you did not set as
+100KB, like the 5.0 `cassandra.yaml`). Settings you did not set as
 variables are rendered with their stock value, so a hand-edited node shows
 here what would be reverted.
 
 With `cassandra_config_confirm: auto` (default), a node that was already
-initialized (`<cassandra_data_dir>/system` exists) is only changed after you
-type `yes` at a single prompt listing every host and file concerned; a
-first install is not blocked. `true` always asks, `false` never does. With
-no terminal to answer (CI, AWX), a required confirmation fails the run.
-`--check` shows the diff and changes nothing. The role never restarts
+initialized (a `system` keyspace in `cassandra_data_file_directories`, its
+`local_system_data_file_directory`, `/var/lib/cassandra/data` or a tarball's
+`data/data`, or any absolute path written in its live `cassandra.yaml`
+outside comment lines, relative ones excepted; a live file it cannot read;
+or Cassandra running) is only changed after you type `yes` at a single
+prompt listing every host and file concerned; a first install is not
+blocked. `true` asks whenever a file changes, `false` never does. The JMX
+users files are written without that preview. With no terminal to answer
+(CI, AWX), a required confirmation fails the run.
+A refusal says where the node was found initialized and, for a node that
+was only started by mistake (e.g. with the stock config) and never held real
+data, which directories to empty to start it over (Cassandra stopped; this
+deletes the node's data).
+`--check` shows the diff and runs the checks below, and changes nothing. The role never restarts
 Cassandra: when it changed files of a running node, it says so.
 
 On a node already initialized, a file whose settings are the same as the
 role's (only comments, blank lines or their layout differ, e.g. a config
-written by hand, without the role's header line) is left as it is, owner
-and mode included: `cassandra_config_normalize: true` rewrites it.
+written by hand, without the role's header line) is left as it is:
+`cassandra_config_normalize: true` rewrites it. Its owner, group and mode
+are set all the same.
 
 Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are
-written `root:cassandra` mode `0640` (`cassandra_config_owner`,
-`cassandra_config_group`, `cassandra_config_mode`), since `cassandra.yaml`
-may hold keystore passwords.
+owned by `root`, group `cassandra_group` (`cassandra_config_user`,
+`cassandra_config_group`): Cassandra reads them, but cannot rewrite them.
+`cassandra.yaml` may hold keystore passwords, and the `jvm*-server.options`
+files too (extra options such as `-Djavax.net.ssl.keyStorePassword=`): mode
+`0640` (`cassandra_config_mode`). The others (`cassandra-env.sh`, rackdc,
+logback) hold no secret: mode `0644` (`cassandra_config_public_mode`), so that
+`nodetool`, run by any user, can read the JMX port in `cassandra-env.sh` (else
+it prints `grep: .../cassandra-env.sh: Permission denied`).
+`cassandra_config_file_permissions` sets a file apart, e.g.
+`{logback.xml: {mode: "0600"}}`. A change of owner, group or mode alone is
+listed in the report and needs no confirmation nor restart: `apply_config`,
+which restarts nodes, leaves it to the next run of the role.
 
 On a node that already joined a cluster, the role refuses to change
-`cluster_name`, `num_tokens`, `partitioner`, `endpoint_snitch`, `dc` or
-`rack` (the file's `dc` and `rack` only under a snitch that reads them): a
-new cluster name or partitioner stops the node from starting, the others
-move data ownership without streaming it. (`initial_token` is read at a
-node's first start only: a joined node keeps its tokens whatever it says;
-`move_node` moves a single-token node.) The
-error lists the live and new values: fix the inventory to match the node, or
-set `cassandra_config_force_identity_change: true` while following a
-documented procedure (e.g. a snitch migration).
+`cluster_name`, `num_tokens`, `partitioner`, `endpoint_snitch`, `dc`,
+`rack` (the file's `dc` and `rack` only under a snitch that reads them),
+`dc_suffix` or `ec2_naming_scheme`: a new cluster name, partitioner or
+`num_tokens` stops the node from starting, a new dc or rack too (unless
+forced), a new snitch or forced dc/rack moves data ownership without
+streaming it. (`initial_token` is read at a node's first start only: a
+joined node keeps its tokens whatever it says; `move_node` moves a
+single-token node.) On 5.0, `storage_compatibility_mode` only moves one step
+at a time, `CASSANDRA_4` (also when the live file does not set it: write it
+first), then `UPGRADING`, then `NONE`, each once the whole cluster runs the
+previous one; never back. A file kept as the node has it
+(`cassandra_config_keep_files`) changes none of these. The error lists the
+live and new values: fix the inventory to match the node, or set
+`cassandra_config_force_identity_change: true` while following a documented
+procedure (e.g. a snitch migration); it skips all these checks, the storage
+compatibility steps included.
+
+The data, commitlog, hints, saved caches and log directories that don't
+exist yet are created once the files are written, owned by the account
+Cassandra runs as, mode `0750` (missing parents root-owned, `0755`). The
+role stops first when one of them is on a mount point of `/etc/fstab` that
+is not mounted: it would be on the filesystem below, and a joined node would
+look new.
 
 Taking over an existing node
 ----------------------------
@@ -66,18 +99,22 @@ Role Variables
 --------------
 
 * `cassandra_version`: Cassandra series, same values as
-  `cassandra_repository`. Defaults to `50x`.
+  `cassandra_repository`. Defaults to `50x`. The role stops when the
+  installed Cassandra package is of another series (not under `--check`).
 * `cassandra_conf_dir`: destination directory for the templated files.
   Defaults to where the package makes Cassandra read its config:
   `/etc/cassandra/conf` on RedHat, `/etc/cassandra` on Debian. Keep the
   default with a package install: the package's `cassandra.in.sh`
   hardcodes that path for Cassandra and its tools, anything else is not read.
 * `cassandra_rpm_conf_alternative` (RedHat): conf dir seeded once from the
-  package's `default.conf` and selected with `alternatives` (priority
-  `cassandra_rpm_conf_alternative_priority`, 100), so `/etc/cassandra/conf`
-  points to it and `default.conf` stays as shipped (`rpm -V` clean, package
-  upgrades never touch the live config). Default `/etc/cassandra/ansible.conf`;
-  `""` writes into `default.conf` instead.
+  one `/etc/cassandra/conf` points to (the package's `default.conf` on a new
+  install; on a node already run from another dir, its keystores and other
+  files come along, owners and modes kept) and selected with `alternatives`
+  (priority `cassandra_rpm_conf_alternative_priority`, 100), so
+  `/etc/cassandra/conf` points to it and `default.conf` stays as shipped
+  (`rpm -V` clean, package upgrades never touch the live config). Default
+  `/etc/cassandra/ansible.conf`; `""` writes into the dir in use instead
+  (`default.conf` on a new install; it does not switch back a node already moved to its own dir).
 * `cassandra_data_file_directories`: `data_file_directories`, one per disk
   (JBOD). Defaults to `cassandra_data_dir` alone, which should stay first.
 * `cassandra_data_dir`: Cassandra's data directory. Defaults to
@@ -97,12 +134,31 @@ Role Variables
   defaults to `NONE` (5.0 formats and features, right for a new cluster).
   A cluster upgraded from 4.x must set `CASSANDRA_4`, then move through
   `UPGRADING` to `NONE` with rolling restarts.
+* `cassandra_user`, `cassandra_group` (default `cassandra`): the account
+  Cassandra runs as (`cassandra_service` runs it so). The directories the
+  role creates (`0750`) and the JMX users' files are theirs
+  (`cassandra_service_user` / `_group` when set), and `cassandra_group` is
+  the default group of the config files. The role does not create them.
+* Commit log sync: `cassandra_commitlog_sync` is `periodic` (default),
+  `group` or `batch`. Cassandra refuses to start with a sync period outside
+  periodic mode, or in group mode without a group window, so the role writes
+  `cassandra_commitlog_sync_period` (default `10000ms`) in periodic mode only,
+  and `cassandra_commitlog_sync_group_window` in group mode only. Group mode
+  needs the window set (no default, as in Cassandra): the longest a write
+  waits for the grouped fsync before it is acked. Small values (10-15ms) are
+  typical; the stock example, 1000ms, would hold each write up to 1s. Batch
+  mode writes neither. 4.0 uses `cassandra_commitlog_sync_period_in_ms` and
+  `cassandra_commitlog_sync_group_window_in_ms` (milliseconds, e.g. `15`).
+  `commitlog_sync_batch_window_in_ms` has no variable: 4.x does nothing with
+  it (and refuses it in periodic mode), 5.0 refuses it.
 * `cassandra_jmx_users`: remote JMX users (with `cassandra_local_jmx: false`),
   as `{name, password, access}` (`readwrite`, the default, or
   `readonly`; a `readwrite` user also gets the `create` and `unregister`
   rights of the JDK's controlRole, unless `create_unregister: false`),
   written to `/etc/cassandra/jmxremote.password` and `.access`, mode `0400`
-  owned by cassandra. Keep the passwords in a vault.
+  owned by `cassandra_user` (the JVM refuses a password file others can
+  read; `cassandra_config_file_permissions` can set them apart too). Keep the
+  passwords in a vault.
 * `cassandra_cqlsh_credentials`: cqlsh set up for OS users, as
   `{os_user, username, password}`: `~/.cassandra/cqlshrc` points cqlsh at this
   node (`cassandra_rpc_address`), and from 4.1 the password goes to
@@ -115,15 +171,17 @@ Role Variables
   Cassandra refuses unknown keys at startup.
 * `cassandra-env.sh`: `cassandra_log_dir` (defaults to `/var/log/cassandra`,
   as the deb/rpm packages patch it; the tarball's stock value is
-  `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (4.x only: CMS needs it
-  whenever `cassandra_heap_size` is set, the role asserts it),
+  `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (4.x only: without G1
+  it goes with `cassandra_heap_size`, both or neither; on 5.0 a heap size
+  needs G1; the role asserts it),
   `cassandra_heap_size` (empty = stock auto-sizing),
   `cassandra_max_direct_memory_size` and `cassandra_heap_dump_dir` (5.0
   only; on 4.x set `CASSANDRA_HEAPDUMP_DIR` in the service environment),
   `cassandra_local_jmx`, `cassandra_jmx_port`, `cassandra_jmx_rmi_hostname`.
 * GC: `cassandra_jvm_gc` defaults to the series' stock GC (`CMS` on 4.x,
-  `G1` on 5.0). `G1` on 4.x uses 5.0's G1 settings; `CMS` needs Java 8/11
-  and `cassandra_heap_newsize` with `cassandra_heap_size`; `custom` comments
+  `G1` on 5.0). `G1` on 4.x turns on the stock G1 block with the
+  `cassandra_jvm_*` values (5.0's by default); `CMS` needs Java 8/11
+  (and on 4.x `cassandra_heap_newsize` with `cassandra_heap_size`); `custom` comments
   out both blocks (set your own flags, e.g. ZGC, with
   `cassandra_jvm<N>_extra_options`). `cassandra_jvm11_gc` etc. override it
   per file; `cassandra_jvm_cms_initiating_occupancy_fraction` tunes CMS.
@@ -191,7 +249,10 @@ Example Playbook
 ----------------
 
     - hosts: cassandra
+      vars:
+        cassandra_version: 50x  # the same series for all the roles
       roles:
+        - community.cassandra.cassandra_repository
         - community.cassandra.cassandra_install
         - community.cassandra.cassandra_linux
         - community.cassandra.cassandra_config

@@ -27,8 +27,9 @@ argument_specs:
         type: str
         default: /etc/cassandra/ansible.conf
         description:
-        - 'RedHat family: config directory seeded once from the package''s C(default.conf) and selected with C(alternatives),
-          so C(default.conf) stays as shipped. An empty string writes into C(default.conf).'
+        - 'RedHat family: config directory seeded once from the one in use (the package''s C(default.conf) on a new install,
+          other files and owners included) and selected with C(alternatives), so C(default.conf) stays as shipped. An empty
+          string writes into the directory in use.'
       cassandra_rpm_conf_alternative_priority:
         type: int
         default: 100
@@ -39,14 +40,38 @@ argument_specs:
         default: auto
         description:
         - Show the diff and ask for confirmation before changing the files.
-        - V(auto) asks only on a node that was already initialized (C(<cassandra_data_dir>/system) exists). V(true) always
-          asks, V(false) never does. Without a terminal to answer, a required confirmation fails the run.
+        - V(auto) asks only on a node that was already initialized (a C(system) keyspace in
+          O(cassandra_data_file_directories), its C(local_system_data_file_directory), C(/var/lib/cassandra/data), a tarball's
+          C(data/data), or any absolute path written in the live C(cassandra.yaml) outside comment lines; a live file it
+          cannot read; or Cassandra running). A refusal says where, and how to start over a node that never
+          held real data. V(true) asks whenever a file changes, V(false) never does. Any other
+          value is refused. Without a terminal to answer, a required confirmation fails the run.
       cassandra_config_normalize:
         type: bool
         default: false
         description:
-        - On a node already initialized, a file with the same settings as the role's (only comments, blank lines or
-          their layout differ, e.g. written by hand, without the role's header) is left as it is. V(true) rewrites it.
+        - On a node already initialized, a file with the same settings as the role's is left as it is (e.g. written
+          by hand, without the role's header), read as Cassandra, bash, the JVM and logback read them, so comments,
+          layout, the order of the JVM options and quotes that change nothing do not count. V(true) rewrites it.
+          The C(import_cluster) self-check uses the same test.
+      cassandra_config_storage_dir:
+        type: str
+        default: ""
+        description:
+          - Where the directories a C(cassandra.yaml) leaves out are (the node's C(-Dcassandra.storagedir), e.g.
+            C($CASSANDRA_HOME/data) for a tarball), for the "same settings" test of O(cassandra_config_normalize).
+          - Empty, the running Cassandra's. C(import_cluster) sets it for such files.
+      cassandra_config_keep_files:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Config files left as they are on a node already initialized that has them, neither written nor compared, e.g. a
+            C(logback.xml) with appenders no variable covers. Names of the conf dir's files (C(cassandra.yaml),
+            C(cassandra-env.sh), C(jvm-server.options), C(jvm<N>-server.options), C(cassandra-rackdc.properties),
+            C(logback.xml)). A node without the file, or a new one, gets the role's.
+          - C(import_cluster) sets it with C(import_cluster_keep_hand_edits) for the files with hand edits no
+            variable covers.
       cassandra_data_dir:
         type: path
         default: /var/lib/cassandra/data
@@ -215,13 +240,25 @@ argument_specs:
       cassandra_commitlog_sync:
         type: str
         default: periodic
+        choices: [periodic, group, batch]
         description:
         - C(commitlog_sync) in C(cassandra.yaml).
+        - Cassandra accepts the sync period in periodic mode only and needs the group window in group mode, so
+          the role writes C(commitlog_sync_period) in periodic mode only and C(commitlog_sync_group_window) in
+          group mode only (C(_in_ms) names on 4.0). Batch mode writes neither.
       cassandra_commitlog_sync_period:
         type: str
         default: 10000ms
         description:
-        - C(commitlog_sync_period) in C(cassandra.yaml).
+        - C(commitlog_sync_period) in C(cassandra.yaml), written when O(cassandra_commitlog_sync=periodic).
+      cassandra_commitlog_sync_group_window:
+        type: str
+        default: ''
+        description:
+        - C(commitlog_sync_group_window) in C(cassandra.yaml), written when O(cassandra_commitlog_sync=group), which
+          needs it (no default, as in Cassandra). A duration in ms or a larger unit, above zero.
+        - The longest a write waits for the grouped fsync before it is acked. Small values (10-15ms) are typical;
+          the stock example, 1000ms, would hold each write up to 1s.
       cassandra_commitlog_segment_size:
         type: str
         default: 32MiB
@@ -792,7 +829,15 @@ argument_specs:
         type: int
         default: 10000
         description:
-        - C(commitlog_sync_period_in_ms) in C(cassandra.yaml) (4.0 only).
+        - C(commitlog_sync_period_in_ms) in C(cassandra.yaml) (4.0 only), written when
+          O(cassandra_commitlog_sync=periodic).
+      cassandra_commitlog_sync_group_window_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(commitlog_sync_group_window_in_ms) in C(cassandra.yaml) (4.0 only), written when
+          O(cassandra_commitlog_sync=group), which needs it (no default). Milliseconds above zero (4.0 reads a
+          float), e.g. V(15). See O(cassandra_commitlog_sync_group_window).
       cassandra_commitlog_segment_size_in_mb:
         type: int
         default: 32
@@ -953,12 +998,13 @@ argument_specs:
         default: ''
         description:
         - 'C(MAX_HEAP_SIZE) in C(cassandra-env.sh), for example C(8G). Empty: the stock automatic sizing.'
-        - With CMS (the 4.x default) set O(cassandra_heap_newsize) as well.
+        - Without G1 (CMS is the 4.x default), set O(cassandra_heap_newsize) as well on 4.x; on 5.0 it can only be set with
+          G1 (its C(cassandra-env.sh) has no C(HEAP_NEWSIZE)). The role refuses other combinations.
       cassandra_heap_newsize:
         type: str
         default: ''
         description:
-        - C(HEAP_NEWSIZE) in C(cassandra-env.sh). Only used by CMS, where it must be set together with O(cassandra_heap_size).
+        - C(HEAP_NEWSIZE) in C(cassandra-env.sh) (4.x). Without G1, it must be set together with O(cassandra_heap_size).
       cassandra_max_direct_memory_size:
         type: str
         default: ''
@@ -1039,7 +1085,7 @@ argument_specs:
         type: dict
         default: {}
         description:
-        - Settings no variable covers, written as-is at the end of C(cassandra.yaml), e.g. C({commitlog_total_space: 8192MiB}).
+        - 'Settings no variable covers, written as-is at the end of C(cassandra.yaml), e.g. C({commitlog_total_space: 8192MiB}).'
         - Keys the template already has are refused (set them with their variable). Cassandra refuses unknown keys at startup.
       cassandra_jvm_extra_options:
         type: list
@@ -1114,29 +1160,70 @@ argument_specs:
         - Also send the logs to stdout (the C(STDOUT) appender of C(logback.xml)).
           Under systemd that is a second copy of C(system.log) in journald; JVM
           errors before logback starts go to stdout either way.
-      cassandra_config_owner:
+      cassandra_user:
+        type: str
+        default: cassandra
+        description:
+        - The account Cassandra runs as (C(cassandra_service) runs it so). It owns
+          the directories the role creates and the JMX users' files. The role does
+          not create it.
+      cassandra_group:
+        type: str
+        default: cassandra
+        description:
+        - The group Cassandra runs as. Group of the directories the role creates,
+          the JMX users' files and, by default, the config files.
+      cassandra_config_user:
         type: str
         default: root
         description:
         - Owner of the config files.
+      cassandra_config_owner:
+        type: str
+        description:
+        - Former name of O(cassandra_config_user), deprecated. Wins when set; the
+          role warns to rename it.
       cassandra_config_group:
         type: str
-        default: cassandra
         description:
-        - Group of the config files (Cassandra reads them through it).
+        - Group of the config files (Cassandra reads them through it). Defaults
+          to O(cassandra_group).
       cassandra_config_mode:
         type: str
         default: "0640"
         description:
-        - Mode of the config files. C(cassandra.yaml) may hold keystore passwords.
+        - Mode of C(cassandra.yaml), which may hold keystore passwords, and of the
+          C(jvm*-server.options) files, whose extra options may too (e.g.
+          C(-Djavax.net.ssl.keyStorePassword=)). Octal, quoted.
+      cassandra_config_public_mode:
+        type: str
+        default: "0644"
+        description:
+        - Mode of the other config files (C(cassandra-env.sh),
+          C(cassandra-rackdc.properties), C(logback.xml)), which hold no secret.
+          C(nodetool), run by any user, reads the JMX port in C(cassandra-env.sh).
+          Octal, quoted.
+      cassandra_config_file_permissions:
+        type: dict
+        default: {}
+        description:
+        - >-
+          Per file, over the above, C({file name: {owner, group, mode}}) (any of
+          the three), e.g. C({logback.xml: {mode: "0600"}}). Also for
+          C(jmxremote.password) and C(jmxremote.access) (default O(cassandra_user),
+          O(cassandra_group), C(0400); the JVM refuses a password file its group
+          or others can read or write). Another file name is refused. Modes in
+          octal, quoted.
+        - C(import_cluster) writes it for the files whose owner, group or mode
+          differ from the others on a node.
       cassandra_config_force_identity_change:
         type: bool
         default: false
         description:
         - Change C(cluster_name), C(num_tokens), C(partitioner),
-          C(endpoint_snitch), C(dc) or C(rack) of a node that already joined a
-          cluster. Refused otherwise; only for a documented procedure (e.g. a
-          snitch migration).
+          C(endpoint_snitch), C(dc), C(rack), C(dc_suffix) or C(ec2_naming_scheme) of a node that already joined a
+          cluster, or move C(storage_compatibility_mode) by more than one step. Refused otherwise; only for a
+          documented procedure (e.g. a snitch migration).
       cassandra_jmx_users:
         type: list
         elements: dict

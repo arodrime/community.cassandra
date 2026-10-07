@@ -12,7 +12,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Set up the progress file
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     cassandra_service_node_action: reboot
@@ -23,7 +23,7 @@
         tasks_from: progress.yml
 
 - name: Rolling reboot
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   serial: 1
   any_errors_fatal: true
   tasks:
@@ -35,7 +35,7 @@
         cassandra_service_node_action: reboot
 
 - name: Summary
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: Print the summary

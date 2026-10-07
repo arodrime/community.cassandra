@@ -96,12 +96,21 @@ def went_on(output):
     return len(re.findall(r'"msg": "went on"', output))
 
 
+def task_hosts(output, name):
+    """The hosts each run of the task named name printed a line for."""
+    runs = re.findall(r"TASK \[[^\]]*: %s\][^\n]*\n(.*?)(?=TASK \[|PLAY RECAP)" % re.escape(name), output, re.S)
+    return [re.findall(r"(?:ok|changed|skipping|fatal): \[(node\d)\]", run) for run in runs]
+
+
 def test_yes_goes_on(tmp_path):
     rc, output, seen = run_in_terminal(tmp_path, [" Yes "])
     assert rc == 0, output
     assert went_on(output) == 2
     assert seen == 1
     assert re.search(r"Remove node7 from the ring\?\r?\nAnswer yes to go on, no to stop", output)
+    # controller bookkeeping: one line per step, the facts on both hosts (both went on)
+    for name in ("Start the count of answers", "Count the answers", "Confirm the operation", "Read the answer"):
+        assert task_hosts(output, name) == [["node1"]], (name, output)
 
 
 def test_y_goes_on(tmp_path):
@@ -122,6 +131,7 @@ def test_typo_then_yes(tmp_path):
     assert rc == 0, output
     assert "Please answer yes or no" in output
     assert went_on(output) == 2
+    assert task_hosts(output, "Count the answers") == [["node1"], ["node1"]], output
 
 
 def test_three_typos_stop(tmp_path):
@@ -156,3 +166,82 @@ def test_no_terminal_and_confirm_false_goes_on(tmp_path):
     run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)
     assert run.returncode == 0, run.stdout
     assert went_on(run.stdout) == 2
+
+
+def test_check_mode_asks_nothing(tmp_path):
+    # --check changes nothing: no question, even without a terminal
+    argv, env = command(tmp_path, "--check")
+    run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)
+    assert run.returncode == 0, run.stdout
+    assert "No terminal" not in run.stdout and "Answer yes" not in run.stdout
+    assert went_on(run.stdout) == 2
+
+
+SCREEN_PLAYBOOK = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Screen
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: screen.yml
+      vars:
+        cassandra_screen_question: Remove node7?
+        cassandra_screen_session_warning: true
+        cassandra_screen:
+          operation: decommission_node
+          summary: remove node7
+          warnings:
+            - label: replication
+              text: orders keeps 2 replicas
+"""
+
+
+def screen_run(tmp_path, *extra):
+    argv, env = command(tmp_path, *extra)
+    (tmp_path / "confirm.yml").write_text(SCREEN_PLAYBOOK)  # in place of the plain one
+    env = dict(env, TMUX="", STY="")  # the session warning shows
+    return subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)
+
+
+def test_screen_under_check_is_printed_once_without_question(tmp_path):
+    run = screen_run(tmp_path, "--check")
+    assert run.returncode == 0, run.stdout
+    assert run.stdout.count('"decommission_node: remove node7",') == 1
+    assert '"--check: nothing will be changed (the plan only, no question).",' in run.stdout
+    assert '"WARNING - replication: orders keeps 2 replicas",' in run.stdout
+    assert '"(A real run would also warn about: session.)"' in run.stdout
+    assert "No terminal" not in run.stdout
+
+
+def test_screen_with_confirm_false_is_printed_and_goes_on(tmp_path):
+    run = screen_run(tmp_path, "-e", "cassandra_operation_confirm=false")
+    assert run.returncode == 0, run.stdout
+    assert '"cassandra_operation_confirm is false: no question, the run goes on.",' in run.stdout
+    assert run.stdout.count('"decommission_node: remove node7",') == 1 and "Answer yes" not in run.stdout
+    assert '"WARNING - session: this run is not inside tmux or screen' in run.stdout
+
+
+def test_screen_then_the_question(tmp_path):
+    argv, env = command(tmp_path)
+    (tmp_path / "confirm.yml").write_text(SCREEN_PLAYBOOK)  # in place of the plain one
+    pid, fd = pty.fork()
+    if pid == 0:  # the child
+        os.execve(argv[0], argv, env)
+    output = read_until(fd, b"", lambda out: prompts(out) > 0, time.time() + 120)
+    time.sleep(1)
+    os.write(fd, b"no\r")
+    output = read_until(fd, output, lambda out: b"PLAY RECAP" in out, time.time() + 120).decode()
+    os.waitpid(pid, 0)
+    # the screen printed once (in the logs too), then the question alone
+    assert output.count('"decommission_node: remove node7",') == 1
+    assert '"WARNING - replication: orders keeps 2 replicas"' in output
+    assert re.search(r"Confirm the operation\]\r?\nRemove node7\?\r?\nAnswer yes to go on, no to stop", output)
+    assert "Stopped at your request, nothing changed." in output
+
+
+def test_screen_is_printed_before_a_run_without_terminal_stops(tmp_path):
+    run = screen_run(tmp_path)
+    assert run.returncode != 0
+    assert run.stdout.count('"decommission_node: remove node7",') == 1
+    assert "No terminal to answer the confirmation on" in run.stdout

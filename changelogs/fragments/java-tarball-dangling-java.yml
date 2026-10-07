@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - "cassandra_install - with Java from a tarball, a ``/usr/bin/java`` that leads nowhere (the ``java`` alternative of a Java removed since) is now replaced by the tarball's ``java``; the role left it, and Cassandra and nodetool found no java."

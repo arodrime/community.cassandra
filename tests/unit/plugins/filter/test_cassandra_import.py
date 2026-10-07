@@ -55,7 +55,7 @@ def test_ring_multi_dc():
 
 
 def test_ring_load_unknown():
-    assert [(n["address"], n["rack"]) for n in ring("nodetool_status_vnodes_load_unknown.txt")] == [("10.118.154.136", "rack1")]
+    assert [(n["address"], n["rack"]) for n in ring("nodetool_status_vnodes_load_unknown.txt")] == [("10.100.100.136", "rack1")]
 
 
 def test_inventory_files_keep_passwords_apart():
@@ -104,6 +104,20 @@ def test_variables_read_back(series):
     assert v["cassandra_rpc_address"] == "10.0.0.9"
     assert v["cassandra_heap_size"] == "8G"
     assert v["cassandra_rackdc_dc"] == "paris"  # SimpleSnitch: the file's, not the node's dc
+
+
+@pytest.mark.parametrize("series, window", [("50x", "cassandra_commitlog_sync_group_window"),
+                                            ("41x", "cassandra_commitlog_sync_group_window"),
+                                            ("40x", "cassandra_commitlog_sync_group_window_in_ms")])
+def test_commitlog_group_window_read_back(series, window):
+    # its line is on in group mode only (else a commented placeholder)
+    value = 15 if series == "40x" else "15ms"
+    out = cassandra_config_import(node_files(series, cassandra_commitlog_sync="group", **{window: value}), series, FACTS)
+    assert out["hand_edits"] == []
+    assert out["vars"]["cassandra_commitlog_sync"] == "group"
+    assert out["vars"][window] == value
+    out = cassandra_config_import(node_files(series), series, FACTS)
+    assert out["hand_edits"] == [] and window not in out["vars"]
 
 
 def test_hand_edit_and_normalized():
@@ -630,7 +644,15 @@ def test_layout_left_as_it_is_on_every_node_stays_per_node():
     assert out["group_vars"]["c"] == {"cassandra_num_tokens": 4}
     marked = dict(keep, cassandra_imported_host=True)
     assert out["host_vars"] == {"n1": marked, "n2": marked, "n3": marked}
-    assert "The roles leave their setup as it is" in out["report"]
+    assert "The roles leave their setup as it is (host_vars: cassandra_linux_manage false)" in out["report"]
+
+
+def test_layout_node_not_read_names_what_it_keeps():
+    # every switch its host_vars get, the package ones too
+    keep = {"cassandra_linux_manage": False, "cassandra_firewall_manage": False, "cassandra_install_tools": False}
+    out = cassandra_inventory_layout([node("n1", "dc1", "r1"), dict(node("n2", "dc1", "r1"), read=False, keep=keep)], "c")
+    assert ("The roles leave their setup as it is (host_vars: cassandra_firewall_manage, cassandra_linux_manage,"
+            " cassandra_install_tools false)") in out["report"]
 
 
 def test_layout_value_kept_on_a_node_is_reported():

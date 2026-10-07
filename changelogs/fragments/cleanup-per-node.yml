@@ -1,0 +1,2 @@
+minor_changes:
+  - "cleanup, and add_node or move_node with a cleanup mode - a batch of nodes cleaned together shows one block per node with its own progress (a single line once that node is done), under a line naming the nodes cleaned in parallel, instead of one total for the batch."

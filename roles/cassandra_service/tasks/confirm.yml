@@ -3,12 +3,16 @@
 #   include_role: name=community.cassandra.cassandra_service tasks_from=confirm.yml
 #   vars: cassandra_confirm_prompt: "what is about to happen, and the risk"
 # yes or y goes on, no or n stops; any other answer asks again, 3 times at most.
-# cassandra_operation_confirm: false skips the question (non-interactive runs).
+# cassandra_operation_confirm: false skips the question (non-interactive runs),
+# and so does --check (nothing changes: the plan only, see screen.yml).
+# Controller bookkeeping: each task runs once (run_once), its facts set on
+# every host of the play.
 - name: Start the count of answers
   ansible.builtin.set_fact:
     _cassandra_confirm_tries: 0
-  when: cassandra_operation_confirm | bool
+  run_once: true
+  when: cassandra_operation_confirm | bool and not ansible_check_mode
 
 - name: Ask for confirmation
   ansible.builtin.include_tasks: confirm_ask.yml
-  when: cassandra_operation_confirm | bool
+  when: cassandra_operation_confirm | bool and not ansible_check_mode

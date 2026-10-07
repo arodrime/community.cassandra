@@ -19,7 +19,7 @@
         tasks_from: hosts_check.yml
 
 - name: Cluster health
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: true
   gather_subset: [network]
   tasks:
@@ -51,9 +51,16 @@
     - name: Fail on problems
       ansible.builtin.assert:
         that: _unhealthy | length == 0
-        fail_msg: "Cluster not healthy: see the report above ({{ _unhealthy | join(', ') }})"
+        fail_msg: >-
+          Cluster not healthy: see the report above ({{ _unhealthy | join(', ') }}).{{
+          (' Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
+           ~ ' (still in the ring? the playbook topology removes them).') if _absent and _count_problems else '' }}
         success_msg: "Cluster healthy: {{ ansible_play_hosts_all | length }} node(s) checked"
       vars:
+        _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
+        _count_problems: >-
+          {{ ansible_play_hosts | map('extract', hostvars, 'cassandra_health_problems') | flatten
+             | select('search', '^the ring has ') | list | length > 0 }}
         _unhealthy: >-
           {{ ansible_play_hosts_all | reject('in', ansible_play_hosts) | list
              + (ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_health_problems')

@@ -76,5 +76,22 @@ provisioner:
         cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
         cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
         cassandra_java_version: "17"
+  playbooks:
+    side_effect: side_effect.yml
 verifier:
   name: testinfra
+# No check step: converge.yml expects refusals a --check run would not meet
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

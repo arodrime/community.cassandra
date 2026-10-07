@@ -5,7 +5,8 @@ argument_specs:
     description:
       - Kernel settings, swap, transparent huge pages, time sync, limits,
         and read-ahead and IO scheduler of the data disk.
-      - In containers, settings are written but not applied live unless
+      - In containers, settings are written but not applied live, and what runs
+        at boot (the THP unit, the disks' udev rule) is left out, unless
         O(cassandra_linux_apply_live=true).
     options:
       cassandra_linux_manage:
@@ -59,7 +60,7 @@ argument_specs:
           - Apply kernel settings live (sysctl, swapoff, THP, disk tuning), not just persist them.
           - C(auto) applies them everywhere except in containers (Ansible's
             virtualization facts, or O(cassandra_linux_container_types)), where they
-            belong to the host. V(true) or V(false) forces it.
+            belong to the host. V(true) or V(false) forces it; anything else fails the role.
       cassandra_linux_container_types:
         type: list
         elements: str

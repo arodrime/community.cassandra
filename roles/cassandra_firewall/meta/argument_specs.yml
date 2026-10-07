@@ -5,6 +5,13 @@ argument_specs:
     description:
       - Uses firewalld on RedHat family systems and ufw on Debian and Ubuntu.
     options:
+      cassandra_firewall_manage:
+        type: bool
+        default: true
+        description:
+          - V(false) leaves the firewall as it is on this node, nothing installed, started or opened.
+          - C(import_cluster) sets it for the nodes it imports (host_vars), whose firewall, or none, was set up
+            another way; nodes added later get the role's.
       cassandra_offline:
         type: bool
         default: false

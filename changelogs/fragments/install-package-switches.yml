@@ -1,0 +1,5 @@
+minor_changes:
+  - cassandra_install - new ``cassandra_install_tools``, ``cassandra_install_jemalloc`` and ``cassandra_package_hold`` (all ``true`` by default, as before) leave out cassandra-tools, jemalloc and the Debian/Ubuntu package hold. import_cluster sets them to ``false`` for the nodes without them.
+bugfixes:
+  - cassandra_install - ``cassandra_packages`` from the inventory is no longer overridden by the role's OS variables (which set it with ``cassandra-tools``).
+  - cassandra_install - the jemalloc lookup no longer fails the run when no repository answers.

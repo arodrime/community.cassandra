@@ -11,16 +11,17 @@
 # -e cassandra_add_node_reset=true starts a new node over that has data but is
 # not in the ring (started once by mistake, a failed bootstrap): Cassandra
 # stopped, its directories emptied (reset_node.yml: refused on a node any up
-# node of the cluster sees in its ring; shown, then a confirmation of its
-# own), then added.
-# One screen first, one confirmation (cassandra_operation_confirm: false skips
-# it): cluster, version, Java, Medusa, each new node (address, dc, rack, data
+# node of the cluster sees in its ring; what it deletes is on the screen, the
+# one question covers it), then added.
+# One screen first, one confirmation (cassandra_operation_confirm: false or
+# --check skips it): cluster, version, Java, Medusa, each new node (address, dc, rack, data
 # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
 # outside tmux/screen).
-# A bootstrap can take hours: a progress line every cassandra_stream_check_interval
-# seconds (300); the run stops only after cassandra_stream_stall_checks checks (3)
-# in a row with nothing streamed. Afterwards the cleanup command is printed, or
-# run with cassandra_add_node_cleanup: one, rack, dc or all (default none).
+# A bootstrap can take hours: its progress printed every cassandra_stream_check_interval
+# seconds (300, the first checks sooner); the run stops only after
+# cassandra_stream_stall_checks checks (3) that far apart in a row with nothing streamed. Afterwards the cleanup command is printed, or
+# run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
+# all (default none), the words of cassandra_cleanup_mode.
 # One token per node (cassandra_num_tokens: 1): each new node needs
 # cassandra_initial_token, or -e cassandra_token_auto=bisect (each one splits
 # the largest range, nothing moves), balanced (an even ring: move_node then
@@ -34,6 +35,15 @@
   gather_facts: false
   any_errors_fatal: true  # a host that errors must not drop out of the run
   tasks:
+    - name: A new node is a node of the cluster
+      ansible.builtin.assert:
+        that: inventory_hostname in query('community.cassandra.cassandra_nodes')
+        fail_msg: >-
+          {{ inventory_hostname }} is {{ 'marked cassandra_node_state: absent' if inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')]
+             else 'not in the group ' ~ lookup('community.cassandra.cassandra_hosts') }}: put it in the cluster's group
+          (present) first.
+        quiet: true
+
     - name: Check this host
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -53,7 +63,7 @@
               | selectattr('cassandra_new_node_state', 'equalto', 'new') | map(attribute='inventory_hostname') | list }}"
     _joining: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
                   | selectattr('cassandra_new_node_state', 'equalto', 'joining') | map(attribute='inventory_hostname') | list }}"
-    _existing: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | list }}"
+    _existing: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
     # one token per node: the new nodes' tokens (cassandra_token_auto)
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
     _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
@@ -62,11 +72,13 @@
       {{ _new | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_initial_token']) | zip(_new)
          | selectattr(0, 'equalto', '') | map(attribute=1) | list }}
   tasks:
-    - name: Load the cassandra_service defaults
+    # cassandra_install's: the summary names the Java the new nodes get
+    - name: Load the role defaults
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
+      loop: [cassandra_service, cassandra_install]
 
     - name: Check this node
       block:
@@ -114,23 +126,27 @@
           ansible.builtin.fail:
             msg: No node was added.
 
-    # Without the replication (no CQL access), the plan assumes the whole datacenter hands over data
+    # Without the replication (no CQL access), the plan assumes the whole datacenter hands over data.
+    # On one host without run_once: a run_once task that fails in a rescued block drops the other
+    # hosts of the play on ansible-core 2.19+
     - name: Read the keyspaces' replication
+      when: inventory_hostname == ansible_play_hosts_all[0]
       block:
         - name: Read the keyspaces' replication
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
             tasks_from: keyspaces.yml
-            apply:
-              run_once: true
           vars:
             cassandra_keyspaces_from: "{{ _existing | first }}"
-          run_once: true
       rescue:
         - name: Go on without it
           ansible.builtin.set_fact:
             cassandra_keyspaces: null
-          run_once: true
+
+    - name: Share the replication with every new node
+      ansible.builtin.set_fact:
+        cassandra_keyspaces: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_keyspaces | default(none) }}"
+      run_once: true
 
     # also on a run again after the nodes joined: the cleanup is still to do
     - name: Work out what the add means for the cluster
@@ -197,9 +213,9 @@
               {%- endfor -%}
               {{ l }}
             _hosts: >-
-              {{ dict(groups[lookup('community.cassandra.cassandra_hosts')]
+              {{ dict(query('community.cassandra.cassandra_nodes')
                       | map('extract', hostvars, ['_cassandra_preflight', 'ring_address'])
-                      | zip(groups[lookup('community.cassandra.cassandra_hosts')])) }}
+                      | zip(query('community.cassandra.cassandra_nodes'))) }}
 
         - name: Refuse tokens that can't be worked out
           ansible.builtin.assert:
@@ -209,87 +225,126 @@
             fail_msg: "{{ cassandra_add_node_tokens.problems + (cassandra_add_node_tokens.balanced_problems if _auto == 'balanced' else []) }}"
             quiet: true
 
+    # Read-only: what each reset deletes goes on the screen, refused before any question
+    # (topology worked it out already and showed it on its own screen: kept as shown)
+    - name: Work out the reset of the new nodes (cassandra_add_node_reset)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: reset_node_plan.yml
+      when:
+        - cassandra_add_node_reset | default(false) | bool
+        - cassandra_new_node_state == 'new'
+        - _cassandra_node_reset_plan is not defined
+
     - name: Check the cleanup choice
       ansible.builtin.assert:
-        that: cassandra_add_node_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
-        fail_msg: "cassandra_add_node_cleanup must be none, one, rack, dc or all (got {{ cassandra_add_node_cleanup | default('') }})"
+        that: cassandra_add_node_cleanup | default('none') in ['none', 'sequential', 'one', 'rack', 'dc', 'all']
+        fail_msg: >-
+          cassandra_add_node_cleanup must be none (print the command), sequential (one node at a time; one is the same),
+          rack (a rack at a time), dc (a datacenter at a time) or all (every node at once: heavy I/O)
+          (got {{ cassandra_add_node_cleanup | default('') }})
         quiet: true
       run_once: true
 
-    # One screen, printed whatever cassandra_operation_confirm: what will be done,
-    # with what, the warnings; then one confirmation
-    - name: Show what the add will do
-      ansible.builtin.debug:
-        msg: "{{ _summary.split('\n') | reject('equalto', '') | list }}"
-      run_once: true
+    # One screen (screen.yml): what will be done, with what, the warnings; then
+    # one confirmation (not under --check nor with cassandra_operation_confirm false)
+    - name: Show the plan and confirm the add
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: screen.yml
       when: _new | length > 0 or _joining | length > 0 or cassandra_add_node_cleanup | default('none') != 'none'
       vars:
         _p: "{{ hostvars[(_new + ansible_play_hosts_all) | first]._cassandra_preflight }}"
         _running: >-
           {{ (hostvars[_existing[0]].cassandra_preflight_describe.stdout | default('') ~ '\n').split('Database versions:')[1:]
              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
-        _cleanup: "{{ cassandra_add_node_cleanup | default('none') }}"
+        _cleanup: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
         # cassandra_medusa's defaults are not loaded here: the version and virtualenv defaults are copied
         # on when a new node gets it (each node's line says which)
         _medusa: >-
           {{ (_new + _joining) | map('extract', hostvars) | selectattr('cassandra_medusa_enabled', 'defined')
              | map(attribute='cassandra_medusa_enabled') | map('bool') | select | list | length > 0 }}
-        _summary: |-
-            add_node on cluster '{{ _p.cassandra_cluster_name }}'{{ (' (running ' ~ _running ~ ')') if _running else '' }}:
-            {% for h in _new %}
-              {{ h }} ({{ hostvars[h]._cassandra_preflight.address }}): datacenter {{ hostvars[h]._cassandra_preflight.cassandra_dc }}, rack {{ hostvars[h]._cassandra_preflight.cassandra_rack }}{% for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) %}, about {{ (e.bytes / 1073741824) | round(1) }} GiB to stream ({{ e.basis }}){% endfor %}{% set m = hostvars[h] %}{% if m.cassandra_medusa_enabled | default(false) | bool %}, Medusa fqdn {{ (m.cassandra_medusa_fqdn if m.cassandra_medusa_fqdn is defined else (((m.ansible_facts.hostname | default(h)) ~ '.' ~ m.cassandra_medusa_fqdn_domain) if m.cassandra_medusa_fqdn_domain | default('') else '')) or '(Medusa works it out)' }}{% endif %}
-
-            {% endfor %}
-            {% if _joining %}
-              still bootstrapping, waited for first: {{ _joining | join(', ') }}
-            {% endif %}
-            {% if cassandra_add_node_reset | default(false) | bool and _new %}
-            cassandra_add_node_reset: what the new nodes hold (a failed first start or bootstrap) is DELETED first, shown and confirmed next.
-            {% endif %}
-            Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }}, Java {{ cassandra_java_tarball | default('', true) or ('package, version ' ~ (cassandra_java_version | default('of the series'))) }}, Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa') or 'the system Python') ~ ')') if _medusa else 'off' }}
-            {% if _new or _joining %}
-            One node at a time; each one streams its share of the data (hours on big nodes), with a progress line
-            every {{ cassandra_stream_check_interval }}s; the run stops after {{ cassandra_stream_stall_checks }} checks in a row without progress.
-            {% else %}
-            No node to add ({{ ansible_play_hosts_all | join(', ') }} already in the ring).
-            {% endif %}
-            Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
-              'one': 'one node at a time', 'rack': 'the nodes of a rack together, rack after rack',
-              'dc': 'the nodes of a datacenter together', 'all': 'every node at once (heavy I/O everywhere)'}[_cleanup] }}
-            ({{ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length }} nodes: {{ cassandra_add_node_plan.scope | dict2items | map(attribute='key') | zip(cassandra_add_node_plan.scope | dict2items | map(attribute='value') | map('replace', 'rack', "the new nodes' racks") | map('replace', 'dc', 'whole datacenter')) | map('join', ' ') | join(', ') }}).
-            {% for w in cassandra_add_node_plan.warnings %}
-            WARNING: {{ w }}
-            {% endfor %}
-            {% if _single | bool and _new %}
-            One token per node (shares with the largest replication factor of each datacenter, else cassandra_token_rf):
-            {% for line in cassandra_add_node_tokens.lines %}
-            {{ line }}
-            {% endfor %}
-            {% for w in cassandra_add_node_tokens.warnings %}
-            WARNING: {{ w }}
-            {% endfor %}
-            {{ {'false': 'Tokens from the inventory (cassandra_initial_token).',
-                'bisect': 'Following bisect: no node moves.',
-                'balanced': ('Following balanced: then run move_node to move ' ~ cassandra_add_node_tokens.moves | map(attribute='name') | join(', ')
-                             ~ ' (until then the ring is uneven).') if cassandra_add_node_tokens.moves else 'Following balanced: no node moves.',
-                'true': 'You choose next: bisect or balanced.'}[_auto] }}
-            {% endif %}
-            {{ _cassandra_session_warning }}
-
-    - name: Confirm the add
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
-      when: _new | length > 0 or _joining | length > 0 or cassandra_add_node_cleanup | default('none') != 'none'
-      vars:
-        cassandra_confirm_prompt: "add_node: go on with the {{ 'add' if _new or _joining else 'cleanup' }} shown above?"
+        _blocks: >-
+          {%- set l = [] -%}
+          {%- for h in _new -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   set m = hostvars[h] -%}
+          {%-   set lines = [] -%}
+          {%-   for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) -%}
+          {%-     set _ = lines.append('about ' ~ (e.bytes / 1073741824) | round(1) ~ ' GiB to stream (' ~ e.basis ~ ')') -%}
+          {%-   endfor -%}
+          {%-   if m.cassandra_medusa_enabled | default(false) | bool -%}
+          {%-     set _ = lines.append('Medusa fqdn ' ~ ((m.cassandra_medusa_fqdn if m.cassandra_medusa_fqdn is defined
+                    else (((m.ansible_facts.hostname | default(h)) ~ '.' ~ m.cassandra_medusa_fqdn_domain)
+                          if m.cassandra_medusa_fqdn_domain | default('') else '')) or '(Medusa works it out)')) -%}
+          {%-   endif -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(p), 'lines': lines}) -%}
+          {%- endfor -%}
+          {{ l }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: >-
+          {{ ('Add ' ~ _new | join(', ') ~ '?') if _new else ('Wait for ' ~ _joining | join(', ') ~ '?') if _joining
+             else 'Run the cleanup?' }}
+        cassandra_screen:
+          operation: add_node
+          cluster: "{{ _p.cassandra_cluster_name }}"
+          version: "{{ _running }}"
+          summary: >-
+            {{ ('add ' ~ _new | join(', ')) if _new else ('wait for ' ~ _joining | join(', ')) if _joining
+               else 'cleanup only' }}
+          intro:
+            - >-
+              New nodes get Cassandra {{ cassandra_package_version | default('', true) or ('series ' ~ _p.cassandra_version) }},
+              Java {{ cassandra_java_version | default('of the series') }} ({{ ('tarball ' ~ cassandra_java_tarball)
+              if cassandra_java_tarball | default('', true) else ('in ' ~ cassandra_java_home) if cassandra_java_home | default('', true)
+              else 'package' if cassandra_install_java | default(true) | bool else 'set up by other means' }}),
+              Medusa {{ ('on (' ~ cassandra_medusa_version | default('0.30.1') ~ ' in ' ~ (cassandra_medusa_venv | default('/opt/cassandra-medusa')
+              or 'the system Python') ~ ')') if _medusa else 'off' }}.
+            - >-
+              {{ ('One node at a time; each one streams its share of the data (hours on big nodes), its progress printed every '
+                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after ' ~ cassandra_stream_stall_checks
+                  ~ ' checks that far apart in a row without progress.') if _new or _joining
+                 else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
+            - "{{ ('Still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
+          blocks: "{{ _blocks }}"
+          after:
+            - >-
+              Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
+                'sequential': 'one node at a time', 'rack': 'a rack at a time', 'dc': 'a datacenter at a time',
+                'all': 'every node at once: heavy I/O'}[_cleanup] }}
+              ({{ cassandra_add_node_plan.cleanup | dict2items | map(attribute='value') | flatten | length }} nodes: {{
+              cassandra_add_node_plan.scope | dict2items | map(attribute='key') | zip(cassandra_add_node_plan.scope | dict2items
+              | map(attribute='value') | map('replace', 'rack', "the new nodes' racks") | map('replace', 'dc', 'whole datacenter'))
+              | map('join', ' ') | join(', ') }}).
+            - >-
+              {{ 'One token per node (shares with the largest replication factor of each datacenter, else cassandra_token_rf):'
+                 if _single | bool and _new else '' }}
+            - pre: "{{ cassandra_add_node_tokens.lines | default([]) if _single | bool and _new else [] }}"
+            - >-
+              {{ {'false': 'Tokens from the inventory (cassandra_initial_token).',
+                  'bisect': 'Following bisect: no node moves.',
+                  'balanced': ('Following balanced: then run move_node to move ' ~ cassandra_add_node_tokens.moves | map(attribute='name') | join(', ')
+                               ~ ' (until then the ring is uneven).') if cassandra_add_node_tokens.moves | default([]) else 'Following balanced: no node moves.',
+                  'true': ('--check: a real run asks next, bisect or balanced; this one follows bisect.' if ansible_check_mode
+                           else 'You choose next: bisect or balanced.')}[_auto] if _single | bool and _new else '' }}
+          # cassandra_add_node_reset: what each reset deletes (reset_node_plan.yml), covered by the one question
+          warnings: >-
+            {{ _resets | community.cassandra.cassandra_reset_warnings
+               + [{'label': 'racks', 'each': cassandra_add_node_plan.warnings},
+                  {'label': 'tokens', 'each': cassandra_add_node_tokens.warnings | default([]) if _single | bool and _new else []}] }}
+        _resets: >-
+          {%- set l = [] -%}
+          {%- for h in _new if hostvars[h]._cassandra_node_reset_plan is defined -%}
+          {%-   set _ = l.append({'name': h, 'plan': hostvars[h]._cassandra_node_reset_plan}) -%}
+          {%- endfor -%}
+          {{ l }}
 
     - name: Choose where the new nodes go
       ansible.builtin.pause:
         prompt: "bisect (no node moves) or balanced (an even ring, move_node moves other nodes afterwards)? Answer bisect or balanced"
       register: cassandra_token_choice
       run_once: true
-      when: _single | bool and _auto == 'true' and _new | length > 0
+      when: _single | bool and _auto == 'true' and _new | length > 0 and not ansible_check_mode  # --check: bisect
 
     - name: Check the choice
       ansible.builtin.assert:
@@ -301,7 +356,7 @@
              if _choice not in ['bisect', 'balanced'] else cassandra_add_node_tokens.balanced_problems | join(' ') }}
         quiet: true
       run_once: true
-      when: _single | bool and _auto == 'true' and _new | length > 0
+      when: _single | bool and _auto == 'true' and _new | length > 0 and not ansible_check_mode
       vars:
         _choice: "{{ cassandra_token_choice.user_input | default('') | trim | lower }}"
 
@@ -315,8 +370,8 @@
         - inventory_hostname in cassandra_add_node_tokens[_kind] | default({})
       vars:
         _kind: >-
-          {{ (hostvars[ansible_play_hosts_all[0]].cassandra_token_choice.user_input | default('') | trim | lower)
-             if _auto == 'true' else _auto }}
+          {{ ('bisect' if ansible_check_mode else hostvars[ansible_play_hosts_all[0]].cassandra_token_choice.user_input
+              | default('') | trim | lower) if _auto == 'true' else _auto }}
 
     # After every refusal above: a node with data of its own (a failed first
     # start or bootstrap, not in the ring) starts over empty
@@ -327,6 +382,8 @@
       when:
         - cassandra_add_node_reset | default(false) | bool
         - cassandra_new_node_state == 'new'
+      vars:
+        _cassandra_node_reset_confirmed: true  # on the add_node screen, the one question
 
 - name: Add the new nodes, one at a time
   hosts: "{{ cassandra_new_nodes }}"
@@ -344,9 +401,11 @@
         _pending: >-
           {{ ansible_play_hosts_all[0 if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname):]
              | map('extract', hostvars, 'cassandra_new_node_state') | select('equalto', 'new') | list | length }}
-        cassandra_service_expected_before: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _pending | int }}"
+        # topology: the hosts marked absent are still in the ring until it removes them, after the adds
+        _extra: "{{ _cassandra_ring_extra | default(0) | int }}"
+        cassandra_service_expected_before: "{{ query('community.cassandra.cassandra_nodes') | length - _pending | int + _extra | int }}"
         cassandra_service_expected_after: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _pending | int + (1 if cassandra_new_node_state == 'new' else 0) }}
+          {{ query('community.cassandra.cassandra_nodes') | length - _pending | int + _extra | int + (1 if cassandra_new_node_state == 'new' else 0) }}
         # bootstraps an earlier run started (UJ, waited for in turn): not a problem around the
         # nodes before them (a new node never comes before them, see above)
         _joining: >-
@@ -383,33 +442,41 @@
 # The nodes that handed ranges over still hold that data until a cleanup: the
 # datacenter's nodes, or only the new nodes' racks when every keyspace has as
 # many replicas there as racks. cassandra_add_node_cleanup: none (default)
-# prints the command; one, rack, dc or all runs it here, by batches (one node,
-# the nodes of a rack, of a datacenter, or all of them at once), the cluster
-# checked before each batch.
+# prints the command; sequential (or one), rack, dc or all runs it here, by
+# batches (one node, the nodes of a rack, of a datacenter, or all of them at
+# once), the cluster checked before each batch.
 - name: Clean up the nodes that handed data over
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes') if query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
+       else 'localhost:!localhost' }}
   gather_facts: false
   vars:
     _plan: >-
       {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) | first].cassandra_add_node_plan | default({}) }}
     _targets: >-
       {{ _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten | select('in', ansible_play_hosts) | list }}
-    _mode: "{{ cassandra_add_node_cleanup | default('none') }}"
+    _mode: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
     cassandra_service_node_action: cleanup
     cassandra_cleanup_jobs: 2
   tasks:
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg:
-          - "Once the cluster is fine, clean up the nodes that handed data over ({{ _scope }}), e.g. one at a time:"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup
-            -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }} --limit {{ _targets | join(',') }}"
-          - "  (-e cassandra_cleanup_mode=rack|dc|all for batches of nodes together)"
+          - "Once the cluster is fine, clean up the nodes that handed data over ({{ _scope }}):"
+          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup{{ _hosts_option }}
+            --limit {{ _targets | join(',') }} -e cassandra_cleanup_mode={{ cassandra_cleanup_mode | default('sequential') }}
+            -e cassandra_cleanup_jobs={{ cassandra_cleanup_jobs }}"
+          - ""
+          - "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)"
+          - "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)"
+          - "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)"
       run_once: true
       when:
         - _targets | length > 0
         - _mode == 'none'
       vars:
+        # the group the lookup finds by itself is left out
+        _hosts_option: "{{ (' -e cassandra_hosts=' ~ cassandra_hosts) if cassandra_hosts is defined else '' }}"
         _scope: >-
           {{ _plan.scope | dict2items | map(attribute='key') | zip(_plan.scope | dict2items | map(attribute='value')
              | map('replace', 'rack', "the new nodes' racks only") | map('replace', 'dc', 'the whole datacenter'))
@@ -432,7 +499,7 @@
           {%- set batches = {} -%}
           {%- for h in _targets -%}
           {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set key = {'one': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
+          {%-   set key = {'sequential': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
           {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
           {%- endfor -%}
           {{ batches.values() | list }}

@@ -39,6 +39,7 @@ def plan(py3, distribution="Ubuntu", os_family="Debian", **overrides):
         "cassandra_install_url": "https://debian.cassandra.apache.org",
         "cassandra_install_package_file": "{name}_{version}_all.deb",
         "cassandra_packages": ["cassandra"],
+        "_cassandra_packages": ["cassandra", "cassandra-tools"],
         "cassandra_package_version": "",
         "cassandra_repository_manage": False,
         "cassandra_repository_key_url": "",

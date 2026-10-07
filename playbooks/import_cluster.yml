@@ -30,10 +30,19 @@
 # medusa script, a full path on the nodes), else in the PATH, else in the usual
 # places, else in the PATH of a login shell of cassandra, then of root, and
 # last in any virtualenv under /opt.
+# -e import_cluster_runbook=true also writes RUNBOOK.md there (the help
+# playbook: the cluster, every operation's command for this inventory, advice).
 # An error while writing the inventory is hidden (the variables hold
 # passwords): -e import_cluster_debug=true shows it.
+# A host marked cassandra_node_state: absent (an inventory given back) is not read.
+# Hand edits no variable covers fail the self-check: -e
+# import_cluster_keep_hand_edits=true leaves those files as they are on their
+# node (cassandra_config_keep_files) instead.
+# A ring node it could not read (down, unreachable, nodetool not found, its
+# running Java removed by an update) fails the import, as its settings are unknown: -e
+# import_cluster_allow_unread=true accepts it.
 - name: Find the cluster from the given nodes
-  hosts: all
+  hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
   gather_facts: true
   gather_subset: [network]
   become: true  # nodetool reads the JMX password file (cassandra's, 0400)
@@ -107,7 +116,7 @@
       run_once: true
 
 - name: Read every node
-  hosts: all
+  hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
   gather_facts: false
   ignore_unreachable: true
   become: true
@@ -149,15 +158,21 @@
         echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
-        echo "cms=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -cx -- -XX:+UseConcMarkSweepGC)"
+        # the account it runs as: its effective user and group (a name, else the number)
+        uid=$(awk '/^Uid:/ {print $3}' /proc/$pid/status 2>/dev/null)
+        gid=$(awk '/^Gid:/ {print $3}' /proc/$pid/status 2>/dev/null)
+        [ -n "$uid" ] && echo "run_user=$(getent passwd "$uid" | cut -d: -f1 | grep . || echo "$uid")"
+        [ -n "$gid" ] && echo "run_group=$(getent group "$gid" | cut -d: -f1 | grep . || echo "$gid")"
         # how it is started today: the unit (or the init script systemd wraps), its restart policy, at boot or not
         for p in FragmentPath SourcePath Restart UnitFileState Environment EnvironmentFiles; do
           echo "unit_$p=$(systemctl show cassandra -p $p --value 2>/dev/null)"
         done
         # the unit of an init script is "generated": is-enabled asks the init system
         echo "unit_IsEnabled=$(systemctl is-enabled cassandra 2>/dev/null)"
-        bin=$(readlink -f /proc/$pid/exe)
-        echo "java=$($bin -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
+        # (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
+        # directory went too)
+        bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
+        echo "java=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
         echo "javabin=$bin"
         # the package the running java comes from, empty when none (a tarball)
         pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
@@ -166,6 +181,14 @@
         # where the config really is (/etc/cassandra/conf of the RPM is an alternatives link)
         case $cfg in /*) d=${cfg%/*} ;; *) d=/etc/cassandra/conf ;; esac
         echo "conftarget=$(readlink -f "$d" 2>/dev/null)"
+        # the Cassandra packages held (Debian, Ubuntu)
+        command -v dpkg >/dev/null 2>&1 && echo "held=$(dpkg --get-selections 'cassandra*' 2>/dev/null | awk '$2 == "hold" {print $1}' | tr '\n' ' ')"
+        # dsbulk as cassandra_install puts it: /usr/share/dsbulk-<version> with its marker, linked from
+        # /usr/share/dsbulk and /usr/bin/dsbulk
+        # (the links as the role writes them: else it would rewrite them)
+        dsb=$(readlink /usr/share/dsbulk 2>/dev/null)
+        [ "$(readlink /usr/bin/dsbulk 2>/dev/null)" = /usr/share/dsbulk/bin/dsbulk ] && [ -x "$dsb/bin/dsbulk" ] \
+          && [ -f "$dsb/.cassandra_install" ] && echo "dsbulk=$dsb/bin/dsbulk"
         # what the roles set up has their mark; the rest was set up another way, and is left as it is
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_service)' "$(systemctl show cassandra -p FragmentPath --value 2>/dev/null)" \
           && echo "own_unit=yes"
@@ -173,9 +196,12 @@
         grep -qs 'Managed by Ansible (community.cassandra.cassandra_linux)' /etc/security/limits.d/cassandra.conf \
           && echo "own_os=yes"
         grep -qs 'Managed by Ansible (cassandra_install)' /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh && echo "own_cqlsh=yes"
+        rf=
         for f in /etc/yum.repos.d/cassandra-*.repo /etc/apt/sources.list.d/cassandra-*.sources /etc/apt/sources.list.d/cassandra-*.list; do
-          [ -e "$f" ] && { echo "own_repo=yes"; break; }
+          [ -e "$f" ] && rf="$rf $f"
         done
+        # (each one checked below: the role takes over only files it would write as they are)
+        [ -n "$rf" ] && echo "own_repo=yes" && echo "repo_files=${rf# }"
         # a configured repository offers the cassandra package (else it was installed from a file: new nodes
         # need cassandra_install_method packages); apt: a source besides the status of the installed package
         if command -v apt-cache >/dev/null 2>&1; then
@@ -204,6 +230,12 @@
         # not from a package: the directory above bin/java
         import_cluster_java_home: "{{ _kv.javabin | dirname | dirname if _kv.javapkg | default('') == '' else '' }}"
         import_cluster_system_java: "{{ _kv.sysjava | default('') }}"
+        import_cluster_java_bin: "{{ _kv.javabin | default('') }}"
+        import_cluster_held: "{{ _kv.held | default('') | split }}"
+        import_cluster_dsbulk: "{{ _kv.dsbulk | default('') }}"
+        import_cluster_repo_files: "{{ _kv.repo_files | default('') | split }}"
+        # the package query answered (dnf repoquery, apt lists): else an air-gapped host, or repositories down
+        import_cluster_repos_answer: "{{ _kv.pkg_query is defined }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
         import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
         # installed, but no configured repository offers it (the query ran): from a package file
@@ -215,6 +247,9 @@
         import_cluster_log_dir: "{{ _kv.logdir | default('') }}"
         import_cluster_storage_dir: "{{ _kv.storagedir | default('') }}"
         import_cluster_conf_target: "{{ _kv.conftarget | default('') }}"
+        import_cluster_account:
+          user: "{{ _kv.run_user | default('') }}"
+          group: "{{ _kv.run_group | default('') }}"
         # set up another way (no mark of the roles): the roles leave it as it is on this node
         import_cluster_keep: >-
           {{ {} | combine({'cassandra_repository_manage': false} if _kv.own_repo is not defined else {},
@@ -227,16 +262,36 @@
           boot: >-
             {{ _kv.unit_IsEnabled | default('') if _kv.unit_UnitFileState | default('') in ['', 'generated']
                else _kv.unit_UnitFileState }}
-          # the heap set in the unit (Environment=MAX_HEAP_SIZE=...), lost when cassandra_service replaces it
-          heap: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)MAX_HEAP_SIZE=(\\S+)') | first | default('') }}"
-          newsize: "{{ _kv.unit_Environment | default('') | regex_findall('(?:^|\\s)HEAP_NEWSIZE=(\\S+)') | first | default('') }}"
-          cms: "{{ _kv.cms | default('0') != '0' }}"
           # everything else the unit sets (e.g. LOCAL_JMX=no), and the files it reads variables from
           env: "{{ _kv.unit_Environment | default('') | community.cassandra.cassandra_unit_environment }}"
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
       when: import_cluster_running.rc | default(1) == 0
+
+    # config files written since Cassandra started: it may not run what they say (a restart pending, or not)
+    - name: Find when the running Cassandra started
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: jvm_started.yml
+      when: import_cluster_series is defined
+
+    - name: Read when its config files were written
+      ansible.builtin.find:
+        paths: "{{ import_cluster_conf_dir }}"
+        patterns: "{{ _cassandra_service_config_files }}"
+        file_type: file
+      register: import_cluster_conf_files
+      when:
+        - import_cluster_series is defined
+        - cassandra_jvm.start is defined
+
+    - name: Note the ones written since it started
+      ansible.builtin.set_fact:
+        import_cluster_newer_files: >-
+          {{ import_cluster_conf_files.files | selectattr('ctime', '>', cassandra_jvm.start | float)
+             | map(attribute='path') | map('basename') | sort }}
+      when: import_cluster_conf_files.files is defined
 
     - name: Read the config files
       ansible.builtin.slurp:
@@ -257,6 +312,52 @@
       no_log: true
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
 
+    # the Cassandra repository files: cassandra_repository takes over only the ones it would write as they are
+    - name: Read the Cassandra repository files
+      ansible.builtin.slurp:
+        path: "{{ item }}"
+      loop: "{{ import_cluster_repo_files + (['/etc/apt/auth.conf.d/cassandra.conf'] if ansible_facts['os_family'] == 'Debian' else []) }}"
+      register: import_cluster_repo_slurp
+      failed_when: false  # no credentials file
+      no_log: true  # credentials
+      when: import_cluster_repo_files | default([]) | length > 0
+
+    - name: Read their mode and the signing keys they name
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha1
+        get_mime: false
+        get_attributes: false
+      loop: >-
+        {{ (import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='item') | list
+            + import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='content')
+              | map('b64decode') | map('regex_findall', '(?m)^(?:gpgkey\s*=\s*file://|Signed-By:\s*)(\S+)') | flatten)
+           | unique }}
+      register: import_cluster_repo_stat
+      no_log: true  # the checksum of the credentials file
+      when: import_cluster_repo_files | default([]) | length > 0
+
+    - name: Tell whether cassandra_repository would write them as they are
+      ansible.builtin.set_fact:
+        import_cluster_repo: >-
+          {{ _files | community.cassandra.cassandra_repository_import(
+               _stats, import_cluster_series, ansible_facts['os_family'],
+               lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/files/KEYS', rstrip=false) | hash('sha1'),
+               ansible_facts['packages'] | default({}), import_cluster_package_from_file | bool,
+               (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml') | from_yaml).debian_packages) }}
+      vars:
+        _read: "{{ import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | list }}"
+        _files: "{{ dict(_read | map(attribute='item') | zip(_read | map(attribute='content') | map('b64decode'))) }}"
+        _stats: >-
+          {{ dict(import_cluster_repo_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+                  | map(attribute='item')
+                  | zip(import_cluster_repo_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+                        | map(attribute='stat'))) }}
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+      when:
+        - import_cluster_series is defined
+        - import_cluster_repo_files | default([]) | length > 0
+
     # the unit cassandra_service wrote (its mark): the self-check compares it with the one it would write
     - name: Read the unit
       ansible.builtin.slurp:
@@ -269,10 +370,20 @@
         - "'cassandra_service_unit_manage' not in import_cluster_keep"
         - import_cluster_unit.file != ''
 
+    # its Java removed since it started (a JDK update took its directory): what it runs is unknown
+    - name: Note a running Java that cannot be read
+      ansible.builtin.set_fact:
+        import_cluster_error: >-
+          its Java ({{ import_cluster_java_bin or '?' }}) cannot be run any more (removed since Cassandra started,
+          e.g. by a JDK update): restart Cassandra (rolling_restart), then import again
+      when:
+        - import_cluster_series is defined
+        - import_cluster_java | default('') == ''
+
     # no_log hides the error too: the rescue says what failed, without the values
     # a skipped loop registers results too: the series, not them, says it was read
     - name: Read this node's config
-      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x'] and import_cluster_error is not defined
       block:
         # without it the role defaults would be imported (cluster name, seeds...)
         - name: Check cassandra.yaml was read
@@ -313,6 +424,43 @@
               else '. Its error is above.' if import_cluster_debug | default(false) | bool
               else '. The rest of the error is hidden (the config holds passwords):'
                    ~ ' rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+
+    # owner, group and mode of what cassandra_config writes or creates, read only
+    - name: Read the owner and mode of the config files and directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: true
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      loop: >-
+        {{ _files | map('regex_replace', '^', import_cluster_conf_dir ~ '/') | list
+           + ['/etc/cassandra/jmxremote.password', '/etc/cassandra/jmxremote.access'] + _dirs }}
+      register: import_cluster_perm_stat
+      failed_when: false  # not read (e.g. a data dir on NFS root can't read): left out
+      when: import_cluster_config is defined
+      vars:
+        _cfg: "{{ import_cluster_config.vars | default({}) }}"
+        _dirs: >-
+          {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
+             + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),
+                _cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),
+                _cfg.cassandra_saved_caches_dir | default('/var/lib/cassandra/saved_caches'),
+                import_cluster_log_dir | default('', true) or _cfg.cassandra_log_dir | default('/var/log/cassandra')] }}
+
+    - name: Turn them into variables
+      ansible.builtin.set_fact:
+        import_cluster_perms: >-
+          {{ _file_stats | community.cassandra.cassandra_permissions_import(import_cluster_account, import_cluster_series,
+                                                                            _dir_stats, 'cassandra_jmx_users' in import_cluster_config.vars) }}
+      vars:
+        # the files by their name, then the dirs by their path (the loop above)
+        _names: "{{ _files + ['jmxremote.password', 'jmxremote.access'] }}"
+        _paths: "{{ import_cluster_perm_stat.results | map(attribute='item') | list }}"
+        _stats: "{{ import_cluster_perm_stat.results | map(attribute='stat', default={}) | list }}"
+        _file_stats: "{{ dict(_names | zip(_stats[:_names | length])) }}"
+        _dir_stats: "{{ dict(_paths[_names | length:] | zip(_stats[_names | length:])) }}"
+      when: import_cluster_config is defined
 
     # Cassandra Medusa (backups): its install and /etc/medusa/medusa.ini
     - name: Look for Medusa
@@ -455,7 +603,9 @@
               {{ import_cluster_medusa_ini.content | b64decode | community.cassandra.cassandra_medusa_import(
                    import_cluster_medusa_key_file.content | default('') | b64decode,
                    _found | combine({'key_owner': _key.pw_name | default(''), 'key_group': _key.gr_name | default(''),
-                                     'key_mode': _key.mode | default('')})) }}
+                                     'key_mode': _key.mode | default(''),
+                                     'account_user': import_cluster_account.user | default(''),
+                                     'account_group': import_cluster_account.group | default('')})) }}
           vars:
             _key: "{{ import_cluster_medusa_key_stat.stat | default({}) }}"
           no_log: "{{ not import_cluster_debug | default(false) | bool }}"
@@ -725,10 +875,12 @@
     _vault: "{{ _vault_file != '' }}"
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
-    # not one node read: nothing checked, nothing valid
+    # not one node read: nothing checked, nothing valid; a ring node not read (down, unreachable): not
+    # checked, the roles would give it the group variables (and start it), unless import_cluster_allow_unread
     _self_check_ok: >-
       {{ _self_check_error is not defined and _self_check | default({}) | length > 0
-         and _self_check | dict2items | map(attribute='value.differences') | select | list | length == 0 }}
+         and _self_check | dict2items | map(attribute='value.differences') | select | list | length == 0
+         and (_unchecked | length == 0 or import_cluster_allow_unread | default(false) | bool) }}
     _unchecked: >-
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
@@ -738,8 +890,8 @@
       SELF-CHECK PASSED: with these variables, the roles write the config of the {{ _self_check | length }} node(s) read
       as it is today (cassandra.yaml, cassandra-env.sh, the jvm options, rackdc, logback, and the JMX users, the unit and
       medusa.ini when the roles manage them: compared setting by setting, as Cassandra, the JVM, bash and systemd read
-      them; their content, not their owner or mode). Not compared: the OS tuning (see OS TUNING below),
-      /etc/default/cassandra, cassandra-topology.properties.
+      them; and the owner, group and mode of the config and JMX files). Not compared: the OS tuning (see OS TUNING
+      below), /etc/default/cassandra, cassandra-topology.properties, the owner and mode of the unit and medusa.ini.
       {% else %}
       SELF-CHECK FAILED: THIS INVENTORY IS NOT VALID. With it, the roles would change the settings below on the
       nodes (the import misread them, or no variable covers them). Fix the variables (or the nodes) before any run.
@@ -757,7 +909,10 @@
       {% endfor %}
       {% endif %}
       {% if _unchecked %}
-      NOT CHECKED (not read): {{ _unchecked | join(', ') }}: the roles would give them the group variables unchecked.
+      NOT CHECKED (not read): {{ _unchecked | join(', ') }}: the roles would give them the group variables unchecked
+      (and start a node that is down).{{ ' Accepted (import_cluster_allow_unread).' if import_cluster_allow_unread | default(false) | bool
+      else ' THE IMPORT FAILS: read them (start Cassandra, fix the access), or set -e import_cluster_allow_unread=true'
+           ~ ' to accept it (then exclude them from the runs, e.g. --limit, until a new import reads them).' }}
       {% endif %}
       {% for name, check in _self_check | default({}) | dictsort if check.notes %}
       {% for line in check.notes %}
@@ -791,14 +946,14 @@
       Not read from the nodes, set them in group_vars if they apply (see the guide's air-gapped section):
         cassandra_offline (hosts without network), the mirror (cassandra_install_url: the repository, or with
         cassandra_install_method packages the directory of the package files; cassandra_install_username, and its
-        password in a vaulted file), cassandra_java_tarball for new nodes, and the repository of a vendor Java
+        password in a vaulted file), cassandra_java_tarball (or the cassandra_java_tarballs offer) for new nodes, and the repository of a vendor Java
         package (cassandra_java_package) for new nodes.
 
       Next steps:
         1. Review the report above and the variables (hand edits, drift).
-        2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml community.cassandra.preflight
+        2. Check the cluster: ansible-playbook -i {{ _dir }}/hosts.yml -b community.cassandra.preflight
         3. See what the roles would change, changing nothing:
-           ansible-playbook -i {{ _dir }}/hosts.yml <your site playbook> --check --diff
+           ansible-playbook -i {{ _dir }}/hosts.yml -b <your site playbook> --check --diff
   tasks:
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory
@@ -828,13 +983,21 @@
               {{ item.address if _host_names == 'ip'
                  else (_hv.ansible_facts[_host_names] | default(_host, true)) }}
             _host_names: "{{ import_cluster_host_names | default('hostname') }}"
+            # a Java package is kept (cassandra_java_tarballs: {}, not the tarballs a shared
+            # offer has); a Java the series does not support too (cassandra_java_allow_unsupported)
             _java: >-
               {{ ({'cassandra_java_version': _hv.import_cluster_java}
                   if _read and _hv.import_cluster_java != _java_default[_hv.import_cluster_series] | default('') else {})
                  | combine({'cassandra_java_home': _hv.import_cluster_java_home}
                            if _read and _hv.import_cluster_java_home | default('') != '' else {})
                  | combine({'cassandra_java_package': _hv.import_cluster_java_package}
-                           if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {}) }}
+                           if _read and _hv.import_cluster_java_package | default('') not in ['', _java_package] else {})
+                 | combine({'cassandra_java_tarballs': {}}
+                           if _read and _hv.import_cluster_java_home | default('') == '' else {})
+                 | combine({'cassandra_java_allow_unsupported': true}
+                           if _read and (_hv.import_cluster_series | community.cassandra.cassandra_java_supported | length > 0)
+                              and _hv.import_cluster_java not in _hv.import_cluster_series | community.cassandra.cassandra_java_supported
+                           else {}) }}
             # the package cassandra_install would install for that Java (its default)
             _java_package: >-
               {{ ('openjdk-' ~ _hv.import_cluster_java | default('') ~ '-jre-headless') if _hv.ansible_facts.os_family | default('') == 'Debian'
@@ -846,7 +1009,44 @@
                   if _read and _hv.import_cluster_package | default('') else {})
                  | combine({'cassandra_install_method': 'packages'}
                            if _read and _hv.import_cluster_package | default('') and _hv.import_cluster_package_from_file | default(false) | bool
-                           else {}) }}
+                           else {})
+                 | combine(_repo.vars if _read else {}) }}
+            # import_cluster_keep_hand_edits: the config files with hand edits no variable covers are left as
+            # they are on this node (cassandra_config_keep_files), rather than failing the self-check
+            _hand_kept: >-
+              {%- set out = [] -%}
+              {%- for line in _hv.import_cluster_config.hand_edits | default([]) if _read -%}
+              {%-   set f = line | regex_replace('[:,].*$', '') -%}
+              {%-   if f is match('^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties|logback[.]xml)$')
+                       and f not in out -%}
+              {%-     set _ = out.append(f) -%}
+              {%-   endif -%}
+              {%- endfor -%}
+              {{ {'cassandra_config_keep_files': out} if out and import_cluster_keep_hand_edits | default(false) | bool else {} }}
+            # cassandra_repository takes over the node's Cassandra repository files only if it would write them as
+            # they are (with their URL, credentials and key path); else they are left as they are
+            _repo: "{{ _hv.import_cluster_repo | default({'manage': true, 'vars': {}, 'why': ''}) }}"
+            # what cassandra_install adds next to the Cassandra package, left out where the node has none (its
+            # host_vars: nodes added later get them)
+            _installed: >-
+              {%- set pkgs = _hv.ansible_facts.packages | default({}) -%}
+              {%- set out = {} -%}
+              {%- if _read and _hv.import_cluster_package | default('') -%}
+              {%-   if 'cassandra-tools' not in pkgs -%}{%- set _ = out.update({'cassandra_install_tools': false}) -%}{%- endif -%}
+              {%-   if ('libjemalloc2' if _hv.ansible_facts.os_family | default('') == 'Debian' else 'jemalloc') not in pkgs -%}
+              {%-     set _ = out.update({'cassandra_install_jemalloc': false}) -%}
+              {%-   endif -%}
+              {%-   if _hv.ansible_facts.os_family | default('') == 'Debian'
+                       and ['cassandra', 'cassandra-tools'] | select('in', pkgs) | reject('in', _hv.import_cluster_held | default([])) | list -%}
+              {%-     set _ = out.update({'cassandra_package_hold': false}) -%}
+              {%-   endif -%}
+              {%- endif -%}
+              {%- set dsbulk = _hv.import_cluster_dsbulk | default('') -%}
+              {%- if _read and dsbulk is match('^/usr/share/dsbulk-[0-9]+([.][0-9]+)*/bin/dsbulk$') -%}
+              {%-   set _ = out.update({'cassandra_dsbulk_version': (dsbulk | dirname | dirname | basename)[7:]}) -%}
+              {%- elif _read -%}{%- set _ = out.update({'cassandra_dsbulk_install': false}) -%}
+              {%- endif -%}
+              {{ out }}
             _conf: >-
               {{ ({'cassandra_conf_dir': _hv.import_cluster_conf_dir}
                   if _read and _hv.import_cluster_conf_dir not in _default_conf_dirs else {})
@@ -856,7 +1056,6 @@
                            if _read and _hv.import_cluster_unit.restart | default('') not in ['', 'no'] else {})
                  | combine({'cassandra_service_enabled': false}
                            if _read and _hv.import_cluster_unit.boot | default('') == 'disabled' else {})
-                 | combine(_unit_heap)
                  | combine({'cassandra_service_environment': _unit_env} if _unit_env else {}) }}
             # cassandra_config's default (without facts: either)
             _default_conf_dirs: >-
@@ -872,26 +1071,19 @@
                     and _conf.cassandra_log_dir | default('') not in ['', _hv.import_cluster_config.vars.cassandra_log_dir
                                                                            | default('/var/log/cassandra')]
                  else {} }}
-            # the rest of the unit's Environment, kept in cassandra_service's unit
+            # /usr/bin/java is another java than the running one (Cassandra finds its Java through JAVA_HOME):
+            # left as it is on this node, the system java of the other programs. None (or leading nowhere):
+            # the roles make it the running one, as nodetool needs one
+            _java_link: >-
+              {{ {'cassandra_java_set_default': false}
+                 if _read and _hv.import_cluster_java_bin | default('') != '' and _hv.import_cluster_system_java | default('') != ''
+                    and _hv.import_cluster_system_java != _hv.import_cluster_java_bin else {} }}
+            # the unit's Environment (its heap too: cassandra-env.sh stays as it is), kept in cassandra_service's unit
             _unit_env: >-
               {{ {} if not _read else _hv.import_cluster_unit.env | default({}) | dict2items
-                 | rejectattr('key', 'in', (['MAX_HEAP_SIZE'] if 'cassandra_heap_size' in _unit_heap else [])
-                                           + (['HEAP_NEWSIZE'] if 'cassandra_heap_newsize' in _unit_heap else []))
                  | rejectattr('key', 'equalto', 'CASSANDRA_LOG_DIR' if _hv.import_cluster_unit.env.CASSANDRA_LOG_DIR | default('')
                                                 == _hv.import_cluster_log_dir | default('') else '')
                  | items2dict }}
-            # the heap of the unit, unless cassandra-env.sh sets it (it wins); the 5.0
-            # config has no HEAP_NEWSIZE, which CMS needs with MAX_HEAP_SIZE. A unit
-            # kept as it is keeps it (cassandra-env.sh unchanged, the same in new nodes' unit)
-            _unit_heap: >-
-              {{ {} if not _read or 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
-                 else ({'cassandra_heap_size': _hv.import_cluster_unit.heap}
-                  if _hv.import_cluster_unit.heap | default('') != ''
-                     and _hv.import_cluster_config.vars.cassandra_heap_size | default('') == ''
-                     and not (_hv.import_cluster_series == '50x' and _hv.import_cluster_unit.cms | default(false) | bool) else {})
-                 | combine({'cassandra_heap_newsize': _hv.import_cluster_unit.newsize}
-                           if _hv.import_cluster_unit.newsize | default('') != '' and _hv.import_cluster_series != '50x'
-                              and _hv.import_cluster_config.vars.cassandra_heap_newsize | default('') == '' else {}) }}
             _node:
               name: "{{ _name }}"
               address: "{{ item.address }}"
@@ -909,33 +1101,50 @@
                    else 'unsupported version ' ~ _hv.import_cluster_version)) }}
               vars: >-
                 {{ (_hv.import_cluster_config.vars | combine({'cassandra_version': _hv.import_cluster_series}, _java, _pkg, _conf, _jmx,
+                                                             _hv.import_cluster_perms.vars | default({}),
                                                              _hv.import_cluster_medusa.vars | default({}),
                                                              _hv.import_cluster_os.vars | default({})))
                    if _read else {} }}
               # the OS tuning found on it, for the report
               os: "{{ _hv.import_cluster_os | default({}) if _read else {} }}"
-              # a node not read is an existing node too: nothing of it is taken over
+              # a node not read is an existing node too: nothing of it is taken over. The firewall (or none)
+              # is the node's: no mark tells one the role set up
               keep: >-
-                {{ (_hv.import_cluster_keep | default({}) | combine(_env_log_dir, _hv.import_cluster_medusa.keep | default({})) if _read
+                {{ (_hv.import_cluster_keep | default({})
+                    | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}),
+                              {} if _repo.manage else {'cassandra_repository_manage': false}, _hand_kept, _installed)
+                    if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,
-                          'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false}) }}
+                          'cassandra_cqlsh_python_manage': false, 'cassandra_service_unit_manage': false,
+                          'cassandra_java_set_default': false, 'cassandra_firewall_manage': false,
+                          'cassandra_install_tools': false, 'cassandra_install_jemalloc': false,
+                          'cassandra_package_hold': false, 'cassandra_dsbulk_install': false}) }}
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
               notes: >-
                 {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
+                   + _hv.import_cluster_perms.notes | default([])
                    + _hv.import_cluster_medusa.notes | default([])
                    + ([('reached at ' ~ _hv.ansible_host ~ ', hosts.yml has its ring address ' ~ item.address
                         ~ ' (import_cluster_set_ansible_host: false leaves ansible_host out)')]
                       if _host != item.address and _hv.ansible_host | default(item.address) != item.address
-                         and import_cluster_set_ansible_host | default(true) | bool else []) }}
+                         and import_cluster_set_ansible_host | default(true) | bool else [])
+                   + ([('Cassandra repository files left as they are: ' ~ _repo.why)] if _read and not _repo.manage else [])
+                   + (['no repository answered the package query (an air-gapped host?): set cassandra_offline: true'
+                       ~ ' (group_vars) unless the roles may download from the mirror']
+                      if _read and not _hv.import_cluster_repos_answer | default(true) | bool else [])
+                   + ([(_hv.import_cluster_newer_files | join(', ') ~ ' written after Cassandra started: it may not run'
+                        ~ ' what they say. apply_config does not restart it for them; rolling_restart applies them')]
+                      if _read and _hv.import_cluster_newer_files | default([]) else []) }}
             _versions: >-
               {{ 'Cassandra ' ~ _hv.import_cluster_version | default('?') ~ ', Java ' ~ _hv.import_cluster_java | default('?')
                  ~ ((' (not a package: ' ~ _hv.import_cluster_java_home ~ ')') if _hv.import_cluster_java_home | default('') else '')
-                 ~ ((', but /usr/bin/java is ' ~ (_hv.import_cluster_system_java or 'missing')
-                     ~ ': the roles will point it at the running Java')
-                    if _hv.import_cluster_java_home | default('')
-                       and _hv.import_cluster_system_java | default('') != _hv.import_cluster_java_home ~ '/bin/java' else '') }}
+                 ~ ((', /usr/bin/java is ' ~ _hv.import_cluster_system_java
+                     ~ ': left as it is on this node (new nodes get the running Java as their system java)') if _java_link
+                    else ', /usr/bin/java is missing: the roles will point it at the running Java'
+                         if _hv.import_cluster_java_bin | default('') != '' and _hv.import_cluster_system_java | default('') == ''
+                    else '') }}
             _started: >-
               {{ 'started by ' ~ (_hv.import_cluster_unit.file | default('') or 'no systemd unit')
                  ~ ', Restart=' ~ (_hv.import_cluster_unit.restart | default('') or '?')
@@ -943,16 +1152,13 @@
                  ~ (' (kept on this node; new nodes get the unit of cassandra_service, with the restart policy'
                     if 'cassandra_service_unit_manage' in _hv.import_cluster_keep | default({})
                     else ' (cassandra_service replaces it with its own unit, keeping the restart policy')
-                 ~ ((', its heap as ' ~ _unit_heap.keys() | join(', ')) if _unit_heap else '')
                  ~ ((', its Environment ' ~ _unit_env.keys() | join(', ') ~ ' as cassandra_service_environment') if _unit_env else '')
                  ~ ((', NOT its EnvironmentFile ' ~ _hv.import_cluster_unit.env_files ~ ': put what it sets in cassandra_service_environment')
                     if _hv.import_cluster_unit.env_files | default('') else '') ~ ')' }}
             _install: >-
               {{ ('package ' ~ _hv.import_cluster_package
                   ~ (' installed from a file, no configured repository offers it (cassandra_install_method: packages;'
-                     ~ ' set cassandra_install_url, the directory of the package files, for new nodes'
-                     ~ (('; cassandra_repository removes the cassandra-<series> repository it added on this node')
-                        if 'cassandra_repository_manage' not in _hv.import_cluster_keep | default({}) else '') ~ ')'
+                     ~ ' set cassandra_install_url, the directory of the package files, for new nodes)'
                      if _hv.import_cluster_package_from_file | default(false) | bool else ''))
                  if _hv.import_cluster_package | default('')
                  else 'NOT a package install: cassandra_install would install the package next to it' }}
@@ -1005,7 +1211,8 @@
                                                                           _hv.import_cluster_unit.env | default({}),
                                                                           _hv.import_cluster_storage_dir | default(''),
                                                                           _hv.import_cluster_java | default(''),
-                                                                          _hv.import_cluster_conf_dir) }}
+                                                                          _hv.import_cluster_conf_dir,
+                                                                          _hv.import_cluster_perms.files | default(none)) }}
       rescue:
         - name: Keep why for the report
           ansible.builtin.set_fact:
@@ -1204,8 +1411,20 @@
       ansible.builtin.fail:
         msg: >-
           SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
-          roles would change settings on the nodes. See SELF-CHECK in {{ _dir }}/report.txt.
+          roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
+          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See SELF-CHECK and
+          NOT CHECKED in {{ _dir }}/report.txt.
           (-e import_cluster_strict=false: the same inventory and report, without this failure)
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
+
+# -e import_cluster_runbook=true: RUNBOOK.md in import_cluster_dir too (the
+# help playbook on the inventory just written; not under --check)
+- name: Write RUNBOOK.md
+  ansible.builtin.import_playbook: help.yml
+  when: import_cluster_runbook | default(false) | bool and not ansible_check_mode
+  vars:
+    help_inventory: "{{ _dir }}/hosts.yml"
+    help_write: true
+    help_show: false  # the import's report is the screen; help's text goes to RUNBOOK.md

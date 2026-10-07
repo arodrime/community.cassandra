@@ -96,7 +96,7 @@ def test_multi_dc_fixture_grouped_by_dc():
 
 def test_token_per_node_fixture_down_node_unknown_load():
     lines = cassandra_ring_report(fixture("nodetool_status_token_per_node.txt"),
-                                  {"a": ["10.118.154.136"], "b": ["10.118.154.137"]})
+                                  {"a": ["10.100.100.136"], "b": ["10.100.100.137"]})
     assert "  datacenter1: 2 node(s), 1 up, 1 down; load 648.19 GiB (1 unknown)" in lines
 
 
@@ -161,3 +161,16 @@ def test_other_hosts_matched_by_address_only(monkeypatch):
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("2001:db8:0:0:0:0:0:2")), {"n1": ["10.0.0.1"]},
                                   outside={"n2": ["n2.example", "2001:db8::2"]}, limited=True)
     assert lines[-1] == "In the ring and the inventory, not in this run (--limit): 2001:db8:0:0:0:0:0:2 = n2 (dc1, UN)"
+
+
+def test_hosts_marked_absent_still_in_the_ring():
+    outside = {"n3": ["n3", "10.0.0.3"], "m1": ["m1", "10.0.0.9"]}
+    lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.3", state="L"), node("10.0.0.9")),
+                                  {"n1": ["10.0.0.1"]}, group="group prod", outside=outside, absent=["n3"])
+    assert lines[-2:] == [
+        "In the ring and the inventory, not in group prod: 10.0.0.9 = m1 (dc1, UN)",
+        "Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): 10.0.0.3 = n3 (dc1, UL)"]
+    # gone from the ring: the ring and the group match
+    lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, group="group prod",
+                                  outside=outside, absent=["n3"])
+    assert lines[-1] == "The ring and group prod match (1 node(s))"

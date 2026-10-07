@@ -1,0 +1,3 @@
+minor_changes:
+  - >-
+    import_cluster - the report says which nodes no repository answered for (an air-gapped host?), where ``cassandra_offline: true`` is needed.

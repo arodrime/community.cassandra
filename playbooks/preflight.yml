@@ -1,6 +1,6 @@
 ---
 # Checks one cluster (an inventory group) before changing it:
-#   ansible-playbook -i inventory community.cassandra.preflight
+#   ansible-playbook -i inventory -b community.cassandra.preflight (root on the nodes, as the operations)
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
 # cluster group (lookup community.cassandra.cassandra_hosts).
 # Fails on settings that must match across the cluster, on rack layouts the
@@ -18,8 +18,14 @@
         name: community.cassandra.cassandra_service
         tasks_from: hosts_check.yml
 
+# The nodes of the cluster (without the hosts marked cassandra_node_state:
+# absent), and the nodes decommission_node removes (cassandra_leaving_nodes)
 - name: Cassandra preflight checks
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: >-
+    {{ 'localhost:!localhost' if _cassandra_preflight_skip | default(false) | bool
+       else (query('community.cassandra.cassandra_nodes')
+             + (query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes) if cassandra_leaving_nodes | default('') | length > 0 else [])
+               | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}
   gather_facts: true
   tasks:
     # An unreachable host would silently be left out of the rest of the run
@@ -36,6 +42,11 @@
         _unreachable: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
       run_once: true
 
+    - name: Check the run has root on the nodes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: root_check.yml
+
     - name: Going on without the nodes that did not answer
       ansible.builtin.debug:
         msg: >-
@@ -44,54 +55,50 @@
       run_once: true
       when: ansible_play_hosts_all | difference(ansible_play_hosts) | length > 0
 
-    - name: Load the cassandra_config defaults
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_config
-        tasks_from: defaults.yml
-        public: true
-
-    - name: Work out which nodes are seeds
+    - name: Read this node's settings
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: seed_facts.yml
+        tasks_from: node_facts.yml
         public: true
+
+    # before any operation (apply_config writes the config before it restarts);
+    # a node refused stops the whole run, not just that node
+    - name: Check the account Cassandra runs as can read the config
+      any_errors_fatal: true
+      block:
+        - name: Check the account Cassandra runs as can read the config
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: account_check.yml
+          vars:
+            _cassandra_account_must_exist: false  # a new node gets the package (and its user) later
+
+    # a typo, or a name from another version of the collection, is otherwise silently ignored
+    - name: Find the cassandra_* variables no role or playbook knows
+      ansible.builtin.set_fact:
+        _cassandra_preflight_unknown: >-
+          {{ query('ansible.builtin.varnames', '^cas+andra_')
+             | community.cassandra.cassandra_unknown_names(_cassandra_playbook_variables) }}
+
+    - name: Warn about them
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ item }} (set for {{ _hosts | join(', ') }}) is not known to this collection: its roles and
+          playbooks do not read it{{ ' (did you mean ' ~ _close ~ '?)' if _close else '' }}
+      loop: "{{ ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | unique | sort }}"
+      vars:
+        _hosts: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if item in hostvars[h]._cassandra_preflight_unknown -%}{%- set _ = out.append(h) -%}{%- endfor -%}
+          {{ out }}
+        _close: "{{ hostvars[_hosts | first]._cassandra_preflight_unknown[item] }}"
+      run_once: true
 
     # cassandra_seed_True / cassandra_seed_False, used by the other playbooks
     - name: Group seeds and other nodes
       ansible.builtin.group_by:
         key: "cassandra_seed_{{ _cassandra_service_is_seed | bool }}"
       changed_when: false
-
-    # Role defaults are not visible through hostvars: each node records its own values
-    - name: Record this node's settings
-      ansible.builtin.set_fact:
-        _cassandra_preflight:
-          cassandra_cluster_name: "{{ cassandra_cluster_name }}"
-          cassandra_version: "{{ cassandra_version }}"
-          cassandra_num_tokens: "{{ cassandra_num_tokens }}"
-          cassandra_endpoint_snitch: "{{ cassandra_endpoint_snitch }}"
-          cassandra_allocate_tokens_for_local_replication_factor: "{{ cassandra_allocate_tokens_for_local_replication_factor }}"
-          cassandra_partitioner: "{{ cassandra_partitioner }}"
-          cassandra_initial_token: "{{ '' if cassandra_initial_token is none else cassandra_initial_token | string }}"
-          cassandra_data_file_directories: "{{ cassandra_data_file_directories }}"
-          _cassandra_service_seeds: "{{ _cassandra_service_seeds }}"
-          cassandra_dc: "{{ cassandra_dc }}"
-          cassandra_rack: "{{ cassandra_rack }}"
-          address: "{{ _address }}"
-          # the address the other nodes (nodetool status, ring) see this node by
-          ring_address: "{{ (cassandra_extra_settings | default({})).broadcast_address | default(_address, true) }}"
-          layout:  # for cassandra_seed_layout
-            name: "{{ inventory_hostname }}"
-            address: >-
-              {{ _cassandra_service_seed_entry if _cassandra_service_is_seed
-                 else (_address if _cassandra_service_seeds | select('match', '^[0-9.]+$|.*:') | list else inventory_hostname) }}
-            dc: "{{ cassandra_dc }}"
-            rack: "{{ cassandra_rack }}"
-            seed: "{{ _cassandra_service_is_seed | bool }}"
-      vars:
-        _address: >-
-          {{ cassandra_listen_address if cassandra_listen_address | default('') not in ['', 'localhost']
-             else ansible_facts['default_ipv4']['address'] | default(inventory_hostname) }}
 
     - name: Settings that must match on every node
       ansible.builtin.assert:
@@ -126,13 +133,6 @@
              | community.cassandra.cassandra_seed_layout }}
       when: _layout.problems | length > 0
       run_once: true
-
-    - name: Read the services
-      ansible.builtin.service_facts:
-
-    - name: Is Cassandra running here
-      ansible.builtin.set_fact:
-        _cassandra_preflight_running: "{{ ansible_facts.services['cassandra.service'].state | default('') == 'running' }}"
 
     # Once the cluster exists, every seed must be a live member: a stale seed
     # (decommissioned node, old IP) breaks bootstraps
@@ -182,8 +182,11 @@
 
         - name: Every seed is up
           ansible.builtin.assert:
-            # a cluster about to be wiped: a seed of the group, up or not
-            that: _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
+            # a cluster about to be wiped: a seed of the group, up or not; a resumed rolling run: a member
+            # drained or stopped by the interrupted run (each node's own check before it stops on any other)
+            that: >-
+              _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
+              or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ ("A new node can't be a seed (seeds don't bootstrap, it would join without its data): add it as a"
@@ -245,8 +248,11 @@
           {{ [] if _cassandra_preflight_cluster_reset | default(false) | bool
              else ((cassandra_preflight_status.cluster_status | default({}, true))[item] | default({})).nodes | default([]) }}
         _ring_racks: "{{ _ring_nodes | map(attribute='rack') | unique | list }}"
+        # the nodes to decommission (cassandra_leaving_nodes) join nothing
         _inventory: >-
-          {{ ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | selectattr('cassandra_dc', 'equalto', item) | list }}
+          {{ ansible_play_hosts | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)
+                                       if cassandra_leaving_nodes | default('') | length > 0 else [])
+             | map('extract', hostvars, '_cassandra_preflight') | selectattr('cassandra_dc', 'equalto', item) | list }}
         _inventory_racks: "{{ _inventory | map(attribute='cassandra_rack') | unique | list }}"
         # the hosts of the datacenter not in its ring yet, refused in turn
         _refused: >-

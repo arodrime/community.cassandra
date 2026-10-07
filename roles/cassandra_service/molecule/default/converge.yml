@@ -53,6 +53,7 @@
           changed_when: true
           when: sysv_unit.rc == 0
 
+# Cassandra runs with another group than the package's: the config files get it too
 - name: Converge
   hosts: all
   vars:
@@ -60,8 +61,78 @@
     cassandra_heap_size: 256M
     cassandra_endpoint_snitch: GossipingPropertyFileSnitch
     cassandra_dc: dc_molecule
+    cassandra_group: dbgrp
   roles:
     - role: community.cassandra.cassandra_repository
     - role: community.cassandra.cassandra_install
     - role: community.cassandra.cassandra_config
     - role: community.cassandra.cassandra_service
+
+- name: Refuse a unit group that could not read the config files
+  hosts: all
+  vars:
+    cassandra_group: dbgrp
+  tasks:
+    - name: Run the role with the unit's group alone set back to cassandra
+      block:
+        - name: Run cassandra_service, expecting its account check to fail
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+          vars:
+            cassandra_service_group: cassandra
+
+        - name: Fail if the role accepted it
+          ansible.builtin.fail:
+            msg: cassandra_service accepted a group that cannot read cassandra.yaml
+      rescue:
+        - name: Assert the failure came from the account check, naming the file
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == "Refuse an account that could not read the config"
+              - "'cassandra.yaml (root:dbgrp 0640)' in ansible_failed_result.msg"
+
+# A Cassandra that cannot start (a JVM option the JVM refuses): the wait stops
+# with the end of the journal as soon as the service is down, not after
+# cassandra_service_wait_timeout. Then started again as Converge left it.
+- name: Cassandra that does not start
+  hosts: all
+  tags: molecule-idempotence-notest
+  vars:
+    cassandra_cluster_name: "Molecule Cluster"
+    cassandra_heap_size: 256M
+    cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+    cassandra_dc: dc_molecule
+    cassandra_group: dbgrp
+  tasks:
+    - name: Note the time
+      ansible.builtin.set_fact:
+        cassandra_test_start: "{{ now().timestamp() | int }}"
+
+    - name: Start it with a JVM option it refuses
+      block:
+        - name: Run the role
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+          vars:
+            cassandra_service_environment: {JVM_EXTRA_OPTS: "-XX:+NoSuchOption"}
+            cassandra_service_state: restarted
+
+        - name: Should not be reached
+          ansible.builtin.fail:
+            msg: the role waited for a Cassandra that cannot start
+          register: cassandra_test_not_stopped
+      rescue:
+        - name: Stopped at once, with the journal
+          ansible.builtin.assert:
+            that:
+              - cassandra_test_not_stopped is not defined
+              - ansible_failed_task.name == 'Cassandra is not running'
+              - ansible_failed_result.msg | join('\n') is search('NoSuchOption')
+              - now().timestamp() | int - cassandra_test_start | int < 120
+            fail_msg: "{{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+
+    - name: Back as Converge left it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+      vars:
+        cassandra_service_state: restarted

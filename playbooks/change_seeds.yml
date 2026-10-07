@@ -10,7 +10,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Update the seed list
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _file: "{{ cassandra_conf_dir }}/cassandra.yaml"
@@ -38,17 +38,23 @@
         _cassandra_seeds_old: >-
           {{ cassandra_seeds_yaml.content | b64decode | regex_findall('(?m)^\s*- seeds:\s*"?([^"\n]*)"?') | first | default('') }}
 
-    - name: Confirm the new seed list
+    - name: Show the new seed list and confirm
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: |-
-          Seeds in cassandra.yaml, reloaded live (no restart):
-          {% for h in _changed %}
-            {{ h }}: {{ hostvars[h]._cassandra_seeds_old }} -> {{ _new }}
-          {% endfor %}
         _changed: "{{ ansible_play_hosts | map('extract', hostvars) | rejectattr('_cassandra_seeds_old', 'equalto', _new) | map(attribute='inventory_hostname') | list }}"
+        _blocks: >-
+          {%- set l = [] -%}
+          {%- for h in _changed -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': ['from: ' ~ hostvars[h]._cassandra_seeds_old, 'to:   ' ~ _new]}) -%}
+          {%- endfor -%}
+          {{ l }}
+        cassandra_screen_question: "Write and reload the new seed list on {{ _changed | join(', ') }}?"
+        cassandra_screen:
+          operation: change_seeds
+          summary: the seed list in cassandra.yaml, reloaded live (no restart)
+          blocks: "{{ _blocks }}"
       when: _changed | length > 0
 
     - name: Checksum cassandra.yaml before the change

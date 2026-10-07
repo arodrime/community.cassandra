@@ -32,11 +32,15 @@ cassandra_medusa_pip_extra_args: []
 cassandra_offline: false
 
 # ---- /etc/medusa/medusa.ini ----
-# The config and the S3 credentials file hold secrets: readable by their owner only.
-cassandra_medusa_config_owner: cassandra
-cassandra_medusa_config_group: cassandra
+# The config and the S3 credentials file hold secrets: readable by their owner
+# only, the account Cassandra runs as (cassandra_user, cassandra_group, or the
+# unit's cassandra_service_user, cassandra_service_group when set).
+# cassandra_medusa_config_owner and cassandra_medusa_key_file_owner, their
+# former names, still win when set.
+cassandra_medusa_config_user: "{{ cassandra_service_user | default(cassandra_user | default('cassandra')) }}"
+cassandra_medusa_config_group: "{{ cassandra_service_group | default(cassandra_group | default('cassandra')) }}"
 cassandra_medusa_config_mode: "0600"
-cassandra_medusa_key_file_owner: "{{ cassandra_medusa_config_owner }}"
+cassandra_medusa_key_file_user: "{{ cassandra_medusa_config_owner | default(cassandra_medusa_config_user) }}"
 cassandra_medusa_key_file_group: "{{ cassandra_medusa_config_group }}"
 cassandra_medusa_key_file_mode: "{{ cassandra_medusa_config_mode }}"
 

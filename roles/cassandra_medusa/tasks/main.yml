@@ -1,6 +1,16 @@
 ---
 # Installs Cassandra Medusa with pip, in its own virtualenv or in a system
 # Python (cassandra_medusa_venv: ""), and writes /etc/medusa/medusa.ini. Schedules no backup.
+- name: Warn about variables under their former names
+  ansible.builtin.debug:
+    msg: >-
+      DEPRECATION WARNING ({{ inventory_hostname }}): {{ _former | join(', ') }} set: cassandra_medusa_config_owner
+      is now cassandra_medusa_config_user, cassandra_medusa_key_file_owner cassandra_medusa_key_file_user. Rename them
+      (the former names still win while they are set).
+  vars:
+    _former: "{{ query('ansible.builtin.varnames', '^cassandra_medusa_(config|key_file)_owner$') }}"
+  when: _former | length > 0
+
 - name: Check the settings
   ansible.builtin.assert:
     that:
@@ -357,7 +367,7 @@
   vars:
     _cassandra_medusa_ini_path: /etc/medusa/medusa.ini
     _cassandra_medusa_ini_content: "{{ lookup('ansible.builtin.template', 'medusa.ini.j2') }}"
-    _cassandra_medusa_ini_owner: "{{ cassandra_medusa_config_owner }}"
+    _cassandra_medusa_ini_owner: "{{ cassandra_medusa_config_owner | default(cassandra_medusa_config_user) }}"
     _cassandra_medusa_ini_group: "{{ cassandra_medusa_config_group }}"
     _cassandra_medusa_ini_mode: "{{ cassandra_medusa_config_mode }}"
 
@@ -366,7 +376,7 @@
   ansible.builtin.include_tasks: ini_file.yml
   vars:
     _cassandra_medusa_ini_path: "{{ cassandra_medusa_key_file }}"
-    _cassandra_medusa_ini_owner: "{{ cassandra_medusa_key_file_owner }}"
+    _cassandra_medusa_ini_owner: "{{ cassandra_medusa_key_file_owner | default(cassandra_medusa_key_file_user) }}"
     _cassandra_medusa_ini_group: "{{ cassandra_medusa_key_file_group }}"
     _cassandra_medusa_ini_mode: "{{ cassandra_medusa_key_file_mode }}"
     _cassandra_medusa_ini_content: |

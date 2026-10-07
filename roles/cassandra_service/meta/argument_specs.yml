@@ -60,16 +60,29 @@ argument_specs:
         description:
           - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
             there. The new host checks use it to tell those switches from the operator's own.
+      cassandra_user:
+        type: str
+        default: cassandra
+        description:
+          - The account Cassandra runs as (the unit's C(User=)), also the owner of the directories and JMX users' files
+            of C(cassandra_config). The role does not create it.
+      cassandra_group:
+        type: str
+        default: cassandra
+        description:
+          - The group Cassandra runs as (the unit's C(Group=)), also the default group of the config files of
+            C(cassandra_config).
       cassandra_service_user:
         type: str
-        default: cassandra
         description:
-          - User running Cassandra.
+          - The unit's C(User=), and the owner of the directories and JMX users' files of C(cassandra_config).
+            Defaults to O(cassandra_user); set that one instead.
       cassandra_service_group:
         type: str
-        default: cassandra
         description:
-          - Group running Cassandra.
+          - The unit's C(Group=), and the group of the directories and JMX users' files of C(cassandra_config) (not of
+            its config files). Defaults to O(cassandra_group); set that one instead. The role refuses an account that
+            could not read the config files C(cassandra_config) writes.
       cassandra_service_unit_manage:
         type: bool
         default: true
@@ -140,13 +153,14 @@ argument_specs:
       cassandra_add_node_cleanup:
         type: str
         default: none
-        choices: [none, one, rack, dc, all]
+        choices: [none, sequential, one, rack, dc, all]
         description:
           - What the C(add_node) playbook does, after the add, about the cleanup of the nodes that handed
             data over (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
-            replicas as racks there). C(none) prints the command; C(one) runs it one node at a time;
-            C(rack) and C(dc) clean the nodes of a rack, of a datacenter together, one batch after the other;
-            C(all) cleans them all at once. The cluster is checked before each batch.
+            replicas as racks there), with the words of the C(cleanup) playbook's C(cassandra_cleanup_mode).
+            C(none) prints the command; C(sequential) runs it one node at a time (C(one) is the same);
+            C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
+            The cluster is checked before each batch.
       cassandra_add_node_reset:
         type: bool
         default: false
@@ -168,6 +182,28 @@ argument_specs:
             host replacing itself (the dead node's address is its own, e.g. a lost disk or a reinstall).
             C(false) refuses it, C(true) resets it first as C(cassandra_add_node_reset) does. The other nodes
             may list the host's address only as the dead node being replaced, down.
+      cassandra_node_state:
+        type: str
+        default: present
+        choices: [present, absent]
+        description:
+          - The state this host should be in, the inventory being the desired state of the cluster. C(absent)
+            (a host var, or a group var for a group of hosts) takes the host out of the cluster - every operation
+            playbook leaves it out (preflight, health checks and their node counts, rolling operations, status,
+            import), and the C(topology) playbook decommissions it if it is still in the ring.
+          - Delete the host from the inventory once C(topology) has removed it, or leave it marked absent.
+      cassandra_topology_max_removals:
+        type: int
+        default: 2
+        description:
+          - C(topology) - the most nodes one run removes from the ring; a plan that removes more is refused
+            (a group var marking hosts absent by mistake), as is one that removes more than half of a datacenter.
+      cassandra_topology_allow_large_removal:
+        type: bool
+        default: false
+        description:
+          - C(topology) - C(true) goes on with a plan the guard refuses (more removals than
+            C(cassandra_topology_max_removals), or more than half of a datacenter).
       cassandra_create_cluster_reset:
         type: bool
         default: false
@@ -195,7 +231,7 @@ argument_specs:
             C(cassandra_initial_token) go. C(false) refuses them; C(bisect) splits the largest ranges, no node
             moves; C(balanced) gives an even ring for the new node count, the new nodes join at their final
             tokens and C(move_node) moves the others afterwards; C(true) shows both plans and asks which
-            (refused when C(cassandra_operation_confirm) is false).
+            (refused when C(cassandra_operation_confirm) is false; C(--check) follows bisect without asking).
       cassandra_token_rf:
         type: int
         default: 3
@@ -218,7 +254,7 @@ argument_specs:
       cassandra_move_cleanup:
         type: str
         default: none
-        choices: [none, one, rack, dc, all]
+        choices: [none, sequential, one, rack, dc, all]
         description:
           - What C(move_node) does about the cleanup of the nodes that lost ranges (this run's and the ones an
             interrupted run recorded), as C(cassandra_add_node_cleanup).
@@ -245,8 +281,10 @@ argument_specs:
         description:
           - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
-            C(move_node)).
-            Each check reads C(nodetool netstats) and prints one progress line.
+            C(move_node)) and of a cleanup; the first checks come sooner (after 10 s, 30 s, 1, 2 and 4
+            minutes, each at most this long), so a short operation ends in seconds.
+            Each check reads C(nodetool netstats) and prints the progress, a short line (bar, percentage,
+            rate) then the data, the other nodes and the times, one item per line.
       cassandra_stream_stall_checks:
         type: int
         default: 3
@@ -254,6 +292,7 @@ argument_specs:
           - A streaming operation fails only after this many checks in a row without any progress in
             C(nodetool netstats) (no byte or file streamed, no session started or ended), 4 times as
             many while nothing is left to transfer (before the first session, index or view builds).
+            Only the checks C(cassandra_stream_check_interval) apart count, not the sooner first ones.
             Nothing is stopped then; the node stays as it is.
       cassandra_stream_max_time:
         type: int
@@ -314,7 +353,8 @@ argument_specs:
         type: bool
         default: true
         description:
-          - Ask the operator before a risky operation. C(false) for non-interactive runs.
+          - Ask the operator before a risky operation. C(false) for non-interactive runs. C(--check) never asks
+            (nothing changes, the plan only).
       cassandra_operation_drain:
         type: bool
         default: true

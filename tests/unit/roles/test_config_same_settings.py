@@ -5,15 +5,18 @@ __metaclass__ = type
 # same as the role's (a config written by hand: no header, other comments or
 # layout), and writes remote JMX users the way the node has them.
 
+import base64
 import json
 import os
 import subprocess
 import sys
+import warnings
 
 import pytest
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -21,6 +24,12 @@ try:  # ansible-core 2.19+ renders trusted templates only
 except ImportError:
     def trust_as_template(template):
         return template
+
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # the collection's filters, under plain pytest too
+
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings  # noqa: E402 pylint: disable=wrong-import-position
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
@@ -44,16 +53,18 @@ def render(template, **variables):
 SCRIPT = task("Diff them against the live files")["ansible.builtin.command"]["argv"][2]
 
 
-def compare(tmp_path, name, live, new):
-    """The preview's exit code for a live file and the role's: 0 same, 1 differ, 2 same settings."""
+def compare(tmp_path, name, live, new, storage_dir=""):
+    """0: the same text (the preview's exit code), 1: differ, 2: the same settings (kept on a running node)."""
     (tmp_path / "live").mkdir()
     (tmp_path / "new").mkdir()
     live_path, new_path = tmp_path / "live" / name, tmp_path / "new" / name
     if live is not None:
         live_path.write_text(live)
     new_path.write_text(new)
-    return subprocess.run([sys.executable, "-c", SCRIPT, str(live_path), str(new_path)],
-                          stdout=subprocess.PIPE, check=False).returncode
+    rc = subprocess.run([sys.executable, "-c", SCRIPT, str(live_path), str(new_path)],
+                        stdout=subprocess.PIPE, check=False).returncode
+    assert rc in (0, 1)
+    return 2 if rc == 1 and cassandra_same_settings(live, new, name, storage_dir) else rc
 
 
 @pytest.mark.parametrize("name, live, new, rc", [
@@ -77,11 +88,30 @@ def compare(tmp_path, name, live, new):
     # an -XX list flag set twice adds up, unlock options must come first, an agent twice loads twice)
     ("jvm-server.options", "-Xss256k\n# x\n  -Dy=1\n-Dx=1\n", HEADER + "-Xss256k\n-Dx=1\n", 2),
     ("jvm-server.options", "-Xss256k\n-Dx=1\n-Xmx1G\n", HEADER + "-Xss256k\n-Xmx1G\n-Dx=1\n", 2),  # a property anywhere
-    ("jvm-server.options", "-Xss256k\n-Xmx1G\n", HEADER + "-Xmx1G\n-Xss256k\n", 1),
-    ("jvm-server.options", "-Dx=1\n-Dy=2\n-Dx=3\n", HEADER + "-Dy=2\n-Dx=1\n-Dx=3\n", 1),  # a key twice: in order
-    ("jvm-server.options", "-XX:OnOutOfMemoryError=/a\n-XX:OnOutOfMemoryError=b\n", HEADER + "-XX:OnOutOfMemoryError=b\n", 1),
+    ("jvm-server.options", "-Xss256k\n-Xmx1G\n", HEADER + "-Xmx1G\n-Xss256k\n", 2),  # other options: any order
+    ("jvm-server.options", "-Xss256k\n-XX:+AlwaysPreTouch\n-Xmx1G\n", HEADER + "-Xss256k\n-Xmx1G\n-XX:+AlwaysPreTouch\n", 2),
+    ("jvm-server.options", "-Dx=1\n-Dy=2\n-Dx=3\n", HEADER + "-Dy=2\n-Dx=3\n", 2),  # a name twice: the last one
+    ("jvm-server.options", "-Dx=1\n-Dx=3\n", HEADER + "-Dx=3\n-Dx=1\n", 1),
+    ("jvm-server.options", "-Xss512k\n", HEADER + "-Xss256k\n-Xmx1G\n-Xss512k\n", 1),
+    ("jvm-server.options", "-Xss512k\n-Xmx1G\n", HEADER + "-Xss256k\n-Xmx1G\n-Xss512k\n", 2),
+    # but cassandra-env.sh looks for +UseG1GC in all of them
     ("jvm-server.options", "-XX:+UseG1GC\n-XX:-UseG1GC\n", HEADER + "-XX:-UseG1GC\n", 1),
+    # one setting under two spellings: the last one counts
+    ("jvm-server.options", "-XX:MaxHeapSize=8G\n-Xmx4G\n", HEADER + "-Xmx4G\n-XX:MaxHeapSize=8G\n", 1),
+    # options without a name keep their order; an option starting with -- takes the next word
+    ("jvm-server.options", "-Xloggc:/a\n-Xloggc:/b\n", HEADER + "-Xloggc:/b\n-Xloggc:/a\n", 1),
+    ("jvm-server.options", "--add-exports A\n--add-opens B\n", HEADER + "--add-exports B\n--add-opens A\n", 1),
+    ("jvm-server.options", "-Xss256k foo\n", HEADER + "-Xss256k\nfoo\n", 1),  # foo: not a line starting with '-'
+    ("jvm-server.options", "-Xss256k   -Xmx1G\n", HEADER + "-Xmx1G\n-Xss256k\n", 2),  # each word is an option
+    # these add up: given twice, both count
+    ("jvm-server.options", "-XX:OnOutOfMemoryError=/a\n-XX:OnOutOfMemoryError=b\n", HEADER + "-XX:OnOutOfMemoryError=b\n", 1),
     ("jvm-server.options", "-javaagent:/a.jar\n-javaagent:/a.jar\n", HEADER + "-javaagent:/a.jar\n", 1),
+    ("jvm-server.options", "-XX:StartFlightRecording=a\n-XX:StartFlightRecording=b\n", HEADER + "-XX:StartFlightRecording=b\n", 1),
+    # an option the unlock one must come before
+    ("jvm-server.options", "-XX:+UnlockDiagnosticVMOptions\n-XX:+LogVMOutput\n",
+     HEADER + "-XX:+LogVMOutput\n-XX:+UnlockDiagnosticVMOptions\n", 1),
+    ("jvm-server.options", "-XX:+UnlockDiagnosticVMOptions\n-Xss256k\n-XX:+LogVMOutput\n",
+     HEADER + "-Xss256k\n-XX:+UnlockDiagnosticVMOptions\n-XX:+LogVMOutput\n", 2),
     # bash reads these otherwise than their words: # in a word, ~, a continued line
     ("cassandra-env.sh", "LOCAL_JMX=yes#x\n", HEADER + "LOCAL_JMX=yes\n", 1),
     ("cassandra-env.sh", "X=~/d\n", HEADER + "X='~/d'\n", 1),
@@ -111,9 +141,29 @@ def compare(tmp_path, name, live, new):
     ("cassandra.yaml", "cluster_name: 'A'\n", "cluster_name: 'B'\n", 1),
     # 1, 1.0 and true are not the same setting
     ("cassandra.yaml", "x: 1\n", HEADER + "x: true\n", 1),
+    # Cassandra reads a quoted number as the number, a key with no value as not set
+    ("cassandra.yaml", 'concurrent_reads: "32"\nx:\n', HEADER + "concurrent_reads: 32\n", 2),
+    ("cassandra.yaml", "x: TRUE\n", HEADER + "x: true\n", 2),
+    ("cassandra.yaml", "x: yes\n", HEADER + "x: true\n", 2),  # a boolean setting
+    # yes is true for a boolean setting only (a parameter map keeps the text, which parseBoolean reads false)
+    ("cassandra.yaml", "p:\n  parameters:\n    fail_on_missing_provider: yes\n",
+     HEADER + "p:\n  parameters:\n    fail_on_missing_provider: true\n", 1),
+    ("cassandra.yaml", "x: 'yes'\n", HEADER + "x: true\n", 1),
+    # an inline comment
+    ("cassandra-env.sh", 'JVM_OPTS="$JVM_OPTS -Dx=1" # why\n', HEADER + 'JVM_OPTS="$JVM_OPTS -Dx=1"\n', 2),
+    # prefer_local=false: as not set
+    ("cassandra-rackdc.properties", "dc=dc1\nrack=r1\nprefer_local=false\n", HEADER + "dc=dc1\nrack=r1\n", 2),
+    # a comment line never goes on to the next one: dc=dc2 counts
+    ("cassandra-rackdc.properties", "dc=dc1\n# note \\\ndc=dc2\n", HEADER + "dc=dc1\n", 1),
+    ("cassandra-rackdc.properties", "dc=d\\\n   c1\n", HEADER + "dc=dc1\n", 2),
     ("logback.xml", "<configuration>\n</configuration>\n",
      "<!-- Managed by Ansible -->\n<!--\n a licence\n-->\n<configuration>\n</configuration>\n", 2),
-    ("logback.xml", "<configuration/>\n", "<configuration>\n</configuration>\n", 1),
+    ("logback.xml", "<configuration/>\n", "<configuration>\n</configuration>\n", 2),
+    # re-indented, attributes in another order, a level in another case
+    ("logback.xml", '<configuration>\n<root level="info"><appender-ref ref="A"/></root>\n</configuration>\n',
+     '<configuration>\n  <root level="INFO">\n    <appender-ref ref="A" />\n  </root>\n</configuration>\n', 2),
+    ("logback.xml", '<configuration><root level="INFO"/></configuration>', '<configuration><root level="WARN"/></configuration>', 1),
+    ("logback.xml", "<configuration>\n", "<configuration/>\n", 1),  # not XML: not the same
     # no live file: written
     ("jvm-server.options", None, HEADER, 1),
 ])
@@ -121,26 +171,50 @@ def test_preview_tells_same_settings(tmp_path, name, live, new, rc):
     assert compare(tmp_path, name, live, new) == rc
 
 
-def kept(results, initialized=True, normalize=False, slurped=None):
+def b64(text):
+    return base64.b64encode(text.encode()).decode()
+
+
+def kept(files, storage_dir="", given_dir=""):
+    """The files left as they are, from {name: (live, role's)} read by "Read the files that differ"."""
     templates = task("List the files to change and whether to ask first")["vars"]
-    variables = dict(cassandra_config_normalize=normalize, cassandra_config_initialized={"stat": {"exists": initialized}},
-                     cassandra_config_preview={"results": results}, cassandra_conf_dir="/etc/c",
-                     cassandra_config_tmp={"path": "/tmp/t"})
-    if slurped is not None:
-        variables["cassandra_config_yaml_files"] = {"results": slurped}
-    variables["_same_on_controller"] = render(templates["_same_on_controller"], **variables)
+    results = []
+    for name, (live, new) in files.items():
+        if live is not None:
+            results.append({"item": [name, "/etc/c"], "content": b64(live)})
+        else:
+            results.append({"item": [name, "/etc/c"], "failed": True})
+        results.append({"item": [name, "/tmp/t"], "content": b64(new)})
+    variables = dict(cassandra_conf_dir="/etc/c", cassandra_config_tmp={"path": "/tmp/t"},
+                     cassandra_config_compared={"results": results}, cassandra_jvm={"storagedir": storage_dir},
+                     cassandra_config_storage_dir=given_dir, _keep=[])
     return render(templates["_kept"], **variables)
 
 
-RESULTS = [{"cassandra_config_file": "cassandra.yaml", "rc": 1, "stdout": "diff"},
-           {"cassandra_config_file": "jvm-server.options", "rc": 2, "stdout": "diff"},
-           {"cassandra_config_file": "logback.xml", "rc": 0, "stdout": ""}]
+def test_same_settings_kept_by_the_controller():
+    assert kept({"cassandra.yaml": ("x: 1  # c\n", HEADER + "x: 1\n"), "logback.xml": ("<a/>", "<b/>"),
+                 "jvm-server.options": (None, "-Xss256k\n")}) == ["cassandra.yaml"]
 
 
-def test_same_settings_kept_on_a_running_node_only():
-    assert kept(RESULTS) == ["jvm-server.options"]
-    assert kept(RESULTS, initialized=False) == []  # a new node gets every file of the role
-    assert kept(RESULTS, normalize=True) == []
+def test_dirs_left_to_the_storage_dir_are_kept():
+    # a cassandra.yaml without the directories (a tarball's): they are under -Dcassandra.storagedir
+    live = "cluster_name: A\n"
+    new = ("cluster_name: A\ndata_file_directories:\n    - /var/lib/cassandra/data\ncommitlog_directory: /var/lib/cassandra/commitlog\n"
+           "saved_caches_directory: /var/lib/cassandra/saved_caches\nhints_directory: /var/lib/cassandra/hints\n")
+    assert kept({"cassandra.yaml": (live, new)}, "/var/lib/cassandra") == ["cassandra.yaml"]
+    assert kept({"cassandra.yaml": (live, new)}, "/opt/cassandra/data") == []
+    assert kept({"cassandra.yaml": (live, new)}) == []  # not running: unknown
+    assert kept({"cassandra.yaml": (live, new)}, given_dir="/var/lib/cassandra") == ["cassandra.yaml"]  # imported
+
+
+def test_compared_on_a_running_node_only():
+    read = task("Read the files that differ, to compare their settings")
+    assert "_cassandra_config_initialized | bool" in read["when"]
+    assert "not cassandra_config_normalize | bool" in read["when"]
+
+
+def test_preview_needs_no_pyyaml_on_the_node():
+    assert "yaml" not in SCRIPT
 
 
 TEMPLATES = os.path.join(TASKS, "..", "templates")
@@ -262,43 +336,6 @@ def test_identity_of_a_joined_node_as_cassandra_reads_it(tmp_path, live, changes
         "live.yaml", "new.yaml", "live.properties", "new.properties")] + [SNITCHES], stdout=subprocess.PIPE,
         check=True).stdout
     assert json.loads(out) == changes
-
-
-def test_yaml_without_pyyaml_on_the_node_is_left_to_the_controller(tmp_path):
-    """No PyYAML where the script runs: exit 3, the controller compares (cassandra_same_yaml)."""
-    (tmp_path / "live").mkdir()
-    (tmp_path / "new").mkdir()
-    (tmp_path / "live" / "cassandra.yaml").write_text("x: 1  # c\n")
-    (tmp_path / "new" / "cassandra.yaml").write_text(HEADER + "x: 1\n")
-    (tmp_path / "yaml.py").write_text("raise ImportError('no PyYAML')\n")
-    env = dict(os.environ, PYTHONPATH=str(tmp_path))
-    rc = subprocess.run([sys.executable, "-c", SCRIPT, str(tmp_path / "live" / "cassandra.yaml"),
-                         str(tmp_path / "new" / "cassandra.yaml")], stdout=subprocess.PIPE, env=env, check=False).returncode
-    assert rc == 3
-
-
-@pytest.mark.parametrize("live, new, same", [
-    ("cluster_name: A # c\nx: 1\nx: 2\n", "cluster_name: 'A'\nx: 2\n", True),
-    ("x: TRUE\n", "x: true\n", True),
-    ("x: 1\n", "x: true\n", False),
-    ("", "x: 1\n", False),
-    ("x: [\n", "x: 1\n", False),
-])
-def test_same_yaml_on_the_controller(live, new, same):
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_same_yaml import cassandra_same_yaml
-    assert cassandra_same_yaml(live, new) is same
-
-
-def test_controller_fallback_keeps_the_same_yaml():
-    """The kept list takes the files the controller found the same."""
-    results = [{"cassandra_config_file": "cassandra.yaml", "rc": 3, "stdout": "d"},
-               {"cassandra_config_file": "logback.xml", "rc": 2, "stdout": "d"}]
-    slurped = [{"item": ["cassandra.yaml", "/etc/c"], "content": "eDogMSAjIGMK"},  # x: 1 # c
-               {"item": ["cassandra.yaml", "/tmp/t"], "content": "eDogMQo="}]  # x: 1
-    assert kept(results, slurped=slurped) == ["logback.xml", "cassandra.yaml"]
-    slurped[1]["content"] = "eDogMgo="  # x: 2
-    assert kept(results, slurped=slurped) == ["logback.xml"]
-    assert kept(results, slurped=slurped[:1]) == ["logback.xml"]  # one of them not read: not the same
 
 
 RACKDC_GUARD = task("Refuse rackdc lines other than the node's dc and rack under a snitch that reads them")

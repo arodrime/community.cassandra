@@ -14,7 +14,7 @@
 # address, e.g. a lost disk or a reinstall): -e cassandra_replace_node_reset=true stops Cassandra
 # and empties its directories first (reset_node.yml: refused unless every node
 # that lists this host's address sees it down, as the node being replaced;
-# shown and confirmed).
+# what it deletes is on the screen, the one question covers it).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
@@ -37,7 +37,7 @@
   any_errors_fatal: true
   vars:
     _from: >-
-      {{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | first | default('') }}
+      {{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | first | default('') }}
   tasks:
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
@@ -116,17 +116,48 @@
           ansible.builtin.fail:
             msg: Nothing was replaced.
 
-    - name: Confirm the replacement
+    # Read-only: what the reset deletes goes on the screen, refused before any question
+    - name: Work out the reset of the host (cassandra_replace_node_reset)
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: reset_node_plan.yml
+      when: cassandra_replace_node_reset | default(false) | bool
       vars:
-        cassandra_confirm_prompt: |-
-          replace_node will start {{ inventory_hostname }} in place of the dead node {{ cassandra_replace_address | default('(not set)') }}:
-          it takes over its tokens and streams their data from the other replicas (this can take hours).
-          {{ ('cassandra_replace_node_reset: what ' ~ inventory_hostname ~ ' holds is DELETED first, shown and confirmed next.')
-             if cassandra_replace_node_reset | default(false) | bool else '' }}
-          {{ _cassandra_session_warning }}
+        cassandra_node_reset_replace_address: "{{ cassandra_replace_address }}"
+
+    - name: Show the plan and confirm the replacement
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: screen.yml
+      vars:
+        _p: "{{ _cassandra_preflight }}"
+        _dead: >-
+          {{ cassandra_replace_ring.cluster_status.values() | map(attribute='nodes') | flatten
+             | selectattr('address', 'equalto', cassandra_replace_address) | first | default({}) }}
+        _dead_dc: >-
+          {%- set out = [] -%}
+          {%- for dc, info in cassandra_replace_ring.cluster_status.items()
+                if info.nodes | default([]) | selectattr('address', 'equalto', cassandra_replace_address) | list -%}
+          {%-   set _ = out.append(dc) -%}
+          {%- endfor -%}
+          {{ out | first | default('?') }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: "Replace {{ cassandra_replace_address }} with {{ inventory_hostname }}?"
+        cassandra_screen:
+          operation: replace_node
+          summary: "replace the dead node {{ cassandra_replace_address | default('(not set)') }} with {{ inventory_hostname }}"
+          blocks:
+            - title: "{{ inventory_hostname | community.cassandra.cassandra_screen_title(_p) }}"
+              lines:
+                - >-
+                  replaces {{ cassandra_replace_address }} ({{ _dead.status | default('') }}{{ _dead.state | default('') }} in
+                  {{ _dead_dc }} / {{ _dead.rack | default('?') }}, load {{ _dead.load | default('?') }}, as {{ _from }} sees it)
+                - takes over its tokens and streams their data from the other replicas (hours on a big node)
+                - "end state: {{ inventory_hostname }} up and normal (UN) in its place"
+          # cassandra_replace_node_reset: what the reset deletes (reset_node_plan.yml), covered by the one question
+          warnings: >-
+            {{ [{'name': inventory_hostname, 'plan': _cassandra_node_reset_plan}] | community.cassandra.cassandra_reset_warnings
+               if _cassandra_node_reset_plan is defined else [] }}
 
     # The dead node's address may be this host's: seen down there, as expected
     - name: Reset the host first (cassandra_replace_node_reset)
@@ -136,6 +167,7 @@
       when: cassandra_replace_node_reset | default(false) | bool
       vars:
         cassandra_node_reset_replace_address: "{{ cassandra_replace_address }}"
+        _cassandra_node_reset_confirmed: true  # on the replace_node screen, the one question
 
 - name: Replace the node
   hosts: "{{ cassandra_new_nodes }}"

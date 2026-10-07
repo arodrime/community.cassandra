@@ -29,15 +29,10 @@
     quiet: true
   when: cassandra_service_drain_on_stop
 
-# Same name as the package's init script: systemd prefers a native unit
-# over the SysV-generated one, so service/systemctl both use this.
+# Written already (account checked too) when a restart wrote it before draining (action_restart.yml)
 - name: Install the cassandra systemd unit
-  ansible.builtin.template:
-    src: cassandra.service.j2
-    dest: /etc/systemd/system/cassandra.service
-    mode: "0644"
-  register: cassandra_service_unit
-  when: cassandra_service_unit_manage | bool
+  ansible.builtin.include_tasks: unit.yml
+  when: not _cassandra_service_unit_written | default(false) | bool
 
 # The package's init script can leave the unit "active (exited)" with no JVM
 # (e.g. Cassandra died after a SysV start): systemd then sees nothing to start.
@@ -160,17 +155,18 @@
              else 'started' }}
       register: cassandra_service_started
 
+    # Stops early, with the end of the journal, when Cassandra stops (wait_normal.yml)
     - name: Wait for the node to be joined (Mode NORMAL)
-      community.cassandra.cassandra_netstats:
-      module_defaults:
-        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
-      register: cassandra_service_netstats
-      until: cassandra_service_netstats.mode | default('') == 'NORMAL'
-      retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
-      delay: 10
       when:
         - cassandra_service_wait_for_normal
         - not ansible_check_mode
+      block:
+        - name: Note until when to wait
+          ansible.builtin.set_fact:
+            _cassandra_service_wait_deadline: "{{ now().timestamp() | int + cassandra_service_wait_timeout | int }}"
+
+        - name: Wait for the node to be joined (Mode NORMAL)
+          ansible.builtin.include_tasks: wait_normal.yml
 
     # the config this start used, to tell later changes still to apply (apply_config)
     - name: Record the config Cassandra started with

@@ -26,10 +26,12 @@ jobs:
         versions:
           - python_version: "3.10"
             ansible_version: "stable-2.16"
-          - python_version: "3.11"
-            ansible_version: "stable-2.17"
           - python_version: "3.12"
-            ansible_version: "stable-2.18"
+            ansible_version: "stable-2.19"
+          - python_version: "3.13"
+            ansible_version: "stable-2.20"
+          - python_version: "3.14"
+            ansible_version: "stable-2.21"
           #- python_version: "3.12"
           #  ansible_version: "devel"
     steps:
@@ -65,10 +67,12 @@ jobs:
         versions:
           - python_version: "3.10"
             ansible_version: "stable-2.16"
-          - python_version: "3.11"
-            ansible_version: "stable-2.17"
           - python_version: "3.12"
-            ansible_version: "stable-2.18"
+            ansible_version: "stable-2.19"
+          - python_version: "3.13"
+            ansible_version: "stable-2.20"
+          - python_version: "3.14"
+            ansible_version: "stable-2.21"
     steps:
 
       - name: Check out code
@@ -103,9 +107,7 @@ jobs:
       - uses: codecov/codecov-action@v7.0.0
         with:
           fail_ci_if_error: false
-
-      - name: Upload Coverage data
-        run: tests/coverage.sh
+          flags: units
 
   integration_matrix:
     runs-on: ubuntu-24.04
@@ -134,7 +136,6 @@ jobs:
               - 'plugins/module_utils/**'
               - 'plugins/doc_fragments/**'
               - 'tests/integration/targets/setup_*/**'
-              - 'tests/coverage.sh'
               - 'meta/runtime.yml'
               - '.github/workflows/ansible-test.yml'
               - 'galaxy.yml'
@@ -181,16 +182,13 @@ jobs:
         working-directory: ansible_collections/community/cassandra
     strategy:
       max-parallel: 3  # fork: leave runners to the other repos of the account
+      fail-fast: false  # a failing target must not stop the others uploading their coverage
       matrix:
         versions:
           - python_version: "3.10"
             ansible_version: "stable-2.16"
-          - python_version: "3.10"
-            ansible_version: "stable-2.17"
-          #- python_version: "3.12"
-          #  ansible_version: "stable-2.18"
-          #- python_version: "3.12"
-          #  ansible_version: "milestone"
+          - python_version: "3.14"
+            ansible_version: "stable-2.21"
         cassandra_version:
           - package_version: "40x"
             tar_version: "4.0.9"
@@ -245,9 +243,7 @@ jobs:
       - uses: codecov/codecov-action@v7.0.0
         with:
           fail_ci_if_error: false
-
-      - name: Upload Coverage data
-        run: tests/coverage.sh
+          flags: ${{ matrix.cassandra_module }}
 
   integration_41x:
     needs: integration_matrix
@@ -258,16 +254,13 @@ jobs:
         working-directory: ansible_collections/community/cassandra
     strategy:
       max-parallel: 3  # fork: leave runners to the other repos of the account
+      fail-fast: false
       matrix:
         versions:
           - python_version: "3.10"
             ansible_version: "stable-2.16"
-          - python_version: "3.10"
-            ansible_version: "stable-2.17"
-          #- python_version: "3.12" ccm issues with six older python https://github.com/apache/cassandra-ccm/pull/800
-          #  ansible_version: "stable-2.18"
-          #- python_version: "3.12"
-          #  ansible_version: "milestone"
+          - python_version: "3.14"
+            ansible_version: "stable-2.21"
         cassandra_version:
           - package_version: "41x"
             tar_version: "4.1.7"
@@ -322,9 +315,7 @@ jobs:
       - uses: codecov/codecov-action@v7.0.0
         with:
           fail_ci_if_error: false
-
-      - name: Upload Coverage data
-        run: tests/coverage.sh
+          flags: ${{ matrix.cassandra_module }}
 
   integration_50x:
     needs: integration_matrix
@@ -335,12 +326,13 @@ jobs:
         working-directory: ansible_collections/community/cassandra
     strategy:
       max-parallel: 3  # fork: leave runners to the other repos of the account
+      fail-fast: false
       matrix:
         versions:
           - python_version: "3.10"
             ansible_version: "stable-2.16"
-          - python_version: "3.10"
-            ansible_version: "stable-2.17"
+          - python_version: "3.14"
+            ansible_version: "stable-2.21"
         cassandra_version:
           - package_version: "50x"
             tar_version: "5.0.8"
@@ -392,6 +384,4 @@ jobs:
       - uses: codecov/codecov-action@v7.0.0
         with:
           fail_ci_if_error: false
-
-      - name: Upload Coverage data
-        run: tests/coverage.sh
+          flags: ${{ matrix.cassandra_module }}

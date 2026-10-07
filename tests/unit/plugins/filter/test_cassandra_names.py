@@ -23,3 +23,12 @@ def test_known_and_other_settings_left_alone():
 def test_role_variables_are_not_typos():
     # close to cassandra_replace_address, but a cassandra_config variable
     assert cassandra_close_names(["cassandra_rpc_address"], ["cassandra_replace_address"]) == {}
+
+
+def test_unknown_names_with_a_suggestion():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_names
+    out = cassandra_unknown_names(["cassandra_config_usr", "cassandra_frobnicate_level", "cassandra_config_user",
+                                   "cassandra_hosts", "cassandra_config_applied", "cassandra_config_owner"],
+                                  ["cassandra_hosts"])
+    # a role variable, a playbook one, a result of a role's task, a former name still read: known
+    assert out == {"cassandra_config_usr": "cassandra_config_user", "cassandra_frobnicate_level": ""}

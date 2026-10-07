@@ -17,8 +17,15 @@ cassandra_service_allow_new_seed: false
 # sets it on the nodes it finds started another way)
 cassandra_service_unit_manage: true
 
-cassandra_service_user: cassandra
-cassandra_service_group: cassandra
+# The account Cassandra runs as: cassandra_user and cassandra_group drive the
+# unit, the config files' group and the directories and JMX files of
+# cassandra_config. cassandra_service_user/_group override them for the unit and
+# those directories and files, not the config files' group: set cassandra_user
+# and cassandra_group instead.
+cassandra_user: cassandra
+cassandra_group: cassandra
+cassandra_service_user: "{{ cassandra_user }}"
+cassandra_service_group: "{{ cassandra_group }}"
 # systemd Restart=. "no": a node that died stays down until a human looks
 # (disk/commit failure policies and OOM kill it on purpose). "on-failure"
 # is capped at cassandra_service_start_limit_burst restarts per interval.
@@ -60,10 +67,11 @@ cassandra_service_wait_timeout: 600  # seconds
 
 # Streaming operations (add_node, replace_node, decommission_node,
 # remove_dead_node, add_datacenter's rebuild) are waited for as long as they
-# make progress: every cassandra_stream_check_interval seconds nodetool
-# netstats is read and a progress line printed; the run fails only after
-# cassandra_stream_stall_checks checks in a row with nothing streamed (no
-# byte, no file, no session started or ended), 4 times as many while nothing
+# make progress: every cassandra_stream_check_interval seconds (the first
+# checks sooner: after 10 s, 30 s, 1, 2 and 4 minutes) nodetool netstats is
+# read and the progress printed; the run fails only after
+# cassandra_stream_stall_checks checks in a row, that interval apart, with
+# nothing streamed (no byte, no file, no session started or ended), 4 times as many while nothing
 # is left to transfer (before the first session, index or view builds after
 # the streams, hints of a decommission, a cleanup queued behind compactions). No overall limit
 # unless cassandra_stream_max_time is set (seconds, 0: none).
@@ -71,8 +79,8 @@ cassandra_stream_check_interval: 300  # seconds
 cassandra_stream_stall_checks: 3
 cassandra_stream_max_time: 0  # seconds, 0: no limit
 # add_node: the cleanup of the nodes that handed data over. none: print the
-# command; one: run it one node at a time; rack, dc: the nodes of a rack, of a
-# datacenter together, one batch after the other; all: every node at once.
+# command; sequential: run it one node at a time (one: the same); rack, dc: a
+# rack, a datacenter at a time; all: every node at once (heavy I/O).
 cassandra_add_node_cleanup: none
 # add_node: a new node with data but not in the ring (started once by
 # mistake, a failed bootstrap) is refused; true empties it first (stops
@@ -81,6 +89,15 @@ cassandra_add_node_cleanup: none
 # holds data, typically a host replacing itself (same address).
 cassandra_add_node_reset: false
 cassandra_replace_node_reset: false
+# The inventory is the desired state: a host of the cluster's group marked
+# absent (a host var or a group var) is no longer part of the cluster, the
+# playbooks leave it out and topology removes it from the ring
+# (decommission). The guard of topology: more removals at once than
+# cassandra_topology_max_removals, or more than half of a datacenter, are
+# refused unless cassandra_topology_allow_large_removal is true.
+cassandra_node_state: present
+cassandra_topology_max_removals: 2
+cassandra_topology_allow_large_removal: false
 # create_cluster: true rebuilds a cluster that runs already, all its data
 # lost (another snitch, datacenters, racks); the operator types the cluster
 # name, or gives it in cassandra_create_cluster_reset_confirm (no terminal)
@@ -105,11 +122,11 @@ cassandra_move_force_disk: false
 # skipped one by one (60 s: 12.5 days)
 _cassandra_stream_round_size: "{{ [24, [120, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
 
-# Confirmation prompts of long operations warn when the controller's shell is
-# not inside tmux or screen (a lost SSH session would stop the run)
+# The screens of long operations (screen.yml: session=) warn when the
+# controller's shell is not inside tmux or screen (a lost SSH session would stop the run)
 _cassandra_session_warning: >-
   {{ '' if lookup('ansible.builtin.env', 'TMUX') or lookup('ansible.builtin.env', 'STY')
-     else 'WARNING: this run is not inside tmux or screen: if the SSH session to this machine drops, the run stops'
+     else 'this run is not inside tmux or screen: if the SSH session to this machine drops, the run stops'
           ~ ' (the operation itself goes on, unwatched). Run it inside tmux or screen.' }}
 # the lifetime of the background job of a decommission, removenode or rebuild
 # (outlives cassandra_stream_max_time: the wait reports it, the job is not killed)
@@ -131,10 +148,24 @@ cassandra_jmx_password_file: ""
 # decommission), when authentication is on
 cassandra_cql_username: ""
 cassandra_cql_password: ""
+# Owner, group and mode cassandra_config gives the config files (its defaults
+# when it is not in the play), for the check that the account can read them
+_cassandra_service_config_perms:
+  owner: "{{ cassandra_config_owner | default(cassandra_config_user | default('root')) }}"
+  group: "{{ cassandra_config_group | default(cassandra_group) }}"
+  mode: "{{ cassandra_config_mode | default('0640') }}"
+  public_mode: "{{ cassandra_config_public_mode | default('0644') }}"
+  files: "{{ cassandra_config_file_permissions | default({}) }}"
+  user: "{{ cassandra_service_user }}"
+  user_group: "{{ cassandra_service_group }}"
 # Where the config Cassandra runs with is, and the checksums it started with
 _cassandra_service_conf_dir: >-
   {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
 _cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
+# The files of the conf dir cassandra_config writes: the config a restart picks up
+# (and the JMX users' files, in the conf dir on Debian and Ubuntu)
+_cassandra_service_config_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,
+                                  jmxremote.password, jmxremote.access]
 _cassandra_service_jmx: >-
   {{ {'port': cassandra_jmx_port | default(7199) | int}
      | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
@@ -146,7 +177,8 @@ _cassandra_service_nodetool: >-
   else ((' -pw ' ~ cassandra_jmx_password | quote) if cassandra_jmx_password else '') }}
 
 # Operator confirmation before an operation that asks for one (confirm.yml):
-# true asks, false goes on without asking (non-interactive runs).
+# true asks, false goes on without asking (non-interactive runs). --check
+# never asks: nothing changes, the screen is the plan.
 cassandra_operation_confirm: true
 
 # Rolling restarts and stop_rack drain each node (nodetool drain, with the JMX
@@ -162,3 +194,14 @@ cassandra_operation_drain: true
 cassandra_rolling_resume: false
 cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
+
+# The variables the playbooks are run with (-e): a name set close to one of them
+# is pointed out (hosts_check.yml), and preflight warns about cassandra_*
+# variables no role or playbook knows
+_cassandra_playbook_variables: [cassandra_hosts, cassandra_new_nodes, cassandra_leaving_nodes, cassandra_target_dc, cassandra_target_rack,
+                                cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
+                                cassandra_dead_node_address, cassandra_dead_node_new_removal, cassandra_replace_address,
+                                cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
+                                cassandra_allow_down_nodes, cassandra_accept_default_identity, cassandra_reset_nodes,
+                                cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
+                                cassandra_create_cluster_reset_confirm, cassandra_topology_max_removals, cassandra_topology_allow_large_removal]

@@ -8,6 +8,12 @@
 # and both cassandra_service_expected_before/after (ring sizes);
 # cassandra_service_joining_before/after: addresses expected UJ (add_node),
 # cassandra_service_leaving_before: UL (decommission_node resuming).
+# A resumed run (cassandra_rolling_resume) of an operation that drains a node
+# and restarts it may find the node it stopped at (the first one not done)
+# drained or stopped, DN for the others: when its own netstats says so (Mode
+# DRAINED, or JMX refusing the connection), it is checked from another node
+# only and may be down, and its action brings it back. Any other node down,
+# or that node down for another reason, still stops the run.
 - name: Skip a node the interrupted run already did
   ansible.builtin.set_fact:
     cassandra_op_result: "{{ cassandra_service_node_action }} skipped, done in the interrupted run"
@@ -16,16 +22,35 @@
 - name: "{{ cassandra_service_node_action }} {{ inventory_hostname }}"
   when: inventory_hostname not in cassandra_progress_done | default([])
   vars:
-    _cassandra_group_size: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length }}"
+    _cassandra_group_size: "{{ query('community.cassandra.cassandra_nodes') | length }}"
+    _cassandra_resume_candidate: >-
+      {{ cassandra_rolling_resume | default(false) | bool
+         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java']
+         and inventory_hostname == ansible_play_hosts_all | reject('in', cassandra_progress_done | default([])) | first | default('') }}
+    _cassandra_resumed_node: >-
+      {{ _cassandra_resume_candidate | bool
+         and (cassandra_service_resume_state.mode | default('') == 'DRAINED'
+              or 'Connection refused' in cassandra_service_resume_state.stderr | default('') ~ cassandra_service_resume_state.msg | default('')) }}
   block:
     - name: Note the start time
       ansible.builtin.set_fact:
         _cassandra_op_start: "{{ now().timestamp() | int }}"
 
+    - name: Read the state of the node the interrupted run stopped at
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+      register: cassandra_service_resume_state
+      failed_when: false  # a stopped node: JMX refuses the connection
+      check_mode: false  # read-only
+      when: _cassandra_resume_candidate | bool
+
     - name: Check the cluster before touching this node
       ansible.builtin.include_tasks: cluster_health.yml
       vars:
-        cassandra_service_health_node_checks: "{{ cassandra_service_node_checks_before | default(true) }}"
+        cassandra_service_health_node_checks: >-
+          {{ cassandra_service_node_checks_before | default(true) | bool and not _cassandra_resumed_node | bool }}
+        cassandra_service_health_resumed_down: "{{ [_cassandra_preflight.ring_address] if _cassandra_resumed_node | bool else [] }}"
         cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_before | default(_cassandra_group_size) }}"
         cassandra_service_health_joining_ok: "{{ cassandra_service_joining_before | default([]) }}"
         cassandra_service_health_leaving_ok: "{{ cassandra_service_leaving_before | default([]) }}"
@@ -39,7 +64,11 @@
       ansible.builtin.include_tasks: cluster_health.yml
       when: not (ansible_check_mode and cassandra_service_node_action in ['add', 'replace', 'decommission'])
       vars:
-        cassandra_service_health_node_checks: "{{ cassandra_service_node_checks_after | default(true) }}"
+        # --check did not restart the node a resumed run found drained or stopped: still down
+        cassandra_service_health_node_checks: >-
+          {{ cassandra_service_node_checks_after | default(true) | bool and not (ansible_check_mode and _cassandra_resumed_node | bool) }}
+        cassandra_service_health_resumed_down: >-
+          {{ [_cassandra_preflight.ring_address] if ansible_check_mode and _cassandra_resumed_node | bool else [] }}
         cassandra_service_health_expected_nodes: "{{ cassandra_service_expected_after | default(_cassandra_group_size) }}"
         cassandra_service_health_joining_ok: "{{ cassandra_service_joining_after | default([]) }}"
 

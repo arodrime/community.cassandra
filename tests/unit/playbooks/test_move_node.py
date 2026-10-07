@@ -71,7 +71,8 @@ def test_cleanup_targets_and_what_stays_recorded(tmp_path, plan_cleanup, recorde
 
 
 @pytest.mark.parametrize("mode, batches", [
-    ("one", [["n2"], ["n3"]]), ("rack", [["n2"], ["n3"]]), ("dc", [["n2", "n3"]]), ("all", [["n2", "n3"]])])
+    ("sequential", [["n2"], ["n3"]]), ("one", [["n2"], ["n3"]]), ("rack", [["n2"], ["n3"]]), ("dc", [["n2", "n3"]]),
+    ("all", [["n2", "n3"]])])
 def test_cleanup_batches(tmp_path, mode, batches):
     variables = cleanup_vars(tmp_path, ["n2", "n3"], None, ["n1", "n2", "n3"], mode)
     rendered = render(task(CLEANUP, "Clean up, by batches")["vars"]["_batches"], **variables)

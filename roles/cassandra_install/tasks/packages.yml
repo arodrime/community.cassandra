@@ -8,7 +8,7 @@
   ansible.builtin.set_fact:
     _cassandra_install_files: >-
       {%- set out = [] -%}
-      {%- for p in [cassandra_packages] | flatten
+      {%- for p in _cassandra_packages
             if _cassandra_install_before[p] | default([]) | map(attribute='version')
                | select('equalto', cassandra_package_version) | list | length == 0 -%}
       {%-   set _ = out.append(cassandra_install_package_file | replace('{name}', p) | replace('{version}', cassandra_package_version)) -%}

@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    cassandra_config - new ``cassandra_config_keep_files``, config files left as they are on a node already initialized that has them (neither written nor compared), e.g. a logback.xml with appenders no variable covers.
+  - >-
+    import_cluster - with ``import_cluster_keep_hand_edits: true``, the config files with hand edits no variable covers are left as they are on their node (``cassandra_config_keep_files`` in its host_vars) instead of failing the self-check.

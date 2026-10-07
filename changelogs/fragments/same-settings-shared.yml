@@ -1,0 +1,4 @@
+minor_changes:
+  - cassandra_config - a file with the same settings as the role's is left as it is on a running node by the test the import_cluster self-check uses, read as Cassandra, bash, the JVM and logback read it (a quoted number, an inline shell comment, JVM options in another order, a re-indented logback.xml, ``prefer_local=false``, the directories a cassandra.yaml leaves to ``-Dcassandra.storagedir``); the files are compared on the controller (no PyYAML needed on the nodes).
+bugfixes:
+  - import_cluster - the self-check no longer passes a file cassandra_config would rewrite (e.g. a quote going on to the next line in cassandra-env.sh, an unlock JVM option moved), and JVM options that add up (``-XX:OnOutOfMemoryError``, an agent given twice) are compared as such.

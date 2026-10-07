@@ -20,15 +20,18 @@
     - ansible_check_mode
     - ansible_facts['os_family'] == "RedHat"
 
-- name: Remove the Cassandra apt sources and their credentials (Debian & Ubuntu)
+- name: Remove the Cassandra apt sources (Debian & Ubuntu)
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop: >-
     {{ ([cassandra_version] + ['311x', '40x', '41x', '50x']) | unique | product(['list', 'sources'])
-       | map('join', '.') | map('regex_replace', '^', '/etc/apt/sources.list.d/cassandra-') | list
-       + ['/etc/apt/auth.conf.d/cassandra.conf'] }}
+       | map('join', '.') | map('regex_replace', '^', '/etc/apt/sources.list.d/cassandra-') | list }}
   register: _cassandra_repository_removed
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Remove their credentials (Debian & Ubuntu)
+  ansible.builtin.include_tasks: remove_apt_credentials.yml
   when: ansible_facts['os_family'] == "Debian"
 
 # Also under --check: cassandra_install resolves the packages' dependencies

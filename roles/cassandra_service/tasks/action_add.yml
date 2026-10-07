@@ -68,7 +68,7 @@
         _cassandra_stream_from: ["{{ inventory_hostname }}"]
         _cassandra_stream_join: true
         _cassandra_stream_peers: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')]
+          {{ query('community.cassandra.cassandra_nodes')
              | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_new_nodes | default(inventory_hostname)))
              | list }}
         _cassandra_stream_advice: >-

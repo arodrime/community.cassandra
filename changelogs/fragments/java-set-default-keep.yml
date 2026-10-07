@@ -1,0 +1,5 @@
+bugfixes:
+  - >-
+    cassandra_install - ``cassandra_java_set_default: false`` also leaves ``/usr/bin/java`` as it is with a Java tarball or ``cassandra_java_home`` (it was always pointed at that Java).
+  - >-
+    import_cluster - a node whose ``/usr/bin/java`` is another Java than the running one (e.g. the JDK of other programs) gets ``cassandra_java_set_default: false`` in its host_vars, so the roles leave the system java as it is.

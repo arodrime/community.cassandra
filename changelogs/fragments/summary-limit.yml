@@ -1,0 +1,2 @@
+bugfixes:
+  - "Operation playbooks - the final summary listed a node left out of the run by ``--limit`` as ``not reached``; it now says ``not in this run (--limit)``, and ``not reached`` is kept for a node of the run the operation did not get to."

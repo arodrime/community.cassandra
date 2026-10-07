@@ -26,6 +26,9 @@ def test_runs_as_cassandra_with_limits(host):
     limits = host.file(f"/proc/{pid}/limits").content_string
 
     assert host.run(f"ps -o user= -p {pid}").stdout.strip() == "cassandra"
+    # cassandra_group: the unit's Group=, and the group of the config files it reads
+    assert host.run(f"ps -o group= -p {pid}").stdout.strip() == "dbgrp"
+    assert "Group=dbgrp" in host.file("/etc/systemd/system/cassandra.service").content_string
     assert "CassandraDaemon" in host.file(f"/proc/{pid}/cmdline").content_string.replace("\0", " ")
     assert [line.split()[3:5] for line in limits.splitlines() if line.startswith("Max open files")] == [["1048576", "1048576"]]
 

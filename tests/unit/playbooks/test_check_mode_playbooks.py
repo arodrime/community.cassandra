@@ -22,32 +22,38 @@ except ImportError:
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "decommission_node.yml")
 
 
-def gone(check_mode, host, states=("normal", "normal"), done=None):
+def others_in_ring(check_mode, host, in_ring=(True, True), done=None, hosts=("n2", "n5")):
+    """decommission_node: the other nodes to remove still in the ring, as the health check of host expects them."""
     with open(PLAYBOOK, encoding="utf-8") as f:
         plays = yaml.safe_load(f)
     task = next(t for p in plays for t in p.get("tasks", []) if t.get("name") == "Remove this node")
-    variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": ["n2", "n5"], "inventory_hostname": host,
-                 "hostvars": {"n2": {"inventory_hostname": "n2", "cassandra_leaving_node": {"state": states[0]}},
-                              "n5": {"inventory_hostname": "n5", "cassandra_leaving_node": {"state": states[1]}}}}
+    hostvars = dict((h, {"inventory_hostname": h, "cassandra_leaving_node": {"in_ring": r}}) for h, r in zip(hosts, in_ring))
+    variables = {"ansible_check_mode": check_mode, "ansible_play_hosts_all": list(hosts), "inventory_hostname": host,
+                 "hostvars": hostvars}
     if done is not None:
         variables["cassandra_progress_done"] = done
-    return int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_gone"])))
+    return int(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_others_in_ring"])))
 
 
 def test_the_nodes_before_are_gone():
-    assert (gone(False, "n2"), gone(False, "n5")) == (0, 1)
+    assert (others_in_ring(False, "n2"), others_in_ring(False, "n5")) == (1, 0)
 
 
 def test_none_is_gone_under_check():
-    assert (gone(True, "n2"), gone(True, "n5")) == (0, 0)
+    assert (others_in_ring(True, "n2"), others_in_ring(True, "n5")) == (1, 1)
 
 
 def test_under_check_the_ones_an_earlier_run_removed_are_gone():
     # --check -e cassandra_rolling_resume=true after a run that removed n2
-    assert gone(True, "n5", states=("decommissioned", "normal")) == 1
-    assert gone(True, "n5", states=("leaving", "normal")) == 0
-    assert gone(True, "n5", done=["n2"]) == 1  # in the progress file, whatever nodetool said
-    assert gone(True, "n2", states=("decommissioned", "normal")) == 0  # not itself
+    assert others_in_ring(True, "n5", in_ring=(False, True)) == 0
+    assert others_in_ring(True, "n5", done=["n2"]) == 0  # in the progress file, whatever nodetool said
+
+
+def test_nodes_out_of_the_ring_already_are_not_counted():
+    # topology: n3 still leaving, n4 and n6 decommissioned but running (out of the ring), n7 to decommission
+    hosts = ("n3", "n4", "n6", "n7")
+    flags = (True, False, False, True)
+    assert [others_in_ring(False, h, flags, hosts=hosts) for h in hosts] == [1, 1, 1, 0]
 
 
 def add_node_pending(check_mode, host):

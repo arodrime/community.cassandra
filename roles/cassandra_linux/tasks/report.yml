@@ -20,8 +20,8 @@
             if _cassandra_linux_live and _cassandra_linux_before['swap|active'] | int > 0 else [])
          + ([{'item': 'swap entries in /etc/fstab', 'before': _cassandra_linux_before['swap|fstab'] | int, 'after': 0}]
             if _cassandra_linux_before['swap|fstab'] | int > 0 else [])
-         + ([{'item': 'disable-thp.service', 'before': _cassandra_linux_before['thp|unit'], 'after': 'enabled' if _cassandra_linux_live else 'installed'}]
-            if thp is changed else [])
+         + ([{'item': 'disable-thp.service', 'before': _cassandra_linux_before['thp|unit'], 'after': 'enabled' if _cassandra_linux_boot else 'installed'}]
+            if thp is changed or (_cassandra_linux_boot and _cassandra_linux_before['thp|unit'] != 'enabled') else [])
          + ([{'item': 'transparent_hugepage', 'before': _cassandra_linux_before['thp|enabled'], 'after': 'never'}]
             if _cassandra_linux_live and _cassandra_linux_before['thp|enabled'] not in ['never', ''] else [])
          + ([{'item': 'package ' ~ _cassandra_timesync_pkg, 'before': 'absent', 'after': 'present'}]
@@ -49,13 +49,14 @@
   ansible.builtin.set_fact:
     _cassandra_linux_items: >-
       {{ _cassandra_linux_items
-         + ([{'item': 'read_ahead_kb ' ~ item.item, 'before': _disk[0], 'after': cassandra_data_readahead_kb | string}]
-            if _disk[0] != cassandra_data_readahead_kb | string else [])
+         + ([{'item': 'read_ahead_kb ' ~ item.item, 'before': _disk[0], 'after': _cassandra_readahead_read_back | string}]
+            if _disk[0] | int != _cassandra_readahead_read_back | int else [])
          + ([{'item': 'IO scheduler ' ~ item.item, 'before': _disk[1], 'after': 'none'}]
             if _disk[2] == '0' and _disk[1] not in ['none', ''] else []) }}
   vars:
     _disk: "{{ (item.stdout | default('||1')).split('|') }}"
   loop: "{{ cassandra_data_disk_before.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+  when: _cassandra_data_live_here | default(false) | bool
   loop_control:
     label: "{{ item.item }}"
 

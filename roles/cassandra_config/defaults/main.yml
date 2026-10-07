@@ -6,22 +6,36 @@ cassandra_version: "50x"
 # (alternatives symlink), the deb /etc/cassandra.
 cassandra_conf_dir: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra' }}"
 
-# RedHat: own conf dir, seeded from the package's default.conf and selected
-# through alternatives, so default.conf stays pristine. "" writes into
-# default.conf instead.
+# RedHat: own conf dir, seeded once from the dir /etc/cassandra/conf points to
+# (default.conf on a new install) and selected through alternatives, so the
+# package's files stay as shipped. "" writes into the dir in use instead.
 cassandra_rpm_conf_alternative: /etc/cassandra/ansible.conf
 cassandra_rpm_conf_alternative_priority: 100
 
 # Show the diff and ask ("yes") before changing files: auto = only on a node
-# that was already initialized (<cassandra_data_dir>/system exists), so a
-# first install is not blocked; true = always; false = never. Without a
-# terminal to answer, a required confirmation fails the run.
+# that was already initialized (a system keyspace in its data directories, or
+# Cassandra running), so a first install is not blocked; true = whenever a
+# file changes; false = never. Without a terminal to answer, a required
+# confirmation fails the run.
 cassandra_config_confirm: auto
 
 # On a node already initialized, a file with the same settings as the role's
-# (only comments, blank lines or their layout differ, e.g. a config written by
-# hand, without the role's header) is left as it is. true rewrites it.
+# (read as Cassandra, bash, the JVM and logback read them: comments, layout,
+# the order of the JVM options and quotes that change nothing do not count,
+# e.g. a config written by hand, without the role's header) is left as it
+# is. true rewrites it.
 cassandra_config_normalize: false
+# Where the directories a cassandra.yaml leaves out are (-Dcassandra.storagedir
+# of the node, e.g. $CASSANDRA_HOME/data for a tarball), for the test above.
+# "": the running Cassandra's. import_cluster sets it for such files.
+cassandra_config_storage_dir: ""
+
+# Config files left as they are on a node already initialized that has them
+# (not written nor compared), e.g. a logback.xml with appenders no variable covers: names of
+# the conf dir's files (cassandra.yaml, cassandra-env.sh, jvm-server.options,
+# jvm<N>-server.options, cassandra-rackdc.properties, logback.xml).
+# import_cluster sets it with import_cluster_keep_hand_edits.
+cassandra_config_keep_files: []
 
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data
@@ -66,8 +80,13 @@ cassandra_row_cache_size: "0MiB"
 cassandra_row_cache_save_period: "{{ '0' if cassandra_version == '40x' else '0s' }}"  # 4.0: seconds, no unit
 cassandra_counter_cache_size: ""
 cassandra_counter_cache_save_period: "{{ '7200' if cassandra_version == '40x' else '7200s' }}"  # 4.0: seconds, no unit
+# periodic, group or batch. Cassandra refuses commitlog_sync_period outside
+# periodic mode: the role writes it in periodic mode only, and the group
+# window in group mode only. The window has no default, as in Cassandra:
+# group mode needs it set (e.g. 15ms)
 cassandra_commitlog_sync: "periodic"
 cassandra_commitlog_sync_period: "10000ms"
+cassandra_commitlog_sync_group_window: ""
 cassandra_commitlog_segment_size: "32MiB"
 cassandra_commitlog_disk_access_mode: "legacy"
 cassandra_seed_provider_class_name: "org.apache.cassandra.locator.SimpleSeedProvider"
@@ -197,6 +216,7 @@ cassandra_permissions_validity_in_ms: 2000
 cassandra_credentials_validity_in_ms: 2000
 cassandra_row_cache_size_in_mb: 0
 cassandra_commitlog_sync_period_in_ms: 10000
+cassandra_commitlog_sync_group_window_in_ms: ""
 cassandra_commitlog_segment_size_in_mb: 32
 cassandra_index_summary_resize_interval_in_minutes: 60
 cassandra_trickle_fsync_interval_in_kb: 10240
@@ -238,7 +258,7 @@ cassandra_extra_settings: {}
 # by the cassandra user in a package install).
 cassandra_log_dir: /var/log/cassandra
 cassandra_heap_size: ""  # "" = stock auto-sizing; e.g. "8G" sets -Xms/-Xmx
-cassandra_heap_newsize: ""  # CMS only (4.x): required with cassandra_heap_size, e.g. "800M"
+cassandra_heap_newsize: ""  # 4.x without G1: set together with cassandra_heap_size, e.g. "800M"
 cassandra_max_direct_memory_size: ""
 cassandra_heap_dump_dir: "$CASSANDRA_LOG_DIR"
 cassandra_local_jmx: true  # false = remote JMX, with authentication
@@ -249,8 +269,9 @@ cassandra_jmx_rmi_hostname: ""
 # Each cassandra_jvm_<option> applies to every jvm<N>-server.options file;
 # cassandra_jvm<N>_<option> overrides one (e.g. cassandra_jvm11_gc).
 # GC: the series' stock one by default (CMS on 4.x, G1 on 5.0). G1 on 4.x
-# uses 5.0's G1 settings; CMS needs Java 8/11. custom: both blocks
-# commented, set your own flags with cassandra_jvm<N>_extra_options.
+# turns on the stock G1 block, with the values below (5.0's); CMS needs
+# Java 8/11. custom: both blocks commented, set your own flags with
+# cassandra_jvm<N>_extra_options.
 cassandra_jvm_gc: "{{ 'CMS' if cassandra_version in ['40x', '41x'] else 'G1' }}"  # G1, CMS or custom
 cassandra_jvm_cms_initiating_occupancy_fraction: 75
 cassandra_jvm_max_tenuring_threshold: 2
@@ -286,16 +307,33 @@ cassandra_debug_log_enabled: true
 # still reach stdout).
 cassandra_log_console: false
 
-# Config files may hold keystore passwords: readable by the cassandra group only
-cassandra_config_owner: root
-cassandra_config_group: cassandra
-cassandra_config_mode: "0640"
+# The account Cassandra runs as (cassandra_service's unit runs it so): it gets
+# the directories the role creates and the JMX users' files
+cassandra_user: cassandra
+cassandra_group: cassandra
+# The config files: owned by root, group cassandra_group (Cassandra reads them
+# but cannot rewrite them). cassandra.yaml (keystore passwords) and the JVM
+# options files (their extra options, e.g. -Djavax.net.ssl.keyStorePassword=)
+# are not readable by others. The other files hold no secret and are readable
+# by all: nodetool, run by any user, reads the JMX port from cassandra-env.sh.
+cassandra_config_user: root  # cassandra_config_owner, its former name, still wins when set
+cassandra_config_group: "{{ cassandra_group }}"
+cassandra_config_mode: "0640"  # cassandra.yaml, jvm*-server.options
+cassandra_config_public_mode: "0644"  # cassandra-env.sh, cassandra-rackdc.properties, logback.xml
+# Per file, over the above: {file name: {owner, group, mode}}, any of the three,
+# e.g. {logback.xml: {mode: "0600"}}. Also for jmxremote.password and
+# jmxremote.access (cassandra_user, cassandra_group, 0400 by default; the JVM
+# refuses a password file its group or others can read). import_cluster
+# writes it for the files that differ from the others on a node.
+cassandra_config_file_permissions: {}
 # Keep a timestamped copy of each file the role replaces, next to it (to roll back)
 cassandra_config_backup: true
 
 # Settings a node keeps for life once it has joined (cluster_name, num_tokens,
-# partitioner, snitch, dc, rack): changing them breaks it, so the role refuses.
-# true only to follow a documented procedure (e.g. a snitch migration).
+# partitioner, snitch, dc, rack, dc_suffix, ec2_naming_scheme, and 5.0's
+# storage_compatibility_mode one step at a time): changing them breaks it, so
+# the role refuses. true skips all these checks: only to follow a documented
+# procedure (e.g. a snitch migration).
 cassandra_config_force_identity_change: false
 
 # Remote JMX users (with cassandra_local_jmx: false), written to

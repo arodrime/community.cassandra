@@ -342,9 +342,9 @@ def test_import_key_file_owner_and_mode_apart():
     found = dict(FOUND, ini_owner="root", ini_group="root", ini_mode="644",
                  key_owner="root", key_group="root", key_mode="0600")
     out = cassandra_medusa_import(HAND, CREDENTIALS, found)["vars"]
-    assert (out["cassandra_medusa_config_owner"], out["cassandra_medusa_config_mode"]) == ("root", "0644")
+    assert (out["cassandra_medusa_config_user"], out["cassandra_medusa_config_mode"]) == ("root", "0644")
     assert out["cassandra_medusa_key_file_mode"] == "0600"
-    assert "cassandra_medusa_key_file_owner" not in out  # same as medusa.ini's
+    assert "cassandra_medusa_key_file_user" not in out  # same as medusa.ini's
 
 
 def test_import_key_file_same_as_config():
@@ -356,8 +356,18 @@ def test_import_key_file_same_as_config():
 def test_import_owner_and_mode():
     found = dict(FOUND, ini_owner="root", ini_group="root", ini_mode="640")
     out = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, found)["vars"]
-    assert (out["cassandra_medusa_config_owner"], out["cassandra_medusa_config_group"],
+    assert (out["cassandra_medusa_config_user"], out["cassandra_medusa_config_group"],
             out["cassandra_medusa_config_mode"]) == ("root", "root", "0640")
+
+
+def test_import_owner_follows_the_account():
+    """The role's default owner is the account Cassandra runs as (cassandra_user, cassandra_group)."""
+    found = dict(FOUND, ini_owner="dbsvc", ini_group="dbgrp", ini_mode="600", account_user="dbsvc", account_group="dbgrp")
+    out = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, found)["vars"]
+    assert not [k for k in out if k.startswith("cassandra_medusa_config_")]
+    found = dict(found, account_user="", account_group="")
+    out = cassandra_medusa_import("[storage]\nstorage_provider = s3\n", None, found)["vars"]
+    assert (out["cassandra_medusa_config_user"], out["cassandra_medusa_config_group"]) == ("dbsvc", "dbgrp")
 
 
 def test_import_invalid_ini():

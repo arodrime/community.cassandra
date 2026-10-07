@@ -22,15 +22,25 @@
   gather_facts: false
   any_errors_fatal: true  # remove none of them if one is refused
   vars:
-    _cluster: "{{ groups[lookup('community.cassandra.cassandra_hosts')] }}"
+    # the nodes of the cluster and the ones to remove (they may be marked cassandra_node_state: absent)
+    _cluster: "{{ (query('community.cassandra.cassandra_nodes') + _leaving) | unique }}"
     _leaving: "{{ ansible_play_hosts_all }}"
     _staying: "{{ _cluster | reject('in', _leaving) | list }}"
+    _keyspaces: "{{ cassandra_decommission_keyspaces.out | default('') | community.cassandra.cassandra_keyspaces }}"
+    _nodes_left: >-
+      {%- set out = {} -%}
+      {%- for h in _staying -%}
+      {%-   set dc = hostvars[h]._cassandra_preflight.cassandra_dc -%}
+      {%-   set _ = out.update({dc: out.get(dc, 0) + 1}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _problems: "{{ _keyspaces | community.cassandra.cassandra_replication_problems(_nodes_left) }}"
   tasks:
     - name: Check this node
       block:
         - name: A node to remove is in the cluster
           ansible.builtin.assert:
-            that: inventory_hostname in _cluster
+            that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')]
             fail_msg: "{{ inventory_hostname }} is not in the inventory group {{ lookup('community.cassandra.cassandra_hosts') }}"
             quiet: true
 
@@ -73,12 +83,6 @@
                  + ['Lower the replication first (ALTER KEYSPACE, then repair), or set cassandra_decommission_force: true:'
                     ~ ' those replicas are then lost, and QUORUM can fail.'] }}
             quiet: true
-          vars:
-            _nodes_left: >-
-              {%- set out = {} -%}{%- for h in _staying -%}{%- set dc = hostvars[h]._cassandra_preflight.cassandra_dc -%}{%-                  set _ = out.update({dc: out.get(dc, 0) + 1}) -%}{%- endfor -%}{{ out }}
-            _problems: >-
-              {{ cassandra_decommission_keyspaces.out | default('') | community.cassandra.cassandra_keyspaces
-                 | community.cassandra.cassandra_replication_problems(_nodes_left) }}
           run_once: true
       rescue:
         - name: Record the refusal
@@ -103,19 +107,34 @@
           ansible.builtin.fail:
             msg: No node was removed.
 
-    - name: Confirm the removal
+    - name: Show the plan and confirm the removal
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: |-
-          decommission_node will remove {{ _leaving | join(', ') }} from the cluster, one at a time: each one streams
-          its data to the other nodes (this can take hours), then Cassandra is stopped and disabled on it.
-          {% for h in _leaving if hostvars[h].cassandra_leaving_node.state | default('normal') != 'normal' %}
-          {{ h }}: {{ 'already decommissioned, only stopped and disabled' if hostvars[h].cassandra_leaving_node.state == 'decommissioned'
-                     else 'decommission already in progress (an earlier run), waited for' }}
-          {% endfor %}
-          {{ _cassandra_session_warning }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: "Remove {{ _leaving | join(', ') }} from the cluster?"
+        cassandra_screen: >-
+          {{ _states | community.cassandra.cassandra_decommission_screen(_nodes, ring=_ring, keyspaces=_keyspaces, peer=_staying[0],
+               replication_problems=_problems if cassandra_decommission_force | default(false) | bool else []) }}
+        _states: >-
+          {%- set l = [] -%}
+          {%- for h in _leaving -%}
+          {%-   set _ = l.append({'name': h, 'state': hostvars[h].cassandra_leaving_node.state | default('normal')}) -%}
+          {%- endfor -%}
+          {{ l }}
+        _nodes: >-
+          {%- set l = [] -%}
+          {%- for h in _cluster if hostvars[h]._cassandra_preflight is defined -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   set _ = l.append({'name': h, 'address': p.ring_address, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
+                                  'seed': p.layout.seed | bool}) -%}
+          {%- endfor -%}
+          {{ l }}
+        # as a node that stays sees it now, else as preflight saw it
+        _ring: >-
+          {{ (hostvars[_leaving[0]].cassandra_leaving_ring | default({})).cluster_status
+             | default((cassandra_preflight_status | default({})).cluster_status | default({}), true) }}
 
 - name: Set up the progress file
   hosts: "{{ cassandra_leaving_nodes }}"
@@ -147,22 +166,28 @@
       vars:
         cassandra_service_node_action: decommission
         cassandra_service_node_checks_after: false  # stopped: checked from another node
-        # the nodes before this one are gone (--check: only those an earlier run removed)
-        _gone: >-
-          {%- set before = ansible_play_hosts_all[:ansible_play_hosts_all.index(inventory_hostname)] -%}
-          {{ before | select('in', cassandra_progress_done | default([])
-                                   + before | map('extract', hostvars) | selectattr('cassandra_leaving_node.state', 'equalto', 'decommissioned')
-                                     | map(attribute='inventory_hostname') | list) | list | length
-             if ansible_check_mode else before | length }}
+        # the other nodes to remove still in the ring: the ones after this one (--check: before it too) that were
+        # in it when checked, not done by an interrupted run
+        _others_in_ring: >-
+          {%- set n = namespace(count=0) -%}
+          {%- set mine = ansible_play_hosts_all.index(inventory_hostname) -%}
+          {%- for h in ansible_play_hosts_all if h != inventory_hostname and h not in cassandra_progress_done | default([]) -%}
+          {%-   if (ansible_check_mode or ansible_play_hosts_all.index(h) > mine)
+                   and (hostvars[h].cassandra_leaving_node | default({})).in_ring | default(true) -%}
+          {%-     set n.count = n.count + 1 -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ n.count }}
         # this one may be leaving already (an earlier run): its own checks are skipped, UL expected
         _left: >-
           {{ cassandra_leaving_node.state == 'decommissioned'
              or (cassandra_leaving_node.state == 'leaving' and not cassandra_leaving_node.in_ring) }}
         cassandra_service_node_checks_before: "{{ cassandra_leaving_node.state == 'normal' }}"
         cassandra_service_leaving_before: "{{ [cassandra_leaving_node_address] if cassandra_leaving_node.state == 'leaving' else [] }}"
-        cassandra_service_expected_before: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int - (1 if _left | bool else 0) }}
-        cassandra_service_expected_after: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | length - _gone | int - 1 }}"
+        # the nodes that stay (not the hosts marked cassandra_node_state: absent), the other ones to remove still in the ring
+        _staying: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list | length }}"
+        cassandra_service_expected_before: "{{ _staying | int + _others_in_ring | int + (0 if _left | bool else 1) }}"
+        cassandra_service_expected_after: "{{ _staying | int + _others_in_ring | int }}"
 
 - name: Summary
   hosts: "{{ cassandra_leaving_nodes }}"

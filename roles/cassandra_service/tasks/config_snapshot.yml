@@ -1,5 +1,5 @@
 ---
-# Records the checksums of the config files the running Cassandra started with,
+# Records the checksums of the config files (and of the systemd unit) the running Cassandra started with,
 # so config_pending.yml can tell a change still to apply by content (a file
 # rewritten with the same content, or a change applied live, is not pending).
 - name: Checksum the config files
@@ -9,10 +9,18 @@
     get_checksum: true
   register: cassandra_config_snapshot_files
 
+# the unit too: a new User=, Group= or limit also waits for a restart
+- name: Checksum the unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cassandra.service
+  register: cassandra_config_snapshot_unit
+
 - name: Record them
   ansible.builtin.copy:
     content: >-
       {{ dict(cassandra_config_snapshot_files.files | map(attribute='path')
-              | zip(cassandra_config_snapshot_files.files | map(attribute='checksum'))) | to_nice_json }}
+              | zip(cassandra_config_snapshot_files.files | map(attribute='checksum')))
+         | combine({cassandra_config_snapshot_unit.stat.path: cassandra_config_snapshot_unit.stat.checksum}
+                   if cassandra_config_snapshot_unit.stat.exists else {}) | to_nice_json }}
     dest: "{{ _cassandra_service_config_snapshot }}"
     mode: "0644"

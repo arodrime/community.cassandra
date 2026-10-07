@@ -27,7 +27,7 @@ EXAMPLES = '''
 - name: Wait until the node has joined the ring
   community.cassandra.cassandra_netstats:
   register: netstats
-  until: netstats.mode == 'NORMAL'
+  until: netstats.mode | default('') == 'NORMAL'
   retries: 60
   delay: 10
 
@@ -39,7 +39,9 @@ EXAMPLES = '''
 
 RETURN = '''
 mode:
-  description: Operating mode of the node, as in the "Mode:" line.
+  description:
+    - Operating mode of the node, as in the "Mode:" line.
+    - Empty string when the output has no "Mode:" line.
   returned: success
   type: str
   sample: NORMAL

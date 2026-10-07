@@ -25,7 +25,7 @@
   any_errors_fatal: true
   vars:
     _new_dc: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight.cassandra_dc }}"
-    _existing: "{{ groups[lookup('community.cassandra.cassandra_hosts')] | reject('in', ansible_play_hosts_all) | list }}"
+    _existing: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
     _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
   tasks:
@@ -116,24 +116,35 @@
             fail_msg: "{{ cassandra_new_dc_tokens.problems }}"
             quiet: true
 
-    - name: Confirm
+    - name: Show the plan and confirm
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: |-
-          add_datacenter will add {{ _new_dc }} ({{ ansible_play_hosts_all | join(', ') }}), then run:
-          {% for statement in cassandra_new_dc_alter %}
-            {{ statement }}
-          {% endfor %}
-          then stream each new node's data from {{ cassandra_rebuild_source_dc }} (this can take hours).
-          {% if _single | bool %}
-          One token per node, the new datacenter's ring:
-          {% for line in cassandra_new_dc_tokens.lines | reject('match', '^\+ new node') %}
-            {{ line }}
-          {% endfor %}
-          {% endif %}
-          {{ _cassandra_session_warning }}
+        _blocks: >-
+          {%- set l = [] -%}
+          {%- for h in ansible_play_hosts_all -%}
+          {%-   set p = hostvars[h]._cassandra_preflight -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(p),
+                                  'lines': ['streams its data from ' ~ cassandra_rebuild_source_dc ~ ' (nodetool rebuild)']}) -%}
+          {%- endfor -%}
+          {{ l }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: "Add {{ _new_dc }}?"
+        cassandra_screen:
+          operation: add_datacenter
+          summary: "add {{ _new_dc }} ({{ ansible_play_hosts_all | join(', ') }})"
+          intro:
+            - "Adds the nodes, then runs:"
+            - pre: "{{ cassandra_new_dc_alter | map('regex_replace', '^', '  ') | list }}"
+            - "Then each new node streams its data from {{ cassandra_rebuild_source_dc }} (hours on big nodes)."
+          blocks: "{{ _blocks }}"
+          after:
+            - >-
+              {{ "One token per node, the new datacenter's ring:" if _single | bool else '' }}
+            - pre: >-
+                {{ cassandra_new_dc_tokens.lines | reject('match', '^\+ new node') | map('regex_replace', '^', '  ') | list
+                   if _single | bool else [] }}
 
     # a new datacenter: balanced (no move) is the even ring, racks taken in turn
     - name: Give the new node its token
@@ -170,9 +181,9 @@
         _cassandra_join_over: run add_datacenter again.
         _done: "{{ 0 if ansible_check_mode else ansible_play_hosts_all.index(inventory_hostname) }}"  # --check: none added
         cassandra_service_expected_before: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - ansible_play_hosts_all | length + _done | int }}
+          {{ query('community.cassandra.cassandra_nodes') | length - ansible_play_hosts_all | length + _done | int }}
         cassandra_service_expected_after: >-
-          {{ groups[lookup('community.cassandra.cassandra_hosts')] | length - ansible_play_hosts_all | length + _done | int + 1 }}
+          {{ query('community.cassandra.cassandra_nodes') | length - ansible_play_hosts_all | length + _done | int + 1 }}
 
 - name: Give the datacenter its replicas and data
   hosts: "{{ cassandra_new_nodes }}"

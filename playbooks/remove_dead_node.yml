@@ -27,7 +27,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Remove the dead node
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _method: "{{ cassandra_dead_node_method | default('removenode') }}"
@@ -35,6 +35,16 @@
     _nothing_to_do: "{{ _method in ['removenode', 'removenode_force'] and cassandra_dead_node | default({}) == {} }}"
     # removenode: an earlier run's removal still in progress (on any node) is waited for again
     _resume: "{{ _method == 'removenode' and (cassandra_dead_removal | default({})).state | default('start') == 'resume' }}"
+    _nodes_left: >-
+      {%- set out = {} -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   set dc = hostvars[h]._cassandra_preflight.cassandra_dc -%}
+      {%-   set _ = out.update({dc: out.get(dc, 0) + 1}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _replication_problems: >-
+      {{ cassandra_dead_keyspaces.out | default('') | community.cassandra.cassandra_keyspaces
+         | community.cassandra.cassandra_replication_problems(_nodes_left) }}
   tasks:
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
@@ -206,39 +216,58 @@
 
     - name: Every datacenter keeps enough nodes for its replicas
       ansible.builtin.assert:
-        that: _problems | length == 0 or cassandra_decommission_force | default(false) | bool
+        that: _replication_problems | length == 0 or cassandra_decommission_force | default(false) | bool
         fail_msg: >-
-          {{ ['Without ' ~ cassandra_dead_node_address ~ ', too few nodes are left:'] + _problems
+          {{ ['Without ' ~ cassandra_dead_node_address ~ ', too few nodes are left:'] + _replication_problems
              + ['Add a node first (or replace_node), or lower the replication; cassandra_decommission_force: true'
                 ~ ' goes on anyway.'] }}
         quiet: true
       when: not _nothing_to_do | bool
-      vars:
-        _nodes_left: >-
-          {%- set out = {} -%}{%- for h in ansible_play_hosts -%}{%- set dc = hostvars[h]._cassandra_preflight.cassandra_dc -%}{%-              set _ = out.update({dc: out.get(dc, 0) + 1}) -%}{%- endfor -%}{{ out }}
-        _problems: >-
-          {{ cassandra_dead_keyspaces.out | default('') | community.cassandra.cassandra_keyspaces
-             | community.cassandra.cassandra_replication_problems(_nodes_left) }}
       run_once: true
 
-    - name: Confirm
+    - name: Show the plan and confirm
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
+        tasks_from: screen.yml
       when: not _nothing_to_do | bool
       vars:
-        cassandra_confirm_prompt: |-
-          remove_dead_node will take {{ cassandra_dead_node_address | default('(not set)') }} out of the ring with {{ _method }}.
-          {% if _resume | bool %}
-          Its removal started earlier is still in progress on {{ cassandra_dead_removal.on }}: waited for again.
-          {% elif _method == 'removenode' %}
-          Its ranges are streamed from the other replicas (this can take hours).
-          {% elif _method == 'removenode_force' %}
-          FORCE, on {{ cassandra_dead_force.on | default('') }}: finishes the pending removal without waiting for the streams left: run a repair afterwards.
-          {% else %}
-          ASSASSINATE: no streaming. Data only this node held is LOST; run a full repair afterwards.
-          {% endif %}
-          {{ _cassandra_session_warning }}
+        _dead: "{{ cassandra_dead_node | default({}) }}"
+        _dead_dc: >-
+          {%- set out = [] -%}
+          {%- for dc, info in cassandra_dead_ring.cluster_status.items()
+                if info.nodes | default([]) | selectattr('address', 'equalto', cassandra_dead_node_address) | list -%}
+          {%-   set _ = out.append(dc) -%}
+          {%- endfor -%}
+          {{ out | first | default('?') }}
+        cassandra_screen_session_warning: true
+        cassandra_screen_question: "Take {{ cassandra_dead_node_address | default('(not set)') }} out of the ring with {{ _method }}?"
+        cassandra_screen:
+          operation: remove_dead_node
+          summary: "take {{ cassandra_dead_node_address | default('(not set)') }} out of the ring with {{ _method }}"
+          blocks:
+            - title: >-
+                {{ cassandra_dead_node_address | default('(not set)') }}  {{ (_dead.status | default('') ~ _dead.state | default(''))
+                   or 'not in the ring' }}{{ ('  ' ~ _dead_dc ~ ' / ' ~ _dead.rack) if _dead.rack is defined else '' }}{{
+                   (', load ' ~ _dead.load) if _dead.load is defined else '' }}
+              lines:
+                - >-
+                  {{ ('its removal, started earlier, is still in progress on ' ~ cassandra_dead_removal.on ~ ': waited for again')
+                     if _resume | bool
+                     else ('removenode from ' ~ ansible_play_hosts[0] ~ ': its ranges are streamed from the other replicas'
+                           ~ ' (hours on a big node)') if _method == 'removenode'
+                     else ('removenode force on ' ~ cassandra_dead_force.on | default('')
+                           ~ ': finishes the pending removal without waiting for the streams left') if _method == 'removenode_force'
+                     else 'assassinate: out of gossip, no streaming' }}
+                - >-
+                  end state: out of the ring{{ '' if _method == 'removenode' else
+                  ('; run a repair afterwards' if _method == 'removenode_force' else '; run a full repair afterwards') }}
+          warnings:
+            - label: data loss
+              text: "{{ 'assassinate: data only this node held is LOST.' if _method == 'assassinate' else '' }}"
+            - label: replication
+              text: >-
+                {{ (['cassandra_decommission_force is true: the removal goes on although too few nodes are left for'
+                     ' some keyspaces:'] + _replication_problems) if _replication_problems and cassandra_decommission_force | default(false) | bool else '' }}
 
     - name: Remove it (removenode, from {{ ansible_play_hosts[0] }})
       community.cassandra.cassandra_removenode:

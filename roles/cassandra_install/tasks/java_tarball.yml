@@ -96,6 +96,13 @@
         group: root
       when: not ansible_check_mode
 
+    # Before it is marked unpacked: once the tarball is fixed, it is unpacked again
+    - name: Check the unpacked Java is cassandra_java_version
+      ansible.builtin.include_tasks: java_release.yml
+      vars:
+        _cassandra_java_release_of_tarball: true
+      when: not ansible_check_mode
+
     - name: Mark it unpacked
       ansible.builtin.copy:
         content: "{{ cassandra_java_tarball }}\n"
@@ -120,6 +127,21 @@
     path: "{{ _cassandra_java_home }}/bin/java"
   register: cassandra_java_home_java
 
+# Cassandra runs java as its own user: a tarball with private directories
+# (0700), or unpacked under a restrictive umask, leaves it no java. Only adds
+# read and traverse rights; a Java installed by other means is left as it is.
+- name: Let every user read and run the unpacked Java
+  ansible.builtin.file:
+    path: "{{ _cassandra_java_home }}"
+    state: directory
+    recurse: true
+    mode: go+rX
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_home_java.stat.exists
+    - cassandra_java_tarball_done.stat.exists or not (cassandra_java_home_present.stat.exists | default(false))
+      or cassandra_java_tarball_started.stat.exists | default(false)
+
 - name: A Java given by its directory must be there
   ansible.builtin.assert:
     that: cassandra_java_home_java.stat.exists
@@ -128,9 +150,11 @@
   when: cassandra_java_tarball == ""
 
 # Resolved, both: the directory itself may be a link (e.g. a "current" link)
+# -m: a /usr/bin/java that leads nowhere (an alternative of a removed Java)
+# still prints a line, so it is told apart from this one
 - name: Resolve the system java and this one
   ansible.builtin.command:
-    argv: [readlink, -f, /usr/bin/java, "{{ _cassandra_java_home }}/bin/java"]
+    argv: [readlink, -m, /usr/bin/java, "{{ _cassandra_java_home }}/bin/java"]
   register: cassandra_java_resolved
   changed_when: false
   failed_when: false
@@ -138,6 +162,7 @@
 
 # Under --check nothing is unpacked, so there is no java to point at yet.
 # Already pointing there (an alternative, or a plain link made by hand): left as is.
+# cassandra_java_set_default false: left as it is (Cassandra then needs JAVA_HOME).
 - name: Make it the system java
   community.general.alternatives:
     name: java
@@ -145,8 +170,10 @@
     link: /usr/bin/java
     priority: 100
   when:
+    - cassandra_java_set_default | bool
     - not (ansible_check_mode and not cassandra_java_home_java.stat.exists)
-    - cassandra_java_resolved.stdout_lines | unique | length != 1
+    - cassandra_java_resolved.rc != 0 or cassandra_java_resolved.stdout_lines | length != 2
+      or cassandra_java_resolved.stdout_lines[0] != cassandra_java_resolved.stdout_lines[1]
 
 # The Debian/Ubuntu Cassandra package depends on a Java package or a
 # javaN-runtime virtual one: a local package provides the latter for the

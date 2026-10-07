@@ -76,7 +76,7 @@ def test_home(tmp_path, monkeypatch):
 
 TASKS = dict((t.get("name"), t) for play in PLAYS for t in play.get("tasks", []) + [
     sub for task in play.get("tasks", []) for sub in task.get("block", [])])
-WRITE_VARS = PLAYS[-1]["vars"]
+WRITE_VARS = next(p for p in PLAYS if p.get("name") == "Write the inventory")["vars"]
 
 
 def secret(tmp_path, monkeypatch, **variables):
@@ -111,6 +111,8 @@ def test_vault_password_file_of_ansible(tmp_path, monkeypatch):
     (tmp_path / "vp.txt").write_text("secret\n")
     # ansible.cfg or ANSIBLE_VAULT_PASSWORD_FILE, as Ansible read them when it started
     monkeypatch.setattr(C, "DEFAULT_VAULT_PASSWORD_FILE", str(tmp_path / "vp.txt"))
+    # (lookup('config') reads the config manager from ansible-core 2.19: the variable, as a run would have it)
+    monkeypatch.setenv("ANSIBLE_VAULT_PASSWORD_FILE", str(tmp_path / "vp.txt"))
     variables, content = secret(tmp_path, monkeypatch)
     assert variables["_vault_file"] == str(tmp_path / "vp.txt")
     assert content.startswith("$ANSIBLE_VAULT;")

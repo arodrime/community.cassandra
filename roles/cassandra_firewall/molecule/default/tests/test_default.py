@@ -21,8 +21,10 @@ def test_ensure_firewall_commands(host):
 
 def test_ensure_cassandra_ports_open(host):
     if is_debian(host):
-        out = host.run("ufw show added").stdout
-        opened = sorted(p for p in EXPECTED_PORTS if "ufw allow {0}".format(p) in out)
+        # "ufw allow <port>/<proto>" lines only: the per-source rules have more words
+        lines = host.run("ufw show added").stdout.splitlines()
+        opened = sorted(line.split()[2] for line in lines
+                        if line.startswith("ufw allow ") and len(line.split()) == 3)
     else:
         # Output is not always in the same order so we need to order it ourselves
         opened = sorted(host.run("firewall-cmd --list-ports").stdout.split())

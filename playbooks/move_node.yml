@@ -10,17 +10,17 @@
 # only those nodes move. The plan comes first: each datacenter's ring now and
 # after, the order of the moves, the data each one streams and to which
 # nodes; then one confirmation (cassandra_operation_confirm: false skips it).
-# --check shows the plan and stops there.
+# --check shows the plan, asks nothing and stops there.
 # Each move: the cluster checked (all nodes up and normal, no stream), the
 # nodes that receive data keep cassandra_move_min_free_percent (20) of their
 # data disk free (cassandra_move_force_disk: true goes on anyway), nodetool
-# move followed like a bootstrap (a progress line every
+# move followed like a bootstrap (its progress printed every
 # cassandra_stream_check_interval seconds), the cluster checked again. The
 # run stops at the first problem.
 # Run it again to resume: the plan is worked out again from the ring (the
 # nodes already moved stay), a move an earlier run left going is waited for.
 # The nodes that lost ranges keep that data until a cleanup: the commands are
-# printed, or cassandra_move_cleanup: one, rack, dc or all runs it here. They
+# printed, or cassandra_move_cleanup: sequential (or one), rack, dc or all runs it here. They
 # are recorded next to the progress files (<cassandra_hosts>-move.cleanup),
 # before each move, until a move_node run cleans them up: an interrupted run
 # forgets none.
@@ -30,7 +30,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
 
 - name: Find moves an earlier run left going
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   tasks:
     - name: Load the cassandra_service defaults
@@ -50,8 +50,11 @@
 
     - name: Check the cleanup choice
       ansible.builtin.assert:
-        that: cassandra_move_cleanup | default('none') in ['none', 'one', 'rack', 'dc', 'all']
-        fail_msg: "cassandra_move_cleanup must be none, one, rack, dc or all (got {{ cassandra_move_cleanup | default('') }})"
+        that: cassandra_move_cleanup | default('none') in ['none', 'sequential', 'one', 'rack', 'dc', 'all']
+        fail_msg: >-
+          cassandra_move_cleanup must be none (print the command), sequential (one node at a time; one is the same),
+          rack (a rack at a time), dc (a datacenter at a time) or all (every node at once: heavy I/O)
+          (got {{ cassandra_move_cleanup | default('') }})
         quiet: true
       run_once: true
 
@@ -97,7 +100,7 @@
           stream: restarting Cassandra on it cancels it (the node keeps its old token), then run move_node again.
 
 - name: Plan the moves
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
@@ -155,27 +158,17 @@
         # every node of the group, the ones out of this run (--limit) by their inventory address or name
         _hosts: >-
           {%- set out = {} -%}
-          {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] -%}
+          {%- for h in query('community.cassandra.cassandra_nodes') -%}
           {%-   set _ = out.update({(hostvars[h]._cassandra_preflight.ring_address if hostvars[h]._cassandra_preflight is defined
                                     else hostvars[h].ansible_host | default(h)): h}) -%}
           {%- endfor -%}
           {{ out }}
       run_once: true
 
-    - name: Show the plan
-      ansible.builtin.debug:
-        msg: >-
-          {{ ['move_node on cluster ' ~ _cassandra_preflight.cassandra_cluster_name ~ ' (shares with the largest replication'
-              ~ ' factor of each datacenter, else cassandra_token_rf; the data of a move from the loads of the nodes):']
-             + _plan.lines + (_plan.warnings | map('regex_replace', '^', 'WARNING: ') | list)
-             + ((['Cleanup afterwards (cassandra_move_cleanup=' ~ cassandra_move_cleanup | default('none') ~ ')',
-                  _cassandra_session_warning]) if _plan.steps else ['Nothing to move.']) }}
-      run_once: true
-
     - name: Refuse a plan that can't be followed
       ansible.builtin.assert:
         that: _problems | length == 0
-        fail_msg: "{{ _problems + ['Nothing was moved.'] }}"
+        fail_msg: "{{ _plan.lines + _plan.warnings | map('regex_replace', '^', 'WARNING - tokens: ') | list + _problems + ['Nothing was moved.'] }}"
         quiet: true
       run_once: true
       vars:
@@ -186,19 +179,30 @@
              ~ ('it' if _outside | length == 1 else 'them') ~ ' to the inventory group, or give the moves'
              ~ ' (cassandra_move_tokens)'] if _outside else []) }}
 
-    - name: Say that --check stops here
-      ansible.builtin.debug:
-        msg: "--check: the plan only, nothing was moved."
-      run_once: true
-      when: ansible_check_mode and _plan.steps | length > 0
-
-    - name: Confirm the moves
+    - name: Show the plan and confirm the moves
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
-        tasks_from: confirm.yml
-      when: _plan.steps | length > 0 and not ansible_check_mode
+        tasks_from: screen.yml
       vars:
-        cassandra_confirm_prompt: "move_node: move {{ _plan.steps | map(attribute='name') | join(', ') }} as shown above, one at a time?"
+        cassandra_screen_session_warning: "{{ _plan.steps | length > 0 }}"
+        cassandra_screen_question: >-
+          {{ ('Move ' ~ _plan.steps | map(attribute='name') | join(', ') ~ ' as shown, one at a time?') if _plan.steps else '' }}
+        cassandra_screen:
+          operation: move_node
+          summary: "{{ ('move ' ~ _plan.steps | map(attribute='name') | join(', ')) if _plan.steps else 'nothing to move' }}"
+          intro:
+            - >-
+              Shares with the largest replication factor of each datacenter, else cassandra_token_rf; the data of a move
+              from the loads of the nodes.
+          after:
+            - pre: "{{ _plan.lines }}"
+            - >-
+              {{ ('Cleanup afterwards (cassandra_move_cleanup='
+                  ~ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) ~ ').')
+                 if _plan.steps else 'Nothing to move.' }}
+          warnings:
+            - label: tokens
+              each: "{{ _plan.warnings }}"
 
     - name: Line the nodes up in the order of the moves
       ansible.builtin.add_host:
@@ -285,9 +289,9 @@
 
 # The nodes that lost ranges (worked out from the plan) still hold that data
 # until a cleanup. cassandra_move_cleanup: none (default) prints the command;
-# one, rack, dc or all runs it here, by batches, the cluster checked before each.
+# sequential (or one), rack, dc or all runs it here, by batches, the cluster checked before each.
 - name: Clean up the nodes that lost ranges
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   vars:
     _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_move_plan | default({}) }}"
@@ -298,7 +302,7 @@
          | select | unique | list }}
     _targets: "{{ _listed | select('in', ansible_play_hosts) | list }}"
     _left: "{{ _listed | reject('in', ansible_play_hosts) | list }}"
-    _mode: "{{ cassandra_move_cleanup | default('none') }}"
+    _mode: "{{ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) }}"
     # not "move-...": a resume of the moves must not pick this file
     cassandra_service_node_action: cleanup_after_move
     cassandra_service_resume_hint: >-
@@ -317,16 +321,23 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg:
-          - "Once the cluster is fine, clean up the nodes that lost ranges, e.g. one at a time:"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup
-            -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }} --limit {{ _targets | join(',') }}"
-          - "  (-e cassandra_cleanup_mode=rack|dc|all for batches of nodes together; listed in {{ _move_record }} until a
-            move_node run with cassandra_move_cleanup cleans them up)"
+          - "Once the cluster is fine, clean up the nodes that lost ranges (listed in {{ _move_record }} until a move_node
+            run with cassandra_move_cleanup cleans them up):"
+          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup{{ _hosts_option }}
+            --limit {{ _targets | join(',') }} -e cassandra_cleanup_mode={{ cassandra_cleanup_mode | default('sequential') }}
+            -e cassandra_cleanup_jobs={{ cassandra_cleanup_jobs }}"
+          - ""
+          - "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)"
+          - "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)"
+          - "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)"
       run_once: true
       when:
         - _targets | length > 0
         - _mode == 'none'
         - not ansible_check_mode
+      vars:
+        # the group the lookup finds by itself is left out
+        _hosts_option: "{{ (' -e cassandra_hosts=' ~ cassandra_hosts) if cassandra_hosts is defined else '' }}"
 
     - name: Say which recorded cleanups this run can't reach
       ansible.builtin.debug:
@@ -356,7 +367,7 @@
           {%- set batches = {} -%}
           {%- for h in _targets -%}
           {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set key = {'one': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
+          {%-   set key = {'sequential': h, 'rack': p.cassandra_dc ~ '/' ~ p.cassandra_rack, 'dc': p.cassandra_dc, 'all': 'all'}[_mode] -%}
           {%-   set _ = batches.update({key: batches.get(key, []) + [h]}) -%}
           {%- endfor -%}
           {{ batches.values() | list }}

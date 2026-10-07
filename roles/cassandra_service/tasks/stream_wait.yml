@@ -1,7 +1,7 @@
 ---
 # Waits for a streaming operation as long as it makes progress: every
-# cassandra_stream_check_interval seconds, reads nodetool netstats where the
-# data streams, prints one progress line, and fails only after
+# cassandra_stream_check_interval seconds (sooner at first), reads nodetool netstats where the
+# data streams, prints the progress (cassandra_stream_report), and fails only after
 # cassandra_stream_stall_checks checks in a row without any byte or file
 # streamed (or after cassandra_stream_max_time,
 # when set). Rounds of _cassandra_stream_round_size checks (stream_check.yml, one
@@ -13,7 +13,8 @@
 #   _cassandra_stream_from: hosts whose netstats show the streams
 #   _cassandra_stream_join: true: done when this node is NORMAL (bootstrap, replace)
 #   _cassandra_stream_leave: true: done when this node is DECOMMISSIONED (decommission)
-#   _cassandra_stream_job: {'jid': ..., 'host': ...}: done when this async job ends
+#   _cassandra_stream_job: {'jid': ..., 'host': ...}: done when this async job ends (with _leave, when it
+#     changed something: a decommission of a node already LEAVING waits for DECOMMISSIONED)
 #   _cassandra_stream_removal_on: host whose nodetool removenode status says when
 #     a removenode an earlier run started is over (no job to follow)
 #   _cassandra_stream_peers: hosts to read instead, from the other side, when this
@@ -24,7 +25,7 @@
   ansible.builtin.set_fact:
     _cassandra_stream_status: going
 
-- name: Check the progress, every {{ cassandra_stream_check_interval }}s
+- name: Check the progress, then every {{ cassandra_stream_check_interval }}s
   ansible.builtin.include_tasks: stream_check.yml
   loop: "{{ range(_cassandra_stream_round_size | int) | list }}"
   loop_control:
@@ -55,7 +56,7 @@
       still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:
       {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
       {%- endif %}
-      Last progress: {{ _cassandra_stream_state.line }}
+      Last progress: {{ _cassandra_stream_report | first }}
   when: _cassandra_stream_status not in ['done', 'going']
 
 - name: Next round of checks

@@ -21,6 +21,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
     cassandra_import_self_check,
     cassandra_inventory_host_vars,
 )
+from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_permissions_import
 
 STOCK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "molecule",
                      "default", "files", "stock-%s")
@@ -74,12 +75,69 @@ def host_vars(files, series, facts=None):
 
 
 def check(files, series, facts=None, tamper=None, env=None, storage_dir="/var/lib/cassandra", java=None, conf_dir="",
-          keep=None):
+          keep=None, permissions=None):
+    """permissions: the node's files' owner, group and mode (None: none compared)."""
     facts = facts or FACTS
     inventory, layout = import_node(files, series, facts, tamper, storage_dir, keep)
     java = java or {"40x": "11", "41x": "11", "50x": "17"}[series]
     return cassandra_import_self_check(inventory, layout["hosts"], "n1", facts, files, env or {}, storage_dir, java,
-                                       conf_dir)
+                                       conf_dir, {} if permissions is None else permissions)
+
+
+# --- owner, group and mode -------------------------------------------------
+
+def stats(files, owner, group, mode):
+    return dict((name, {"exists": True, "pw_name": owner, "gr_name": group, "mode": mode, "uid": 990, "gid": 990})
+                for name in files)
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_imported_owner_group_and_mode_pass(series):
+    """Config files owned by the service account and its own group, 0640: imported, nothing to change."""
+    files = seeded(stock(series))
+    perms = cassandra_permissions_import(stats(files, "cassandra", "dbgrp", "0640"), {"user": "cassandra", "group": "dbgrp"},
+                                         series)
+    out = check(files, series, tamper=perms["vars"], permissions=perms["files"])
+    assert out["differences"] == []
+
+
+def test_owner_group_and_mode_not_imported_are_caught():
+    files = seeded(stock("50x"))
+    perms = cassandra_permissions_import(stats(files, "cassandra", "dbgrp", "0640"), {"user": "cassandra", "group": "dbgrp"},
+                                         "50x")
+    out = check(files, "50x", permissions=perms["files"])
+    assert "cassandra.yaml: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0640" \
+        in out["differences"]
+    assert "cassandra-env.sh: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0644" \
+        in out["differences"]
+    assert len(out["differences"]) == 7  # one line per file
+
+
+def test_owner_group_and_mode_the_roles_cannot_work_out():
+    files = seeded(stock("50x"))
+    out = check(files, "50x", tamper={"cassandra_config_file_permissions": {"logbak.xml": {"mode": "0600"}}}, permissions={})
+    assert len(out["differences"]) == 1
+    assert out["differences"][0].startswith("owner, group and mode: cassandra_config_file_permissions: logbak.xml not a"
+                                            " file cassandra_config writes")
+
+
+def test_owner_group_and_mode_not_read_are_a_difference():
+    files = seeded(stock("50x"))
+    inventory, layout = import_node(files, "50x")
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17")
+    assert out["differences"] == ["owner, group and mode: not read on the node, the roles may change them"]
+
+
+def test_mixed_modes_pass_with_per_file_permissions():
+    files = seeded(stock("41x"))
+    found = stats(files, "root", "cassandra", "0644")
+    for name in found:
+        if name == "cassandra.yaml" or name.startswith("jvm"):
+            found[name]["mode"] = "0640"
+    found["logback.xml"]["mode"] = "0600"
+    perms = cassandra_permissions_import(found, {"user": "cassandra", "group": "cassandra"}, "41x")
+    assert perms["vars"] == {"cassandra_config_file_permissions": {"logback.xml": {"mode": "0600"}}}
+    assert check(files, "41x", tamper=perms["vars"], permissions=perms["files"])["differences"] == []
 
 
 # --- the variables a host gets from the files -------------------------------
@@ -134,7 +192,7 @@ def test_addresses_written_as_facts_render_the_node_address():
     inventory, layout = import_node(files, "50x")
     other = dict(FACTS, default_ipv4={"address": "10.0.0.9"})
     assert cassandra_import_self_check(inventory, layout["hosts"], "n1", other, files, {}, "/var/lib/cassandra",
-                                       "17")["differences"] == [
+                                       "17", "", {})["differences"] == [
         "cassandra.yaml: listen_address: node has '10.0.0.1', import would write '10.0.0.9'"]
 
 
@@ -216,12 +274,60 @@ def test_heap_moved_from_the_unit_to_cassandra_env():
     rendered = {"cassandra-env.sh": 'MAX_HEAP_SIZE="8G"\nHEAP_NEWSIZE="800M"\n'}
     live = {"cassandra-env.sh": '#MAX_HEAP_SIZE="4G"\n#HEAP_NEWSIZE="800M"\n'}
     unit_env = {"MAX_HEAP_SIZE": "8G", "HEAP_NEWSIZE": "800M", "LOCAL_JMX": "no"}
-    assert _compare_files(rendered, live, unit_env, {"LOCAL_JMX": "no"})["differences"] == []
+    # the same heap, but cassandra_config would rewrite cassandra-env.sh: not passed
+    assert _compare_files(rendered, live, unit_env, {"LOCAL_JMX": "no"})["differences"] == [
+        "cassandra-env.sh: the same settings, written in a way cassandra_config does not keep (it would rewrite the file,"
+        " e.g. the heap moved between the unit and cassandra-env.sh, or a line going on to the next)"]
     assert _compare_files(rendered, live, dict(unit_env, MAX_HEAP_SIZE="4G"), {})["differences"] == [
         "heap (cassandra-env.sh, else the unit's Environment): MAX_HEAP_SIZE: node has '4G', import would write '8G'"]
     # cassandra-env.sh sets it: the unit's does not count
     assert _compare_files({"cassandra-env.sh": 'MAX_HEAP_SIZE="8G"\n'}, {"cassandra-env.sh": "MAX_HEAP_SIZE=8G\n"},
                           {"MAX_HEAP_SIZE": "2G"}, {})["differences"] == []
+
+
+@pytest.mark.parametrize("name, node, role", [
+    # the self-check passes these, and cassandra_config leaves them as they are (one test for both)
+    ("cassandra.yaml", 'concurrent_reads: "32"\nphi_convict_threshold:\n', "concurrent_reads: 32\n"),
+    ("jvm-server.options", "-Xss256k\n-XX:+AlwaysPreTouch\n-Xmx1G\n", "-Xss256k\n-Xmx1G\n-XX:+AlwaysPreTouch\n"),
+    ("cassandra-env.sh", 'JVM_OPTS="$JVM_OPTS -Dx=1" # why\n', 'JVM_OPTS="$JVM_OPTS -Dx=1"\n'),
+    ("logback.xml", '<configuration>\n<root level="info"><appender-ref ref="A"/></root></configuration>',
+     '<configuration>\n  <root level="INFO">\n    <appender-ref ref="A" />\n  </root>\n</configuration>\n'),
+    ("cassandra-rackdc.properties", "dc=dc1\nrack=r1\nprefer_local=false\n", "dc=dc1\nrack=r1\n"),
+])
+def test_passed_means_kept(name, node, role):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
+    assert _compare_files({name: role}, {name: node})["differences"] == []
+    assert cassandra_same_settings(node, role, name) is True
+
+
+@pytest.mark.parametrize("name, node, role", [
+    # bash reads the quote over two lines: the role would rewrite it, the check must not pass
+    ("cassandra-env.sh", 'X="a\n# b\n"\n', 'X="a\n"\n'),
+    ("jvm-server.options", "-XX:+UnlockDiagnosticVMOptions\n-XX:+LogVMOutput\n", "-XX:+LogVMOutput\n-XX:+UnlockDiagnosticVMOptions\n"),
+])
+def test_rewritten_by_the_role_is_not_passed(name, node, role):
+    assert _compare_files({name: role}, {name: node})["differences"] != []
+
+
+def test_dirs_left_to_the_storage_dir():
+    node = "cluster_name: A\n"
+    role = ("cluster_name: A\ndata_file_directories:\n    - /var/lib/cassandra/data\n"
+            "commitlog_directory: /var/lib/cassandra/commitlog\nsaved_caches_directory: /var/lib/cassandra/saved_caches\n"
+            "hints_directory: /var/lib/cassandra/hints\n")
+    assert _compare_files({"cassandra.yaml": role}, {"cassandra.yaml": node}, storage_dir="/var/lib/cassandra")["differences"] == []
+    assert _compare_files({"cassandra.yaml": role}, {"cassandra.yaml": node})["differences"] != []
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_yaml_leaving_out_the_dirs_gets_the_storage_dir(series):
+    # a tarball's cassandra.yaml: its directories under -Dcassandra.storagedir, which cassandra_config needs
+    # to keep the file while the node is down (no running Cassandra to read it from)
+    files = seeded(stock(series))
+    for key in ("commitlog_directory", "saved_caches_directory", "hints_directory"):
+        files["cassandra.yaml"] = re.sub(r"(?m)^%s:.*$" % key, "", files["cassandra.yaml"])
+    files["cassandra.yaml"] = re.sub(r"(?m)^data_file_directories:\n(    - .*\n)+", "", files["cassandra.yaml"])
+    assert host_vars(files, series)["cassandra_config_storage_dir"] == "/var/lib/cassandra"
+    assert check(files, series)["differences"] == []
 
 
 def test_logback_comments_and_layout_do_not_count():
@@ -391,7 +497,7 @@ def test_a_template_in_a_value_read_back_is_caught():
     files["cassandra.yaml"] = re.sub(r"(?m)^cluster_name:.*$", "cluster_name: 'Prod{#x#}'", files["cassandra.yaml"])
     inventory, layout = import_node(files, "41x")
     inventory.append({"path": "host_vars/n1/main.yml", "content": "cassandra_cluster_name: 'Prod{#x#}'\n"})
-    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11")
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11", "", {})
     assert out["differences"] == ["cassandra.yaml: cluster_name: node has 'Prod{#x#}', import would write 'Prod'"]
 
 
@@ -567,7 +673,8 @@ def ring_import(series, members):
     layout = cassandra_inventory_layout(nodes, "my_cluster")
     inventory = cassandra_inventory_files(layout)
     checks = dict((name, cassandra_import_self_check(inventory, layout["hosts"], name, facts, files, {},
-                                                     "/var/lib/cassandra", {"40x": "11", "41x": "11", "50x": "17"}[series]))
+                                                     "/var/lib/cassandra", {"40x": "11", "41x": "11", "50x": "17"}[series],
+                                                     "", {}))
                   for name, (files, facts) in files_of.items())
     return inventory, layout, checks
 

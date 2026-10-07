@@ -1,0 +1,5 @@
+minor_changes:
+  - >-
+    cassandra_firewall - new ``cassandra_firewall_manage`` (default ``true``); ``false`` leaves the firewall as it is on the node (nothing installed, started or opened).
+  - >-
+    import_cluster - sets ``cassandra_firewall_manage: false`` in the host_vars of the nodes it imports, so the firewall role (listed in a site playbook, or with ``cassandra_manage_firewall``) leaves their firewall, or the lack of one, as it is.

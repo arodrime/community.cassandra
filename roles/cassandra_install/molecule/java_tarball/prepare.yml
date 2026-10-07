@@ -7,3 +7,63 @@
     - name: Install python3.12
       ansible.builtin.raw: test -x /usr/bin/python3.12 || dnf -y install python3.12
       changed_when: false
+
+# A local mirror offering two Java versions as tarballs: the real Java 17 and
+# a stand-in Java 11 (its release file is all the role reads before refusing)
+- name: Local Java mirror
+  hosts: all
+  vars:
+    _mirror: /srv/mirror/java
+    _fake11: /var/tmp/jdk-11.0.25+9-jre
+  tasks:
+    - name: Create the mirror and the stand-in Java 11
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: ["{{ _mirror }}", /srv/mirror/fixed, "{{ _fake11 }}/bin"]
+
+    - name: Download the Java 17 tarball into the mirror
+      ansible.builtin.get_url:
+        url: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+        checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+        dest: "{{ _mirror }}/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz"
+        mode: "0644"
+      retries: 3
+      register: cassandra_test_jdk17
+      until: cassandra_test_jdk17 is succeeded
+
+    # the same name as the stand-in Java 11, for the "fixed on the mirror" step
+    - name: Copy the Java 17 tarball under the stand-in's name
+      ansible.builtin.copy:
+        src: "{{ _mirror }}/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz"
+        dest: /srv/mirror/fixed/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz
+        remote_src: true
+        mode: "0644"
+
+    - name: Write the stand-in Java 11
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ _fake11 }}/{{ item.path }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: release, content: "IMPLEMENTOR=\"Eclipse Adoptium\"\nJAVA_VERSION=\"11.0.25\"\n", mode: "0644"}
+        - {path: bin/java, content: "#!/bin/sh\necho 'openjdk version \"11.0.25\"' >&2\n", mode: "0755"}
+
+    - name: Pack it into the mirror
+      community.general.archive:
+        path: "{{ _fake11 }}"
+        dest: "{{ _mirror }}/OpenJDK11U-jre_x64_linux_hotspot_11.0.25_9.tar.gz"
+        format: gz
+        mode: "0644"
+
+    - name: Serve the mirror on 127.0.0.1:8000
+      ansible.builtin.command:
+        argv: [systemd-run, --unit=java-mirror, -p, WorkingDirectory=/srv/mirror,
+               "{{ ansible_facts['python']['executable'] }}", -m, http.server, --bind, 127.0.0.1, "8000"]
+      changed_when: true
+
+    - name: Wait for it
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8000

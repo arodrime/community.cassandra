@@ -157,7 +157,9 @@ Operation playbooks
 The collection has playbooks for the usual operations on a cluster. Each one works on one inventory group
 (the inventory's cluster group, or ``-e cassandra_hosts=<group>``, see `Inventory`_) and starts with ``preflight``, which checks that the settings that must match do
 match on every node, that the racks suit the token allocator, and that the seeds are a sensible layout (it suggests
-a seed list when they are not).
+a seed list when they are not). It also checks that the account Cassandra runs as can read the config files, and
+warns about the ``cassandra_*`` variables set that no role or playbook knows (a typo, or a name from another version:
+they have no effect), with the known one they are close to.
 
 .. code-block:: console
 
@@ -170,6 +172,7 @@ a seed list when they are not).
     $ ansible-playbook -i inventory community.cassandra.status
     $ ansible-playbook -i inventory community.cassandra.cleanup
     $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.topology --check
     $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
     $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_reset_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.change_seeds
@@ -184,16 +187,61 @@ checks on its own, changing nothing, and fails when there is a problem, so it ca
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
 
-Risky operations ask for confirmation first: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
+Risky operations show one screen first, the same layout for each: a header (the operation, the cluster and its running
+version), one block per node concerned (when the operation works node by node), then the warnings, each one labelled
+(``WARNING - replication: ...``) and on its own paragraph. Then they ask for confirmation: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
 asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
-terminal; without one, a run that would ask fails at once.
+terminal; without one, a run that would ask fails at once. ``--check`` shows the screen, says that nothing will be
+changed and asks nothing (``add_node`` with ``cassandra_token_auto: true`` follows bisect instead of asking); the
+warnings that only concern a real run (the SSH session, data deleted for good) are named on one line instead. A
+reset (see `Resetting a node`_) shows each node's plan under ``--check``, not the screen.
 
 Rolling operations record each node done in a progress file on the controller, in ``.cassandra_progress`` next to
 the inventory (in the current dir when the inventory's dir is not writable and has no ``.cassandra_progress`` yet, or
 with ``-i host1,host2``), or in ``cassandra_rolling_progress_dir``. An interrupted run resumes where it stopped with
-``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. The
+``-e cassandra_rolling_resume=true``, run with the same inventory from the same dir. A node the interrupted
+``rolling_restart``, ``rolling_reboot``, ``apply_config`` or ``update_java`` (one node at a time) left drained or
+stopped is restarted first: it may be down then, any other node down still stops the run. The
 files are written as the user running Ansible, even with ``-b``: add ``.cassandra_progress`` to the inventory's
 ``.gitignore``.
+
+Help and runbook
+----------------
+
+``help`` reads the inventory only (no node is contacted, nothing changes) and prints three sections: each cluster
+as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
+and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
+its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
+several clusters, a datacenter and rack of it, the nodes marked absent, ``-b`` unless ``ansible.cfg`` or the inventory already become, and the vault and
+user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know); and advice from the inventory (nodes
+marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
+seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_topic=decommission_node
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_write=true
+
+``-e help_topic=<operation>`` shows one operation in detail: its documentation (the comment that starts the
+playbook), its variables and its command. ``-e help_write=true`` also writes the same content as ``RUNBOOK.md`` in
+the inventory's dir (the first ``-i`` one), with the commands ready to copy: commit it with the inventory. It is
+written only when its content changes (run ``help`` again after changing the inventory); ``--check --diff`` shows the
+difference. Its commands are as run from the directory ``help`` was run from (the one with ``ansible.cfg``; the file
+says where that is from its own dir), with the ``-i`` path and the vault and connection options ``help`` was given:
+run it the same way each time, or the file changes. ``import_cluster`` writes it at the end of an import with
+``-e import_cluster_runbook=true``.
+
+``help`` decrypts nothing, even when given the vault password: the vault-encrypted vars files are skipped and named
+in the advice, inline vaulted values are shown as ``(vaulted)``, so no secret reaches its output or ``RUNBOOK.md``.
+A value templated from a vaulted one is shown as ``(vaulted)`` too, a template that would run a lookup is shown as
+written, and the ``-e`` variables of the ``help`` run are not read. A shown setting that can't be read from the
+inventory alone is named in the advice. When the inventory has vaulted values and the run has no vault password
+(``--vault-password-file``, ``--vault-id``, ``--ask-vault-pass``, or one in ``ansible.cfg``), the printed commands
+carry ``--ask-vault-pass``. ``cassandra_node_state: absent`` marks a host to remove: ``help`` lists it apart and
+names it in the ``decommission_node`` command; the other operations still treat it as a node of the cluster.
+A vault-encrypted file in ``group_vars/all`` is read by Ansible for every host, ``localhost`` too: ``help`` then
+needs the vault password as well (and still shows nothing from it).
 
 
 Creating a cluster
@@ -252,10 +300,13 @@ estimate of the data it will receive (from ``nodetool status``) and its Medusa f
 nodes then hold different shares of the data), and a run not inside ``tmux`` or ``screen`` on the controller (a lost
 SSH session stops the run).
 
-Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints a progress line
-every ``cassandra_stream_check_interval`` seconds (300 by default), with the percentage, bytes and tables streamed,
-the rate over the last 3 checks, the time left and the expected end time, and waits as long as the streams make
-progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3) with nothing streamed (4 times as
+Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints its progress
+every ``cassandra_stream_check_interval`` seconds (300 by default; the first checks sooner, after 10 s, 30 s, 1, 2
+and 4 minutes, so a short operation ends in seconds): a first line with the node, a bar, the percentage
+and the rate over the last 3 checks, then the bytes and files streamed, each node it streams from with its own
+progress, and the times on the controller (now, started, expected end); a single line with the total time and average
+rate once done. It waits as long as the streams make
+progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3), a full interval apart, with nothing streamed (4 times as
 many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
@@ -265,8 +316,8 @@ again with ``-e cassandra_add_node_reset=true`` (see `Resetting a node`_). ``rep
 
 Once the new nodes have joined, the others still hold the data they handed over: ``add_node`` prints the ``cleanup``
 command for the nodes concerned (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
-replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``one`` (a node at a time), ``rack``, ``dc``
-or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
+replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``sequential`` (a node at a time, ``one`` is
+the same), ``rack``, ``dc`` or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
 once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
 
@@ -303,7 +354,7 @@ playbooks work them out:
   cluster is checked, and the nodes that receive data must keep ``cassandra_move_min_free_percent`` (20) of their data
   disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
   again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
-  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``one``, ``rack``, ``dc``, ``all``), or the
+  lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``sequential``, ``rack``, ``dc``, ``all``), or the
   command is printed; they stay listed next to the progress files (``<cassandra_hosts>-move.cleanup``) until a ``move_node``
   run cleans them up, so an interrupted run forgets none. A moved node keeps its old ``initial_token`` in
   ``cassandra.yaml`` (it is not read again); the run says which ``cassandra_initial_token`` of the inventory to
@@ -332,6 +383,50 @@ authentication is on). Remove the hosts from the inventory afterwards. Run again
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
 decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
 the operator: ``nodetool decommission`` on the node resumes it, restarting Cassandra on it cancels it.
+Its screen shows the order, and for each node its address, datacenter and rack, load and share, the nodes its data
+goes to (the other nodes of its rack when the datacenter has as many racks as every keyspace has replicas there and
+the rack keeps a node, else the other nodes of its datacenter; SimpleStrategy keyspaces: any node of the cluster),
+the node the ring is checked from, and how it ends.
+
+
+The inventory as the desired state
+----------------------------------
+
+``topology`` makes the ring match the inventory, so adding and removing nodes is an edit of the inventory, reviewed
+and committed like any other change:
+
+1. Edit the inventory: a new host goes in its datacenter's (or rack's) group, not in ``cassandra_seeds``; a node to
+   remove gets ``cassandra_node_state: absent`` (a host var, or a group var for several).
+2. ``ansible-playbook -i inventory community.cassandra.topology --check`` shows the plan and changes nothing.
+3. ``ansible-playbook -i inventory community.cassandra.topology`` shows the same plan, asks once, then does it.
+4. Commit the inventory. Delete the lines of the hosts removed, or leave them marked absent.
+
+A host of the cluster's group that is not in the ring is added as ``add_node`` adds it (its checks,
+``cassandra_add_node_reset``, ``cassandra_initial_token`` or ``cassandra_token_auto=bisect|balanced`` with one token
+per node). A host marked absent that is still in the ring is decommissioned as ``decommission_node`` does it (refused:
+a seed, a datacenter left with fewer nodes than a keyspace has replicas there unless ``cassandra_decommission_force``).
+A host marked absent, out of the ring and stopped needs nothing ("already removed"). A node of the ring no host of the
+inventory has is never touched: it is reported (a mistyped address, a host missing from the inventory, a dead node to
+remove with ``remove_dead_node``), and a plan with something to do is refused while it is there.
+
+One node at a time, the adds first (the cluster never has fewer nodes than it ends with), then the removals, the
+cluster checked before and after each node; the run stops at the first problem. One screen lists every step, with
+the data each node streams, and asks once; each step then shows its own screen as it starts, without a question.
+Refused before anything changes: a ``--limit`` that leaves out a host of the group (the plan needs them all), a plan
+removing more nodes than ``cassandra_topology_max_removals`` (2) or more than half of a datacenter
+(``cassandra_topology_allow_large_removal: true`` goes on: a group var marking hosts absent by mistake is the case it
+catches), an add while a decommission is still running, two hosts with one address, a host marked absent still in the
+ring that does not answer or is down (``remove_dead_node`` then), a node of the group that does not answer, one token
+per node with adds and removals in one run (add first, then mark the hosts absent, then ``move_node``), and
+``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or ``cassandra_reset_nodes`` on the command line (the plan says
+which nodes). The cleanup of the nodes that handed data over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked
+out again from the ring, a bootstrap or a decommission still running is waited for. Nothing to add or remove: it says so.
+
+``add_node``, ``decommission_node`` and ``remove_dead_node`` stay for explicit use. Every playbook leaves the hosts
+marked absent out: preflight, the health checks and the node counts they expect, rolling operations, ``status`` (which
+names them while they are still in the ring) and ``import_cluster``. While one is still in the ring, the health checks
+count one node too many and stop, naming it: run ``topology``. The lookup ``community.cassandra.cassandra_nodes`` gives
+the hosts of the cluster without them.
 
 
 Replacing a dead node
@@ -379,6 +474,8 @@ point, the config or the logs, one directory inside another (links resolved), or
 be read. The directories are checked again, links resolved, just before the delete.
 The run shows what it would stop and delete, directory by directory, then asks once (``cassandra_operation_confirm:
 false`` skips the question); ``--check`` shows it and changes nothing. A second run finds nothing to do.
+``add_node`` and ``replace_node`` (``cassandra_add_node_reset``, ``cassandra_replace_node_reset``) work out the reset
+before their screen, show what it deletes there (a ``data loss`` warning per node), and their one question covers it.
 
 
 When a node is dead for good and will not be replaced, take it out of the inventory and run ``remove_dead_node`` with
@@ -431,7 +528,7 @@ allows losing a rack (see `Rack maintenance`_).
 
 To move a cluster to another Java, set ``cassandra_java_version`` in the cluster's ``group_vars`` and run
 ``update_java``: node by node, it installs that Java, makes it the default ``java``, writes the config and restarts.
-It refuses a Java the series does not support, and warns about ``cassandra_jvm<N>_*`` settings meant for the old
+It refuses a Java the series does not support (see below), and warns about ``cassandra_jvm<N>_*`` settings meant for the old
 Java (with the lines to add for the new one) and about CMS, which Java 17 does not have. The systemd unit drains the node on stop as well (``cassandra_service_drain_on_stop``), so a plain
 ``systemctl stop cassandra`` or a reboot outside Ansible is clean too. A node's own unit kept as found
 (``cassandra_service_unit_manage: false``) may not: these playbooks drain it with ``nodetool`` even with
@@ -454,6 +551,44 @@ Java dependency as missing, and a plain ``dnf upgrade`` that finds a newer Cassa
 satisfy it (the tarball stays the system ``java``): exclude the cassandra packages from routine upgrades
 (``excludepkgs``, versionlock).
 ``update_java`` moves a cluster to a new tarball the same way as to a new package.
+
+With several clusters, the mirror can offer one tarball per Java major in ``cassandra_java_tarballs``, set once for
+all of them (here a ``group_vars/all`` file shared by the inventories), and each cluster only names its Java:
+
+.. code-block:: yaml
+
+   # inventories/_common/group_vars/all/mirror.yml
+   cassandra_java_tarballs:
+     "11":
+       url: https://mirror.example.com/java/OpenJDK11U-jre_x64_linux_hotspot_11.0.28_6.tar.gz
+       checksum: "sha256:..."
+     "17":
+       url: https://mirror.example.com/java/OpenJDK17U-jre_x64_linux_hotspot_17.0.16_8.tar.gz
+       checksum: "sha256:..."
+     "21":
+       url: https://mirror.example.com/java/OpenJDK21U-jre_x64_linux_hotspot_21.0.8_9.tar.gz
+       checksum: "sha256:..."
+
+   # inventories/<cluster>/group_vars/<cluster>/main.yml
+   cassandra_java_version: "17"
+
+``url`` may also be a file on the controller, and ``checksum`` is optional but recommended. Each tarball is unpacked
+in a directory named after its file: give each version a file of its own name. An entry may carry its own
+``username``/``password``; without them, a tarball on the same host as ``cassandra_install_url`` gets the mirror's
+credentials (see the air-gapped section). An explicit ``cassandra_java_tarball`` still wins. With tarballs on offer, a ``cassandra_java_version`` without one is
+refused (with the versions on offer), unless the node has ``cassandra_java_home`` or ``cassandra_install_java:
+false`` (Java set up by other means, no tarball taken). A cluster on Java packages moves
+to the tarball on its next run (the running nodes switch at their next restart; with ``cassandra_offline`` and a URL the
+run stops instead): ``cassandra_java_tarballs: {}`` in its
+``group_vars`` keeps it on packages; remove that line and run ``update_java`` to move it node by node. Once unpacked, the Java's ``release`` file must name that major version: a
+tarball of another Java is refused, and unpacked again on the next run once its entry is fixed. A Java already there
+(a tarball unpacked earlier, ``cassandra_java_home``) is checked the same way before anything changes, so
+``update_java`` and ``upgrade`` stop before stopping a node whose Java does not match. ``update_java``
+follows the same entries: change ``cassandra_java_version`` and run it.
+
+The Java each series runs on is checked by ``cassandra_install``, ``update_java`` and ``upgrade`` alike: 8 or 11 for
+4.0 and 4.1, 11 or 17 for 5.0. 5.0 starts on Java 21 (as on 17) but does not support it (that comes with 6.0):
+``cassandra_java_allow_unsupported: true`` installs it anyway, at your own risk.
 
 EL 10 (RHEL, Rocky, AlmaLinux 10) has no Java 11 or 17 package, only 21 and 25, which Cassandra 4.x and 5.0 do not
 run on: give a Java tarball there (``cassandra_install`` stops and says so otherwise), or ``cassandra_java_home`` for
@@ -514,11 +649,24 @@ changed, or would change under ``--check``, to that directory on the controller.
 
 The role never restarts Cassandra. When it changed the files of a running node, it says so.
 
+Whether a running node still has to be restarted for its config is told by content: the roles record the checksums
+of the files Cassandra reads (``cassandra.yaml``, ``cassandra-env.sh``, the jvm options, rackdc, logback) and of its
+systemd unit at each start, and before the roles first change the config or the unit of a node started another way
+(e.g. imported). Other files of the conf dir
+(keystores, backups) do not count. A node with no record, whose files were written after Cassandra started by
+something else, is not restarted by ``apply_config``, which names those files: run ``rolling_restart`` if they
+changed a setting.
+
 To change the configuration of a running cluster, use ``apply_config`` instead of running the role: it shows the
 diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
-restart): it is restarted too.
+restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is
+restarted too.
+
+Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
+``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``
+creates. Set them once for both roles. ``cassandra_service`` refuses an account that could not read the config files.
 
 
 Restricted networks (air-gapped)
@@ -719,20 +867,40 @@ nodes get the same form); otherwise each node keeps its value in ``host_vars``. 
 change the ``fqdn`` of an existing ``medusa.ini`` unless ``cassandra_medusa_fqdn_change: true``.
 
 A node whose running Java is not a package (a JDK unpacked by hand, from a tarball) gets ``cassandra_java_home``: the
-roles then keep that Java and install no Java package.
+roles then keep that Java and install no Java package. A node whose Java is a package gets
+``cassandra_java_tarballs: {}``: it keeps its package even where a shared ``cassandra_java_tarballs`` offers tarballs
+(see Java above); remove that line and run ``update_java`` to move it to the tarball. A node with
+``cassandra_java_home`` needs no tarball either; the offer is for the nodes added later.
+
+The account Cassandra runs as (the user and group of its running process) becomes ``cassandra_user`` and
+``cassandra_group`` when it is not ``cassandra``. The owner, group and mode of the config files (``cassandra.yaml``,
+``cassandra-env.sh``, the JVM options, rackdc, logback) and of the JMX users' files are read too, and kept:
+``cassandra_config_user`` and ``cassandra_config_group`` (what most files have), ``cassandra_config_mode``
+(``cassandra.yaml`` and the JVM options files) and ``cassandra_config_public_mode`` (the others), each written when it
+is not the roles' default, and ``cassandra_config_file_permissions`` for a file that differs from the others. Nodes
+that differ from each other get them per datacenter, rack or node, listed with the other differences. So files owned
+``cassandra:dbgrp`` mode ``0640`` stay so, rather than going back to the roles' ``root:cassandra``, ``0640`` for
+``cassandra.yaml`` and the JVM options, ``0644`` for the others. The report says when ``cassandra-env.sh`` is not
+readable by other users (``nodetool`` run by them cannot read the JMX port in it), and lists the data, commitlog,
+hints, saved caches and log directories not owned by that account (``cassandra_config`` leaves the directories there
+as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
 
 What the roles would replace on a node that was set up another way is left as it is there: the package repositories,
-the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python and the systemd unit (or init script)
-Cassandra is started by. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
+the OS settings (kernel, limits, THP, swap, time sync, disks), cqlsh's Python, the systemd unit (or init script)
+Cassandra is started by, the system java and the firewall. A part that has no mark of the roles (their repository file or ``Managed by Ansible`` header), and every node that could not be read, gets the matching switch set to false in its
 ``host_vars`` (``cassandra_repository_manage``, ``cassandra_linux_manage``, ``cassandra_cqlsh_python_manage``,
 ``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
-``group_vars``: nodes added later get the roles' full setup. Remove a line to let the role take that part over,
+``group_vars``: nodes added later get the roles' full setup. The same goes for a ``/usr/bin/java`` that is not the
+Java Cassandra runs (``cassandra_java_set_default: false``), the firewall (``cassandra_firewall_manage: false`` on
+every imported node) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
+the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_dsbulk_install``,
+``cassandra_package_hold``); a dsbulk the role's way keeps its ``cassandra_dsbulk_version``. Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``
 (``add_node`` and ``replace_node`` refuse such a host with no Cassandra installed). The upgrade playbook stops before
 touching a node whose repositories are not managed and lack the target version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
 already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
-unregister rights keeps them that way, and ``cassandra_config`` leaves a file (the JMX users' files too) alone on an
-initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
+unregister rights keeps them that way, and ``cassandra_config`` leaves the content of a file (the JMX users' files
+too) alone on an initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
 the roles change nothing on the imported nodes.
 
 The OS tuning already on the nodes (set by hand, by another tool or in the image) is read too, and listed in the
@@ -761,18 +929,38 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
 
 THP, swap, ``tuned``, the time servers and the firewall are only reported: the role disables THP and swap the same
 way whatever the nodes use, does not write time servers, and only opens the firewall with
-``cassandra_manage_firewall: true``. A node the role set up keeps the values of the role's own files (its sysctl
+``cassandra_manage_firewall: true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or
+none, is left as it is; nodes added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl
 file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that running the roles again changes
 nothing on it; when those files do not hold them, the values in effect are carried, and a node without time sync gets
 ``cassandra_linux_timesync: false`` rather than a chrony it does not have.
 
+A node of the ring the import could not read (down, unreachable, nodetool not found, or its running Java removed by
+an update since it started: restart it first) makes it fail: the roles would
+give it the group variables unchecked, and start it if it is down. ``-e import_cluster_allow_unread=true`` accepts it;
+then keep it out of the runs (``--limit``) until an import reads it.
+
+The Cassandra repository files of a node (``cassandra-<series>`` in ``/etc/yum.repos.d`` or
+``/etc/apt/sources.list.d``, and ``/etc/apt/auth.conf.d/cassandra.conf``) are taken over only when
+``cassandra_repository`` would write them as they are: then their mirror URL, credentials (``secrets.yml``) and key
+path are imported. Files written another way (other keys or names, other signing keys, an apt credentials file without
+the role's header, another series' file, or any file when the package came from a file) get
+``cassandra_repository_manage: false`` on that node, and the report says why.
+
+Hand edits no variable covers (an extra logback appender, a ``-javaagent`` line in ``cassandra-env.sh``) fail the
+self-check. With ``-e import_cluster_keep_hand_edits=true`` the files that have them are left as they are on their
+node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither writes nor compares
+them); nodes added later get the role's files.
+
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as
-Cassandra, the JVM, bash and systemd read them. The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
+Cassandra, the JVM, bash and systemd read them; and the owner, group and mode ``cassandra_config`` would give the
+config and JMX files with the node's (one line per file that differs). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in ``hosts.yml`` and the playbook fails
 (``-e import_cluster_strict=false`` writes the same files without failing). Fix the variables or the nodes before any
-run. The OS tuning, ``/etc/default/cassandra`` and ``cassandra-topology.properties`` are not compared.
+run. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
+and ``medusa.ini`` are not compared.
 
 When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and settings are imported and
 ``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path

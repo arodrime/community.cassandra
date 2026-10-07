@@ -69,7 +69,8 @@
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
                now=now().timestamp() | int, operations=_cassandra_stream_operations,
-               peer=(_address if _blind else None), stall_checks=cassandra_stream_stall_checks | int) }}
+               peer=(_address if _blind else None), stall_checks=cassandra_stream_stall_checks | int,
+               interval=cassandra_stream_check_interval | int) }}
       vars:
         _blind: "{{ _cassandra_stream_blind | bool }}"
         # the address the other nodes see this node by in their netstats
@@ -86,12 +87,14 @@
         _cassandra_stream_job_result: >-
           {{ dict(cassandra_stream_job_status | default({}) | dict2items
                   | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
-        # the block's condition reads _cassandra_stream_status: set after the progress line
+        # the block's condition reads _cassandra_stream_status: set after the progress line. A decommission job that
+        # changed nothing (the node was LEAVING already) is not the end: its mode DECOMMISSIONED is
         _cassandra_stream_now: >-
           {{ 'done' if (_join and _self_mode == 'NORMAL') or (_leave and _self_mode == 'DECOMMISSIONED')
-                      or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false))
+                      or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false)
+                          and (_job_status.changed | default(false) or not _leave))
                       or (_removal and _removal_status.rc | default(1) == 0 and 'Removing token' not in _removal_status.stdout | default(''))
-             else 'job_failed' if _job and _job_status.finished | default(0) | int == 1
+             else 'job_failed' if _job and _job_status.finished | default(0) | int == 1 and _job_status.failed | default(false)
              else 'job_lost' if _job and _job_status.failed | default(false)
              else 'join_failed' if _join and _self_mode == 'JOINING_FAILED'
              else 'leave_failed' if _leave and _self_mode == 'DECOMMISSION_FAILED'
@@ -109,19 +112,26 @@
         _job_status: "{{ cassandra_stream_job_status | default({}) }}"
         _self_mode: "{{ _cassandra_stream_self.mode | default('') }}"
 
-    # Once it has ended, no no-progress count on the last line
+    # A list: the default callback prints one line each; once done, a single line
+    - name: Write the progress
+      ansible.builtin.set_fact:
+        _cassandra_stream_report: >-
+          {{ _cassandra_stream_state | community.cassandra.cassandra_stream_report(node=inventory_hostname,
+               what=_cassandra_stream_what, status=_cassandra_stream_now, names=_names) }}
+      vars:
+        # the other ends by their inventory names (netstats shows addresses)
+        _names: "{{ groups['all'] | community.cassandra.cassandra_host_addresses(hostvars) }}"
+
     - name: Progress of the {{ _cassandra_stream_what }}
       ansible.builtin.debug:
-        msg: "{{ now().strftime('%H:%M') }} {{ _cassandra_stream_state[_line] }}{{ _mode }}"
-      vars:
-        _mode: "{{ ('  mode ' ~ _cassandra_stream_self.mode) if _cassandra_stream_self.mode | default('') else '' }}"
-        _line: "{{ 'line_done' if _cassandra_stream_now == 'done' else 'line' }}"
+        msg: "{{ _cassandra_stream_report }}"
 
     - name: Keep where it stands
       ansible.builtin.set_fact:
         _cassandra_stream_status: "{{ _cassandra_stream_now }}"
 
+    # 10 s, 30 s, 1, 2 and 4 minutes, then every cassandra_stream_check_interval
     - name: Wait before the next check
       ansible.builtin.pause:
-        seconds: "{{ cassandra_stream_check_interval | int }}"
+        seconds: "{{ _cassandra_stream_state.wait }}"
       when: _cassandra_stream_status == 'going'
