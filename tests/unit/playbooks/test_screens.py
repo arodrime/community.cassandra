@@ -309,12 +309,25 @@ def test_stop_rack_screen():
 
 def test_apply_config_and_update_java_screens():
     t, play = task("apply_config.yml", "Show the plan and confirm the run")
-    hostvars = {"node1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_reason": "concurrent_reads to change"},
-                "node2": {"cassandra_apply_config_todo": False}}
-    text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars}, t["vars"], play["vars"], check=True)
-    assert text == ("apply_config: apply the config on node1\n--check: nothing will be changed (the plan only, no question).\n\n"
-                    "Writes the config, then drains and restarts each node, one at a time (the diffs are above).\n\n"
-                    "  node1\n    concurrent_reads to change")
+    hostvars = {"node1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_reasons": ["cassandra.yaml to change"],
+                          "cassandra_apply_config_then": "restart"},
+                "node2": {"cassandra_apply_config_todo": False},
+                "node3": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "none",
+                          "cassandra_apply_config_reasons": ["owner, group or mode to change: cassandra.yaml"]},
+                "node4": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "start",
+                          "cassandra_apply_config_reasons": ["owner, group or mode to change: cassandra-env.sh"]},
+                "node5": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write",
+                          "cassandra_apply_config_reasons": ["cassandra.yaml to change"]}}
+    text = screen({"ansible_play_hosts": ["node1", "node2", "node3", "node4", "node5"], "hostvars": hostvars}, t["vars"],
+                  play["vars"], check=True)
+    assert text == ("apply_config: apply the config on node1, node3, node4, node5\n"
+                    "--check: nothing will be changed (the plan only, no question).\n\n"
+                    "Writes the config one node at a time (diffs above), then restarts or starts it as said below.\n\n"
+                    "  node1\n    cassandra.yaml to change\n    then drained and restarted\n\n"
+                    "  node3\n    owner, group or mode to change: cassandra.yaml\n    no restart (Cassandra reads its config at start)\n\n"
+                    "  node4\n    owner, group or mode to change: cassandra-env.sh\n"
+                    "    its Cassandra is not running: started once written (down over max_hint_window? repair it)\n\n"
+                    "  node5\n    cassandra.yaml to change\n    its Cassandra is stopped: written, left stopped (read when it starts)")
     t, play = task("update_java.yml", "Show the plan and confirm the run")
     text = screen({"groups": {"cassandra_update_java_True": ["node2"]}, "cassandra_java_version": 17,
                    "hostvars": {"node2": {"cassandra_update_java_running": "Java 11"}}}, t["vars"], play.get("vars"))

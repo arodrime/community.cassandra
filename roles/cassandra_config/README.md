@@ -65,8 +65,11 @@ logback) hold no secret: mode `0644` (`cassandra_config_public_mode`), so that
 it prints `grep: .../cassandra-env.sh: Permission denied`).
 `cassandra_config_file_permissions` sets a file apart, e.g.
 `{logback.xml: {mode: "0600"}}`. A change of owner, group or mode alone is
-listed in the report and needs no confirmation nor restart: `apply_config`,
-which restarts nodes, leaves it to the next run of the role.
+shown, listed in the report and needs no confirmation nor restart (Cassandra
+reads its config when it starts; the JMX password file, read at each login,
+takes it at once): `apply_config` applies it without restarting a running
+node, starts a node whose Cassandra failed (e.g. it could not read its
+config) once it is applied, and leaves a stopped node stopped.
 
 On a node that already joined a cluster, the role refuses to change
 `cluster_name`, `num_tokens`, `partitioner`, `endpoint_snitch`, `dc`,

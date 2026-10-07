@@ -668,7 +668,11 @@ diff of every node, asks once, then goes node by node, writing the files and res
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
 restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is
-restarted too.
+restarted too. A node whose files only need another owner, group or mode gets them without a restart (Cassandra reads
+its config when it starts). A node where Cassandra is not running gets its config too: started once written when its
+unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
+ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
+no node running is not handled.
 
 Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
 ``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``

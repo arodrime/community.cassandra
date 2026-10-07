@@ -207,10 +207,12 @@
         - name: Every seed is up
           ansible.builtin.assert:
             # a cluster about to be wiped: a seed of the group, up or not; a resumed rolling run: a member
-            # drained or stopped by the interrupted run (each node's own check before it stops on any other)
+            # drained or stopped by the interrupted run; apply_config: a member of this run not running, which
+            # it writes (each node's own check before it stops on any other)
             that: >-
               _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
               or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
+              or (_cassandra_preflight_seeds_down_ok | default(false) | bool and _addr in _all and _addr in _stopped)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ ("A new node can't be a seed (seeds don't bootstrap, it would join without its data): add it as a"
@@ -229,6 +231,9 @@
             _all: >-
               {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
                  | map(attribute='address') | list }}
+            _stopped: >-
+              {{ ansible_play_hosts | map('extract', hostvars) | rejectattr('_cassandra_preflight_running')
+                 | map(attribute='_cassandra_preflight.address') | list }}
           loop: "{{ _cassandra_service_seeds }}"
 
         # Streaming and schema changes between versions are not supported;

@@ -5,7 +5,13 @@
 # cluster checked again. Only the nodes whose config changes, or whose running
 # Cassandra did not start with its config files or its systemd unit (written by
 # cassandra_config or cassandra_service, which do not restart, or by a run
-# stopped before the restart), are touched.
+# stopped before the restart), are touched. Cassandra reads its config at
+# start: a node whose files only need another owner, group or mode is not
+# restarted (the JMX password file is read at each login: its new owner and
+# mode apply at once). A node where Cassandra failed (e.g. it could not read
+# its config) is started once its config is written; one stopped on purpose
+# gets its config and stays stopped. The health checks let these nodes be
+# down, except before a restart: any other node down stops the run.
 # Stops at the first problem.
 #   ansible-playbook -i inventory community.cassandra.apply_config
 # Without -e cassandra_hosts=<group>: the group cassandra, else the inventory's
@@ -14,6 +20,8 @@
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_seeds_down_ok: true  # a seed of this run not running: written, maybe started
 
 - name: Find what each node needs
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -47,14 +55,84 @@
           changed a setting, run rolling_restart to apply it.
       when: cassandra_config_unknown_files | length > 0
 
+    # its unit not running: a JVM started another way still runs the config it read
+    - name: Look for a Cassandra JVM the unit did not start
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: jvm_started.yml
+      when: not _cassandra_preflight_running | default(true) | bool
+
+    # failed (it could not start, or crashed) or restarting after a failure: it was to run; else stopped on purpose
+    - name: Read the state of its unit
+      ansible.builtin.systemd_service:
+        name: cassandra
+      register: cassandra_apply_config_unit
+      failed_when: false  # no unit: not started by it
+      when: not _cassandra_preflight_running | default(true) | bool
+
     - name: Note what this node needs
       ansible.builtin.set_fact:
-        cassandra_apply_config_todo: >-
-          {{ (_cassandra_config_changes | default([]) | length > 0) or cassandra_config_restart_pending | bool }}
-        cassandra_apply_config_reason: >-
-          {{ ((_cassandra_config_changes | default([])) | join(', ') ~ ' to change')
-             if _cassandra_config_changes | default([]) | length > 0
-             else ('restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)') }}
+        cassandra_apply_config_todo: "{{ _files | length > 0 or _perms | length > 0 or _pending | bool }}"
+        # then, Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone:
+        # read at start); not running: start (its unit failed: it could not start, e.g. its config unreadable;
+        # or the node a resumed run stopped), write (stopped on purpose: left stopped)
+        cassandra_apply_config_then: >-
+          {{ ('restart' if _files | length > 0 or _pending | bool else 'none') if _running | bool
+             else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
+        cassandra_apply_config_reasons: >-
+          {{ ([_files | join(', ') ~ ' to change'] if _files | length > 0 else [])
+             + (['owner, group or mode to change: ' ~ _perms | join(', ')] if _perms | length > 0 else [])
+             + (['restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)']
+                if _pending | bool else []) }}
+      vars:
+        _files: "{{ _cassandra_config_changes | default([]) }}"
+        _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
+        _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
+        # a node not running reads its files when it starts: pending only under a resumed run, taken for the
+        # node the interrupted run stopped (then started)
+        _pending: >-
+          {{ cassandra_config_restart_pending | bool and (_running | bool or cassandra_rolling_resume | default(false) | bool) }}
+        _unit: "{{ cassandra_apply_config_unit.status | default({}) }}"
+        # failed, or restarting after a failure; not a stop that ended failed (SIGTERM's 143 with no
+        # SuccessExitStatus=143 in a unit kept as it was, a timeout: a stop's, or a forking unit's start)
+        _unit_failed: >-
+          {{ _unit.ActiveState | default('') in ['failed', 'activating']
+             and _unit.Result | default('') != 'timeout' and _unit.ExecMainStatus | default('') | string != '143' }}
+
+    # a restart waits for every other node up (cluster health): a node not running that this run leaves
+    # down, or starts after the restart (nodes go in inventory order), would stop it halfway
+    - name: Refuse restarts while a node is not running
+      ansible.builtin.assert:
+        that: _down | length == 0
+        fail_msg: >-
+          {{ _down | join(', ') }}: Cassandra not running, and {{ _restart | join(', ') }} would be restarted, which needs
+          every other node up. Nothing was changed. Apply the config there first (--limit {{ _down | join(',') }}) and
+          start {{ 'them' if _down | length > 1 else 'it' }} if stopped on purpose, or, if an interrupted run stopped
+          {{ 'them' if _down | length > 1 else 'it' }}, resume it (-e cassandra_rolling_resume=true); then run again.
+        quiet: true
+      run_once: true
+      vars:
+        _restart: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | bool
+                                            and hostvars[h].cassandra_apply_config_then == 'restart' -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+        _down: >-
+          {%- set out = [] -%}
+          {%- if _restart -%}
+          {%-   set first = ansible_play_hosts.index(_restart[0]) -%}
+          {%-   for h in ansible_play_hosts -%}
+          {%-     set v = hostvars[h] -%}
+          {%-     if v.cassandra_apply_config_then == 'write'
+                     or (v.cassandra_apply_config_then == 'start'
+                         and (not v.cassandra_apply_config_todo | bool or ansible_play_hosts.index(h) > first)) -%}
+          {%-       set _ = out.append(h) -%}
+          {%-     endif -%}
+          {%-   endfor -%}
+          {%- endif -%}
+          {{ out }}
 
     - name: Group the nodes to do
       ansible.builtin.group_by:
@@ -81,15 +159,21 @@
         _blocks: >-
           {%- set l = [] -%}
           {%- for h in _todo -%}
-          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})), 'lines': [hostvars[h].cassandra_apply_config_reason]}) -%}
+          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})),
+                                    'lines': hostvars[h].cassandra_apply_config_reasons + [_then[hostvars[h].cassandra_apply_config_then]]}) -%}
           {%- endfor -%}
           {{ l }}
-        cassandra_screen_question: "Apply the config and restart {{ _todo | join(', ') }}?"
+        _then:
+          restart: then drained and restarted
+          start: "its Cassandra is not running: started once written (down over max_hint_window? repair it)"
+          write: "its Cassandra is stopped: written, left stopped (read when it starts)"
+          none: no restart (Cassandra reads its config at start)
+        cassandra_screen_question: "Apply the config on {{ _todo | join(', ') }}?"
         cassandra_screen:
           operation: apply_config
           summary: "apply the config on {{ _todo | join(', ') }}"
           intro:
-            - Writes the config, then drains and restarts each node, one at a time (the diffs are above).
+            - Writes the config one node at a time (diffs above), then restarts or starts it as said below.
           blocks: "{{ _blocks }}"
   vars:
     _todo: >-
@@ -119,6 +203,24 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: apply_config
+        # the other nodes where Cassandra is not running may stay down while a node is written without
+        # being taken down (none, start, write): those started later in the run (or not to do), those left
+        # stopped; a restart waits for every other node up (under --check, the nodes before it were not started)
+        cassandra_service_health_down_ok: >-
+          {%- set out = [] -%}
+          {%- set nodes = query('community.cassandra.cassandra_nodes') -%}
+          {%- for h in nodes if h != inventory_hostname and hostvars[h].cassandra_apply_config_then is defined -%}
+          {%-   set v = hostvars[h] -%}
+          {#-   a start node down until its turn (or not to do: left down); a write node down for good -#}
+          {%-   set later_start = v.cassandra_apply_config_then == 'start'
+                                  and (nodes.index(h) > nodes.index(inventory_hostname) or not v.cassandra_apply_config_todo | bool
+                                       or ansible_check_mode) -%}
+          {%-   if later_start or (v.cassandra_apply_config_then == 'write' and cassandra_apply_config_then != 'restart') -%}
+          {%-     set _ = out.append(v._cassandra_preflight.ring_address) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out if cassandra_apply_config_then != 'restart' or ansible_check_mode else [] }}
+        _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"

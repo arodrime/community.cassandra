@@ -71,16 +71,40 @@ def test_relaxed_only_when_the_node_says_it_is_drained_or_stopped(state, resumed
     names = [t["name"] for t in OPERATION["block"]]
     assert names.index(read["name"]) < names.index(BEFORE["name"]) and read["failed_when"] is False
     assert read["when"] == "_cassandra_resume_candidate | bool" and read["check_mode"] is False
-    checks = {"_cassandra_resumed_node": resumed, "_cassandra_preflight": {"ring_address": "10.0.0.2"}}
+    down = render(OPERATION["vars"]["_cassandra_down_node"], _cassandra_resumed_node=resumed, cassandra_service_node_action="restart")
+    assert down is resumed
+    checks = {"_cassandra_down_node": down, "_cassandra_preflight": {"ring_address": "10.0.0.2"}}
     assert render(BEFORE["vars"]["cassandra_service_health_node_checks"], **checks) is (not resumed)
     assert render(BEFORE["vars"]["cassandra_service_health_resumed_down"], **checks) == (["10.0.0.2"] if resumed else [])
     # after the action: as usual on a real run, still down under --check (nothing was restarted)
     after = [t for t in OPERATION["block"] if t["name"] == "Check the cluster with this node back"][0]
     for check in (False, True):
         relaxed = resumed and check
-        values = dict(checks, ansible_check_mode=check)
+        values = dict(checks, ansible_check_mode=check, _cassandra_left_down=False)
         assert render(after["vars"]["cassandra_service_health_node_checks"], **values) is (not relaxed)
         assert render(after["vars"]["cassandra_service_health_resumed_down"], **values) == (["10.0.0.2"] if relaxed else [])
+
+
+@pytest.mark.parametrize("action, then, down", [
+    ("apply_config", "start", True),      # not running (e.g. it could not read its config): started by the action
+    ("apply_config", "restart", False),
+    ("apply_config", "none", False),
+    ("apply_config", "write", True),      # stopped on purpose: written, left stopped
+    ("restart", "start", False),          # a fact left by an apply_config earlier in the run: not this operation's
+])
+def test_a_node_apply_config_starts_may_be_down(action, then, down):
+    variables = {"_cassandra_resumed_node": False, "cassandra_service_node_action": action, "cassandra_apply_config_then": then}
+    assert render(OPERATION["vars"]["_cassandra_down_node"], **variables) is down
+    checks = {"_cassandra_down_node": down, "_cassandra_preflight": {"ring_address": "10.0.0.2"}}
+    assert render(BEFORE["vars"]["cassandra_service_health_node_checks"], **checks) is (not down)
+    assert render(BEFORE["vars"]["cassandra_service_health_resumed_down"], **checks) == (["10.0.0.2"] if down else [])
+    # after the action: down only when left stopped (or under --check)
+    left = render(OPERATION["vars"]["_cassandra_left_down"], **variables)
+    assert left is (action == "apply_config" and then == "write")
+    after = [t for t in OPERATION["block"] if t["name"] == "Check the cluster with this node back"][0]
+    values = dict(checks, ansible_check_mode=False, _cassandra_left_down=left)
+    assert render(after["vars"]["cassandra_service_health_node_checks"], **values) is (not left)
+    assert render(after["vars"]["cassandra_service_health_resumed_down"], **values) == (["10.0.0.2"] if left else [])
 
 
 def test_the_health_check_lets_that_node_only_be_down():
