@@ -503,9 +503,9 @@ def test_apply_config_plan_shows_the_changes_before_the_question():
                          ansible_check_mode=check)
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["vars"]["_blocks"]))
 
-    assert blocks(False) == [{"title": "node1", "lines": ["cassandra.yaml to change", "then drained and restarted",
-                                                         {"pre": ["  cassandra.yaml", "    - concurrent_reads: 32",
-                                                                  "    + concurrent_reads: 48"]}]}]
+    assert blocks(False) == [{"title": "node1", "lines": [
+        "cassandra.yaml to change", "then drained and restarted",
+        {"pre": ["  cassandra.yaml", "    - concurrent_reads: 32", "    + concurrent_reads: 48"]}]}]
     # --check asks nothing: the changes are in the recap
     assert blocks(True) == [{"title": "node1", "lines": ["cassandra.yaml to change", "then drained and restarted"]}]
 
