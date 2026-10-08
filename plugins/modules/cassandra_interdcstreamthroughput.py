@@ -16,6 +16,7 @@ requirements:
   - nodetool
 description:
     - Sets the inter-dc stream throughput.
+    - Without C(value), only reads the current inter-dc stream throughput.
 
 extends_documentation_fragment:
   - community.cassandra.nodetool_module_options
@@ -23,15 +24,19 @@ extends_documentation_fragment:
 options:
   value:
     description:
-      - MB value to set inter-dc stream throughput to.
+      - Inter-dc stream throughput to set, in megabits per second (Mb/s), or 0 to disable throttling.
+      - When omitted, the module only returns the current value and changes nothing.
     type: int
-    required: True
 '''
 
 EXAMPLES = '''
 - name: Set inter dc stream throughput to 200
   community.cassandra.cassandra_interdcstreamthroughput:
     value: 200
+
+- name: Read the current inter dc stream throughput
+  community.cassandra.cassandra_interdcstreamthroughput:
+  register: interdcstreamthroughput
 '''
 
 RETURN = '''
@@ -39,39 +44,43 @@ cassandra_interdcstreamthroughput:
   description: The return state of the executed command.
   returned: success
   type: str
+current:
+  description:
+    - The inter-dc stream throughput read before any change, in C(unit).
+    - 0 means unlimited (no throttling).
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: float
+  sample: 200.0
+unit:
+  description: The unit printed by nodetool, null when it prints C(unlimited).
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: Mb/s
+current_raw:
+  description:
+    - The line printed by the get command.
+    - Since 4.1, nodetool labels it C(Current stream throughput).
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: "Current stream throughput: 200.0 Mb/s"
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolGetSetCommand, cassandra_version_at_least
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import (
+    NodeToolGetSetCommand, cassandra_version_at_least, parse_nodetool_get)
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
-import re
-
-
-# Helper functions from ChatGPT
-def extract_throughput(string):
-    match = re.search(r'(\d+(?:\.\d+)?) Mb/s', string)
-    if match:
-        return float(match.group(1))
-    else:
-        return None
-
-
-def compare_throughputs(string1, string2):
-    throughput1 = extract_throughput(string1)
-    throughput2 = extract_throughput(string2)
-    if throughput1 is not None and throughput2 is not None:
-        return throughput1 == throughput2
-    else:
-        return False
 
 
 def main():
     argument_spec = cassandra_common_argument_spec()
     argument_spec.update(
-        value=dict(type='int', required=True)
+        value=dict(type='int')
     )
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -106,10 +115,21 @@ def main():
         if err:
             result['stderr'] = err
 
-    get_response = "Current inter-datacenter stream throughput: {0} Mb/s".format(value)
-    # if module.params['cassandra_version'] == "4.1":
-    #    get_response = "Current stream throughput: {0:.1f} Mb/s".format(value)
-    if compare_throughputs(get_response, out):
+    current, unit, line = parse_nodetool_get(out)
+    if rc == 0 and current is not None:
+        result['current'] = current
+        result['unit'] = unit
+        result['current_raw'] = line
+
+    if value is None:
+        if rc != 0:
+            module.fail_json(name=n.get_cmd,
+                             msg="get command failed", **result)
+        if current is None:
+            module.fail_json(name=n.get_cmd,
+                             msg="unable to parse the get command output: {0}".format(out), **result)
+        result['changed'] = False
+    elif current == value:
 
         if rc != 0:
             result['changed'] = False

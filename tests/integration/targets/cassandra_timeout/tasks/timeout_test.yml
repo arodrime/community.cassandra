@@ -8,10 +8,10 @@
     debug: true
   register: result
 
-- set_fact:
+- ansible.builtin.set_fact:
     mymsg: "{{ item }} timeout changed"
 
-- assert:
+- ansible.builtin.assert:
     that:
       - result.changed
       - result.msg == mymsg
@@ -20,11 +20,11 @@
   ansible.builtin.shell: nodetool -u {{ cassandra_admin_user }} -pw {{ cassandra_admin_pwd }} -h 127.0.0.1 gettimeout {{ item }}
   register: result
 
-- set_fact:
+- ansible.builtin.set_fact:
     mymsg: "Current timeout for type {{ item }}: 15999 ms"
 
 - name: Assert timeout is 15999 ms
-  assert:
+  ansible.builtin.assert:
     that: mymsg == result.stdout
 
 - name: Set throughput to 15999 again
@@ -36,10 +36,10 @@
     debug: true
   register: result
 
-- set_fact:
+- ansible.builtin.set_fact:
     mymsg: "{{ item }} timeout unchanged"
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "result.changed == False"
       - result.msg == mymsg
@@ -54,10 +54,10 @@
   check_mode: yes
   register: result
 
-- set_fact:
+- ansible.builtin.set_fact:
     mymsg: "{{ item }} timeout changed"
 
-- assert:
+- ansible.builtin.assert:
     that:
       - result.changed
       - result.msg == mymsg
@@ -71,10 +71,10 @@
     debug: true
   register: result
 
-- set_fact:
+- ansible.builtin.set_fact:
     mymsg: "{{ item }} timeout changed"
 
-- assert:
+- ansible.builtin.assert:
     that:
       - result.changed
       - result.msg == mymsg
@@ -83,11 +83,11 @@
   ansible.builtin.shell: nodetool -u {{ cassandra_admin_user }} -pw {{ cassandra_admin_pwd }} -h 127.0.0.1 gettimeout {{ item }}
   register: result
 
-- set_fact:
+- ansible.builtin.set_fact:
     expected_stdout: "Current timeout for type {{ item }}: 100 ms"
 
 - name: Ensure timeout is 100
-  assert:
+  ansible.builtin.assert:
     that:
       - result.stdout == expected_stdout
 

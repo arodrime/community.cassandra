@@ -15,6 +15,7 @@ short_description: Sets the trace probability.
 requirements: [ nodetool ]
 description:
     - Sets the trace probability.
+    - Without C(value), only reads the current trace probability.
 
 extends_documentation_fragment:
   - community.cassandra.nodetool_module_options
@@ -23,14 +24,18 @@ options:
   value:
     description:
       - Trace probability between 0.0 and 1.0
+      - When omitted, the module only returns the current value and changes nothing.
     type: float
-    required: True
 '''
 
 EXAMPLES = '''
 - name: Set traceprobability to 0.9
   community.cassandra.cassandra_traceprobability:
     value: 0.9
+
+- name: Read the current trace probability
+  community.cassandra.cassandra_traceprobability:
+  register: traceprobability
 '''
 
 RETURN = '''
@@ -38,20 +43,33 @@ cassandra_traceprobability:
   description: The return state of the executed command.
   returned: success
   type: str
+current:
+  description:
+    - The trace probability read before any change.
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: float
+  sample: 0.0
+current_raw:
+  description: The line printed by the get command.
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: "Current trace probability: 0.0"
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolGetSetCommand
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolGetSetCommand, parse_nodetool_get
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
 def main():
     argument_spec = cassandra_common_argument_spec()
     argument_spec.update(
-        value=dict(type='float', required=True)
+        value=dict(type='float')
     )
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -78,8 +96,20 @@ def main():
         if err:
             result['stderr'] = err
 
-    get_response = "Current trace probability: {0}".format(value)
-    if get_response == out:
+    current, dummy, line = parse_nodetool_get(out)
+    if rc == 0 and current is not None:
+        result['current'] = current
+        result['current_raw'] = line
+
+    if value is None:
+        if rc != 0:
+            module.fail_json(name=n.get_cmd,
+                             msg="get command failed", **result)
+        if current is None:
+            module.fail_json(name=n.get_cmd,
+                             msg="unable to parse the get command output: {0}".format(out), **result)
+        result['changed'] = False
+    elif current == value:
 
         if rc != 0:
             result['changed'] = False
