@@ -146,3 +146,24 @@ def test_limit_refused_and_the_nodes_read():
     groups = {"all": ["a1", "b1", "10.0.0.2"], "import_cluster_found": ["10.0.0.2"]}
     templar = Templar(loader=DataLoader(), variables={"groups": groups, "hostvars": hostvars})
     assert templar.template(trust_as_template(read["hosts"])) == ["a1", "10.0.0.2"]
+
+
+def test_found_nodes_matched_by_their_address():
+    # a node found in the ring, added under its name: matched to its ring address without facts too
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    match = next(t for t in write["tasks"][0]["block"] if t["name"] == "Match the ring with the hosts")
+    hostvars = {"node1": {"ansible_facts": {"all_ipv4_addresses": ["10.0.0.1"], "hostname": "node1"}},
+                "node2": {"import_cluster_address": "10.0.0.2"}}
+    variables = {"_given": ["node1"], "groups": {"import_cluster_found": ["node2"]}, "hostvars": hostvars,
+                 "item": {"address": "10.0.0.2"}, "import_cluster_host_names": "hostname"}
+    templar = Templar(loader=DataLoader(), variables=variables)
+    host = templar.template(trust_as_template(match["vars"]["_host"]))
+    assert host == "node2"
+    # not reached (no facts): named by its address, as the report says it is not read
+    variables.update(_host=host, _hv=hostvars["node2"], _host_names="hostname")
+    assert Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(match["vars"]["_name"])) == "10.0.0.2"
+    # reached: its hostname
+    variables["_hv"] = {"ansible_facts": {"hostname": "node2"}}
+    assert Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(match["vars"]["_name"])) == "node2"

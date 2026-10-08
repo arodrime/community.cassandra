@@ -1409,3 +1409,25 @@ def test_summary_under_check():
     assert lines[-1] == ("--check: nothing written (with --diff, each file's changes are shown above). Run the same"
                          " without --check to write it.")
     assert "Import done" not in "\n".join(lines)
+
+
+GETENT_NODE = "10.0.0.2        node2.example.org node2\n10.0.0.3        node3.example.org\n"
+
+
+def test_ring_names_as_the_given_node():
+    """The nodes found in the ring are reached (and so named) as the given node is: its short name, or the fqdn when
+    the given name has a domain; when the controller resolves that name to the node's address, else the address."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        cassandra_ring_lookups, cassandra_ring_names)
+    found = ["10.0.0.2", "10.0.0.3", "10.0.0.4"]  # 10.0.0.4: no name on the node
+    assert cassandra_ring_lookups(GETENT_NODE, found, "node1") == [
+        "node2.example.org", "node2", "node3.example.org", "node3"]
+    controller = "10.0.0.2 node2\n10.0.0.2 node2.example.org\n10.0.0.3 node3.example.org\n10.0.0.9 node3\n"
+    assert cassandra_ring_names(GETENT_NODE, controller, found, "node1") == {
+        "10.0.0.2": "node2", "10.0.0.3": "10.0.0.3", "10.0.0.4": "10.0.0.4"}  # node3: another address here
+    assert cassandra_ring_names(GETENT_NODE, controller, found, "node1.example.org") == {
+        "10.0.0.2": "node2.example.org", "10.0.0.3": "node3.example.org", "10.0.0.4": "10.0.0.4"}
+    # the given node named by its address: the others too; nothing resolved on the controller: addresses
+    assert cassandra_ring_names(GETENT_NODE, controller, found, "10.0.0.1") == dict((a, a) for a in found)
+    assert cassandra_ring_lookups(GETENT_NODE, found, "10.0.0.1") == []
+    assert cassandra_ring_names(GETENT_NODE, "", found, "node1") == dict((a, a) for a in found)
