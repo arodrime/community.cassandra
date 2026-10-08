@@ -514,3 +514,8 @@ def test_system_keyspace_loop_renders_before_the_live_paths_are_listed():
     # (an undefined is skipped with it, a list + undefined fails the run)
     v = dict(INVENTORY)
     assert render(task("Look for the system keyspace of an initialized node")["loop"], **v)
+
+
+def test_last_line_without_newline_not_joined(tmp_path):
+    # difflib leaves such a line unterminated: the next one is not glued to it
+    assert changed_lines(preview(tmp_path, "cassandra.yaml", "a: 1\nb: 2", "a: 1\nb: 3\n")) == ["-b: 2", "+b: 3"]

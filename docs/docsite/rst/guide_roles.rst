@@ -719,11 +719,17 @@ restarted too. A node whose files only need another owner, group or mode gets th
 its config when it starts). A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
-no node running is not handled.
+no node running is not handled. The run ends with what each node got (``--check``: would get): the changed
+setting lines of its diffs (passwords as ``****``) and its owner, group and mode changes, the nodes with the same
+outcome on one line.
 
 Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
 ``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``
 creates. Set them once for both roles. ``cassandra_service`` refuses an account that could not read the config files.
+A data, commitlog, saved_caches or hints directory this account could not read, write and search (e.g. owned by
+root) gets this owner and group, its mode ``u+rwx`` (the other bits kept): the directory itself only, not what it
+holds. Keyspace and table directories another account owns are named in ``apply_config``'s end of run, left as they
+are.
 
 
 Restricted networks (air-gapped)

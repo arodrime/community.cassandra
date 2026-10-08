@@ -42,6 +42,7 @@
         cassandra_config_reload_seeds: false
         cassandra_change_report_dir: ""  # the real run reports
         _cassandra_config_no_restart_warning: true
+        _cassandra_change_report_quiet: true  # the diffs just shown are the changes; the recap ends the run
 
     - name: Look for a restart still pending
       ansible.builtin.include_role:
@@ -74,21 +75,23 @@
 
     - name: Note what this node needs
       ansible.builtin.set_fact:
-        cassandra_apply_config_todo: "{{ _files | length > 0 or _perms | length > 0 or _pending | bool }}"
+        cassandra_apply_config_todo: "{{ _files | length > 0 or (_perms + _dirs) | length > 0 or _pending | bool }}"
         # then, Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone:
         # read at start); not running: start (its unit failed: it could not start, e.g. its config unreadable;
         # or the node a resumed run stopped), write (stopped on purpose: left stopped)
         cassandra_apply_config_then: >-
           {{ ('restart' if _files | length > 0 or _pending | bool else 'none') if _running | bool
              else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
+        cassandra_apply_config_pending: "{{ _pending }}"
         cassandra_apply_config_reasons: >-
           {{ ([_files | join(', ') ~ ' to change'] if _files | length > 0 else [])
-             + (['owner, group or mode to change: ' ~ _perms | join(', ')] if _perms | length > 0 else [])
+             + (['owner, group or mode to change: ' ~ (_perms + _dirs) | join(', ')] if (_perms + _dirs) | length > 0 else [])
              + (['restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)']
                 if _pending | bool else []) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
+        _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
         _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
         # a node not running reads its files when it starts: pending only under a resumed run, taken for the
         # node the interrupted run stopped (then started)
@@ -146,12 +149,6 @@
         cassandra_op_result: nothing to apply
       when: not cassandra_apply_config_todo | bool
 
-    - name: Say there is nothing to apply
-      ansible.builtin.debug:
-        msg: The running config of every node already matches the inventory, nothing to do.
-      run_once: true
-      when: _todo | length == 0
-
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -173,9 +170,12 @@
         cassandra_screen_question: "Apply the config on {{ _todo | join(', ') }}?"
         cassandra_screen:
           operation: apply_config
-          summary: "apply the config on {{ _todo | join(', ') }}"
+          summary: "{{ 'would apply' if ansible_check_mode else 'apply' }} the config on {{ _todo | join(', ') }}"
           intro:
-            - Writes the config one node at a time (diffs above), then restarts or starts it as said below.
+            - >-
+              {{ 'A real run would write each node in turn (diffs above), then restart or start it as said below.'
+                 if ansible_check_mode else
+                 'Writes the config one node at a time (diffs above), then restarts or starts it as said below.' }}
           blocks: "{{ _blocks }}"
   vars:
     _todo: >-
@@ -224,12 +224,30 @@
           {{ out if cassandra_apply_config_then != 'restart' or ansible_check_mode else [] }}
         _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 
+# What each node got (--check: would get), its settings diffs (secrets masked) and owner/mode changes
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
   become: true
   tasks:
-    - name: Print the summary
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
-        tasks_from: summary.yml
+    - name: Print the changes
+      ansible.builtin.debug:
+        msg: "{{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode) }}"
+      run_once: true
+      vars:
+        cassandra_output: true
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in query('community.cassandra.cassandra_nodes') -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
+                                    'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
+                                    'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all
+                                                                                else 'not in this run (--limit)'),
+                                    'items': v._cassandra_config_items | default([]),
+                                    'notes': (['restart pending: ' ~ v.cassandra_config_newer_files | default([]) | join(', ')
+                                               ~ ' changed since the running Cassandra started']
+                                              if v.cassandra_apply_config_pending | default(false) | bool else [])
+                                             + v._cassandra_config_dir_notes | default([])}) -%}
+          {%- endfor -%}
+          {{ out }}

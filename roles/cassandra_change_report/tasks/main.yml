@@ -2,6 +2,7 @@
 # Called by the other roles with:
 #   cassandra_change_report_role: role name
 #   cassandra_change_report_items: [{item, before, after}] for what changes
+#   _cassandra_change_report_quiet: true when the caller shows them its own way (written all the same)
 - name: Show changes ({{ cassandra_change_report_role }})
   ansible.builtin.debug:
     msg: "{{ lines.splitlines() }}"
@@ -10,7 +11,9 @@
       {% for c in cassandra_change_report_items %}
       {{ c.item }}: {{ c.before }} -> {{ c.after }}
       {% endfor %}
-  when: cassandra_change_report_items | length > 0
+  when:
+    - cassandra_change_report_items | length > 0
+    - not _cassandra_change_report_quiet | default(false)
 
 # Same timestamp for every host and role of the run. Not under the block's
 # conditions: run_once would skip it for every host when the first one has

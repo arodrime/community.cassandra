@@ -221,7 +221,8 @@ def test_the_role_reports_them_and_records_what_cassandra_started_with():
     record = find(ROLE, "Record the changes for the report")["ansible.builtin.set_fact"]["_cassandra_config_items"]
     assert "_cassandra_config_perm_changes" in record
     shown = find(ROLE, "Show the owner, group and mode changes")
-    assert render(shown["ansible.builtin.debug"]["msg"], {"_cassandra_config_perm_changes": perm_changes(LIVE, **INVENTORY)}) == [
+    assert render(shown["ansible.builtin.debug"]["msg"], {"_cassandra_config_perm_changes": perm_changes(LIVE, **INVENTORY),
+                                                          "_cassandra_config_dir_changes": [], "_cassandra_config_dir_notes": []}) == [
         "/etc/cassandra/conf/cassandra.yaml (owner:group mode): root:cassandra 0640 -> dbsvc:dbgrp 0640",
         "/etc/cassandra/conf/cassandra-env.sh (owner:group mode): root:cassandra 0644 -> dbsvc:dbgrp 0644"]
     # recorded before an owner or mode change too: later runs then tell it needs no restart (same checksums)

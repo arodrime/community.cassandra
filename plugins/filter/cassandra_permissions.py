@@ -7,6 +7,9 @@ cassandra_file_permissions: a file name, the role's variables -> the owner,
 cassandra_permission_changes: the stat of the files on a node, the role's
     variables -> the changes of owner, group or mode the role makes there, for
     its report.
+cassandra_dir_permission_changes: the stat of Cassandra's directories (data,
+    commit log, saved caches, hints) -> the owner, group or mode changes the
+    role makes there: the account Cassandra runs as, with all its rights.
 cassandra_unreadable_config: the config files the account Cassandra runs as
     could not read with these variables (cassandra_service's check).
 cassandra_permissions_import: what import_cluster read on a node (the account
@@ -146,6 +149,59 @@ def cassandra_permission_changes(results, settings, name_key="cassandra_config_f
     return out
 
 
+# never chowned, whatever the inventory says
+SYSTEM_DIRS = frozenset(["/", "/var", "/var/lib", "/var/log", "/srv", "/opt", "/home", "/tmp", "/usr", "/etc", "/mnt",
+                         "/media", "/root", "/boot", "/run", "/usr/local", "/var/opt", "/var/tmp",
+                         "/var/cache", "/var/spool", "/proc", "/sys", "/dev"])
+
+
+def _usable(found, user, group):
+    """The account can read, write and search the directory, as the kernel
+    decides: the owner's bits for its owner, else the group's for its group
+    (its primary one), else the others'; root can."""
+    if str(user) in ("root", "0"):
+        return True
+    mode = int(found["mode"], 8)
+    if same_owner(user, found["owner"], found.get("uid")):
+        bits = mode >> 6
+    elif same_owner(group, found["group"], found.get("gid")):
+        bits = mode >> 3
+    else:
+        bits = mode
+    return bits & 0o7 == 0o7
+
+
+def cassandra_dir_permission_changes(results, user, group):
+    """results: the results of a stat loop (follow) over the directories, each
+    item [kind, path] (kind: 'data dir', 'commitlog dir'...); user, group: the
+    account Cassandra runs as -> [{item, path, dir, before, after, owner,
+    group, mode}] for the existing directories (top level only) where this
+    account cannot read, write or search (another owner, a mode taken away):
+    given to it as the role creates them, its owner and group, the mode with
+    u+rwx (the other bits kept). One it can use is left as it is (a package's
+    0755, root:cassandra 0770, cassandra 0700): an imported node stays as it is.
+    A system directory (/, /var/lib, /srv...) is never one of them. The role
+    then tries the ones found as the account (its other groups, ACLs)."""
+    out = []
+    for r in results or []:
+        st = r.get("stat") or {}
+        if not st.get("exists") or not st.get("isdir"):
+            continue  # missing: created by the role; not a directory: Cassandra says so
+        kind, path = r["item"]
+        if os.path.normpath(str(path)) in SYSTEM_DIRS:
+            continue  # a mistyped path: never given to Cassandra
+        found = _stat(st)
+        if not re.match(r"^[0-7]{4}$", found["mode"]) or _usable(found, user, group):
+            continue
+        wanted = {"owner": str(user), "group": str(group), "mode": "%04o" % (int(found["mode"], 8) | 0o700)}
+        if _differ(wanted, found):
+            out.append({"item": "%s %s (owner:group mode)" % (kind, path), "path": path, "dir": kind,
+                        "before": "%s:%s %s" % (found["owner"], found["group"], found["mode"]),
+                        "after": "%s:%s %s" % (wanted["owner"], wanted["group"], wanted["mode"]),
+                        "owner": wanted["owner"], "group": wanted["group"], "mode": wanted["mode"]})
+    return out
+
+
 def cassandra_unreadable_config(version, settings, users, groups):
     """version: cassandra_version; settings: as for cassandra_file_permissions;
     users: the account Cassandra runs as (its name and its number); groups: its
@@ -246,13 +302,15 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
             odd.append("%s %s:%s %s" % (path, d["owner"], d["group"], d["mode"]))
     if odd:
         notes.append("Directories not owned by %s:%s, the account Cassandra runs as (cassandra_config leaves them"
-                     " as they are; it creates the missing ones %s:%s 0750): %s" % (user, group, user, group, ", ".join(odd)))
+                     " as they are, but a data, commitlog, saved_caches or hints directory that account cannot use; it creates the missing"
+                     " ones %s:%s 0750): %s" % (user, group, user, group, ", ".join(odd)))
     return {"vars": out, "notes": notes, "files": dict(found, **unread)}
 
 
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_dir_permission_changes": cassandra_dir_permission_changes,
             "cassandra_file_permissions": cassandra_file_permissions,
             "cassandra_permission_changes": cassandra_permission_changes,
             "cassandra_permissions_import": cassandra_permissions_import,
