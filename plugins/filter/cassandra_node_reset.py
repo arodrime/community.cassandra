@@ -370,7 +370,8 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
     running = _true_value(running)
     ring_problems = [ring_problems] if isinstance(ring_problems, str) else list(ring_problems or [])
     users = sorted(set(k for k in keyspaces or [] if _user_keyspace(k)))
-    ours = live_cluster is not None and live_cluster == cluster_name
+    # a cluster that kept the stock name: a stock node is not known to be one of its own
+    ours = live_cluster is not None and live_cluster == cluster_name and cluster_name != STOCK_CLUSTER
     problems = []
     if running:
         problems.append("Cassandra runs on it: add_node resets only a node where Cassandra is down. Stop it"

@@ -548,3 +548,13 @@ def test_live_cluster_name_returned():
     assert cassandra_node_reset_dirs(INVENTORY, "cluster_name: billing\n", MOUNTS)["cluster_name"] == "billing"
     assert cassandra_node_reset_dirs(INVENTORY, "num_tokens: 16\n", MOUNTS)["cluster_name"] == "Test Cluster"
     assert cassandra_node_reset_dirs(INVENTORY, None, MOUNTS)["cluster_name"] is None
+
+
+def test_auto_reset_a_cluster_with_the_stock_name_does_not_own_stock_nodes():
+    # this cluster kept the name 'Test Cluster': a stock node that met other nodes, or holds user keyspaces,
+    # may be of any other stock-named ring
+    out = _auto(cluster_name="Test Cluster", peers=True)
+    assert out["problems"] == ["its system.peers lists other nodes: a member of another 'Test Cluster' ring"]
+    out = _auto(cluster_name="Test Cluster", keyspaces=["system", "app"], cluster_keyspaces=["app"])
+    assert out["problems"] == ["it holds user keyspaces (app): only a failed bootstrap of this cluster may"]
+    assert _auto(cluster_name="Test Cluster")["reset"]  # blank of user data, never met a node: reset
