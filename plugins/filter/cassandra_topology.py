@@ -281,7 +281,7 @@ def cassandra_topology_steps(plan, hosts):
 
 
 def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replication_problems=None, force=False,
-                              names=None, cluster="", version="", check=False, session="", confirm=True):
+                              names=None, cluster="", version="", check=False, session="", confirm=True, notes=None):
     """The plan screen (OUTPUT_UX Q5): "PLAN  topology  cluster (Cassandra x)
     N steps, one node at a time", the steps in order, the facts (each
     datacenter once done, what is left to do by hand), the WARNING lines,
@@ -291,7 +291,11 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     keyspaces: cassandra_keyspaces (None: unknown); replication_problems: the
     datacenters left with fewer nodes than replicas (shown when force:
     cassandra_decommission_force); names: {address: host} of the ring's
-    nodes; session: the tmux/screen warning (a real run only)."""
+    nodes; session: the tmux/screen warning (a real run only); notes: the
+    lines the checks kept for the plan (note.yml, "WARNING  ..." or a note).
+    The checks of the hosts to add (hosts' info, checks: new_node_checks.yml)
+    are NOTE and WARNING lines too, one per text, with the hosts it is about.
+    Every note is on one line, said once."""
     by_name = dict((h["name"], h) for h in hosts)
     ring = ring or {}
     steps = cassandra_topology_steps(plan, hosts)
@@ -378,12 +382,31 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
                               " before reusing the host%s" % (out.nodes(done, keep_order=True), "it" if len(done) == 1 else "them",
                                                               "its" if len(done) == 1 else "their",
                                                               "" if len(done) == 1 else "s")])
+    def grouped(key):
+        """[(text, hosts)] of the hosts to add, in order, each text once."""
+        out = []
+        for h in hosts:
+            if h["name"] in plan["add"]:
+                for text in h.get(key) or []:
+                    found = [o for o in out if o[0] == text]
+                    if found:
+                        found[0][1].append(h["name"])
+                    else:
+                        out.append((text, [h["name"]]))
+        return out
+
     if plan["add"]:
         facts.append(["cleanup", "of the nodes that hand data over: its command is printed after the adds (topology"
                                  " runs none, the removals move data again)"])
 
+    for text, names_of in grouped("info"):
+        facts.append("NOTE  %s: %s" % (out.nodes(names_of), text))
+    kept = [str(n).strip() for n in notes or [] if str(n).strip()]
+    facts.extend("NOTE  " + n for n in kept if not n.startswith("WARNING"))
+
     # the warnings, just above the question
-    warnings = []
+    warnings = [n[len("WARNING"):].strip() for n in kept if n.startswith("WARNING")]
+    warnings.extend("%s: %s" % (out.nodes(names_of), text) for text, names_of in grouped("checks"))
     if seeds.get("removed") or seeds.get("added"):  # a seed change topology applies on its own
         warnings.append("the seeds will change on every node: %s -> %s (from cassandra_seeds in the inventory)"
                         % (",".join(seeds["old"]) or "(none)", seeds["new"]))
@@ -411,6 +434,11 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     else:
         warnings.extend(r[1] for r in real_run)
 
+    said = []
+    for w in warnings:  # each once
+        if w not in said:
+            said.append(w)
+    warnings = said
     question = "" if confirm else "cassandra_operation_confirm is false: no question, the run goes on."
     lines = out.plan("topology", cluster=cluster, version=version,
                      summary="%s, one node at a time" % out.plural(len(steps), "step"),

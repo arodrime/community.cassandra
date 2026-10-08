@@ -30,10 +30,12 @@
                                                          and not _cassandra_screen_asked_by | default('') else '',
                                                  asked_by=_cassandra_screen_asked_by | default('')) }}
   block:
+    # a step of topology: its plan showed this already
     - name: Show the plan
       ansible.builtin.debug:
-        msg: "{{ _cassandra_screen_text.split('\n') }}"
+        msg: "{{ _cassandra_screen_text }}"
       run_once: true
+      when: not _cassandra_screen_asked_by | default('')
       vars:
         cassandra_output: true
 

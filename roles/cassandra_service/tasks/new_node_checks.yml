@@ -247,16 +247,28 @@
                      running=_cassandra_preflight_running | default(false),
                      reset=_cassandra_new_node_reset | default(false)) }}
 
+        # topology: in its plan (NOTE and WARNING lines)
         - name: What {{ inventory_hostname }} has
           ansible.builtin.debug:
-            msg: "{{ _cassandra_new_node_check.info + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING: ') | list }}"
+            msg: >-
+              {{ (_cassandra_new_node_check.info | map('regex_replace', '^', inventory_hostname ~ ': ') | list
+                  + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING  ' ~ inventory_hostname ~ ': ') | list)
+                 | join(_nl) }}
+          when: not _cassandra_notes_deferred | default(false) | bool
+          vars:
+            _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+            cassandra_output: true
 
     - name: Every problem found
       ansible.builtin.debug:
-        msg: "{{ _lines }}"
+        msg: "{{ _lines | join(_nl) }}"
       run_once: true
-      when: _lines | length > 0
+      when:
+        - _lines | length > 0
+        - not _cassandra_notes_deferred | default(false) | bool  # topology: in its refusal
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true
         _lines: >-
           {%- set l = [] -%}
           {%- for h in ansible_play_hosts if hostvars[h]._cassandra_new_node_check is defined -%}

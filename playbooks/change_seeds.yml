@@ -70,12 +70,13 @@
     - name: Say how to apply the other differences
       ansible.builtin.debug:
         msg: >-
-          WARNING: the config of {{ _drift | join(', ') }} differs from the inventory beyond the seeds (diffs above),
+          WARNING  the config of {{ _drift | community.cassandra.cassandra_node_list }} differs from the inventory beyond the seeds (diffs above),
           not applied by change_seeds. Apply it with the cassandra_config role, e.g.
           ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.create_cluster
           -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }} (it starts nothing on a running cluster),
           then restart the nodes with community.cassandra.rolling_restart.
       vars:
+        cassandra_output: true
         _drift: >-
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_config_changes', 'defined')
              | rejectattr('_cassandra_config_changes', 'equalto', []) | map(attribute='inventory_hostname') | list }}

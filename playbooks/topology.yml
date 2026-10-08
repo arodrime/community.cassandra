@@ -51,6 +51,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
     _cassandra_preflight_adding: "{{ query('community.cassandra.cassandra_nodes') }}"  # a seed not in the ring yet is added
+    _cassandra_notes_deferred: true  # its notes in the plan
 
 # Out of preflight: they are not part of the cluster any more, and may be gone
 - name: Read the hosts marked absent
@@ -59,6 +60,7 @@
   become: true
   ignore_unreachable: true  # a host gone for good is reported, not a failure
   vars:
+    _cassandra_notes_deferred: true  # in the plan
     _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
   tasks:
     - name: Not every host of the group is marked absent
@@ -117,6 +119,7 @@
   become: true
   any_errors_fatal: true  # nothing changes if one check fails
   vars:
+    _cassandra_notes_deferred: true  # the checks' notes in the plan
     _tp_group: "{{ lookup('community.cassandra.cassandra_hosts') }}"
     _tp_cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default(_tp_group, true) }}"
     _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
@@ -208,7 +211,10 @@
       rescue:
         - name: Record the refusal
           ansible.builtin.set_fact:
-            _cassandra_topology_refused: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+            # the checks' own problems (not printed: _cassandra_notes_deferred), else the message
+            _cassandra_topology_refused: >-
+              {{ (_cassandra_new_node_check.problems | default([]) | join('; '))
+                 or [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
 
     - name: Work out the plan
       ansible.builtin.set_fact:
@@ -235,6 +241,8 @@
                                            else v.cassandra_new_node_state | default(none),
                                   'refused': v._cassandra_topology_refused | default(''),
                                   'single': _tp_single | bool, 'token': p.cassandra_initial_token | default(''),
+                                  'info': v._cassandra_new_node_check.info | default([]) if not absent else [],
+                                  'checks': v._cassandra_new_node_check.warnings | default([]) if not absent else [],
                                   'reset': v._cassandra_node_reset_plan | default(none)
                                            if not absent and v._cassandra_node_reset_plan is defined
                                               and (v._cassandra_node_reset_plan.delete or v._cassandra_node_reset_plan.stop | bool
@@ -272,10 +280,11 @@
     - name: Refuse a plan that can't be done
       ansible.builtin.assert:
         that: _tp_problems | length == 0
-        fail_msg: "{{ ['REFUSED  topology  ' ~ _tp_cluster ~ '  nothing was changed'] + _tp_problems | map('regex_replace', '^', '  ') | list }}"
+        fail_msg: "{{ (['REFUSED  topology  ' ~ _tp_cluster ~ '  nothing was changed'] + _tp_problems | map('regex_replace', '^', '  ') | list) | join(_nl) }}"
         quiet: true
       run_once: true
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         _tp_problems: >-
           {{ cassandra_topology_plan.problems
@@ -291,7 +300,7 @@
     - name: Say there is nothing to do
       ansible.builtin.debug:
         msg: >-
-          {{ ['NOTHING TO DO  topology  ' ~ _tp_cluster ~ '  the ring has the '
+          {{ (['NOTHING TO DO  topology  ' ~ _tp_cluster ~ '  the ring has the '
               ~ ansible_play_hosts_all | length ~ (' node' if ansible_play_hosts_all | length == 1 else ' nodes') ~ ' of the inventory,'
               ~ ' they run with the seeds of cassandra_seeds']
              + (['  already removed: ' ~ cassandra_topology_plan.gone | community.cassandra.cassandra_node_list
@@ -301,10 +310,12 @@
              + (['  not answering: ' ~ cassandra_topology_plan.silent | community.cassandra.cassandra_node_list
                  ~ ' (marked absent, out of the ring)'] if cassandra_topology_plan.silent else [])
              + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING  ')
-                | map('regex_replace', '$', ' is in the ring but in no host of the inventory: never touched') | list) }}
+                | map('regex_replace', '$', ' is in the ring but in no host of the inventory: never touched') | list)
+             + (hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([]))) | join(_nl) }}
       run_once: true
       when: not _tp_todo | bool
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
 
     - name: Show the plan
@@ -315,10 +326,12 @@
                replication_problems=_tp_replication,
                force=cassandra_decommission_force | default(false) | bool,
                cluster=_tp_cluster, version=_tp_version, check=ansible_check_mode,
-               session=_cassandra_session_warning, confirm=cassandra_operation_confirm | bool) }}
+               session=_cassandra_session_warning, confirm=cassandra_operation_confirm | bool,
+               notes=hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])) | join(_nl) }}
       run_once: true
       when: _tp_todo | bool
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         _tp_names: >-
           {{ dict(cassandra_topology_hosts | map(attribute='address') | zip(cassandra_topology_hosts | map(attribute='name'))) }}
@@ -377,6 +390,7 @@
     cassandra_add_node_cleanup: none  # after the removals, which move data again: printed
     _cassandra_preflight_skip: true
     _cassandra_screen_asked_by: topology
+    _cassandra_notes_deferred: true
     # the hosts marked absent still in the ring until the removals, after the adds
     _cassandra_ring_extra: "{{ groups['cassandra_topology_remove'] | default([]) | map('extract', hostvars) | selectattr('cassandra_leaving_node', 'defined')
                                | selectattr('cassandra_leaving_node.in_ring') | list | length }}"
@@ -401,6 +415,7 @@
     cassandra_leaving_nodes: "{{ groups['cassandra_topology_remove'] | default([]) | join(',') or 'localhost:!localhost' }}"
     _cassandra_preflight_skip: true
     _cassandra_screen_asked_by: topology
+    _cassandra_notes_deferred: true
     _cassandra_progress_resume: false  # the plan is worked out again at each run
     cassandra_service_resume_hint: "Once fixed, run topology again: it works out what is left to do."
 
@@ -412,7 +427,7 @@
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-
-          {{ ['DONE  topology  ' ~ _plan_cluster ~ '  ring = inventory: ' ~ ([('added ' ~ _plan.add | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.add else '',
+          {{ (['DONE  topology  ' ~ _plan_cluster ~ '  ring = inventory: ' ~ ([('added ' ~ _plan.add | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.add else '',
                                                      'seeds now ' ~ _plan.seeds.new if _plan.seeds.step else '',
                                                      ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
                                                     | select | join('; '))]
@@ -420,12 +435,13 @@
                   ~ _them ~ ' marked absent (the playbooks leave ' ~ _them ~ ' out)',
                   '  2. wipe ' ~ ('its' if _done | length == 1 else 'their') ~ ' data directories before reusing the host'
                   ~ ('' if _done | length == 1 else 's')])
-                if _done | length > 0 else []) }}
+                if _done | length > 0 else [])) | join(_nl) }}
       run_once: true
       when:
         - not ansible_check_mode
         - (_plan.add + _plan.remove) | length > 0 or _plan.seeds.step
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"

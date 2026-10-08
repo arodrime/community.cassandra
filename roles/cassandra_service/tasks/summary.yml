@@ -9,7 +9,8 @@
       {%-   set _ = out.append(h ~ ': ' ~ hostvars[h].cassandra_op_result
                                    | default('not reached' if h in ansible_play_hosts_all else 'not in this run (--limit)')) -%}
       {%- endfor -%}
-      {{ out }}
+      {{ out | join(_nl) }}
   run_once: true
   vars:
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     cassandra_output: true

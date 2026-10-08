@@ -264,6 +264,14 @@
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-
-          Remove {{ ansible_play_hosts_all | join(', ') }} from the inventory. Their data directories are
-          left in place; wipe them before reusing the hosts.
+          {{ ['TO DO', '  1. remove ' ~ ansible_play_hosts_all | community.cassandra.cassandra_node_list
+              ~ ' from the inventory (or mark ' ~ _it ~ ' cassandra_node_state: absent)',
+              '  2. wipe ' ~ ('its' if _one else 'their') ~ ' data directories (left in place) before reusing the host'
+              ~ ('' if _one else 's')] | join(_nl) }}
       run_once: true
+      when: not _cassandra_screen_asked_by | default('')  # topology says it once, at its end
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true
+        _one: "{{ ansible_play_hosts_all | length == 1 }}"
+        _it: "{{ 'it' if _one | bool else 'them' }}"

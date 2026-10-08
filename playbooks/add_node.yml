@@ -466,16 +466,20 @@
 
     - name: Say which nodes to move (one token per node, balanced)
       ansible.builtin.debug:
-        msg:
-          - "The ring is even once {{ _moves | map(attribute='name') | join(', ') }} move, one at a time (the plan shown at the start):"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.move_node -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }}"
+        msg: >-
+          {{ ['TO DO', '  1. even out the ring: move ' ~ _moves | map(attribute='name') | join(', ')
+              ~ ', one at a time (the plan shown at the start):',
+              '     ansible-playbook -i ' ~ ansible_inventory_sources | first ~ ' community.cassandra.move_node -e cassandra_hosts='
+              ~ lookup('community.cassandra.cassandra_hosts')] | join(_nl) }}
       run_once: true
       when:
         - _moves | length > 0
         - ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_add_node_token_kind', 'defined')
           | selectattr('cassandra_add_node_token_kind', 'equalto', 'balanced') | list | length > 0
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _moves: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_add_node_tokens.moves | default([]) }}"
+        cassandra_output: true
 
 # The nodes that handed ranges over still hold that data until a cleanup: the
 # datacenter's nodes, or only the new nodes' racks when every keyspace has as
@@ -500,20 +504,21 @@
   tasks:
     - name: Say which cleanups to run
       ansible.builtin.debug:
-        msg:
-          - "Once the cluster is fine, clean up the nodes that handed data over ({{ _scope }}):"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup{{ _hosts_option }}
-            --limit {{ _targets | join(',') }} -e cassandra_cleanup_mode={{ cassandra_cleanup_mode | default('sequential') }}
-            -e cassandra_cleanup_jobs={{ cassandra_cleanup_jobs }}"
-          - ""
-          - "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)"
-          - "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)"
-          - "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)"
+        msg: >-
+          {{ ['Once the cluster is fine, clean up the nodes that handed data over (' ~ _scope ~ '):',
+              '  ansible-playbook -i ' ~ ansible_inventory_sources | first ~ ' community.cassandra.cleanup' ~ _hosts_option
+              ~ ' --limit ' ~ _targets | join(',') ~ ' -e cassandra_cleanup_mode=' ~ cassandra_cleanup_mode | default('sequential')
+              ~ ' -e cassandra_cleanup_jobs=' ~ cassandra_cleanup_jobs, '',
+              '  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)',
+              '                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)',
+              '  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)'] | join(_nl) }}
       run_once: true
       when:
         - _targets | length > 0
         - _mode == 'none'
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true
         # the group the lookup finds by itself is left out
         _hosts_option: "{{ (' -e cassandra_hosts=' ~ cassandra_hosts) if cassandra_hosts is defined else '' }}"
         _scope: >-

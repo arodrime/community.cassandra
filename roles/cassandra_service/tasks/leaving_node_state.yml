@@ -53,4 +53,8 @@
               ~ ', Cassandra is only stopped and disabled there')
              if cassandra_leaving_node.state == 'decommissioned'
              else 'decommission already in progress (an earlier run), waited for again' }}
-      when: cassandra_leaving_node.state in ['leaving', 'decommissioned']
+      when:
+        - cassandra_leaving_node.state in ['leaving', 'decommissioned']
+        - not _cassandra_notes_deferred | default(false) | bool  # topology: in its plan
+      vars:
+        cassandra_output: true

@@ -446,3 +446,19 @@ def test_screen_big_datacenter_counted_once_and_one_node_left():
     hosts = [host(1), host(2), host(3, dc="dc2", absent=True)]
     r = {"dc1": {"nodes": [entry(1), entry(2)]}, "dc2": {"nodes": [entry(3)]}}
     assert cassandra_topology_plan(hosts, r)["large_removals"] == ["dc2 removed whole (node3): no node left there"]
+
+
+def test_screen_notes_one_line_each_once():
+    hosts = [host(1), host(2), host(3), host(4, state="new", info=["java: installed", "port 9042 reached"],
+                                                checks=["could not list the listening ports (ss)"]),
+             host(5, state="new", info=["java: installed"], checks=["could not list the listening ports (ss)"])]
+    r = ring(entry(1), entry(2), entry(3))
+    notes = ["WARNING  seeds: dc1 has one seed", "WARNING  seeds: dc1 has one seed", "cassandra_foo is not read"]
+    lines = cassandra_topology_screen(cassandra_topology_plan(hosts, r), hosts, ring=r, notes=notes, confirm=False)
+    assert "NOTE  node4, node5: java: installed" in lines and "NOTE  node4: port 9042 reached" in lines
+    assert "NOTE  cassandra_foo is not read" in lines
+    assert warnings_of(lines) == ["WARNING  seeds: dc1 has one seed",
+                                  "WARNING  node4, node5: could not list the listening ports (ss)"]
+    # NOTE lines with the facts, before the WARNING block; every line plain text
+    assert lines.index("NOTE  node4, node5: java: installed") < lines.index(warnings_of(lines)[0])
+    assert all("\n" not in line for line in lines)

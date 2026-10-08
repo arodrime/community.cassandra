@@ -68,18 +68,20 @@ def test_the_plan_asks_once_and_the_steps_ask_nothing():
 def test_operator_messages_marked_for_the_ops_callback():
     refuse = task("Refuse a plan that can't be done")
     assert refuse["vars"]["cassandra_output"] is True
-    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _tp_cluster="my_cluster", _tp_problems=["a", "b"])
-    assert msg == ["REFUSED  topology  my_cluster  nothing was changed", "  a", "  b"]
+    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _tp_cluster="my_cluster", _tp_problems=["a", "b"], _nl="\n")
+    assert msg == "REFUSED  topology  my_cluster  nothing was changed\n  a\n  b"
     nothing = task("Say there is nothing to do")
     assert nothing["vars"]["cassandra_output"] is True
     plan = {"gone": ["n5", "n6", "n7"], "silent": [], "unknown": ["10.0.0.9 (dc1 / r1, UN)"]}
+    hostvars = {"n1": {"_cassandra_notes": ["WARNING  seeds: dc1 has one seed"]}}
     msg = render(nothing["ansible.builtin.debug"]["msg"], _tp_cluster="my_cluster", cassandra_topology_plan=plan,
-                 ansible_play_hosts_all=["n1", "n2", "n3"])
+                 ansible_play_hosts_all=["n1", "n2", "n3"], hostvars=hostvars, _nl="\n").split("\n")
     assert msg == ["NOTHING TO DO  topology  my_cluster  the ring has the 3 nodes of the inventory, they run with the"
                    " seeds of cassandra_seeds",
                    "  already removed: n5..n7 (marked absent, out of the ring, Cassandra stopped): delete them from the"
                    " inventory, or leave them",
-                   "WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never touched"]
+                   "WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never touched",
+                   "WARNING  seeds: dc1 has one seed"]  # the checks' notes kept for the plan
     done = next(p for p in PLAYS if p.get("name") == "Say what is left to do")["tasks"][0]
     assert done["vars"]["cassandra_output"] is True
     plan = {"add": ["n4"], "remove": ["n2"], "gone": [], "silent": [], "seeds": {"step": True, "new": "n1,n4"}}
@@ -88,7 +90,7 @@ def test_operator_messages_marked_for_the_ops_callback():
                      ansible_play_hosts_all=["n1"])
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
-    assert msg == ["DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
+    assert msg.split("\n") == ["DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
                    "  1. delete n2 from the inventory, or leave it marked absent (the playbooks leave it out)",
                    "  2. wipe its data directories before reusing the host"]
 
@@ -202,3 +204,28 @@ def test_the_plan_gets_the_seeds_and_no_cap():
     todo = PLAN["vars"]["_tp_todo"]
     assert render(todo, cassandra_topology_plan={"add": [], "remove": [], "seeds": {"step": True}}) is True
     assert render(todo, cassandra_topology_plan={"add": [], "remove": [], "seeds": {"step": False}}) is False
+
+
+def test_notes_kept_for_the_plan_not_printed_on_their_own():
+    preflight = next(p for p in PLAYS if p.get("ansible.builtin.import_playbook") == "community.cassandra.preflight")
+    assert preflight["vars"]["_cassandra_notes_deferred"] is True
+    assert PLAN["vars"]["_cassandra_notes_deferred"] is True
+    absent = next(p for p in PLAYS if p.get("name") == "Read the hosts marked absent")
+    assert absent["vars"]["_cassandra_notes_deferred"] is True
+    for name in ("Add the nodes", "Remove the nodes"):
+        assert next(p for p in PLAYS if p.get("name") == name)["vars"]["_cassandra_notes_deferred"] is True
+    show = task("Show the plan")["ansible.builtin.debug"]["msg"]
+    assert "notes=hostvars[ansible_play_hosts_all[0]]._cassandra_notes" in show and "join(_nl)" in show
+    # a check's notes: kept when deferred, printed (one string, marked) otherwise
+    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "note.yml"), encoding="utf-8") as f:
+        keep, say = yaml.safe_load(f)
+    kept = render(keep["ansible.builtin.set_fact"]["_cassandra_notes"], _note="WARNING  a\nNOTE b\nWARNING  a",
+                  _cassandra_notes=["WARNING  a"])
+    assert kept == ["WARNING  a", "NOTE b"]
+    assert keep["when"] == "_cassandra_notes_deferred | default(false) | bool"
+    assert say["when"] == "not _cassandra_notes_deferred | default(false) | bool"
+    assert say["vars"]["cassandra_output"] is True and say["ansible.builtin.debug"]["msg"] == "{{ _note }}"
+    # the per-host dumps of the checks: not printed under topology
+    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
+        text = f.read()
+    assert text.count("not _cassandra_notes_deferred | default(false) | bool") == 2

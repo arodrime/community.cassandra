@@ -69,7 +69,7 @@
 
     - name: Progress of the cleanups
       ansible.builtin.debug:
-        msg: "{{ _cassandra_stream_report }}"
+        msg: "{{ _cassandra_stream_report | join('\n') }}"
       vars:
         cassandra_output: true
 

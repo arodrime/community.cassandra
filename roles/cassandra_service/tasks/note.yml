@@ -1,0 +1,20 @@
+---
+# An operator note of a check (a "WARNING  ..." line, or several lines in one
+# string): printed as is (the ops callback's operator message), or, when the
+# playbook shows its notes in its own plan (_cassandra_notes_deferred: topology),
+# kept in _cassandra_notes (one item per line) for it.
+#   include_role: name=community.cassandra.cassandra_service tasks_from=note.yml
+#   vars: _note: "WARNING  ..."
+- name: Keep the note for the plan
+  ansible.builtin.set_fact:
+    _cassandra_notes: "{{ (_cassandra_notes | default([]) + _note.split('\n') | map('trim') | select | list) | unique }}"
+  run_once: true
+  when: _cassandra_notes_deferred | default(false) | bool
+
+- name: Say it
+  ansible.builtin.debug:
+    msg: "{{ _note }}"
+  run_once: true
+  when: not _cassandra_notes_deferred | default(false) | bool
+  vars:
+    cassandra_output: true
