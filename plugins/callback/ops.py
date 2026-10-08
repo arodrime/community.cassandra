@@ -20,6 +20,7 @@ description:
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
     (C(ignore_unreachable)) on one line. Diffs (C(--diff)) too.
+  - The warnings of the tasks are printed too.
   - With C(-v) or more, everything is printed as the default callback does.
   - Set it in C(ansible.cfg) (C([defaults]) C(stdout_callback = community.cassandra.ops)) or with
     C(ANSIBLE_STDOUT_CALLBACK=community.cassandra.ops).
@@ -89,6 +90,7 @@ class CallbackModule(DefaultCallback):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_on_ok(result)
         task = _task(result)
+        self._handle_warnings(_result(result))  # a warning is meant to be read
         if marked(task) and not (task.loop and "results" in _result(result)) and self._says(task):
             self._print(_result(result).get("msg"))
 
@@ -101,6 +103,7 @@ class CallbackModule(DefaultCallback):
     def v2_runner_item_on_ok(self, result):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_item_on_ok(result)
+        self._handle_warnings(_result(result))
         if marked(_task(result)) and self._says(_task(result)):
             self._print(_result(result).get("msg"))
 
