@@ -191,7 +191,9 @@
       run_once: true
 
     # Once the cluster exists, every seed must be a live member: a stale seed
-    # (decommissioned node, old IP) breaks bootstraps
+    # (decommissioned node, old IP) breaks bootstraps. A host the run adds
+    # (cassandra_new_nodes; topology: any host of the group) joins with the
+    # other seeds and is made a seed once up (cassandra_service join_seeds.yml)
     - name: Check the running cluster
       run_once: true
       when: _cassandra_preflight_running_nodes | length > 0
@@ -215,14 +217,38 @@
               _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
               or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
               or (_cassandra_preflight_seeds_down_ok | default(false) | bool and _addr in _all and _addr in _stopped)
+              or (_seed_added | length > 0 and (_addr not in _all or _addr in _joining))
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
-              {{ ("A new node can't be a seed (seeds don't bootstrap, it would join without its data): add it as a"
-                  ~ ' regular node, then make it a seed with change_seeds.') if _host and _addr not in _all
+              {{ (_absent | first ~ ' is marked cassandra_node_state: absent: take it out of cassandra_seeds in the'
+                  ~ ' inventory (topology then drops it from the seed lists before it removes it).') if _absent
+                 else ('A host not in the ring yet: add it with add_node (or topology), which makes it a seed once it has'
+                  ~ ' joined.') if _host and _addr not in _all
                  else 'Bring it back up, or take it out of cassandra_seeds (change_seeds) if it is gone.' if _addr in _all
                  else 'It is not a node of this cluster: check cassandra_seeds.' }}
             quiet: true
           vars:
+            # the hosts this run adds: cassandra_new_nodes (add_node), _cassandra_preflight_adding (topology)
+            _new_nodes: "{{ _nn if _nn is string else _nn | join(',') }}"
+            _nn: "{{ cassandra_new_nodes | default('', true) }}"
+            _adding: >-
+              {{ (query('ansible.builtin.inventory_hostnames', _new_nodes) if _new_nodes else [])
+                 + _cassandra_preflight_adding | default([]) }}
+            # a host marked absent, out of this play: by its name or ansible_host
+            _absent: >-
+              {%- set out = [] -%}
+              {%- for h in query('community.cassandra.cassandra_nodes', state='absent')
+                    if item | regex_replace(':[0-9]+$', '') in [h, hostvars[h].ansible_host | default(h)] -%}
+              {%-   set _ = out.append(h) -%}
+              {%- endfor -%}
+              {{ out }}
+            # a bootstrap an earlier run started (UJ): waited for, made a seed after
+            _joining: >-
+              {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
+                 | selectattr('state', 'equalto', 'J') | map(attribute='address') | list }}
+            _seed_added: >-
+              {{ ansible_play_hosts | select('in', _adding) | map('extract', hostvars)
+                 | selectattr('_cassandra_service_seed_entry', 'equalto', item) | list }}
             _up: >-
               {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
                  | selectattr('status', 'equalto', 'U') | selectattr('state', 'in', ['N', 'M']) | map(attribute='address') | list }}

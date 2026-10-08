@@ -1,5 +1,23 @@
 ---
-# Prepares a new node with the roles and starts it (it bootstraps into the ring)
+# Prepares a new node with the roles and starts it (it bootstraps into the ring).
+# Its cassandra.yaml lists the seeds it joins with (join_seeds.yml), never itself
+# (a seed does not bootstrap): add_node and topology apply cassandra_seeds once it is up.
+- name: Work out the seeds it joins with
+  ansible.builtin.include_tasks: join_seeds.yml
+
+# the last guard: it starts with itself as a seed only by a bug above
+- name: It is not one of the seeds it joins with
+  ansible.builtin.assert:
+    that: _own | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }} would join with itself as a seed ({{ _own | join(', ') }}): a seed does not bootstrap,
+      it would join without its data. Nothing was started.
+    quiet: true
+  vars:
+    _own: >-
+      {{ ((_cassandra_join_seeds.split(',') if _cassandra_join_seeds is string else _cassandra_join_seeds) | map('trim')
+          | map('regex_replace', ':[0-9]+$', '') | list) | intersect(_cassandra_service_names | default([inventory_hostname])) }}
+
 - name: Configure the package repository
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_repository
@@ -15,6 +33,8 @@
 - name: Write the config
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config
+  vars:
+    cassandra_seeds: "{{ _cassandra_join_seeds }}"
 
 - name: Open the firewall
   ansible.builtin.include_role:
@@ -30,6 +50,7 @@
   ansible.builtin.include_tasks: main.yml
   vars:
     cassandra_service_wait_for_normal: false  # the bootstrap is waited for below
+    cassandra_service_allow_new_seed: true  # in cassandra_seeds or not, it joins with _cassandra_join_seeds
 
 # A bootstrap streams the node's share of the data: hours on big nodes. The
 # wait goes on as long as the streams make progress (stream_wait.yml). Stopping

@@ -3,7 +3,7 @@
 # stops once with every problem found: root access, the Cassandra directories
 # (mounted where fstab or systemd expects, empty, free space), the Pythons of
 # cqlsh and Medusa, the packages and where they come from, the network to the
-# seeds, its own ports free, no Cassandra running, no *_manage: false switch
+# seeds it joins with (join_seeds.yml), its own ports free, no Cassandra running, no *_manage: false switch
 # import_cluster wrote (host_vars of a node it found) on a host with no Cassandra. Read-only, also
 # under --check. Runs after the preflight play (its facts and ring). A host already
 # in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
@@ -125,9 +125,14 @@
           failed_when: false
           check_mode: false  # read-only
 
+        - name: Work out the seeds it joins with
+          ansible.builtin.include_tasks: join_seeds.yml
+
         - name: Work out what to check
           ansible.builtin.set_fact:
             _cassandra_new_node_plan: "{{ lookup('ansible.builtin.template', 'new_node_checks_plan.j2') | from_json }}"
+          vars:
+            cassandra_seeds: "{{ _cassandra_join_seeds }}"  # the ones it reaches to join
           # URLs with credentials or a signature
           no_log: >-
             {{ [cassandra_java_tarball, cassandra_medusa_pip_index_url, cassandra_install_url,

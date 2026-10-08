@@ -138,3 +138,27 @@ def test_plan_vars_do_not_shadow_the_included_tasks_vars():
     for play in PLAYS:
         clash = set((play.get("vars") or {}).keys()) & used
         assert not clash, (play.get("name"), clash)
+
+
+def test_steps_in_order_adds_seeds_removals():
+    names = [p.get("name") for p in PLAYS]
+    assert names.index("Add the nodes") < names.index("Change the seeds") < names.index("Remove the nodes")
+    seeds = next(p for p in PLAYS if p.get("name") == "Change the seeds")
+    assert seeds["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
+    assert render(seeds["hosts"], groups={"all": []}) == []
+    assert render(seeds["hosts"], groups={"cassandra_topology_seeds": ["n1", "n2"]}) == ["n1", "n2"]
+    line_up = task("Line up the nodes for the seed step")
+    assert line_up["when"] == "not ansible_check_mode"  # --check: the plan only
+    hosts = ["n1", "n2"]
+    # anything to do: the seeds too, a reload at least (files written, a run stopped before the reload)
+    assert render(line_up["loop"], ansible_play_hosts_all=hosts, _tp_todo=True) == hosts
+    assert render(line_up["loop"], ansible_play_hosts_all=hosts, _tp_todo=False) == []
+
+
+def test_the_plan_gets_the_question_and_the_seeds():
+    plan = task("Work out the plan")["ansible.builtin.set_fact"]["cassandra_topology_plan"]
+    assert "confirm=cassandra_operation_confirm | bool" in plan and "seeds=cassandra_seeds" in plan
+    assert "allow_large" not in plan
+    todo = PLAN["vars"]["_tp_todo"]
+    assert render(todo, cassandra_topology_plan={"add": [], "remove": [], "seeds": {"step": True}}) is True
+    assert render(todo, cassandra_topology_plan={"add": [], "remove": [], "seeds": {"step": False}}) is False

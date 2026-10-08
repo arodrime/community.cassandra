@@ -87,16 +87,17 @@ Read-only (change nothing):
 Nodes:
 
   add_node - Adds new hosts to the running cluster, one at a time. Put them in their rack's group
-    first, not in cassandra_seeds.
+    first; one in cassandra_seeds joins as a regular node, then becomes a seed.
     $ $PLAY $C.add_node -e cassandra_new_nodes=NEW_NODE
 
   topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the
-    ring, removes the hosts marked cassandra_node_state: absent; one node at a time, --check shows
-    the plan.
+    ring, applies cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node
+    at a time, --check shows the plan.
     $ $PLAY $C.topology
 
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
-    the others; refuses seeds.
+    the others; a node no longer in cassandra_seeds is first dropped from the other nodes' seed
+    lists.
     $ $PLAY $C.decommission_node -e cassandra_leaving_nodes=node4
 
   replace_node - Replaces a dead node by a blank host, which takes over its tokens and data. In the
@@ -325,9 +326,9 @@ def test_example_replaces_the_needed_argument():
 
 
 def test_long_option_on_its_own_line():
-    lines = cassandra_help(MODEL, PLAYBOOKS, topic="topology", cwd=CWD).splitlines()
-    at = lines.index("    -e cassandra_topology_allow_large_removal=true")
-    assert lines[at + 1] == "    " + " " * 42 + "goes on with more removals than that, or more than"
+    lines = cassandra_help(MODEL, PLAYBOOKS, topic="remove_dead_node", cwd=CWD).splitlines()
+    at = lines.index("    -e cassandra_dead_node_method=removenode_force")
+    assert lines[at + 1] == "    " + " " * 42 + "removenode, removenode_force (finishes a stuck"
 
 
 def test_common_options_only_for_the_operations_that_change_something():
@@ -422,7 +423,8 @@ def test_absent_seed():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[3]["vars"]["cassandra_seeds"] = hosts[3]["vars"]["cassandra_seeds"] + ["192.0.2.14"]
     text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
-    assert "- Seed and marked absent: node4. Take it out of cassandra_seeds (change_seeds) before it leaves." in text
+    assert "- Seed and marked absent: node4. Take it out of cassandra_seeds in the inventory: topology then\n" \
+           "  drops it from the seed lists before it leaves." in text
 
 
 def test_racks_against_the_allocator():

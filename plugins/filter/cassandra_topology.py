@@ -6,10 +6,14 @@ cassandra_topology_plan: the hosts of the cluster's group (the ones marked
     cassandra_node_state: absent too) and the ring -> what to add, what to
     remove, in which order, and why not (the refusals).
 cassandra_topology_screen: the plan -> the screen (filter cassandra_screen).
+cassandra_seed_change: the hosts' live seed lists and cassandra_seeds -> the
+    seed change to apply (topology, add_node, decommission_node).
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
+
+import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen_title)
@@ -29,20 +33,85 @@ def _plural(count, word):
     return "%d %s%s" % (count, word, "" if count == 1 else "s")
 
 
-def cassandra_topology_plan(hosts, ring=None, max_removals=2, allow_large=False, token_auto="false"):
+def _seed_entries(seeds):
+    """cassandra_seeds (a list or a comma-separated string) -> its entries."""
+    if not seeds:
+        return []
+    if isinstance(seeds, str):
+        seeds = seeds.split(",")
+    return [str(s).strip() for s in seeds if str(s).strip()]
+
+
+def cassandra_seed_change(hosts, seeds):
+    """hosts: [{name, absent, dc, rack, names: the names and addresses it
+    answers to, live: the seed list of its cassandra.yaml ('' when unknown)}];
+    absent: leaving (its own list does not count). seeds: cassandra_seeds,
+    the seed list wanted. Returns {new: the line cassandra.yaml gets (as
+    change_seeds writes it), old: [the entries the other hosts run with],
+    old_hosts: [the hosts in it], removed, added: [labels
+    "name (dc/rack)", an entry no host has as is], differ: [hosts whose list
+    is not the new one], step: something to apply, problems: a datacenter
+    left with no seed, no seed at all}."""
+    new_entries = _seed_entries(seeds)
+    new_line = seeds if isinstance(seeds, str) else ",".join(new_entries)
+    present = [h for h in hosts if not h.get("absent")]
+    old = []
+    for h in present:
+        for entry in _seed_entries(h.get("live")):
+            if entry not in old:
+                old.append(entry)
+
+    def owner(entry):
+        bare = re.sub(r":[0-9]+$", "", entry)  # the port left out, as seed_facts.yml compares
+        return next((h for h in hosts if bare in (h.get("names") or []) or bare == h["name"]), None)
+
+    def key(entry):
+        h = owner(entry)
+        return h["name"] if h else entry
+
+    def label(entry):
+        h = owner(entry)
+        return "%s (%s/%s)" % (h["name"], h.get("dc") or "?", h.get("rack") or "?") if h else entry
+
+    old_keys = [key(e) for e in old]
+    new_keys = [key(e) for e in new_entries]
+    removed = [label(e) for e in old if key(e) not in new_keys]
+    added = [label(e) for e in new_entries if key(e) not in old_keys]
+    differ = [h["name"] for h in present if h.get("live") and h["live"] != new_line]
+    problems = []
+    if not new_entries:
+        problems.append("cassandra_seeds is empty: list a node of each datacenter (one per rack, two or three per"
+                        " datacenter).")
+    gone = [owner(e) for e in old if key(e) not in new_keys and owner(e)]
+    for dc in sorted(set(h.get("dc") for h in gone)):
+        left = [h["name"] for h in present if h.get("dc") == dc]
+        if left and not [n for n in new_keys if n in left]:
+            problems.append("%s would be left with no seed (%s %s the seed list): put a node of %s in cassandra_seeds."
+                            % (dc, ", ".join(h["name"] for h in gone if h.get("dc") == dc),
+                               "leaves" if len([h for h in gone if h.get("dc") == dc]) == 1 else "leave", dc))
+    return {"new": new_line, "old": old, "old_hosts": [k for k in old_keys if k in [h["name"] for h in hosts]],
+            "removed": removed, "added": added, "differ": differ,
+            "step": bool(removed or added or differ), "problems": problems}
+
+
+def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, token_auto="false", seeds=None):
     """hosts: every host of the cluster's group in the inventory's order:
     [{name, absent, address (the one the ring shows, '' when unknown), dc, rack,
-      seed, reachable, running, state, refused, single, token, reset}]. single:
+      seed, reachable, running, state, refused, single, token, reset, names,
+      live}]. seed: in cassandra_seeds; names, live: see cassandra_seed_change. single:
     one token per node; token: its cassandra_initial_token; reset: its reset
     plan (cassandra_add_node_reset), for the screen. state: for a host to
     add, new_node_state.yml's (new, joining, joined); for a host marked absent,
     leaving_node_state.yml's (normal, leaving, decommissioned); refused: why
     a check refused the host. ring: cassandra_status' cluster_status.
-    max_removals, allow_large: the guard (cassandra_topology_max_removals,
-    cassandra_topology_allow_large_removal); token_auto: cassandra_token_auto
-    (one token per node).
+    max_removals: the most removals of a run without the question
+    (cassandra_topology_max_removals), applied when confirm
+    (cassandra_operation_confirm) is false; with the question the plan on the
+    screen is the guard. token_auto:
+    cassandra_token_auto (one token per node); seeds: cassandra_seeds.
     Returns {add, remove: [names] in the order of the run (adds first; a
     bootstrap or decommission an earlier run started first of its kind),
+    seeds: cassandra_seed_change's (applied between the adds and the removals),
     finish: the hosts to remove only stopped and disabled (out of the ring
     already), gone: hosts marked absent already out of the ring and stopped,
     silent: hosts marked absent out of the ring that do not answer, unknown:
@@ -66,10 +135,7 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, allow_large=False,
         elif h.get("state") == "joined" or entry:
             if entry and entry["status"] == "D":
                 down.append(name)
-        elif h.get("seed"):
-            problems.append("%s: in cassandra_seeds, and not in the ring yet: seeds don't bootstrap, it would join"
-                            " without its data. Add it as a regular node, then make it a seed with change_seeds." % name)
-        else:
+        else:  # in cassandra_seeds too: it joins with the others as its seeds, and is made one once up
             new.append(name)
 
     for h in absent:
@@ -99,8 +165,9 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, allow_large=False,
                 % (name, address, where, address))
         elif entry and h.get("seed"):
             problems.append(
-                "%s is marked absent but is in cassandra_seeds: take it out of the seeds and apply it with"
-                " change_seeds first, or the other nodes keep contacting a node that is gone." % name)
+                "%s is marked absent but is still in cassandra_seeds: take it out of cassandra_seeds in the"
+                " inventory; topology then applies the new seed list on the other nodes before it removes it."
+                % name)
         elif entry and entry["state"] in ("J", "M"):
             problems.append("%s (%s) is marked absent and %s in the ring (%s): Cassandra decommissions a node up and"
                             " normal only. Run topology again once it is UN." % (
@@ -143,24 +210,31 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, allow_large=False,
                         " address mistyped, a host missing), or remove a dead node with remove_dead_node."
                         % ", ".join(unknown))
 
-    # the guard: removing many nodes at once is rarely meant
-    if not allow_large:
-        if len(in_ring) > int(max_removals):
-            problems.append("the plan removes %d nodes (%s), more than cassandra_topology_max_removals (%d): check"
-                            " the inventory (a group var marking hosts absent?). Raise it, or set"
-                            " cassandra_topology_allow_large_removal: true, if it is meant."
-                            % (len(in_ring), ", ".join(in_ring), int(max_removals)))
-        by_dc = {}
-        for name in in_ring:
-            h = next(x for x in absent if x["name"] == name)
-            by_dc.setdefault(entries[h["address"]][0], []).append(name)
-        for dc, names in sorted(by_dc.items()):
-            # the datacenter with the nodes this run adds first
-            size = len([e for e in entries.values() if e[0] == dc]) + len([h for h in present if h["name"] in new and h.get("dc") == dc])
-            if len(names) * 2 > size:
-                problems.append("the plan removes %d of the %d nodes of %s (%s): more than half of the datacenter."
-                                " A datacenter goes with remove_datacenter; else set"
-                                " cassandra_topology_allow_large_removal: true." % (len(names), size, dc, ", ".join(names)))
+    # a run nobody confirms has a cap; the plan is read before the question otherwise
+    if not confirm and len(in_ring) > int(max_removals):
+        problems.append("the plan removes %d nodes (%s), more than cassandra_topology_max_removals (%d) for a run"
+                        " without a question (cassandra_operation_confirm false): check the inventory (a group var"
+                        " marking hosts absent?), run it with the question, or raise it if it is meant."
+                        % (len(in_ring), ", ".join(in_ring), int(max_removals)))
+    # never more than half of a datacenter at once, question or not
+    by_dc = {}
+    for name in in_ring:
+        h = next(x for x in absent if x["name"] == name)
+        by_dc.setdefault(entries[h["address"]][0], []).append(name)
+    for dc, names in sorted(by_dc.items()):
+        # the datacenter with the nodes this run adds first
+        size = len([e for e in entries.values() if e[0] == dc]) + len([h for h in present if h["name"] in new and h.get("dc") == dc])
+        if len(names) * 2 > size:
+            problems.append("the plan removes %d of the %d nodes of %s (%s): more than half of the datacenter."
+                            " Remove fewer at a time (topology again once done), or the whole datacenter with"
+                            " remove_datacenter." % (len(names), size, dc, ", ".join(names)))
+
+    # the seeds: cassandra_seeds applied live on every node once the adds are done, before the removals
+    # a host to add may have a cassandra.yaml of its own (a package's): not a list the cluster runs with
+    seed_hosts = [dict(h, live="") if h["name"] in new else h for h in hosts]
+    seed_change = cassandra_seed_change(seed_hosts, seeds) if seeds is not None else {"step": False, "problems": []}
+    if seed_change["step"]:
+        problems.extend(seed_change["problems"])
 
     # one token per node: add_node needs a token per new node, or cassandra_token_auto
     auto = str(token_auto).strip().lower()
@@ -186,9 +260,34 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, allow_large=False,
     if down:
         warnings.append("%s down in the ring: the check before the first step stops the run unless it is back up."
                         % ", ".join(down))
-    return {"add": add, "remove": remove, "finish": finish, "gone": gone, "silent": silent, "unknown": unknown, "down": down,
+    return {"add": add, "remove": remove, "seeds": seed_change, "finish": finish, "gone": gone, "silent": silent, "unknown": unknown, "down": down,
             "in_ring": in_ring, "joining": joining, "leaving": leaving, "nodes_left": nodes_left,
             "problems": problems, "warnings": warnings}
+
+
+def cassandra_topology_steps(plan, hosts):
+    """The plan in order, one line per kind of step:
+    "Add 2 nodes:           node5 (dc1/r1), node6 (dc1/r2)"."""
+    by_name = dict((h["name"], h) for h in hosts)
+
+    def label(name):
+        h = by_name.get(name) or {}
+        return "%s (%s/%s)" % (name, h.get("dc") or "?", h.get("rack") or "?")
+
+    rows = []
+    if plan["add"]:
+        rows.append(("Add %s:" % _plural(len(plan["add"]), "node"), ", ".join(label(n) for n in plan["add"])))
+    seeds = plan.get("seeds") or {}
+    if seeds.get("step"):
+        removed, added = seeds.get("removed") or [], seeds.get("added") or []
+        rows.append(("Change seeds:", "%s -> %s" % (", ".join(removed), ", ".join(added)) if removed and added
+                     else ("+ " + ", ".join(added)) if added else ("- " + ", ".join(removed)) if removed
+                     else "cassandra_seeds written on " + ", ".join(seeds.get("differ") or [])))
+    if plan["remove"]:
+        rows.append(("Decommission %s:" % _plural(len(plan["remove"]), "node"),
+                     ", ".join(label(n) for n in plan["remove"])))
+    width = max([len(r[0]) for r in rows] or [0]) + 2
+    return [r[0].ljust(width) + r[1] for r in rows]
 
 
 def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replication_problems=None, force=False,
@@ -242,12 +341,22 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
         title = "%d. add %s" % (steps, cassandra_screen_title(name, where))
         blocks.append({"title": title, "lines": lines})
 
+    seeds = plan.get("seeds") or {}
+    if seeds.get("step"):
+        steps += 1
+        lines = ["from: %s" % (",".join(seeds["old"]) or "(none)"), "to:   %s" % seeds["new"],
+                 "written to cassandra.yaml on every node, reloaded live where Cassandra runs (change_seeds' way, no restart)"]
+        if plan["add"] and seeds.get("added"):
+            lines.append("a new node in cassandra_seeds joins as a regular node first (a seed does not bootstrap),"
+                         " and becomes a seed here")
+        blocks.append({"title": "%d. change the seeds" % steps, "lines": lines})
+
     if plan["remove"]:
         # where the data goes: the screen of decommission_node, as the ring is once the adds are done
         states = [{"name": n, "state": "decommissioned" if n in plan["finish"] else
                    "leaving" if n in plan["leaving"] else "normal"} for n in plan["remove"]]
         nodes = [{"name": h["name"], "address": h.get("address"), "dc": h.get("dc"), "rack": h.get("rack"),
-                  "seed": h.get("seed")} for h in hosts]
+                  "seed": h["name"] in seeds.get("old_hosts", [])} for h in hosts]
         ring_after = {}
         for dc, info in ring.items():
             ring_after[dc] = {"nodes": list((info or {}).get("nodes") or [])}
@@ -265,12 +374,15 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     what = []
     if plan["add"]:
         what.append("add " + ", ".join(plan["add"]))
+    if seeds.get("step"):
+        what.append("change the seeds")
     if plan["remove"]:
         what.append("remove " + ", ".join(plan["remove"]))
-    intro = ["The inventory is the desired state: the hosts of the cluster's group not in the ring are added, the"
-             " hosts marked cassandra_node_state: absent still in it are removed. One node at a time, adds first,"
-             " the cluster checked before and after each one; the run stops at the first problem. Each step shows"
-             " its own screen as it starts (no other question)."]
+    intro = [{"pre": cassandra_topology_steps(plan, hosts) + [""]},
+             "The inventory is the desired state: the hosts of the cluster's group not in the ring are added, the"
+             " seed list becomes cassandra_seeds, the hosts marked cassandra_node_state: absent still in the ring are"
+             " removed. In this order, one node at a time, the cluster checked before and after each one; the run"
+             " stops at the first problem. Each step shows its own screen as it starts (no other question)."]
     after = []
     if plan["gone"]:
         after.append("Already removed (marked absent, out of the ring, Cassandra stopped): %s." % ", ".join(plan["gone"]))
@@ -314,4 +426,5 @@ class FilterModule(object):
         return {
             "cassandra_topology_plan": cassandra_topology_plan,
             "cassandra_topology_screen": cassandra_topology_screen,
+            "cassandra_seed_change": cassandra_seed_change,
         }

@@ -1,0 +1,29 @@
+---
+# The seed list a host not in the ring yet joins with (_cassandra_join_seeds):
+# cassandra_seeds without the hosts not in the ring yet. A seed does not
+# bootstrap (a host that lists itself joins without its data), and a host that
+# has not joined is no contact. None left (every seed is a host to add): two
+# up and normal nodes of the ring. Once the host is up, add_node or topology
+# applies cassandra_seeds on every node (seeds_apply.yml). Needs the preflight
+# facts and ring.
+- name: Work out the seeds it joins with
+  ansible.builtin.set_fact:
+    _cassandra_join_seeds: "{{ cassandra_seeds if _join_kept | length == _join_seeds | length else (_join_kept or _join_up[:2]) }}"
+  vars:
+    _join_seeds: >-
+      {{ ((cassandra_seeds | default([])) if cassandra_seeds | default([]) is not string else cassandra_seeds.split(','))
+         | map('trim') | select | list }}
+    _join_ring: >-
+      {{ ((cassandra_preflight_status | default({})).cluster_status | default({}, true)).values()
+         | map(attribute='nodes') | flatten }}
+    _join_members: "{{ _join_ring | rejectattr('state', 'equalto', 'J') | map(attribute='address') | list }}"
+    # the names of the hosts of the cluster not in the ring yet (this one too). Names of
+    # their own: the vars of the caller's include (e.g. add_node's _pending) would win
+    _join_pending: >-
+      {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+         | rejectattr('_cassandra_preflight.ring_address', 'in', _join_members)
+         | map(attribute='_cassandra_service_names', default=[]) | flatten | list }}
+    _join_kept: >-
+      {{ _join_seeds | zip(_join_seeds | map('regex_replace', ':[0-9]+$', '')) | rejectattr(1, 'in', _join_pending)
+         | map(attribute=0) | list }}
+    _join_up: "{{ _join_ring | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}"

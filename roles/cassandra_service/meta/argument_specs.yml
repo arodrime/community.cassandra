@@ -196,14 +196,10 @@ argument_specs:
         type: int
         default: 2
         description:
-          - C(topology) - the most nodes one run removes from the ring; a plan that removes more is refused
-            (a group var marking hosts absent by mistake), as is one that removes more than half of a datacenter.
-      cassandra_topology_allow_large_removal:
-        type: bool
-        default: false
-        description:
-          - C(topology) - C(true) goes on with a plan the guard refuses (more removals than
-            C(cassandra_topology_max_removals), or more than half of a datacenter).
+          - C(topology) without the question (C(cassandra_operation_confirm=false), nobody reads the plan) - the
+            most nodes one run removes from the ring; a plan that removes more is refused (a group var marking
+            hosts absent by mistake). With the question, the plan on the screen is the guard, no cap.
+          - A plan that removes more than half of a datacenter is refused either way.
       cassandra_create_cluster_reset:
         type: bool
         default: false

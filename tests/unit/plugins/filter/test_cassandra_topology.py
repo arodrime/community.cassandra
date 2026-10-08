@@ -5,7 +5,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
-    cassandra_topology_plan, cassandra_topology_screen)
+    cassandra_seed_change, cassandra_topology_plan, cassandra_topology_screen, cassandra_topology_steps)
 
 
 def entry(i, rack="r1", status="U", state="N", load="40.1 GiB", owns="25.0%"):
@@ -70,7 +70,8 @@ def test_absent_refusals():
     entries = [entry(i, status="D" if i == 6 else "U") for i in range(1, 8)]
     plan = cassandra_topology_plan(hosts, ring(*entries), max_removals=5)
     problems = plan["problems"]
-    assert any(p.startswith("node5 is marked absent but is in cassandra_seeds") for p in problems)
+    assert any(p.startswith("node5 is marked absent but is still in cassandra_seeds: take it out of cassandra_seeds in"
+                            " the inventory") for p in problems)
     assert any(p.startswith("node6 (10.0.0.6) is marked absent and down in the ring") for p in problems)
     assert "node7: its decommission failed" in problems
     assert any(p.startswith("node8 is marked absent and runs Cassandra, but is not in the ring") for p in problems)
@@ -82,7 +83,7 @@ def test_finish_a_decommission_and_wait_for_one():
     hosts = [host(1), host(2), host(3), host(4, absent=True, state="leaving"), host(5, absent=True, state="decommissioned"),
              host(6, absent=True, state="normal")]
     plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4, state="L"), entry(6), entry(7), entry(8)),
-                                   max_removals=3, allow_large=False)
+                                   max_removals=3)
     assert plan["remove"] == ["node4", "node5", "node6"]
     assert plan["finish"] == ["node5"]
     assert plan["in_ring"] == ["node4", "node6"]
@@ -97,19 +98,29 @@ def test_no_add_while_a_node_leaves():
         assert any(p.startswith("node4 still leaving") for p in plan["problems"]), state
 
 
-def test_guard_on_large_removals():
+def test_removal_cap_only_without_the_question():
     hosts = [host(i) for i in range(1, 6)] + [host(i, absent=True) for i in range(6, 9)]
     full = ring(*[entry(i) for i in range(1, 9)])
-    plan = cassandra_topology_plan(hosts, full)
-    assert len(plan["problems"]) == 1
-    assert plan["problems"][0].startswith("the plan removes 3 nodes (node6, node7, node8), more than cassandra_topology_max_removals (2)")
-    assert cassandra_topology_plan(hosts, full, max_removals=3)["problems"] == []
-    assert cassandra_topology_plan(hosts, full, allow_large=True)["problems"] == []
-    # more than half of a datacenter: 2 of 3
+    # the question is asked: the plan is read, no cap
+    assert cassandra_topology_plan(hosts, full)["problems"] == []
+    assert cassandra_topology_plan(hosts, full, max_removals=1, confirm=True)["problems"] == []
+    # nobody reads the plan (cassandra_operation_confirm false): capped
+    plan = cassandra_topology_plan(hosts, full, confirm=False)
+    assert plan["problems"] == [
+        "the plan removes 3 nodes (node6, node7, node8), more than cassandra_topology_max_removals (2) for a run"
+        " without a question (cassandra_operation_confirm false): check the inventory (a group var marking hosts"
+        " absent?), run it with the question, or raise it if it is meant."]
+    assert cassandra_topology_plan(hosts, full, max_removals=3, confirm=False)["problems"] == []
+
+
+def test_more_than_half_a_datacenter_always_refused():
+    # 2 of 3: refused with the question too, and whatever the cap
     hosts = [host(1), host(2, absent=True), host(3, absent=True)]
-    plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3)))
-    assert plan["problems"] == ["the plan removes 2 of the 3 nodes of dc1 (node2, node3): more than half of the datacenter."
-                                " A datacenter goes with remove_datacenter; else set cassandra_topology_allow_large_removal: true."]
+    for confirm in (True, False):
+        plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3)), max_removals=10, confirm=confirm)
+        assert plan["problems"] == ["the plan removes 2 of the 3 nodes of dc1 (node2, node3): more than half of the"
+                                    " datacenter. Remove fewer at a time (topology again once done), or the whole"
+                                    " datacenter with remove_datacenter."]
     # half exactly is not more than half
     hosts = [host(1), host(2), host(3, absent=True), host(4, absent=True)]
     assert cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4)))["problems"] == []
@@ -126,14 +137,14 @@ def test_same_address_on_two_hosts():
                                 " before adding or removing any of them."]
 
 
-def test_adds_joining_first_seed_and_refusals():
+def test_adds_joining_first_a_seed_too_and_refusals():
+    # node6 in cassandra_seeds, not in the ring: added (it joins as a regular node, made a seed after)
     hosts = [host(1), host(2), host(3), host(4, state="new"), host(5, state="joining"), host(6, seed=True),
              host(7, refused="has data but is not in the ring")]
     plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(5, state="J")))
-    assert plan["add"] == ["node5", "node4"]
+    assert plan["add"] == ["node5", "node4", "node6"]
     assert plan["joining"] == ["node5"]
-    assert any(p.startswith("node6: in cassandra_seeds, and not in the ring yet") for p in plan["problems"])
-    assert "node7: has data but is not in the ring" in plan["problems"]
+    assert plan["problems"] == ["node7: has data but is not in the ring"]
 
 
 def test_down_present_node_warned():
@@ -229,3 +240,100 @@ def test_one_token_per_node_add_and_remove_in_one_run_refused():
     plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4)))
     assert len(plan["problems"]) == 1
     assert plan["problems"][0].startswith("one token per node: adding node5 and removing node4 in one run")
+
+
+def seeded(i, live="10.0.0.1,10.0.0.2", **extra):
+    """A host with the names a seed entry may give it and the seed list of its cassandra.yaml."""
+    extra.setdefault("names", ["node%d" % i, "10.0.0.%d" % i])
+    return host(i, live=live, **extra)
+
+
+def test_seed_change_replaces_a_seed():
+    hosts = [seeded(1), seeded(2, absent=True, rack="r2"), seeded(3), seeded(5, live="", rack="r2")]
+    change = cassandra_seed_change(hosts, ["10.0.0.1", "10.0.0.5:7000"])
+    assert change["new"] == "10.0.0.1,10.0.0.5:7000"
+    assert change["old"] == ["10.0.0.1", "10.0.0.2"]
+    assert change["old_hosts"] == ["node1", "node2"]
+    assert change["removed"] == ["node2 (dc1/r2)"] and change["added"] == ["node5 (dc1/r2)"]
+    assert change["differ"] == ["node1", "node3"]  # node5 has no cassandra.yaml yet, node2 leaves
+    assert change["step"] and change["problems"] == []
+
+
+def test_seed_change_nothing_to_do_and_a_rewrite():
+    hosts = [seeded(1), seeded(2), seeded(3)]
+    assert cassandra_seed_change(hosts, "10.0.0.1,10.0.0.2")["step"] is False
+    assert cassandra_seed_change(hosts, ["10.0.0.1", "10.0.0.2"])["step"] is False
+    # the same seeds, written another way on one node: rewritten there
+    hosts[2]["live"] = "node1,node2"
+    change = cassandra_seed_change(hosts, ["10.0.0.1", "10.0.0.2"])
+    assert change["removed"] == [] and change["added"] == [] and change["differ"] == ["node3"] and change["step"]
+
+
+def test_seed_change_refusals():
+    # dc2's only seed leaves the list: dc2 keeps nodes but no seed
+    hosts = [seeded(1, live="10.0.0.1,10.0.0.4"), seeded(2, live="10.0.0.1,10.0.0.4"),
+             seeded(4, dc="dc2", live="10.0.0.1,10.0.0.4"), seeded(5, dc="dc2", live="10.0.0.1,10.0.0.4")]
+    assert cassandra_seed_change(hosts, ["10.0.0.1"])["problems"] == [
+        "dc2 would be left with no seed (node4 leaves the seed list): put a node of dc2 in cassandra_seeds."]
+    assert cassandra_seed_change(hosts, ["10.0.0.1", "10.0.0.5"])["problems"] == []
+    # dc2 removed for good: no node left there, nothing to seed
+    hosts[2]["absent"] = hosts[3]["absent"] = True
+    assert cassandra_seed_change(hosts, ["10.0.0.1"])["problems"] == []
+    assert cassandra_seed_change(hosts, [])["problems"][0].startswith("cassandra_seeds is empty")
+
+
+def test_plan_replaces_a_seed_in_one_run():
+    # node2 (a seed) marked absent and out of cassandra_seeds, node5 new and in it
+    hosts = [seeded(1, seed=True), seeded(2, absent=True, state="normal"), seeded(3), seeded(4),
+             seeded(5, live="127.0.0.1:7000", seed=True, state="new", rack="r2")]
+    r = ring(entry(1), entry(2), entry(3), entry(4))
+    plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.5"])
+    # node5's own cassandra.yaml (the package's, not set up yet) is no list the cluster runs with
+    assert plan["seeds"]["old"] == ["10.0.0.1", "10.0.0.2"]
+    assert plan["problems"] == []
+    assert plan["add"] == ["node5"] and plan["remove"] == ["node2"]
+    assert plan["seeds"]["step"] and plan["seeds"]["removed"] == ["node2 (dc1/r1)"]
+    # the plan in order: adds, seeds, removals
+    assert cassandra_topology_steps(plan, hosts) == [
+        "Add 1 node:           node5 (dc1/r2)",
+        "Change seeds:         node2 (dc1/r1) -> node5 (dc1/r2)",
+        "Decommission 1 node:  node2 (dc1/r1)"]
+    text = cassandra_screen(cassandra_topology_screen(plan, hosts, ring=r))
+    assert text.startswith("topology: add node5; change the seeds; remove node2\n\nAdd 1 node:")
+    blocks = [line for line in text.split("\n") if line[:3] == "  " + line[2:3] and line[2:3].isdigit()]
+    assert blocks == ["  1. add node5  10.0.0.5  dc1 / r2", "  2. change the seeds", "  3. remove node2  10.0.0.2  dc1 / r1"]
+    assert "\n    from: 10.0.0.1,10.0.0.2\n    to:   10.0.0.1,10.0.0.5\n" in text
+    assert "Decommission 1 node:  node2 (dc1/r1)\n\nThe inventory is the desired state" in text
+    assert "    a seed until now: the other nodes' seed lists drop it first" in text
+    # the seed still in cassandra_seeds: refused, whatever the rest
+    hosts[1]["seed"] = True
+    plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2", "10.0.0.5"])
+    assert plan["remove"] == []
+    assert plan["problems"][0].startswith("node2 is marked absent but is still in cassandra_seeds")
+
+
+def test_plan_seed_change_alone_and_its_refusal():
+    hosts = [seeded(1), seeded(2, rack="r2"), seeded(3, dc="dc2", live="10.0.0.1,10.0.0.2,10.0.0.3"),
+             seeded(4, dc="dc2", live="10.0.0.1,10.0.0.2,10.0.0.3")]
+    for h in hosts[:2]:
+        h["live"] = "10.0.0.1,10.0.0.2,10.0.0.3"
+    r = {"dc1": {"nodes": [entry(1), entry(2, rack="r2")]}, "dc2": {"nodes": [entry(3), entry(4)]}}
+    plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2", "10.0.0.4"])
+    assert plan["add"] == [] and plan["remove"] == [] and plan["problems"] == []
+    assert cassandra_topology_steps(plan, hosts) == ["Change seeds:  node3 (dc2/r1) -> node4 (dc2/r1)"]
+    # dc2 left with no seed: refused
+    plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2"])
+    assert plan["problems"] == ["dc2 would be left with no seed (node3 leaves the seed list): put a node of dc2 in"
+                                " cassandra_seeds."]
+    # nothing given (an old caller): no seed step
+    assert cassandra_topology_plan(hosts, r)["seeds"]["step"] is False
+
+
+def test_steps_count_and_group_the_nodes():
+    hosts = [host(1), host(2, rack="r2"), host(3, absent=True), host(4, absent=True, rack="r2"),
+             host(5, state="new"), host(6, state="new", rack="r2")]
+    plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2, rack="r2"), entry(3), entry(4, rack="r2")))
+    assert plan["problems"] == []
+    assert cassandra_topology_steps(plan, hosts) == [
+        "Add 2 nodes:           node5 (dc1/r1), node6 (dc1/r2)",
+        "Decommission 2 nodes:  node3 (dc1/r1), node4 (dc1/r2)"]

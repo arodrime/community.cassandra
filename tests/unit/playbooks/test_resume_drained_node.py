@@ -140,7 +140,8 @@ def test_preflight_lets_a_resumed_run_pass_a_member_seed_down():
     check = [t for t in play["tasks"] if t.get("name") == "Check the running cluster"][0]
     seeds = [t for t in check["block"] if t["name"] == "Every seed is up"][0]
     condition = "{{ %s }}" % seeds["ansible.builtin.assert"]["that"].strip()
-    variables = {"_addr": "10.0.0.2", "_up": ["10.0.0.1"], "_all": ["10.0.0.1", "10.0.0.2"], "_host": ["10.0.0.2"]}
+    variables = {"_addr": "10.0.0.2", "_up": ["10.0.0.1"], "_all": ["10.0.0.1", "10.0.0.2"], "_host": ["10.0.0.2"],
+                 "_seed_added": [], "_joining": []}
     assert render(condition, cassandra_rolling_resume=True, **variables) is True
     assert render(condition, cassandra_rolling_resume=False, **variables) is False
     # not a member of the ring: refused, resumed or not

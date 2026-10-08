@@ -90,7 +90,9 @@ def decommission(racks, leaving=("node7", "node8"), states=None, check=False, co
     for i, h in enumerate(hosts, 1):
         hostvars[h] = {"_cassandra_preflight": {"ring_address": "10.0.0.%d" % i, "address": "10.0.0.%d" % i,
                                                 "cassandra_dc": "dc1", "cassandra_rack": rack_of[h],
-                                                "cassandra_cluster_name": "Orders", "layout": {"seed": h in ("node1", "node2")}},
+                                                "cassandra_cluster_name": "Orders",
+                                                "live_seeds": "10.0.0.1,10.0.0.2"},
+                       "_cassandra_service_names": [h, "10.0.0.%d" % i],
                        "cassandra_leaving_node": {"state": (states or {}).get(h, "normal")}}
     ring = {"dc1": {"nodes": [ring_entry(i, rack_of[h], load="%d.1 GiB" % (40 + i)) for i, h in enumerate(hosts, 1)
                               if (states or {}).get(h) != "decommissioned"]}}
@@ -104,7 +106,7 @@ def decommission(racks, leaving=("node7", "node8"), states=None, check=False, co
                  "ansible_play_hosts_all": list(leaving), "_cassandra_preflight": hostvars[leaving[0]]["_cassandra_preflight"],
                  "cassandra_preflight_describe": {"stdout": DESCRIBE},
                  "cassandra_decommission_keyspaces": {"out": "\n".join(rows)},
-                 "cassandra_decommission_force": force}
+                 "cassandra_decommission_force": force, "cassandra_seeds": ["10.0.0.1", "10.0.0.2"]}
     return screen(variables, task_["vars"], play["vars"], check=check, confirm=confirm)
 
 
@@ -337,8 +339,8 @@ def test_apply_config_and_update_java_screens():
 
 def test_change_seeds_and_upgrade_screens():
     t, play = task("change_seeds.yml", "Show the new seed list and confirm")
-    hostvars = {"node1": {"inventory_hostname": "node1", "_cassandra_seeds_old": "10.0.0.1"},
-                "node2": {"inventory_hostname": "node2", "_cassandra_seeds_old": "10.0.0.1,10.0.0.2"}}
+    hostvars = {"node1": {"inventory_hostname": "node1", "_cassandra_preflight": {"live_seeds": "10.0.0.1"}},
+                "node2": {"inventory_hostname": "node2", "_cassandra_preflight": {"live_seeds": "10.0.0.1,10.0.0.2"}}}
     text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars, "_new": "10.0.0.1,10.0.0.2"}, t["vars"])
     assert text == ("change_seeds: the seed list in cassandra.yaml, reloaded live (no restart)\n\n"
                     "  node1\n    from: 10.0.0.1\n    to:   10.0.0.1,10.0.0.2")

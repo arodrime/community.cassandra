@@ -161,7 +161,7 @@ def _true(value):
 def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, peer="", replication_problems=None):
     """leaving: [{name, state (normal, leaving, decommissioned)}] in the order
     of the run; nodes: [{name, address, dc, rack, seed}] for every node of the
-    group; ring: cassandra_status' cluster_status, read from a node that
+    group, seed: in the seed lists the nodes run with (dropped before it leaves); ring: cassandra_status' cluster_status, read from a node that
     stays; keyspaces: cassandra_keyspaces; peer: the node that stays, which
     the ring is checked from; replication_problems: the ones cassandra_decommission_force
     lets through."""
@@ -188,7 +188,8 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
         node = by_name.get(name, {"dc": "?", "rack": "?", "address": "?"})
         dc, rack = node.get("dc"), node.get("rack")
         title = cassandra_screen_title(name, {"address": node.get("address"), "cassandra_dc": dc, "cassandra_rack": rack})
-        lines = ["a seed" if node.get("seed") else "not a seed"]
+        lines = ["a seed until now: the other nodes' seed lists drop it first (cassandra_seeds, live)"
+                 if node.get("seed") else "not a seed"]
         if state == "decommissioned":
             lines.append("already out of the ring (an earlier run): Cassandra only stopped and disabled on it")
             blocks.append({"title": title, "lines": lines})

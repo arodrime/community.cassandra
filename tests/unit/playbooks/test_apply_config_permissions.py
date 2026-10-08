@@ -238,7 +238,7 @@ def test_apply_config_passes_a_member_seed_down(resume, down_ok, expected):
     seeds = [t for t in check["block"] if t["name"] == "Every seed is up"][0]
     variables = {"_addr": "10.100.100.2", "_up": ["10.100.100.1"], "_all": ["10.100.100.1", "10.100.100.2"],
                  "_host": ["10.100.100.2"], "_stopped": ["10.100.100.2"], "cassandra_rolling_resume": resume,
-                 "_cassandra_preflight_seeds_down_ok": down_ok}
+                 "_cassandra_preflight_seeds_down_ok": down_ok, "_seed_added": [], "_joining": []}
     condition = "{{ %s }}" % seeds["ansible.builtin.assert"]["that"].strip()
     assert render(condition, variables) is expected
     # apply_config: only a seed of this run that is not running (one it writes), not one down elsewhere

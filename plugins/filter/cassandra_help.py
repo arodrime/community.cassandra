@@ -68,8 +68,8 @@ OPERATIONS = [
      "summary": "Checks the nodes against the inventory before a change: settings that must match, racks for the"
                 " token allocator, versions, seeds."},
     {"name": "add_node", "theme": "nodes", "cql": "plan",
-     "summary": "Adds new hosts to the running cluster, one at a time. Put them in their rack's group first, not in"
-                " cassandra_seeds.",
+     "summary": "Adds new hosts to the running cluster, one at a time. Put them in their rack's group first; one in"
+                " cassandra_seeds joins as a regular node, then becomes a seed.",
      "options": [("-e cassandra_new_nodes=NEW_NODE", "the hosts to add (comma-separated), already in the inventory",
                   None),
                  ("-e cassandra_add_node_reset=true", "first empties a new node that has data but is not in the ring",
@@ -80,21 +80,20 @@ OPERATIONS = [
                                                     " balanced or true (shows both, asks)", "false")],
      "example": ("then the cleanup, one node at a time", ["-e cassandra_add_node_cleanup=sequential"])},
     {"name": "topology", "theme": "nodes", "cql": True, "cql_when": "to remove nodes",
-     "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, removes"
-                " the hosts marked cassandra_node_state: absent; one node at a time, --check shows the plan.",
+     "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, applies"
+                " cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node at a time,"
+                " --check shows the plan.",
      "options": [("-e cassandra_add_node_reset=true", "first empties a host to add that has data but is not in the"
                                                       " ring", "false"),
                  ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
                   "false"),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
                                                           " replicas", "false"),
-                 ("-e cassandra_topology_max_removals=3", "most nodes removed in one run", "2"),
-                 ("-e cassandra_topology_allow_large_removal=true", "goes on with more removals than that, or more"
-                                                                    " than half of a datacenter", "false")],
+                 ("-e cassandra_topology_max_removals=3", "most nodes removed by a run without the question", "2")],
      "example": ("the plan only", ["--check"])},
     {"name": "decommission_node", "theme": "nodes", "cql": True,
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"
-                " refuses seeds.",
+                " a node no longer in cassandra_seeds is first dropped from the other nodes' seed lists.",
      "options": [("-e cassandra_leaving_nodes=<nodes>", "the nodes to remove (comma-separated)", None),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
                                                           " replicas", "false"),
@@ -488,8 +487,8 @@ def _advice(model, cluster, playbooks, cwd, known):
                         _command(BY_NAME["decommission_node"], model, cluster, cwd)))
         seeds = [h["name"] for h in absent if h["seed"]]
         if seeds:
-            out.append("Seed and marked absent: %s. Take it out of cassandra_seeds (change_seeds) before it"
-                       " leaves." % ", ".join(seeds))
+            out.append("Seed and marked absent: %s. Take it out of cassandra_seeds in the inventory: topology"
+                       " then drops it from the seed lists before it leaves." % ", ".join(seeds))
 
     auth = cluster.values("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])
     if any("PasswordAuthenticator" in str(a) for a in auth) and not any(
