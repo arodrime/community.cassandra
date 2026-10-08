@@ -215,7 +215,9 @@
     recurse: true
   register: cassandra_node_reset_peers
   failed_when: false
-  when: _cassandra_node_reset_auto | default(false) | bool
+  when:
+    - _cassandra_node_reset_auto | default(false) | bool
+    - cassandra_node_reset_found.files | default([]) | length > 0  # a blank host: no system dir to look in
 
 # The whole cluster (create_cluster's reset): every node is wiped, the caller checked the ring
 - name: Work out whether this node may be reset

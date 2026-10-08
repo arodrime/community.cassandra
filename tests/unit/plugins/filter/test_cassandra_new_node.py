@@ -96,11 +96,11 @@ def test_non_empty_dirs():
     assert "(.keep)" in out["problems"][2]
 
 
-def test_non_empty_dirs_with_a_reset_only_warn():
+def test_non_empty_dirs_with_a_reset_only_a_note():
     found = ["/var/lib/cassandra/data/system", "/var/lib/cassandra/commitlog/CommitLog-7-1.log"]
     out = cassandra_new_node_dirs(DIRS, [ROOT, DATA], found=found, reset=True)
-    assert out["problems"] == []
-    assert out["warnings"] == [
+    assert out["problems"] == [] and out["warnings"] == []
+    assert [i for i in out["info"] if "not empty" in i] == [
         "data directory /var/lib/cassandra/data is not empty (system): the reset empties it first, unless it is refused",
         "commitlog directory /var/lib/cassandra/commitlog is not empty (CommitLog-7-1.log): the reset empties it first, unless it is refused"]
 

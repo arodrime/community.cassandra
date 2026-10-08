@@ -133,8 +133,9 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
                 and not any(_under(other, p) for other in paths if other != path)]
         if held and reset:
             names = sorted(os.path.basename(p) for p in held)
-            warnings.append("%s directory %s is not empty (%s%s): the reset empties it first, unless it is refused"
-                            % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
+            # the plan says what the reset deletes (or why it is refused): a note, not a warning
+            info.append("%s directory %s is not empty (%s%s): the reset empties it first, unless it is refused"
+                        % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
         elif held:
             names = sorted(os.path.basename(p) for p in held)
             problems.append("%s directory %s is not empty (%s%s): a new node starts empty. Move the data away, or empty it"

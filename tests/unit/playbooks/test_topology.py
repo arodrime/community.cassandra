@@ -231,7 +231,21 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
     # the per-host dumps of the checks: not printed under topology
     with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
         text = f.read()
-    assert text.count("not _cassandra_notes_deferred | default(false) | bool") == 2
+    assert text.count("not _cassandra_notes_deferred | default(false) | bool") == 3
+    # the stop: a verdict (printed as is) outside topology, unmarked there (topology says it in its refusal)
+    checks = yaml.safe_load(text)
+
+    def stops(tasks):
+        for t in tasks:
+            if str(t.get("name", "")).startswith("Stop before installing anything"):
+                yield t
+            for key in ("block", "rescue", "always"):
+                yield from stops(t.get(key) or [])
+    marked, plain = list(stops(checks))
+    assert marked["vars"]["cassandra_output"] is True and "cassandra_output" not in plain["vars"]
+    assert marked["when"][1] == "not _cassandra_notes_deferred | default(false) | bool"
+    assert plain["when"][1] == "_cassandra_notes_deferred | default(false) | bool"
+    assert marked["ansible.builtin.fail"] == plain["ansible.builtin.fail"]
 
 
 def test_a_refused_host_to_add_gives_its_problems_and_the_reset_hint():

@@ -281,6 +281,7 @@
           {%- endfor -%}
           {{ l }}
 
+    # the verdict, printed as is by the ops callback (topology: in its refusal, the same failure unmarked)
     - name: Stop before installing anything
       ansible.builtin.fail:
         msg: >-
@@ -291,7 +292,31 @@
               " 'Test Cluster', no user keyspace; unless -e cassandra_add_node_reset=false), replace_node with"
               ' -e cassandra_replace_node_reset=true, if they hold nothing you need.') if _leftovers | bool else '' }}
       run_once: true
-      when: _hosts | length > 0
+      when:
+        - _hosts | length > 0
+        - not _cassandra_notes_deferred | default(false) | bool
+      vars:
+        cassandra_output: true
+        _leftovers: >-
+          {{ _hosts | map('extract', hostvars, ['_cassandra_new_node_check', 'problems']) | flatten
+             | select('search', 'is not empty|Cassandra is running here') | list | length > 0 }}
+        _hosts: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_new_node_check', 'defined')
+             | rejectattr('_cassandra_new_node_check.problems', 'equalto', []) | map(attribute='inventory_hostname') | list }}
+
+    - name: Stop before installing anything (topology)
+      ansible.builtin.fail:
+        msg: >-
+          {{ _hosts | join(', ') }} {{ 'is' if _hosts | length == 1 else 'are' }} not ready (the problems are listed above):
+          nothing was installed. Fix them and run again, or skip these checks with -e cassandra_new_node_checks=false.
+          {{ ('Leftovers of a node that never joined (started once by mistake, a failed bootstrap) or of a host replacing itself:'
+              ' add_node empties a new node first when it may (Cassandra down, in no ring, cluster this one or the stock'
+              " 'Test Cluster', no user keyspace; unless -e cassandra_add_node_reset=false), replace_node with"
+              ' -e cassandra_replace_node_reset=true, if they hold nothing you need.') if _leftovers | bool else '' }}
+      run_once: true
+      when:
+        - _hosts | length > 0
+        - _cassandra_notes_deferred | default(false) | bool
       vars:
         _leftovers: >-
           {{ _hosts | map('extract', hostvars, ['_cassandra_new_node_check', 'problems']) | flatten
