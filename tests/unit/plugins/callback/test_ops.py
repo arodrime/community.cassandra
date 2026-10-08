@@ -124,22 +124,23 @@ def run(tmp_path, playbook, *args, **env_extra):
 def test_only_the_marked_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK)
     assert rc == 0, output
-    assert output.splitlines() == [
+    lines = output.splitlines()
+    assert lines[:6] == [
         "PLAN  op  my_cluster  2 steps",
-        u"  1. node1  dc1/rack_a  ← here",
+        u"  1. node1  dc1/rack_a  \u2190 here",
         "line one",
         "line two",
         "item a",
         "item b",
-        "handler on node1",
-        "handler on node2",
     ]
+    # the handlers: in whatever order the hosts end
+    assert sorted(lines[6:]) == ["handler on node1", "handler on node2"]
 
 
 def test_check_mode_prints_the_same_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK, "--check")
     assert rc == 0, output
-    assert output.splitlines()[:2] == ["PLAN  op  my_cluster  2 steps", u"  1. node1  dc1/rack_a  ← here"]
+    assert output.splitlines()[:2] == ["PLAN  op  my_cluster  2 steps", u"  1. node1  dc1/rack_a  \u2190 here"]
     assert "TASK [" not in output and "PLAY RECAP" not in output
 
 
