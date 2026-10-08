@@ -14,13 +14,13 @@ from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_o
     NodeToolCmd, NodeToolCommandSimple, strip_jvm_banner)
 from ansible_collections.community.cassandra.plugins.module_utils import nodetool_netstats, nodetool_status
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import parse_ring
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import parse_nodetool_get
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 from ansible_collections.community.cassandra.plugins.modules.cassandra_netstats import parse_netstats
 from ansible_collections.community.cassandra.plugins.modules.cassandra_move import parse_info_tokens
 from ansible_collections.community.cassandra.plugins.modules.cassandra_fullquerylog import parse_getfullquerylog
 from ansible_collections.community.cassandra.plugins.modules.cassandra_removenode import leaving_nodes
 from ansible_collections.community.cassandra.plugins.modules.cassandra_schema import cluster_schema
-from ansible_collections.community.cassandra.plugins.modules.cassandra_streamthroughput import extract_throughput
 from ansible_collections.community.cassandra.plugins.modules.cassandra_invalidatecache import parse_cache_info
 
 BANNERS = [
@@ -138,8 +138,8 @@ def test_schema(banner):
 
 @pytest.mark.parametrize("banner", BANNERS)
 def test_throughput_and_cache_info(banner):
-    assert extract_throughput(banner + "Current stream throughput: 24.0 Mb/s\n") == extract_throughput(
-        "Current stream throughput: 24.0 Mb/s\n")
+    assert parse_nodetool_get(banner + "Current stream throughput: 24.0 Mb/s\n") == (
+        24.0, "Mb/s", "Current stream throughput: 24.0 Mb/s")
     info = ("Key Cache              : entries 12, size 1 KiB, capacity 100 MiB\n"
             "Row Cache              : entries 0, size 0 bytes, capacity 0 bytes\n"
             "Counter Cache          : entries 3, size 0 bytes, capacity 50 MiB\n")

@@ -488,25 +488,8 @@ def test_apply_config_recap():
         "node5  not in this run (--limit)"]
 
 
-def test_node_operation_result_under_check():
-    # --check simulated the node: "would", not "done in"
-    tasks = load("roles", "cassandra_service", "tasks", "node_operation.yml")
-    record = next(t for t in walk(tasks) if t.get("name") == "Record the result")["ansible.builtin.set_fact"]
-
-    def result(action, check):
-        variables = {"cassandra_service_node_action": action, "ansible_check_mode": check, "_cassandra_op_start": 0}
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(record["cassandra_op_result"]))
-
-    assert result("apply_config", True) == "would apply"
-    assert result("restart", True) == "would restart"
-    assert result("update_java", True) == "would update Java"
-    assert result("upgradesstables", True) == "would upgrade the sstables"
-    assert result("apply_config", False).startswith("apply_config done in ")
-    assert record["cassandra_op_done"] is True
-
-
-@pytest.mark.parametrize("tasks_file,would,done", [("restart_batch.yml", "would restart with its rack", "restart done with its rack in "),
-                                                   ("cleanup_batch.yml", "would clean up", "cleanup done in ")])
+# node_operation.yml and restart_batch.yml: test_check_mode_results.py
+@pytest.mark.parametrize("tasks_file,would,done", [("cleanup_batch.yml", "would clean up", "cleanup done in ")])
 def test_batch_result_under_check(tasks_file, would, done):
     tasks = load("roles", "cassandra_service", "tasks", tasks_file)
     record = next(t for t in walk(tasks) if t.get("name") == "Record the result")["ansible.builtin.set_fact"]

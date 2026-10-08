@@ -51,7 +51,8 @@ def test_prepared_all_at_once_before_the_starts_one_at_a_time():
 
 def test_the_prepare_starts_nothing():
     prepare = load("roles", "cassandra_service", "tasks", "action_add_prepare.yml")
-    roles = [included(t) for t in prepare]
+    assert included(prepare[0]) == "join_seeds.yml"  # its cassandra.yaml lists the seeds it joins with
+    roles = [included(t) for t in prepare if "ansible.builtin.include_role" in t]
     assert roles == ["community.cassandra.cassandra_repository", "community.cassandra.cassandra_install",
                      "community.cassandra.cassandra_linux", "community.cassandra.cassandra_config",
                      "community.cassandra.cassandra_firewall", "community.cassandra.cassandra_medusa"]

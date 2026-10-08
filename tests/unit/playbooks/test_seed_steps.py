@@ -139,8 +139,9 @@ def test_join_seeds_keep_cassandra_seeds_as_written_when_nothing_is_left_out():
 
 def test_the_add_and_its_checks_use_the_join_seeds():
     add = load("roles", "cassandra_service", "tasks", "action_add.yml")
-    assert add[0]["ansible.builtin.include_tasks"] == "join_seeds.yml"
-    config = task(add, "Write the config")
+    prepare = load("roles", "cassandra_service", "tasks", "action_add_prepare.yml")
+    assert prepare[0]["ansible.builtin.include_tasks"] == "join_seeds.yml"
+    config = task(prepare, "Write the config")
     assert config["vars"]["cassandra_seeds"] == "{{ _cassandra_join_seeds }}"
     assert task(add, "Start it")["vars"]["cassandra_service_allow_new_seed"] is True
     checks = load("roles", "cassandra_service", "tasks", "new_node_checks.yml")
@@ -227,7 +228,7 @@ def test_a_failed_seed_step_stops_the_run():
 
 
 def test_the_add_refuses_a_node_among_its_own_join_seeds():
-    guard = task(load("roles", "cassandra_service", "tasks", "action_add.yml"), "It is not one of the seeds it joins with")
+    guard = task(load("roles", "cassandra_service", "tasks", "action_add_prepare.yml"), "It is not one of the seeds it joins with")
     own = guard["vars"]["_own"]
     names = ["n5", "10.0.0.5"]
     assert render(own, _cassandra_join_seeds=["10.0.0.1"], _cassandra_service_names=names) == []
