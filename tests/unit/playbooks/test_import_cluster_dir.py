@@ -354,3 +354,10 @@ def test_short_screen_at_the_end():
     debug = [t["name"] for t in write if "ansible.builtin.debug" in t]
     assert debug == ["Show the summary"]
     assert [t["name"] for t in write][-2:] == ["Show the summary", "Stop on a failed self-check"]
+
+
+def test_report_lines_joined_by_a_real_newline():
+    # in a folded block '\n' stays a backslash and an n (report.txt was one line): a variable holds the newline
+    assert WRITE_VARS["_newline"] == "\n" and "join(_newline)" in WRITE_VARS["_report"]
+    with open(PLAYBOOK, encoding="utf-8") as f:
+        assert "join('\\n')" not in f.read()

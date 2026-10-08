@@ -1099,7 +1099,9 @@
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
-           self_check_error=_self_check_error | default('')) | join('\n') }}
+           self_check_error=_self_check_error | default('')) | join(_newline) }}
+    # (a newline: in a folded block, '\n' would stay a backslash and an n)
+    _newline: "\n"
   tasks:
     # the first play had no host: a group that matches nothing (or only hosts marked absent), a --limit
     - name: Stop when no node was given
@@ -1530,7 +1532,7 @@
           {%-   set t = r.content | b64decode -%}
           {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') or not r.item is match('(group|host)_vars/')
                                               or r.item == 'group_vars/' ~ _layout.cluster_group ~ '/main.yml'
-                                         else t.split('\n') | first if t.startswith('# Written by ')
+                                         else t.splitlines() | first if t.startswith('# Written by ')
                                          else t | community.cassandra.cassandra_leading_comments}) -%}
           {%- endfor -%}
           {{ out }}
