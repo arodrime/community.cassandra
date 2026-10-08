@@ -14,7 +14,8 @@ docs/docsite/rst/guide_output.rst.
 - before a change: plan; during it: progress_line; at the end: recap,
   perm_lines, diff_lines, changed_lines;
 - what is left to do: command, extra_var, todo, inventory_steps,
-  in_git_work_tree.
+  in_git_work_tree;
+- the seed rule of preflight and help: seed_layout.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -724,3 +725,68 @@ def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
         steps.append({"text": "commit it", "command": "git add %s && git commit -m %s" % (
             shlex.quote(shown_path), shlex.quote(message or "Inventory: %s" % os.path.basename(shown_path)))})
     return steps
+
+
+SEEDS_MIN, SEEDS_MAX = 2, 3  # per datacenter (OUTPUT Q7)
+
+
+def _seed_pick(racks, target):
+    """target nodes of a datacenter, one rack after the other, its seeds first
+    (racks holding a seed first: well placed seeds stay)."""
+    order = sorted(racks, key=lambda r: not any(n["seed"] for n in racks[r]))
+    queues = dict((r, sorted(racks[r], key=lambda n: not n["seed"])) for r in order)
+    picked = []
+    while len(picked) < target and any(queues.values()):
+        for rack in order:
+            if queues[rack] and len(picked) < target:
+                picked.append(queues[rack].pop(0))
+    return picked
+
+
+def seed_layout(nodes):
+    """The seed rule (Q7), the same for preflight and help: 2 or 3 seeds per
+    datacenter, on different racks when it has several; 1 seed (in a
+    datacenter of more than one node) or none is a warning, more than 3 a
+    note. nodes: [{name, address, dc, rack, seed}] in inventory order.
+    Returns {lines: one per datacenter ("Seeds  dc1  node1 (rack_a), node3
+    (rack_b)  ok", a warning's "WARNING  Seeds  dc2  ..."), dcs: [{dc, level
+    ok|note|warning, text}], problems: the warnings' texts, notes, suggested: a seed list that follows the rule
+    (addresses, every datacenter; empty without a warning)}."""
+    dcs = {}
+    for n in nodes or []:
+        dcs.setdefault(n["dc"], {}).setdefault(n["rack"], []).append(n)
+    width = max([len(str(dc)) for dc in dcs] or [0])
+    result = {"lines": [], "dcs": [], "problems": [], "notes": [], "suggested": []}
+    suggested = []
+    for dc, racks in dcs.items():
+        members = [n for rack in racks.values() for n in rack]
+        seeds = [n for n in members if n["seed"]]
+        seed_racks = []
+        for n in seeds:
+            if n["rack"] not in seed_racks:
+                seed_racks.append(n["rack"])
+        level, text = "ok", ""
+        if not seeds:
+            level, text = "warning", "no seed"
+        elif len(seeds) == 1 and len(members) > 1:
+            level, text = "warning", "1 seed: %d to %d per datacenter%s" % (
+                SEEDS_MIN, SEEDS_MAX, ", on different racks" if len(racks) > 1 else "")
+        elif len(seed_racks) < min(len(seeds), len(racks)):
+            empty = [r for r in racks if r not in seed_racks]
+            level, text = "warning", "%s on %s, none on %s: put them on different racks" % (
+                plural(len(seeds), "seed"), ", ".join(seed_racks), ", ".join(empty))
+        elif len(seeds) > SEEDS_MAX:
+            level, text = "note", "%d seeds: %d to %d are enough" % (len(seeds), SEEDS_MIN, SEEDS_MAX)
+        listed = ", ".join("%s (%s)" % (n["name"], n["rack"]) for n in seeds) or "none"
+        line = "Seeds  %s  %s  %s" % (str(dc).ljust(width), listed, {"ok": "ok", "note": "note: " + text}.get(level, text))
+        result["lines"].append("WARNING  " + line if level == "warning" else line)
+        result["dcs"].append({"dc": dc, "level": level, "text": text})
+        if level == "warning":
+            result["problems"].append("%s: %s" % (dc, text))
+        elif level == "note":
+            result["notes"].append("%s: %s" % (dc, text))
+        target = min(len(members), SEEDS_MAX, max(SEEDS_MIN, len(racks)))
+        keep = seeds if level != "warning" else _seed_pick(racks, target)
+        suggested += [n["address"] for n in keep]
+    result["suggested"] = suggested if result["problems"] else []
+    return result

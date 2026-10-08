@@ -270,14 +270,27 @@ def test_preflight_notes_render_one_line_each():
         " (did you mean cassandra_seeds?)",
         "WARNING  cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
     t = found["Seed layout"]
-    layout = {"problems": ["dc1 has one seed"], "suggested": ["n1", "n2"]}
-    for deferred, tail in ((True, " (update the inventory: topology then applies it live)"),
-                           (False, "\n  then apply it live: ansible-playbook -i inv community.cassandra.change_seeds"
-                                   " -e cassandra_hosts=prod")):
-        note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", ansible_inventory_sources=["inv"],
-                      _cassandra_notes_deferred=deferred)
-        assert note == ('WARNING  seeds: dc1 has one seed; suggested in the group_vars of prod: cassandra_seeds:'
-                        ' ["n1", "n2"]' + tail)
+    layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r2)  ok", "WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter"],
+              "problems": ["dc2: 1 seed: 2 to 3 per datacenter"], "notes": [], "suggested": ["n1", "n2", "b1", "b2"]}
+    cmd = "ansible-playbook community.cassandra.change_seeds -e cassandra_hosts=prod"
+    for deferred, lines in ((True, ['WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
+                                    '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]'
+                                    ' (update the inventory: topology then applies it live)']),
+                            (False, ['Seeds  dc1  n1 (r1), n2 (r2)  ok',
+                                     'WARNING  Seeds  dc2  b1 (r1)  1 seed: 2 to 3 per datacenter',
+                                     '  suggested in the group_vars of prod: cassandra_seeds: ["n1", "n2", "b1", "b2"]',
+                                     '  then apply it live: ' + cmd])):
+        note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd,
+                      _deferred=deferred)
+        assert note.split("\n") == lines
+    # a note only (more than 3 seeds): the lines, no suggestion
+    layout = {"lines": ["Seeds  dc1  n1 (r1), n2 (r1), n3 (r1), n4 (r1)  note: 4 seeds: 2 to 3 are enough"],
+              "problems": [], "notes": ["dc1: 4 seeds: 2 to 3 are enough"], "suggested": []}
+    assert render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", _change_seeds=cmd,
+                  _deferred=False) == layout["lines"][0]
+    for problems, notes in (([], []), (["x"], []), ([], ["y"])):
+        shown = render("{{ %s }}" % t["when"], _layout={"problems": problems, "notes": notes})
+        assert shown is bool(problems or notes)  # a boolean (ansible-core 2.19+ refuses a list)
 
 
 def test_a_step_of_topology_prints_only_its_token_tables():

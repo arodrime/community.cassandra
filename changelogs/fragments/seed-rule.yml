@@ -1,0 +1,2 @@
+minor_changes:
+  - "preflight and help playbooks - one seed rule for both: 2 or 3 seeds per datacenter, on different racks when it has several; one seed (or none) in a datacenter is a warning, more than 3 a note; one line per datacenter (``Seeds  dc1  node1 (rack_a), node3 (rack_b)  ok``)."

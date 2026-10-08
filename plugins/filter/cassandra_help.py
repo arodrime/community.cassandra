@@ -30,7 +30,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import _wrap
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
-    extra_var as _e, path_from as _path)
+    extra_var as _e, path_from as _path, seed_layout)
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -309,6 +309,10 @@ class _Cluster(object):
                                 & set(self.seeds))
         self.present = [h for h in self.hosts if not h["absent"]]
 
+    def seed_layout(self):
+        """The seed rule (preflight's): the nodes not marked absent."""
+        return seed_layout([dict((k, h[k]) for k in ("name", "address", "dc", "rack", "seed")) for h in self.present])
+
     def values(self, key, default=None):
         """{value: [hosts]} over the nodes that stay; the role default when not set."""
         out = {}
@@ -530,24 +534,18 @@ def _advice(model, cluster, playbooks, cwd, known):
     if cluster.seeds_unread:
         pass
     elif not cluster.seeds:
-        out.append("No cassandra_seeds in the inventory: set it in the cluster's group_vars, one node per rack, two"
-                   " or three per datacenter.")
+        out.append("No cassandra_seeds in the inventory: set it in the cluster's group_vars, 2 or 3 nodes per"
+                   " datacenter, on different racks when there are several.")
     strangers = [] if cluster.seeds_unread else [s for s in cluster.seeds if s not in inventory_names]
     if strangers:
         out.append("Seeds that are no node of the inventory: %s." % ", ".join(strangers))
-    for dc in sorted(cluster.dcs) if not cluster.seeds_unread else []:
-        racks = cluster.dcs[dc]
-        seeded = dict((rack, [h["name"] for h in hosts if h["seed"]]) for rack, hosts in racks.items())
-        if cluster.seeds and not any(seeded.values()):
-            out.append("%s has no seed: make one node per rack a seed (change_seeds)." % dc)
-        elif cluster.seeds and len(racks) <= 3:
-            missing = sorted(r for r, s in seeded.items() if not s)
-            if missing:
-                out.append("%s: no seed in %s (one seed per rack keeps one up when a rack is down)."
-                           % (dc, ", ".join(missing)))
-        many = sorted("%s (%s)" % (r, ", ".join(s)) for r, s in seeded.items() if len(s) > 1)
-        if many:
-            out.append("%s: more than one seed in %s: one per rack is enough." % (dc, ", ".join(many)))
+    if cluster.seeds and not cluster.seeds_unread:
+        layout = cluster.seed_layout()
+        for problem in layout["problems"]:
+            out.append("%s (the rule: 2 or 3 seeds per datacenter, on different racks when there are several): set"
+                       " cassandra_seeds, then change_seeds applies it live." % problem)
+        for note in layout["notes"]:
+            out.append("%s (more seeds, more gossip; no gain)." % note)
 
     rf = cluster.rf()
     for dc in sorted(cluster.dcs):
@@ -597,8 +595,12 @@ def _cluster_lines(cluster):
                       cluster.show("cassandra_num_tokens", cluster.defaults["cassandra_num_tokens"]),
                       cluster.show("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])),
                    "  ", "    ")
-    lines += _wrap("Seeds: %s" % ("not readable from the inventory alone" if cluster.seeds_unread and not cluster.seeds
-                                  else ", ".join(cluster.seeds) or "none"), "  ", "    ")
+    if cluster.seeds and not cluster.seeds_unread:  # the seed rule of preflight, one line per datacenter
+        for line in cluster.seed_layout()["lines"]:
+            lines += _wrap(line, "  ", "    ")
+    else:
+        lines += _wrap("Seeds: %s" % ("not readable from the inventory alone" if cluster.seeds_unread and not cluster.seeds
+                                      else ", ".join(cluster.seeds) or "none"), "  ", "    ")
     for dc in sorted(cluster.dcs):
         racks = cluster.dcs[dc]
         count = sum(len(h) for h in racks.values())

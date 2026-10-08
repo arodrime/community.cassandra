@@ -59,7 +59,7 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
   Cassandra: series 41x, package 4.1.10, installed from repository (role default)
   Java: 11, package
   Snitch: GossipingPropertyFileSnitch, num_tokens: 16, authenticator: PasswordAuthenticator
-  Seeds: 192.0.2.11, 192.0.2.13, 192.0.2.15
+  Seeds  dc1  node1 (rack1), node3 (rack2), node5 (rack3)  ok
 
   dc1: 5 nodes (1 marked absent), 3 racks
     rack1: node1 192.0.2.11 (seed), node2 192.0.2.12
@@ -419,8 +419,12 @@ def test_seeds_layout():
         host["vars"]["cassandra_seeds"] = "192.0.2.11:7000,192.0.2.12:7000,192.0.2.99"
     text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert "- Seeds that are no node of the inventory: 192.0.2.99." in text
-    assert "- dc1: no seed in rack2, rack3 (one seed per rack keeps one up when a rack is down)." in text
-    assert "- dc1: more than one seed in rack1 (node1, node2): one per rack is enough." in text
+    assert ("- dc1: 2 seeds on rack1, none on rack2, rack3: put them on different racks (the rule: 2 or 3 seeds\n"
+            "  per datacenter, on different racks when there are several): set cassandra_seeds, then change_seeds\n"
+            "  applies it live.") in text
+    full = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    assert ("  WARNING  Seeds  dc1  node1 (rack1), node2 (rack1)  2 seeds on rack1, none on rack2, rack3: put\n"
+            "    them on different racks\n") in full
 
 
 def test_absent_seed():

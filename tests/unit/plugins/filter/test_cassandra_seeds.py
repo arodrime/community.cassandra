@@ -10,32 +10,54 @@ def node(name, rack, seed=False, dc="dc1"):
 
 def test_usual_layout():
     nodes = [node("n1", "r1", True), node("n2", "r2", True), node("n3", "r3", True), node("n4", "r1")]
-    assert cassandra_seed_layout(nodes) == {"problems": [], "suggested": []}
+    out = cassandra_seed_layout(nodes)
+    assert out["lines"] == ["Seeds  dc1  n1 (r1), n2 (r2), n3 (r3)  ok"]
+    assert (out["problems"], out["notes"], out["suggested"]) == ([], [], [])
+
+
+def test_two_seeds_on_one_rack_is_fine():
+    nodes = [node("n1", "r1", True), node("n2", "r1", True), node("n3", "r1")]
+    out = cassandra_seed_layout(nodes)
+    assert out["lines"] == ["Seeds  dc1  n1 (r1), n2 (r1)  ok"] and out["problems"] == []
 
 
 def test_seeds_sharing_a_rack():
     nodes = [node("n1", "r1", True), node("n2", "r1", True), node("n3", "r2"), node("n4", "r3"), node("n5", "r1", True)]
     out = cassandra_seed_layout(nodes)
-    assert out["problems"] == ["dc1: seeds n1, n2 and n5 all on r1, r2 and r3 have none"]
+    assert out["problems"] == ["dc1: 3 seeds on r1, none on r2, r3: put them on different racks"]
+    assert out["lines"] == ["WARNING  Seeds  dc1  n1 (r1), n2 (r1), n5 (r1)  3 seeds on r1, none on r2, r3: put them on"
+                            " different racks"]
     assert out["suggested"] == ["ip-n1", "ip-n3", "ip-n4"]
 
 
-def test_one_rack_keeps_current_seeds_first():
+def test_one_seed_is_a_warning_current_seed_kept_first():
     nodes = [node("n1", "r1"), node("n2", "r1", True), node("n3", "r1"), node("n4", "r1")]
     out = cassandra_seed_layout(nodes)
-    assert out["problems"] == [
-        "dc1 has 1 rack (r1): 3, one per replica with RF=3, lets a whole rack go down",
-        "dc1 has 1 seed (n2): 3 is the usual layout",
-    ]
-    assert out["suggested"] == ["ip-n2", "ip-n1", "ip-n3"]
+    assert out["problems"] == ["dc1: 1 seed: 2 to 3 per datacenter"]
+    assert out["suggested"] == ["ip-n2", "ip-n1"]
+
+
+def test_no_seed_in_a_datacenter():
+    nodes = [node("a1", "r1", True), node("a2", "r2", True), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
+    out = cassandra_seed_layout(nodes)
+    assert out["lines"] == ["Seeds  dc1  a1 (r1), a2 (r2)  ok", "WARNING  Seeds  dc2  none  no seed"]
+    assert out["suggested"] == ["ip-a1", "ip-a2", "ip-b1", "ip-b2"]
 
 
 def test_small_datacenter_and_several_dcs():
     nodes = [node("a1", "r1", True), node("a2", "r2", True), node("a3", "r3", True),
-             node("b1", "r1", True, dc="dc2"), node("b2", "r1", dc="dc2")]
+             node("b1", "r1", True, dc="dc2"), node("b2", "r1", dc="dc2"), node("c1", "r1", True, dc="dc3")]
     out = cassandra_seed_layout(nodes)
-    assert out["problems"] == ["dc2 has 1 seed (b1): 2 is the usual layout"]
-    assert out["suggested"] == ["ip-a1", "ip-a2", "ip-a3", "ip-b1", "ip-b2"]
+    assert out["problems"] == ["dc2: 1 seed: 2 to 3 per datacenter"]  # dc3: one node, its seed
+    assert out["suggested"] == ["ip-a1", "ip-a2", "ip-a3", "ip-b1", "ip-b2", "ip-c1"]
+
+
+def test_more_than_three_seeds_is_a_note():
+    nodes = [node("n%d" % i, "r%d" % i, seed=i <= 4) for i in range(1, 6)]
+    out = cassandra_seed_layout(nodes)
+    assert out["problems"] == [] and out["suggested"] == []
+    assert out["notes"] == ["dc1: 4 seeds: 2 to 3 are enough"]
+    assert out["lines"] == ["Seeds  dc1  n1 (r1), n2 (r2), n3 (r3), n4 (r4)  note: 4 seeds: 2 to 3 are enough"]
 
 
 def test_more_racks_than_seeds_is_fine():
