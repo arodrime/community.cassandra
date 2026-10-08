@@ -219,9 +219,12 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
     for dc, names in sorted(by_dc.items()):
         # the datacenter with the nodes this run adds first
         size = len([e for e in entries.values() if e[0] == dc]) + len([h for h in present if h["name"] in new and h.get("dc") == dc])
-        if len(names) * 2 > size:
-            large_removals.append("%d of %d nodes of %s removed (%s): %s left to hold their data"
-                                  % (len(names), size, dc, out.nodes(names), _plural(size - len(names), "node")))
+        if len(names) == size:
+            large_removals.append("%s removed whole (%s): no node left there" % (dc, out.nodes(names)))
+        elif len(names) * 2 > size:
+            large_removals.append("%d of %s of %s removed (%s): %s left to hold their data"
+                                  % (len(names), _plural(size, "node"), dc, out.nodes(names),
+                                     _plural(size - len(names), "node")))
 
     # the seeds: cassandra_seeds applied live on every node once the adds are done, before the removals
     # a host to add may have a cassandra.yaml of its own (a package's): not a list the cluster runs with
@@ -347,7 +350,9 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
         racks = {}
         for name in left:
             racks[by_name[name].get("rack")] = racks.get(by_name[name].get("rack"), 0) + 1
-        text = "%s: %s" % (out.plural(len(left), "node"), out.nodes(left)) if left else "no node left"
+        # more than 5: nodes() counts them itself
+        text = (out.nodes(left) if len(left) > 5 else "%s: %s" % (out.plural(len(left), "node"), out.nodes(left))) \
+            if left else "no node left"
         if len(racks) > 1:
             text += "   " + "  ".join("%s %d" % (r, c) for r, c in sorted(racks.items()))
         rfs = sorted(((v.get("rf") or {}).get(dc, 0), k) for k, v in (keyspaces or {}).items()
@@ -399,10 +404,10 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
         dirs = [line for item in rest for line in (item.get("pre") or [] if isinstance(item, dict) else [item])]
         real_run.append((reset["label"], "\n".join(["%s: %s" % (reset["label"], first)] + ["  " + d for d in dirs])))
     if str(session or "").strip():
-        real_run.append(("session", str(session).strip()))
+        real_run.append(("not inside tmux or screen", str(session).strip()))
     if check:
         if real_run:
-            facts.append("A real run would also warn about: %s." % ", ".join(sorted(set(r[0] for r in real_run))))
+            facts.append(["real run", "would also warn about: %s" % ", ".join(sorted(set(r[0] for r in real_run)))])
     else:
         warnings.extend(r[1] for r in real_run)
 

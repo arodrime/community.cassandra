@@ -43,7 +43,7 @@
       _cassandra_service_seeds: "{{ _cassandra_service_seeds }}"
       live_seeds: >-
         {{ cassandra_node_facts_yaml.content | default('') | b64decode
-           | regex_findall('(?m)^\s*- seeds:\s*"?([^"\n]*)"?') | first | default('') }}
+           | regex_findall('(?m)^\s*- seeds:\s*["\x27]?([^"\x27\n]*)') | first | default('') }}
       cassandra_dc: "{{ cassandra_dc }}"
       cassandra_rack: "{{ cassandra_rack }}"
       address: "{{ _address }}"

@@ -51,7 +51,11 @@ def test_the_plan_asks_once_and_the_steps_ask_nothing():
     names = [t.get("name") for t in PLAN["tasks"]]
     assert names.index("Show the plan") + 1 == names.index("Confirm the plan")  # the prompt right under the WARNING lines
     plan = {"add": ["n4"], "remove": ["n2"], "seeds": {"step": True}}
-    assert render(confirm["vars"]["cassandra_confirm_prompt"], cassandra_topology_plan=plan) == "Run these 3 steps?"
+    prompt = confirm["vars"]["cassandra_confirm_prompt"]
+    steps = confirm["vars"]["_tp_steps"]
+    assert render(prompt, _tp_steps=render(steps, cassandra_topology_plan=plan)) == "Run these 3 steps?"
+    plan = {"add": [], "remove": [], "seeds": {"step": True}}
+    assert render(prompt, _tp_steps=render(steps, cassandra_topology_plan=plan)) == "Run this step?"
     assert "_cassandra_screen_asked_by" not in PLAN.get("vars", {})
     imports = [p for p in PLAYS if "ansible.builtin.import_playbook" in p]
     assert [p["ansible.builtin.import_playbook"] for p in imports] == [
@@ -85,8 +89,8 @@ def test_operator_messages_marked_for_the_ops_callback():
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
     assert msg == ["DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
-                   "  1. delete n2 from the inventory, or leave them marked absent (the playbooks leave them out)",
-                   "  2. wipe their data directories before reusing the hosts"]
+                   "  1. delete n2 from the inventory, or leave it marked absent (the playbooks leave it out)",
+                   "  2. wipe its data directories before reusing the host"]
 
 
 def test_check_mode_lines_up_nothing():

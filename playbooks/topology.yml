@@ -291,10 +291,13 @@
     - name: Say there is nothing to do
       ansible.builtin.debug:
         msg: >-
-          {{ ['NOTHING TO DO  topology  ' ~ _tp_cluster ~ '  the ring has the ' ~ ansible_play_hosts_all | length
-              ~ ' nodes of the inventory, they run with the seeds of cassandra_seeds']
+          {{ ['NOTHING TO DO  topology  ' ~ _tp_cluster ~ '  the ring has the '
+              ~ ansible_play_hosts_all | length ~ (' node' if ansible_play_hosts_all | length == 1 else ' nodes') ~ ' of the inventory,'
+              ~ ' they run with the seeds of cassandra_seeds']
              + (['  already removed: ' ~ cassandra_topology_plan.gone | community.cassandra.cassandra_node_list
-                 ~ ' (marked absent, out of the ring, Cassandra stopped): delete them from the inventory, or leave them'] if cassandra_topology_plan.gone else [])
+                 ~ ' (marked absent, out of the ring, Cassandra stopped): delete '
+                 ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them') ~ ' from the inventory, or leave '
+                 ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them')] if cassandra_topology_plan.gone else [])
              + (['  not answering: ' ~ cassandra_topology_plan.silent | community.cassandra.cassandra_node_list
                  ~ ' (marked absent, out of the ring)'] if cassandra_topology_plan.silent else [])
              + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING  ')
@@ -330,9 +333,10 @@
         tasks_from: confirm.yml
       when: _tp_todo | bool
       vars:
-        cassandra_confirm_prompt: >-
-          Run these {{ (cassandra_topology_plan.add + cassandra_topology_plan.remove) | length
-                       + (1 if cassandra_topology_plan.seeds.step else 0) }} steps?
+        cassandra_confirm_prompt: "{{ 'Run this step?' if _tp_steps | int == 1 else 'Run these ' ~ _tp_steps ~ ' steps?' }}"
+        _tp_steps: >-
+          {{ (cassandra_topology_plan.add + cassandra_topology_plan.remove) | length
+             + (1 if cassandra_topology_plan.seeds.step else 0) }}
 
     # --check: the plan only, the steps below have no host
     - name: Line up the nodes to add, in order
@@ -412,8 +416,10 @@
                                                      'seeds now ' ~ _plan.seeds.new if _plan.seeds.step else '',
                                                      ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
                                                     | select | join('; '))]
-             + ((['', 'TO DO', '  1. delete ' ~ _done | community.cassandra.cassandra_node_list ~ ' from the inventory, or leave them marked absent'
-                  ~ ' (the playbooks leave them out)', '  2. wipe their data directories before reusing the hosts'])
+             + ((['', 'TO DO', '  1. delete ' ~ _done | community.cassandra.cassandra_node_list ~ ' from the inventory, or leave '
+                  ~ _them ~ ' marked absent (the playbooks leave ' ~ _them ~ ' out)',
+                  '  2. wipe ' ~ ('its' if _done | length == 1 else 'their') ~ ' data directories before reusing the host'
+                  ~ ('' if _done | length == 1 else 's')])
                 if _done | length > 0 else []) }}
       run_once: true
       when:
@@ -424,3 +430,4 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
+        _them: "{{ 'it' if _done | length == 1 else 'them' }}"

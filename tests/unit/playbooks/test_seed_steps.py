@@ -317,3 +317,12 @@ def test_the_shared_seed_tasks_vars_are_their_own():
     for name in ("join_seeds.yml", "seeds_apply.yml"):
         own = _var_names(load("roles", "cassandra_service", "tasks", name))
         assert not own & elsewhere, (name, own & elsewhere)
+
+
+def test_the_seed_line_read_with_any_quotes():
+    facts = task(load("roles", "cassandra_service", "tasks", "node_facts.yml"), "Record this node's settings")
+    template = facts["ansible.builtin.set_fact"]["_cassandra_preflight"]["live_seeds"]
+    import base64
+    for line in ('- seeds: "10.0.0.1,10.0.0.2"', "- seeds: '10.0.0.1,10.0.0.2'", "- seeds: 10.0.0.1,10.0.0.2"):
+        content = base64.b64encode(("seed_provider:\n  - class_name: x\n    parameters:\n      %s\n" % line).encode()).decode()
+        assert render(template, cassandra_node_facts_yaml={"content": content}) == "10.0.0.1,10.0.0.2", line

@@ -216,7 +216,8 @@ def test_screen_warnings_last_and_the_session_on_a_real_run_only():
     assert lines[first:] == warned + ["cassandra_operation_confirm is false: no question, the run goes on."]
     check = cassandra_topology_screen(plan, hosts, ring=r, session="not inside tmux or screen", check=True)
     assert "WARNING  not inside tmux or screen" not in check
-    assert "A real run would also warn about: session." in check
+    assert [line for line in check if line.startswith("real run:")] == [
+        "real run:   would also warn about: not inside tmux or screen"]
 
 
 def test_screen_reset_and_unknown_warnings():
@@ -234,7 +235,7 @@ def test_screen_reset_and_unknown_warnings():
     assert "           /d/data: 1 entries: system" in lines  # under its warning's text
     check = cassandra_topology_screen(plan, hosts, ring=r, check=True)
     assert not [line for line in check if "data loss:" in line]
-    assert "A real run would also warn about: data loss." in check
+    assert [line for line in check if line.endswith("would also warn about: data loss")]
 
 
 def test_screen_racks_once_done():
@@ -428,9 +429,20 @@ def test_a_datacenter_removed_whole_needs_no_seed():
     lines = cassandra_topology_screen(plan, hosts, ring=r)
     assert "dc2 after:  no node left" in lines
     assert lines[3].endswith("decommission node4  dc2/r1  load 40.1 GiB, owns 25.0% -> none (no node left in dc2)")
-    assert "WARNING  2 of 2 nodes of dc2 removed (node3, node4): 0 nodes left to hold their data" in lines
+    assert "WARNING  dc2 removed whole (node3, node4): no node left there" in lines
     # node4 stays in dc2: dc2 still in use, a seed needed there
     hosts[3]["absent"] = False
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1"])
     assert plan["problems"] == ["dc2 would be left with no seed (node3 leaves the seed list): put a node of dc2 in"
                                 " cassandra_seeds."]
+
+
+def test_screen_big_datacenter_counted_once_and_one_node_left():
+    hosts = [host(i) for i in range(1, 9)] + [host(9, state="new")]
+    r = ring(*[entry(i) for i in range(1, 9)])
+    lines = cassandra_topology_screen(cassandra_topology_plan(hosts, r), hosts, ring=r)
+    assert "dc1 after:  9 nodes: node1..node9" in lines
+    # 1 of 1: the datacenter removed whole
+    hosts = [host(1), host(2), host(3, dc="dc2", absent=True)]
+    r = {"dc1": {"nodes": [entry(1), entry(2)]}, "dc2": {"nodes": [entry(3)]}}
+    assert cassandra_topology_plan(hosts, r)["large_removals"] == ["dc2 removed whole (node3): no node left there"]
