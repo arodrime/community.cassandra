@@ -14,6 +14,7 @@ __metaclass__ = type
 import re
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import address_part, same_address
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
     clock as _clock, count as _count, rate as _rate, size as _size)
 
@@ -450,6 +451,104 @@ def cassandra_compactionstats(result, types=None):
     return view
 
 
+# nodetool's stderr lines that say nothing about the error (a JVM banner)
+_BANNER = re.compile(r"^(Picked up \S+|OpenJDK .*warning|WARNING: )")
+
+
+def cassandra_stream_own_error(own):
+    """Why this node's own nodetool netstats gave no mode at a check
+    (stream_check.yml), '' when it answered: the first line of its error,
+    without JVM banners (Picked up JAVA_TOOL_OPTIONS...). own: the
+    cassandra_netstats result (unreachable, failed or not)."""
+    own = own or {}
+    if own.get("mode"):
+        return ""
+    for key in ("stderr", "msg"):
+        for line in str(own.get(key) or "").splitlines():
+            line = line.strip()
+            if line and not _BANNER.match(line):
+                return line[:160]
+    return "no answer" if own else ""
+
+
+def _own_stopped(own):
+    """Its own nodetool says Cassandra does not run there (JMX refuses the
+    connection); not an unreachable host (ssh's own "Connection refused")."""
+    own = own or {}
+    return not own.get("unreachable") and "Connection refused" in "%s %s" % (own.get("stderr") or "", own.get("msg") or "")
+
+
+def cassandra_ring_seen(results, address):
+    """How the other nodes see a node in nodetool status: 'UN', 'UJ', 'DN'...
+    from the first cassandra_status result that lists its address, '' when
+    none does. results: the registered loop results of cassandra_status."""
+    if not address:
+        return ""
+    for result in results or []:
+        status = (result or {}).get("cluster_status") or {}
+        for dc in status.values() if isinstance(status, dict) else []:
+            for node in (dc.get("nodes") or []) if isinstance(dc, dict) else []:
+                if same_address(address_part(str(node.get("address") or "")), address_part(str(address))):
+                    return "%s%s" % (node.get("status", ""), node.get("state", ""))
+    return ""
+
+
+def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", job=None, removal=None, max_time=0,
+                            now=None):
+    """Where a streaming operation stands after a check (stream_check.yml):
+    'done', 'going', or why the wait stops: job_failed, job_lost,
+    join_failed, leave_failed, stopped, stalled, too_long.
+    state: cassandra_stream_progress's; join: done when this node is
+    NORMAL (bootstrap, replace), or, when its own nodetool can't answer
+    (5.0.0 to 5.0.4 during a bootstrap, JMX login or permissions), when the
+    other nodes see it UN (seen, cassandra_ring_seen); leave: done when it
+    is DECOMMISSIONED (decommission); own: this node's cassandra_netstats
+    result (None: not read); job: the async_status result of the job
+    running it (None: no job; with leave, a job that changed nothing, the
+    node LEAVING already, is not the end); removal: the nodetool removenode
+    status result (None: not followed): done once no removal is left;
+    max_time: cassandra_stream_max_time (0: none)."""
+    state = state or {}
+    own = own or {}
+    mode = own.get("mode") or ""
+    error = cassandra_stream_own_error(own) if own else ""
+    stopped = _own_stopped(own)
+    job = job if job else None
+    finished = job is not None and int(job.get("finished") or 0) == 1
+    if ((join and (mode == "NORMAL" or (error and not stopped and seen == "UN")))
+            or (leave and mode == "DECOMMISSIONED")
+            or (finished and not job.get("failed") and (job.get("changed") or not leave))
+            or (removal is not None and int(removal.get("rc", 1)) == 0
+                and "Removing token" not in (removal.get("stdout") or ""))):
+        return "done"
+    if finished and job.get("failed"):
+        return "job_failed"
+    if job is not None and job.get("failed"):
+        return "job_lost"
+    if join and mode == "JOINING_FAILED":
+        return "join_failed"
+    if leave and mode == "DECOMMISSION_FAILED":
+        return "leave_failed"
+    if (join or leave) and stopped:
+        return "stopped"
+    if state.get("stalled"):
+        return "stalled"
+    now = state.get("now", 0) if now is None else now
+    if int(max_time or 0) > 0 and now - int(state.get("start", now)) >= int(max_time):
+        return "too_long"
+    return "going"
+
+
+def cassandra_stream_waiting(own, seen="", node="", join=False):
+    """The line that says why a join is not over yet when its node's own
+    nodetool can't answer (stream_check.yml), [] otherwise."""
+    error = cassandra_stream_own_error(own)
+    if not join or not error or _own_stopped(own):
+        return []
+    return ["      %s: its own nodetool does not answer (%s): done once the other nodes see it UN (%s)"
+            % (node or "this node", error, ("they see it " + seen) if seen else "not in their nodetool status yet")]
+
+
 class FilterModule(object):
     def filters(self):
         return {"cassandra_stream_progress": cassandra_stream_progress,
@@ -459,4 +558,9 @@ class FilterModule(object):
                 "cassandra_cleanup_report": cassandra_cleanup_report,
                 "cassandra_add_node_plan": cassandra_add_node_plan,
                 "cassandra_compactionstats": cassandra_compactionstats,
-                "cassandra_cleanup_view": cassandra_cleanup_view}
+                "cassandra_cleanup_view": cassandra_cleanup_view,
+                "cassandra_stream_own_error": cassandra_stream_own_error,
+                "cassandra_ring_seen": cassandra_ring_seen,
+                "cassandra_stream_status": cassandra_stream_status,
+                "cassandra_stream_waiting": cassandra_stream_waiting,
+                "cassandra_stream_own_stopped": _own_stopped}

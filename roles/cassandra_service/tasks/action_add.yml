@@ -1,30 +1,10 @@
 ---
-# Prepares a new node with the roles and starts it (it bootstraps into the ring)
-- name: Configure the package repository
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_repository
-
-- name: Install Cassandra
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_install
-
-- name: Tune the OS
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_linux
-
-- name: Write the config
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_config
-
-- name: Open the firewall
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_firewall
-  when: cassandra_manage_firewall | default(false) | bool
-
-- name: Install Cassandra Medusa (backups)
-  ansible.builtin.include_role:
-    name: community.cassandra.cassandra_medusa
-  when: cassandra_medusa_enabled | default(false) | bool
+# Prepares a new node with the roles (action_add_prepare.yml; add_node did it
+# already for all of them at once: _cassandra_add_prepared) and starts it (it
+# bootstraps into the ring)
+- name: Prepare the node
+  ansible.builtin.include_tasks: action_add_prepare.yml
+  when: not _cassandra_add_prepared | default(false) | bool
 
 - name: Start it
   ansible.builtin.include_tasks: main.yml
@@ -43,18 +23,22 @@
     community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
   block:
     # Before 5.0.5 the StorageService MBean is only there once the bootstrap is
-    # over (CASSANDRA-19902): JMX answering without it is enough here
+    # over (CASSANDRA-19902); a JMX login or permission refused: JMX answering
+    # is enough here (the bootstrap is then followed from the other nodes)
     - name: Wait for Cassandra to answer on JMX
       community.cassandra.cassandra_netstats:
       register: cassandra_service_netstats
-      until: >-
-        cassandra_service_netstats.mode | default('') | length > 0
-        or 'InstanceNotFoundException' in cassandra_service_netstats.stderr | default('')
+      until: _answers | bool
       retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
       delay: 10
-      failed_when: >-
-        cassandra_service_netstats.mode | default('') | length == 0
-        and 'InstanceNotFoundException' not in cassandra_service_netstats.stderr | default('')
+      failed_when: not _answers | bool
+      vars:
+        _error: "{{ cassandra_service_netstats.stderr | default('') ~ ' ' ~ cassandra_service_netstats.msg | default('') }}"
+        # nodetool reaches it (not refused) and gets an answer, if only a refusal
+        _answers: >-
+          {{ cassandra_service_netstats.mode | default('') | length > 0
+             or ('Connection refused' not in _error
+                 and _error is search('InstanceNotFoundException|SecurityException|Authentication failed|Access denied|Credentials')) }}
 
     - name: Start following the bootstrap
       ansible.builtin.set_fact:

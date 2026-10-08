@@ -186,7 +186,8 @@
             'before': (_cassandra_service_before.unit or 'absent') if '/etc/systemd/system/' not in _cassandra_service_before.unit else 'different',
             'after': 'native unit'}]
           if cassandra_service_unit is changed else [])
-         + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown', 'after': 'restarted' if cassandra_service_state == 'restarted' else _want_active}]
+         + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown',
+              'after': ('would restart' if ansible_check_mode else 'restarted') if cassandra_service_state == 'restarted' else _want_active}]
             if cassandra_service_state == 'restarted' or _cassandra_service_before.active != _want_active else [])
          + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': 'enabled' if cassandra_service_enabled else 'disabled'}]
             if (_cassandra_service_before.enabled == 'enabled') != (cassandra_service_enabled | bool) else []) }}

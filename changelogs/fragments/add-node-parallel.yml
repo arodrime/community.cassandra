@@ -1,0 +1,7 @@
+minor_changes:
+  - add_node playbook - the new nodes are prepared all at once (repository, install, OS, config, firewall, Medusa; nothing started), then started and bootstrapped one at a time as before.
+  - add_node, replace_node, decommission_node, remove_dead_node, move_node, topology - the progress of a bootstrap, decommission or removal is one line per check plus one line for the other nodes (``[1/2] node5 bootstrap  JOINING  [#####-----]  52%  ...``).
+  - add_node, replace_node, topology - a joining node whose own nodetool can't answer (JMX login or permissions, 5.0.0 to 5.0.4 during a bootstrap) is done once the other nodes see it UN; the progress says why it waits.
+  - rolling_restart, rolling_reboot and the other rolling operations - under ``--check`` the summary and the change report say what a real run would do (``would restart``), never ``restarted`` or ``restart done in``.
+bugfixes:
+  - add_node, replace_node, decommission_node, remove_dead_node, move_node, topology, add_node cleanups - the progress wait ends right after the check that sees the operation over, instead of running through the rest of its round of checks (hundreds of skipped tasks, minutes on a real run).

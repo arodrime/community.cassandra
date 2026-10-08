@@ -171,6 +171,9 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: decommission
+        # the progress lines' [i/n]
+        _cassandra_stream_index: "{{ ansible_play_hosts_all.index(inventory_hostname) + 1 }}"
+        _cassandra_stream_steps: "{{ ansible_play_hosts_all | length }}"
         cassandra_service_node_checks_after: false  # stopped: checked from another node
         # the other nodes to remove still in the ring: the ones after this one (--check: before it too) that were
         # in it when checked, not done by an interrupted run

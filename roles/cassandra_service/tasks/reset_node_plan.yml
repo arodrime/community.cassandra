@@ -5,6 +5,12 @@
 # (add_node, replace_node: cassandra_reset_warnings; topology for the hosts it
 # adds, its add_node step keeping that plan) runs it before that screen, then
 # reset_node.yml with _cassandra_node_reset_confirmed: true.
+# _cassandra_node_reset_auto (add_node and topology, cassandra_add_node_reset on by
+# default): a node without data needs no reset (nothing to do, no line); one
+# with data is reset only when Cassandra is down there, it is in no ring, its
+# cluster is this one or the stock 'Test Cluster' and it has no user keyspace but
+# a failed bootstrap's of this cluster (cassandra_add_node_reset_check): the plan
+# gets the line for the screen, or the refusal saying what the node holds.
 - name: The node belongs to the cluster's group
   ansible.builtin.assert:
     that: inventory_hostname in query('community.cassandra.cassandra_nodes')
@@ -75,10 +81,11 @@
     _cassandra_node_reset_protected: "{{ _protected }}"
     _cassandra_node_reset_listed: >-
       {{ _inventory | community.cassandra.cassandra_node_reset_dirs(_live, _mounts, _protected,
-           cluster_name=cassandra_cluster_name) }}
+           cluster_name='' if _auto | bool else cassandra_cluster_name) }}
   no_log: true  # the live file's text is in the vars
   vars:
     _mounts: "{{ ansible_facts['mounts'] | default([]) + (cassandra_node_reset_mounts.content | default('') | b64decode).splitlines() }}"
+    _auto: "{{ _cassandra_node_reset_auto | default(false) }}"  # its own check of the cluster name
     # what a directory to empty must not hold
     _protected: >-
       {{ [cassandra_conf_dir, cassandra_log_dir | default('/var/log/cassandra'), '/usr/share/cassandra',
@@ -122,6 +129,26 @@
          if cassandra_node_reset_live_stat.stat.exists and cassandra_node_reset_live.content is not defined else [] }}
     _mounts: "{{ ansible_facts['mounts'] | default([]) + (cassandra_node_reset_mounts.content | default('') | b64decode).splitlines() }}"
 
+# stat fails on a directory that can't be reached (no root: become turned off?): find would skip it silently
+- name: Look at the directories
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ _cassandra_node_reset_dirs.dirs | map(attribute='real') | list }}"
+  register: cassandra_node_reset_stat
+  failed_when: false
+
+# Listed where they really are: what is deleted is what is shown
+- name: List what the directories hold
+  ansible.builtin.find:
+    paths: >-
+      {{ cassandra_node_reset_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list }}
+    file_type: any
+    hidden: true
+  register: cassandra_node_reset_found
+  when: cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length > 0
+
 # Every other node of the cluster group, but the ones the preflight found stopped and the ones
 # being added or reset (they may run alone): an answer of a node outside the cluster (its own
 # ring) can't hide the answers of the real members
@@ -137,8 +164,11 @@
   register: cassandra_node_reset_rings
   failed_when: false  # a node that does not answer is left out
   ignore_unreachable: true
-  when: not _cassandra_node_reset_whole_cluster | default(false) | bool
+  when:
+    - not _cassandra_node_reset_whole_cluster | default(false) | bool
+    - not _cassandra_node_reset_auto | default(false) | bool or _held | length > 0  # add_node's: no data, no reset
   vars:
+    _held: "{{ cassandra_node_reset_found.files | default([]) | rejectattr('path', 'search', '/lost[+]found$') | list }}"
     _aside_pattern: "{{ [cassandra_new_nodes | default([]), cassandra_reset_nodes | default([])] | flatten | select | join(',') }}"
     # the nodes being added or reset (the play's hosts when not named: topology runs this on every node)
     _aside: >-
@@ -161,25 +191,31 @@
     - cassandra_node_reset_jvm.rc == 0
     - not _cassandra_node_reset_whole_cluster | default(false) | bool
 
-# stat fails on a directory that can't be reached (no root: become turned off?): find would skip it silently
-- name: Look at the directories
-  ansible.builtin.stat:
-    path: "{{ item }}"
-    get_checksum: false
-  loop: "{{ _cassandra_node_reset_dirs.dirs | map(attribute='real') | list }}"
-  register: cassandra_node_reset_stat
+# add_node's reset: how much it holds, and whether it met other nodes (its system.peers tables)
+- name: Measure what the directories hold
+  ansible.builtin.command:
+    argv: "{{ ['du', '-sbc', '--'] + _there }}"
+  register: cassandra_node_reset_du
+  changed_when: false
   failed_when: false
-
-# Listed where they really are: what is deleted is what is shown
-- name: List what the directories hold
-  ansible.builtin.find:
-    paths: >-
-      {{ cassandra_node_reset_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+  check_mode: false  # read-only
+  when:
+    - _cassandra_node_reset_auto | default(false) | bool
+    - _there | length > 0
+  vars:
+    _there: >-
+      {{ cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
          | map(attribute='item') | list }}
-    file_type: any
-    hidden: true
-  register: cassandra_node_reset_found
-  when: cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length > 0
+
+- name: Look for the peers it met
+  ansible.builtin.find:
+    paths: "{{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real')
+               | map('regex_replace', '$', '/system') | list }}"
+    patterns: "*-Data.db"
+    recurse: true
+  register: cassandra_node_reset_peers
+  failed_when: false
+  when: _cassandra_node_reset_auto | default(false) | bool
 
 # The whole cluster (create_cluster's reset): every node is wiped, the caller checked the ring
 - name: Work out whether this node may be reset
@@ -216,24 +252,51 @@
       {%- endfor -%}
       {{ out }}
 
+- name: Work out whether add_node may reset it
+  ansible.builtin.set_fact:
+    _cassandra_node_reset_check: >-
+      {{ inventory_hostname | community.cassandra.cassandra_add_node_reset_check(cassandra_cluster_name,
+           live_cluster=_cassandra_node_reset_listed.cluster_name,
+           has_data=_found | length > 0,
+           running=cassandra_node_reset_jvm.rc == 0 or _status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'],
+           size=(cassandra_node_reset_du.stdout_lines | default(['0']) | last | default('0')).split() | first | default(0) | int,
+           keyspaces=_found | select('regex', '^(' ~ _data_dirs | map('regex_escape') | join('|') ~ ')/[^/]+$') | map('basename') | list,
+           peers=cassandra_node_reset_peers.files | default([]) | map(attribute='path') | select('search', '/peers(_v2)?-[^/]*/') | list | length > 0,
+           cluster_keyspaces=(cassandra_keyspaces.keys() | list) if cassandra_keyspaces | default(none) is mapping else none,
+           ring_problems=_cassandra_node_reset_ring.problems,
+           title=inventory_hostname ~ ((' (' ~ _p.cassandra_dc ~ '/' ~ _p.cassandra_rack | default('?') ~ ')') if _p.cassandra_dc | default('') else '')) }}
+  when: _cassandra_node_reset_auto | default(false) | bool
+  vars:
+    _p: "{{ _cassandra_preflight | default({}) }}"
+    _status: "{{ cassandra_node_reset_unit.status | default({}) }}"
+    _found: "{{ cassandra_node_reset_found.files | default([]) | map(attribute='path') | reject('search', '/lost[+]found$') | list }}"
+    _data_dirs: "{{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real') | list }}"
+
 # The plan, also read by the confirmation from every host of the play
 - name: Work out the reset of {{ inventory_hostname }}
   ansible.builtin.set_fact:
     _cassandra_node_reset_plan:
       problems: >-
-        {{ _cassandra_node_reset_dirs.problems + _cassandra_node_reset_ring.problems
+        {{ [] if _auto | bool and not _has_data | bool
+           else _cassandra_node_reset_dirs.problems + ([] if _auto | bool else _cassandra_node_reset_ring.problems)
            + (cassandra_node_reset_found.skipped_paths | default({}) | dict2items
               | rejectattr('value', 'search', 'not a directory|No such file')
               | map(attribute='key') | map('regex_replace', '$', ': can not be read (without root?)') | list)
            + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
               | map(attribute='item') | map('regex_replace', '$', ': can not be checked (without root?)') | list)
            + (['a Cassandra JVM runs that the cassandra unit did not start (by hand?), so it can not stop it: stop it first']
-              if cassandra_node_reset_jvm.rc == 0 and not _active | bool else []) }}
+              if cassandra_node_reset_jvm.rc == 0 and not _active | bool and not _auto | bool else [])
+           + (_cassandra_node_reset_check.problems if _auto | bool else []) }}
       info: "{{ _cassandra_node_reset_ring.info }}"
-      stop: "{{ _active or cassandra_node_reset_jvm.rc == 0 }}"
+      # add_node's: never stops Cassandra (refused when it runs), nothing to do without data
+      stop: "{{ (_active or cassandra_node_reset_jvm.rc == 0) and not _auto | bool }}"
       disable: >-
-        {{ _status.UnitFileState | default('') in ['enabled', 'enabled-runtime']
-           or cassandra_node_reset_sysv.stdout | default('') | trim == 'enabled' }}
+        {{ (_status.UnitFileState | default('') in ['enabled', 'enabled-runtime']
+            or cassandra_node_reset_sysv.stdout | default('') | trim == 'enabled')
+           and (_has_data | bool or not _auto | bool) }}
+      # the plan line (add_node's screen) or the refusal saying what the node holds
+      line: "{{ _cassandra_node_reset_check.line | default('') if _auto | bool and _cassandra_node_reset_check.reset else '' }}"
+      refusal: "{{ _cassandra_node_reset_check.line | default('') if _auto | bool and not _cassandra_node_reset_check.reset else '' }}"
       unit: "{{ _status.LoadState | default('not-found') != 'not-found' }}"
       # a fresh file system's lost+found stays
       delete: >-
@@ -255,6 +318,8 @@
   vars:
     _status: "{{ cassandra_node_reset_unit.status | default({}) }}"
     _active: "{{ _status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}"
+    _auto: "{{ _cassandra_node_reset_auto | default(false) }}"
+    _has_data: "{{ cassandra_node_reset_found.files | default([]) | rejectattr('path', 'search', '/lost[+]found$') | list | length > 0 }}"
 
 - name: What the reset of {{ inventory_hostname }} would do
   ansible.builtin.debug:
@@ -267,11 +332,18 @@
          + ([] if _p.delete else ['  nothing to delete'])
          + _p.info | map('regex_replace', '^', '  ') | list
          + _p.problems | map('regex_replace', '^', '  REFUSED: ') | list }}
+  # add_node's: nothing to say about a node without data
+  when: not _cassandra_node_reset_auto | default(false) | bool or _p.delete | length > 0
   vars:
     _p: "{{ _cassandra_node_reset_plan }}"
 
 - name: Refuse the reset of {{ inventory_hostname }}
   ansible.builtin.fail:
     msg: >-
-      Reset of {{ inventory_hostname }} refused, nothing was changed: {{ _cassandra_node_reset_plan.problems | join('; ') }}.
+      {{ (_cassandra_node_reset_plan.refusal ~ ((' Also: ' ~ _other | join('; ') ~ '.') if _other else ''))
+         if _cassandra_node_reset_plan.refusal
+         else 'Reset of ' ~ inventory_hostname ~ ' refused, nothing was changed: ' ~ _cassandra_node_reset_plan.problems | join('; ') ~ '.' }}
   when: _cassandra_node_reset_plan.problems | length > 0
+  vars:
+    # the directory problems, besides what the add_node check says
+    _other: "{{ _cassandra_node_reset_plan.problems | reject('in', _cassandra_node_reset_check.problems | default([])) | list }}"

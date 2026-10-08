@@ -4,8 +4,9 @@
 # cassandra_new_node_state: new (never started), joining (UJ under its own
 # host ID: a bootstrap an earlier run started, waited for again) or joined
 # (UN under its own host ID); any other mix is refused with the reason. With
-# cassandra_add_node_reset, a node with data that is not in the ring (a failed
-# first start or bootstrap) is new too: add_node resets it first.
+# cassandra_add_node_reset (on by default), a node with data that is not in the
+# ring (a failed first start or bootstrap) is new too: add_node resets it first,
+# when it may (reset_node_plan.yml, _cassandra_node_reset_auto).
 - name: Where {{ inventory_hostname }} stands
   vars:
     _data: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}"
@@ -24,7 +25,7 @@
     # 5.0.0 to 5.0.4: nodetool can't answer on a bootstrapping node (CASSANDRA-19902)
     _no_mbean: "{{ 'InstanceNotFoundException' in cassandra_new_node_info.stderr | default('') }}"
     _state: >-
-      {{ 'new' if _in_ring == 'absent' and (not _has_data or cassandra_add_node_reset | default(false) | bool)
+      {{ 'new' if _in_ring == 'absent' and (not _has_data or cassandra_add_node_reset | default(true) | bool)
          else 'orphan' if _in_ring == 'absent'
          else 'other_host' if _my_id and _my_id != _ring.host_id
          else 'joined' if _in_ring == 'UN' and _has_data and _my_id
@@ -68,8 +69,9 @@
           {{ inventory_hostname }} ({{ _address }}):
           {%- if _state == 'orphan' %}
           has data ({{ _data }}/system) but is not in the ring: an interrupted bootstrap, or data of another cluster.
-          If it holds nothing you need, -e cassandra_add_node_reset=true empties it first (stops Cassandra, deletes what
-          its data, commitlog, saved_caches, hints and cdc_raw directories hold, after a confirmation), then adds it.
+          It was not reset: -e cassandra_add_node_reset=false was given. Without it, add_node empties such a node
+          first when it may (Cassandra down, in no ring, cluster this one or the stock 'Test Cluster', no user keyspace
+          but a failed bootstrap's of this cluster; what it deletes is on the screen), then adds it.
           {%- elif _state == 'other_host' %}
           the ring has {{ _in_ring }} host ID {{ _ring.host_id }} at this address, but this node
           {{ ('has host ID ' ~ _my_id) if _my_id else 'does not answer (not running, or JMX unreachable)' }}: the address is used by another node
@@ -81,7 +83,7 @@
           {%- elif _state == 'down' and _ring.state == 'J' %}
           down in the middle of its bootstrap ({{ _in_ring }}, host ID {{ _ring.host_id }}): see why in its system.log.
           Once fixed, start over: stop Cassandra, wait until it is gone from nodetool status (seen from another node),
-          then run add_node again with -e cassandra_add_node_reset=true (it empties the node first).
+          then run add_node again (it empties the node first: cassandra_add_node_reset).
           {%- elif _state == 'down' %}
           already in the ring (host ID {{ _ring.host_id }}) but down: start it (systemctl start cassandra) and check
           its logs; add_node is not needed.

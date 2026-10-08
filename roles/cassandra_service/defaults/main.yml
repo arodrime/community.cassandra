@@ -83,11 +83,14 @@ cassandra_stream_max_time: 0  # seconds, 0: no limit
 # rack, a datacenter at a time; all: every node at once (heavy I/O).
 cassandra_add_node_cleanup: none
 # add_node: a new node with data but not in the ring (started once by
-# mistake, a failed bootstrap) is refused; true empties it first (stops
-# Cassandra, deletes what its directories hold, shown and confirmed;
-# reset_node.yml). replace_node: the same for a replacement host that still
-# holds data, typically a host replacing itself (same address).
-cassandra_add_node_reset: false
+# mistake, a failed bootstrap) is emptied first (deletes what its directories
+# hold, shown and confirmed; reset_node.yml), only when Cassandra is down there,
+# no up node sees it in its ring, its cluster is this one or the stock 'Test
+# Cluster' and it has no user keyspace but a failed bootstrap's of this
+# cluster; else refused with what it holds. false refuses every node with data.
+# replace_node: true empties a replacement host that still holds data,
+# typically a host replacing itself (same address).
+cassandra_add_node_reset: true
 cassandra_replace_node_reset: false
 # The inventory is the desired state: a host of the cluster's group marked
 # absent (a host var or a group var) is no longer part of the cluster, the
@@ -116,11 +119,19 @@ cassandra_move_cleanup: none
 cassandra_move_min_free_percent: 20
 cassandra_move_force_disk: false
 
-# checks per include level of the progress waits: Ansible nests every include
-# one level deeper and fails past ~150 levels. A round covers 6 hours (a month
-# in 150 rounds) with 24 to 120 checks: the checks left once it ends are
-# skipped one by one (60 s: 12.5 days)
+# checks per include level of the progress waits (wait_loop.yml): Ansible nests
+# every include one level deeper and fails past ~150 levels. A round covers
+# 6 hours (a month in 150 rounds) with 24 to 120 checks (60 s: 12.5 days), by
+# groups of _cassandra_wait_size: once it ends, what is left of the round is
+# skipped by at most that many checks and groups, one task each
 _cassandra_stream_round_size: "{{ [24, [120, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
+_cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(0, 'ceil') | int }}"
+
+# the words of an action in a --check result ("would restart")
+_cassandra_service_would:
+  apply_config: apply the config
+  update_java: update Java
+  upgradesstables: upgrade the SSTables
 
 # The screens of long operations (screen.yml: session=) warn when the
 # controller's shell is not inside tmux or screen (a lost SSH session would stop the run)

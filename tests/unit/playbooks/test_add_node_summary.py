@@ -205,3 +205,11 @@ def test_check_mode_follows_bisect_without_asking():
         assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(kind)).strip() == expected
     text = summary(_single=True, _auto="true", cassandra_add_node_tokens=TOKENS, ansible_check_mode=True)
     assert "--check: a real run asks next, bisect or balanced; this one follows bisect." in flat(text)
+
+
+def test_reset_line_on_the_node_block():
+    # cassandra_add_node_reset (on by default): the plan line of a node that will be reset, before the question
+    line = "node7 (dc1/r1): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down) — will be reset"
+    text = summary(node7={"_cassandra_node_reset_plan": {"line": line, "delete": [], "stop": False, "disable": False}})
+    assert "node7 10.0.0.7 dc1 / r1 %s" % line in flat(text)
+    assert "will be reset" not in summary()

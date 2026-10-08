@@ -11,6 +11,9 @@ cassandra_cluster_reset_check: create_cluster's reset of a whole cluster, only
     when every node of the ring is a host of the inventory's group.
 cassandra_node_reset_ring: whether the node may be reset, from the rings
     other nodes of the cluster see and, when Cassandra runs there, its own.
+cassandra_add_node_reset_check: add_node's reset, on by default: only a node
+    that is down, in no ring, of this cluster or the stock 'Test Cluster',
+    with no user keyspace but a failed bootstrap's of this cluster.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -20,6 +23,8 @@ import posixpath
 import re
 
 import yaml
+
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
 
 # cassandra.yaml keys of the directories a reset empties, their kind, and the
 # directory under the package's storage dir (/var/lib/cassandra) a missing key
@@ -38,6 +43,8 @@ SYSTEM_TREES = ("/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/l
                 "/sbin", "/snap", "/sys", "/usr")
 SYSTEM_DIRS = ("/home", "/media", "/mnt", "/opt", "/srv", "/tmp", "/var", "/var/cache", "/var/lib", "/var/local",
                "/var/log", "/var/mail", "/var/opt", "/var/spool", "/var/tmp")
+# the cluster name of the package's own cassandra.yaml (and Cassandra's default)
+STOCK_CLUSTER = "Test Cluster"
 # cassandra.yaml settings with this node's addresses
 LIVE_ADDRESSES = ("listen_address", "broadcast_address", "rpc_address", "broadcast_rpc_address")
 
@@ -122,7 +129,7 @@ def _live_dirs(text):
             continue
         for v in value if isinstance(value, list) else [value]:
             out.append((kind, v if isinstance(v, str) else str(v)))
-    node = {"cluster_name": str(data.get("cluster_name") or "Test Cluster"),  # Cassandra's default
+    node = {"cluster_name": str(data.get("cluster_name") or STOCK_CLUSTER),  # Cassandra's default
             "addresses": [str(data[k]) for k in LIVE_ADDRESSES if data.get(k) not in (None, "")]}
     return out, node, ""
 
@@ -136,11 +143,12 @@ def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=
     cluster_name: the inventory's; a live file of another cluster (but the
     package's stock Test Cluster) is refused.
     Returns {'dirs': [{'path', 'kinds', 'from'}], 'problems': [...],
-    'addresses': [...]}: the directories to empty (inventory and live file
-    merged), the reasons not to touch any of them, the addresses the live
-    file gives this node."""
+    'addresses': [...], 'cluster_name': ...}: the directories to empty
+    (inventory and live file merged), the reasons not to touch any of them,
+    the addresses and the cluster name (None: no live file, or unreadable)
+    the live file gives this node."""
     mount_points = _mount_points(mounts)
-    found, problems, addresses = [], [], []
+    found, problems, addresses, live_cluster = [], [], [], None
     for kind, path in inventory or []:
         found.append((kind, path, "inventory"))
     if live_yaml:  # None or '' (Ansible before 2.19 may turn a none into ''): no live file
@@ -149,7 +157,8 @@ def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=
             problems.append(problem)
         if node:
             addresses = node["addresses"]
-            if cluster_name and node["cluster_name"] not in (cluster_name, "Test Cluster"):
+            live_cluster = node["cluster_name"]
+            if cluster_name and node["cluster_name"] not in (cluster_name, STOCK_CLUSTER):
                 problems.append("the live cassandra.yaml is for cluster '%s', not '%s' (nor the package's stock"
                                 " 'Test Cluster'): a node of another cluster?" % (node["cluster_name"], cluster_name))
         for kind, path in live or []:
@@ -170,7 +179,8 @@ def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=
             if a != b and _under(b, a):
                 problems.append("%s (%s) is inside %s (%s): set them apart"
                                 % (b, ", ".join(dirs[b]["kinds"]), a, ", ".join(dirs[a]["kinds"])))
-    return {"dirs": [dirs[p] for p in sorted(dirs)], "problems": problems, "addresses": addresses}
+    return {"dirs": [dirs[p] for p in sorted(dirs)], "problems": problems, "addresses": addresses,
+            "cluster_name": live_cluster}
 
 
 def cassandra_node_reset_real(result, real, mounts=None, protected=None):
@@ -322,9 +332,88 @@ def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None)
     return {"problems": problems, "info": info, "ring": result_ring}
 
 
+def _names(names, most=5):
+    names = sorted(names)
+    return ", ".join(names[:most]) + (", ..." if len(names) > most else "")
+
+
+def _user_keyspace(name):
+    return not str(name).startswith("system") and name != "lost+found"
+
+
+def _true_value(value):
+    return str(value).strip().lower() in ("true", "yes", "1")
+
+
+def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_data=False, running=False, size=0,
+                                   keyspaces=None, peers=False, cluster_keyspaces=None, ring_problems=None, title=""):
+    """add_node's reset of a new node holding data (cassandra_add_node_reset,
+    on by default): done only when the node is down, in no ring, of this
+    cluster or the package's stock 'Test Cluster', and has no user keyspace
+    but the ones of a failed bootstrap of this cluster.
+    node: its name; cluster_name: this cluster's; live_cluster: the cluster
+    name of its live cassandra.yaml (Cassandra refuses to start with another
+    name than its data's; None: no such file, or unreadable); has_data: its
+    directories hold something; running: a Cassandra JVM runs there or the
+    unit is active; size: bytes in its directories; keyspaces: the keyspace
+    directories in its data directories; peers: its system.peers tables hold
+    data (it met other nodes); cluster_keyspaces: the cluster's keyspaces
+    (None: unknown); ring_problems: cassandra_node_reset_ring's problems (an
+    up node of the cluster sees it, no node answered...); title: how the
+    lines name it, e.g. "node7 (dc1/rack_b)".
+    Returns {'reset': bool, 'problems': [...], 'line': str}: without data,
+    nothing to reset (no line); else the line for the plan ("... - will be
+    reset") or the refusal, which says what the node holds."""
+    title = title or node
+    if not _true_value(has_data):
+        return {"reset": False, "problems": [], "line": ""}
+    running = _true_value(running)
+    ring_problems = [ring_problems] if isinstance(ring_problems, str) else list(ring_problems or [])
+    users = sorted(set(k for k in keyspaces or [] if _user_keyspace(k)))
+    ours = live_cluster is not None and live_cluster == cluster_name
+    problems = []
+    if running:
+        problems.append("Cassandra runs on it: add_node resets only a node where Cassandra is down. Stop it"
+                        " (systemctl stop cassandra) if it holds nothing you need, then run add_node again")
+    problems.extend(ring_problems)
+    if live_cluster is None:
+        problems.append("the cluster its data belongs to is unknown (no readable cassandra.yaml)")
+    elif live_cluster not in (cluster_name, STOCK_CLUSTER):
+        problems.append("its data is of cluster '%s', neither '%s' nor the package's stock '%s'"
+                        % (live_cluster, cluster_name, STOCK_CLUSTER))
+    elif _true_value(peers) and not ours:
+        problems.append("its system.peers lists other nodes: a member of another '%s' ring" % live_cluster)
+    if users and live_cluster is not None:
+        foreign = [k for k in users if cluster_keyspaces is not None and k not in cluster_keyspaces]
+        if not ours:
+            problems.append("it holds user keyspaces (%s): only a failed bootstrap of this cluster may" % _names(users))
+        elif cluster_keyspaces is None:
+            problems.append("it holds user keyspaces (%s) and the cluster's keyspaces could not be read: whether they"
+                            " are a failed bootstrap's can't be checked" % _names(users))
+        elif foreign:
+            problems.append("it holds keyspaces this cluster does not have (%s)" % _names(foreign))
+    seen = [p for p in ring_problems if " sees " in p]
+    ring = ("in the ring of this cluster" if seen else "ring unknown" if ring_problems
+            else "in another ring" if _true_value(peers) and not ours else "not in any ring")
+    held = ["%s" % cassandra_output.size(float(size or 0)), "cluster '%s'" % live_cluster if live_cluster is not None
+            else "cluster unknown"]
+    if users:
+        held.append("user keyspaces %s" % _names(users)
+                    + (" (a failed bootstrap of this cluster)" if ours and not problems else ""))
+    held.extend([ring, "running" if running else "down"])
+    holds = "%s: has data (%s)" % (title, ", ".join(held))
+    if problems:
+        return {"reset": False, "problems": problems,
+                "line": "%s: not reset automatically, %s. Nothing was changed: check what it holds; if nothing is"
+                        " needed, empty it (reset_node) or remove it from cassandra_new_nodes"
+                        % (holds, "; ".join(problems))}
+    return {"reset": True, "problems": [], "line": "%s \u2014 will be reset" % holds}
+
+
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_add_node_reset_check": cassandra_add_node_reset_check,
             "cassandra_cluster_reset_check": cassandra_cluster_reset_check,
             "cassandra_node_reset_dirs": cassandra_node_reset_dirs,
             "cassandra_node_reset_real": cassandra_node_reset_real,

@@ -3,23 +3,21 @@
 # progress: every cassandra_stream_check_interval seconds (sooner at first), reads nodetool
 # compactionstats on the batch's nodes, prints the progress (bytes cleaned
 # by the running Cleanup tasks, cassandra_stream_report), and fails only after
-# cassandra_stream_stall_checks checks in a row without progress. Rounds of
-# _cassandra_stream_round_size checks (cleanup_check.yml), then includes itself until
-# every cleanup job has ended. Run once; expects
+# cassandra_stream_stall_checks checks in a row without progress. The checks
+# (cleanup_check.yml) run in wait_loop.yml until every cleanup job has ended.
+# Run once; expects
 # cassandra_cleanup_jobs_started (the async jobs) and _cassandra_stream_state
-# reset to {} before the first include.
-- name: Start a round of checks
+# reset to {} before the include.
+- name: Start following them
   ansible.builtin.set_fact:
     _cassandra_cleanup_status: going
 
 - name: Check the progress, then every {{ cassandra_stream_check_interval }}s
-  ansible.builtin.include_tasks: cleanup_check.yml
-  loop: "{{ range(_cassandra_stream_round_size | int) | list }}"
-  loop_control:
-    loop_var: _cassandra_stream_round
-    label: "{{ _cassandra_stream_round + 1 }}"
+  ansible.builtin.include_tasks: wait_loop.yml
+  vars:
+    _cassandra_wait_check: cleanup_check.yml
+    _cassandra_wait_going: "{{ _cassandra_cleanup_status == 'going' }}"
 
-# Outside the checks' block: its condition (still going) would skip it
 - name: Stop when a cleanup failed or stopped moving
   ansible.builtin.fail:
     msg: >-
@@ -37,7 +35,3 @@
       Last progress: {{ (_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
                           status=_cassandra_cleanup_status) | first) }}
   when: _cassandra_cleanup_status in ['failed', 'stalled']
-
-- name: Next round of checks
-  ansible.builtin.include_tasks: cleanup_wait.yml
-  when: _cassandra_cleanup_status == 'going'

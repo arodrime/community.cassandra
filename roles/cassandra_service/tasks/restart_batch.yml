@@ -64,7 +64,9 @@
 
     - name: Record the result
       ansible.builtin.set_fact:
-        cassandra_op_result: "restart done with its rack in {{ now().timestamp() | int - _cassandra_restart_start | int }}s"
+        cassandra_op_result: >-
+          {{ 'would restart with its rack (--check: nothing was changed)' if ansible_check_mode
+             else ('restart done with its rack in ' ~ (now().timestamp() | int - _cassandra_restart_start | int) ~ 's') }}
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ _todo }}"

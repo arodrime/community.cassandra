@@ -1,0 +1,29 @@
+---
+# Prepares a new node with the roles, everything before its start: nothing here
+# starts Cassandra (cassandra_install keeps the package from starting it), so
+# add_node runs it on every new node at once, before the one at a time bootstraps
+- name: Configure the package repository
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_repository
+
+- name: Install Cassandra
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_install
+
+- name: Tune the OS
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_linux
+
+- name: Write the config
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+
+- name: Open the firewall
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_firewall
+  when: cassandra_manage_firewall | default(false) | bool
+
+- name: Install Cassandra Medusa (backups)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_medusa
+  when: cassandra_medusa_enabled | default(false) | bool

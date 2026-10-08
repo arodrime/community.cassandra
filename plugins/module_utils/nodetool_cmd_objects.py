@@ -1,6 +1,19 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
+import re
 import socket
+
+# Lines the JVM prints before nodetool's own output: a JAVA_TOOL_OPTIONS or
+# _JAVA_OPTIONS of the environment ("Picked up JAVA_TOOL_OPTIONS: ..."), a VM
+# warning. Usually on stderr, but they end up in stdout when it is merged.
+JVM_BANNER_RE = re.compile(r'^(Picked up [A-Za-z_]+: |(OpenJDK|Java HotSpot\(TM\)) .*VM warning: )')
+
+
+def strip_jvm_banner(text):
+    """text without the JVM banner lines (JVM_BANNER_RE)."""
+    if not text:
+        return text
+    return ''.join(line for line in text.splitlines(True) if not JVM_BANNER_RE.match(line))
 
 
 def cassandra_version_at_least(version_string, minimum_version):
@@ -44,13 +57,16 @@ class NodeToolCmd(object):
         if self.cassandra_version is None:
             (rc, out, err) = self.nodetool_cmd("version")
             if rc == 0:
-                what_is_the_version = ".".join(out.split(': ')[1].split(".")[:2]).strip()
+                # ReleaseVersion: 5.0.7
+                line = [x for x in out.splitlines() if x.startswith('ReleaseVersion')][-1:] or [out]
+                what_is_the_version = ".".join(line[0].split(': ')[1].split(".")[:2]).strip()
                 module.params['cassandra_version'] = what_is_the_version
             else:
                 module.fail_json(msg="Unable to determine Cassandra version: {0}".format(out), stderr=err)
 
     def execute_command(self, cmd):
-        return self.module.run_command(cmd)
+        rc, out, err = self.module.run_command(cmd)
+        return rc, strip_jvm_banner(out), err
 
     def nodetool_cmd(self, sub_command):
         if self.nodetool_path is not None and len(self.nodetool_path) > 0:
