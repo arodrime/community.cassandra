@@ -259,8 +259,17 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
     $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_topic=decommission_node
     $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_write=true
 
-``-e help_topic=<operation>`` shows one operation in detail: its documentation (the comment that starts the
-playbook), its variables and its command. ``-e help_write=true`` also writes the same content as ``RUNBOOK.md`` in
+``-e help_topic=<operation>`` shows one operation in detail: its command, its options one per line with their
+default, an example for this inventory, and its documentation (the comment that starts the playbook). The default
+callback shows the help as plain text under its yaml result format, as a list of quoted lines under its json one
+(the default): set it in ``ansible.cfg`` (or ``ANSIBLE_CALLBACK_RESULT_FORMAT=yaml``):
+
+.. code-block:: ini
+
+    [defaults]
+    callback_result_format = yaml
+
+``-e help_write=true`` also writes the overview as ``RUNBOOK.md``, each operation with its options and example, in
 the inventory's dir (the first ``-i`` one), or in the existing dir given as ``-e help_runbook_dir=<dir>``, with the commands ready to copy: commit it with the inventory. It is
 written only when its content changes (run ``help`` again after changing the inventory); ``--check --diff`` shows the
 difference. Its commands are as run from the directory ``help`` was run from (the one with ``ansible.cfg``; the file

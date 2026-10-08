@@ -6,10 +6,12 @@ __metaclass__ = type
 # five nodes, three seeds, one node marked absent).
 
 import copy
+import glob
 import os
 import re
 
 import pytest
+import yaml
 
 from ansible.errors import AnsibleFilterError
 
@@ -66,77 +68,101 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
 -------------
 
 Read-only (change nothing):
+
   help - This overview, from the inventory alone (no node contacted).
     $ $PLAY $C.help
+
   status - The ring as nodetool status shows it from one node, per datacenter; a down node is shown,
     not an error.
     $ $PLAY $C.status
+
   health_check - Checks the cluster from every node (ring, gossip, native transport, streams,
     schema, ports); fails on a problem, so it can be scheduled.
     $ $PLAY $C.health_check
+
   preflight - Checks the nodes against the inventory before a change: settings that must match,
     racks for the token allocator, versions, seeds.
     $ $PLAY $C.preflight
 
 Nodes:
+
   add_node - Adds new hosts to the running cluster, one at a time. Put them in their rack's group
     first, not in cassandra_seeds.
     $ $PLAY $C.add_node -e cassandra_new_nodes=NEW_NODE
+
   topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the
     ring, removes the hosts marked cassandra_node_state: absent; one node at a time, --check shows
     the plan.
     $ $PLAY $C.topology
+
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
     the others; refuses seeds.
     $ $PLAY $C.decommission_node -e cassandra_leaving_nodes=node4
+
   replace_node - Replaces a dead node by a blank host, which takes over its tokens and data. In the
     inventory, the new host in, the dead one out.
     $ $PLAY $C.replace_node -e cassandra_new_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
+
   remove_dead_node - Last resort for a dead node that will not be replaced: removenode (or
     assassinate). Take it out of the inventory first.
     $ $PLAY $C.remove_dead_node -e cassandra_dead_node_address=DEAD_NODE_ADDRESS
+
   reset_node - Empties nodes that are not members of the ring (started once by mistake, a failed
     bootstrap) for a fresh start.
     $ $PLAY $C.reset_node -e cassandra_reset_nodes=NODE
+
   move_node - One token per node: moves nodes to new tokens, one at a time (by default the fewest
     moves that even out each datacenter). Not for this cluster (num_tokens 16).
     $ $PLAY $C.move_node
 
 Cluster:
+
   create_cluster - Builds the cluster from blank hosts: prepared in parallel, then started one at a
     time, seeds first. Starts nothing on a running cluster.
     $ $PLAY $C.create_cluster
+
   rolling_restart - Drains and restarts the nodes one at a time, the cluster checked before and
     after each one.
     $ $PLAY $C.rolling_restart
+
   rolling_reboot - Same as rolling_restart, rebooting the hosts (OS patching).
     $ $PLAY $C.rolling_reboot
+
   stop_rack - Stops every node of one rack at once (maintenance), when the replication allows losing
     that rack.
     $ $PLAY $C.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+
   start_rack - Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.
     $ $PLAY $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+
   apply_config - Applies the inventory's config: shows every diff, asks once, then writes the nodes
     that need it, one at a time, restarting only those that need it.
     $ $PLAY $C.apply_config
+
   change_seeds - Applies a new cassandra_seeds list to every node, live (no restart).
     $ $PLAY $C.change_seeds
+
   update_java - Moves the cluster to the Java in cassandra_java_version, one node at a time.
     $ $PLAY $C.update_java
+
   upgrade - Upgrades the cluster to the version in the inventory, one phase per run: preflight,
     prepare, canary, rolling, sstables, cleanup.
     $ $PLAY $C.upgrade -e cassandra_upgrade_phase=preflight
+
   cleanup - Runs nodetool cleanup (the data a node no longer owns, after nodes were added), the
     cluster checked before each batch.
     $ $PLAY $C.cleanup
+
   add_datacenter - Adds a datacenter: its nodes join without streaming, the keyspaces get replicas
     there, then each node rebuilds from another datacenter.
     $ $PLAY $C.add_datacenter -e cassandra_new_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+
   remove_datacenter - Removes a datacenter: the keyspaces stop keeping replicas there, then its
     nodes leave one at a time. Move its clients first.
     $ $PLAY $C.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
 
 Takeover:
+
   import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes; a
     re-import into an inventory it wrote keeps the files it did not write.
     $ ansible-playbook -i 192.0.2.11, $C.import_cluster -e import_cluster_dir=inventories/orders -e import_cluster_force=true -e import_cluster_runbook=true
@@ -146,6 +172,7 @@ Takeover:
 - Marked cassandra_node_state: absent: node4. topology --check shows the plan to remove them, then
   topology without --check does it:
     $ $PLAY $C.topology --check
+
 - dc1: racks of different sizes (1, 1, 2 nodes): the data is not shared evenly; add or remove nodes
   rack by rack.""".replace("$PLAY", "ansible-playbook -i inventories/orders/hosts.yml").replace("$C.", "community.cassandra.")
 
@@ -183,17 +210,57 @@ def test_every_operation_has_a_theme_and_a_summary():
         assert op["summary"].endswith("."), op["name"]
 
 
+def read(*patterns):
+    text = ""
+    for pattern in patterns:
+        for path in sorted(glob.glob(os.path.join(TOP, pattern))):
+            with open(path, encoding="utf-8") as f:
+                text += f.read() + "\n"
+    return text
+
+
 def test_operation_variables_are_the_playbooks_own():
-    # each -e variable named by a command or an option is in the playbook (or the roles it runs)
+    # each variable an option or an example sets is in the playbook (or the roles it runs)
+    roles = read("roles/*/tasks/*.yml", "roles/*/defaults/main.yml")
     for op in OPERATIONS:
-        with open(os.path.join(TOP, "playbooks", op["name"] + ".yml"), encoding="utf-8") as f:
-            text = f.read()
-        for arg in op.get("args") or []:
-            name = re.search(r"cassandra_\w+", arg).group(0)
-            assert name in text, (op["name"], name)
-        for name in op.get("options") or {}:
-            assert name in text or name in ("cassandra_rolling_resume", "cassandra_reboot_timeout",
-                                            "cassandra_cleanup_jobs"), (op["name"], name)
+        text = read("playbooks/%s.yml" % op["name"])
+        args = [o[0] for o in op.get("options") or []] + list((op.get("example") or ("", []))[1])
+        for arg in args:
+            name = "--check" if arg == "--check" else re.search(r"(?:cassandra|help|import_cluster)_\w+", arg).group(0)
+            assert name in text or name in roles, (op["name"], name)
+
+
+def test_option_defaults_are_the_code_s():
+    # a default of one word is the playbook's own (name | default(value), or name: value in its vars), or
+    # the role default
+    defaults = {}
+    for path in glob.glob(os.path.join(TOP, "roles", "*", "defaults", "main.yml")):
+        with open(path, encoding="utf-8") as f:
+            defaults.update(yaml.safe_load(f) or {})
+    roles = read("roles/*/tasks/*.yml")
+    checked = 0
+    for op in OPERATIONS:
+        code = "\n".join(line for line in (read("playbooks/%s.yml" % op["name"]) + roles).splitlines()
+                         if not line.lstrip().startswith("#"))
+        for arg, _text, default in op.get("options") or []:
+            if default is None or " " in default:
+                continue
+            name = re.search(r"\w+", arg[3:]).group(0)
+            # (default(''): a check whether it is given)
+            found = set(re.findall(r"\b%s \| default\(['\"]?([^'\")]*)" % name, code)) - {""}
+            found.update(re.findall(r"^\s+%s: (\S+)\s*(?:#.*)?$" % name, code, re.M))
+            if name in defaults:
+                found.add(str(defaults[name]).lower() if isinstance(defaults[name], bool) else str(defaults[name]))
+            assert found == {default}, (op["name"], name, default, found)
+            checked += 1
+    assert checked > 30
+
+
+def test_examples_set_their_operation_s_options():
+    for op in OPERATIONS:
+        names = [re.search(r"\w+", o[0][3:]).group(0) for o in op.get("options") or []]
+        for arg in (op.get("example") or ("", []))[1]:
+            assert arg == "--check" or re.search(r"\w+", arg[3:]).group(0) in names, (op["name"], arg)
 
 
 def test_markdown_has_the_same_commands():
@@ -207,6 +274,63 @@ def test_markdown_has_the_same_commands():
     assert "## 3. Advice" in runbook
 
 
+def test_markdown_operation_layout():
+    # the command, the options one per line with their default, an example: in code blocks
+    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    play = "ansible-playbook -i inventories/orders/hosts.yml community.cassandra."
+    section = runbook.split("**rolling_restart**", 1)[1].split("**rolling_reboot**", 1)[0]
+    assert section == (
+        " - Drains and restarts the nodes one at a time, the cluster checked before and after each one.\n\n"
+        "```sh\n" + play + "rolling_restart\n```\n\n"
+        "Options:\n\n"
+        "- `-e cassandra_rolling_mode=rack`: the nodes of a rack together, rack by rack (default: node)\n"
+        "- `-e cassandra_rack_force=true`: rack mode: goes on although keyspaces would lose more than one replica"
+        " (default: false)\n"
+        "- `-e cassandra_rolling_resume=true`: resumes an interrupted run, skipping the nodes already done"
+        " (default: false)\n\n"
+        "Example (a rack at a time):\n\n"
+        "```sh\n" + play + "rolling_restart -e cassandra_rolling_mode=rack\n```\n\n")
+    # the options of every operation once, at the top
+    assert "- `-e cassandra_operation_confirm=false`: asks no question" in runbook.split("## 1.", 1)[0]
+
+
+def test_every_operation_and_its_example_in_the_runbook():
+    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    for op in OPERATIONS:
+        assert "\n**%s** - " % op["name"] in runbook, op["name"]
+        if op.get("example"):
+            assert "\nExample (%s):\n" % op["example"][0] in runbook, op["name"]
+
+
+def test_no_trailing_space():
+    # the yaml result format shows a string with a line ending in a space quoted, on one line
+    texts = [cassandra_help(MODEL, PLAYBOOKS, cwd=CWD), cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)]
+    texts += [cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD) for op in OPERATIONS]
+    for text in texts:
+        assert not [line for line in text.splitlines() if line != line.rstrip()], text.splitlines()[0]
+
+
+def test_example_replaces_the_needed_argument():
+    text = cassandra_help(MODEL, PLAYBOOKS, topic="upgrade", cwd=CWD)
+    example = text.split("Example (the next phase):\n", 1)[1].splitlines()[0]
+    assert example == ("    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.upgrade"
+                       " -e cassandra_upgrade_phase=prepare")
+
+
+def test_long_option_on_its_own_line():
+    lines = cassandra_help(MODEL, PLAYBOOKS, topic="topology", cwd=CWD).splitlines()
+    at = lines.index("    -e cassandra_topology_allow_large_removal=true")
+    assert lines[at + 1] == "    " + " " * 42 + "goes on with more removals than that, or more than"
+
+
+def test_common_options_only_for_the_operations_that_change_something():
+    for op in OPERATIONS:
+        text = cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD)
+        assert ("cassandra_operation_confirm" in text) == (op["theme"] in ("nodes", "cluster")), op["name"]
+    text = cassandra_help(model(auto=None), PLAYBOOKS, topic="cleanup", cwd=CWD)
+    assert "-e cassandra_hosts=<group>            the cluster to run on (default: none, the inventory has" in text
+
+
 def test_topic():
     with open(os.path.join(TOP, "playbooks", "decommission_node.yml"), encoding="utf-8") as f:
         header = f.read()
@@ -218,7 +342,21 @@ def test_topic():
     assert "What it does and checks (playbooks/decommission_node.yml):" in lines
     assert "  Removes nodes from a running cluster, one at a time: each one streams its" in lines
     assert "- name: Preflight" not in text  # the comment only
-    assert "  cassandra_decommission_force  true goes on when a datacenter would keep fewer nodes than replicas" in lines
+    # the command, the options one per line with their default, an example, in that order
+    options = lines.index("Options:")
+    assert lines[options:options + 9] == [
+        "Options:",
+        "    -e cassandra_leaving_nodes=<nodes>    the nodes to remove (comma-separated) (required)",
+        "    -e cassandra_decommission_force=true  goes on when a datacenter would keep fewer nodes than",
+        "                                          replicas (default: false)",
+        "    -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already",
+        "                                          done (default: false)",
+        "    -e cassandra_hosts=<group>            the cluster to run on (default: orders)",
+        "    -e cassandra_operation_confirm=false  asks no question, for runs without a terminal",
+        "                                          (default: true)"]
+    assert lines.index("Command for this inventory:") < options < lines.index("Example (changing nothing):")
+    assert ("    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
+            " -e cassandra_leaving_nodes=node4 --check") in lines
     assert "cassandra_cql_username and cassandra_cql_password" in text
 
 

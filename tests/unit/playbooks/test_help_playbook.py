@@ -69,7 +69,7 @@ def inventory(tmp_path, vault_password=None):
 def run(tmp_path, *extra, **kwargs):
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
                ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0", ANSIBLE_TIMEOUT="3",
-               ANSIBLE_STDOUT_CALLBACK="ansible.builtin.default",
+               ANSIBLE_STDOUT_CALLBACK=kwargs.get("callback", "ansible.builtin.default"),
                ANSIBLE_CALLBACK_RESULT_FORMAT=kwargs.get("result_format", "json"))
     # (ansible-test --color sets ANSIBLE_FORCE_COLOR, which wins over ANSIBLE_NOCOLOR)
     for name in ("ANSIBLE_VAULT_PASSWORD_FILE", "ANSIBLE_BECOME", "ANSIBLE_CONFIG", "ANSIBLE_INVENTORY", "ANSIBLE_FORCE_COLOR",
@@ -92,6 +92,9 @@ def test_help_reads_the_inventory_only(tmp_path):
     assert rc == 0, out
     assert list(recap(out)) == ["localhost"], out  # no node in the run
     assert '"Cluster \'Orders\' (inventory group orders): 4 nodes, 1 more marked absent",' in out  # a list of lines
+    # the json result format: first, how to get plain text
+    assert ('    "msg": [\n        "Plain text, without the quotes: callback_result_format = yaml in ansible.cfg'
+            ' ([defaults])",\n        "",\n        "Cassandra help for the inventory') in out
     assert "rack2: node3 192.0.2.13 (seed), node4 192.0.2.14 (absent)" in out
     assert ("$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass"
             " community.cassandra.decommission_node -e cassandra_leaving_nodes=node4") in out
@@ -162,7 +165,21 @@ def test_help_topic_under_the_yaml_result_format(tmp_path):
             " -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3") in out
     assert "What it does and checks (playbooks/stop_rack.yml):" in out
     assert "  Stops every node of one rack at once (maintenance of the rack's hosts,\n" in out
+    # plain text: the options one per line, unquoted
+    assert ("\n        Options:\n            -e cassandra_target_dc=<dc>           the rack's datacenter (required)\n"
+            in out)
+    assert "Plain text, without the quotes" not in out
     assert SECRET not in out
+
+
+def test_help_under_another_callback(tmp_path):
+    # a list of lines, without the advice for the default callback
+    inventory(tmp_path)
+    rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml", "-e", "help_topic=stop_rack",
+                  callback="ansible.builtin.minimal")
+    assert rc == 0, out
+    assert '"stop_rack (cluster): Stops every node of one rack at once (maintenance), when the replication' in out
+    assert "Plain text, without the quotes" not in out
 
 
 def test_help_unknown_topic(tmp_path):

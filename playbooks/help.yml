@@ -12,8 +12,10 @@
 #    cassandra_cql_username, a variable close to one the collection reads,
 #    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,
 #    mixed versions.
-# -e help_topic=<operation>: one operation in detail (its documentation, its
-# variables, its command).
+# -e help_topic=<operation>: one operation in detail (its command, its options
+# with their defaults, an example, its documentation).
+# Shown as plain text with callback_result_format = yaml in ansible.cfg
+# ([defaults]) or ANSIBLE_CALLBACK_RESULT_FORMAT=yaml; else as a list of quoted lines.
 # -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir
 # (changed only when its content changes; --check --diff shows the difference),
 # to commit with the inventory (-e help_runbook_dir=<dir>: in that dir
@@ -52,17 +54,19 @@
       ansible.builtin.set_fact:
         _cassandra_help_model: "{{ _model }}"
 
-    # one string under the yaml result format (shown as a block, not wrapped),
-    # else a list of lines (not one line with \n in it)
+    # one string under the default callback's yaml result format (plain text, not
+    # wrapped), else a list of lines (not one line with \n in it), the default
+    # callback's json one saying how to get plain text
     - name: Show the help
       ansible.builtin.debug:
-        msg: "{{ _text if _yaml | bool else _text.split('\n') }}"
+        msg: "{{ _text if _yaml | bool else ([_plain, ''] if _default | bool else []) + _text.split('\n') }}"
       when: help_show | default(true) | bool  # false: RUNBOOK.md only (import_cluster_runbook)
       vars:
+        _default: "{{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') in ['default', 'ansible.builtin.default'] }}"
         _yaml: >-
-          {{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') in ['default', 'ansible.builtin.default']
-             and lookup('ansible.builtin.config', 'result_format', plugin_type='callback', plugin_name='default',
-                        on_missing='skip') == 'yaml' }}
+          {{ _default | bool and lookup('ansible.builtin.config', 'result_format', plugin_type='callback',
+                                        plugin_name='default', on_missing='skip') == 'yaml' }}
+        _plain: "Plain text, without the quotes: callback_result_format = yaml in ansible.cfg ([defaults])"
         _text: >-
           {{ _cassandra_help_model | community.cassandra.cassandra_help(
                _playbooks, topic=help_topic | default(''),
