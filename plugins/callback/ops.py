@@ -19,7 +19,8 @@ description:
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
-    (C(ignore_unreachable)) on one line. Diffs (C(--diff)) too.
+    (C(ignore_unreachable)) on one line. A failure the playbook handles (a task of a block with a C(rescue)) on
+    one line too, its host, task and the first line of its message. Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
   - With C(-v) or more, everything is printed as the default callback does.
   - Set it in C(ansible.cfg) (C([defaults]) C(stdout_callback = community.cassandra.ops)) or with
@@ -56,6 +57,21 @@ def marked(task):
     """True when the task is an operator message: vars cassandra_output: true."""
     value = (getattr(task, "vars", None) or {}).get(MARKER)
     return value is True or str(value).strip().lower() in ("true", "yes")
+
+
+def _uuid(item):
+    return getattr(item, "_uuid", None)
+
+
+def rescued(task):
+    """True when the task is in the block part of a block with a rescue (at
+    any level, through includes): the playbook handles its failure."""
+    child, parent = task, getattr(task, "_parent", None)
+    while parent is not None:
+        if getattr(parent, "rescue", None) and _uuid(child) in [_uuid(t) for t in getattr(parent, "block", None) or []]:
+            return True
+        child, parent = parent, getattr(parent, "_parent", None)
+    return False
 
 
 def lines(msg):
@@ -133,7 +149,18 @@ class CallbackModule(DefaultCallback):
             return self._verdict(result)
         if _task(result).loop and "results" in _result(result):
             return None  # each failed item was printed already
+        if rescued(_task(result)):  # its rescue handles it: one line, never silent
+            return self._handled(result)
         return super(CallbackModule, self).v2_runner_on_failed(result, ignore_errors)
+
+    def _handled(self, result):
+        res = _result(result)
+        # a command's own error rather than "non-zero return code"
+        said = [line.strip() for line in lines(res.get("stderr") or res.get("msg") or "") if line.strip()]
+        host = getattr(result, "host", None) or result._host
+        self._display.display("%s: %s: %s (the playbook handles it)"
+                              % (host.get_name(), _task(result).get_name(), said[0] if said else "failed"))
+        return None
 
     def v2_runner_item_on_failed(self, result):
         if self._verbose():

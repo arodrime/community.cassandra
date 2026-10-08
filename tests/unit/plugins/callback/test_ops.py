@@ -251,3 +251,44 @@ def test_warnings_are_shown(tmp_path):
     rc, output = run(tmp_path, playbook)
     assert rc == 0, output
     assert "WARN-FROM-MODULE" in output
+
+
+def test_a_rescued_failure_on_one_line(tmp_path):
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Outer
+      block:
+        - name: Inner
+          block:
+            - name: Read something optional
+              ansible.builtin.command: sh -c 'echo no CQL access >&2; exit 2'
+          always:
+            - name: Always
+              ansible.builtin.debug:
+                msg: always
+      rescue:
+        - name: Go on without it
+          ansible.builtin.debug:
+            msg: "going on"
+          vars:
+            cassandra_output: true
+    - name: In a rescue itself
+      block:
+        - name: Fails
+          ansible.builtin.fail:
+            msg: first
+      rescue:
+        - name: Fails again
+          ansible.builtin.fail:
+            msg: the real failure
+"""
+    rc, output = run(tmp_path, playbook, INVENTORY="node1,")
+    assert rc != 0
+    lines = output.splitlines()
+    assert lines[0] == "node1: Read something optional: no CQL access (the playbook handles it)"
+    assert lines[1] == "going on"
+    assert "node1: Fails: first (the playbook handles it)" in lines
+    # a failure in a rescue is not handled: in full
+    assert "TASK [Fails again]" in output and "the real failure" in output
