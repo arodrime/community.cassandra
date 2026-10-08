@@ -81,10 +81,10 @@ def _summary(name, nodes):
     counts = _counts(nodes)
     sizes = [_bytes(n["load"]) for n in nodes]
     unknown = sizes.count(None)
-    return "%s: %s, %s; load %s%s" % (
-        name, out.plural(len(nodes), "node"), ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES
-                                                         if counts[word] or word in ("up", "down")),
-        out.size(sum(x for x in sizes if x is not None)), " (%d unknown)" % unknown if unknown else "")
+    states = ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES if counts[word] or word in ("up", "down"))
+    return "%s: %s, %s; load %s%s" % (name, out.plural(len(nodes), "node"), states,
+                                      out.size(sum(x for x in sizes if x is not None)),
+                                      " (%d unknown)" % unknown if unknown else "")
 
 
 def _verdict(cluster_status, cluster, seen_from, matches, members):

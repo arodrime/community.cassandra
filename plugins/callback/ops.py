@@ -108,9 +108,20 @@ class CallbackModule(DefaultCallback):
             self._print(_result(result).get("msg"))
 
     def _own_failure(self, result):
-        """A marked assert or fail: its msg is the verdict, printed as is."""
+        """A marked assert or fail with something to say: its msg is the
+        verdict, printed as is (else the default callback's failure)."""
         task, res = _task(result), _result(result)
-        return marked(task) and task.action in _VERDICTS and "msg" in res
+        said = [line for line in lines(res.get("msg")) if line.strip()]
+        # an empty msg: nothing (2.16), or core's own "Task failed: ..." (2.19+): the default output then
+        return marked(task) and task.action in _VERDICTS and bool(said) and not said[0].startswith("Task failed: ")
+
+    def _verdict(self, result):
+        """The verdict lines; the host first when the task runs on each host."""
+        msg = lines(_result(result)["msg"])
+        if not _task(result).run_once:
+            host = getattr(result, "host", None) or result._host
+            msg[0] = "%s: %s" % (host.get_name(), msg[0])
+        self._print(msg, color=C.COLOR_ERROR)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         if self._verbose():
@@ -118,7 +129,7 @@ class CallbackModule(DefaultCallback):
         if ignore_errors:
             return None  # the playbook expects it (ignore_errors) and handles it
         if self._own_failure(result) and not (_task(result).loop and "results" in _result(result)):
-            return self._print(_result(result)["msg"], color=C.COLOR_ERROR)
+            return self._verdict(result)
         if _task(result).loop and "results" in _result(result):
             return None  # each failed item was printed already
         return super(CallbackModule, self).v2_runner_on_failed(result, ignore_errors)
@@ -133,7 +144,7 @@ class CallbackModule(DefaultCallback):
         if ignored is True or str(ignored).strip().lower() in ("true", "yes"):
             return None
         if self._own_failure(result):
-            return self._print(res["msg"], color=C.COLOR_ERROR)
+            return self._verdict(result)
         return super(CallbackModule, self).v2_runner_item_on_failed(result)
 
     def v2_runner_on_unreachable(self, result):
@@ -158,7 +169,6 @@ class CallbackModule(DefaultCallback):
             if self._verbose():
                 return getattr(super(CallbackModule, self), name)(*args, **kwargs)
             return None
-        method.__name__ = name
         return method
 
     v2_runner_on_skipped = _quiet("v2_runner_on_skipped")

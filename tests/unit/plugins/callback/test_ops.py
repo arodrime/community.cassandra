@@ -117,7 +117,7 @@ def run(tmp_path, playbook, *args, **env_extra):
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", inventory, "-c", "local",
             "-e", "ansible_python_interpreter=" + sys.executable, str(path)] + list(args)
     proc = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                          cwd=str(tmp_path), timeout=300)
+                          check=False, cwd=str(tmp_path), timeout=300)
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
@@ -208,3 +208,45 @@ def test_verbose_delegates_to_the_default_callback(tmp_path):
     assert rc == 0, output
     assert "TASK [A command]" in output and "PLAY RECAP" in output and "skipping: [node1]" in output
     assert "plain debug output" in output and "...ignoring" in output
+
+
+def test_a_verdict_without_text_and_one_per_host(tmp_path):
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Empty verdict
+      ansible.builtin.assert:
+        that: inventory_hostname != 'node1'
+        fail_msg: "{{ [] }}"
+      vars:
+        cassandra_output: true
+    - name: Per host verdict
+      ansible.builtin.fail:
+        msg: "not healthy here"
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc != 0
+    # nothing to say: the default callback's failure, task and host named
+    assert "TASK [Empty verdict]" in output and "fatal: [node1]: FAILED!" in output
+    # run on each host: each line says which one
+    assert "node2: not healthy here" in output.splitlines()
+
+
+def test_warnings_are_shown(tmp_path):
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "warner.py").write_text(
+        "from ansible.module_utils.basic import AnsibleModule\n"
+        "m = AnsibleModule(argument_spec={})\nm.warn('WARN-FROM-MODULE')\nm.exit_json(changed=False)\n")
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Warns
+      warner:
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    assert "WARN-FROM-MODULE" in output

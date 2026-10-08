@@ -304,3 +304,25 @@ def test_inventory_steps_with_and_without_git(tmp_path):
     assert steps == ["Review the inventory: inv/hosts.yml",
                      {"text": "commit it", "command": "git add inv/hosts.yml && git commit -m 'Remove node7'"}]
     assert out.inventory_steps("x.yml", in_git=False) == ["Review the inventory: x.yml"]
+
+
+@pytest.mark.parametrize("text, masked", [
+    ('"keystore_password": "x"', '"keystore_password": ****'),
+    ("{'keystore_password': 'x', 'a': 1}", "{'keystore_password': ****, 'a': 1}"),
+    ("sse_c_key = x", "sse_c_key = ****"),
+    ("access_key: x", "access_key: ****"),
+    ("password: >-\n  x\n  y\nnext: 1", "password: ****\n  ****\n  ****\nnext: 1"),
+    ("cqlsh -u a -p x", "cqlsh -u a -p ****"),
+    ("nodetool -pw x status", "nodetool -pw **** status"),
+    ("--password x", "--password ****"),
+])
+def test_mask_more_forms(text, masked):
+    assert out.mask(text) == masked
+
+
+def test_hidden_values_in_lists_dicts_and_a_dict_becoming_a_value():
+    assert out.shown("opts", ["a", ["-Dpassword=x"]]) == "****"
+    assert out.shown("env", {"CASSANDRA_PASS": "x"}) == "****"
+    assert out.shown("ldap_bind_pw", "x") == "****" and out.shown("num_tokens", 16) == "16"
+    lines = out.diff_lines({"ks": {"keystore_password": "old"}}, {"ks": "x"})
+    assert "x" not in " ".join(line.split(":")[-1] for line in lines) and "old" not in " ".join(lines)

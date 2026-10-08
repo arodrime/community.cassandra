@@ -190,11 +190,49 @@ SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|ke
 SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret|private_key)[\w.-]*\s*[:=]\s*)"
                           r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|$))", re.M)
 MASK = "****"
+# What the output hides besides (secret and SECRET_VALUE are also what import_cluster files as secrets: kept as
+# they are): more names, a quote between the name and the colon (JSON, Python), the command line forms
+_HIDDEN = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|credential|auth_token"
+                     r"|_pw$|_pass$|^pw$|^pass$|ca_key", re.I)
+_HIDDEN_VALUE = re.compile(
+    r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|credential|auth_token|_pw|_pass)"
+    r"[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|,\s|[,}]|$))", re.M)
+_HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|-p|--password|-pwf?)\s+)(\S+)", re.M)
+_BLOCK = re.compile(r"^\s*[|>][-+]?\d*\s*$")
 
 
 def mask(text):
-    """text with the value of every secret setting in it as ****."""
-    return SECRET_VALUE.sub(r"\1" + MASK, str(text))
+    """text with the value of every secret setting in it as ****: key: value,
+    key=value, "key": "value", -pw value, --password value, and the lines of a
+    YAML block value (key: |)."""
+    out = []
+    block = None  # the indent of a secret's YAML block value
+    for line in str(text).split("\n"):
+        indent = len(line) - len(line.lstrip())
+        if block is not None and line.strip() and indent > block:
+            out.append(line[:indent] + MASK)
+            continue
+        block = None
+        match = _HIDDEN_VALUE.search(line)
+        if match and _BLOCK.match(match.group(2)):
+            block = indent
+        line = _HIDDEN_VALUE.sub(r"\1" + MASK, line)
+        out.append(_HIDDEN_OPTION.sub(r"\1" + MASK, line))
+    return "\n".join(out)
+
+
+def hidden(key, value):
+    """True when the output shows value of key as ****: a secret, or a name or
+    a value the output hides too."""
+    if isinstance(value, dict):
+        return any(hidden(str(k), v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return bool(_HIDDEN.search(key)) or any(hidden(key, v) for v in value)
+    if value == "" or value is None:
+        return False
+    if isinstance(value, str) and mask(value) != value:
+        return True
+    return secret(key, value) or (bool(_HIDDEN.search(key)) and not key.endswith("_file"))
 
 
 def secret(key, value):
@@ -213,7 +251,7 @@ def secret(key, value):
 def shown(key, value):
     """value as the output shows it: **** for a secret, a string as is, the
     rest as compact JSON."""
-    if secret(str(key), value):
+    if hidden(str(key), value):
         return MASK
     if isinstance(value, str):
         return value
@@ -240,7 +278,7 @@ def _groups(values, order):
         raw = values[node]
         groups.setdefault(_same(raw), [raw, []])[1].append(node)
     ranked = sorted(groups.values(), key=lambda g: (-len(g[1]), order.index(g[1][0])))
-    return [(raw, names) for raw, names in ranked]
+    return [tuple(group) for group in ranked]
 
 
 def setting_lines(setting, values, all_nodes=None, expected=None, notes=None, where=None, full=False, indent=""):
@@ -560,6 +598,9 @@ def diff_lines(before, after, indent="  "):
     changed ones only, "- key: old" then "+ key: new", a nested key under its
     parents; secrets as ****."""
     old, new = _flat(before or {}), _flat(after or {})
+    # a key that held a secret on one side (a dict with a password) hides its value on the other
+    parents_of_secrets = set(p[:i] for p in list(old) + list(new) if hidden(p[-1], old.get(p, new.get(p)))
+                             for i in range(1, len(p)))
     out, opened = [], ()
     for path in sorted(set(old) | set(new), key=lambda p: [_natural(x) for x in p]):
         a, b = old.get(path, _MISSING), new.get(path, _MISSING)
@@ -570,11 +611,11 @@ def diff_lines(before, after, indent="  "):
             if opened[:depth + 1] != parents[:depth + 1]:
                 out.append("%s%s%s:" % (indent, "  " * depth, parents[depth]))
         opened = parents
-        hidden = any(secret(p, a) or secret(p, b) for p in path)
+        masked = any(hidden(p, a) or hidden(p, b) for p in path) or path in parents_of_secrets
         pad = "  " * len(parents)
         for sign, value in (("-", a), ("+", b)):
             if value is not _MISSING:
-                out.append("%s%s %s%s: %s" % (indent, sign, pad, path[-1], MASK if hidden else shown(path[-1], value)))
+                out.append("%s%s %s%s: %s" % (indent, sign, pad, path[-1], MASK if masked else shown(path[-1], value)))
     return out
 
 

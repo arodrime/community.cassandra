@@ -415,5 +415,15 @@ def test_report_node_level_failures():
                      "  nodetool:  status failed on n1: nodetool error: boom",
                      "  gossip:    not running on n1",
                      "  CQL:       native transport not running on n1",
-                     "  netstats:  failed (refused) on n1",
+                     "  netstats:  failed on n1: refused",
                      "  schema:    disagreement: 2 schema versions"]
+
+
+def test_report_same_error_on_several_nodes_once():
+    down = {"failed": True, "msg": "Connection refused"}
+    per_host = dict((h, findings(h, [{"from": h, "result": {"msg": "Connection refused"}}], expected=1, netstats=down))
+                    for h in ("n1", "n2", "n3"))
+    assert cassandra_health_report(per_host, "c", ["n1", "n2", "n3"])["lines"] == [
+        "NOT HEALTHY  c  3 nodes checked, 2 problems",
+        "  nodetool:  status failed on n1..n3: Connection refused",
+        "  netstats:  failed on n1..n3: Connection refused"]

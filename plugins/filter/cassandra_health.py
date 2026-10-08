@@ -52,8 +52,8 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             if n["status"] != "U" or n["state"] != "N":
                 found.append({"kind": "state", "address": n["address"], "rack": n["rack"],
                               "state": n["status"] + n["state"], "seen_from": view["from"],
-                              "text": "%s (%s) is %s%s, seen from %s" % (n["address"], n["rack"], n["status"], n["state"],
-                                                                        view["from"])})
+                              "text": "%s (%s) is %s%s, seen from %s" % (
+                                  n["address"], n["rack"], n["status"], n["state"], view["from"])})
         if len(nodes) != int(expected):
             found.append({"kind": "count", "ring": len(nodes), "expected": int(expected), "seen_from": view["from"],
                           "text": "the ring has %d nodes, the inventory %d (seen from %s): a node is missing from the ring, "
@@ -126,7 +126,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
                 add("ring", ("count", f["ring"], f["expected"]), "%d members, inventory %d" % (f["ring"], f["expected"]),
                     f["seen_from"])
             elif kind == "nodetool":
-                add("nodetool", ("nodetool", f["on"]), "status failed on %s: %s" % (f["on"], f["error"]))
+                add("nodetool", ("nodetool", f["error"]), "status failed on %s: " + f["error"], f["on"])
             elif kind == "port":
                 add("ports", ("port", f["name"], f["port"]), "%s %s not answering on" % (f["name"], f["port"]), f["on"])
             elif kind == "gossip":
@@ -136,7 +136,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
             elif kind == "streams":
                 add("streams", ("streams",), "in progress on", f["on"])
             elif kind == "netstats":
-                add("netstats", ("netstats", f["error"]), "failed (%s) on" % f["error"], f["on"])
+                add("netstats", ("netstats", f["error"]), "failed on %s: " + f["error"], f["on"])
             elif kind == "schema":
                 add("schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"])
             else:
@@ -150,6 +150,8 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
         label, text, who = seen[key]
         if key[0] in ("state", "count"):
             text += "   seen from %s" % out.nodes(who)
+        elif key[0] in ("nodetool", "netstats"):
+            text = text.replace("%s", out.nodes(who), 1)
         elif who:
             text += " " + out.nodes(who)
         lines.append("  %s  %s" % ((label + ":").ljust(width), text))
@@ -160,8 +162,8 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     if not rows:
         size = members if members is not None else len(hosts)
         return {"healthy": True, "problems": 0, "lines": [
-            "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (cluster, out.plural(len(hosts), "node"),
-                                                                             size)]}
+            "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (
+                cluster, out.plural(len(hosts), "node"), size)]}
     todo = []
     down = [names.get(k[1], k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
     if down:
