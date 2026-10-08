@@ -297,7 +297,7 @@ def test_markdown_operation_layout():
         "Example (a rack at a time):\n\n"
         "```sh\n" + play + "rolling_restart -e cassandra_rolling_mode=rack\n```\n\n")
     # the options of every operation once, at the top
-    assert "- `-e cassandra_operation_confirm=false`: asks no question" in runbook.split("## 1.", 1)[0]
+    assert "- `-e cassandra_operation_confirm=false`: skips the question (of the operations that ask one)" in runbook.split("## 1.", 1)[0]
 
 
 def test_every_operation_and_its_example_in_the_runbook():
@@ -368,8 +368,8 @@ def test_topic():
         "    -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already",
         "                                          done (default: false)",
         "    -e cassandra_hosts=<group>            the cluster to run on (default: orders)",
-        "    -e cassandra_operation_confirm=false  asks no question, for runs without a terminal",
-        "                                          (default: true)"]
+        "    -e cassandra_operation_confirm=false  skips the question (of the operations that ask one), for",
+        "                                          runs without a terminal (default: true)"]
     assert lines.index("Command for this inventory:") < options < lines.index("Example (changing nothing):")
     assert ("    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
             " -e cassandra_leaving_nodes=node4 --check") in lines

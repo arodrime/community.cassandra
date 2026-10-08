@@ -180,7 +180,7 @@ OPERATIONS = [
      "options": [("-e cassandra_upgrade_phase=preflight", "preflight, prepare, canary, rolling, sstables or cleanup,"
                                                           " in that order", None),
                  ("-e cassandra_upgrade_canary=<node>", "the node the canary phase upgrades",
-                  "the first non-seed by datacenter, rack and name"),
+                  "the first non-seed by datacenter, rack and name (else the first node)"),
                  ("-e cassandra_rolling_resume=true", "sstables phase: resumes an interrupted run, skipping the nodes"
                                                       " already done", "false")],
      "example": ("the next phase", ["-e cassandra_upgrade_phase=prepare"])},
@@ -708,7 +708,8 @@ def _common(model, clusters, op=None):
     given = any(_hosts_given(model, cluster) for cluster in clusters)
     return [o for o in [("-e cassandra_hosts=<group>", "the cluster to run on",
                          "the one in the commands" if given else model["auto"]),
-                        ("-e cassandra_operation_confirm=false", "asks no question, for runs without a terminal",
+                        ("-e cassandra_operation_confirm=false", "skips the question (of the operations that ask one),"
+                         " for runs without a terminal",
                          "true"),
                         ("--check", "shows the plan, changing nothing", "")]
             if op is None or op.get("confirm", True) or "confirm" not in o[0]]
@@ -765,7 +766,8 @@ def _markdown(header, sections, model, cwd, runbook_dir):
                           "this file's directory (where help was run, with its ansible.cfg if any)" if where == "."
                           else "`%s`, relative to this file (where help was run, with its ansible.cfg if any)"
                           % where), "",
-           "Options of every operation that changes something:", ""] + _markdown_options(_common(model, _clusters(model)))
+           "Options of every operation that changes something:", ""]
+    out += _markdown_options(_common(model, _clusters(model)))
     for title, items in sections:
         out += ["## %s" % title, ""]
         if title.startswith("1."):
@@ -804,7 +806,8 @@ def _topic(topic, header, model, clusters, cwd):
         if item["example"]:
             examples += named + ["    $ " + item["example"][1]]
     blocks.append(["Command for this inventory:"] + cmds)
-    options = list(op.get("options") or []) + (_common(model, clusters, op) if op["theme"] in ("nodes", "cluster") else [])
+    options = list(op.get("options") or [])
+    options += _common(model, clusters, op) if op["theme"] in ("nodes", "cluster") else []
     if options:
         blocks.append(["Options:"] + _option_lines(options))
     if examples:

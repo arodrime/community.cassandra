@@ -248,7 +248,7 @@ Help and runbook
 as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
-several clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
+several clusters, ``CASSANDRA_CLUSTER`` names another group or the dir is shared with other clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
 user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know); and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
