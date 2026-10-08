@@ -127,8 +127,6 @@ _cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(
 # the words of an action in a --check result ("would restart")
 _cassandra_service_would:
   apply_config: apply the config
-  cleanup: clean up
-  cleanup_after_move: clean up after the move
   update_java: update Java
   upgradesstables: upgrade the SSTables
 

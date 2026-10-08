@@ -129,6 +129,8 @@
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
 
         - name: Stop here
+          vars:
+            cassandra_output: true  # a verdict: its msg as is
           ansible.builtin.fail:
             msg: No node was added.
 
@@ -279,7 +281,7 @@
           {%-   set m = hostvars[h] -%}
           {%-   set lines = [] -%}
           {%-   for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) -%}
-          {%-     set _ = lines.append('about ' ~ (e.bytes / 1073741824) | round(1) ~ ' GiB to stream (' ~ e.basis ~ ')') -%}
+          {%-     set _ = lines.append('about ' ~ e.bytes | community.cassandra.cassandra_size ~ ' to stream (' ~ e.basis ~ ')') -%}
           {%-   endfor -%}
           {%-   if m._cassandra_service_is_seed | default(false) | bool -%}
           {%-     set _ = lines.append('in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed'
@@ -445,7 +447,11 @@
       rescue:
         - name: Record the failure
           ansible.builtin.set_fact:
-            cassandra_op_result: "add FAILED while preparing it: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+            cassandra_op_result: >-
+              {{ ('add FAILED while preparing it: ' ~ _why) if _why
+                 else 'not prepared: stopped with the others (a node failed)' }}
+          vars:
+            _why: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') | trim }}"
 
         - name: Print the summary
           ansible.builtin.include_role:
@@ -455,6 +461,8 @@
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
 
         - name: Stop here
+          vars:
+            cassandra_output: true  # a verdict: its msg as is
           ansible.builtin.fail:
             msg: "{{ inventory_hostname }} could not be prepared: no new node was started."
 
@@ -573,10 +581,14 @@
     - name: Say which cleanups to run
       ansible.builtin.debug:
         msg: >-
-          {{ ['Once the cluster is fine, clean up the nodes that handed data over (' ~ _scope ~ '):',
-              '  ansible-playbook -i ' ~ ansible_inventory_sources | first ~ ' community.cassandra.cleanup' ~ _hosts_option
-              ~ ' --limit ' ~ _targets | join(',') ~ ' -e cassandra_cleanup_mode=' ~ cassandra_cleanup_mode | default('sequential')
-              ~ ' -e cassandra_cleanup_jobs=' ~ cassandra_cleanup_jobs, '',
+          {{ [('After the real run, once' if ansible_check_mode else 'Once') ~ ' the cluster is fine, clean up the nodes that'
+              ~ ' handed data over (' ~ _scope ~ '):',
+              '  ' ~ 'cleanup' | community.cassandra.cassandra_command(
+                       inventory=ansible_inventory_sources,
+                       default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                       hosts=cassandra_hosts | default(''), limit=_targets, cwd=lookup('ansible.builtin.env', 'PWD'),
+                       extra={'cassandra_cleanup_mode': cassandra_cleanup_mode | default('sequential'),
+                              'cassandra_cleanup_jobs': cassandra_cleanup_jobs}), '',
               '  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)',
               '                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)',
               '  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)'] | join(_nl) }}
@@ -587,8 +599,6 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
-        # the group the lookup finds by itself is left out
-        _hosts_option: "{{ (' -e cassandra_hosts=' ~ cassandra_hosts) if cassandra_hosts is defined else '' }}"
         _scope: >-
           {{ _plan.scope | dict2items | map(attribute='key') | zip(_plan.scope | dict2items | map(attribute='value')
              | map('replace', 'rack', "the new nodes' racks only") | map('replace', 'dc', 'the whole datacenter'))

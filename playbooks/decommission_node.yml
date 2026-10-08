@@ -136,6 +136,8 @@
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
 
         - name: Stop here
+          vars:
+            cassandra_output: true  # a verdict: its msg as is
           ansible.builtin.fail:
             msg: No node was removed.
 

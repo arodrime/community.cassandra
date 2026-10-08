@@ -82,6 +82,8 @@
       ansible.builtin.include_tasks: summary.yml
 
     - name: Stop here
+      vars:
+        cassandra_output: true  # a verdict: its msg as is
       ansible.builtin.fail:
         msg: >-
           Stopped at the rack {{ _todo | join(', ') }}: no later rack was restarted.

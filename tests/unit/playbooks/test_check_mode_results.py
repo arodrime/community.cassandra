@@ -53,8 +53,6 @@ def find(tasks, name):
     ("reboot", True, "would reboot (--check: nothing was changed)"),
     ("apply_config", True, "would apply the config (--check: nothing was changed)"),
     ("restart", False, "restart done in 12s"),
-    ("cleanup", True, "would clean up (--check: nothing was changed)"),
-    ("cleanup_after_move", True, "would clean up after the move (--check: nothing was changed)"),
     ("add", True, "would add (--check: nothing was changed)"),
     ("add", False, "add done in 12s"),
 ])
@@ -108,3 +106,28 @@ class _Unchanged(dict):
     """A registered result that did not change (the 'changed' test reads it)."""
     def __init__(self):
         super(_Unchanged, self).__init__(changed=False)
+
+
+def test_check_previews_the_config_of_a_node_to_reset():
+    # --check: the reset did not run, the node still has the stock identity a real run deletes first
+    tasks = load("action_add_prepare.yml")
+    names = [t.get("name") for t in tasks]
+    preview = tasks[names.index("Preview the config of a node the real run resets first")]
+    assert names.index("Preview the config of a node the real run resets first") + 1 == names.index("Write the config")
+    assert preview["ansible.builtin.set_fact"] == {"cassandra_config_force_identity_change": True}
+    for check, delete, expected in ((True, ["/d/data/system"], True), (True, [], False), (False, ["/d/data/system"], False)):
+        shown = all(render("{{ %s }}" % w, ansible_check_mode=check, _cassandra_node_reset_plan={"delete": delete})
+                    for w in preview["when"])
+        assert shown is expected
+
+
+def test_prepare_failure_of_a_node_stopped_with_the_others():
+    with open(os.path.join(TOP, "playbooks", "add_node.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    play = next(p for p in plays if p.get("name") == "Prepare the new nodes, all at once")
+    record = find(play["tasks"], "Record the failure")
+    template = record["ansible.builtin.set_fact"]["cassandra_op_result"]
+    for failed, expected in (({"msg": "no repository"}, "add FAILED while preparing it: no repository"),
+                             ({}, "not prepared: stopped with the others (a node failed)")):
+        why = render(record["vars"]["_why"], ansible_failed_result=failed)
+        assert render(template, _why=why).strip() == expected

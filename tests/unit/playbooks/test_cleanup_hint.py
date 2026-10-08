@@ -41,7 +41,9 @@ def hint(playbook, **variables):
     task = [t for t in play["tasks"] if t["name"] == "Say which cleanups to run"][0]
     values = {"ansible_inventory_sources": ["inventory/prod.yml"], "_targets": ["node1", "node4"],
               "cassandra_cleanup_jobs": play["vars"]["cassandra_cleanup_jobs"],
-              "_hosts_option": trust_as_template(task["vars"]["_hosts_option"])}
+              "ansible_check_mode": False}
+    if "_hosts_option" in (task.get("vars") or {}):
+        values["_hosts_option"] = trust_as_template(task["vars"]["_hosts_option"])
     values.update(variables)
     templar = Templar(loader=DataLoader(), variables=values)
     msg = task["ansible.builtin.debug"]["msg"]
@@ -67,3 +69,12 @@ def test_move_node_prints_both_options_and_the_group_given():
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2",
     ] + OPTIONS
+
+
+def test_add_node_under_check_says_after_the_real_run_and_the_group_given():
+    lines = hint("add_node.yml", _scope="dc1: the whole datacenter", ansible_check_mode=True, cassandra_hosts="orders")
+    assert lines[:2] == [
+        "After the real run, once the cluster is fine, clean up the nodes that handed data over (dc1: the whole"
+        " datacenter):",
+        "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
+        " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2"]

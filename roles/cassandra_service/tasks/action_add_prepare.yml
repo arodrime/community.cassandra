@@ -32,6 +32,15 @@
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_linux
 
+# --check: the reset add_node plans (reset_node_plan.yml) did not run, the node still holds the data a real
+# run deletes first: its identity (cluster name...) is not kept, as a real run finds the node empty
+- name: Preview the config of a node the real run resets first
+  ansible.builtin.set_fact:
+    cassandra_config_force_identity_change: true
+  when:
+    - ansible_check_mode
+    - _cassandra_node_reset_plan.delete | default([]) | length > 0
+
 - name: Write the config
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config
