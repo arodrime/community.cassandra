@@ -192,7 +192,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                     % (inventory_dir, " ".join(secrets_clear)))
     if leftovers.get("unsure"):
         todo.append("Files of an earlier import whose cluster is not known, kept: %s (remove them if they are this"
-                    " cluster's)" % ", ".join(leftovers["unsure"]))
+                    " cluster's, or import again with -e import_cluster_adopt=true)" % ", ".join(leftovers["unsure"]))
     if check:
         todo.append("Write it: the same command without --check")
     elif todo and self_check_ok:

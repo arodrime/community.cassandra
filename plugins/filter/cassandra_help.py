@@ -213,6 +213,8 @@ OPERATIONS = [
                  ("-e import_cluster_report_dir=<dir>", "where to write report.txt",
                   "reports/<cluster group> next to import_cluster_dir"),
                  ("-e import_cluster_force=true", "a re-import, over this cluster's files", "false"),
+                 ("-e import_cluster_adopt=true", "takes over the files of an earlier import that do not say whose"
+                                                  " they are (each replaced one kept as <file>.<date>~)", "false"),
                  ("-e import_cluster_allow_unread=true", "accepts a ring node it could not read (else the import"
                                                          " fails)", "false"),
                  ("-e import_cluster_keep_hand_edits=true", "leaves the config files with hand edits as they are on"

@@ -28,6 +28,10 @@
 #   import_cluster_medusa_path: none (see Medusa below).
 #   import_cluster_keep_hand_edits: false (see the hand edits below).
 #   import_cluster_allow_unread: false (see the nodes not read below).
+#   import_cluster_adopt: false; true takes the files of an earlier import of
+#     this cluster that do not say whose they are (no first line naming it,
+#     and no hosts file there naming their group or host) as this cluster's:
+#     replaced or removed, each replaced one kept as <file>.<date>~.
 #   import_cluster_strict: true; false writes an inventory that fails the
 #     self-check without failing the run.
 #   import_cluster_debug: false; true shows an error while writing the
@@ -45,7 +49,9 @@
 # cluster's hosts file alone names its group or host (else it is kept, and
 # listed in the report). A <cluster group>.yml without that line holding this
 # cluster's group alone (moved from an earlier layout, or edited by hand) is
-# its hosts file: replaced, the old one kept as <file>.<date>~.
+# its hosts file: replaced, the old one kept as <file>.<date>~. So is a file
+# without that line laid out as the import writes it (its first comment a block
+# title: # Cluster & topology...), from an import before that line.
 # Passwords found in the config go to secrets.yml files next to the other
 # variables: encrypted with ansible-vault with the vault password file of
 # Ansible (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not
@@ -1428,7 +1434,8 @@
         _leftovers: >-
           {{ _found | community.cassandra.cassandra_inventory_leftovers(_read, _written, _layout.cluster_group,
                                                                          _vault_secret | default(''),
-                                                                         _layout.hosts, _layout.cluster_name) }}
+                                                                         _layout.hosts, _layout.cluster_name,
+                                                                         import_cluster_adopt | default(false) | bool) }}
       vars:
         # (not the report, when import_cluster_report_dir puts it there: written again below)
         _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
@@ -1443,7 +1450,8 @@
           {%-   set t = r.content | b64decode -%}
           {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') or not r.item is match('(group|host)_vars/')
                                               or r.item == 'group_vars/' ~ _layout.cluster_group ~ '/main.yml'
-                                         else t.split('\n') | first}) -%}
+                                         else t.split('\n') | first if t.startswith('# Written by ')
+                                         else t | community.cassandra.cassandra_leading_comments}) -%}
           {%- endfor -%}
           {{ out }}
         _written: "{{ [_hosts_file] + _files | map(attribute='path') | list }}"
@@ -1454,7 +1462,10 @@
         fail_msg: >-
           {{ _leftovers.conflicts | default([]) | join('; ') }}. Nothing written: in {{ _dir }}, these are another
           cluster's (another import_cluster_dir, or for a host name import_cluster_host_names fqdn or ip), or files an
-          earlier release wrote that no hosts file there names (remove them if they are this cluster's)
+          earlier release wrote that no hosts file there names{{ '' if not _leftovers.adoptable | default([]) else
+          '. If they are this cluster\'s (an earlier import of it): -e import_cluster_adopt=true takes them over, each
+          file replaced kept as <file>.<date>~' if _leftovers.adoptable | length == _leftovers.conflicts | length else
+          '. -e import_cluster_adopt=true would take over ' ~ _leftovers.adoptable | length ~ ' of them only' }}
         quiet: true
 
     - name: Stop rather than write in clear over a vaulted file

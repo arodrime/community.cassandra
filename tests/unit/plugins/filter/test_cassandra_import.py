@@ -989,7 +989,7 @@ def test_reimport_names_what_it_replaces():
     out = cassandra_inventory_leftovers(["prod.yml", "group_vars/prod/main.yml"],
                                         {"prod.yml": "all:", "group_vars/prod/main.yml": GENERATED % "prod"},
                                         ["prod.yml", "group_vars/prod/main.yml"], "prod")
-    assert out == {"stale": [], "kept": [], "replaced": ["prod.yml"], "unsure": [], "conflicts": []}
+    assert out == {"stale": [], "kept": [], "replaced": ["prod.yml"], "unsure": [], "conflicts": [], "adoptable": []}
 
 
 def test_reimport_header_only_at_the_top():
@@ -997,7 +997,7 @@ def test_reimport_header_only_at_the_top():
         GENERATED, cassandra_inventory_leftovers)
     out = cassandra_inventory_leftovers(["host_vars/x/main.yml"], {"host_vars/x/main.yml": "a: 1\n" + GENERATED % "prod"},
                                         [], "prod")
-    assert out == {"stale": [], "kept": ["host_vars/x/main.yml"], "replaced": [], "unsure": [], "conflicts": []}
+    assert out == {"stale": [], "kept": ["host_vars/x/main.yml"], "replaced": [], "unsure": [], "conflicts": [], "adoptable": []}
 
 
 def test_header_names_the_cluster():
@@ -1056,7 +1056,7 @@ def test_reimport_removes_only_its_own_files():
     found.update({"group_vars/cluster_b/local.yml": "a: 1", "group_vars/cluster_b_dc1.yml": "a: 1",
                   "group_vars/cluster_a/local.yml": "a: 1", "host_vars/node9/main.yml": "a: 1"})
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
-    assert out == {"stale": ["host_vars/gone/main.yml"], "replaced": [], "unsure": [], "conflicts": [],
+    assert out == {"stale": ["host_vars/gone/main.yml"], "replaced": [], "unsure": [], "conflicts": [], "adoptable": [],
                    "kept": ["group_vars/all/main.yml", "group_vars/cluster_a/local.yml", "host_vars/node9/main.yml"]}
 
 
@@ -1069,13 +1069,13 @@ def test_files_of_an_earlier_release():
     found["host_vars/nobody/main.yml"] = GENERATED_UNNAMED  # no hosts file names it
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
     assert out == {"stale": ["host_vars/gone/main.yml"], "kept": ["group_vars/all/main.yml"], "replaced": [],
-                   "unsure": ["host_vars/nobody/main.yml"], "conflicts": []}
+                   "unsure": ["host_vars/nobody/main.yml"], "conflicts": [], "adoptable": []}
     # the same, read as cluster_b's re-import: cluster_a's files untouched
     out = cassandra_inventory_leftovers(list(found), found, ["cluster_b.yml", "host_vars/node2/main.yml"], "cluster_b",
                                         inventory={"all": {"children": {"cluster_b": {"hosts": {"node2": {}}}}}})
     assert out == {"stale": ["group_vars/cluster_b/main.yml", "group_vars/cluster_b_dc1/main.yml"],
                    "kept": ["group_vars/all/main.yml"], "replaced": [], "unsure": ["host_vars/nobody/main.yml"],
-                   "conflicts": []}
+                   "conflicts": [], "adoptable": []}
 
 
 # as an import from before the first line was written, moved by hand from inventories/cluster_a/hosts.yml
@@ -1096,7 +1096,7 @@ def test_hosts_file_moved_from_a_dir_of_its_own(first):
                                         cluster_name="Cluster A")
     assert out == {"stale": ["host_vars/gone/main.yml"], "kept": ["group_vars/all/main.yml"],
                    "replaced": ["cluster_a.yml", "group_vars/cluster_a/main.yml", "group_vars/cluster_a_dc1/main.yml",
-                                "host_vars/node1/main.yml"], "unsure": [], "conflicts": []}
+                                "host_vars/node1/main.yml"], "unsure": [], "conflicts": [], "adoptable": []}
     # without the all level, as an inventory may be written too
     found["cluster_a.yml"] = first + "\n" + yaml.safe_dump(yaml.safe_load(HOSTS_A)["all"]["children"])
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
@@ -1106,6 +1106,80 @@ def test_hosts_file_moved_from_a_dir_of_its_own(first):
                                         cluster_name="cluster-a")
     assert out["conflicts"] == ["group_vars/cluster_a/main.yml: cluster 'Cluster A', not 'cluster-a' (two clusters,"
                                 " one group cluster_a)"]
+
+
+# as the fork's import wrote them before the first line: --- then the blocks, hosts named by address then
+OLD_HOSTS_A = """---
+all:
+  children:
+    cluster_a:
+      children:
+        cluster_a_dc1:
+          children:
+            cluster_a_dc1_rack1:
+              hosts:
+                10.100.100.1: {ansible_host: 10.100.100.1}
+                10.100.100.2: {ansible_host: 10.100.100.2}
+"""
+OLD_VARS = "---\n\n\n# Cluster & Topology\ncassandra_cluster_name: Cluster A\n\n# Versions & packages\ncassandra_version: 4.1.5\n"
+
+
+def test_files_of_an_import_before_the_first_line():
+    """An earlier import's files without any first line (only --- and its block titles): this cluster's when its
+    hosts file names them: replaced with a backup, the ones of hosts named another way removed; the user's own
+    files (no block title) kept."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        GENERATED, cassandra_inventory_leftovers, leading_comments, old_import)
+    assert old_import(OLD_VARS) and old_import("# Cluster & topology\na: 1") and old_import(leading_comments(OLD_VARS))
+    assert old_import("# NOT VALID: the import self-check failed, see report.txt\nall:")
+    assert not old_import("---\n# my settings\na: 1") and not old_import("a: 1\n# Cluster & topology\n")
+    assert leading_comments(OLD_VARS) == "---\n\n\n# Cluster & Topology" and "4.1.5" not in leading_comments(OLD_VARS)
+    found = {"cluster_a.yml": OLD_HOSTS_A, "cluster_b.yml": GENERATED % "cluster_b" + "\n" + HOSTS_B,
+             "group_vars/cluster_a/main.yml": OLD_VARS, "group_vars/cluster_a_dc1/main.yml": "---\n# Cluster & topology",
+             "host_vars/10.100.100.1/main.yml": "---\n\n# JVM & heap", "host_vars/node1/main.yml": "---\n# Directories",
+             "group_vars/cluster_a/local.yml": "---\n# mine\nx: 1", "group_vars/all/main.yml": "# Directories\n"}
+    read = dict((p, t if p.endswith("cluster_a/main.yml") or "/" not in p else leading_comments(t)) for p, t in found.items())
+    out = cassandra_inventory_leftovers(list(found), read, WRITTEN_A, "cluster_a", inventory=NEW_A,
+                                        cluster_name="Cluster A")
+    assert out == {"stale": ["host_vars/10.100.100.1/main.yml"],
+                   "kept": ["group_vars/all/main.yml", "group_vars/cluster_a/local.yml"],
+                   "replaced": ["cluster_a.yml", "group_vars/cluster_a/main.yml", "group_vars/cluster_a_dc1/main.yml",
+                                "host_vars/node1/main.yml"], "unsure": [], "conflicts": [], "adoptable": []}
+
+
+def test_adopt_files_of_an_earlier_import_not_known_as_this_clusters():
+    """No hosts file says whose they are (its hosts file holds more than the cluster): stopped, adopt takes them."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    found = {"cluster_a.yml": HOSTS_A + "  vars: {x: 1}\n", "group_vars/cluster_a/main.yml": GENERATED_UNNAMED,
+             "host_vars/node1/main.yml": GENERATED_UNNAMED, "host_vars/gone/main.yml": GENERATED_UNNAMED,
+             "group_vars/cluster_b/main.yml": GENERATED_UNNAMED, "group_vars/cluster_a_dc1/secrets.yml": GENERATED_UNNAMED}
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
+    assert out["conflicts"] == ["group_vars/cluster_a/main.yml: written by an earlier import, not known to be cluster_a's",
+                                "host_vars/node1/main.yml: written by an earlier import, not known to be cluster_a's",
+                                "group cluster_a: in cluster_a.yml too", "group cluster_a_dc1: in cluster_a.yml too",
+                                "group cluster_a_dc1_rack1: in cluster_a.yml too"]
+    assert out["adoptable"] == out["conflicts"]
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A, adopt=True)
+    assert out == {"stale": ["group_vars/cluster_a_dc1/secrets.yml", "host_vars/gone/main.yml"], "kept": [],
+                   "replaced": ["cluster_a.yml", "group_vars/cluster_a/main.yml", "host_vars/node1/main.yml"],
+                   "unsure": ["group_vars/cluster_b/main.yml"], "conflicts": [], "adoptable": []}
+    # never another cluster's (its name in the first line)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
+    found["host_vars/node1/main.yml"] = GENERATED % "cluster_b"
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A, adopt=True)
+    assert out["conflicts"] == ["host_vars/node1/main.yml: written for cluster_b"] and out["adoptable"] == []
+
+
+def test_user_files_not_an_earlier_imports():
+    """The files of an import before the first line, and the main.yml files it writes, are not the user's."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        cassandra_inventory_layout, cassandra_inventory_user_files)
+    layout = cassandra_inventory_layout(_owner_nodes(), "Orders")
+    read = {"group_vars/orders/main.yml": "---\nx: 1", "group_vars/orders/old.yml": OLD_VARS,
+            "group_vars/all/main.yml": OLD_VARS, "group_vars/orders/local.yml": "---\n# mine\nc: 1"}
+    assert [f["path"] for f in cassandra_inventory_user_files(read, layout)] == [
+        "group_vars/all/main.yml", "group_vars/orders/local.yml"]
 
 
 @pytest.mark.parametrize("text, conflicts", [
@@ -1141,7 +1215,7 @@ def test_first_import_next_to_another_cluster():
     found = dict((p, t) for p, t in _two_clusters(GENERATED % "cluster_a", GENERATED % "cluster_b").items()
                  if "cluster_a" not in p and "node1" not in p and "gone" not in p)
     out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
-    assert out == {"stale": [], "kept": ["group_vars/all/main.yml"], "replaced": [], "unsure": [], "conflicts": []}
+    assert out == {"stale": [], "kept": ["group_vars/all/main.yml"], "replaced": [], "unsure": [], "conflicts": [], "adoptable": []}
 
 
 def test_stops_on_another_clusters_names():

@@ -1072,7 +1072,13 @@ on their own. A file from an
 earlier release, whose first line names no cluster, is this cluster's when this cluster's hosts file alone names its
 group or host; otherwise it is kept as it is and listed in the report. A ``<cluster group>.yml`` without that first
 line that holds this cluster's group alone (an old ``hosts.yml`` moved there by hand, or one edited by hand) is its
-hosts file: replaced, the old one kept as a backup. The report lists the files removed, the files
+hosts file: replaced, the old one kept as a backup. A file without that first line laid out as the import writes it
+(``---``, blank lines, then a block title such as ``# Cluster & topology``: an import from before that line) is an
+earlier import's too: this cluster's when its hosts file there, or else the one it writes, names its group or host;
+replaced with a backup, or removed when the import no longer writes it (a node named by its address then, by its
+hostname now). Files of an earlier import that no hosts file says are this cluster's stop the import;
+``-e import_cluster_adopt=true`` takes them over (the ones at the paths it writes, or in its groups' and hosts'
+dirs), each file replaced kept as ``<file>.<date>~``. Never a file whose first line names another cluster. The report lists the files removed, the files
 kept (down to ``group_vars/<group>/``), and the files replaced at its paths that did not have its header, each kept
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).

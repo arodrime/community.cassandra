@@ -1154,9 +1154,14 @@ _ALIASES = {"cassandra_config_owner": "cassandra_config_user"}
 def cassandra_inventory_user_files(read, layout, password=""):
     """read: {path: text} of the vars files of the inventory dir; layout: cassandra_inventory_layout's.
     -> [{path, content}]: the user's own (not the import's) that apply to this cluster's hosts: group_vars/all,
-    its groups', its hosts'; a vaulted one decrypted with password (else its content None)."""
+    its groups', its hosts'; a vaulted one decrypted with password (else its content None). Not the user's: a
+    file with the import's first line, one laid out as an import writes it (an earlier release's, without that
+    line: old_import), the main.yml files it writes."""
     groups = ["all"] + sorted(layout.get("group_vars") or {})
     hosts = [n["name"] for n in layout.get("nodes") or []]
+    # the files it writes (replaced: the old one is kept as <file>.<date>~ only)
+    mine = ["group_vars/%s/main.yml" % g for g in layout.get("group_vars") or {}] + [
+        "host_vars/%s/main.yml" % h for h, v in (layout.get("host_vars") or {}).items() if v]
     out = []
     for path, text in sorted((read or {}).items()):
         if not re.match(r"^(group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)$", path):
@@ -1169,7 +1174,8 @@ def cassandra_inventory_user_files(read, layout, password=""):
             if text is None:  # not read: said in the report
                 out.append({"path": path, "content": None})
                 continue
-        if written_for(text) is None:  # the import's own: written again
+        earlier = name != "all" and old_import(text)  # an earlier import's (never group_vars/all)
+        if written_for(text) is None and not (earlier or path in mine):  # the import's: written again
             out.append({"path": path, "content": text})
     return out
 
@@ -1497,6 +1503,37 @@ def written_for(text):
     return (match.group(1) or "") if match else None
 
 
+# the comment line each block of an import's vars file starts with, in this release or an earlier one (first words)
+_OLD_TITLES = ("cluster & topology", "versions & packages", "directories", "account & file owners", "network & ports",
+               "jmx", "jvm", "other cassandra.yaml settings", "logging", "os tuning", "medusa", "other")
+_NOT_VALID = "# NOT VALID: the import self-check failed"
+
+
+def leading_comments(text):
+    """The lines of text before its first line of data (comments, blank lines, ---): what tells an earlier
+    import's file without its first line, and shows no value."""
+    out = []
+    for line in str(text or "").split("\n"):
+        if line.strip() and line.strip() != "---" and not line.lstrip().startswith("#"):
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+def old_import(text):
+    """True when text, without the import's first line, is laid out as an import writes it: its first comment
+    one of the import's block titles (# Cluster & topology...), or its NOT VALID line."""
+    for line in str(text or "").split("\n"):
+        line = line.strip()
+        if not line or line == "---":
+            continue
+        if line.startswith(_NOT_VALID):
+            return True
+        title = line[1:].strip().lower() if line.startswith("#") else ""
+        return any(title == t or title.startswith(t + " ") for t in _OLD_TITLES)
+    return False
+
+
 def _decrypt(text, password):
     """text decrypted with password, or None (no password, another one, damaged)."""
     if not password:
@@ -1616,7 +1653,8 @@ def _cluster_tree(text, cluster):
     return isinstance(data, dict) and list(data) == [cluster] and isinstance(data[cluster], dict)
 
 
-def cassandra_inventory_leftovers(paths, read, written, cluster, password="", inventory=None, cluster_name=None):
+def cassandra_inventory_leftovers(paths, read, written, cluster, password="", inventory=None, cluster_name=None,
+                                  adopt=False):
     """paths: the files in the inventory dir, which holds every cluster, each
     with its <cluster group>.yml (relative paths); read: {path: its first line
     (a vaulted file, and an inventory file: all of it)} for those read;
@@ -1630,21 +1668,34 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
     'conflicts': why this import would write over another cluster's files, or
     share its hosts or groups}. A file whose first line names no cluster (an
     earlier release) is this cluster's when this cluster's hosts file alone
-    names its group or host. A <cluster group>.yml without the import's
+    names its group or host (for a file without the first line laid out as
+    the import writes it: the one there, else the one it writes). A <cluster group>.yml without the import's
     first line that holds this cluster's group alone is its hosts file (an
     earlier release's, or edited by hand). Two clusters whose names make the
     same group (the cassandra_cluster_name of group_vars/<cluster group>/main.yml,
     with the import's first line or none), the user's own inventory files with
     a group of this cluster's, a hosts file of an import into a dir of its own
     (an earlier layout: hosts.yml, at the top or in a subdir) and a cluster
-    group all, ungrouped or cassandra are conflicts too."""
+    group all, ungrouped or cassandra are conflicts too. A file without the
+    import's first line laid out as the import writes it (old_import: read
+    gives its leading comments) is an earlier release's too, replaced with a
+    backup. adopt (import_cluster_adopt): the files of an earlier import not
+    known to be this cluster's, and a <cluster group>.yml of no import, at
+    the paths it writes or in its groups' and hosts' dirs, are this
+    cluster's (the replaced ones kept as <file>.<date>~); 'adoptable': the
+    conflicts it would solve."""
     found = dict((p, read.get(p)) for p in paths)
+    old_layout = set()
 
     def header(path):
         text = found.get(path)
         if text is not None and text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its line
             text = _decrypt(text, password)
-        return written_for(text)
+        name = written_for(text)
+        if name is None and text is not None and not path.startswith("group_vars/all") and old_import(text):
+            old_layout.add(path)
+            return ""  # an earlier release's, without its first line
+        return name
 
     headers = dict((p, header(p)) for p in found)
     # the clusters' hosts files (the import's), by cluster, and the user's own inventory files
@@ -1656,8 +1707,8 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
         if any(p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)
                for p in path.split("/")):
             continue  # not read by Ansible as inventory
-        if name is None:
-            if path == cluster + ".yml" and found[path] is not None and _cluster_tree(found[path], cluster):
+        if name is None or path in old_layout and "/" not in path:
+            if path == cluster + ".yml" and found[path] is not None and (adopt or _cluster_tree(found[path], cluster)):
                 clusters[path] = (cluster, _yaml_names(found[path]))  # replaced, the old one kept as <file>.<date>~
             elif found[path] is not None:
                 own[path] = _own_names(path, found[path])
@@ -1678,13 +1729,18 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
         if theirs is not None and str(theirs) != str(cluster_name) and not templated:
             conflicts.append("%s: cluster '%s', not '%s' (two clusters, one group %s)" % (previous, theirs, cluster_name, cluster))
 
-    def named_by(path):
-        """The clusters whose hosts file names the group or host of a group_vars or host_vars path."""
+    new_names = _inventory_names(inventory) if inventory else (set(), set())
+
+    def named_by(path, new=False):
+        """The clusters whose hosts file names the group or host of a group_vars or host_vars path (new: the
+        hosts this import writes count as this cluster's hosts file)."""
         parts = path.split("/")
         if len(parts) < 2 or parts[0] not in ("group_vars", "host_vars"):
             return set()
         item = os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1]  # group_vars/<group>.yml too
-        return set(c for c, (groups, hosts) in clusters.values() if item in (groups if parts[0] == "group_vars" else hosts))
+        pick = 0 if parts[0] == "group_vars" else 1
+        return set(c for c, names in ([(cluster, new_names)] if new else []) + list(clusters.values())
+                   if item in names[pick])
 
     def owner(path):
         name = headers[path]
@@ -1695,15 +1751,21 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
         if "/" not in path:
             return cluster if path in written else ""
         owners = named_by(path)
+        if not owners and path in old_layout:  # from before the first line (one cluster a dir): the hosts written
+            owners = named_by(path, new=True)
+        if not owners and adopt and (path in written or named_by(path, new=True)):
+            return cluster
         return owners.pop() if len(owners) == 1 else ""
 
-    stale, kept, unsure = [], [], []
+    stale, kept, unsure, adoptable = [], [], [], []
     for path in sorted(found):
         who = owner(path)
         if path in written:
             if who not in (None, cluster):
                 conflicts.append("%s: written for %s" % (path, who) if who
                                  else "%s: written by an earlier import, not known to be %s's" % (path, cluster))
+                if not who:
+                    adoptable.append(conflicts[-1])
         elif who is None:
             if not named_by(path) - set([cluster]):  # not in another cluster's group_vars or host_vars
                 kept.append(path)
@@ -1718,8 +1780,12 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
                 conflicts += ["%s: in %s too" % (name, path) for name in sorted((groups & their_groups) | (hosts & their_hosts))]
         for path, (their_groups, dummy) in sorted(own.items()):  # a host may be in groups of the user's too
             conflicts += ["group %s: in %s too" % (name, path) for name in sorted(groups & their_groups)]
-    replaced = sorted(p for p in found if p in written and headers[p] is None)
-    return {"stale": stale, "kept": kept, "replaced": replaced, "unsure": unsure, "conflicts": conflicts}
+            if path == cluster + ".yml":  # its hosts file, not known as an import's
+                adoptable += conflicts[len(conflicts) - len(groups & their_groups):]
+    replaced = sorted(p for p in found if p in written and (headers[p] is None or p in old_layout
+                                                            or adopt and headers[p] == ""))
+    return {"stale": stale, "kept": kept, "replaced": replaced, "unsure": unsure, "conflicts": conflicts,
+            "adoptable": adoptable}
 
 
 def cassandra_inventory_same_secret(existing, content, password):
@@ -1838,4 +1904,5 @@ class FilterModule(object):
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,
             "cassandra_ring_names": cassandra_ring_names,
+            "cassandra_leading_comments": leading_comments,
         }
