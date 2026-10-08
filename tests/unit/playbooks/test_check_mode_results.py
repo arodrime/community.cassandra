@@ -53,6 +53,10 @@ def find(tasks, name):
     ("reboot", True, "would reboot (--check: nothing was changed)"),
     ("apply_config", True, "would apply the config (--check: nothing was changed)"),
     ("restart", False, "restart done in 12s"),
+    ("cleanup", True, "would clean up (--check: nothing was changed)"),
+    ("cleanup_after_move", True, "would clean up after the move (--check: nothing was changed)"),
+    ("add", True, "would add (--check: nothing was changed)"),
+    ("add", False, "add done in 12s"),
 ])
 def test_node_result(action, check, expected):
     task = find(load("node_operation.yml"), "Record the result")
@@ -60,6 +64,16 @@ def test_node_result(action, check, expected):
                     ansible_check_mode=check, _cassandra_op_start=0, now=lambda: _Now(12),
                     _cassandra_service_would=defaults()["_cassandra_service_would"])
     assert result == expected
+
+
+@pytest.mark.parametrize("check", [True, False])
+def test_node_result_add_again(check):
+    # add_node run again: a node that joined in an earlier run is neither added nor would be
+    task = find(load("node_operation.yml"), "Record the result")
+    result = render(task["ansible.builtin.set_fact"]["cassandra_op_result"], cassandra_service_node_action="add",
+                    cassandra_new_node_state="joined", ansible_check_mode=check, _cassandra_op_start=0,
+                    now=lambda: _Now(12), _cassandra_service_would=defaults()["_cassandra_service_would"])
+    assert result == "already in the ring, nothing to add"
 
 
 @pytest.mark.parametrize("check, expected", [

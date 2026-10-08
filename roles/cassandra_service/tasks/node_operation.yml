@@ -95,12 +95,14 @@
         ansible_become: false  # an inventory ansible_become beats the become keyword
       when: cassandra_progress_file is defined and not ansible_check_mode  # --check made no file
 
-    # --check did nothing: what a real run would do, never "done"
+    # --check did nothing: what a real run would do, never "done"; add_node run again: a node already in the ring
     - name: Record the result
       ansible.builtin.set_fact:
         cassandra_op_result: >-
-          {{ ('would ' ~ _cassandra_service_would.get(cassandra_service_node_action, cassandra_service_node_action)
-              ~ ' (--check: nothing was changed)') if ansible_check_mode
+          {{ 'already in the ring, nothing to add'
+             if cassandra_service_node_action == 'add' and cassandra_new_node_state | default('new') == 'joined'
+             else ('would ' ~ _cassandra_service_would.get(cassandra_service_node_action, cassandra_service_node_action)
+                   ~ ' (--check: nothing was changed)') if ansible_check_mode
              else (cassandra_service_node_action ~ ' done in ' ~ (now().timestamp() | int - _cassandra_op_start | int) ~ 's') }}
         cassandra_op_done: true
   rescue:
