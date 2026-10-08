@@ -318,9 +318,19 @@ def test_inventory_steps_with_and_without_git(tmp_path):
     ("cqlsh -u a -p x", "cqlsh -u a -p ****"),
     ("nodetool -pw x status", "nodetool -pw **** status"),
     ("--password x", "--password ****"),
+    # an unquoted value to the end of the line: a comma or a brace is part of it
+    ("keystore_password: abc,def", "keystore_password: ****"),
+    ("keystore_password: ab}cd", "keystore_password: ****"),
+    ("password: abc, def", "password: ****"),
+    ("-Dssl.keyStorePassword=ab,cd -Dx=1", "-Dssl.keyStorePassword=****"),
+    ("{password: abc, user: u}", "{password: ****, user: u}"),
 ])
 def test_mask_more_forms(text, masked):
     assert out.mask(text) == masked
+
+
+def test_changed_lines_mask_a_value_with_a_comma():
+    assert out.changed_lines(["+keystore_password: ab,cd"]) == ["  +keystore_password: ****"]
 
 
 def test_hidden_values_in_lists_dicts_and_a_dict_becoming_a_value():

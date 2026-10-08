@@ -194,9 +194,12 @@ MASK = "****"
 # they are): more names, a quote between the name and the colon (JSON, Python), the command line forms
 _HIDDEN = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|auth_token"
                      r"|_pw$|_pass$|^pw$|^pass$|ca_key", re.I)
-_HIDDEN_VALUE = re.compile(
-    r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token|_pw|_pass)"
-    r"[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|,\s|[,}]|$))", re.M)
+_HIDDEN_KEY = (r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token|_pw|_pass)"
+               r"[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
+# an unquoted value runs to the end of the line (a comment aside), as a YAML plain scalar or a JVM option may hold
+# a comma; inside a flow mapping or JSON ({...} before it) it ends at the next comma or brace
+_HIDDEN_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|$))", re.M)
+_HIDDEN_FLOW_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|,\s|[,}]|$))", re.M)
 # nodetool -pw, --password; -p only after cqlsh (elsewhere a port or mkdir -p)
 _HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|--password)\s+|\bcqlsh\b[^\n]*?\s-p\s+)(\S+)", re.M)
 _BLOCK = re.compile(r"^\s*[|>][-+]?\d*\s*$")
@@ -217,7 +220,7 @@ def mask(text):
         match = _HIDDEN_VALUE.search(line)
         if match and _BLOCK.match(match.group(2)):
             block = indent
-        line = _HIDDEN_VALUE.sub(r"\1" + MASK, line)
+        line = (_HIDDEN_FLOW_VALUE if "{" in line else _HIDDEN_VALUE).sub(r"\1" + MASK, line)
         out.append(_HIDDEN_OPTION.sub(r"\1" + MASK, line))
     return "\n".join(out)
 
