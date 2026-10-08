@@ -13,8 +13,9 @@
 # screen does not say that cassandra_operation_confirm false skips one.
 # The cluster's name and running versions come from preflight unless given.
 # _cassandra_screen_asked_by (topology, running add_node and decommission_node
-# as its steps): the screen is printed as a step's details, no question (the
-# caller showed the whole plan and asked once).
+# as its steps): the caller showed the whole plan and asked once; only the
+# step's own tables (the tokens of the new nodes) and token warnings are
+# printed, no question.
 - name: Show the plan, then ask
   vars:
     _cassandra_screen_defaults:
@@ -30,7 +31,6 @@
                                                          and not _cassandra_screen_asked_by | default('') else '',
                                                  asked_by=_cassandra_screen_asked_by | default('')) }}
   block:
-    # a step of topology: its plan showed this already
     - name: Show the plan
       ansible.builtin.debug:
         msg: "{{ _cassandra_screen_text }}"
@@ -38,6 +38,25 @@
       when: not _cassandra_screen_asked_by | default('')
       vars:
         cassandra_output: true
+
+    # a step of topology: its plan showed the rest
+    - name: Show the step's own tables
+      ansible.builtin.debug:
+        msg: "{{ _step | join(_nl) }}"
+      run_once: true
+      when:
+        - _cassandra_screen_asked_by | default('') | length > 0
+        - _step | length > 0
+      vars:
+        cassandra_output: true
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _step: >-
+          {%- set l = [] -%}
+          {%- for i in cassandra_screen.intro | default([]) if i is mapping -%}{%- set _ = l.extend(i.pre | default([])) -%}{%- endfor -%}
+          {%- for w in cassandra_screen.warnings | default([]) if w.label | default('') == 'tokens' -%}
+          {%-   for t in w.each | default([w.text | default('')]) if t -%}{%- set _ = l.append('WARNING  tokens: ' ~ t) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ l }}
 
     - name: Ask for confirmation
       ansible.builtin.include_tasks: confirm.yml

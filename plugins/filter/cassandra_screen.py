@@ -232,8 +232,8 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
         if simple and (by_rack or len(members) > 1):
             where += "; SimpleStrategy keyspaces (%s): any node of the cluster" % ", ".join(simple)
         lines.append(where)
-        short.append("%s-> %s%s" % (load, out.nodes(names) or "none (no node left in %s)" % dc,
-                                     (" (the other nodes of %s)" % rack) if by_rack else ""))
+        receivers_text = out.nodes(names) or "none (no node left in %s)" % dc
+        short.append("%s-> %s%s" % (load, receivers_text, (" (the other nodes of %s)" % rack) if by_rack else ""))
         if simple and (by_rack or len(members) > 1):
             short.append("SimpleStrategy keyspaces: any node")
         passed_on = [m for m in names if m in later]

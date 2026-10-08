@@ -382,18 +382,19 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
                               " before reusing the host%s" % (out.nodes(done, keep_order=True), "it" if len(done) == 1 else "them",
                                                               "its" if len(done) == 1 else "their",
                                                               "" if len(done) == 1 else "s")])
+
     def grouped(key):
         """[(text, hosts)] of the hosts to add, in order, each text once."""
-        out = []
+        found = []
         for h in hosts:
             if h["name"] in plan["add"]:
                 for text in h.get(key) or []:
-                    found = [o for o in out if o[0] == text]
-                    if found:
-                        found[0][1].append(h["name"])
+                    same = [f for f in found if f[0] == text]
+                    if same:
+                        same[0][1].append(h["name"])
                     else:
-                        out.append((text, [h["name"]]))
-        return out
+                        found.append((text, [h["name"]]))
+        return found
 
     if plan["add"]:
         facts.append(["cleanup", "of the nodes that hand data over: its command is printed after the adds (topology"

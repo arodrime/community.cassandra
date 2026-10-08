@@ -68,8 +68,10 @@ def test_the_plan_asks_once_and_the_steps_ask_nothing():
 def test_operator_messages_marked_for_the_ops_callback():
     refuse = task("Refuse a plan that can't be done")
     assert refuse["vars"]["cassandra_output"] is True
-    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _tp_cluster="my_cluster", _tp_problems=["a", "b"], _nl="\n")
-    assert msg == "REFUSED  topology  my_cluster  nothing was changed\n  a\n  b"
+    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _tp_cluster="my_cluster", _tp_problems=["a", "b"], _nl="\n",
+                 ansible_play_hosts_all=["n1"], hostvars={"n1": {"_cassandra_notes": ["WARNING  cassandra_sedes is not known"]}})
+    # the checks' notes kept for the plan come with the refusal (they often say why)
+    assert msg == "REFUSED  topology  my_cluster  nothing was changed\n  a\n  b\nWARNING  cassandra_sedes is not known"
     nothing = task("Say there is nothing to do")
     assert nothing["vars"]["cassandra_output"] is True
     plan = {"gone": ["n5", "n6", "n7"], "silent": [], "unknown": ["10.0.0.9 (dc1 / r1, UN)"]}
@@ -90,9 +92,10 @@ def test_operator_messages_marked_for_the_ops_callback():
                      ansible_play_hosts_all=["n1"])
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
-    assert msg.split("\n") == ["DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
-                   "  1. delete n2 from the inventory, or leave it marked absent (the playbooks leave it out)",
-                   "  2. wipe its data directories before reusing the host"]
+    assert msg.split("\n") == [
+        "DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
+        "  1. delete n2 from the inventory, or leave it marked absent (the playbooks leave it out)",
+        "  2. wipe its data directories before reusing the host"]
 
 
 def test_check_mode_lines_up_nothing():
@@ -229,3 +232,65 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
     with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
         text = f.read()
     assert text.count("not _cassandra_notes_deferred | default(false) | bool") == 2
+
+
+def test_a_refused_host_to_add_gives_its_problems_and_the_reset_hint():
+    block = task("Check the hosts to add")
+    record = block["rescue"][0]
+    template = record["ansible.builtin.set_fact"]["_cassandra_topology_refused"]
+    msg = "n5 is not ready (the problems are listed above): ... -e cassandra_add_node_reset=true (add_node) ..."
+
+    def refused(problems):
+        variables = dict(record["vars"], ansible_failed_result={"msg": msg},
+                         _cassandra_new_node_check={"problems": problems})
+        variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template)).strip()
+
+    assert refused(["data directory /d is not empty", "port 7000 in use"]) == (
+        "data directory /d is not empty; port 7000 in use; -e cassandra_add_node_reset=true empties it first, if it"
+        " holds nothing you need")
+    assert refused([]) == msg  # another failure: its message
+
+
+def test_preflight_notes_render_one_line_each():
+    with open(os.path.join(TOP, "playbooks", "preflight.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    found = {}
+    for play in plays:
+        for t in play.get("tasks") or []:
+            if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") == "note.yml":
+                found[t["name"]] = t
+    assert sorted(found) == ["Going on without the nodes that did not answer", "Seed layout", "Warn about them"]
+    hostvars = {"n1": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds", "cassandra_x": ""}},
+                "n2": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}}
+    t = found["Warn about them"]
+    note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars, _nl="\n")
+    assert note.split("\n") == [
+        "WARNING  cassandra_sedes (set for n1, n2) is not known to this collection: its roles and playbooks do not read it"
+        " (did you mean cassandra_seeds?)",
+        "WARNING  cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
+    t = found["Seed layout"]
+    layout = {"problems": ["dc1 has one seed"], "suggested": ["n1", "n2"]}
+    for deferred, tail in ((True, " (update the inventory: topology then applies it live)"),
+                           (False, "\n  then apply it live: ansible-playbook -i inv community.cassandra.change_seeds"
+                                   " -e cassandra_hosts=prod")):
+        note = render(t["vars"]["_note"], _layout=layout, _cluster="prod", _nl="\n", ansible_inventory_sources=["inv"],
+                      _cassandra_notes_deferred=deferred)
+        assert note == ('WARNING  seeds: dc1 has one seed; suggested in the group_vars of prod: cassandra_seeds:'
+                        ' ["n1", "n2"]' + tail)
+
+
+def test_a_step_of_topology_prints_only_its_token_tables():
+    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "screen.yml"), encoding="utf-8") as f:
+        block = yaml.safe_load(f)[0]["block"]
+    plan, step = block[0], block[1]
+    assert plan["when"] == "not _cassandra_screen_asked_by | default('')"
+    assert step["vars"]["cassandra_output"] is True
+    screen = {"intro": ["prose", {"pre": ["node5  token 42"]}],
+              "warnings": [{"label": "tokens", "each": ["node5: 42 is taken"]}, {"label": "replication", "text": "x"}]}
+    assert render(step["vars"]["_step"], cassandra_screen=screen) == ["node5  token 42", "WARNING  tokens: node5: 42 is taken"]
+    assert render(step["vars"]["_step"], cassandra_screen={"intro": ["prose"], "warnings": []}) == []
+    # conditionals with a boolean result (ansible-core 2.19+ refuses a string)
+    for when in [plan["when"]] + step["when"]:
+        for asked_by in ("", "topology"):
+            assert isinstance(render("{{ %s }}" % when, _cassandra_screen_asked_by=asked_by, _step=["x"]), bool), when

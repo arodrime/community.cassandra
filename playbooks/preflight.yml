@@ -191,7 +191,7 @@
         _note: >-
           {{ 'WARNING  seeds: ' ~ _layout.problems | join('; ') ~ '; suggested in the group_vars of ' ~ _cluster
              ~ ': cassandra_seeds: ' ~ _layout.suggested | to_json
-             ~ ((', applied live by topology') if _cassandra_notes_deferred | default(false) | bool
+             ~ ((' (update the inventory: topology then applies it live)') if _cassandra_notes_deferred | default(false) | bool
                 else (_nl ~ '  then apply it live: ansible-playbook -i ' ~ ansible_inventory_sources | first
                       ~ ' community.cassandra.change_seeds -e cassandra_hosts=' ~ _cluster)) }}
         _cluster: "{{ lookup('community.cassandra.cassandra_hosts') }}"

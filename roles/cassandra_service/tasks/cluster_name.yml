@@ -29,10 +29,11 @@
 - name: Say the cluster name is not checked
   ansible.builtin.debug:
     msg: >-
-      WARNING: no node of the cluster answered nodetool ({{ _errors | join('; ') }}):
+      WARNING  no node of the cluster answered nodetool ({{ _errors | join('; ') }}):
       the cluster name is not checked against cassandra_cluster_name ({{ cassandra_cluster_name }}).
   run_once: true
   vars:
+    cassandra_output: true
     _errors: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_errors }}"
   when:
     - not hostvars[ansible_play_hosts | first]._cassandra_cluster_found

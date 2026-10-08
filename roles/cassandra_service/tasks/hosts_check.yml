@@ -8,7 +8,7 @@
 # --limit skips localhost, so this check too.
 - name: Variables close to the playbooks' own
   ansible.builtin.debug:
-    msg: "WARNING: {{ item.key }} is set: did you mean {{ item.value }}?"
+    msg: "WARNING  {{ item.key }} is set: did you mean {{ item.value }}?"
   loop: "{{ query('ansible.builtin.varnames', '^cas+andra_') | community.cassandra.cassandra_close_names(_known) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"

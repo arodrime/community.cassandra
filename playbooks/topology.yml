@@ -213,8 +213,12 @@
           ansible.builtin.set_fact:
             # the checks' own problems (not printed: _cassandra_notes_deferred), else the message
             _cassandra_topology_refused: >-
-              {{ (_cassandra_new_node_check.problems | default([]) | join('; '))
-                 or [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+              {{ ((_cassandra_new_node_check.problems | default([]) | join('; '))
+                  ~ ('; -e cassandra_add_node_reset=true empties it first, if it holds nothing you need'
+                     if 'cassandra_add_node_reset=true' in _msg else ''))
+                 if _cassandra_new_node_check.problems | default([]) else _msg }}
+          vars:
+            _msg: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
 
     - name: Work out the plan
       ansible.builtin.set_fact:
@@ -280,7 +284,10 @@
     - name: Refuse a plan that can't be done
       ansible.builtin.assert:
         that: _tp_problems | length == 0
-        fail_msg: "{{ (['REFUSED  topology  ' ~ _tp_cluster ~ '  nothing was changed'] + _tp_problems | map('regex_replace', '^', '  ') | list) | join(_nl) }}"
+        # the checks' notes too: they often say why
+        fail_msg: >-
+          {{ (['REFUSED  topology  ' ~ _tp_cluster ~ '  nothing was changed'] + _tp_problems | map('regex_replace', '^', '  ') | list
+              + hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])) | join(_nl) }}
         quiet: true
       run_once: true
       vars:
@@ -311,7 +318,8 @@
                  ~ ' (marked absent, out of the ring)'] if cassandra_topology_plan.silent else [])
              + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING  ')
                 | map('regex_replace', '$', ' is in the ring but in no host of the inventory: never touched') | list)
-             + (hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([]))) | join(_nl) }}
+             + (hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])
+                | map('regex_replace', '^(?!WARNING)', 'NOTE  ') | list)) | join(_nl) }}
       run_once: true
       when: not _tp_todo | bool
       vars:
@@ -381,7 +389,8 @@
       when: not ansible_check_mode
 
 # Each step as its playbook does it, without its preflight (done above) nor its
-# question (asked above); its screen shows the step's details
+# question (asked above); the plan showed its details (a step prints only its
+# own tables: the tokens of the new nodes)
 - name: Add the nodes
   ansible.builtin.import_playbook: community.cassandra.add_node
   vars:
