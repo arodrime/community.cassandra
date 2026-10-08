@@ -423,9 +423,16 @@ def test_reset_screen():
 
 
 def test_every_confirmation_goes_through_the_screen():
-    # no playbook builds its own prompt any more: one layout, one --check rule
+    # no playbook builds its own prompt without its plan: through screen.yml, or (the plan layout of
+    # module_utils cassandra_output, OUTPUT Q5) confirm.yml right after the task that prints the plan
     for name in os.listdir(os.path.join(TOP, "playbooks")):
         with open(os.path.join(TOP, "playbooks", name), encoding="utf-8") as f:
-            text = f.read()
-        assert "tasks_from: confirm.yml" not in text, name
-        assert "cassandra_confirm_prompt" not in text, name
+            plays = yaml.safe_load(f)
+        for play in plays:
+            tasks = play.get("tasks") or []
+            for index, t in enumerate(tasks):
+                if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") != "confirm.yml":
+                    continue
+                shown = tasks[index - 1] if index else {}
+                assert (shown.get("vars") or {}).get("cassandra_output") is True, name
+                assert "ansible.builtin.debug" in shown and shown.get("when") == t.get("when"), name

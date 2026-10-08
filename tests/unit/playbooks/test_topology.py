@@ -41,16 +41,52 @@ def render(template, **variables):
 
 
 def test_the_plan_asks_once_and_the_steps_ask_nothing():
-    screen = task("Show the plan and confirm it")
-    assert screen["ansible.builtin.include_role"]["tasks_from"] == "screen.yml"
-    assert screen["vars"]["cassandra_screen_question"].strip()
-    assert "_cassandra_screen_asked_by" not in screen["vars"] and "_cassandra_screen_asked_by" not in PLAN.get("vars", {})
+    show = task("Show the plan")
+    assert show["vars"]["cassandra_output"] is True  # printed by the ops callback
+    assert "check=ansible_check_mode" in show["ansible.builtin.debug"]["msg"]  # under --check too
+    assert "confirm=cassandra_operation_confirm | bool" in show["ansible.builtin.debug"]["msg"]
+    assert "ansible_check_mode" not in str(show.get("when"))
+    confirm = task("Confirm the plan")
+    assert confirm["ansible.builtin.include_role"]["tasks_from"] == "confirm.yml"
+    names = [t.get("name") for t in PLAN["tasks"]]
+    assert names.index("Show the plan") + 1 == names.index("Confirm the plan")  # the prompt right under the WARNING lines
+    plan = {"add": ["n4"], "remove": ["n2"], "seeds": {"step": True}}
+    assert render(confirm["vars"]["cassandra_confirm_prompt"], cassandra_topology_plan=plan) == "Run these 3 steps?"
+    assert "_cassandra_screen_asked_by" not in PLAN.get("vars", {})
     imports = [p for p in PLAYS if "ansible.builtin.import_playbook" in p]
     assert [p["ansible.builtin.import_playbook"] for p in imports] == [
         "community.cassandra.preflight", "community.cassandra.add_node", "community.cassandra.decommission_node"]
     for step in imports[1:]:
         assert step["vars"]["_cassandra_screen_asked_by"] == "topology"
         assert step["vars"]["_cassandra_preflight_skip"] is True
+
+
+def test_operator_messages_marked_for_the_ops_callback():
+    refuse = task("Refuse a plan that can't be done")
+    assert refuse["vars"]["cassandra_output"] is True
+    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _tp_cluster="my_cluster", _tp_problems=["a", "b"])
+    assert msg == ["REFUSED  topology  my_cluster  nothing was changed", "  a", "  b"]
+    nothing = task("Say there is nothing to do")
+    assert nothing["vars"]["cassandra_output"] is True
+    plan = {"gone": ["n5", "n6", "n7"], "silent": [], "unknown": ["10.0.0.9 (dc1 / r1, UN)"]}
+    msg = render(nothing["ansible.builtin.debug"]["msg"], _tp_cluster="my_cluster", cassandra_topology_plan=plan,
+                 ansible_play_hosts_all=["n1", "n2", "n3"])
+    assert msg == ["NOTHING TO DO  topology  my_cluster  the ring has the 3 nodes of the inventory, they run with the"
+                   " seeds of cassandra_seeds",
+                   "  already removed: n5..n7 (marked absent, out of the ring, Cassandra stopped): delete them from the"
+                   " inventory, or leave them",
+                   "WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never touched"]
+    done = next(p for p in PLAYS if p.get("name") == "Say what is left to do")["tasks"][0]
+    assert done["vars"]["cassandra_output"] is True
+    plan = {"add": ["n4"], "remove": ["n2"], "gone": [], "silent": [], "seeds": {"step": True, "new": "n1,n4"}}
+    variables = dict(done["vars"], hostvars={"n1": {"cassandra_topology_plan": plan,
+                                                    "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}},
+                     ansible_play_hosts_all=["n1"])
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+    msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
+    assert msg == ["DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
+                   "  1. delete n2 from the inventory, or leave them marked absent (the playbooks leave them out)",
+                   "  2. wipe their data directories before reusing the hosts"]
 
 
 def test_check_mode_lines_up_nothing():

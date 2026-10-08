@@ -82,7 +82,7 @@ OPERATIONS = [
     {"name": "topology", "theme": "nodes", "cql": True, "cql_when": "to remove nodes",
      "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, applies"
                 " cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node at a time,"
-                " --check shows the plan.",
+                " --check shows the plan and its warnings.",
      "options": [("-e cassandra_add_node_reset=true", "first empties a host to add that has data but is not in the"
                                                       " ring", "false"),
                  ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
@@ -92,7 +92,8 @@ OPERATIONS = [
      "example": ("the plan only", ["--check"])},
     {"name": "decommission_node", "theme": "nodes", "cql": True,
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"
-                " a node no longer in cassandra_seeds is first dropped from the other nodes' seed lists.",
+                " a node no longer in cassandra_seeds is first dropped from the other nodes' seed lists; refuses a"
+                " datacenter left with nodes but no seed, or fewer nodes than replicas.",
      "options": [("-e cassandra_leaving_nodes=<nodes>", "the nodes to remove (comma-separated)", None),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
                                                           " replicas", "false"),
@@ -167,7 +168,8 @@ OPERATIONS = [
      "options": [RESUME],
      "example": ("every diff, changing nothing", ["--check"])},
     {"name": "change_seeds", "theme": "cluster",
-     "summary": "Applies a new cassandra_seeds list to every node, live (no restart).",
+     "summary": "Applies a new cassandra_seeds list to every node, live (no restart); topology, add_node and"
+                " decommission_node apply it too when nodes come and go.",
      "example": CHECK},
     {"name": "update_java", "theme": "cluster",
      "summary": "Moves the cluster to the Java in cassandra_java_version, one node at a time.",

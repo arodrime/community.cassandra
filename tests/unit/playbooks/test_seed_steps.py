@@ -246,6 +246,24 @@ def test_decommission_refusals_on_seeds():
     assert step == ["n2"] and problems[0].startswith("cassandra_seeds is empty")
 
 
+def test_decommission_of_a_whole_datacenter_needs_no_seed_there():
+    # dc2 = n6 (a seed until now) and n7; dc1 = n1 (seed), n2
+    lives = "10.0.0.1,10.0.0.6"
+    hostvars = {"n1": node(1, live=lives, seed_entry="10.0.0.1"), "n2": node(2, live=lives),
+                "n6": node(6, live=lives, dc="dc2"), "n7": node(7, live=lives, dc="dc2")}
+    group = ["n1", "n2", "n6", "n7"]
+
+    def check(leaving):
+        variables = dict(DECO["vars"], ansible_play_hosts_all=leaving, hostvars=hostvars, cassandra_seeds=["10.0.0.1"],
+                         groups={"all": group, "prod": group}, cassandra_hosts="prod")
+        return render("{{ [_dn_seed_step, _dn_seeds.problems] }}", **variables)
+
+    assert check(["n6", "n7"]) == [["n6"], []]  # dc2 gone for good
+    step, problems = check(["n6"])  # n7 stays in dc2 with no seed: refused
+    assert step == ["n6"] and problems == ["dc2 would be left with no seed (n6 leaves the seed list): put a node of"
+                                           " dc2 in cassandra_seeds."]
+
+
 # change_seeds and the steps share seeds_apply.yml
 
 def test_change_seeds_uses_the_shared_tasks():

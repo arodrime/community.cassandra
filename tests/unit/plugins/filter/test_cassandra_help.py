@@ -92,12 +92,12 @@ Nodes:
 
   topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the
     ring, applies cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node
-    at a time, --check shows the plan.
+    at a time, --check shows the plan and its warnings.
     $ $PLAY $C.topology
 
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
     the others; a node no longer in cassandra_seeds is first dropped from the other nodes' seed
-    lists.
+    lists; refuses a datacenter left with nodes but no seed, or fewer nodes than replicas.
     $ $PLAY $C.decommission_node -e cassandra_leaving_nodes=node4
 
   replace_node - Replaces a dead node by a blank host, which takes over its tokens and data. In the
@@ -140,7 +140,8 @@ Cluster:
     that need it, one at a time, restarting only those that need it.
     $ $PLAY $C.apply_config
 
-  change_seeds - Applies a new cassandra_seeds list to every node, live (no restart).
+  change_seeds - Applies a new cassandra_seeds list to every node, live (no restart); topology,
+    add_node and decommission_node apply it too when nodes come and go.
     $ $PLAY $C.change_seeds
 
   update_java - Moves the cluster to the Java in cassandra_java_version, one node at a time.

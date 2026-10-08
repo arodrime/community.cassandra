@@ -432,7 +432,8 @@ Removing a node
 ``decommission_node`` removes the nodes in ``cassandra_leaving_nodes``, one at a time: each one streams its data to the
 others, then Cassandra is stopped and disabled on it. To remove a seed, take it out of ``cassandra_seeds`` in the
 inventory: the other nodes, which still list it, then get the new list first, live, as ``change_seeds`` applies it (a
-node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that keeps nodes left with no seed, and a removal that would
+node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that still has nodes afterwards left with no
+seed (one removed whole needs none), and a removal that would
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). Remove the hosts from the inventory afterwards. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
@@ -470,26 +471,39 @@ remove with ``remove_dead_node``), and a plan with something to do is refused wh
 
 One node at a time, the adds first (the cluster never has fewer nodes than it ends with), then the seeds (a new seed
 is up by then, a seed to remove is still there), then the removals, the cluster checked before and after each node;
-the run stops at the first problem. The screen starts with the plan in that order, each node with its datacenter and
-rack, for example (replacing the seed ``node2`` by ``node5``):
+the run stops at the first problem. The plan screen lists the steps in that order, each node with its datacenter and
+rack, then each datacenter once done, what is left to do by hand, and the WARNING lines right above the question, for
+example (replacing the seed ``node2`` by ``node5``):
 
 .. code-block:: text
 
-    Add 1 node:           node5 (dc1/rack1)
-    Change seeds:         node2 (dc1/rack1) -> node5 (dc1/rack1)
-    Decommission 1 node:  node2 (dc1/rack1)
+    PLAN  topology  my_cluster (Cassandra 5.0.4)  3 steps, one node at a time
+      1.  add node5           dc1/rack1  bootstrap, ~32.1 GiB to stream (the load of dc1 / 5 nodes); joins as a regular node, a seed at the seed step
+      2.  seeds                          10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5  written and reloaded live on every node, no restart
+      3.  decommission node2  dc1/rack1  load 40.1 GiB, owns 25.0% -> node1, node3..node5
 
-then the details of each step (the data each node streams), and asks once; each step then shows its own screen as it
-starts, without a question. Refused before anything changes: a ``--limit`` that leaves out a host of the group (the
-plan needs them all), a datacenter that keeps nodes left with no seed, a removal that would leave a datacenter with
-fewer nodes than a keyspace has replicas there (unless ``cassandra_decommission_force``), an add while a decommission is still running, two hosts with one address, a host marked absent still in the
-ring that does not answer or is down (``remove_dead_node`` then), a node of the group that does not answer, one token
-per node with adds and removals in one run (add first, then mark the hosts absent, then ``move_node``), and
-``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or ``cassandra_reset_nodes`` on the command line (the plan says
-which nodes). No cap on the number of removals: more than half of a datacenter removed is a warning on the plan
-screen. The cleanup of the nodes that handed data over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked
-out again from the ring and the nodes' seed lists, a bootstrap or a decommission still running is waited for. Nothing
-to do: it says so.
+    dc1 after:  4 nodes: node1, node3..node5   highest RF 3 (orders)
+    then:       delete node2 from the inventory (or leave it marked absent); wipe its data directories before reusing the host
+    cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
+
+    WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
+    Run these 3 steps?
+
+It asks once; each step then shows its own screen as it starts, without a question. ``--check`` shows the same plan,
+the same warnings, and asks nothing. The warnings: the seeds changing on every node (the seed step, with or without
+nodes added or removed), more than half of a datacenter removed (``WARNING  3 of 5 nodes of dc1 removed``), racks
+of different sizes once done, ring nodes no host has, a node down, the data a reset deletes. No cap on the number
+of removals: the guards are the replicas and the seeds. Refused before anything changes: a ``--limit`` that leaves
+out a host of the group (the plan needs them all), a datacenter that still has nodes after the run left with no seed
+(a datacenter removed whole needs none), a removal that would leave a datacenter with fewer nodes than a keyspace
+has replicas there (unless ``cassandra_decommission_force``), an add while a decommission is still running, two hosts
+with one address, a host marked absent still in the ring that does not answer or is down (``remove_dead_node``
+then), a node of the group that does not answer, one token per node with adds and removals in one run (add first,
+then mark the hosts absent, then ``move_node``), and ``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or
+``cassandra_reset_nodes`` on the command line (the plan says which nodes). The cleanup of the nodes that handed data
+over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked out
+again from the ring and the nodes' seed lists, a bootstrap or a decommission still running is waited for. Nothing to
+do: it says so.
 
 ``add_node``, ``decommission_node``, ``change_seeds`` and ``remove_dead_node`` stay for explicit use. Every playbook leaves the hosts
 marked absent out: preflight, the health checks and the node counts they expect, rolling operations, ``status`` (which
