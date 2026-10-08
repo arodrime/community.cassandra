@@ -260,9 +260,9 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
     $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help -e help_write=true
 
 ``-e help_topic=<operation>`` shows one operation in detail: its command, its options one per line with their
-default, an example for this inventory, and its documentation (the comment that starts the playbook). The default
-callback shows the help as plain text under its yaml result format, as a list of quoted lines under its json one
-(the default): set it in ``ansible.cfg`` (or ``ANSIBLE_CALLBACK_RESULT_FORMAT=yaml``):
+default, an example for this inventory (where one helps), and its documentation (the comment that starts the
+playbook). The default callback shows the help as plain text under its yaml result format, as a list of quoted
+lines under its json one (the default): set it in ``ansible.cfg`` (or ``ANSIBLE_CALLBACK_RESULT_FORMAT=yaml``):
 
 .. code-block:: ini
 

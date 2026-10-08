@@ -219,15 +219,22 @@ def read(*patterns):
     return text
 
 
+def playbook(name):
+    """The playbook's text, with the role task files it includes (one level)."""
+    text = read("playbooks/%s.yml" % name)
+    files = set(re.findall(r"tasks_from: (\S+)", text))
+    files.update("action_%s.yml" % a for a in re.findall(r"cassandra_service_node_action: (\w+)", text))  # node_operation
+    return text + read(*["roles/*/tasks/%s" % f for f in sorted(files)])
+
+
 def test_operation_variables_are_the_playbooks_own():
-    # each variable an option or an example sets is in the playbook (or the roles it runs)
-    roles = read("roles/*/tasks/*.yml", "roles/*/defaults/main.yml")
+    # each variable an option or an example sets is in the playbook or the role tasks it includes
     for op in OPERATIONS:
-        text = read("playbooks/%s.yml" % op["name"])
+        text = playbook(op["name"])
         args = [o[0] for o in op.get("options") or []] + list((op.get("example") or ("", []))[1])
         for arg in args:
             name = "--check" if arg == "--check" else re.search(r"(?:cassandra|help|import_cluster)_\w+", arg).group(0)
-            assert name in text or name in roles, (op["name"], name)
+            assert name in text, (op["name"], name)
 
 
 def test_option_defaults_are_the_code_s():
@@ -237,10 +244,9 @@ def test_option_defaults_are_the_code_s():
     for path in glob.glob(os.path.join(TOP, "roles", "*", "defaults", "main.yml")):
         with open(path, encoding="utf-8") as f:
             defaults.update(yaml.safe_load(f) or {})
-    roles = read("roles/*/tasks/*.yml")
     checked = 0
     for op in OPERATIONS:
-        code = "\n".join(line for line in (read("playbooks/%s.yml" % op["name"]) + roles).splitlines()
+        code = "\n".join(line for line in playbook(op["name"]).splitlines()
                          if not line.lstrip().startswith("#"))
         for arg, _text, default in op.get("options") or []:
             if default is None or " " in default:
@@ -296,14 +302,15 @@ def test_markdown_operation_layout():
 
 def test_every_operation_and_its_example_in_the_runbook():
     runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    sections = dict(re.findall(r"\n\*\*(\w+)\*\* - (.*?)(?=\n\*\*\w+\*\* - |\n## )", runbook, re.S))
+    assert sorted(sections) == sorted(op["name"] for op in OPERATIONS)
     for op in OPERATIONS:
-        assert "\n**%s** - " % op["name"] in runbook, op["name"]
-        if op.get("example"):
-            assert "\nExample (%s):\n" % op["example"][0] in runbook, op["name"]
+        example = "\nExample (%s):\n" % op["example"][0] if op.get("example") else "\nExample ("
+        assert (example in sections[op["name"]]) == bool(op.get("example")), op["name"]
 
 
 def test_no_trailing_space():
-    # the yaml result format shows a string with a line ending in a space quoted, on one line
+    # clean lines (the default callback strips trailing spaces under the yaml result format; RUNBOOK.md keeps them)
     texts = [cassandra_help(MODEL, PLAYBOOKS, cwd=CWD), cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)]
     texts += [cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD) for op in OPERATIONS]
     for text in texts:
@@ -326,9 +333,18 @@ def test_long_option_on_its_own_line():
 def test_common_options_only_for_the_operations_that_change_something():
     for op in OPERATIONS:
         text = cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD)
-        assert ("cassandra_operation_confirm" in text) == (op["theme"] in ("nodes", "cluster")), op["name"]
-    text = cassandra_help(model(auto=None), PLAYBOOKS, topic="cleanup", cwd=CWD)
-    assert "-e cassandra_hosts=<group>            the cluster to run on (default: none, the inventory has" in text
+        assert ("-e cassandra_hosts=<group>" in text) == (op["theme"] in ("nodes", "cluster")), op["name"]
+        # cassandra_operation_confirm: only for the operations that ask (their screen or question)
+        asks = bool(re.search(r"tasks_from: (confirm|screen)\.yml|cassandra_operation_confirm", playbook(op["name"])))
+        assert ("-e cassandra_operation_confirm=false" in text) == (asks and op["theme"] in ("nodes", "cluster")), \
+            op["name"]
+    text = cassandra_help(MODEL, PLAYBOOKS, topic="cleanup", cwd=CWD)
+    assert re.search(r"\n    -e cassandra_hosts=<group> +the cluster to run on \(default: orders\)\n", text)
+    # the commands give the group: when the inventory has several, or CASSANDRA_CLUSTER named another
+    text = cassandra_help(model(auto=""), PLAYBOOKS, topic="cleanup", cwd=CWD)
+    assert re.search(r"\n    -e cassandra_hosts=<group> +the cluster to run on \(default: the one in the commands\)\n",
+                     text)
+    assert "community.cassandra.cleanup -e cassandra_hosts=orders" in text
 
 
 def test_topic():

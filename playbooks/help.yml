@@ -13,7 +13,7 @@
 #    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,
 #    mixed versions.
 # -e help_topic=<operation>: one operation in detail (its command, its options
-# with their defaults, an example, its documentation).
+# with their defaults, an example where one helps, its documentation).
 # Shown as plain text with callback_result_format = yaml in ansible.cfg
 # ([defaults]) or ANSIBLE_CALLBACK_RESULT_FORMAT=yaml; else as a list of quoted lines.
 # -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir
