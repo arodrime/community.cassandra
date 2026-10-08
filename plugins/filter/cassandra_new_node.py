@@ -15,6 +15,7 @@ cassandra_new_node_network: ports of existing nodes reached from the host, and
 cassandra_new_node_urls: package sources reached with their credentials.
 cassandra_new_node_kept_setup: *_manage switches that keep a node's own setup,
     on a host with no Cassandra to keep.
+cassandra_new_node_notes: of their info, the notes an operator acts on.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -349,6 +350,16 @@ def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=Fal
         % (names, "is" if len(off) == 1 else "are", ", ".join(what for name, what in off))])
 
 
+# The info notes worth a line on the plan: something comes from elsewhere than asked, or is left unchecked or
+# untouched. The rest (installed, available, reached, the mount and Python found) only says a check passed.
+_ACTIONABLE = re.compile(r"not in the configured repositories|left as it is on this host|does not fit|not checked")
+
+
+def cassandra_new_node_notes(info):
+    """info: the checks' info sentences -> those an operator acts on."""
+    return [i for i in info or [] if _ACTIONABLE.search(str(i))]
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -358,4 +369,5 @@ class FilterModule(object):
             "cassandra_new_node_network": cassandra_new_node_network,
             "cassandra_new_node_urls": cassandra_new_node_urls,
             "cassandra_new_node_kept_setup": cassandra_new_node_kept_setup,
+            "cassandra_new_node_notes": cassandra_new_node_notes,
         }

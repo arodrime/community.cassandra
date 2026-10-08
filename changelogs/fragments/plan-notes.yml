@@ -1,0 +1,2 @@
+minor_changes:
+  - "add_node and topology playbooks - the plan keeps only the notes an operator acts on (not the packages installed, the ports reached or the mounts found); topology's step for a node it resets says what it holds, as add_node does."

@@ -317,8 +317,9 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
             parts = ["bootstrap, ~%s to stream (%s)" % (out.size(e["bytes"]), e["basis"]) if e else "bootstrap"]
             if h.get("single"):
                 parts.append("token %s" % (h["token"] if h.get("token") else "from cassandra_token_auto"))
-            if h.get("reset"):
-                parts.append("reset first (cassandra_add_node_reset)")
+            if h.get("reset"):  # add_node's line for it: "<node>: has data (...) - will be reset"
+                line = str(h["reset"].get("line") or "")
+                parts.append(line.split(": ", 1)[1] if ": has data " in line else "will be reset first")
             if seeds.get("step") and name in [a.split(" ")[0] for a in seeds.get("added") or []]:
                 parts.append("joins as a regular node, a seed at the seed step")
         step["text"] = "; ".join(parts)

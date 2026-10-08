@@ -204,7 +204,7 @@
             _cassandra_new_node_check: >-
               {{ {'problems': _all | map(attribute='problems') | flatten,
                   'warnings': _all | map(attribute='warnings') | flatten,
-                  'info': _all | map(attribute='info') | flatten} }}
+                  'info': _all | map(attribute='info') | flatten | community.cassandra.cassandra_new_node_notes} }}
           vars:
             _dirs_result: >-
               {{ _cassandra_new_node_plan.dirs | community.cassandra.cassandra_new_node_dirs(
@@ -257,7 +257,9 @@
               {{ (_cassandra_new_node_check.info | map('regex_replace', '^', inventory_hostname ~ ': ') | list
                   + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING  ' ~ inventory_hostname ~ ': ') | list)
                  | join(_nl) }}
-          when: not _cassandra_notes_deferred | default(false) | bool
+          when:
+            - not _cassandra_notes_deferred | default(false) | bool
+            - (_cassandra_new_node_check.info + _cassandra_new_node_check.warnings) | length > 0
           vars:
             _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
             cassandra_output: true

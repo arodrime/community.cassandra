@@ -376,3 +376,18 @@ def test_no_kept_setup():
     assert cassandra_new_node_kept_setup(on, installed=False, imported=True) == {"problems": [], "warnings": [], "info": []}
     # cassandra_repository_manage false: the package checks cover it
     assert cassandra_new_node_kept_setup({"cassandra_repository_manage": False}, installed=False, imported=True)["problems"] == []
+
+
+def test_notes_keep_only_what_an_operator_acts_on():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_new_node import cassandra_new_node_notes
+    info = ["Ansible: /usr/bin/python3 3.9.18, as root", "cqlsh: python3 3.9",
+            "data /var/lib/cassandra/data: on / (overlay overlay), 40.1 GiB free of 98.0 GiB",
+            "cassandra 5.0.9 (Cassandra): installed", "openjdk-17 (Java): available",
+            "storage port 7000 of node1 reached", "repository: https://example/x reached",
+            "the nodes of rack r1 (dc1) hold 1.2 GiB on average (nodetool status), this host has 40.1 GiB free for data",
+            "cassandra (Cassandra): not in the configured repositories, comes from the Apache repository",
+            "left as it is on this host (false): cassandra_linux_manage",
+            "cqlsh: python3 3.6 does not fit, runs on /usr/bin/python3.11",
+            "Medusa pip index: set by cassandra_medusa_pip_extra_args, not checked"]
+    assert cassandra_new_node_notes(info) == info[-4:]
+    assert cassandra_new_node_notes(None) == []

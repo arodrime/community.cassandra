@@ -226,7 +226,12 @@ def test_screen_reset_and_unknown_warnings():
     r = ring(entry(1), entry(2), entry(3), entry(9))
     plan = cassandra_topology_plan(hosts, r)
     lines = cassandra_topology_screen(plan, hosts, ring=r)
-    assert "reset first (cassandra_add_node_reset)" in lines[1]
+    assert lines[1].endswith("); will be reset first")
+    # add_node's own line, without the node's name (the step has it)
+    reset["line"] = "node4 (dc1/r1): has data (1.0 GiB, cluster 'Test Cluster', not in any ring, down) \u2014 will be reset"
+    lines = cassandra_topology_screen(plan, hosts, ring=r)
+    assert lines[1].endswith("); has data (1.0 GiB, cluster 'Test Cluster', not in any ring, down) \u2014 will be"
+                             " reset")
     assert ("WARNING  data loss: node4: Cassandra stopped, kept from starting at boot, then 1 entries DELETED for good"
             " (no snapshot, no backup), in:") in lines
     assert lines[lines.index("WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never"
