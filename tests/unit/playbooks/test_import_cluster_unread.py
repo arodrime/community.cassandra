@@ -55,7 +55,7 @@ def test_report_and_stop_name_them():
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables)
     assert "n2 not read" in msg and "NOT CHECKED in /reports/c/report.txt." in msg
     variables["ansible_check_mode"] = True  # --check writes no report
-    assert "NOT CHECKED in the report above." in render(STOP["ansible.builtin.fail"]["msg"], **variables)
+    assert "NOT CHECKED in the summary above." in render(STOP["ansible.builtin.fail"]["msg"], **variables)
     report = WRITE["vars"]["_report"]
     assert "THE IMPORT FAILS" in report and "import_cluster_allow_unread=true" in report
     assert "import_cluster_strict | default(true) | bool" in STOP["when"]

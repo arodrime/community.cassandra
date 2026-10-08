@@ -1073,8 +1073,15 @@ kept (down to ``group_vars/<group>/``), and the files replaced at its paths that
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
+The run ends with a short summary, the full report going to ``report.txt``: the cluster, its nodes read and not
+read, where the inventory and the report are written, the self-check (with what it found when it failed), the
+cluster's settings not at the collection's defaults (secrets hidden), the differences between nodes, then either
+``Import done - ready to use`` or ``Import done - do first:`` with what to fix (nodes not read, the self-check,
+passwords written in clear), and the commands that come next (``git diff``, ``apply_config --check --diff`` and
+``topology --check``, which should change nothing).
+
 Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
-write or remove (the ``secrets.yml`` files hidden) and the report, and writes nothing (nor ``report.txt``):
+write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``):
 
 .. code-block:: console
 

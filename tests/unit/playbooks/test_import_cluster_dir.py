@@ -294,8 +294,12 @@ def test_check_diff_writes_nothing():
             assert "check_mode" not in task and "diff" not in task, task["name"]
     assert TASKS["Write report.txt"]["when"] == "not ansible_check_mode"
     assert TASKS["Write group_vars and host_vars"]["no_log"] == "{{ item.secret }}"
-    shown = TASKS["Show the report"]["ansible.builtin.debug"]["msg"]
-    assert render(shown, _report="R", _dir="/inv", _report_dir="/reports/a", ansible_check_mode=True) == [
-        "R", "--check: nothing written, it would write to /inv, the report to /reports/a"]
-    assert render(shown, _report="R", _dir="/inv", _report_dir="/reports/a", ansible_check_mode=False)[-1] == (
-        "Written to /inv, the report to /reports/a")
+    assert "check=ansible_check_mode" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
+
+
+def test_short_screen_at_the_end():
+    """The run ends with the summary (the report goes to report.txt), then the self-check failure if any."""
+    write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
+    debug = [t["name"] for t in write if "ansible.builtin.debug" in t]
+    assert debug == ["Show the summary"]
+    assert [t["name"] for t in write][-2:] == ["Show the summary", "Stop on a failed self-check"]

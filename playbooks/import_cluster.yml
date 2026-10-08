@@ -1033,7 +1033,7 @@
         package (cassandra_java_package) for new nodes.
 
       Next steps:
-        1. Review the report above and the variables (hand edits, drift).
+        1. Review this report and the variables (hand edits, drift).
         2. Check the cluster: ansible-playbook {{ _inventory_args }} community.cassandra.preflight
         3. See what the roles would change, changing nothing:
            ansible-playbook {{ _inventory_args }} <your site playbook (become: true)> --check --diff
@@ -1524,21 +1524,16 @@
                        '# Written by community.cassandra.import_cluster for ' ~ _layout.cluster_group ~ ':') }}
       when: not ansible_check_mode  # shown below
 
-    - name: Show the report
-      ansible.builtin.debug:
-        msg: "{{ (_report ~ '\n' ~ ('--check: nothing written, it would write to ' if ansible_check_mode else 'Written to ') ~ _dir
-                  ~ ((', the report to ' ~ _report_dir) if _report_dir != _dir else '')).split('\n') }}"
-
-    - name: Show the differences between nodes
-      ansible.builtin.debug:
-        msg: "{{ _layout.differences.split('\n') }}"
-
-    - name: Warn about passwords written in clear
+    # the short screen: the full report is in report.txt
+    - name: Show the summary
       ansible.builtin.debug:
         msg: >-
-          WARNING: passwords written IN CLEAR in {{ _dir }}: {{ _secrets | join(', ') }}. Encrypt them now:
-          cd {{ _dir }} && ansible-vault encrypt {{ _secrets | join(' ') }}
-      when: _secrets | length > 0 and not _vault | bool
+          {{ _layout | community.cassandra.cassandra_import_summary(
+               _nodes | default([]), _dir ~ '/' ~ _hosts_file, _report_dir ~ '/report.txt', _self_check_ok | bool,
+               secrets_clear=[] if _vault | bool else _secrets | map('regex_replace', '^', _dir ~ '/') | list,
+               unsure=_leftovers.unsure | default([]), check=ansible_check_mode, inventory_args=_inventory_args,
+               allow_unread=import_cluster_allow_unread | default(false) | bool, report=_report,
+               leftovers=_leftovers | default({})) }}
 
     - name: Stop on a failed self-check
       ansible.builtin.fail:
@@ -1546,7 +1541,7 @@
           SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
           roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
           if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See SELF-CHECK and
-          NOT CHECKED in {{ 'the report above' if ansible_check_mode else _report_dir ~ '/report.txt' }}.
+          NOT CHECKED in {{ 'the summary above' if ansible_check_mode else _report_dir ~ '/report.txt' }}.
           (-e import_cluster_strict=false: the same inventory and report, without this failure)
       when:
         - not _self_check_ok | bool
