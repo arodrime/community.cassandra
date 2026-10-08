@@ -39,10 +39,13 @@ import yaml
 from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible.plugins.filter.core import regex_replace
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 EXPR = re.compile(r"(\{\{.*?\}\})")
 V = r"\(?(\w+)(?: \| default\(\w+\))?\)?"  # var, or (per-file var | default(common var))
+# A password, single-quoted unless YAML reads it back as written (_cassandra_config_quote)
+QUOTED = r"""\((\w+)(?: or '[^']*')?\) \| regex_replace\("'", "''"\) \| regex_replace\(_cassandra_config_quote, "'\\\\1'"\)"""
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 # Written even when equal to the role default: a node keeps them for life, so a
 # role default changing in a later release must not change them
@@ -65,7 +68,7 @@ INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replica
 SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material", re.I)  # sse_c_key, access_key: Medusa's
 # Same masking as cassandra_config's diff preview
 SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret|private_key)[\w.-]*\s*[:=]\s*)"
-                          r"(\"[^\"]*\"?|'[^']*'?|\S.*?(?=\s+#|$))", re.M)
+                          r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|$))", re.M)
 
 
 def _mask(line):
@@ -119,10 +122,13 @@ def _load_role(series, facts):
     with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
         ctx = yaml.safe_load(f)
     with open(os.path.join(ROLE, "vars", "main.yml")) as f:
-        files = yaml.safe_load(f)["_cassandra_config_files"][SERIES[series]]
+        role_vars = yaml.safe_load(f)
+    files = role_vars["_cassandra_config_files"][SERIES[series]]
     ctx["cassandra_version"] = series
     ctx["ansible_facts"] = facts
+    ctx["_cassandra_config_quote"] = role_vars["_cassandra_config_quote"]
     env = jinja2.Environment(keep_trailing_newline=True, trim_blocks=True)
+    env.filters["regex_replace"] = regex_replace
     env.filters["to_nice_yaml"] = lambda data, indent=2: yaml.safe_dump(data, default_flow_style=False, indent=indent)
     for dummy in range(5):  # defaults referencing other defaults
         for k, v in ctx.items():
@@ -156,6 +162,19 @@ def _value(cap):
     return cap
 
 
+def _yaml_string(cap):
+    """The text of a YAML scalar as Cassandra reads a text setting (quotes
+    undone, a comment after it left out, 0123 or yes as written), None if not
+    one: null (no value, ~) is no text, and a line break would not render back."""
+    try:
+        if yaml.safe_load("v: " + cap)["v"] is None:
+            return None
+        value = yaml.load("v: " + cap, Loader=yaml.BaseLoader)["v"]
+    except (yaml.YAMLError, TypeError):
+        return None
+    return value if isinstance(value, str) and not re.search(r"[\r\n]", value) else None
+
+
 def _read_line(tpl, live, ctx=None):
     """Values a template line takes to render as the live line, or None.
     ctx: the role defaults, to tell a bool switch from other variables."""
@@ -179,6 +198,11 @@ def _read_line(tpl, live, ctx=None):
         elif re.fullmatch(r"\(' ' ~ (\w+)\) if \w+ \| string not in \['', 'None'\] else ''", e):
             if cap:  # the text of the value, quotes undone
                 found[re.fullmatch(r"\(' ' ~ (\w+)\).*", e).group(1)] = re.sub(r"^(['\"])(.*)\1$", r"\2", cap[1:].strip())
+        elif re.fullmatch(QUOTED, e):
+            text = _yaml_string(cap)  # the password itself, however the node quotes it
+            if text is None:
+                return None
+            (values if " or '" in e else found)[re.fullmatch(QUOTED, e).group(1)] = text
         elif re.fullmatch(r"%s or '[^']*'" % V, e):
             values[re.fullmatch(r"%s or '[^']*'" % V, e).group(1)] = _value(cap)
         elif re.fullmatch(r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", e):
@@ -418,14 +442,26 @@ def _default(ctx, key):
     return ctx.get(key, ctx.get(re.sub(r"^cassandra_jvm\d+_", "cassandra_jvm_", key), ""))
 
 
+def _has_null(value):
+    if isinstance(value, dict):
+        value = list(value.values())
+    return any(_has_null(v) for v in value) if isinstance(value, list) else value is None
+
+
 def _same_setting(name, role, node):
     """True when the node line means the same as the role's: commented-out
-    stock value the role writes explicitly, or YAML-equal (quoting, spacing)."""
+    stock value the role writes explicitly, or YAML-equal (quoting, spacing),
+    the same text included (a password 0123 or yes, which the role quotes)."""
     if name.endswith(".yaml") and node.lstrip("#").strip() == role.strip():
         return True  # elsewhere (env.sh, jvm options) a commented line is a switched-off one
     if name.endswith(".yaml") and ":" in role and not role.lstrip().startswith("#"):
         try:
-            return yaml.safe_load(role) == yaml.safe_load(node)
+            role_value, node_value = yaml.safe_load(role), yaml.safe_load(node)
+            if role_value == node_value:
+                return True
+            # the same text, unless one of them is null (no value): Cassandra keeps null as null
+            return not _has_null(role_value) and not _has_null(node_value) and \
+                yaml.load(role, Loader=yaml.BaseLoader) == yaml.load(node, Loader=yaml.BaseLoader)
         except yaml.YAMLError:
             return False
     return False

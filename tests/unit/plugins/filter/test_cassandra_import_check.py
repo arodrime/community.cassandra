@@ -11,11 +11,14 @@ import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4,
+    _load_role,
     _mask,
+    _render,
     cassandra_config_import,
     cassandra_inventory_files,
     cassandra_inventory_layout,
 )
+from ansible_collections.community.cassandra.plugins.filter import cassandra_import
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _compare_files,
     cassandra_import_self_check,
@@ -452,6 +455,51 @@ def test_text_values_are_kept_as_text(value, imported):
     assert check(files, "41x")["differences"] == []
 
 
+# Passwords YAML would not read back as written unquoted
+PASSWORDS = ["abc #def", "a: b", "*x", "&x", "!x", "{x}", "[x]", "-x", "'q'", '"d"', "it's", "yes", "null", "~", "0123",
+             "12:30", "a\\b", " lead", "trail ", "{{ x }}", "{%x", ""]
+
+
+def secret_vars(series):
+    with open(os.path.join(cassandra_import.ROLE, "templates", cassandra_import.SERIES[series], "cassandra.yaml.j2")) as f:
+        return sorted(set(re.findall(r"\((\w+)(?: or '[^']*')?\) \| regex_replace", f.read())))
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("password", PASSWORDS)
+def test_passwords_written_by_the_role_pass_the_check(series, password):
+    """A node whose cassandra.yaml the role wrote with these passwords: imported as
+    the passwords themselves, and the roles would write the same settings."""
+    files = seeded(stock(series))
+    secrets = dict((v, password) for v in secret_vars(series))
+    env, ctx, dummy = _load_role(series, FACTS)
+    default = _render(env, series, "cassandra.yaml", ctx)[1]
+    written = _render(env, series, "cassandra.yaml", dict(ctx, **secrets))[1]
+    # the role's password lines into the node's file (the stock one: the role's without its header line)
+    lines = files["cassandra.yaml"].split("\n")
+    assert len(lines) + 1 == len(default) == len(written)
+    changed = [i for i, (a, b) in enumerate(zip(default, written)) if a != b]
+    assert changed
+    for i in changed:
+        lines[i - 1] = written[i]
+    files["cassandra.yaml"] = "\n".join(lines)
+    variables = host_vars(files, series)
+    assert dict((v, variables.get(v, ctx[v])) for v in secrets) == secrets  # absent: the role default
+    assert check(files, series)["differences"] == []
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("line, password", [("'it''s'", "it's"), ('"a #b"  # rotated', "a #b"), ('"x: \\"y\\""', 'x: "y"'),
+                                            ("'*x'", "*x"), ("0123", "0123")])
+def test_passwords_written_by_hand_pass_the_check(series, line, password):
+    files = seeded(stock(series))
+    files["cassandra.yaml"], n = re.subn(r"(?m)^(\s*key_password:).*$", lambda m: m.group(1) + " " + line,
+                                         files["cassandra.yaml"], count=1)
+    assert n == 1
+    assert host_vars(files, series)["cassandra_tde_key_password"] == password
+    assert check(files, series)["differences"] == []
+
+
 def test_a_number_as_text_is_caught():
     files = seeded(stock("41x"))
     files["cassandra.yaml"] = files["cassandra.yaml"].replace("keystore_password: cassandra", "keystore_password: 0123", 1)
@@ -628,14 +676,13 @@ def test_quoted_secrets_are_masked(line):
     assert "S3cret" not in _mask(line)
 
 
-@pytest.mark.parametrize("value", ["Yes", "TRUE", "off", "'on'"])
-def test_a_text_setting_that_reads_like_a_boolean_stays_text(value):
+@pytest.mark.parametrize("value, imported", [("Yes", "Yes"), ("TRUE", "TRUE"), ("off", "off"), ("'on'", "on")])
+def test_a_text_setting_that_reads_like_a_boolean_stays_text(value, imported):
     files = seeded(stock("41x"))
     files["cassandra.yaml"] = files["cassandra.yaml"].replace("keystore_password: cassandra",
                                                               "keystore_password: %s" % value, 1)
     key = [k for k in host_vars(files, "41x") if k.endswith("keystore_password")][0]
-    # 'on': the template writes this one unquoted, so the quotes stay in the value (YAML reads it back as on)
-    assert host_vars(files, "41x")[key] == value
+    assert host_vars(files, "41x")[key] == imported  # the text, quotes undone: the role quotes it
     assert check(files, "41x")["differences"] == []
     # a boolean written back instead of the text: caught
     assert check(files, "41x", tamper={key: value.strip("'").lower() in ("yes", "true", "on")})["differences"] != []

@@ -1656,7 +1656,7 @@ server_encryption_options:
   legacy_ssl_storage_port_enabled: {{ cassandra_legacy_ssl_storage_port_enabled | lower }}
   # Set to a valid keystore if internode_encryption is dc, rack or all
   keystore: {{ cassandra_server_keystore }}
-  {{ '' if cassandra_server_keystore_password else '#' }}keystore_password: {{ cassandra_server_keystore_password or 'cassandra' }}
+  {{ '' if cassandra_server_keystore_password else '#' }}keystore_password: {{ (cassandra_server_keystore_password or 'cassandra') | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
   # Configure the way Cassandra creates SSL contexts.
   # To use PEM-based key material, see org.apache.cassandra.security.PEMBasedSslContextFactory
   # ssl_context_factory:
@@ -1667,12 +1667,12 @@ server_encryption_options:
   # outbound connections (acting as clients) use outbound_keystore & outbound_keystore_password with client certificates
   # to create SSLContext. By default, outbound_keystore is the same as keystore indicating mTLS is not enabled.
 {{ '' if cassandra_server_outbound_keystore else '#' }}  outbound_keystore: {{ cassandra_server_outbound_keystore or 'conf/.keystore' }}
-{{ '' if cassandra_server_outbound_keystore_password else '#' }}  outbound_keystore_password: {{ cassandra_server_outbound_keystore_password or 'cassandra' }}
+{{ '' if cassandra_server_outbound_keystore_password else '#' }}  outbound_keystore_password: {{ (cassandra_server_outbound_keystore_password or 'cassandra') | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
   # Verify peer server certificates
   require_client_auth: {{ cassandra_server_require_client_auth | lower }}
   # Set to a valid trustore if require_client_auth is true
   truststore: {{ cassandra_truststore }}
-  {{ '' if cassandra_truststore_password else '#' }}truststore_password: {{ cassandra_truststore_password or 'cassandra' }}
+  {{ '' if cassandra_truststore_password else '#' }}truststore_password: {{ (cassandra_truststore_password or 'cassandra') | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
   # Verify that the host name in the certificate matches the connected host
   require_endpoint_verification: {{ cassandra_require_endpoint_verification | lower }}
   # More advanced defaults:
@@ -1706,7 +1706,7 @@ client_encryption_options:
   {{ '# ' if cassandra_client_encryption_optional == '' else '' }}optional: {{ 'true' if cassandra_client_encryption_optional == '' else (cassandra_client_encryption_optional | string | lower) }}
   # Set keystore and keystore_password to valid keystores if enabled is true
   keystore: {{ cassandra_client_keystore }}
-  {{ '' if cassandra_client_keystore_password else '#' }}keystore_password: {{ cassandra_client_keystore_password or 'cassandra' }}
+  {{ '' if cassandra_client_keystore_password else '#' }}keystore_password: {{ (cassandra_client_keystore_password or 'cassandra') | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
   # Configure the way Cassandra creates SSL contexts.
   # To use PEM-based key material, see org.apache.cassandra.security.PEMBasedSslContextFactory
   # ssl_context_factory:
@@ -1717,7 +1717,7 @@ client_encryption_options:
   # require_endpoint_verification: false
   # Set trustore and truststore_password if require_client_auth is true
   {{ '' if cassandra_client_truststore else '# ' }}truststore: {{ cassandra_client_truststore or 'conf/.truststore' }}
-  {{ '' if cassandra_client_truststore_password else '# ' }}truststore_password: {{ cassandra_client_truststore_password or 'cassandra' }}
+  {{ '' if cassandra_client_truststore_password else '# ' }}truststore_password: {{ (cassandra_client_truststore_password or 'cassandra') | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
   # More advanced defaults:
   # protocol: TLS
   # store_type: JKS
@@ -1783,9 +1783,9 @@ transparent_data_encryption_options:
     - class_name: {{ cassandra_tde_key_provider_class_name }}
       parameters:
         - keystore: {{ cassandra_tde_keystore }}
-          keystore_password: {{ cassandra_tde_keystore_password }}
+          keystore_password: {{ (cassandra_tde_keystore_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
           store_type: {{ cassandra_tde_store_type }}
-          key_password: {{ cassandra_tde_key_password }}
+          key_password: {{ (cassandra_tde_key_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
 
 # Storage Attached Indexing options.
 # sai_options:

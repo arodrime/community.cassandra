@@ -1186,12 +1186,12 @@ server_encryption_options:
     enable_legacy_ssl_storage_port: {{ cassandra_enable_legacy_ssl_storage_port | lower }}
     # Set to a valid keystore if internode_encryption is dc, rack or all
     keystore: {{ cassandra_server_keystore }}
-    keystore_password: {{ cassandra_server_keystore_password }}
+    keystore_password: {{ (cassandra_server_keystore_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
     # Verify peer server certificates
     require_client_auth: {{ cassandra_server_require_client_auth | lower }}
     # Set to a valid trustore if require_client_auth is true
     truststore: {{ cassandra_truststore }}
-    truststore_password: {{ cassandra_truststore_password }}
+    truststore_password: {{ (cassandra_truststore_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
     # Verify that the host name in the certificate matches the connected host
     require_endpoint_verification: {{ cassandra_require_endpoint_verification | lower }}
     # More advanced defaults:
@@ -1225,7 +1225,7 @@ client_encryption_options:
     # optional: true
     # Set keystore and keystore_password to valid keystores if enabled is true
     keystore: {{ cassandra_client_keystore }}
-    keystore_password: {{ cassandra_client_keystore_password }}
+    keystore_password: {{ (cassandra_client_keystore_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
     # Verify client certificates
     require_client_auth: {{ cassandra_client_require_client_auth | lower }}
     # Set trustore and truststore_password if require_client_auth is true
@@ -1308,9 +1308,9 @@ transparent_data_encryption_options:
       - class_name: {{ cassandra_tde_key_provider_class_name }}
         parameters:
           - keystore: {{ cassandra_tde_keystore }}
-            keystore_password: {{ cassandra_tde_keystore_password }}
+            keystore_password: {{ (cassandra_tde_keystore_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
             store_type: {{ cassandra_tde_store_type }}
-            key_password: {{ cassandra_tde_key_password }}
+            key_password: {{ (cassandra_tde_key_password) | regex_replace("'", "''") | regex_replace(_cassandra_config_quote, "'\\1'") }}
 
 
 #####################
