@@ -19,7 +19,6 @@ __metaclass__ = type
 
 import difflib
 import glob
-import json
 import os
 import re
 import shlex
@@ -30,6 +29,8 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import _wrap
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+    extra_var as _e, path_from as _path)
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -275,14 +276,6 @@ def _resolved(value):
     return value not in (None, "", "(vaulted)") and "{{" not in str(value) and "{%" not in str(value)
 
 
-def _e(name, value):
-    """-e name=value as the shell and Ansible's key=value parsing both take it (else as JSON)."""
-    value = str(value)
-    if re.match(r"^[\w.:/@,+-]+$", value):
-        return "-e %s=%s" % (name, value)
-    return "-e " + shlex.quote(json.dumps({name: value}))
-
-
 class _Cluster(object):
     """One cluster of the model, with what the text needs."""
 
@@ -388,11 +381,6 @@ class _Cluster(object):
             return int(list(found)[0]) if len(found) == 1 else None
         except (TypeError, ValueError):
             return None
-
-
-def _path(path, cwd):
-    rel = os.path.relpath(path, cwd) if cwd and os.path.isabs(path) else path
-    return path if rel.startswith("..") else rel
 
 
 def _inventory_dir(model):

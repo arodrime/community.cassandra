@@ -1,8 +1,10 @@
 ---
 # Read-only health report of a cluster, changing nothing: from every node, the
 # ring (every node up and normal, none joining/leaving/moving), gossip, native
-# transport, streams, schema agreement and the storage and CQL ports. Fails
-# (non-zero exit) when there is a problem, so it can be scheduled.
+# transport, streams, schema agreement and the storage and CQL ports. The
+# report starts with the verdict (HEALTHY or NOT HEALTHY), then each problem
+# once with the nodes that saw it, then what to do. Fails (non-zero exit)
+# when there is a problem, so it can be scheduled.
 #   ansible-playbook -i inventory community.cassandra.health_check
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
@@ -44,32 +46,39 @@
         cassandra_service_health_report_only: true
         cassandra_service_health_timeout: 5  # a report: no waiting for down nodes
 
+    # the verdict first, each problem once with the nodes that saw it; fails the run
+    # (non-zero exit) when there is one
     - name: Report
-      ansible.builtin.debug:
-        msg: >-
+      ansible.builtin.assert:
+        that: _report.healthy
+        fail_msg: "{{ _report.lines }}"
+        success_msg: "{{ _report.lines }}"
+        quiet: false
+      vars:
+        cassandra_output: true
+        # the hosts whose check ran (the others: not reached)
+        _checked: >-
           {%- set out = [] -%}
-          {%- for h in ansible_play_hosts_all -%}
-          {%-   set problems = hostvars[h].cassandra_health_problems | default(['unreachable']) -%}
-          {%-   set _ = out.append(h ~ ': ' ~ ('OK' if problems | length == 0 else problems | join('; '))) -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_health_findings is defined -%}
+          {%-   set _ = out.append(h) -%}
           {%- endfor -%}
           {{ out }}
-      run_once: true
-
-    - name: Fail on problems
-      ansible.builtin.assert:
-        that: _unhealthy | length == 0
-        fail_msg: >-
-          Cluster not healthy: see the report above ({{ _unhealthy | join(', ') }}).{{
-          (' Not counted, marked cassandra_node_state: absent: ' ~ _absent | join(', ')
-           ~ ' (still in the ring? the playbook topology removes them).') if _absent and _count_problems else '' }}
-        success_msg: "Cluster healthy: {{ ansible_play_hosts_all | length }} node(s) checked"
-      vars:
-        _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
-        _count_problems: >-
-          {{ ansible_play_hosts | map('extract', hostvars, 'cassandra_health_problems') | flatten
-             | select('search', '^the ring has ') | list | length > 0 }}
-        _unhealthy: >-
-          {{ ansible_play_hosts_all | reject('in', ansible_play_hosts) | list
-             + (ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_health_problems')
-                | map(attribute='inventory_hostname') | list) }}
+        _findings: >-
+          {%- set out = {} -%}
+          {%- for h in _checked -%}{%- set _ = out.update({h: hostvars[h].cassandra_health_findings}) -%}{%- endfor -%}
+          {{ out }}
+        _first_ring: >-
+          {{ (hostvars[_checked | first].cassandra_health_self | default({})).cluster_status | default({}, true)
+             if _checked else {} }}
+        _report: >-
+          {{ _findings | community.cassandra.cassandra_health_report(
+               lookup('community.cassandra.cassandra_hosts'), ansible_play_hosts_all,
+               unreachable=ansible_play_hosts_all | reject('in', _checked) | list,
+               absent=query('community.cassandra.cassandra_nodes', state='absent'),
+               names=ansible_play_hosts_all | community.cassandra.cassandra_host_addresses(hostvars),
+               members=_first_ring.values() | map(attribute='nodes') | flatten | length if _first_ring else none,
+               topology_command='topology' | community.cassandra.cassandra_command(
+                 inventory=ansible_inventory_sources,
+                 default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                 hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))) }}
       run_once: true

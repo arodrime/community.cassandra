@@ -12,9 +12,12 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
-import time
 
-_GIB = 1024.0 ** 3
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+    clock as _clock, count as _count, rate as _rate, size as _size)
+
+_GIB = out.GIB
 # the rate is measured over this many check intervals
 _WINDOW = 3
 # beyond this, the end is shown as unknown
@@ -35,53 +38,9 @@ _TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED", 
 _ITEM = "      %-11s%s"
 
 
-def _size(count, scale):
-    """count bytes in the unit that suits scale bytes: "41.2 GiB"."""
-    for unit, size, least in (("TiB", 1024.0 ** 4, 1024.0 ** 4), ("GiB", _GIB, _GIB / 10),
-                              ("MiB", 1024.0 ** 2, 1024.0 ** 2 / 10), ("KiB", 1024.0, 1024)):
-        if scale >= least:
-            return "%.1f %s" % (count / size, unit)
-    return "%d B" % count
-
-
-def _count(number):
-    """1240 as "1 240"."""
-    return "{0:,}".format(int(number)).replace(",", " ")
-
-
 def _duration(seconds):
     """"45s", "12m", "1h12m", "2d04h"."""
-    seconds = int(seconds)
-    if seconds >= 86400:
-        return "%dd%02dh" % (seconds // 86400, seconds % 86400 // 3600)
-    if seconds >= 3600:
-        return "%dh%02dm" % (seconds // 3600, seconds % 3600 // 60)
-    if seconds >= 60:
-        return "%dm" % (seconds // 60)
-    return "%ds" % seconds
-
-
-def _rate(per_second):
-    if per_second >= _GIB:
-        return "%.1f GiB/s" % (per_second / _GIB)
-    if per_second >= 1024.0 ** 2:
-        mib = per_second / 1024.0 ** 2
-        return ("%.1f MiB/s" if mib < 10 else "%d MiB/s") % mib
-    if per_second >= 1024:
-        return "%d KiB/s" % (per_second / 1024.0)
-    return "%d B/s" % per_second
-
-
-def _clock(epoch, now):
-    """The controller's local time of epoch with its zone, the date too when it
-    is not today: "19:03 CEST", "2026-10-07 04:26 CEST"."""
-    when = time.localtime(epoch)
-    zone = time.strftime("%Z", when)
-    if not zone or zone[0] in "+-":
-        # no abbreviation for this zone: its offset
-        offset = time.strftime("%z", when)
-        zone = offset[:3] + ":" + offset[3:]
-    return time.strftime("%H:%M" if when[:3] == time.localtime(now)[:3] else "%Y-%m-%d %H:%M", when) + " " + zone
+    return out.duration(seconds, short=True)
 
 
 def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4,
@@ -98,7 +57,8 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     Returns the new state, for the next call and for
     cassandra_stream_report: streams (per session: total, done, files_total,
     files_done, other: the node at the other end, way: 'from' when the data
-    comes from it, 'to' when it goes to it, 'on' for a local task, gone),
+    comes from it, 'to' when it goes to it, 'on' for a local task, gone, moved:
+    progress at this check),
     progressed (since the previous call), start, now, last_progress,
     idle_checks (calls in a row without progress), limit and stalled
     (idle_checks reached limit: stall_checks while some session has bytes
@@ -135,6 +95,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
             if peer and way != "on":
                 way = "to" if way == "from" else "from"
             streams[key] = {"total": s["bytes_total"], "done": s["bytes_done"], "mark": done, "gone": False,
+                            "moved": before is None or done > before["mark"],
                             "files_total": s["files_total"], "files_done": s["files_done"], "way": way,
                             "other": str(result.get("item", "")) if peer else s["peer"]}
     if answered:
@@ -142,7 +103,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
             if key not in current and not stream["gone"] and key.split("|", 1)[0] in answered:
                 # a finished session leaves netstats: count it as fully streamed (not when its
                 # host did not answer this time)
-                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"])
+                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"], moved=True)
                 progressed = True
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
@@ -211,9 +172,8 @@ def _peers(streams):
         rest = ranked[_PEERS - 1:]
         ranked = ranked[:_PEERS - 1] + [("%d more" % len(rest), sum(r[1] for r in rest), sum(r[2] for r in rest))]
     width = max([len(r[0]) for r in ranked] or [0])
-    return ["%s  %3d%% done  (%s / %s)" % (
-        name.ljust(width), int(100 * min(moved, size) / size), _size(moved, size).split()[0], _size(size, size))
-        for name, size, moved in ranked]
+    return ["%s  %3d%% done  (%s)" % (name.ljust(width), int(100 * min(moved, size) / size), out.amount(moved, size, " / "))
+            for name, size, moved in ranked]
 
 
 def cassandra_stream_report(state, node="", what="", status="going", names=None, files_label="files", clocks=True,
@@ -369,17 +329,10 @@ def cassandra_host_addresses(hosts, hostvars):
     return names
 
 
-_LOAD_UNITS = {"bytes": 1, "B": 1, "KiB": 1024, "KB": 1024, "MiB": 1024 ** 2, "MB": 1024 ** 2,
-               "GiB": 1024 ** 3, "GB": 1024 ** 3, "TiB": 1024 ** 4, "TB": 1024 ** 4}
-
-
 def _load_bytes(load):
     """nodetool status Load ("412.3 GiB") in bytes, None when unknown ("?")."""
-    try:
-        number, unit = str(load).split()
-        return int(float(number) * _LOAD_UNITS[unit])
-    except (ValueError, KeyError):
-        return None
+    size = out.parse_size(load)
+    return None if size is None else int(size)
 
 
 def _user_keyspaces(keyspaces):

@@ -32,7 +32,10 @@ Operations on a cluster, described by one inventory group (`cassandra_hosts`,
 by default the cluster the environment variable `CASSANDRA_CLUSTER` names, else the group `cassandra`, else the inventory's cluster group as the import lays it out; per-cluster
 settings such as `cassandra_seeds` in its group_vars). Run them with
 `ansible-playbook community.cassandra.<name>`: they ask for root on the nodes themselves where they need it
-(no `-b`, no `become` in `ansible.cfg`).
+(no `-b`, no `become` in `ansible.cfg`). With `stdout_callback = community.cassandra.ops` in `ansible.cfg`
+(`[defaults]`), they print only what an operator reads: a verdict, the plan, the progress, the recap, what is left
+to do, the questions and the failures (`-v` for everything); with the default callback, set
+`callback_result_format = yaml`.
 
 - `help`- Read-only, from the inventory alone (no node contacted): the clusters it describes, every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables).

@@ -70,6 +70,8 @@
     - name: Progress of the cleanups
       ansible.builtin.debug:
         msg: "{{ _cassandra_stream_report }}"
+      vars:
+        cassandra_output: true
 
     - name: Keep where it stands
       ansible.builtin.set_fact:

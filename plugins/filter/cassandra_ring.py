@@ -1,9 +1,10 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_ring_report: the cassandra_status module's cluster_status as
-readable lines for the status playbook: the nodes per datacenter as nodetool
-status shows them, a summary line per datacenter, and where the inventory and
-the ring differ."""
+readable lines for the status playbook: a verdict line, the nodes per
+datacenter as nodetool status shows them (the ones not UN marked), a summary
+line per rack and per datacenter, and where the inventory and the ring
+differ."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -12,26 +13,15 @@ import ipaddress
 import re
 import socket
 
-# nodetool's sizes (FileUtils.stringifyFileSize), a comma as decimal mark in some locales
-_SIZE = re.compile(r"^([0-9]+(?:[.,][0-9]+)?)\s*(bytes|KiB|MiB|GiB|TiB)$")
-_UNITS = ["bytes", "KiB", "MiB", "GiB", "TiB"]
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+
 _STATES = [("U", "up"), ("D", "down"), ("J", "joining"), ("L", "leaving"), ("M", "moving")]
 _IP = re.compile(r"^[0-9.]+$|:")
 
 
 def _bytes(load):
-    match = _SIZE.match((load or "").strip())
-    if not match:
-        return None
-    return float(match.group(1).replace(",", ".")) * 1024 ** _UNITS.index(match.group(2))
-
-
-def _size(value):
-    unit = 0
-    while value >= 1024 and unit < len(_UNITS) - 1:
-        value /= 1024.0
-        unit += 1
-    return ("%d bytes" % value) if unit == 0 else "%.2f %s" % (value, _UNITS[unit])
+    """nodetool's Load (FileUtils.stringifyFileSize, a comma as decimal mark in some locales) in bytes."""
+    return out.parse_size(load)
 
 
 def _ip(address):
@@ -76,8 +66,41 @@ def _table(rows):
     return ["  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip() for row in rows]
 
 
+def _counts(nodes):
+    counts = dict((word, 0) for dummy, word in _STATES)
+    for n in nodes:
+        for letter, word in _STATES:
+            # U/D: the status (first letter); J/L/M: the state (second)
+            if letter == (n["status"] if letter in "UD" else n["state"]):
+                counts[word] += 1
+    return counts
+
+
+def _summary(name, nodes):
+    """"rack1: 3 nodes, 2 up, 1 down; load 1.5 GiB (1 unknown)"."""
+    counts = _counts(nodes)
+    sizes = [_bytes(n["load"]) for n in nodes]
+    unknown = sizes.count(None)
+    states = ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES if counts[word] or word in ("up", "down"))
+    return "%s: %s, %s; load %s%s" % (name, out.plural(len(nodes), "node"), states,
+                                      out.size(sum(x for x in sizes if x is not None)),
+                                      " (%d unknown)" % unknown if unknown else "")
+
+
+def _verdict(cluster_status, cluster, seen_from, matches, members):
+    """"my_cluster  1 DOWN  (seen from node1, ring = inventory, 3 nodes)"; OK
+    when every node is UN."""
+    nodes = [n for dc in cluster_status.values() for n in dc.get("nodes", [])]
+    counts = _counts(nodes)
+    problems = ["%d %s" % (counts[word], word.upper()) for dummy, word in _STATES if word != "up" and counts[word]]
+    where = ["seen from %s" % seen_from] if seen_from else []
+    where.append(("ring = %s" % members) if matches else "ring and %s differ" % members)
+    where.append(out.plural(len(nodes), "node"))
+    return "  ".join(x for x in [cluster, ", ".join(problems) or "OK", "(%s)" % ", ".join(where)] if x)
+
+
 def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
-                          outside=None, absent=None):
+                          outside=None, absent=None, cluster="", seen_from=""):
     """cluster_status: the cassandra_status module's. inventory: {host:
     [addresses and names it is known by]} of the hosts of the run. unreachable:
     the hosts Ansible could not reach. limited: the play runs on part of the
@@ -85,7 +108,8 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     outside: {host: [addresses]} of the other hosts of the inventory, matched
     by address only (no facts, no name resolution for them). absent: the
     hosts of outside marked cassandra_node_state: absent (topology removes
-    them from the ring).
+    them from the ring). cluster: the cluster's name, seen_from: the node
+    the ring was read from, for the verdict line (none without either).
     Returns the report as a list of lines."""
     cluster_status = cluster_status or {}
     owner = _host_of(inventory, [_ip(n["address"]) for dc in cluster_status
@@ -102,10 +126,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     leaving = []
     for dc in sorted(cluster_status):
         nodes = cluster_status[dc].get("nodes", [])
-        rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory"]]
-        counts = dict((word, 0) for dummy, word in _STATES)
-        total = 0.0
-        unknown = 0
+        rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory", ""]]
         for n in nodes:
             host = owner.get(_ip(n["address"]))
             if host is None and elsewhere.get(_ip(n["address"])) in (absent or []):
@@ -116,23 +137,16 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
                 stray.append("%s (%s, %s%s)" % (n["address"], dc, n["status"], n["state"]))
             else:
                 in_ring.add(host)
+            mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
+                "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
             rows.append([n["status"] + n["state"], n["address"], n["load"] or "?", n["tokens"] or "",
-                         n["owns"] or "", n["host_id"], n["rack"], host or "-"])
-            for letter, word in _STATES:
-                # U/D: the status (first letter); J/L/M: the state (second)
-                if letter == (n["status"] if letter in "UD" else n["state"]):
-                    counts[word] += 1
-            size = _bytes(n["load"])
-            if size is None:
-                unknown += 1
-            else:
-                total += size
+                         n["owns"] or "", n["host_id"], n["rack"], host or "-", mark])
         lines.append("Datacenter: %s" % dc)
         lines.extend("  " + line for line in _table(rows))
-        summary = "  %s: %d node(s), %s; load %s" % (
-            dc, len(nodes), ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES
-                                      if counts[word] or word in ("up", "down")), _size(total))
-        lines.append(summary + (" (%d unknown)" % unknown if unknown else ""))
+        racks = sorted(set(n["rack"] for n in nodes))
+        if len(racks) > 1:
+            lines.extend("  " + _summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks)
+        lines.append("  " + _summary(dc, nodes))
     missing = [h for h in inventory if h not in in_ring]
     unreachable = set(unreachable or [])
     run = "this run (--limit)" if limited else group
@@ -147,8 +161,11 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     if stray:
         lines.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
                      + ", ".join(stray))
-    if not missing and not stray and not known and not leaving:
-        lines.append("The ring and %s match (%d node(s))" % (run, len(inventory)))
+    matches = not missing and not stray and not known and not leaving
+    if matches and not (cluster or seen_from):  # else said by the verdict
+        lines.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
+    if cluster or seen_from:
+        lines.insert(0, _verdict(cluster_status, cluster, seen_from, matches, "inventory" if run == group else run))
     return lines
 
 

@@ -1,7 +1,10 @@
 ---
 # Read-only view of the ring as nodetool status shows it from one node (the
-# first of the group that answers), grouped by datacenter, with a summary line
-# per datacenter (nodes up, down, joining, leaving, moving, total load) and where the
+# first of the group that answers): a verdict line first (the nodes not up
+# and normal, the node it is seen from, whether the ring and the group
+# match), then per datacenter the nodetool table (a node not UN marked
+# "<- down", "<- joining"...), a summary line per rack and per datacenter
+# (nodes up, down, joining, leaving, moving, total load) and where the
 # group and the ring differ (a ring node that is another host of the inventory
 # is named). A down node is shown, not an error (the check
 # is health_check): fails only when no node answers (or the
@@ -139,6 +142,7 @@
              + _errors }}
         quiet: true
       vars:
+        cassandra_output: true  # its message printed as is by the ops callback
         _errors: >-
           {%- set out = [] -%}
           {%- for v in cassandra_status_views -%}
@@ -152,18 +156,21 @@
     - name: Show nodetool's output
       ansible.builtin.debug:
         msg: "{{ (_view.result.stdout_list | default([''], true) | last).splitlines() }}"
+      vars:
+        cassandra_output: true
       when: cassandra_status_raw | default(false) | bool
       run_once: true
 
     - name: Show the ring
       ansible.builtin.debug:
         msg: >-
-          {{ ['Seen from ' ~ _view.from ~ ':']
-             + _view.result.cluster_status | community.cassandra.cassandra_ring_report(_addresses,
-                 ansible_play_hosts_all | reject('in', _reached) | list, ansible_limit is defined,
-                 group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
-                 absent=query('community.cassandra.cassandra_nodes', state='absent')) }}
+          {{ _view.result.cluster_status | community.cassandra.cassandra_ring_report(_addresses,
+               ansible_play_hosts_all | reject('in', _reached) | list, ansible_limit is defined,
+               group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
+               absent=query('community.cassandra.cassandra_nodes', state='absent'),
+               cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from) }}
       vars:
+        cassandra_output: true
         # the other hosts of the inventory, by the addresses it gives them
         _outside: >-
           {%- set out = {} -%}

@@ -26,6 +26,8 @@
       or add -e cassandra_operation_confirm=false to go on without asking.
   run_once: true
   when: _cassandra_confirm_answer == 'no_terminal'
+  vars:
+    cassandra_output: true
 
 # Only go and again carry on, whatever else the answer turned into
 - name: Stop at the operator's request
@@ -33,6 +35,8 @@
     msg: Stopped at your request, nothing changed.
   run_once: true
   when: _cassandra_confirm_answer not in ['go', 'again']
+  vars:
+    cassandra_output: true
 
 - name: Stop after 3 answers that are neither yes nor no
   ansible.builtin.fail:
@@ -41,6 +45,8 @@
   when:
     - _cassandra_confirm_answer == 'again'
     - _cassandra_confirm_tries | int >= 3
+  vars:
+    cassandra_output: true
 
 - name: Ask again
   ansible.builtin.include_tasks: confirm_ask.yml

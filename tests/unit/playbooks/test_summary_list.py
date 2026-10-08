@@ -37,9 +37,11 @@ def test_operation_summary_is_a_list():
         ["n1: add done in 5s", "n2: not reached", "n3: not in this run (--limit)"]
 
 
-def test_health_check_summary_is_a_list():
+def test_health_check_report_inputs_are_a_list_and_a_dict():
     play = load("playbooks", "health_check.yml")
     task = next(t for p in play for t in p.get("tasks", []) if t.get("name") == "Report")
-    hostvars = {"n1": {"cassandra_health_problems": []}, "n2": {}}
-    assert render(task["ansible.builtin.debug"]["msg"], ansible_play_hosts_all=["n1", "n2"], hostvars=hostvars) == \
-        ["n1: OK", "n2: unreachable"]
+    found = [{"kind": "gossip", "on": "n1", "text": "gossip is not running on n1"}]
+    hostvars = {"n1": {"cassandra_health_findings": found}, "n2": {}}
+    checked = render(task["vars"]["_checked"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars)
+    assert checked == ["n1"]  # n2: its check did not run (not reached)
+    assert render(task["vars"]["_findings"], _checked=checked, hostvars=hostvars) == {"n1": found}

@@ -2,7 +2,8 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
-    cassandra_health_problems, cassandra_leaving_state, cassandra_removal_force_target, cassandra_removal_state)
+    cassandra_health_findings, cassandra_health_problems, cassandra_health_report, cassandra_leaving_state,
+    cassandra_removal_force_target, cassandra_removal_state)
 
 UP = {"is_up": True}
 IDLE = {"mode": "NORMAL", "streaming": False}
@@ -348,3 +349,86 @@ def test_force_refused():
     # no removal at all
     out = cassandra_removal_force_target({"n1": FORCE_DN}, "10.0.0.4", state("start"))
     assert out["reason"] == "10.0.0.4 is DN: no removal of it is in progress, run removenode first (the default method)."
+
+
+def findings(host, views, expected=3, **kwargs):
+    checks = dict(gossip=UP, binary=UP, netstats=IDLE, schema=AGREED)
+    checks.update(kwargs)
+    return cassandra_health_findings(views, expected, host, **checks)
+
+
+NAMES = {"10.0.0.1": "n1", "10.0.0.2": "n2", "10.0.0.3": "n3"}
+
+
+def test_findings_carry_the_sentences():
+    ring = [node("10.0.0.1"), node("10.0.0.2", status="D")]
+    found = findings("n1", [view("n1", *ring)])
+    assert [f["text"] for f in found] == problems([view("n1", *ring)])
+    assert found[0] == {"kind": "state", "address": "10.0.0.2", "rack": "r1", "state": "DN", "seen_from": "n1",
+                        "text": "10.0.0.2 (r1) is DN, seen from n1"}
+    assert found[1]["kind"] == "count" and found[1]["ring"] == 2
+
+
+def test_report_healthy():
+    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3")]
+    report = cassandra_health_report(dict((h, findings(h, [view(h, *ring)])) for h in ("n1", "n2", "n3")),
+                                     "my_cluster", ["n1", "n2", "n3"], names=NAMES, members=3)
+    assert report == {"healthy": True, "problems": 0,
+                      "lines": ["HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open"]}
+
+
+def test_report_each_problem_once_with_who_saw_it():
+    ring = [node("10.0.0.1"), node("10.0.0.2", status="D", rack="r2"), node("10.0.0.3"), node("10.0.0.7"),
+            node("10.0.0.8")]
+    per_host = {}
+    for host, address in (("n1", "10.0.0.1"), ("n3", "10.0.0.3")):
+        cql = {"results": [{"item": {"name": "CQL", "host": address, "port": 9042}, "failed": True}]}
+        per_host[host] = findings(host, [view(host, *ring), view("n1" if host != "n1" else "n3", *ring)],
+                                  ports=cql, netstats={"mode": "NORMAL", "streaming": host == "n3"})
+    report = cassandra_health_report(per_host, "my_cluster", ["n1", "n2", "n3"], unreachable=["n2"],
+                                     absent=["n7", "n8"], names=NAMES,
+                                     topology_command="ansible-playbook community.cassandra.topology")
+    assert report["healthy"] is False and report["problems"] == 5
+    assert report["lines"] == [
+        "NOT HEALTHY  my_cluster  2 nodes checked, 5 problems",
+        "  ring:     n2 10.0.0.2 (r2) DN   seen from n1, n3",
+        "  ring:     5 members, inventory 3   seen from n1, n3",
+        "  ports:    CQL 9042 not answering on n1, n3",
+        "  streams:  in progress on n3",
+        "  ssh:      not reached by Ansible: n2",
+        "  not counted, marked cassandra_node_state: absent: n7, n8",
+        "TO DO",
+        "  1. start Cassandra on n2 (its server first if it is down); a node that can't be recovered: replace_node",
+        "  2. remove n7, n8 from the ring:",
+        "     ansible-playbook community.cassandra.topology",
+        "  3. reach n2 over SSH, then run this again",
+        "  4. wait for the streams to end (nodetool netstats), then run this again",
+    ]
+
+
+def test_report_node_level_failures():
+    per_host = {"n1": findings("n1", [{"from": "n1", "result": {"msg": "nodetool error: boom"}}], expected=1,
+                               gossip={"is_up": False}, binary={}, schema={"failed": True, "msg": "2 schema versions"},
+                               netstats={"failed": True, "msg": "refused"})}
+    lines = cassandra_health_report(per_host, "c", ["n1"])["lines"]
+    assert lines == ["NOT HEALTHY  c  1 node checked, 5 problems",
+                     "  nodetool:  status failed on n1: nodetool error: boom",
+                     "  gossip:    not running on n1",
+                     "  CQL:       native transport not running on n1",
+                     "  netstats:  failed on n1: refused",
+                     "  schema:    disagreement: 2 schema versions"]
+
+
+def test_report_same_error_on_several_nodes_once():
+    down = {"failed": True, "msg": "Connection refused"}
+    per_host = dict((h, findings(h, [{"from": h, "result": {"msg": "Connection refused"}}], expected=1, netstats=down))
+                    for h in ("n1", "n2", "n3"))
+    assert cassandra_health_report(per_host, "c", ["n1", "n2", "n3"])["lines"] == [
+        "NOT HEALTHY  c  3 nodes checked, 2 problems",
+        "  nodetool:  status failed on n1..n3: Connection refused",
+        "  netstats:  failed on n1..n3: Connection refused"]
+
+
+def test_report_error_that_is_not_text():
+    per_host = {"n1": [{"kind": "netstats", "on": "n1", "error": None, "text": "x"}]}
+    assert cassandra_health_report(per_host, "c", ["n1"])["lines"][1] == "  netstats:  failed on n1: None"

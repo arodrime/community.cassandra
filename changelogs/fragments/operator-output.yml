@@ -1,0 +1,4 @@
+minor_changes:
+  - status - a verdict line first (the nodes not up and normal, the node the ring is seen from, whether the ring and the group match), a node not UN marked in the table, a summary line per rack.
+  - health_check - the report starts with the verdict (HEALTHY or NOT HEALTHY), lists each problem once with the nodes that saw it, then what to do.
+  - stdout callback community.cassandra.ops - prints only the operator messages of the playbooks (plans, progress, recaps, what to do), the questions and the failures in full; -v gives the default output.

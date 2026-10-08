@@ -13,6 +13,7 @@
   loop_control:
     label: "{{ item.key }}"
   vars:
+    cassandra_output: true
     _known: "{{ _cassandra_playbook_variables }}"
 
 - name: The cluster's group is in the inventory
