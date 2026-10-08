@@ -263,7 +263,10 @@ def test_a_rescued_failure_on_one_line(tmp_path):
         - name: Inner
           block:
             - name: Read something optional
-              ansible.builtin.command: sh -c 'echo no CQL access >&2; exit 2'
+              ansible.builtin.command: sh -c 'echo OpenJDK warning >&2; echo no CQL access >&2; exit 2'
+            - name: Never run
+              ansible.builtin.debug:
+                msg: never
           always:
             - name: Always
               ansible.builtin.debug:
@@ -274,6 +277,24 @@ def test_a_rescued_failure_on_one_line(tmp_path):
             msg: "going on"
           vars:
             cassandra_output: true
+    - name: Items
+      block:
+        - name: An item fails
+          ansible.builtin.command: "{{ item }}"
+          loop: [/bin/true, /bin/false]
+      rescue:
+        - name: Fine
+          ansible.builtin.debug:
+            msg: fine
+    - name: A long one
+      block:
+        - name: Long
+          ansible.builtin.fail:
+            msg: "{{ 'x' * 300 }}"
+      rescue:
+        - name: Fine too
+          ansible.builtin.debug:
+            msg: fine
     - name: In a rescue itself
       block:
         - name: Fails
@@ -290,5 +311,9 @@ def test_a_rescued_failure_on_one_line(tmp_path):
     assert lines[0] == "node1: Read something optional: no CQL access (the playbook handles it)"
     assert lines[1] == "going on"
     assert "node1: Fails: first (the playbook handles it)" in lines
+    assert "node1: Long: %s... (the playbook handles it)" % ("x" * 157) in lines
+    # a failed item of a rescued loop: one line too, no item dump
+    assert "node1: An item fails: non-zero return code (the playbook handles it)" in lines
+    assert "failed: [node1] (item=/bin/false)" not in output
     # a failure in a rescue is not handled: in full
     assert "TASK [Fails again]" in output and "the real failure" in output

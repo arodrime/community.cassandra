@@ -68,7 +68,8 @@ def rescued(task):
     any level, through includes): the playbook handles its failure."""
     child, parent = task, getattr(task, "_parent", None)
     while parent is not None:
-        if getattr(parent, "rescue", None) and _uuid(child) in [_uuid(t) for t in getattr(parent, "block", None) or []]:
+        if (getattr(parent, "rescue", None) and _uuid(child) is not None
+                and _uuid(child) in [_uuid(t) for t in getattr(parent, "block", None) or []]):
             return True
         child, parent = parent, getattr(parent, "_parent", None)
     return False
@@ -155,11 +156,15 @@ class CallbackModule(DefaultCallback):
 
     def _handled(self, result):
         res = _result(result)
-        # a command's own error rather than "non-zero return code"
-        said = [line.strip() for line in lines(res.get("stderr") or res.get("msg") or "") if line.strip()]
+        # a command's own error rather than "non-zero return code" (its last line: JVM warnings come first)
+        msg = [line.strip() for line in lines(res.get("msg") or "") if line.strip()]
+        err = [line.strip() for line in lines(res.get("stderr") or "") if line.strip()]
+        said = err[-1:] if err and (not msg or msg[0] == "non-zero return code") else msg
         host = getattr(result, "host", None) or result._host
-        self._display.display("%s: %s: %s (the playbook handles it)"
-                              % (host.get_name(), _task(result).get_name(), said[0] if said else "failed"))
+        first = said[0] if said else "failed"
+        # the playbook says it in full itself (a summary, a refusal): a short line here
+        first = first if len(first) <= 160 else first[:157].rstrip() + "..."
+        self._display.display("%s: %s: %s (the playbook handles it)" % (host.get_name(), _task(result).get_name(), first))
         return None
 
     def v2_runner_item_on_failed(self, result):
@@ -173,6 +178,8 @@ class CallbackModule(DefaultCallback):
             return None
         if self._own_failure(result):
             return self._verdict(result)
+        if rescued(_task(result)):
+            return self._handled(result)
         return super(CallbackModule, self).v2_runner_item_on_failed(result)
 
     def v2_runner_on_unreachable(self, result):
