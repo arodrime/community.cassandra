@@ -258,6 +258,14 @@ RENAMES = {
 }
 
 
+def quote_secret(line):
+    # A password may hold any character: quoted in YAML unless it reads as a plain string
+    m = re.match(r"^(.*password: )\{\{ (.*) \}\}$", line)
+    if not m or "_cassandra_config_quote" in line:
+        return line
+    return "%s{{ (%s) | regex_replace(\"'\", \"''\") | regex_replace(_cassandra_config_quote, \"'\\\\1'\") }}" % m.groups()
+
+
 def derive_yaml(ref_stock, ref_tpl, stock):
     ref = {}
     for key, a, b in zip(yaml_paths(ref_stock), ref_stock, ref_tpl):
@@ -290,7 +298,7 @@ def derive_yaml(ref_stock, ref_tpl, stock):
             new_vars[var] = default
         else:
             out.append(line)
-    return out, new_vars, conflicts
+    return [quote_secret(line) for line in out], new_vars, conflicts
 
 
 def main(series, stock_dir, out_dir):

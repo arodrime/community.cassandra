@@ -1,8 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# cassandra_config: the heap settings cassandra-env.sh accepts, the GC values,
-# the accounts of what it writes, and the commit log sync settings Cassandra accepts.
+# cassandra_config: passwords YAML reads back as written, the heap settings cassandra-env.sh
+# accepts, the GC values, the accounts of what it writes, and the commit log sync settings Cassandra accepts.
 
 import os
 import re
@@ -42,6 +42,22 @@ def render(template, escape_backslashes=True, **variables):
 TEMPLATES = os.path.join(TASKS, "..", "templates")
 with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
     ROLE_VARS = yaml.safe_load(f)
+with open(os.path.join(TASKS, "..", "templates", "5.0", "cassandra.yaml.j2"), encoding="utf-8") as f:
+    TDE_LINE = [line for line in f.read().split("\n") if line.strip().startswith("keystore_password: {{ (cassandra_tde")][0]
+
+
+@pytest.mark.parametrize("password", [
+    "cassandra", "abc #def", "a: b", "@x", "%x", "*x", "!x", "'q'", '"d"', "it's", "yes", "Off", "123", "", "a\\b", "p@ss/w=rd+1",
+])
+def test_passwords_read_back_as_written(password):
+    rendered = render(TDE_LINE, escape_backslashes=False, cassandra_tde_keystore_password=password,
+                      _cassandra_config_quote=ROLE_VARS["_cassandra_config_quote"])
+    assert yaml.safe_load(rendered) == {"keystore_password": password}
+
+
+def test_plain_password_stays_as_in_stock():
+    assert render(TDE_LINE, escape_backslashes=False, cassandra_tde_keystore_password="cassandra",
+                  _cassandra_config_quote=ROLE_VARS["_cassandra_config_quote"]).strip() == "keystore_password: cassandra"
 
 
 def task_that(name):

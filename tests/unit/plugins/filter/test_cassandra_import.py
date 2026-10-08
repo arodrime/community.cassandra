@@ -839,12 +839,80 @@ def test_identity_text_not_a_number(name, seeds):
     assert (got["cassandra_cluster_name"], got["cassandra_seeds"]) == (name, [seeds])
 
 
-@pytest.mark.parametrize("password", ['"#abc"', '"*abc"', "'a # b'", '"x: y"'])
-def test_quoted_value_kept_quoted(password):
-    live = re.sub(r"^(\s*keystore_password:).*$", r"\1 " + password, stock_yaml("50x"), count=1, flags=re.M)
+# Passwords YAML would not read back as written unquoted, and plain ones
+PASSWORDS = ["cassandra", "abc #def", "a: b", "x #", "@x", "%x", "*x", "&x", "!x", "{x}", "[x]", "-x", "? x", "|x", ">x",
+             "'q'", '"d"', "it's", "yes", "Off", "null", "~", "123", "0123", "1_000", "12:30", "a\\b", "p@ss/w=rd+1",
+             " lead", "trail ", "{{ x }}", "{%x", ""]
+
+
+def secret_vars(series):
+    """The variables of the cassandra.yaml passwords the role quotes."""
+    with open(os.path.join(cassandra_import.ROLE, "templates", cassandra_import.SERIES[series], "cassandra.yaml.j2")) as f:
+        return sorted(set(re.findall(r"\((\w+)(?: or '[^']*')?\) \| regex_replace", f.read())))
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+def test_every_password_line_is_quoted(series):
+    with open(os.path.join(cassandra_import.ROLE, "templates", cassandra_import.SERIES[series], "cassandra.yaml.j2")) as f:
+        lines = [line for line in f.read().split("\n") if re.search(r"password: .*\{\{", line)]
+    assert len(lines) == {"40x": 5, "41x": 6, "50x": 7}[series]
+    assert [line for line in lines if not re.search(r"\w*password: \{\{ %s \}\}$" % cassandra_import.QUOTED, line)] == []
+
+
+@pytest.mark.parametrize("role, node, same", [
+    ("keystore_password: '0123'", "keystore_password: 0123", True),  # the same text for Cassandra
+    ("keystore_password: 'null'", "keystore_password: null", False),  # null is no value
+    ("keystore_password: ''", "keystore_password:", False),
+    ("        - keystore: ''", "        - keystore:", False),  # in a list item too
+])
+def test_same_setting_as_text_but_null(role, node, same):
+    assert _same_setting("cassandra.yaml", role, node) is same
+
+
+@pytest.mark.parametrize("line", ["key_password: null", "key_password: ~", "key_password:", 'key_password: "a\\nb"'])
+def test_password_not_read_as_text_is_a_hand_edit(line):
+    """No value is null for Cassandra, not the text null; a line break would not render back: left as they are."""
+    live = re.sub(r"^(\s*)key_password:.*$", lambda m: m.group(1) + line, stock_yaml("50x"), count=1, flags=re.M)
     out = cassandra_config_import({"cassandra.yaml": live}, "50x", FACTS)
-    assert out["vars"]["cassandra_tde_keystore_password"] == password  # written back as the node has it
+    assert "cassandra_tde_key_password" not in out["vars"]
+    assert ["+"] + cassandra_import._mask(line).split() in [h.split() for h in out["hand_edits"]]
+    assert not [h for h in out["hand_edits"] if re.search(r"\bb\b", h)]  # no line of a password unmasked
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("password", PASSWORDS)
+def test_password_round_trip(series, password):
+    """Written by the role as YAML reads it back, imported as the password itself."""
+    secrets = secret_vars(series)
+    live = node_files(series, **dict((v, password) for v in secrets))["cassandra.yaml"]
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    env, ctx, dummy = _load_role(series, FACTS)
+    assert dict((v, out["vars"].get(v, ctx[v])) for v in secrets) == dict((v, password) for v in secrets)
+    assert (out["hand_edits"], out["normalized"]) == ([], [])
+    if password:  # "" leaves the 5.0 ones commented out
+        assert yaml.safe_load(live)["transparent_data_encryption_options"]["key_provider"][0]["parameters"][0][
+            "key_password"] == password
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+@pytest.mark.parametrize("line, password", [
+    ('"#abc"', "#abc"), ('"*abc"', "*abc"), ("'a # b'", "a # b"), ('"x: y"', "x: y"), ("'it''s'", "it's"),
+    ('"say \\"hi\\""', 'say "hi"'), ("'0123'", "0123"), ("0123", "0123"), ("yes", "yes"), ('"S3cr3t" # rotated', "S3cr3t"),
+    ("'a #b'   # rotated", "a #b"),
+])
+def test_password_however_quoted(series, line, password):
+    live = re.sub(r"^(\s*key_password:).*$", lambda m: m.group(1) + " " + line, stock_yaml(series), count=1, flags=re.M)
+    assert "key_password: " + line in live
+    out = cassandra_config_import({"cassandra.yaml": live}, series, FACTS)
+    assert out["vars"]["cassandra_tde_key_password"] == password
     assert out["hand_edits"] == []
+
+
+@pytest.mark.parametrize("line", ["keystore_password: 'it''s a secret'", 'keystore_password: "a \\" b"',
+                                  "keystore_password: plain # c"])
+def test_mask_hides_the_whole_quoted_value(line):
+    masked = cassandra_import._mask(line)
+    assert masked.startswith("keystore_password: ****") and not re.search(r"secret|\bb\b|plain", masked)
 
 
 def test_quoted_secret_with_a_comment_not_in_the_report():
