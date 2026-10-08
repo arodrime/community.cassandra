@@ -47,12 +47,12 @@
       module_defaults:
         community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
       delegate_to: "{{ item }}"
-      # two of them, not the ones the preflight found stopped
+      # two of them: the ones the preflight found running first, never the ones it found stopped
       loop: >-
-        {{ (_cassandra_stream_peers | default([]) | map('extract', hostvars) | rejectattr('_cassandra_preflight_running', 'defined')
-            | map(attribute='inventory_hostname') | list
-            + _cassandra_stream_peers | default([]) | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
-              | selectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list)[:2] }}
+        {{ (_cassandra_stream_peers | default([]) | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
+            | selectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list
+            + _cassandra_stream_peers | default([]) | map('extract', hostvars) | rejectattr('_cassandra_preflight_running', 'defined')
+              | map(attribute='inventory_hostname') | list)[:2] }}
       register: cassandra_stream_seen
       failed_when: false
       ignore_unreachable: true

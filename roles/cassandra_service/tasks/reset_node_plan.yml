@@ -277,13 +277,9 @@
   ansible.builtin.set_fact:
     _cassandra_node_reset_plan:
       problems: >-
-        {{ [] if _auto | bool and not _has_data | bool
-           else _cassandra_node_reset_dirs.problems + ([] if _auto | bool else _cassandra_node_reset_ring.problems)
-           + (cassandra_node_reset_found.skipped_paths | default({}) | dict2items
-              | rejectattr('value', 'search', 'not a directory|No such file')
-              | map(attribute='key') | map('regex_replace', '$', ': can not be read (without root?)') | list)
-           + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
-              | map(attribute='item') | map('regex_replace', '$', ': can not be checked (without root?)') | list)
+        {{ (_unread + _cassandra_node_reset_dirs.problems | select('search', 'cassandra.yaml (can not be read|is not valid|is not a mapping)')
+            | list) if _auto | bool and not _has_data | bool
+           else _cassandra_node_reset_dirs.problems + ([] if _auto | bool else _cassandra_node_reset_ring.problems) + _unread
            + (['a Cassandra JVM runs that the cassandra unit did not start (by hand?), so it can not stop it: stop it first']
               if cassandra_node_reset_jvm.rc == 0 and not _active | bool and not _auto | bool else [])
            + (_cassandra_node_reset_check.problems if _auto | bool else []) }}
@@ -320,6 +316,13 @@
     _active: "{{ _status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}"
     _auto: "{{ _cassandra_node_reset_auto | default(false) }}"
     _has_data: "{{ cassandra_node_reset_found.files | default([]) | rejectattr('path', 'search', '/lost[+]found$') | list | length > 0 }}"
+    # what could not be looked at: add_node's reset of a node that seems empty is refused on it too
+    _unread: >-
+      {{ (cassandra_node_reset_found.skipped_paths | default({}) | dict2items
+          | rejectattr('value', 'search', 'not a directory|No such file')
+          | map(attribute='key') | map('regex_replace', '$', ': can not be read (without root?)') | list)
+         + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
+            | map(attribute='item') | map('regex_replace', '$', ': can not be checked (without root?)') | list) }}
 
 - name: What the reset of {{ inventory_hostname }} would do
   ansible.builtin.debug:

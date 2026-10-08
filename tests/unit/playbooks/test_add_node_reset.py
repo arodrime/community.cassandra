@@ -48,7 +48,7 @@ def render(template, variables):
 
 
 def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", peers=(), cluster="Test Cluster",
-          keyspaces=None, ring_problems=(), auto=True, enabled="enabled"):
+          keyspaces=None, ring_problems=(), auto=True, enabled="enabled", dir_problems=(), skipped=None):
     v = {
         "inventory_hostname": "node7", "cassandra_cluster_name": "my_cluster", "_cassandra_node_reset_auto": auto,
         "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "rack_b"},
@@ -56,9 +56,9 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
         "cassandra_node_reset_jvm": {"rc": 0 if running else 1},
         "cassandra_node_reset_du": {"stdout_lines": ["1\t/x", du]},
         "cassandra_node_reset_peers": {"files": [{"path": p} for p in peers]},
-        "cassandra_node_reset_found": {"files": [{"path": p} for p in found]},
+        "cassandra_node_reset_found": {"files": [{"path": p} for p in found], "skipped_paths": skipped or {}},
         "_cassandra_node_reset_listed": {"cluster_name": cluster},
-        "_cassandra_node_reset_dirs": {"problems": [], "dirs": [
+        "_cassandra_node_reset_dirs": {"problems": list(dir_problems), "dirs": [
             {"path": DATA, "real": DATA, "kinds": ["data"], "from": ["inventory"]},
             {"path": "/var/lib/cassandra/commitlog", "real": "/var/lib/cassandra/commitlog", "kinds": ["commitlog"],
              "from": ["inventory"]}]},
@@ -94,6 +94,17 @@ def test_node_without_data_needs_nothing():
     plan = v["_cassandra_node_reset_plan"]
     assert plan["problems"] == [] and plan["line"] == "" and plan["delete"] == []
     assert plan["stop"] is False and plan["disable"] is False
+
+
+def test_node_that_seems_empty_but_can_not_be_read_refused():
+    # nothing found, but a directory or the live cassandra.yaml could not be read: data may hide there
+    unreadable = "the live /etc/cassandra/cassandra.yaml can not be read: its directories are unknown"
+    plan = facts(dir_problems=[unreadable, "data directory from inventory, /data: not a mount point"],
+                 skipped={DATA: "Permission denied"})["_cassandra_node_reset_plan"]
+    assert plan["problems"] == [DATA + ": can not be read (without root?)", unreadable]
+    # a path the reset would refuse does not matter on an empty node
+    assert facts(dir_problems=["data directory from inventory, /data: not a mount point"])["_cassandra_node_reset_plan"][
+        "problems"] == []
 
 
 @pytest.mark.parametrize("running, active", [(True, "inactive"), (False, "active"), (True, "active")])
@@ -145,3 +156,12 @@ def test_reset_node_playbook_unchanged():
     v = facts(found=STOCK, running=True, active="active", auto=False)
     plan = v["_cassandra_node_reset_plan"]
     assert plan["problems"] == [] and plan["stop"] is True and plan["line"] == "" and plan["refusal"] == ""
+
+
+def test_topology_reads_the_keyspaces_before_the_reset_of_the_hosts_to_add():
+    # the reset checks the user keyspaces of a host to add against the cluster's (else refused: unknown)
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "topology.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    names = [t.get("name") for p in plays for t in p.get("tasks", [])]
+    assert names.index("Read the keyspaces for the hosts to add") < names.index("Check the hosts to add")
+    assert names.index("Share the keyspaces with the hosts to add") < names.index("Check the hosts to add")
