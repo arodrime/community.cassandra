@@ -452,8 +452,8 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
         count_text = "%s %d/%d checks" % (word, idle_checks, limit) if idle_checks and limit else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
     elif not total:
-        line = "  ".join([head, "waiting for streams"] + (["%d/%d checks" % (idle_checks, limit)] if idle_checks and limit
-                                                           else []) + [elapsed])
+        checks = ["%d/%d checks" % (idle_checks, limit)] if idle_checks and limit else []
+        line = "  ".join([head, "waiting for streams"] + checks + [elapsed])
     else:
         eta = ""
         if speed and total > done:
