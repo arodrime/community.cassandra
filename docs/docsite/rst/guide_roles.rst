@@ -912,7 +912,11 @@ between nodes and the hand edits no variable covers (``cassandra_config`` would 
 In ``<cluster group>.yml`` every node is named by its hostname, the short one it reports, with ``ansible_host`` set to its
 address in the ring. ``import_cluster_host_names`` picks the name: ``hostname`` (default), ``fqdn`` or ``ip``;
 ``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address.
-A node that could not be reached keeps the name it was given, or its address. In the ``group_vars`` and
+The nodes found in the ring are reached as the given one is: by the name the given node knows them by (``getent
+hosts`` there), with its connection variables (``ansible_user``, port, key, ssh arguments, become), at their ring
+address only when the given node has an ``ansible_host`` of its own; so an ssh configuration that matches host names
+works for them too. A node that could not be reached keeps the name it was given, or its address, and is listed in
+TO DO. In the ``group_vars`` and
 ``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
 JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each. The report, and the end
 of the run, start with the differences between nodes: each setting that differs, with its values and the nodes, DC or

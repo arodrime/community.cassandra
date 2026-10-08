@@ -1331,23 +1331,17 @@ GETENT_NODE = "10.0.0.2        node2.example.org node2\n10.0.0.3        node3.ex
 
 
 def test_ring_names_as_the_given_node():
-    """The nodes found in the ring are reached (and so named) as the given node is: its short name, or the fqdn when
-    the given name has a domain; when the controller resolves that name to the node's address, else the address."""
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        cassandra_ring_lookups, cassandra_ring_names)
+    """The nodes found in the ring are named as the given node knows them: its short name, or the fqdn when the
+    given name has a domain; the address when it knows no name for it."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_ring_names
     found = ["10.0.0.2", "10.0.0.3", "10.0.0.4"]  # 10.0.0.4: no name on the node
-    assert cassandra_ring_lookups(GETENT_NODE, found, "node1") == [
-        "node2.example.org", "node2", "node3.example.org", "node3"]
-    controller = {"node2": "10.0.0.2 STREAM node2.example.org\n10.0.0.2 DGRAM\n", "node2.example.org": "10.0.0.2 STREAM\n",
-                  "node3.example.org": "10.0.0.3 STREAM\n", "node3": "10.0.0.9 STREAM node3\n"}
-    assert cassandra_ring_names(GETENT_NODE, controller, found, "node1") == {
-        "10.0.0.2": "node2", "10.0.0.3": "10.0.0.3", "10.0.0.4": "10.0.0.4"}  # node3: another address here
-    assert cassandra_ring_names(GETENT_NODE, controller, found, "node1.example.org") == {
+    assert cassandra_ring_names(GETENT_NODE, found, "node1") == {
+        "10.0.0.2": "node2", "10.0.0.3": "node3", "10.0.0.4": "10.0.0.4"}
+    assert cassandra_ring_names(GETENT_NODE, found, "node1.example.org") == {
         "10.0.0.2": "node2.example.org", "10.0.0.3": "node3.example.org", "10.0.0.4": "10.0.0.4"}
-    # the given node named by its address: the others too; nothing resolved on the controller: addresses
-    assert cassandra_ring_names(GETENT_NODE, controller, found, "10.0.0.1") == dict((a, a) for a in found)
-    assert cassandra_ring_lookups(GETENT_NODE, found, "10.0.0.1") == []
-    assert cassandra_ring_names(GETENT_NODE, {}, found, "node1") == dict((a, a) for a in found)
+    # the given node named by its address: the others too; getent found nothing: addresses
+    assert cassandra_ring_names(GETENT_NODE, found, "10.0.0.1") == dict((a, a) for a in found)
+    assert cassandra_ring_names("", found, "node1") == dict((a, a) for a in found)
 
 
 def _owner_nodes():

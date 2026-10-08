@@ -15,9 +15,8 @@ cassandra_config_ignored_vars: variable names, series -> the cassandra_config
     an upgrade to 4.1).
 cassandra_import_error: a failed task's result -> why it failed, without the
     values (the import's no_log tasks hold passwords).
-cassandra_ring_names: getent hosts on a given node and on the controller ->
-    the name to reach each node found in the ring by (cassandra_ring_lookups:
-    the names to look up on the controller).
+cassandra_ring_names: getent hosts on a given node -> the name to reach each
+    node found in the ring by.
 
 Their unexpected errors do not quote the error message, which may show a value
 read from the config (a password): its type and where it happened only.
@@ -1805,39 +1804,22 @@ def _getent(text):
     return names, addresses
 
 
-def cassandra_ring_names(on_node, on_controller, addresses, given):
+def cassandra_ring_names(on_node, addresses, given):
     """on_node: getent hosts <addresses> on the given node that read the ring;
-    on_controller: {name: getent ahostsv4 <name> on the controller} for the
-    names it gave;
     addresses: the nodes found in the ring; given: that given node's
-    inventory name. Returns {address: the name to reach it by}: the name in
-    the form the given one has (its short name, or the fqdn when the given
-    name has a domain), when the controller resolves it to that address;
-    else the address (a given node named by its address too)."""
+    inventory name. Returns {address: the name to reach it by}: the name the
+    given node knows it by, in the form the given name has (its short name,
+    or the fqdn when the given name has a domain); else the address (a given
+    node named by its address: the others too)."""
     if _IPV4.match(str(given)) or ":" in str(given):
         return dict((a, a) for a in addresses)
     names, dummy = _getent(on_node)
-    resolved = dict((name, [line.split()[0] for line in (text or "").splitlines() if line.split()])
-                    for name, text in (on_controller or {}).items())
     out = {}
     for address in addresses:
         found = names.get(address) or []
         fqdn = next((n for n in found if "." in n), "")
-        name = fqdn if "." in str(given) else (found[0].split(".")[0] if found else "")
-        out[address] = name if name and address in resolved.get(name, []) else address
+        out[address] = (fqdn if "." in str(given) else (found[0].split(".")[0] if found else "")) or address
     return out
-
-
-def cassandra_ring_lookups(on_node, addresses, given):
-    """The names to look up on the controller (see cassandra_ring_names)."""
-    names, dummy = _getent(on_node)
-    out = []
-    for address in addresses:
-        for name in names.get(address) or []:
-            for n in (name, name.split(".")[0]):
-                if n not in out:
-                    out.append(n)
-    return [] if _IPV4.match(str(given)) or ":" in str(given) else out
 
 
 class FilterModule(object):
@@ -1856,5 +1838,4 @@ class FilterModule(object):
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,
             "cassandra_ring_names": cassandra_ring_names,
-            "cassandra_ring_lookups": cassandra_ring_lookups,
         }

@@ -63,8 +63,9 @@
 # its address.
 # The nodes found in the ring are reached as the given node is: by the name it
 # knows them by (getent hosts there; short, or the fqdn when the given name has
-# a domain) when the controller resolves it to the same address, else by the
-# address; one not reached is named by its address, and listed as not read.
+# a domain), with its connection variables (ansible_user, port, key, ssh args,
+# become...), at their ring address when the given node has an ansible_host;
+# one not reached is named by its address, and listed as not read.
 # The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
 # time sync, firewall) is listed in the report, and what a variable covers is
 # carried into the inventory for the nodes added later.
@@ -173,8 +174,8 @@
           {%- endfor -%}
           {{ out | select | unique | list }}
 
-    # reached by name as the given node is (ssh config, known_hosts), when the controller resolves that name
-    # to the node's address; else by its address
+    # reached as the given node is: by the name it knows them by (ssh config and known_hosts entries match
+    # names), with its connection variables; at their ring address only when the given node has one too
     - name: Find the names of the nodes found in the ring, as the given node knows them
       ansible.builtin.command:
         argv: "{{ ['getent', 'hosts'] + import_cluster_new }}"
@@ -186,42 +187,39 @@
       check_mode: false
       when: import_cluster_new | length > 0
 
-    - name: Check the controller resolves them to the same addresses
-      ansible.builtin.command:
-        argv: [getent, ahostsv4, "{{ item }}"]
-      delegate_to: localhost
-      become: false
-      run_once: true
-      register: import_cluster_peer_lookups
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      loop: "{{ _names }}"
-      vars:
-        ansible_connection: local  # never an inventory's connection to localhost
-        ansible_become: false  # an inventory ansible_become beats the become keyword
-        _names: >-
-          {{ import_cluster_peer_names.stdout | default('')
-             | community.cassandra.cassandra_ring_lookups(import_cluster_new, import_cluster_from) }}
-
     - name: Add the nodes the inventory does not have yet
       ansible.builtin.add_host:
         name: "{{ _name }}"
-        ansible_host: "{{ item if _name == item else omit }}"
+        ansible_host: "{{ item if _name == item or _by_address else omit }}"
         import_cluster_address: "{{ item }}"
         groups: [import_cluster_found]
+        ansible_connection: "{{ _given.ansible_connection | default(omit) }}"
+        ansible_user: "{{ _given.ansible_user | default(omit) }}"
+        ansible_port: "{{ _given.ansible_port | default(omit) }}"
+        ansible_password: "{{ _given.ansible_password | default(omit) }}"
+        ansible_ssh_pass: "{{ _given.ansible_ssh_pass | default(omit) }}"
+        ansible_private_key_file: "{{ _given.ansible_private_key_file | default(omit) }}"
+        ansible_ssh_private_key_file: "{{ _given.ansible_ssh_private_key_file | default(omit) }}"
+        ansible_ssh_common_args: "{{ _given.ansible_ssh_common_args | default(omit) }}"
+        ansible_ssh_extra_args: "{{ _given.ansible_ssh_extra_args | default(omit) }}"
+        ansible_become: "{{ _given.ansible_become | default(omit) }}"
+        ansible_become_method: "{{ _given.ansible_become_method | default(omit) }}"
+        ansible_become_user: "{{ _given.ansible_become_user | default(omit) }}"
+        ansible_become_password: "{{ _given.ansible_become_password | default(omit) }}"
+        ansible_become_pass: "{{ _given.ansible_become_pass | default(omit) }}"
+        ansible_python_interpreter: "{{ _given.ansible_python_interpreter | default(omit) }}"
       loop: "{{ import_cluster_new }}"
       run_once: true
+      no_log: true  # the given node's passwords, if any
       vars:
+        _given: "{{ hostvars[import_cluster_from] }}"
         _names: >-
           {{ import_cluster_peer_names.stdout | default('')
-             | community.cassandra.cassandra_ring_names(dict(import_cluster_peer_lookups.results | default([])
-                                                             | map(attribute='item')
-                                                             | zip(import_cluster_peer_lookups.results | default([])
-                                                                   | map(attribute='stdout', default=''))),
-                                                        import_cluster_new, import_cluster_from) }}
+             | community.cassandra.cassandra_ring_names(import_cluster_new, import_cluster_from) }}
         # a name the inventory has already (another host, maybe another cluster's): the address instead
         _name: "{{ item if _names[item] in groups['all'] else _names[item] }}"
+        # the given node reached at an address of its own (ansible_host): the found ones at theirs
+        _by_address: "{{ _given.ansible_host | default(import_cluster_from) != import_cluster_from }}"
 
     - name: Stop if no node answered
       ansible.builtin.assert:

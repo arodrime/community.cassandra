@@ -187,3 +187,46 @@ def test_found_name_of_an_inventory_host_not_taken():
     assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(add["vars"]["_name"])) == "10.0.0.2"
     variables["groups"] = {"all": ["node1"]}
     assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(add["vars"]["_name"])) == "web1"
+
+
+def _added(given_vars, getent, given="node2", known=()):
+    """What 'Add the nodes the inventory does not have yet' gives each found node: {address: {var: value}}."""
+    add = task("Add the nodes the inventory does not have yet")
+    out = {}
+    for address in ["10.0.0.1", "10.0.0.3"]:
+        variables = {"hostvars": {given: given_vars}, "import_cluster_from": given, "item": address,
+                     "import_cluster_new": ["10.0.0.1", "10.0.0.3"], "import_cluster_peer_names": {"stdout": getent},
+                     "groups": {"all": [given] + list(known)}, "omit": "__omit__"}
+        templar = Templar(loader=DataLoader(), variables=variables)
+        for key, value in add["vars"].items():
+            variables[key] = templar.template(trust_as_template(value))
+        templar = Templar(loader=DataLoader(), variables=variables)
+        args = dict((k, templar.template(trust_as_template(v))) for k, v in add["ansible.builtin.add_host"].items()
+                    if k != "groups")
+        out[address] = dict((k, v) for k, v in args.items() if v != "__omit__")
+    return out
+
+
+def test_found_nodes_reached_as_the_given_one():
+    # -i node2, with an ssh config for the names only: the found nodes get the name the given node knows them by
+    # (the controller need not resolve it), its connection variables, and no address to connect to
+    given = {"ansible_user": "ops", "ansible_port": 2222, "ansible_ssh_private_key_file": "~/.ssh/ops",
+             "ansible_ssh_common_args": "-o ProxyJump=bastion", "ansible_become_method": "su",
+             "ansible_become_password": "pw"}
+    added = _added(given, "10.0.0.1  node1.example.org node1\n10.0.0.3  node3\n")
+    assert dict((k, str(v)) for k, v in added["10.0.0.1"].items()) == dict(
+        (k, str(v)) for k, v in dict(given, name="node1", import_cluster_address="10.0.0.1").items())
+    assert added["10.0.0.3"]["name"] == "node3" and "ansible_host" not in added["10.0.0.3"]
+    # the given node reached at an address of its own: the found ones at theirs
+    added = _added(dict(given, ansible_host="10.0.0.2"), "10.0.0.1  node1\n")
+    assert added["10.0.0.1"]["name"] == "node1" and added["10.0.0.1"]["ansible_host"] == "10.0.0.1"
+    # no name known on the given node: the address, reached there
+    assert added["10.0.0.3"]["name"] == "10.0.0.3" and added["10.0.0.3"]["ansible_host"] == "10.0.0.3"
+    # a name the inventory has already: the address
+    added = _added({}, "10.0.0.1  node1\n", known=["node1"])
+    assert added["10.0.0.1"] == {"name": "10.0.0.1", "ansible_host": "10.0.0.1", "import_cluster_address": "10.0.0.1"}
+
+
+def test_found_nodes_names_need_no_controller_lookup():
+    # the old way needed the controller to resolve each name: nothing runs on the controller now
+    assert not any("controller resolves" in t.get("name", "") for play in PLAYS for t in play.get("tasks", []))
