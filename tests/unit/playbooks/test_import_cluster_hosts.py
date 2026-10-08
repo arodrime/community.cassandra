@@ -107,7 +107,7 @@ def test_other_connection_address_noted():
         variables[k] = ""
     templar = Templar(loader=DataLoader(), variables=variables)
     notes = templar.template(trust_as_template(MATCH["vars"]["_node"]["notes"]))
-    assert "reached at node1.mgmt, hosts.yml has its ring address 10.0.0.1" in notes[-1]
+    assert "reached at node1.mgmt, its hosts file has its ring address 10.0.0.1" in notes[-1]
     variables["item"] = {"address": "10.0.0.2"}
     notes = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(MATCH["vars"]["_node"]["notes"]))
     assert not any("reached at" in n for n in notes)

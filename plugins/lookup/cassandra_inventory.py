@@ -40,12 +40,11 @@ EXAMPLES = r"""
 RETURN = r"""
 _raw:
   description:
-    - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(shared_imported), C(clusters)
+    - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters)
       (a list of C(name), C(hosts): C(name), C(vars), C(names))."
     - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) (empty when none);
-      C(imported) whether import_cluster wrote it in a dir of its own (its C(hosts.yml)); C(shared_imported) the
-      clusters import_cluster wrote in a dir it shares with others (C(import_cluster_shared_dir), their
-      C(<cluster>.yml)); C(options) is the list of the command line options the
+      C(imported) the clusters import_cluster wrote there (their C(<cluster>.yml));
+      C(options) is the list of the command line options the
       printed commands need (the vault and user options of this run; no C(-b), the playbooks become root
       on the nodes themselves); C(vault_prompt_added) whether
       C(--ask-vault-pass) is there because help found vaulted values.
@@ -233,9 +232,9 @@ def read(sources, given=None, basedir=None, env=None):
     if (loader.skipped or vaulted) and not vault_given:
         options.append("--ask-vault-pass")  # the operations read the vaulted values help skipped
         prompt_added = True
-    own, shared = _imported(sources, [c["name"] for c in clusters])
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
-            "options": options, "imported": own, "shared_imported": shared, "vault_prompt_added": prompt_added}
+            "options": options, "imported": _imported(sources, [c["name"] for c in clusters]),
+            "vault_prompt_added": prompt_added}
 
 
 def _written_by_import(path):
@@ -247,15 +246,12 @@ def _written_by_import(path):
 
 
 def _imported(sources, names):
-    """Whether import_cluster wrote the inventory in its own dir (its hosts.yml starts with the import's line),
-    and the clusters of names it wrote in a shared dir (their <cluster>.yml)."""
+    """The clusters of names import_cluster wrote there (their <cluster>.yml starts with the import's line)."""
     first = sources[0] if sources else ""
     whole = os.path.isdir(first)
     where = first if whole else os.path.dirname(first)
-    own = (whole or os.path.basename(first) == "hosts.yml") and _written_by_import(os.path.join(where, "hosts.yml"))
-    shared = [n for n in names if (whole or os.path.basename(first) == n + ".yml")
-              and _written_by_import(os.path.join(where, n + ".yml"))]
-    return own, shared
+    return [n for n in names if (whole or os.path.basename(first) == n + ".yml")
+            and _written_by_import(os.path.join(where, n + ".yml"))]
 
 
 class LookupModule(LookupBase):

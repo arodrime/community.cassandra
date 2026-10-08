@@ -55,7 +55,7 @@ def test_reads_the_cluster(tmp_path):
     assert host(model, "node1")["vars"] == {"ansible_host": "192.0.2.11", "cassandra_dc": "dc1",
                                             "cassandra_cluster_name": "Orders"}
     assert model["options"] == []
-    assert model["vault_skipped"] == [] and model["imported"] is False
+    assert model["vault_skipped"] == [] and model["imported"] == []
     assert model["vault_prompt_added"] is False
 
 
@@ -142,26 +142,19 @@ def test_current_dir_group_vars_not_read(tmp_path, monkeypatch):
 
 
 def test_imported(tmp_path):
-    for i, line in enumerate((GENERATED % "orders", GENERATED_UNNAMED)):
-        source = inventory(tmp_path / str(i), hosts=line + "\n" + HOSTS)
-        assert read([source])["imported"] is True
-        assert read([os.path.dirname(source)])["imported"] is True
-        assert read([source])["shared_imported"] == []
-
-
-def test_imported_into_a_shared_dir(tmp_path):
-    """<cluster>.yml next to other clusters': the import wrote it with import_cluster_shared_dir."""
+    """<cluster>.yml with the import's first line, next to other clusters' or not."""
     inv = tmp_path / "inv"
     inv.mkdir()
-    (inv / "orders.yml").write_text(GENERATED % "orders" + "\n" + HOSTS)
-    (inv / "billing.yml").write_text("all:\n  children:\n    billing:\n      hosts:\n        node9: {}\n")
-    model = read([str(inv)])
-    assert model["imported"] is False and model["shared_imported"] == ["orders"]
-    assert read([str(inv / "orders.yml")])["shared_imported"] == ["orders"]
-    # the hosts file alone, named after another group: not the shared file of a cluster
-    assert read([str(inv / "billing.yml")])["shared_imported"] == []
-    (inv / "hosts.yml").write_text(GENERATED % "orders" + "\n" + HOSTS)
-    assert read([str(inv / "orders.yml")])["imported"] is False  # not this file
+    for line in (GENERATED % "orders", GENERATED_UNNAMED):
+        (inv / "orders.yml").write_text(line + "\n" + HOSTS)
+        (inv / "billing.yml").write_text("all:\n  children:\n    billing:\n      hosts:\n        node9: {}\n")
+        assert read([str(inv)])["imported"] == ["orders"]
+        assert read([str(inv / "orders.yml")])["imported"] == ["orders"]
+        # the hosts file alone, named after another group: not the file of a cluster
+        assert read([str(inv / "billing.yml")])["imported"] == []
+    # a hosts.yml of the import (one dir per cluster, an earlier layout): not taken as this cluster's
+    source = inventory(tmp_path / "own", hosts=GENERATED % "orders" + "\n" + HOSTS)
+    assert read([source])["imported"] == [] and read([os.path.dirname(source)])["imported"] == []
 
 
 def test_value_from_an_inline_vault_masked(tmp_path):

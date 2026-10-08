@@ -12,12 +12,9 @@ import re
 import subprocess
 import sys
 
-import yaml
-
 from ansible.parsing.vault import VaultLib, VaultSecret
 
 COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".."))
-TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 HOSTS = """\
 all:
@@ -214,30 +211,18 @@ def test_help_write_is_idempotent(tmp_path):
     assert (inv / "RUNBOOK.md").read_text() == runbook
 
 
-def test_help_inventory_as_import_cluster_runs_it(tmp_path):
-    # import_cluster_runbook: the run's own inventory is the nodes given (-i node1,), help reads the one written
+def test_help_inventory(tmp_path):
+    # help_inventory: read instead of the run's own inventory (here the nodes given, -i node1,)
     inv = inventory(tmp_path)
     rc, out = run(tmp_path, "-i", "192.0.2.11,", "-e", "help_inventory=inventories/orders/hosts.yml",
-                  "-e", "help_write=true", "-e", "help_show=false")
+                  "-e", "help_write=true")
     assert rc == 0, out
-    assert "Cluster 'Orders'" not in out  # RUNBOOK.md only
+    assert "Cluster 'Orders'" in out
     assert "-i inventories/orders/hosts.yml community.cassandra.status" in (inv / "RUNBOOK.md").read_text()
 
 
-def test_import_cluster_writes_the_runbook_on_request():
-    # _dir: the import's localhost fact, still there in the help play (test_help_inventory_as_import_cluster_runs_it
-    # runs that play the way the import does)
-    with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-        last = yaml.safe_load(f)[-1]
-    assert last["ansible.builtin.import_playbook"] == "help.yml"
-    assert last["when"] == "import_cluster_runbook | default(false) | bool and not ansible_check_mode"
-    assert last["vars"] == {"help_inventory": "{{ _dir if import_cluster_shared_dir | default(false) | bool else _dir ~ '/hosts.yml' }}",
-                            "help_runbook_dir": "{{ _report_dir }}", "cassandra_hosts": "{{ _layout.cluster_group }}",
-                            "help_write": True, "help_show": False}
-
-
-def test_runbook_of_a_cluster_in_a_shared_dir(tmp_path):
-    # import_cluster_shared_dir: help reads the whole dir, for this cluster, and writes RUNBOOK.md with the report
+def test_runbook_of_an_imported_cluster(tmp_path):
+    # an inventory dir of imported clusters: help for one cluster, RUNBOOK.md next to its import report
     inv = inventory(tmp_path)
     shared = tmp_path / "inventories"
     (inv / "hosts.yml").rename(shared / "orders.yml")
@@ -246,7 +231,7 @@ def test_runbook_of_a_cluster_in_a_shared_dir(tmp_path):
     (shared / "billing.yml").write_text("all:\n  children:\n    billing:\n      hosts:\n        node9: {ansible_host: 192.0.2.19}\n")
     (tmp_path / "reports" / "orders").mkdir(parents=True)
     rc, out = run(tmp_path, "-i", "192.0.2.11,", "-e", "help_inventory=inventories", "-e", "cassandra_hosts=orders",
-                  "-e", "help_runbook_dir=reports/orders", "-e", "help_write=true", "-e", "help_show=false")
+                  "-e", "help_runbook_dir=reports/orders", "-e", "help_write=true")
     assert rc == 0, out
     assert not (shared / "RUNBOOK.md").exists()
     runbook = (tmp_path / "reports" / "orders" / "RUNBOOK.md").read_text()
