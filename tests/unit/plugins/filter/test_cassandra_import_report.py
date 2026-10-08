@@ -9,7 +9,6 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
 
 WRITTEN = ["/p/inventories/my_cluster.yml", "/p/inventories"]
 REPORT = "/p/reports/my_cluster/report.txt"
-ARGS = "-i /p/inventories -e cassandra_hosts=my_cluster"
 
 
 def node(i, heap="8G", hand=None, read=True, **extra):
@@ -21,34 +20,56 @@ def node(i, heap="8G", hand=None, read=True, **extra):
 
 def report(nodes, ok=True, **kwargs):
     layout = cassandra_inventory_layout(nodes, "My Cluster")
-    return cassandra_import_report(layout, WRITTEN, REPORT, kwargs.pop("self_check", {}), ok, inventory_args=ARGS,
-                                   **kwargs)
+    kwargs.setdefault("cwd", "/p")
+    kwargs.setdefault("in_git", True)
+    return cassandra_import_report(layout, WRITTEN, REPORT, kwargs.pop("self_check", {}), ok, **kwargs)
 
 
 def test_compress():
     assert _compress(["node3", "node1", "node2", "web", "node5"]) == "node1..node3, node5, web"
     assert _compress(["n1", "n2"]) == "n1, n2"
     assert _compress(["a", "b"]) == "a, b"
+    assert _compress(["node%d" % i for i in range(1, 8)]) == "node1..node7"  # no count in a path
 
 
 def test_clean_import_ready():
     lines = report([node(i) for i in range(1, 6)])
-    assert lines[:4] == ["IMPORT my_cluster - 5 node(s) read / 5 - SELF-CHECK PASSED",
-                         "Written: /p/inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/<node>/ (none)",
-                         "Report:  /p/reports/my_cluster/report.txt", ""]
-    assert lines[4] == "READY - nothing to do; review and commit:  git diff && git commit"
+    assert lines[:4] == [u"IMPORT my_cluster — 5 nodes read / 5 — SELF-CHECK PASSED",
+                         "Written: inventories/my_cluster.yml, group_vars/my_cluster*/",
+                         "Report:  reports/my_cluster/report.txt", ""]
+    assert lines[4] == u"READY — nothing to do; review and commit:  git diff && git commit"
     text = "\n".join(lines)
     assert "s3cret" not in text
-    assert "  cassandra_jmx_password:  (in secrets.yml)             all" in lines
-    assert "  cassandra_seeds:         node1, node3                 all" in lines
-    assert "HAND EDITS" not in text and "<- differs" not in text
+    assert "  cassandra_jmx_password:  (in secrets.yml)   all" in lines
+    assert "  cassandra_seeds:         node1, node3       all" in lines
+    assert "HAND EDITS" not in text and "differs" not in text
     assert lines[-1] != "" and "NEXT" in lines and "DETAILS" in lines
+    # NEXT: no -i when the inventory is ansible.cfg's, no -e cassandra_hosts for a cluster alone
+    at = lines.index("NEXT")
+    assert lines[at + 1:at + 3] == [
+        u"  ansible-playbook community.cassandra.apply_config --check --diff   → expect: nothing to apply",
+        u"  ansible-playbook community.cassandra.topology --check              → expect: nothing to do"]
+    lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster")
+    assert ("  ansible-playbook -i inventories community.cassandra.apply_config -e cassandra_hosts=my_cluster"
+            u" --check --diff   → expect: nothing to apply") in lines
+
+
+def test_review_step_only_with_git():
+    # Q8: the git step only when the inventory dir is in a git work tree
+    lines = report([node(i) for i in range(1, 3)], in_git=False)
+    assert lines[4] == u"READY — nothing to do; review the files written in inventories"
+    lines = report([node(1, hand=["cassandra.yaml, line 10:", "  + concurrent_writes: 48"])], in_git=False)
+    assert "  2. Review the files written in inventories" in lines and "git" not in "\n".join(lines[:8])
 
 
 def test_values_grouped_with_their_nodes():
     lines = report([node(1), node(2), node(3), node(4, "16G"), node(5, "16G")])
-    at = lines.index("  cassandra_max_heap_size: 8G                           node1..node3")
-    assert lines[at + 1] == "                           16G                          node4, node5  <- differs (host_vars)"
+    at = lines.index("  cassandra_max_heap_size: 8G                 node1, node2, node3")  # the report: every name
+    assert lines[at + 1] == u"                           16G                node4, node5      ← differs (host_vars)"
+    assert lines[1] == "Written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/node4, node5/" or \
+        lines[1].startswith("Written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/")
+    screen = report([node(i) for i in range(1, 5)] + [node(i, "16G") for i in range(5, 7)], screen=True)
+    assert "  cassandra_max_heap_size: 8G                 node1..node4" in screen  # the screen: ranges
 
 
 def test_things_to_do_and_hand_edits():
@@ -59,33 +80,40 @@ def test_things_to_do_and_hand_edits():
     lines = report(nodes, ok=False, secrets_clear=["group_vars/my_cluster/secrets.yml"],
                    leftovers={"unsure": ["host_vars/old/main.yml"]},
                    self_check={"node1": {"differences": ["cassandra.yaml: concurrent_writes"], "notes": []}})
-    assert lines[0] == "IMPORT my_cluster - 3 node(s) read / 4 - SELF-CHECK FAILED"
+    assert lines[0] == u"IMPORT my_cluster — 3 nodes read / 4 — SELF-CHECK FAILED"
     at = lines.index("TO DO (5)")
     assert lines[at + 1:at + 6] == [
         "  1. Not read: node4 (unreachable): start Cassandra or fix the access, then import again"
         " (or -e import_cluster_allow_unread=true)",
-        "  2. Hand edits the roles would revert: cassandra.yaml concurrent_writes, jvm-server.options -Dcassandra.weird"
-        " (see HAND EDITS)",
+        "  2. Hand edits the roles would revert: concurrent_writes, -Dcassandra.weird (see below)",
         "  3. Self-check: the roles would change settings on node1 (see DETAILS)",
-        "  4. Passwords written in clear: cd /p/inventories && ansible-vault encrypt group_vars/my_cluster/secrets.yml",
+        "  4. Passwords written in clear: cd inventories && ansible-vault encrypt group_vars/my_cluster/secrets.yml",
         "  5. Files of an earlier import whose cluster is not known, kept: host_vars/old/main.yml (remove them if they"
-        " are this cluster's)"]
-    at = lines.index("HAND EDITS - no variable covers them; cassandra_config would revert")
-    assert lines[at + 1:at + 4] == ["  cassandra.yaml concurrent_writes:     48                           node1, node2",
-                                    "  jvm-server.options -Dcassandra.weird: 1                            node3",
+        " are this cluster's, or import again with -e import_cluster_adopt=true)"]
+    at = lines.index(u"HAND EDITS — no variable covers them; cassandra_config would revert")
+    assert lines[at + 1:at + 4] == ["  cassandra.yaml concurrent_writes:     48   node1, node2",
+                                    "  jvm-server.options -Dcassandra.weird: 1    node3",
                                     "  + 1 layout-only edits, no effect (details at the end)"]
     # the full detail at the end
     details = lines[lines.index("DETAILS"):]
     assert "  SELF-CHECK node1: the roles would change" in details and "        + concurrent_writes: 48" in details
 
 
+def test_left_as_it_is_grouped_by_nodes():
+    keep = {"cassandra_repository_manage": False, "cassandra_linux_manage": False, "cassandra_firewall_manage": False}
+    nodes = [node(i, keep=dict(keep)) for i in range(1, 4)] + [node(4, keep={"cassandra_firewall_manage": False})]
+    lines = report(nodes)
+    at = lines.index("LEFT AS IT IS (*_manage: false)")
+    assert lines[at + 1:at + 3] == ["  repositories, OS settings:  node1, node2, node3", "  firewall:                   all"]
+
+
 def test_screen_and_check():
     lines = report([node(i) for i in range(1, 4)], check=True, screen=True,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
-    assert lines[0] == "IMPORT my_cluster (--check, nothing written) - 3 node(s) read / 3 - SELF-CHECK PASSED"
+    assert lines[0] == u"IMPORT my_cluster (--check, nothing written) — 3 nodes read / 3 — SELF-CHECK PASSED"
     assert lines[1].startswith("Would write: ") and lines[2] == "Report:  not written under --check"
     assert "TO DO (1)" in lines and "  1. Write it: the same command without --check" in lines
-    assert lines[-1] == "Full report: written by the run without --check"
+    assert lines[-1] == "full report: written by the run without --check"
     assert "HAND EDITS" not in "\n".join(lines) and "NEXT" not in lines and "DETAILS" not in lines
     full = report([node(i) for i in range(1, 4)], check=True, leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert "Would be removed (an earlier import's, not written again): host_vars/gone/main.yml" in full
@@ -97,10 +125,10 @@ def test_where_each_value_is_kept():
              dict(node(7, "4G"), dc="dc3")]
     lines = report(nodes)
     at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_max_heap_size:")][0]
-    assert lines[at].split()[-1] == "node5..node7"
+    assert lines[at].endswith("node5, node6, node7")
     assert sorted(lines[at + 1:at + 3]) == [
-        "                           16G                          node3, node4  <- differs (group_vars/my_cluster_dc2)",
-        "                           8G                           node1, node2  <- differs (group_vars/my_cluster_dc1)"]
+        u"                           16G                node3, node4      ← differs (group_vars/my_cluster_dc2)",
+        u"                           8G                 node1, node2      ← differs (group_vars/my_cluster_dc1)"]
 
 
 def test_self_check_named_with_hand_edits_elsewhere_and_a_note():
@@ -115,17 +143,30 @@ def test_self_check_named_with_hand_edits_elsewhere_and_a_note():
         "its", "users", "NOT"]
 
 
-def test_differs_from_your_variables():
+def test_differs_from_your_group_vars_all():
+    """Real case: group_vars/all sets the config files' owner; 2 nodes root:cassandra, 3 cassandra:svccassandra."""
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
-    nodes = [node(1), node(2), node(3), node(4), node(5)]
+    nodes = [node(i) for i in range(1, 6)]
+    for n in nodes[:2]:
+        n["vars"].update(cassandra_config_user="root", cassandra_config_group="cassandra")
     for n in nodes[2:]:
         n["vars"].update(cassandra_config_user="cassandra", cassandra_config_group="svccassandra")
     layout = cassandra_inventory_layout_over(nodes, "My Cluster", [{
         "path": "group_vars/all/standard.yml",
         "content": "cassandra_config_user: cassandra\ncassandra_config_group: svccassandra\n"}])
-    lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, inventory_args=ARGS)
-    assert ("  1. Kept as found against your own variables: cassandra_config_group, cassandra_config_user"
-            " (see DIFFERS FROM YOUR VARIABLES)") in lines
-    at = lines.index("DIFFERS FROM YOUR VARIABLES - kept as found; delete the line to apply yours")
-    assert [line.split("  ")[-1] for line in lines[at + 1:at + 3]] == ["-> host_vars", "-> host_vars"]
-    assert "root (yours: cassandra, group_vars/all/standard.yml)" in lines[at + 2]
+    lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True)
+    assert ("  1. Differs from your group_vars/all, kept as found: cassandra_config_group, cassandra_config_user"
+            " (see DIFFERS FROM YOUR group_vars/all)") in lines
+    at = lines.index(u"DIFFERS FROM YOUR group_vars/all — kept as found; delete the line to apply your standard")
+    assert lines[at + 1:at + 5] == [
+        "  cassandra_config_group:  yours: svccassandra (group_vars/all/standard.yml)",
+        u"                           cassandra   node1, node2      \u2190 kept, in host_vars",
+        "  cassandra_config_user:   yours: cassandra (group_vars/all/standard.yml)",
+        u"                           root        node1, node2      \u2190 kept, in host_vars"]
+    # SETTINGS: the value the others get from group_vars/all, not "the collection's default"
+    at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_config_user:")][0]
+    assert lines[at].split()[1:] == ["cassandra", "node3,", "node4,", "node5"]
+    # the screen has no such section, its TO DO points to the report
+    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True)
+    assert not [line for line in screen if line.startswith("DIFFERS")]
+    assert any("(see DIFFERS FROM YOUR group_vars/all in the report)" in line for line in screen)

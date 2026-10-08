@@ -212,14 +212,31 @@ def test_no_clear_secrets_over_a_vaulted_file():
 def write_vars(**given):
     variables = {"_layout": {"cluster_group": "cluster_a"}, "_dir": "/inv", "_report_dir": "/reports/cluster_a"}
     variables.update(given)
-    for name in ("_hosts_file", "_inventory_args"):
+    for name in ("_hosts_file", "_next_hosts"):
         variables[name] = render(WRITE_VARS[name], **variables)
     return variables
 
 
 def test_hosts_file_named_after_the_cluster():
     assert write_vars()["_hosts_file"] == "cluster_a.yml"
-    assert write_vars()["_inventory_args"] == "-i /inv -e cassandra_hosts=cluster_a"
+
+
+@pytest.mark.parametrize("files, hosts", [
+    ([], ""),                                                                   # a first import: the cluster alone
+    (["cluster_a.yml", "group_vars/all/x.yml", ".git/x", "notes.md", "a.yml~"], ""),  # no other inventory file
+    (["cluster_a.yml", "cluster_b.yml"], "cluster_a"),                          # another cluster: -e cassandra_hosts
+    (["web.ini"], "cluster_a"),
+])
+def test_next_commands_name_the_cluster_only_with_others(files, hosts):
+    existing = {"files": [{"path": "/inv/" + f} for f in files]}
+    assert write_vars(import_cluster_existing=existing)["_next_hosts"] == hosts
+
+
+def test_next_commands_without_i_on_the_default_inventory():
+    template = WRITE_VARS["_next_inventory"].replace(
+        "lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST')", "default_list")
+    assert render(template, _dir="/p/inventories", default_list=["/p/inventories"]) == ""
+    assert render(template, _dir="/p/inventories", default_list=["/etc/ansible/hosts"]) == "/p/inventories"
 
 
 @pytest.mark.parametrize("force, hosts_exists, passed", [
@@ -259,6 +276,14 @@ def test_stop_on_another_clusters_files():
     assert render("{{ %s }}" % task["that"], **conflicts) is False
     assert render(task["fail_msg"], **conflicts).startswith("node2: in cluster_b.yml too. Nothing written: in /inv,")
     assert render("{{ %s }}" % task["that"], _leftovers={"conflicts": []}, _dir="/inv") is True
+    assert "import_cluster_adopt" not in render(task["fail_msg"], **conflicts)
+    # files of an earlier import not known to be this cluster's: the switch that takes them over
+    unknown = "group_vars/cluster_a/main.yml: written by an earlier import, not known to be cluster_a's"
+    msg = render(task["fail_msg"], _dir="/inv", _leftovers={"conflicts": [unknown], "adoptable": [unknown]})
+    assert msg.endswith("If an earlier import of this cluster wrote them: -e import_cluster_adopt=true takes them"
+                        " over, each file replaced kept as <file>.<date>~")
+    msg = render(task["fail_msg"], _dir="/inv", _leftovers={"conflicts": [unknown, "x"], "adoptable": [unknown]})
+    assert msg.endswith("-e import_cluster_adopt=true would take over 1 of them only")
     # before any file is removed or written
     names = [t.get("name") for play in PLAYS for t in play.get("tasks", [])]
     assert names.index("Stop rather than write over another cluster's files") < names.index(

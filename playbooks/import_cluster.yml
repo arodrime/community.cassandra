@@ -1009,8 +1009,13 @@
           or lookup('ansible.builtin.config', 'DEFAULT_VAULT_PASSWORD_FILE') | default('', true)) | string | expanduser }}
     _vault: "{{ _vault_file != '' }}"
     _hosts_file: "{{ _layout.cluster_group ~ '.yml' }}"
-    # what the playbooks are run with on this inventory
-    _inventory_args: "{{ '-i ' ~ _dir ~ ' -e cassandra_hosts=' ~ _layout.cluster_group }}"
+    # what the playbooks are run with on this inventory: no -i when it is ansible.cfg's, no -e cassandra_hosts
+    # when it holds this cluster alone (no other inventory file at its top)
+    _next_inventory: "{{ '' if _dir in lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | map('realpath') | list else _dir }}"
+    _next_hosts: >-
+      {{ _layout.cluster_group if import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
+                                  | reject('search', '/') | reject('match', '[.]') | reject('search', '([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$')
+                                  | reject('equalto', _hosts_file) | list else '' }}
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
     # not one node read: nothing checked, nothing valid; a ring node not read (down, unreachable): not
@@ -1029,13 +1034,16 @@
       report_file: "{{ _report_dir ~ '/report.txt' }}"
       secrets_clear: "{{ [] if _vault | bool else _secrets }}"
       check: "{{ ansible_check_mode }}"
-      inventory_args: "{{ _inventory_args }}"
+      inventory: "{{ _next_inventory }}"
+      hosts: "{{ _next_hosts }}"
+      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
       allow_unread: "{{ import_cluster_allow_unread | default(false) | bool }}"
     _report: >-
       {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
            _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
-           inventory_args=_report_args.inventory_args, allow_unread=_report_args.allow_unread | bool,
+           inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
+           allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default('')) | join('\n') }}
   tasks:
     # the first play had no host: a group that matches nothing (or only hosts marked absent), a --limit
@@ -1463,7 +1471,7 @@
           {{ _leftovers.conflicts | default([]) | join('; ') }}. Nothing written: in {{ _dir }}, these are another
           cluster's (another import_cluster_dir, or for a host name import_cluster_host_names fqdn or ip), or files an
           earlier release wrote that no hosts file there names{{ '' if not _leftovers.adoptable | default([]) else
-          '. If they are this cluster\'s (an earlier import of it): -e import_cluster_adopt=true takes them over, each
+          '. If an earlier import of this cluster wrote them: -e import_cluster_adopt=true takes them over, each
           file replaced kept as <file>.<date>~' if _leftovers.adoptable | length == _leftovers.conflicts | length else
           '. -e import_cluster_adopt=true would take over ' ~ _leftovers.adoptable | length ~ ' of them only' }}
         quiet: true
@@ -1560,7 +1568,8 @@
           {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
                _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
                leftovers=_leftovers | default({}), check=_report_args.check | bool,
-               inventory_args=_report_args.inventory_args, allow_unread=_report_args.allow_unread | bool,
+               inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
+               allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), screen=true) }}
 
     - name: Stop on a failed self-check

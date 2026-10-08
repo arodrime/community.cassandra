@@ -1084,20 +1084,25 @@ as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is re
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
 Your own variables files in the inventory directory (``group_vars/all/*.yml``, and those of this cluster's groups
-and hosts) apply to the hosts too: the import takes them into account. A node whose value one of them would change
-gets its value written (the node as it is wins, listed under ``DIFFERS FROM YOUR VARIABLES``: delete the line to
-apply yours), and a value yours already gives is not written again; the self-check reads them too. What it can't
+and hosts) apply to the hosts too: the import takes them into account, for the variables it reads from the nodes
+(not the ones it cannot read, listed under ``NOT READ``, nor confirmations and restart switches). Each node gets
+its live value: written where yours would change it, not written again where yours already gives it; the self-check
+reads them too. Every node whose live value differs from yours is listed under ``DIFFERS FROM YOUR group_vars/all``
+(kept as found: delete the line the import wrote to apply your standard), with a ``TO DO`` entry. What it can't
 compare (a template or a vaulted value of yours, a vaulted file without the vault password, a default made of facts)
 is listed under ``TO DO``. Not read: the groups your own hosts files give these hosts, and the variables written in
 hosts files; keep your settings in ``group_vars/all``. Then ``apply_config --check --diff`` changes nothing.
 
-``report.txt`` starts with the verdict (nodes read, self-check) and what is left to do (``TO DO``: nodes not read,
-hand edits the roles would revert, passwords written in clear, files of unknown origin; ``READY`` when there is
-none), then one line per setting that is not the collection's default, with the nodes that have each value (``all``
-when every node does; ``<- differs`` and where the inventory keeps it for the others), the hand edits the same way,
-what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files removed or
-replaced, the next commands, and the details line by line at the end. The run ends with its first part (header,
-``TO DO`` and ``SETTINGS``).
+``report.txt`` starts with the verdict (``IMPORT <cluster> — 5 nodes read / 5 — SELF-CHECK PASSED``, the files
+written) and what is left to do (``TO DO``: nodes not read, hand edits the roles would revert, values that differ
+from yours, passwords written in clear, files of unknown origin, then review and commit, the git step only when the
+inventory directory is in a git work tree; ``READY — nothing to do`` when there is none), then one line per setting
+that is not the collection's default, with every node that has each value (``all`` when every node does;
+``← differs`` and where the inventory keeps it for the others), the values that differ from yours, the hand edits
+the same way, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files
+removed or replaced, the next commands (without ``-i`` on the inventory of ``ansible.cfg``, without
+``-e cassandra_hosts`` when it holds this cluster alone), and the details line by line at the end. The run ends with
+its header, ``TO DO`` and ``SETTINGS`` (node lists shortened, ``node1..node5``), and where the full report is.
 
 Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
 write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``):
