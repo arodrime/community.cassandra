@@ -484,7 +484,7 @@ def test_import_command_keeps_the_connection_and_jmx():
                             cassandra_jmx_password_file="/etc/cassandra/jmxremote.password")
     text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"], **IMPORTED), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -u admin community.cassandra.import_cluster"
-            " -e import_cluster_force=true -e import_cluster_runbook=true"
+            " -e import_cluster_force=true"
             " -e cassandra_jmx_username=monitor"
             " -e cassandra_jmx_password_file=/etc/cassandra/jmxremote.password") in text
 
@@ -541,7 +541,7 @@ def test_reimport_into_the_inventory_dir(tmp_path):
     shared = model(sources=sources, imported=["orders"], clusters=MODEL["clusters"] + [billing], auto="")
     text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))
     assert ("$ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster"
-            " -e import_cluster_force=true -e import_cluster_runbook=true\n") in text
+            " -e import_cluster_force=true\n") in text
     assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n") in text
     alone = model(sources=sources, imported=["orders"])
     text = cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
@@ -560,7 +560,7 @@ def test_import_command_placeholders_for_what_help_could_not_read():
     hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
     text = cassandra_help(model(hosts=hosts, **IMPORTED), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
-            " -e import_cluster_force=true -e import_cluster_runbook=true"
+            " -e import_cluster_force=true"
             " -e cassandra_jmx_username=JMX_USER -e cassandra_jmx_password_file=JMX_PASSWORD_FILE") in text
     assert "(vaulted)" not in text.split("1. The cluster", maxsplit=1)[0]
 

@@ -210,11 +210,9 @@ OPERATIONS = [
      "summary": "Reads the running cluster into an inventory, changing nothing on the nodes; a re-import keeps"
                 " the files it did not write, --check --diff shows its changes first.",
      "options": [("-e import_cluster_dir=<dir>", "the inventory dir, every cluster's", "inventories"),
-                 ("-e import_cluster_report_dir=<dir>", "where to write report.txt (and RUNBOOK.md)",
+                 ("-e import_cluster_report_dir=<dir>", "where to write report.txt",
                   "reports/<cluster group> next to import_cluster_dir"),
                  ("-e import_cluster_force=true", "a re-import, over this cluster's files", "false"),
-                 ("-e import_cluster_runbook=true", "also writes RUNBOOK.md next to report.txt (the help playbook)",
-                  "false"),
                  ("-e import_cluster_allow_unread=true", "accepts a ring node it could not read (else the import"
                                                          " fails)", "false"),
                  ("-e import_cluster_keep_hand_edits=true", "leaves the config files with hand edits as they are on"
@@ -436,7 +434,7 @@ def _command(op, model, cluster, cwd, extra=()):
         if cluster.name in (model.get("imported") or []):
             where = _path(_inventory_dir(model), cwd)
             target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + [
-                "-e import_cluster_force=true", "-e import_cluster_runbook=true"]
+                "-e import_cluster_force=true"]
         parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
                  + ["community.cassandra.import_cluster"] + target + jmx)
         return " ".join(p for p in parts if p)

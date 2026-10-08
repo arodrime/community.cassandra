@@ -60,7 +60,6 @@
     - name: Show the help
       ansible.builtin.debug:
         msg: "{{ _text if _yaml | bool else ([_plain, ''] if _default | bool else []) + _text.split('\n') }}"
-      when: help_show | default(true) | bool  # false: RUNBOOK.md only (import_cluster_runbook)
       vars:
         cassandra_output: true
         _default: "{{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') in ['default', 'ansible.builtin.default'] }}"

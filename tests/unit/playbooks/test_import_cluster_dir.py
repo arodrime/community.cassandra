@@ -176,7 +176,7 @@ def test_client_script_gets_the_vault_id(path, client):
 
 def test_files_in_dot_dirs_are_not_looked_at():
     found = render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_found"], _dir="/inv",
-                   _report_files=["../reports/p/report.txt", "../reports/p/RUNBOOK.md"],
+                   _report_files=["../reports/p/report.txt"],
                    import_cluster_existing={"files": [{"path": "/inv/.git/HEAD"}, {"path": "/inv/host_vars/.x/main.yml"},
                                                       {"path": "/inv/notes"}, {"path": "/inv/host_vars/n1/main.yml"}]})
     assert found == ["notes", "host_vars/n1/main.yml"]
@@ -186,7 +186,8 @@ def test_report_in_the_inventory_dir_not_a_leftover():
     """import_cluster_report_dir in the inventory dir: its report is not listed as kept, it is written again."""
     task = TASKS["Sort out the files an earlier import wrote"]["vars"]
     files = [{"path": "/inv/notes"}, {"path": "/inv/report.txt"}, {"path": "/inv/reports/p/RUNBOOK.md"}]
-    for report_dir, left in (("/inv", ["notes", "reports/p/RUNBOOK.md"]), ("/inv/reports/p", ["notes", "report.txt"]),
+    for report_dir, left in (("/inv", ["notes", "reports/p/RUNBOOK.md"]),
+                             ("/inv/reports/p", ["notes", "report.txt", "reports/p/RUNBOOK.md"]),
                              ("/reports/p", ["notes", "report.txt", "reports/p/RUNBOOK.md"])):
         variables = {"_dir": "/inv", "_report_dir": report_dir, "import_cluster_existing": {"files": files}}
         variables["_report_files"] = render(task["_report_files"], **variables)
@@ -286,14 +287,13 @@ def test_report_of_another_kept(tmp_path):
 
 def test_check_diff_writes_nothing():
     """--check --diff reviews a re-import: the tasks that write or remove run in check mode (their diff shown, the
-    secrets hidden), the report and RUNBOOK.md are not written."""
+    secrets hidden), the report is not written."""
     write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
     for task in write:
         if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")):
             assert "check_mode" not in task and "diff" not in task, task["name"]
     assert TASKS["Write report.txt"]["when"] == "not ansible_check_mode"
     assert TASKS["Write group_vars and host_vars"]["no_log"] == "{{ item.secret }}"
-    assert "not ansible_check_mode" in PLAYS[-1]["when"]
     shown = TASKS["Show the report"]["ansible.builtin.debug"]["msg"]
     assert render(shown, _report="R", _dir="/inv", _report_dir="/reports/a", ansible_check_mode=True) == [
         "R", "--check: nothing written, it would write to /inv, the report to /reports/a"]

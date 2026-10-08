@@ -51,7 +51,7 @@ would otherwise repeat:
         group_vars/all/local.yml      # your own settings (mirror, ...): kept by a re-import
         group_vars/orders/main.yml    # written by import_cluster, as the groups of each datacenter and rack
         host_vars/node1/main.yml
-      reports/orders/report.txt       # the import's report (and RUNBOOK.md), outside the inventory
+      reports/orders/report.txt       # the import's report, outside the inventory
 
 .. code-block:: ini
 
@@ -280,8 +280,11 @@ the inventory's dir (the first ``-i`` one), or in the existing dir given as ``-e
 written only when its content changes (run ``help`` again after changing the inventory); ``--check --diff`` shows the
 difference. Its commands are as run from the directory ``help`` was run from (the one with ``ansible.cfg``; the file
 says where that is from its own dir), with the ``-i`` path and the vault and connection options ``help`` was given:
-run it the same way each time, or the file changes. ``import_cluster`` writes it at the end of an import with
-``-e import_cluster_runbook=true``.
+run it the same way each time, or the file changes. For one cluster of an inventory dir, next to its import report:
+
+.. code-block:: console
+
+    $ ansible-playbook -i inventories community.cassandra.help -e cassandra_hosts=orders -e help_write=true -e help_runbook_dir=reports/orders
 
 ``help`` decrypts nothing, even when given the vault password: the vault-encrypted vars files are skipped and named
 in the advice, inline vaulted values are shown as ``(vaulted)``, so no secret reaches its output or ``RUNBOOK.md``.
@@ -1066,8 +1069,7 @@ as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is re
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
 Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
-write or remove (the ``secrets.yml`` files hidden) and the report, and writes nothing (nor ``report.txt`` and
-``RUNBOOK.md``):
+write or remove (the ``secrets.yml`` files hidden) and the report, and writes nothing (nor ``report.txt``):
 
 .. code-block:: console
 

@@ -25,9 +25,6 @@
 #   import_cluster_allow_unread: false (see the nodes not read below).
 #   import_cluster_strict: true; false writes an inventory that fails the
 #     self-check without failing the run.
-#   import_cluster_runbook: false; true also writes RUNBOOK.md next to
-#     report.txt (the help playbook: the cluster, every operation's command for
-#     this inventory, advice).
 #   import_cluster_debug: false; true shows an error while writing the
 #     inventory, hidden otherwise (the variables hold passwords).
 # Review a re-import before it writes anything: --check --diff shows the
@@ -993,6 +990,8 @@
         2. Check the cluster: ansible-playbook {{ _inventory_args }} community.cassandra.preflight
         3. See what the roles would change, changing nothing:
            ansible-playbook {{ _inventory_args }} <your site playbook (become: true)> --check --diff
+        4. Its RUNBOOK.md (every operation's command for this inventory), next to this report:
+           ansible-playbook {{ _inventory_args }} community.cassandra.help -e help_write=true -e help_runbook_dir={{ _report_dir }}
   tasks:
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory
@@ -1369,7 +1368,7 @@
         # (not the report, when import_cluster_report_dir puts it there: written again below)
         _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
                     | reject('match', '(.*/)?[.]') | reject('in', _report_files) | list }}"
-        _report_files: "{{ ['report.txt', 'RUNBOOK.md'] | map('regex_replace', '^', _report_dir ~ '/') | map('relpath', _dir) | list }}"
+        _report_files: "{{ [(_report_dir ~ '/report.txt') | relpath(_dir)] }}"
         # the first line is enough to tell (a vaulted file: decrypted to its first line; an inventory file,
         # and the cluster's main.yml for its cluster name: all of it), and a secret's value never leaves
         # this task
@@ -1505,15 +1504,3 @@
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
-
-# -e import_cluster_runbook=true: RUNBOOK.md next to report.txt (the help
-# playbook on the inventory just written, this cluster's commands; not under --check)
-- name: Write RUNBOOK.md
-  ansible.builtin.import_playbook: help.yml
-  when: import_cluster_runbook | default(false) | bool and not ansible_check_mode
-  vars:
-    help_inventory: "{{ _dir }}"
-    help_runbook_dir: "{{ _report_dir }}"
-    cassandra_hosts: "{{ _layout.cluster_group }}"
-    help_write: true
-    help_show: false  # the import's report is the screen; help's text goes to RUNBOOK.md
