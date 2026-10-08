@@ -57,11 +57,13 @@
         - _st.exists
         - not (_st.isdir and _st.readable and _st.writeable and _st.executable)
 
+    # the controller's own bookkeeping: no diff (--check --diff shows the nodes' changes)
     - name: Ensure the progress dir exists
       ansible.builtin.file:
         path: "{{ cassandra_progress_dir }}"
         state: directory
         mode: "0755"
+      diff: false
 
     - name: Find old progress files
       ansible.builtin.find:
@@ -69,12 +71,13 @@
         patterns: "*.done"
         age: "{{ cassandra_rolling_progress_days }}d"
       register: cassandra_progress_old
+      when: cassandra_progress_dir_stat.stat.exists or not ansible_check_mode  # --check made no dir
 
     - name: Remove old progress files
       ansible.builtin.file:
         path: "{{ item.path }}"
         state: absent
-      loop: "{{ cassandra_progress_old.files }}"
+      loop: "{{ cassandra_progress_old.files | default([]) }}"
       loop_control:
         label: "{{ item.path | basename }}"
 
@@ -83,14 +86,16 @@
         paths: "{{ cassandra_progress_dir }}"
         patterns: "{{ _prefix }}*.done"
       register: cassandra_progress_found
-      when: _progress_resuming | bool
+      when:
+        - _progress_resuming | bool
+        - cassandra_progress_dir_stat.stat.exists or not ansible_check_mode
 
     - name: Stop if there is nothing to resume
       ansible.builtin.fail:
         msg: "No {{ _prefix }}*.done file in {{ cassandra_progress_dir }} to resume: run without cassandra_rolling_resume"
       when:
         - _progress_resuming | bool
-        - cassandra_progress_found.files | length == 0
+        - cassandra_progress_found.files | default([]) | length == 0
 
     - name: Pick the progress file
       ansible.builtin.set_fact:

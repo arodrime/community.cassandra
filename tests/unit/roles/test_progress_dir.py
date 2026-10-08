@@ -174,3 +174,11 @@ def test_check_mode_creates_and_reads_no_file(tmp_path):
     rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "--check")
     assert rc == 0, out
     assert list((tmp_path / "inv").glob(".cassandra_progress/*.done")) == []
+
+
+def test_check_diff_says_nothing_of_the_progress_dir(tmp_path):
+    # --check --diff: no dir made, no diff of it, no warning of a find in a dir that is not there
+    rc, out = run(tmp_path, inventory_in(tmp_path / "inv"), "--check", "--diff", cwd=tmp_path)
+    assert rc == 0, out
+    assert not (tmp_path / "inv" / ".cassandra_progress").exists()
+    assert "state: directory" not in out and "not a directory" not in out and "[WARNING]" not in out
