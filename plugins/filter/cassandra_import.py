@@ -40,6 +40,7 @@ from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 EXPR = re.compile(r"(\{\{.*?\}\})")
@@ -65,14 +66,8 @@ IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, 
                          "allocate_tokens_for_local_replication_factor",),
                      "cassandra_storage_compatibility_mode": ("storage_compatibility_mode",)}
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
-SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material", re.I)  # sse_c_key, access_key: Medusa's
-# Same masking as cassandra_config's diff preview
-SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret|private_key)[\w.-]*\s*[:=]\s*)"
-                          r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|$))", re.M)
-
-
-def _mask(line):
-    return SECRET_VALUE.sub(r"\1****", line)
+# Same masking as cassandra_config's diff preview (module_utils cassandra_output)
+SECRET, SECRET_VALUE, _mask, _secret = out.SECRET, out.SECRET_VALUE, out.mask, out.secret
 
 
 # The node's own address or name: written as the fact that gives it
@@ -1106,18 +1101,6 @@ def _os_section(read):
         out += ["", "OS TUNING CARRIED INTO THE VARIABLES, for the nodes added later (the nodes above with"
                 " cassandra_linux_manage false are left as they are):"] + carried
     return out + [""]
-
-
-def _secret(key, value):
-    if isinstance(value, dict):
-        return any(_secret(k, v) for k, v in value.items())
-    if isinstance(value, list):
-        return bool(SECRET.search(key)) or any(_secret(key, v) for v in value if isinstance(v, (dict, str)))
-    if value == "":
-        return False  # e.g. a password variable set to "" to leave it out
-    if isinstance(value, str) and SECRET_VALUE.search(value):
-        return True  # e.g. a unit's JVM_EXTRA_OPTS=-Djavax.net.ssl.keyStorePassword=...
-    return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
 
 
 # The blocks of a main.yml/secrets.yml, in this order: a key goes to the block

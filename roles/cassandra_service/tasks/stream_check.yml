@@ -125,6 +125,8 @@
     - name: Progress of the {{ _cassandra_stream_what }}
       ansible.builtin.debug:
         msg: "{{ _cassandra_stream_report }}"
+      vars:
+        cassandra_output: true
 
     - name: Keep where it stands
       ansible.builtin.set_fact:

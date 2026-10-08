@@ -137,3 +137,5 @@
              else ('Resuming ' ~ cassandra_progress_file ~ ': ' ~ cassandra_progress_done | length
                    ~ ' node(s) already done, skipped: ' ~ cassandra_progress_done | join(', ')) }}
       when: _progress_resuming | bool
+      vars:
+        cassandra_output: true

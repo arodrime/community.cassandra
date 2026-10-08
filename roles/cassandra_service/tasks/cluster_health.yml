@@ -149,6 +149,7 @@
              ~ '. Still in the ring? The playbook topology removes them.']
             if _absent and cassandra_health_problems | select('search', '^the ring has ') | list else []) }}
   vars:
+    cassandra_output: true
     _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
   when:
     - cassandra_health_problems | length > 0
@@ -165,3 +166,5 @@
     - cassandra_health_problems | length > 0
     - cassandra_service_health_force | bool
     - not cassandra_service_health_report_only | default(false) | bool
+  vars:
+    cassandra_output: true
