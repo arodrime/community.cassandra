@@ -53,11 +53,10 @@ def test_report_and_stop_name_them():
     variables = dict(_nodes=NODES, _layout=LAYOUT, _dir="/inv", _report_dir="/reports/c", ansible_check_mode=False)
     variables["_unchecked"] = trust_as_template(WRITE["vars"]["_unchecked"])
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables)
-    assert "n2 not read" in msg and "NOT CHECKED in /reports/c/report.txt." in msg
+    assert "n2 not read" in msg and "See TO DO above, and DETAILS in /reports/c/report.txt." in msg
     variables["ansible_check_mode"] = True  # --check writes no report
-    assert "NOT CHECKED in the summary above." in render(STOP["ansible.builtin.fail"]["msg"], **variables)
-    report = WRITE["vars"]["_report"]
-    assert "THE IMPORT FAILS" in report and "import_cluster_allow_unread=true" in report
+    assert "See TO DO above." in render(STOP["ansible.builtin.fail"]["msg"], **variables)
+    assert "allow_unread=_report_args.allow_unread" in WRITE["vars"]["_report"]
     assert "import_cluster_strict | default(true) | bool" in STOP["when"]
 
 

@@ -17,8 +17,6 @@ cassandra_import_error: a failed task's result -> why it failed, without the
     values (the import's no_log tasks hold passwords).
 cassandra_ring_names: getent hosts on a given node and on the controller ->
     the name to reach each node found in the ring by.
-cassandra_import_summary: the import's outcome -> the short screen that ends
-    it (the full report goes to report.txt).
 
 Their unexpected errors do not quote the error message, which may show a value
 read from the config (a password): its type and where it happened only.
@@ -1064,7 +1062,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
     report += _os_section(read)
     return {"cluster_group": cluster, "cluster_name": cluster_name, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
-            "names": dict((n["address"], n["name"]) for n in nodes if n.get("address"))}
+            "names": dict((n["address"], n["name"]) for n in nodes if n.get("address")), "nodes": nodes}
 
 
 def _by_nodes(pairs):
@@ -1630,99 +1628,6 @@ def cassandra_ring_lookups(on_node, addresses, given):
     return [] if _IPV4.match(str(given)) or ":" in str(given) else out
 
 
-# shown in the summary's first lines, not among the settings
-_SUMMARY_SHOWN = ("cassandra_cluster_name", "cassandra_version", "cassandra_package_version")
-
-
-def _short(text, width=80):
-    return text if len(text) <= width else text[:width - 3] + "..."
-
-
-@_values_hidden
-def cassandra_import_summary(layout, nodes, hosts_file, report_file, self_check_ok, secrets_clear=None, unsure=None,
-                             check=False, inventory_args="", allow_unread=False, report="", leftovers=None):
-    """The screen that ends an import. layout: cassandra_inventory_layout's;
-    nodes: [{address, read, reason}]; hosts_file, report_file: where they are
-    (or would be) written; self_check_ok; secrets_clear: the secrets.yml
-    files written in clear (to encrypt); unsure: the files kept that may be
-    this cluster's; check: --check (nothing written); inventory_args: what
-    the playbooks run with on this inventory; report: the full report, whose
-    SELF-CHECK section is shown when it failed; leftovers:
-    cassandra_inventory_leftovers' (the files removed, and replaced with a
-    backup). Returns its lines: the cluster
-    and where it is written, the settings not at the collection's defaults
-    (secrets hidden), the differences between nodes, then the status and the
-    next commands."""
-    names = layout.get("names") or {}
-    cluster = layout["cluster_group"]
-    cluster_vars = (layout.get("group_vars") or {}).get(cluster) or {}
-    read = [names.get(n["address"], n["address"]) for n in nodes if boolean(n.get("read", False), strict=False)]
-    unread = [(names.get(n["address"], n["address"]), n.get("reason") or "unreachable")
-              for n in nodes if not boolean(n.get("read", False), strict=False)]
-    version = cluster_vars.get("cassandra_package_version") or cluster_vars.get("cassandra_version") or "?"
-    lines = ["Cluster '%s' (group %s): Cassandra %s, %d node(s), %d read"
-             % (layout.get("cluster_name"), cluster, version, len(nodes), len(read))]
-    if unread:
-        lines.append("  NOT READ: " + ", ".join("%s (%s)" % u for u in unread))
-    lines += ["  Inventory: %s%s, with its group_vars and host_vars" % ("--check, would write " if check else "", hosts_file),
-              "  Report:    %s" % ("not written under --check" if check else report_file),
-              "  SELF-CHECK %s" % ("PASSED" if self_check_ok else "FAILED")]
-    if not self_check_ok:  # its details (the indented lines of its section), up to the first blank line
-        section = []
-        for line in (report or "").split("\n"):
-            if section and not line.strip():
-                break
-            if line[:1] in (" ", "\t") and line.strip():
-                section.append("  " + _short(line.rstrip(), 78))
-        lines += section[:15] + (["    ... %d more lines in the report" % (len(section) - 15)] if len(section) > 15 else [])
-    leftovers = leftovers or {}
-    for key, what in (("stale", "removed (an earlier import's, not written again)"),
-                      ("replaced", "replaced (without the import's first line, the old one kept as <file>.<date>~)")):
-        if leftovers.get(key):
-            what = "would be " + what if check else what
-            lines.append("  %s%s: %s" % (what[0].upper(), what[1:], ", ".join(leftovers[key])))
-    lines.append("")
-    settings = [(k, v) for k, v in sorted(cluster_vars.items()) if k not in _SUMMARY_SHOWN]
-    lines.append("Settings not at the collection's defaults (group_vars/%s):" % cluster)
-    lines += ["  " + _short("%s: %s" % (k, "(in secrets.yml)" if _secret(k, v) else _show(k, v))) for k, v in settings]
-    if not settings:
-        lines.append("  none")
-    more = sum(len(v) for g, v in (layout.get("group_vars") or {}).items() if g != cluster)
-    more += sum(len(v) for v in (layout.get("host_vars") or {}).values())
-    if more:
-        lines.append("  + %d per datacenter, rack or node (dc and rack included): see the report" % more)
-    drift = [line for line in (layout.get("differences") or "").split("\n")[1:] if line.strip() and line.strip() != "none"]
-    if drift:
-        lines += ["", "Differences between nodes (kept per group or node, check they are wanted):"]
-        lines += ["  " + _short(line.strip()) for line in drift[:10]]
-        if len(drift) > 10:
-            lines.append("  ... %d more in the report" % (len(drift) - 10))
-    todo = []
-    if unread and not allow_unread:
-        todo.append("read %s: start Cassandra or fix the access, then import again (or -e import_cluster_allow_unread=true"
-                    " to accept it)" % ", ".join(u[0] for u in unread))
-    if not self_check_ok and not (unread and not allow_unread):  # else: checked again once they are read
-        todo.append("fix what SELF-CHECK lists in the report (the variables, or the nodes), then import again")
-    if secrets_clear:
-        todo.append("encrypt the passwords written in clear: ansible-vault encrypt %s" % " ".join(secrets_clear))
-    if unsure:
-        todo.append("check the files kept (an earlier import's, whose cluster is not known): %s" % ", ".join(unsure))
-    lines.append("")
-    if check:
-        lines.append("--check: nothing written (with --diff, each file's changes are shown above). Run the same"
-                     " without --check to write it.")
-        lines += ["  then: " + t for t in todo]
-        return lines
-    lines.append("Import done - " + ("ready to use. Next:" if not todo else "do first:"))
-    lines += ["  - " + t for t in todo]
-    if todo:
-        lines.append("Then:")
-    lines += ["  git diff: review the inventory written",
-              "  ansible-playbook %s community.cassandra.apply_config --check --diff: expected, no change" % inventory_args,
-              "  ansible-playbook %s community.cassandra.topology --check: expected, nothing to do" % inventory_args]
-    return lines
-
-
 class FilterModule(object):
     def filters(self):
         return {
@@ -1736,7 +1641,6 @@ class FilterModule(object):
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,
-            "cassandra_import_summary": cassandra_import_summary,
             "cassandra_ring_names": cassandra_ring_names,
             "cassandra_ring_lookups": cassandra_ring_lookups,
         }

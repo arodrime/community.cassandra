@@ -294,7 +294,9 @@ def test_check_diff_writes_nothing():
             assert "check_mode" not in task and "diff" not in task, task["name"]
     assert TASKS["Write report.txt"]["when"] == "not ansible_check_mode"
     assert TASKS["Write group_vars and host_vars"]["no_log"] == "{{ item.secret }}"
-    assert "check=ansible_check_mode" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
+    assert "check=_report_args.check | bool" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
+    assert "screen=true" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
+    assert render(WRITE_VARS["_report_args"]["check"], ansible_check_mode=True) is True
 
 
 def test_short_screen_at_the_end():

@@ -199,6 +199,7 @@
       when: _names | length > 0
       vars:
         ansible_connection: local  # never an inventory's connection to localhost
+        ansible_become: false  # an inventory ansible_become beats the become keyword
         _names: >-
           {{ import_cluster_peer_names.stdout | default('')
              | community.cassandra.cassandra_ring_lookups(import_cluster_new, import_cluster_from) }}
@@ -1013,81 +1014,20 @@
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
       {{ out }}
-    _report: |-
-      {% if _self_check_ok | bool %}
-      SELF-CHECK PASSED: with these variables, the roles write the config of the {{ _self_check | length }} node(s) read
-      as it is today (cassandra.yaml, cassandra-env.sh, the jvm options, rackdc, logback, and the JMX users, the unit and
-      medusa.ini when the roles manage them: compared setting by setting, as Cassandra, the JVM, bash and systemd read
-      them; and the owner, group and mode of the config and JMX files). Not compared: the OS tuning (see OS TUNING
-      below), /etc/default/cassandra, cassandra-topology.properties, the owner and mode of the unit and medusa.ini.
-      {% else %}
-      SELF-CHECK FAILED: THIS INVENTORY IS NOT VALID. With it, the roles would change the settings below on the
-      nodes (the import misread them, or no variable covers them). Fix the variables (or the nodes) before any run.
-      {% if _self_check_error is defined %}
-        {{ _self_check_error }}
-      {% endif %}
-      {% if _self_check | default({}) | length == 0 %}
-        No node was read: nothing was checked.
-      {% endif %}
-      {% for name, check in _self_check | default({}) | dictsort if check.differences %}
-        == {{ name }}
-      {% for line in check.differences %}
-          {{ line }}
-      {% endfor %}
-      {% endfor %}
-      {% endif %}
-      {% if _unchecked %}
-      NOT CHECKED (not read): {{ _unchecked | join(', ') }}: the roles would give them the group variables unchecked
-      (and start a node that is down).{{ ' Accepted (import_cluster_allow_unread).' if import_cluster_allow_unread | default(false) | bool
-      else ' THE IMPORT FAILS: read them (start Cassandra, fix the access), or set -e import_cluster_allow_unread=true'
-           ~ ' to accept it (then exclude them from the runs, e.g. --limit, until a new import reads them).' }}
-      {% endif %}
-      {% for name, check in _self_check | default({}) | dictsort if check.notes %}
-      {% for line in check.notes %}
-        {{ name }}: {{ line }}
-      {% endfor %}
-      {% endfor %}
-
-      {{ _layout.report }}
-      {% if _secrets %}
-      PASSWORDS found in the config, in {{ _secrets | join(', ') }}:
-      {% if _vault | bool %}
-        encrypted with ansible-vault (password file {{ _vault_file }}).
-      {% else %}
-        WARNING: WRITTEN IN CLEAR (mode 0600), no vault password file given. Encrypt them before anything else:
-          cd {{ _dir }} && ansible-vault encrypt {{ _secrets | join(' ') }}
-        (next time: vault_password_file in ansible.cfg, or -e import_cluster_vault_password_file=<file>,
-        and the import encrypts them itself)
-      {% endif %}
-      {% endif %}
-      {% if _leftovers.stale | default([]) %}
-      REMOVED (written by an earlier import, not by this one): {{ _leftovers.stale | join(', ') }}
-      {% endif %}
-      {% if _leftovers.kept | default([]) %}
-      KEPT as they are (not written by the import): {{ _leftovers.kept | join(', ') }}
-      {% endif %}
-      {% if _leftovers.replaced | default([]) %}
-      REPLACED (at a path the import writes, without its header; the old file kept as <file>.<timestamp>~):
-        {{ _leftovers.replaced | join(', ') }}
-      {% endif %}
-      {% if _leftovers.unsure | default([]) %}
-      KEPT as they are (written by an earlier release of the import, which did not name the cluster, and no hosts
-      file of the dir tells whose they are): {{ _leftovers.unsure | join(', ') }}. Remove them if they are this cluster's.
-      {% endif %}
-
-      Not read from the nodes, set them in group_vars if they apply (see the guide's air-gapped section):
-        cassandra_offline (hosts without network), the mirror (cassandra_install_url: the repository, or with
-        cassandra_install_method packages the directory of the package files; cassandra_install_username, and its
-        password in a vaulted file), cassandra_java_tarball (or the cassandra_java_tarballs offer) for new nodes, and the repository of a vendor Java
-        package (cassandra_java_package) for new nodes.
-
-      Next steps:
-        1. Review this report and the variables (hand edits, drift).
-        2. Check the cluster: ansible-playbook {{ _inventory_args }} community.cassandra.preflight
-        3. See what the roles would change, changing nothing:
-           ansible-playbook {{ _inventory_args }} <your site playbook (become: true)> --check --diff
-        4. Its RUNBOOK.md (every operation's command for this inventory), next to this report:
-           ansible-playbook {{ _inventory_args }} community.cassandra.help -e help_write=true -e help_runbook_dir={{ _report_dir }}
+    # report.txt: setting by setting, each value with the nodes that have it (cassandra_import_report)
+    _report_args:
+      written: ["{{ _dir ~ '/' ~ _hosts_file }}", "{{ _dir }}"]
+      report_file: "{{ _report_dir ~ '/report.txt' }}"
+      secrets_clear: "{{ [] if _vault | bool else _secrets }}"
+      check: "{{ ansible_check_mode }}"
+      inventory_args: "{{ _inventory_args }}"
+      allow_unread: "{{ import_cluster_allow_unread | default(false) | bool }}"
+    _report: >-
+      {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
+           _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
+           leftovers=_leftovers | default({}), check=_report_args.check | bool,
+           inventory_args=_report_args.inventory_args, allow_unread=_report_args.allow_unread | bool,
+           self_check_error=_self_check_error | default('')) | join('\n') }}
   tasks:
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory
@@ -1574,24 +1514,23 @@
                        '# Written by community.cassandra.import_cluster for ' ~ _layout.cluster_group ~ ':') }}
       when: not ansible_check_mode  # shown below
 
-    # the short screen: the full report is in report.txt
+    # the end of the run: its header, TO DO and SETTINGS; the rest is in report.txt
     - name: Show the summary
       ansible.builtin.debug:
         msg: >-
-          {{ _layout | community.cassandra.cassandra_import_summary(
-               _nodes | default([]), _dir ~ '/' ~ _hosts_file, _report_dir ~ '/report.txt', _self_check_ok | bool,
-               secrets_clear=[] if _vault | bool else _secrets | map('regex_replace', '^', _dir ~ '/') | list,
-               unsure=_leftovers.unsure | default([]), check=ansible_check_mode, inventory_args=_inventory_args,
-               allow_unread=import_cluster_allow_unread | default(false) | bool, report=_report,
-               leftovers=_leftovers | default({})) }}
+          {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
+               _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
+               leftovers=_leftovers | default({}), check=_report_args.check | bool,
+               inventory_args=_report_args.inventory_args, allow_unread=_report_args.allow_unread | bool,
+               self_check_error=_self_check_error | default(''), screen=true) }}
 
     - name: Stop on a failed self-check
       ansible.builtin.fail:
         msg: >-
           SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
           roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
-          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See SELF-CHECK and
-          NOT CHECKED in {{ 'the summary above' if ansible_check_mode else _report_dir ~ '/report.txt' }}.
+          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See TO DO above{{ ''
+          if ansible_check_mode else ', and DETAILS in ' ~ _report_dir ~ '/report.txt' }}.
           (-e import_cluster_strict=false: the same inventory and report, without this failure)
       when:
         - not _self_check_ok | bool

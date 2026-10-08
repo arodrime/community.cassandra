@@ -1073,12 +1073,13 @@ kept (down to ``group_vars/<group>/``), and the files replaced at its paths that
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
 
-The run ends with a short summary, the full report going to ``report.txt``: the cluster, its nodes read and not
-read, where the inventory and the report are written, the self-check (with what it found when it failed), the
-cluster's settings not at the collection's defaults (secrets hidden), the differences between nodes, then either
-``Import done - ready to use`` or ``Import done - do first:`` with what to fix (nodes not read, the self-check,
-passwords written in clear), and the commands that come next (``git diff``, ``apply_config --check --diff`` and
-``topology --check``, which should change nothing).
+``report.txt`` starts with the verdict (nodes read, self-check) and what is left to do (``TO DO``: nodes not read,
+hand edits the roles would revert, passwords written in clear, files of unknown origin; ``READY`` when there is
+none), then one line per setting that is not the collection's default, with the nodes that have each value (``all``
+when every node does; ``<- differs`` and where the inventory keeps it for the others), the hand edits the same way,
+what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files removed or
+replaced, the next commands, and the details line by line at the end. The run ends with its first part (header,
+``TO DO`` and ``SETTINGS``).
 
 Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
 write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``):
