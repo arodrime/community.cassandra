@@ -192,12 +192,13 @@ SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret|private_key)[\
 MASK = "****"
 # What the output hides besides (secret and SECRET_VALUE are also what import_cluster files as secrets: kept as
 # they are): more names, a quote between the name and the colon (JSON, Python), the command line forms
-_HIDDEN = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|credential|auth_token"
+_HIDDEN = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|auth_token"
                      r"|_pw$|_pass$|^pw$|^pass$|ca_key", re.I)
 _HIDDEN_VALUE = re.compile(
-    r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|credential|auth_token|_pw|_pass)"
+    r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token|_pw|_pass)"
     r"[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|,\s|[,}]|$))", re.M)
-_HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|-p|--password|-pwf?)\s+)(\S+)", re.M)
+# nodetool -pw, --password; -p only after cqlsh (elsewhere a port or mkdir -p)
+_HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|--password)\s+|\bcqlsh\b[^\n]*?\s-p\s+)(\S+)", re.M)
 _BLOCK = re.compile(r"^\s*[|>][-+]?\d*\s*$")
 
 
@@ -209,8 +210,8 @@ def mask(text):
     block = None  # the indent of a secret's YAML block value
     for line in str(text).split("\n"):
         indent = len(line) - len(line.lstrip())
-        if block is not None and line.strip() and indent > block:
-            out.append(line[:indent] + MASK)
+        if block is not None and (not line.strip() or indent > block):
+            out.append(line[:indent] + MASK if line.strip() else line)
             continue
         block = None
         match = _HIDDEN_VALUE.search(line)
@@ -585,6 +586,8 @@ def perm_lines(changes, indent="  "):
 
 
 def _flat(value, path=()):
+    if isinstance(value, dict) and not value and not path:
+        return {}
     if isinstance(value, dict) and value:
         out = {}
         for k in value:
@@ -626,8 +629,10 @@ def changed_lines(diff, indent="  "):
     """A unified diff (text or lines) -> its - and + lines only (not the
     ---/+++ headers nor @@), secrets masked."""
     lines = diff.splitlines() if isinstance(diff, str) else list(diff or [])
-    return [indent + mask(line) for line in lines
-            if line[:1] in "-+" and not line.startswith("---") and not line.startswith("+++")]
+    kept = [line for line in lines if line[:1] in "-+" and not line.startswith("---") and not line.startswith("+++")]
+    # masked as one text without the signs: a secret's YAML block value spans lines
+    bodies = mask("\n".join(line[1:] for line in kept)).split("\n") if kept else []
+    return [indent + line[0] + body for line, body in zip(kept, bodies)]
 
 
 # --- what is left to do --------------------------------------------------------------------

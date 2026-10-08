@@ -223,7 +223,7 @@ def test_a_verdict_without_text_and_one_per_host(tmp_path):
         cassandra_output: true
     - name: Per host verdict
       ansible.builtin.fail:
-        msg: "not healthy here"
+        msg: ["", "not healthy here"]
       vars:
         cassandra_output: true
 """

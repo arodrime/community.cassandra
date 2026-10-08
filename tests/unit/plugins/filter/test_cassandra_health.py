@@ -427,3 +427,8 @@ def test_report_same_error_on_several_nodes_once():
         "NOT HEALTHY  c  3 nodes checked, 2 problems",
         "  nodetool:  status failed on n1..n3: Connection refused",
         "  netstats:  failed on n1..n3: Connection refused"]
+
+
+def test_report_error_that_is_not_text():
+    per_host = {"n1": [{"kind": "netstats", "on": "n1", "error": None, "text": "x"}]}
+    assert cassandra_health_report(per_host, "c", ["n1"])["lines"][1] == "  netstats:  failed on n1: None"

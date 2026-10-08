@@ -126,7 +126,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
                 add("ring", ("count", f["ring"], f["expected"]), "%d members, inventory %d" % (f["ring"], f["expected"]),
                     f["seen_from"])
             elif kind == "nodetool":
-                add("nodetool", ("nodetool", f["error"]), "status failed on %s: " + f["error"], f["on"])
+                add("nodetool", ("nodetool", f["error"]), "status failed on %s: " + str(f["error"]), f["on"])
             elif kind == "port":
                 add("ports", ("port", f["name"], f["port"]), "%s %s not answering on" % (f["name"], f["port"]), f["on"])
             elif kind == "gossip":
@@ -136,7 +136,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
             elif kind == "streams":
                 add("streams", ("streams",), "in progress on", f["on"])
             elif kind == "netstats":
-                add("netstats", ("netstats", f["error"]), "failed on %s: " + f["error"], f["on"])
+                add("netstats", ("netstats", f["error"]), "failed on %s: " + str(f["error"]), f["on"])
             elif kind == "schema":
                 add("schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"])
             else:

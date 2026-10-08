@@ -120,7 +120,8 @@ class CallbackModule(DefaultCallback):
         msg = lines(_result(result)["msg"])
         if not _task(result).run_once:
             host = getattr(result, "host", None) or result._host
-            msg[0] = "%s: %s" % (host.get_name(), msg[0])
+            first = next(i for i, line in enumerate(msg) if line.strip())
+            msg[first] = "%s: %s" % (host.get_name(), msg[first])
         self._print(msg, color=C.COLOR_ERROR)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):

@@ -326,3 +326,17 @@ def test_hidden_values_in_lists_dicts_and_a_dict_becoming_a_value():
     assert out.shown("ldap_bind_pw", "x") == "****" and out.shown("num_tokens", 16) == "16"
     lines = out.diff_lines({"ks": {"keystore_password": "old"}}, {"ks": "x"})
     assert "x" not in " ".join(line.split(":")[-1] for line in lines) and "old" not in " ".join(lines)
+
+
+@pytest.mark.parametrize("text", ["nodetool -p 7199 status", "mkdir -p /var/lib/cassandra", "ssh -p 2222 host",
+                                  "credentials_validity_in_ms: 2000", "num_tokens: 16"])
+def test_mask_leaves_ports_paths_and_settings(text):
+    assert out.mask(text) == text
+
+
+def test_mask_cqlsh_password_and_block_values():
+    assert out.mask("cqlsh -u admin -p s3cr3t node1") == "cqlsh -u admin -p **** node1"
+    assert out.mask("x_password: >-\n  line1\n\n  line2\nnext: 1") == "x_password: ****\n  ****\n\n  ****\nnext: 1"
+    assert out.changed_lines("-  keystore_password: |\n-    s3cr3t\n+  other: 1\n") == \
+        ["  -  keystore_password: ****", "  -    ****", "  +  other: 1"]
+    assert out.diff_lines({}, {"a": 1}) == ["  + a: 1"] and out.diff_lines(None, {}) == []
