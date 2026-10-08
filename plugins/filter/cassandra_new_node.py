@@ -132,7 +132,7 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
                 and not any(_under(other, p) for other in paths if other != path)]
         if held and reset:
             names = sorted(os.path.basename(p) for p in held)
-            warnings.append("%s directory %s is not empty (%s%s): the reset asked for empties it first"
+            warnings.append("%s directory %s is not empty (%s%s): the reset empties it first, unless it is refused"
                             % (kind, path, ", ".join(names[:5]), "..." if len(names) > 5 else ""))
         elif held:
             names = sorted(os.path.basename(p) for p in held)
@@ -241,18 +241,24 @@ def _listening(ss_output):
     return ports
 
 
-def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False, reset=False):
+def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False, reset=False, reset_stops=True):
     """reached: a wait_for loop result over {'name', 'host', 'port'} items;
     own_ports: [{'name', 'port'}] this host's Cassandra ports; ss_output:
     ss -ltn output (None: could not run it); reset: the node is reset first
-    (reset_node.yml stops a running Cassandra: only a warning, its ports too)."""
+    (reset_node.yml stops a running Cassandra: only a warning, its ports too);
+    reset_stops: false when the reset never stops Cassandra (add_node's resets
+    only a node where it is down): running is a problem then."""
     problems, warnings, info = [], [], []
+    reset = reset and (reset_stops or not running)
     if running and reset:
         warnings.append("Cassandra is running here: the reset asked for stops it first (refused if it is a member of a"
                         " cluster)")
     elif running:
         problems.append("Cassandra is running here: a new node must not have started yet. If it holds no data you need"
-                        " (e.g. the package's own instance), stop it and empty its directories")
+                        " (e.g. the package's own instance), stop it%s" % (
+                            " (systemctl stop cassandra): add_node then empties it first, when it may (Cassandra down,"
+                            " in no ring, cluster this one or the stock 'Test Cluster')" if not reset_stops
+                            else " and empty its directories"))
     for r in (reached or {}).get("results", []):
         item = r.get("item", {})
         if r.get("msg") and item.get("optional"):

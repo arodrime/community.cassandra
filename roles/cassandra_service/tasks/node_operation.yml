@@ -95,13 +95,13 @@
         ansible_become: false  # an inventory ansible_become beats the become keyword
       when: cassandra_progress_file is defined and not ansible_check_mode  # --check made no file
 
-    # --check: only simulated
+    # --check did nothing: what a real run would do, never "done"
     - name: Record the result
       ansible.builtin.set_fact:
         cassandra_op_result: >-
-          {{ ('would ' ~ {'apply_config': 'apply', 'update_java': 'update Java', 'upgradesstables': 'upgrade the sstables'}
-                         .get(cassandra_service_node_action, cassandra_service_node_action)) if ansible_check_mode
-             else cassandra_service_node_action ~ ' done in ' ~ (now().timestamp() | int - _cassandra_op_start | int) ~ 's' }}
+          {{ ('would ' ~ _cassandra_service_would.get(cassandra_service_node_action, cassandra_service_node_action)
+              ~ ' (--check: nothing was changed)') if ansible_check_mode
+             else (cassandra_service_node_action ~ ' done in ' ~ (now().timestamp() | int - _cassandra_op_start | int) ~ 's') }}
         cassandra_op_done: true
   rescue:
     - name: Record the failure

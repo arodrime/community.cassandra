@@ -88,8 +88,9 @@ Read-only (change nothing):
 
 Nodes:
 
-  add_node - Adds new hosts to the running cluster, one at a time. Put them in their rack's group
-    first; one in cassandra_seeds joins as a regular node, then becomes a seed.
+  add_node - Adds new hosts to the running cluster: all prepared at once, then each started and
+    bootstrapped in turn. Put them in their rack's group first; one in cassandra_seeds joins as a
+    regular node, then becomes a seed.
     $ $PLAY $C.add_node -e cassandra_new_nodes=NEW_NODE
 
   topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the

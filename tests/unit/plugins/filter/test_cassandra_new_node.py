@@ -101,8 +101,8 @@ def test_non_empty_dirs_with_a_reset_only_warn():
     out = cassandra_new_node_dirs(DIRS, [ROOT, DATA], found=found, reset=True)
     assert out["problems"] == []
     assert out["warnings"] == [
-        "data directory /var/lib/cassandra/data is not empty (system): the reset asked for empties it first",
-        "commitlog directory /var/lib/cassandra/commitlog is not empty (CommitLog-7-1.log): the reset asked for empties it first"]
+        "data directory /var/lib/cassandra/data is not empty (system): the reset empties it first, unless it is refused",
+        "commitlog directory /var/lib/cassandra/commitlog is not empty (CommitLog-7-1.log): the reset empties it first, unless it is refused"]
 
 
 def test_other_cassandra_dirs_inside_a_data_dir_dont_count():
@@ -258,6 +258,20 @@ def test_network_running_with_a_reset_only_warns():
         "port 9042 (native (CQL)) is already in use here (by Cassandra?)", "port 7199 (JMX) is already in use here (by Cassandra?)"]
     # not running: a busy port is someone else's, the reset changes nothing to it
     out = cassandra_new_node_network({"results": []}, PORTS, SS, running=False, reset=True)
+    assert out["problems"] == ["port 9042 (native (CQL)) is already in use here", "port 7199 (JMX) is already in use here"]
+
+
+def test_network_running_is_a_problem_when_the_reset_never_stops_it():
+    # add_node's default reset: only a node where Cassandra is down
+    out = cassandra_new_node_network({"results": []}, PORTS, SS, running=True, reset=True, reset_stops=False)
+    assert out["problems"] == [
+        "Cassandra is running here: a new node must not have started yet. If it holds no data you need (e.g. the"
+        " package's own instance), stop it (systemctl stop cassandra): add_node then empties it first, when it may"
+        " (Cassandra down, in no ring, cluster this one or the stock 'Test Cluster')",
+        "port 9042 (native (CQL)) is already in use here", "port 7199 (JMX) is already in use here"]
+    assert out["warnings"] == []
+    # down: the busy ports are someone else's
+    out = cassandra_new_node_network({"results": []}, PORTS, SS, running=False, reset=True, reset_stops=False)
     assert out["problems"] == ["port 9042 (native (CQL)) is already in use here", "port 7199 (JMX) is already in use here"]
 
 

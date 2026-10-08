@@ -1,6 +1,6 @@
 ---
-# One check of a streaming operation (stream_wait.yml), in a round of checks: skipped once it has ended.
-- name: Check {{ _cassandra_stream_round + 1 }}
+# One check of a streaming operation (stream_wait.yml, through wait_loop.yml)
+- name: Check the progress
   when: _cassandra_stream_status == 'going'
   block:
     - name: Read the streams
@@ -14,14 +14,17 @@
       failed_when: false
       ignore_unreachable: true  # a node not answering once is a check without an answer
 
-    # This node's netstats, when it is one of them (a bootstrap: its mode says when it is over)
+    # This node's netstats, when it is one of them (a bootstrap: its mode says when it is over). Its own
+    # nodetool may not answer though Cassandra runs (5.0.0 to 5.0.4 during a bootstrap: CASSANDRA-19902;
+    # JMX login or permissions): the other side is read instead
     - name: Keep this node's answer
       ansible.builtin.set_fact:
-        _cassandra_stream_self: >-
-          {{ cassandra_stream_read.results | selectattr('item', 'equalto', inventory_hostname) | first | default({}) }}
+        _cassandra_stream_self: "{{ _self }}"
         _cassandra_stream_blind: >-
-          {{ 'InstanceNotFoundException' in (cassandra_stream_read.results | selectattr('item', 'equalto', inventory_hostname)
-                                             | first | default({})).stderr | default('') }}
+          {{ (_self | community.cassandra.cassandra_stream_own_error | length > 0)
+             and not _self | community.cassandra.cassandra_stream_own_stopped }}
+      vars:
+        _self: "{{ cassandra_stream_read.results | selectattr('item', 'equalto', inventory_hostname) | first | default({}) }}"
 
     - name: Read the streams from the other side
       community.cassandra.cassandra_netstats:
@@ -34,6 +37,29 @@
       failed_when: false
       ignore_unreachable: true  # e.g. the dead node of a replace, still in the inventory
       when: _cassandra_stream_blind | bool
+
+    # A join is then over once the other nodes see it UN
+    - name: Read how the other nodes see it
+      community.cassandra.cassandra_status:
+        down: 10000  # read it whatever the state of the nodes
+        interval: 0
+        port: "{{ hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int }}"
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      delegate_to: "{{ item }}"
+      # two of them: the ones the preflight found running first, never the ones it found stopped
+      loop: >-
+        {{ (_cassandra_stream_peers | default([]) | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
+            | selectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list
+            + _cassandra_stream_peers | default([]) | map('extract', hostvars) | rejectattr('_cassandra_preflight_running', 'defined')
+              | map(attribute='inventory_hostname') | list)[:2] }}
+      register: cassandra_stream_seen
+      failed_when: false
+      ignore_unreachable: true
+      check_mode: false  # read-only
+      when:
+        - _cassandra_stream_blind | bool
+        - _cassandra_stream_join | default(false) | bool
 
     - name: Check the job
       ansible.builtin.async_status:
@@ -87,37 +113,31 @@
         _cassandra_stream_job_result: >-
           {{ dict(cassandra_stream_job_status | default({}) | dict2items
                   | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
-        # the block's condition reads _cassandra_stream_status: set after the progress line. A decommission job that
-        # changed nothing (the node was LEAVING already) is not the end: its mode DECOMMISSIONED is
+        _cassandra_stream_seen: "{{ _seen }}"
+        # the block's condition reads _cassandra_stream_status: set after the progress line
         _cassandra_stream_now: >-
-          {{ 'done' if (_join and _self_mode == 'NORMAL') or (_leave and _self_mode == 'DECOMMISSIONED')
-                      or (_job and _job_status.finished | default(0) | int == 1 and not _job_status.failed | default(false)
-                          and (_job_status.changed | default(false) or not _leave))
-                      or (_removal and _removal_status.rc | default(1) == 0 and 'Removing token' not in _removal_status.stdout | default(''))
-             else 'job_failed' if _job and _job_status.finished | default(0) | int == 1 and _job_status.failed | default(false)
-             else 'job_lost' if _job and _job_status.failed | default(false)
-             else 'join_failed' if _join and _self_mode == 'JOINING_FAILED'
-             else 'leave_failed' if _leave and _self_mode == 'DECOMMISSION_FAILED'
-             else 'stopped' if (_join or _leave) and 'Connection refused' in _cassandra_stream_self.stderr | default('')
-             else 'stalled' if _cassandra_stream_state.stalled
-             else 'too_long' if cassandra_stream_max_time | int > 0
-                                and now().timestamp() | int - _cassandra_stream_state.start | int >= cassandra_stream_max_time | int
-             else 'going' }}
+          {{ _cassandra_stream_state | community.cassandra.cassandra_stream_status(
+               join=_cassandra_stream_join | default(false) | bool, leave=_cassandra_stream_leave | default(false) | bool,
+               own=_cassandra_stream_self, seen=_seen,
+               job=(cassandra_stream_job_status if _cassandra_stream_job.jid | default('') | length > 0 else none),
+               removal=(cassandra_stream_removal if _cassandra_stream_removal_on | default('') | length > 0 else none),
+               max_time=cassandra_stream_max_time | int, now=now().timestamp() | int) }}
       vars:
-        _join: "{{ _cassandra_stream_join | default(false) | bool }}"
-        _job: "{{ _cassandra_stream_job.jid | default('') | length > 0 }}"
-        _leave: "{{ _cassandra_stream_leave | default(false) | bool }}"
-        _removal: "{{ _cassandra_stream_removal_on | default('') | length > 0 }}"
-        _removal_status: "{{ cassandra_stream_removal | default({}) }}"
-        _job_status: "{{ cassandra_stream_job_status | default({}) }}"
-        _self_mode: "{{ _cassandra_stream_self.mode | default('') }}"
+        _seen: >-
+          {{ cassandra_stream_seen.results | default([]) | community.cassandra.cassandra_ring_seen(
+               _cassandra_preflight.ring_address | default(_cassandra_preflight.address | default(''), true)) }}
 
-    # A list: the default callback prints one line each; once done, a single line
+    # One line per check, then always one line for the other ends (and why it waits, when this node can't tell)
     - name: Write the progress
       ansible.builtin.set_fact:
         _cassandra_stream_report: >-
-          {{ _cassandra_stream_state | community.cassandra.cassandra_stream_report(node=inventory_hostname,
-               what=_cassandra_stream_what, status=_cassandra_stream_now, names=_names) }}
+          {{ _cassandra_stream_state | community.cassandra.cassandra_progress_line(
+               index=_cassandra_stream_index | default(0) | int, steps=_cassandra_stream_steps | default(0) | int,
+               node=inventory_hostname, operation=_cassandra_stream_what,
+               mode=_cassandra_stream_self.mode | default(''), names=_names, status=_cassandra_stream_now)
+             + (_cassandra_stream_self | community.cassandra.cassandra_stream_waiting(_cassandra_stream_seen,
+                  node=inventory_hostname, join=_cassandra_stream_join | default(false) | bool)
+                if _cassandra_stream_now == 'going' else []) }}
       vars:
         # the other ends by their inventory names (netstats shows addresses)
         _names: "{{ groups['all'] | community.cassandra.cassandra_host_addresses(hostvars) }}"

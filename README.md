@@ -40,7 +40,7 @@ to do, the questions and the failures (`-v` for everything); with the default ca
 - `help`- Read-only, from the inventory alone (no node contacted): the clusters it describes, every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables).
 - `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
-- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.
+- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster: all prepared at once (nothing started), then started and bootstrapped one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.
 - `move_node`- One token per node: moves nodes to new tokens one at a time (by default, the fewest moves that even out each datacenter), then cleans up.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
@@ -52,7 +52,7 @@ to do, the questions and the failures (`-v` for everything); with the default ca
 - `decommission_node`- Removes the nodes in `cassandra_leaving_nodes`, one at a time; a node taken out of `cassandra_seeds` is first dropped from the other nodes' seed lists; refuses a datacenter that keeps nodes but no seed, or fewer nodes than replicas.
 - `topology`- Makes the ring match the inventory (the desired state): adds the hosts of the cluster's group not in the ring (as `add_node`), applies `cassandra_seeds` (as `change_seeds`), decommissions the hosts marked `cassandra_node_state: absent` still in it (as `decommission_node`); one screen, one question, `--check` shows the plan. Every playbook leaves the hosts marked absent out.
 - `replace_node`- Replaces a dead node (`cassandra_replace_address`) by a blank host (`cassandra_new_nodes`), which takes over its tokens and data.
-- `reset_node`- Empties nodes that are not members of the cluster (`cassandra_reset_nodes`: started once by mistake, a failed bootstrap) for a fresh start; refused on any node the cluster sees in its ring. `add_node` and `replace_node` do the same with `cassandra_add_node_reset` / `cassandra_replace_node_reset`.
+- `reset_node`- Empties nodes that are not members of the cluster (`cassandra_reset_nodes`: started once by mistake, a failed bootstrap) for a fresh start; refused on any node the cluster sees in its ring. `add_node` does the same by default for a new node that holds data, when it is down, in no ring and of this cluster or `Test Cluster` (`cassandra_add_node_reset`), `replace_node` with `cassandra_replace_node_reset`.
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.
 - `remove_dead_node`- Last resort for a dead node that will not be replaced: `removenode` (or `assassinate`).
 - `add_datacenter` / `remove_datacenter`- Adds a datacenter (join without streaming, replication, rebuild), or removes one (replication, then its nodes leave).

@@ -68,12 +68,15 @@ OPERATIONS = [
      "summary": "Checks the nodes against the inventory before a change: settings that must match, racks for the"
                 " token allocator, versions, seeds."},
     {"name": "add_node", "theme": "nodes", "cql": "plan",
-     "summary": "Adds new hosts to the running cluster, one at a time. Put them in their rack's group first; one in"
-                " cassandra_seeds joins as a regular node, then becomes a seed.",
+     "summary": "Adds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in"
+                " turn. Put them in their rack's group first; one in cassandra_seeds joins as a regular node, then"
+                " becomes a seed.",
      "options": [("-e cassandra_new_nodes=NEW_NODE", "the hosts to add (comma-separated), already in the inventory",
                   None),
-                 ("-e cassandra_add_node_reset=true", "first empties a new node that has data but is not in the ring",
-                  "false"),
+                 ("-e cassandra_add_node_reset=false", "refuses a new node that has data instead of emptying it (only"
+                                                       " when down, in no ring, of this cluster or 'Test Cluster',"
+                                                       " without user keyspaces but a failed bootstrap's)",
+                  "true"),
                  ("-e cassandra_add_node_cleanup=sequential", "runs the cleanup afterwards: sequential, rack, dc or"
                                                               " all; none prints its command", "none"),
                  ("-e cassandra_token_auto=bisect", "one token per node: how the new nodes get their tokens, bisect,"
@@ -83,8 +86,8 @@ OPERATIONS = [
      "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, applies"
                 " cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node at a time,"
                 " --check shows the plan and its warnings.",
-     "options": [("-e cassandra_add_node_reset=true", "first empties a host to add that has data but is not in the"
-                                                      " ring", "false"),
+     "options": [("-e cassandra_add_node_reset=false", "refuses a host to add that has data instead of emptying it",
+                  "true"),
                  ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
                   "false"),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"

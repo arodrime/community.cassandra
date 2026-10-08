@@ -7,9 +7,11 @@
 # import_cluster wrote (host_vars of a node it found) on a host with no Cassandra. Read-only, also
 # under --check. Runs after the preflight play (its facts and ring). A host already
 # in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
-# checks it next). _cassandra_new_node_reset (a reset asked for): leftovers in
-# the directories and a running Cassandra are only warnings, the reset deals with
-# them. cassandra_new_node_checks: false skips them all.
+# checks it next). _cassandra_new_node_reset (the node is reset first): leftovers in
+# the directories are only warnings, the reset deals with them (or refuses), and
+# a running Cassandra too unless _cassandra_new_node_reset_stops is false (add_node's
+# reset, on by default, only resets a node where Cassandra is down).
+# cassandra_new_node_checks: false skips them all.
 - name: Load the defaults of the roles the node gets
   ansible.builtin.include_role:
     name: "community.cassandra.{{ item }}"
@@ -245,7 +247,8 @@
                 {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,
                      ss_output=cassandra_new_node_ss.stdout if cassandra_new_node_ss.rc | default(1) == 0 else none,
                      running=_cassandra_preflight_running | default(false),
-                     reset=_cassandra_new_node_reset | default(false)) }}
+                     reset=_cassandra_new_node_reset | default(false),
+                     reset_stops=_cassandra_new_node_reset_stops | default(true)) }}
 
         # topology: in its plan (NOTE and WARNING lines)
         - name: What {{ inventory_hostname }} has
@@ -282,8 +285,9 @@
           {{ _hosts | join(', ') }} {{ 'is' if _hosts | length == 1 else 'are' }} not ready (the problems are listed above):
           nothing was installed. Fix them and run again, or skip these checks with -e cassandra_new_node_checks=false.
           {{ ('Leftovers of a node that never joined (started once by mistake, a failed bootstrap) or of a host replacing itself:'
-              ' -e cassandra_add_node_reset=true (add_node) or -e cassandra_replace_node_reset=true (replace_node) empties'
-              ' it first, if they hold nothing you need.') if _leftovers | bool else '' }}
+              ' add_node empties a new node first when it may (Cassandra down, in no ring, cluster this one or the stock'
+              " 'Test Cluster', no user keyspace; unless -e cassandra_add_node_reset=false), replace_node with"
+              ' -e cassandra_replace_node_reset=true, if they hold nothing you need.') if _leftovers | bool else '' }}
       run_once: true
       when: _hosts | length > 0
       vars:

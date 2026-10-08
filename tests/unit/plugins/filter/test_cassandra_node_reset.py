@@ -4,7 +4,8 @@ __metaclass__ = type
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
-    cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real, cassandra_node_reset_ring, reset_path_problem)
+    cassandra_add_node_reset_check, cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real,
+    cassandra_node_reset_ring, reset_path_problem)
 
 INVENTORY = [["data", "/var/lib/cassandra/data"], ["commitlog", "/var/lib/cassandra/commitlog"],
              ["saved_caches", "/var/lib/cassandra/saved_caches"], ["hints", "/var/lib/cassandra/hints"]]
@@ -161,7 +162,7 @@ def test_no_live_file(live):
     # Ansible before 2.19 turns a none passed through a var into ''
     out = cassandra_node_reset_dirs([["data", "/data/cassandra/data"]], live, cluster_name="Orders")
     assert out == {"dirs": [{"path": "/data/cassandra/data", "kinds": ["data"], "from": ["inventory"]}], "problems": [],
-                   "addresses": []}
+                   "addresses": [], "cluster_name": None}
 
 
 def test_live_file_without_cluster_name_is_test_cluster():
@@ -442,3 +443,108 @@ def test_whole_cluster_reset_needs_data_holders_in_the_ring():
                                 " cluster: a node of another cluster?"], "info": []}
     # blank (a new host in the rebuild): fine
     assert cassandra_node_reset_ring([], ME, has_data=False, cluster_ring=ring[:2])["problems"] == []
+
+
+# add_node's reset, on by default (cassandra_add_node_reset): every condition
+def _auto(**kwargs):
+    args = dict(node="node7", cluster_name="my_cluster", live_cluster="Test Cluster", has_data=True, running=False,
+                size=12 * 1024 ** 3, keyspaces=["system", "system_schema"], peers=False, cluster_keyspaces=None,
+                ring_problems=[], title="node7 (dc1/rack_b)")
+    args.update(kwargs)
+    return cassandra_add_node_reset_check(**args)
+
+
+def test_auto_reset_of_a_stock_node_that_is_down():
+    out = _auto()
+    assert out == {"reset": True, "problems": [],
+                   "line": "node7 (dc1/rack_b): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down)"
+                           " — will be reset"}
+
+
+def test_auto_reset_nothing_to_do_without_data():
+    assert _auto(has_data=False, running=True, live_cluster="other") == {"reset": False, "problems": [], "line": ""}
+
+
+def test_auto_reset_refused_on_a_running_node():
+    out = _auto(running=True)
+    assert not out["reset"]
+    assert out["problems"] == ["Cassandra runs on it: add_node resets only a node where Cassandra is down. Stop it"
+                               " (systemctl stop cassandra) if it holds nothing you need, then run add_node again"]
+    assert out["line"].startswith("node7 (dc1/rack_b): has data (12.0 GiB, cluster 'Test Cluster', not in any ring,"
+                                  " running): not reset automatically, Cassandra runs on it")
+
+
+def test_auto_reset_refused_when_in_the_ring():
+    seen = "node1 sees 10.100.100.7 in its ring (UN, host ID id-7): node7 is a member of the cluster, never reset it"
+    out = _auto(live_cluster="my_cluster", ring_problems=[seen])
+    assert out["problems"] == [seen]
+    assert "(12.0 GiB, cluster 'my_cluster', in the ring of this cluster, down)" in out["line"]
+
+
+def test_auto_reset_refused_when_the_ring_can_not_be_read():
+    why = "no other node of the cluster answered as up and normal (UN) (asked: node1): whether node7 is in the ring can't be checked"
+    out = _auto(ring_problems=[why])
+    assert out["problems"] == [why] and "ring unknown" in out["line"]
+
+
+def test_auto_reset_refused_for_another_cluster():
+    out = _auto(live_cluster="billing")
+    assert out["problems"] == ["its data is of cluster 'billing', neither 'my_cluster' nor the package's stock 'Test Cluster'"]
+    assert "cluster 'billing'" in out["line"]
+
+
+def test_auto_reset_refused_when_the_cluster_is_unknown():
+    out = _auto(live_cluster=None)
+    assert out["problems"] == ["the cluster its data belongs to is unknown (no readable cassandra.yaml)"]
+    assert "cluster unknown" in out["line"]
+
+
+def test_auto_reset_refused_for_a_member_of_another_test_cluster_ring():
+    out = _auto(peers=True)
+    assert out["problems"] == ["its system.peers lists other nodes: a member of another 'Test Cluster' ring"]
+    assert "in another ring" in out["line"]
+
+
+def test_auto_reset_refused_for_user_keyspaces_of_test_cluster():
+    out = _auto(keyspaces=["system", "shop", "users", "system_auth"])
+    assert out["problems"] == ["it holds user keyspaces (shop, users): only a failed bootstrap of this cluster may"]
+    assert "user keyspaces shop, users" in out["line"]
+
+
+def test_auto_reset_of_a_failed_bootstrap_of_this_cluster():
+    out = _auto(live_cluster="my_cluster", keyspaces=["system", "shop"], peers=True, cluster_keyspaces={"shop": {}})
+    assert out["reset"] and out["problems"] == []
+    assert out["line"] == ("node7 (dc1/rack_b): has data (12.0 GiB, cluster 'my_cluster', user keyspaces shop (a failed"
+                           " bootstrap of this cluster), not in any ring, down) — will be reset")
+
+
+def test_auto_reset_refused_for_user_keyspaces_when_the_cluster_keyspaces_are_unknown():
+    # no CQL answer: the same name is not enough (a clone of the cluster, a cassandra.yaml rewritten)
+    out = _auto(live_cluster="my_cluster", keyspaces=["shop"])
+    assert not out["reset"]
+    assert out["problems"] == ["it holds user keyspaces (shop) and the cluster's keyspaces could not be read: whether"
+                               " they are a failed bootstrap's can't be checked"]
+    # without user keyspaces it does not matter
+    assert _auto(live_cluster="my_cluster", keyspaces=["system"])["reset"]
+
+
+def test_auto_reset_ring_problems_as_a_string():
+    assert _auto(ring_problems="no other node answered")["problems"] == ["no other node answered"]
+
+
+def test_auto_reset_refused_for_keyspaces_this_cluster_does_not_have():
+    out = _auto(live_cluster="my_cluster", keyspaces=["shop", "legacy"], cluster_keyspaces={"shop": {}})
+    assert out["problems"] == ["it holds keyspaces this cluster does not have (legacy)"]
+
+
+def test_auto_reset_every_reason_at_once():
+    out = _auto(running=True, live_cluster="billing", keyspaces=["orders"])
+    assert len(out["problems"]) == 3
+    assert out["line"].endswith("Nothing was changed: check what it holds; if nothing is needed, empty it (reset_node)"
+                                " or remove it from cassandra_new_nodes")
+
+
+def test_live_cluster_name_returned():
+    assert cassandra_node_reset_dirs(INVENTORY, "cluster_name: billing\n", MOUNTS)["cluster_name"] == "billing"
+    assert cassandra_node_reset_dirs(INVENTORY, "num_tokens: 16\n", MOUNTS)["cluster_name"] == "Test Cluster"
+    assert cassandra_node_reset_dirs(INVENTORY, None, MOUNTS)["cluster_name"] is None

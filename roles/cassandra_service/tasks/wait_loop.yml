@@ -1,0 +1,20 @@
+---
+# Runs one check (_cassandra_wait_check: a task file of this role) again and
+# again while _cassandra_wait_going (an expression, read before each check) is
+# true, and stops right after the check that ends it. Ansible includes every
+# item of a looped include before running any, and nests every include one
+# level deeper (it fails past ~150 levels): the checks go by groups of
+# _cassandra_wait_size, _cassandra_wait_size groups to a round, one include
+# level per round. Once it has ended, what is left of the round is skipped at
+# most _cassandra_wait_size checks and as many groups, one task each, not a
+# burst of whole checks.
+- name: Checks, by groups of {{ _cassandra_wait_size }}
+  ansible.builtin.include_tasks: wait_group.yml
+  loop: "{{ range(_cassandra_wait_size | int) | list }}"
+  loop_control:
+    loop_var: _cassandra_wait_group
+    label: "{{ _cassandra_wait_group + 1 }}"
+
+- name: Next round of checks
+  ansible.builtin.include_tasks: wait_loop.yml
+  when: _cassandra_wait_going | bool

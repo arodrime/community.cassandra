@@ -178,6 +178,32 @@
              | list if ansible_limit is defined else [] }}
       run_once: true
 
+    # The reset of a host to add (add_node's) checks its user keyspaces against the cluster's: read first
+    - name: Read the keyspaces for the hosts to add
+      when:
+        - _tp_candidates | length > 0
+        - cassandra_add_node_reset | bool
+        - inventory_hostname == _tp_cql_node
+      block:
+        - name: Read the keyspaces' replication
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: keyspaces.yml
+      rescue:
+        - name: Go on without it
+          ansible.builtin.set_fact:
+            cassandra_keyspaces: null
+            _cassandra_topology_keyspaces_error: "{{ (ansible_failed_result.err | default(ansible_failed_result.msg) | default('') | trim).splitlines() | last | default('') }}"
+
+    - name: Share the keyspaces with the hosts to add
+      ansible.builtin.set_fact:
+        cassandra_keyspaces: "{{ hostvars[_tp_cql_node].cassandra_keyspaces | default(none) }}"
+      run_once: true
+      when:
+        - _tp_candidates | length > 0
+        - cassandra_add_node_reset | bool
+        - _tp_cql_node | length > 0
+
     # The checks add_node runs first, on the hosts to add: refused here, before the question.
     # Each host on its own (ansible_play_hosts_all, never ansible_play_hosts nor a rescued run_once:
     # on ansible-core 2.19+ a rescued failure narrows or drops the play's hosts)
@@ -191,6 +217,7 @@
           vars:
             _cassandra_new_node_skip_in_ring: true  # a bootstrap still running
             _cassandra_new_node_reset: "{{ cassandra_add_node_reset | bool }}"
+            _cassandra_new_node_reset_stops: false  # add_node's reset: a running Cassandra is refused
 
         - name: Find where it stands
           ansible.builtin.include_role:
@@ -208,6 +235,7 @@
             - cassandra_new_node_state == 'new'
           vars:
             cassandra_new_nodes: "{{ _tp_candidates | join(',') }}"
+            _cassandra_node_reset_auto: true  # add_node's
       rescue:
         - name: Record the refusal
           ansible.builtin.set_fact:
@@ -261,6 +289,7 @@
       when:
         - _tp_todo | bool
         - inventory_hostname == _tp_cql_node
+        - cassandra_keyspaces is not defined  # read already for the hosts to add
       block:
         - name: Read the keyspaces' replication
           ansible.builtin.include_role:

@@ -136,12 +136,14 @@ Role Variables
   packages or the sources they come from, the seeds' ports, the host's own
   ports free, no Cassandra running) and stop with every problem found.
   Default `true`; `false` skips them.
-* `cassandra_add_node_reset`: `add_node` refuses a new node that has data
-  but is not in the ring (started once by mistake, a failed bootstrap);
-  `true` empties it first (`tasks/reset_node.yml`, as the `reset_node`
-  playbook: Cassandra stopped and disabled, what its directories hold
-  deleted, shown and confirmed; refused on a node the cluster sees in its
-  ring). Default `false`.
+* `cassandra_add_node_reset`: `add_node` (and `topology`) empty first a new
+  node that has data but is not in the ring (started once by mistake, a
+  failed bootstrap): `tasks/reset_node.yml`, as the `reset_node` playbook,
+  what its directories hold deleted, shown and confirmed. Only when
+  Cassandra is down there, no up node sees it in its ring, its cluster is
+  this one or the stock `Test Cluster`, and it has no user keyspace but a
+  failed bootstrap's of this cluster; else refused with what it holds.
+  `false` refuses every new node with data. Default `true`.
 * `cassandra_replace_node_reset`: the same for a replacement host that still
   holds data in `replace_node`, typically a host replacing itself (its
   address only seen down, as the node being replaced). Default `false`.

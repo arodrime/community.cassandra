@@ -186,6 +186,9 @@ def test_progress_line_going_with_peers_always():
 def test_progress_line_waiting_stalled_done():
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", now=NOW, start=NOW - 32) == \
         ["[1/2] node5 bootstrap  JOINING  waiting for streams  32s"]
+    # checks without a stream yet (a bootstrap's ring delay): not called stalled, the count shown
+    assert out.progress_line(1, 2, "node5", "bootstrap", mode="JOINING", now=33, start=0, idle_checks=2, limit=12) == \
+        ["[1/2] node5 bootstrap  JOINING  waiting for streams  2/12 checks  33s"]
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
                              start=NOW - 900, idle_checks=3, limit=12) == \
         ["[1/2] node5 bootstrap  JOINING  STALLED 3/12 checks  37%  37.5/100.0 GiB  15m"]

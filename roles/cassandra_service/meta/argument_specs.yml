@@ -163,17 +163,21 @@ argument_specs:
             The cluster is checked before each batch.
       cassandra_add_node_reset:
         type: bool
-        default: false
+        default: true
         description:
-          - What the C(add_node) playbook does with a new node that has data but is not in the ring (started
-            once by mistake, a failed bootstrap). C(false) refuses it. C(true) resets it first, the same way as
-            the C(reset_node) playbook. It stops Cassandra, keeps it from starting at boot, then deletes what its
+          - What the C(add_node) and C(topology) playbooks do with a new node that has data but is not in the
+            ring (started once by mistake, a failed bootstrap). C(true) (the default) resets it first, the same
+            way as the C(reset_node) playbook. It keeps Cassandra from starting at boot, then deletes what its
             data, commitlog, saved_caches, hints and cdc_raw directories hold, from the inventory and the live
-            C(cassandra.yaml). The list is shown and confirmed first.
-          - The reset is refused when an up node of the cluster lists one of the node's addresses in its ring,
-            when no other node answers as up, when Cassandra runs there with other nodes in its ring, and on
-            paths that look wrong (a system directory, a top-level one that is not a mount point, one holding
-            another mount point, the config or the logs).
+            C(cassandra.yaml). The node, what it holds and the list are shown and confirmed first. C(false)
+            refuses any new node with data. A new node without data needs no reset.
+          - The node is reset only when all hold. Cassandra is down there. No up node of the cluster lists one
+            of its addresses in its ring, and its data does not show it as a member of another ring. Its cluster
+            name (its live C(cassandra.yaml)) is this cluster's or the package's stock C(Test Cluster). It has no
+            user keyspace, unless it is a failed bootstrap of this cluster (its cluster name is this one, its
+            keyspaces among the cluster's). Otherwise it is refused, with what it holds (size, cluster, user
+            keyspaces, ring, running or down). Paths that look wrong are refused too (a system directory, a
+            top-level one that is not a mount point, one holding another mount point, the config or the logs).
       cassandra_replace_node_reset:
         type: bool
         default: false

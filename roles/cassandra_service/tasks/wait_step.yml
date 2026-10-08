@@ -1,0 +1,5 @@
+---
+# One check of wait_loop.yml, unless it has ended
+- name: Check
+  ansible.builtin.include_tasks: "{{ _cassandra_wait_check }}"
+  when: _cassandra_wait_going | bool

@@ -1,6 +1,6 @@
 ---
-# One check of the cleanups of a batch (cleanup_wait.yml), in a round of checks: skipped once it has ended.
-- name: Check {{ _cassandra_stream_round + 1 }}
+# One check of the cleanups of a batch (cleanup_wait.yml, through wait_loop.yml).
+- name: Check the cleanups
   when: _cassandra_cleanup_status == 'going'
   block:
     - name: Read the cleanups

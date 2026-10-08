@@ -371,7 +371,7 @@ many while nothing is left to transfer). If the run stops before the node has jo
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
 failed bootstrap over, stop Cassandra on the node, wait until it is gone from ``nodetool status``, and run ``add_node``
-again with ``-e cassandra_add_node_reset=true`` (see `Resetting a node`_). ``replace_node``, ``decommission_node``,
+again: it empties the node first (``cassandra_add_node_reset``, see `Resetting a node`_). ``replace_node``, ``decommission_node``,
 ``remove_dead_node`` and the rebuild of ``add_datacenter`` wait the same way.
 
 Once the new nodes have joined, the others still hold the data they handed over: ``add_node`` prints the ``cleanup``
@@ -538,7 +538,7 @@ Resetting a node
 ----------------
 
 A node that never joined the cluster but has data of its own (started once with the package's stock configuration,
-or a bootstrap that failed) is refused by ``add_node``. The reset starts it over: Cassandra stopped and kept from
+or a bootstrap that failed) can't be added as it is. The reset starts it over: Cassandra stopped and kept from
 starting at boot, then everything its data, commitlog, saved_caches, hints and cdc_raw directories hold deleted (the
 directories stay, they may be mount points). The directories are those of the inventory and those of the live
 ``cassandra.yaml`` (Cassandra's defaults under ``/var/lib/cassandra`` for the keys it leaves out).
@@ -546,7 +546,22 @@ directories stay, they may be mount points). The directories are those of the in
 .. code-block:: console
 
     $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_reset_nodes=node7
-    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7 -e cassandra_add_node_reset=true
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
+
+``add_node`` (and ``topology``, for the hosts it adds) resets such a node by itself (``cassandra_add_node_reset``, on by
+default), but only when all hold: Cassandra is down on the node; no up node of the cluster sees it in its ring and its
+data does not show it as a member of another ring (other nodes in its ``system.peers`` while its cluster is not this
+one); its cluster name (its live ``cassandra.yaml``, which Cassandra checks against its data at start) is this
+cluster's or the stock ``Test Cluster``; it has no user keyspace, unless it is a failed bootstrap of this cluster (its
+cluster name is this one, and its keyspaces are among the cluster's when they can be read). The screen says it before
+the question, with what it deletes in a ``data loss`` warning::
+
+    node7 (dc1/rack_b): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down) — will be reset
+
+Otherwise the run stops before any change with what the node holds and why, e.g. ``node7 (dc1/rack_b): has data
+(3.1 GiB, cluster 'Test Cluster', user keyspaces shop, not in any ring, running): not reset automatically, Cassandra
+runs on it ...``. A new node without data needs nothing. ``-e cassandra_add_node_reset=false`` refuses every new node
+that has data.
 
 Nothing is changed, and the run stops with the reason, when an up node of the cluster (every node of the group the
 preflight did not find stopped, but the nodes being added or reset, is asked) lists one of the node's addresses
@@ -563,7 +578,7 @@ point, the config or the logs, one directory inside another (links resolved), or
 be read. The directories are checked again, links resolved, just before the delete.
 The run shows what it would stop and delete, directory by directory, then asks once (``cassandra_operation_confirm:
 false`` skips the question); ``--check`` shows it and changes nothing. A second run finds nothing to do.
-``add_node`` and ``replace_node`` (``cassandra_add_node_reset``, ``cassandra_replace_node_reset``) work out the reset
+``add_node`` and ``replace_node`` (``cassandra_add_node_reset``, ``-e cassandra_replace_node_reset=true``) work out the reset
 before their screen, show what it deletes there (a ``data loss`` warning per node), and their one question covers it.
 
 
