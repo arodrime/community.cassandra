@@ -88,8 +88,7 @@ OPERATIONS = [
                  ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
                   "false"),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
-                                                          " replicas", "false"),
-                 ("-e cassandra_topology_max_removals=3", "most nodes removed by a run without the question", "2")],
+                                                          " replicas", "false")],
      "example": ("the plan only", ["--check"])},
     {"name": "decommission_node", "theme": "nodes", "cql": True,
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"

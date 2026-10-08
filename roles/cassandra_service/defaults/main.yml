@@ -93,10 +93,8 @@ cassandra_replace_node_reset: false
 # absent (a host var or a group var) is no longer part of the cluster, the
 # playbooks leave it out and topology removes it from the ring
 # (decommission). topology asks before it changes anything, the plan on the
-# screen; a run without the question (cassandra_operation_confirm false)
-# removes at most cassandra_topology_max_removals nodes.
+# screen.
 cassandra_node_state: present
-cassandra_topology_max_removals: 2
 # create_cluster: true rebuilds a cluster that runs already, all its data
 # lost (another snitch, datacenters, racks); the operator types the cluster
 # name, or gives it in cassandra_create_cluster_reset_confirm (no terminal)
@@ -203,4 +201,4 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_new_nodes, cassandra_
                                 cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw, cassandra_status_from,
                                 cassandra_allow_down_nodes, cassandra_accept_default_identity, cassandra_reset_nodes,
                                 cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
-                                cassandra_create_cluster_reset_confirm, cassandra_topology_max_removals]
+                                cassandra_create_cluster_reset_confirm]

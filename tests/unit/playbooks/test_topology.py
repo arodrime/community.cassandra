@@ -155,10 +155,10 @@ def test_steps_in_order_adds_seeds_removals():
     assert render(line_up["loop"], ansible_play_hosts_all=hosts, _tp_todo=False) == []
 
 
-def test_the_plan_gets_the_question_and_the_seeds():
+def test_the_plan_gets_the_seeds_and_no_cap():
     plan = task("Work out the plan")["ansible.builtin.set_fact"]["cassandra_topology_plan"]
-    assert "confirm=cassandra_operation_confirm | bool" in plan and "seeds=cassandra_seeds" in plan
-    assert "allow_large" not in plan
+    assert "seeds=cassandra_seeds" in plan
+    assert "max_removals" not in plan and "confirm=" not in plan and "allow_large" not in plan
     todo = PLAN["vars"]["_tp_todo"]
     assert render(todo, cassandra_topology_plan={"add": [], "remove": [], "seeds": {"step": True}}) is True
     assert render(todo, cassandra_topology_plan={"add": [], "remove": [], "seeds": {"step": False}}) is False

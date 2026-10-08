@@ -68,7 +68,7 @@ def test_absent_refusals():
              host(7, absent=True, refused="its decommission failed"), host(8, absent=True)]
     # node6 down in the ring; node8 runs, out of the ring
     entries = [entry(i, status="D" if i == 6 else "U") for i in range(1, 8)]
-    plan = cassandra_topology_plan(hosts, ring(*entries), max_removals=5)
+    plan = cassandra_topology_plan(hosts, ring(*entries))
     problems = plan["problems"]
     assert any(p.startswith("node5 is marked absent but is still in cassandra_seeds: take it out of cassandra_seeds in"
                             " the inventory") for p in problems)
@@ -82,8 +82,7 @@ def test_finish_a_decommission_and_wait_for_one():
     # node4 still leaving (UL), node5 decommissioned but running: stopped and disabled only
     hosts = [host(1), host(2), host(3), host(4, absent=True, state="leaving"), host(5, absent=True, state="decommissioned"),
              host(6, absent=True, state="normal")]
-    plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4, state="L"), entry(6), entry(7), entry(8)),
-                                   max_removals=3)
+    plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4, state="L"), entry(6), entry(7), entry(8)))
     assert plan["remove"] == ["node4", "node5", "node6"]
     assert plan["finish"] == ["node5"]
     assert plan["in_ring"] == ["node4", "node6"]
@@ -98,32 +97,28 @@ def test_no_add_while_a_node_leaves():
         assert any(p.startswith("node4 still leaving") for p in plan["problems"]), state
 
 
-def test_removal_cap_only_without_the_question():
+def test_no_cap_on_the_removals():
+    # 3 of 8 removed: no cap, no warning (not more than half of dc1)
     hosts = [host(i) for i in range(1, 6)] + [host(i, absent=True) for i in range(6, 9)]
-    full = ring(*[entry(i) for i in range(1, 9)])
-    # the question is asked: the plan is read, no cap
-    assert cassandra_topology_plan(hosts, full)["problems"] == []
-    assert cassandra_topology_plan(hosts, full, max_removals=1, confirm=True)["problems"] == []
-    # nobody reads the plan (cassandra_operation_confirm false): capped
-    plan = cassandra_topology_plan(hosts, full, confirm=False)
-    assert plan["problems"] == [
-        "the plan removes 3 nodes (node6, node7, node8), more than cassandra_topology_max_removals (2) for a run"
-        " without a question (cassandra_operation_confirm false): check the inventory (a group var marking hosts"
-        " absent?), run it with the question, or raise it if it is meant."]
-    assert cassandra_topology_plan(hosts, full, max_removals=3, confirm=False)["problems"] == []
+    plan = cassandra_topology_plan(hosts, ring(*[entry(i) for i in range(1, 9)]))
+    assert plan["problems"] == [] and plan["remove"] == ["node6", "node7", "node8"] and plan["large_removals"] == []
+    assert "WARNING - removals" not in cassandra_screen(cassandra_topology_screen(plan, hosts))
 
 
-def test_more_than_half_a_datacenter_always_refused():
-    # 2 of 3: refused with the question too, and whatever the cap
+def test_more_than_half_a_datacenter_a_warning():
+    # 2 of 3: not refused, said on the screen (under --check too)
     hosts = [host(1), host(2, absent=True), host(3, absent=True)]
-    for confirm in (True, False):
-        plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3)), max_removals=10, confirm=confirm)
-        assert plan["problems"] == ["the plan removes 2 of the 3 nodes of dc1 (node2, node3): more than half of the"
-                                    " datacenter. Remove fewer at a time (topology again once done), or the whole"
-                                    " datacenter with remove_datacenter."]
+    plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3)))
+    assert plan["problems"] == [] and plan["remove"] == ["node2", "node3"]
+    assert plan["large_removals"] == ["2 of the 3 nodes of dc1 removed (node2, node3): 1 node left to hold their data."]
+    for check in (False, True):
+        text = " ".join(cassandra_screen(cassandra_topology_screen(plan, hosts), check=check).split())
+        assert ("WARNING - removals: 2 of the 3 nodes of dc1 removed (node2, node3): 1 node left to hold their"
+                " data.") in text
     # half exactly is not more than half
     hosts = [host(1), host(2), host(3, absent=True), host(4, absent=True)]
-    assert cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4)))["problems"] == []
+    plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3), entry(4)))
+    assert plan["problems"] == [] and plan["large_removals"] == []
 
 
 def test_same_address_on_two_hosts():
@@ -232,6 +227,7 @@ def test_half_a_datacenter_counts_the_adds():
     hosts = [host(1), host(2, absent=True), host(3, absent=True), host(4, state="new"), host(5, state="new")]
     plan = cassandra_topology_plan(hosts, ring(entry(1), entry(2), entry(3)))
     assert plan["problems"] == [] and plan["add"] == ["node4", "node5"] and plan["remove"] == ["node2", "node3"]
+    assert plan["large_removals"] == []
 
 
 def test_one_token_per_node_add_and_remove_in_one_run_refused():
@@ -336,6 +332,23 @@ def test_plan_seed_change_alone_and_its_refusal():
     assert cassandra_topology_plan(hosts, r)["seeds"]["step"] is False
 
 
+def test_seed_warning_only_when_the_seeds_change():
+    # a node added, one removed, cassandra_seeds as the nodes run it: no seed step, no warning
+    hosts = [seeded(1), seeded(2), seeded(3), seeded(4, absent=True, state="normal"),
+             seeded(5, live="", state="new", rack="r2")]
+    r = ring(entry(1), entry(2), entry(3), entry(4))
+    plan = cassandra_topology_plan(hosts, r, seeds="10.0.0.1,10.0.0.2")
+    assert plan["problems"] == [] and plan["add"] == ["node5"] and plan["remove"] == ["node4"]
+    assert not plan["seeds"]["step"]
+    assert "WARNING - seeds" not in cassandra_screen(cassandra_topology_screen(plan, hosts, ring=r))
+    # the same seeds written another way on one node: written again there, said so
+    hosts[2]["live"] = "node1,node2"
+    plan = cassandra_topology_plan(hosts, r, seeds="10.0.0.1,10.0.0.2")
+    text = " ".join(cassandra_screen(cassandra_topology_screen(plan, hosts, ring=r)).split())
+    assert ("WARNING - seeds: the seed list is written again on node3: 10.0.0.1,10.0.0.2 (from cassandra_seeds in the"
+            " inventory), the same seeds.") in text
+
+
 def test_steps_count_and_group_the_nodes():
     hosts = [host(1), host(2, rack="r2"), host(3, absent=True), host(4, absent=True, rack="r2"),
              host(5, state="new"), host(6, state="new", rack="r2")]
@@ -344,4 +357,3 @@ def test_steps_count_and_group_the_nodes():
     assert cassandra_topology_steps(plan, hosts) == [
         "Add 2 nodes:           node5 (dc1/r1), node6 (dc1/r2)",
         "Decommission 2 nodes:  node3 (dc1/r1), node4 (dc1/r2)"]
-    assert "WARNING - seeds" not in cassandra_screen(cassandra_topology_screen(plan, hosts))  # the seeds stay

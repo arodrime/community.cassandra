@@ -34,15 +34,12 @@
 # each step), one question; --check shows the plan and changes nothing;
 # nothing to do: says so, changes nothing.
 # Refused before anything changes: a --limit that leaves out a host of the
-# group (the plan needs them all), more than half of a datacenter removed, a
-# datacenter left with no seed, more removals than
-# cassandra_topology_max_removals (2) in a run without the question
-# (cassandra_operation_confirm: false: nobody reads the plan; with the question
-# there is no such cap), an add while a
-# decommission is still running, two hosts with one address (absent or not),
+# group (the plan needs them all), a datacenter that keeps nodes left with no
+# seed, an add while a decommission is still running, two hosts with one address (absent or not),
 # a node that does not answer, one token per node with adds and removals in
 # one run, cassandra_new_nodes/cassandra_leaving_nodes/cassandra_reset_nodes
-# given (the plan says which nodes). The cleanup of the nodes that handed data
+# given (the plan says which nodes). No cap on the number of removals: more
+# than half of a datacenter removed is a warning on the plan screen. The cleanup of the nodes that handed data
 # over to the new ones is left to you (its command is printed).
 # Interrupted: run it again (cassandra_rolling_resume=true or not), the plan is
 # worked out again from the ring: a bootstrap or a decommission still running
@@ -212,8 +209,7 @@
     - name: Work out the plan
       ansible.builtin.set_fact:
         cassandra_topology_plan: >-
-          {{ _tp_hosts | community.cassandra.cassandra_topology_plan(_tp_ring, max_removals=cassandra_topology_max_removals,
-               confirm=cassandra_operation_confirm | bool, token_auto=cassandra_token_auto,
+          {{ _tp_hosts | community.cassandra.cassandra_topology_plan(_tp_ring, token_auto=cassandra_token_auto,
                seeds=cassandra_seeds) }}
         cassandra_topology_hosts: "{{ _tp_hosts }}"
       run_once: true

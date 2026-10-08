@@ -94,7 +94,7 @@ def cassandra_seed_change(hosts, seeds):
             "step": bool(removed or added or differ), "problems": problems}
 
 
-def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, token_auto="false", seeds=None):
+def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
     """hosts: every host of the cluster's group in the inventory's order:
     [{name, absent, address (the one the ring shows, '' when unknown), dc, rack,
       seed, reachable, running, state, refused, single, token, reset, names,
@@ -104,11 +104,10 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, toke
     add, new_node_state.yml's (new, joining, joined); for a host marked absent,
     leaving_node_state.yml's (normal, leaving, decommissioned); refused: why
     a check refused the host. ring: cassandra_status' cluster_status.
-    max_removals: the most removals of a run without the question
-    (cassandra_topology_max_removals), applied when confirm
-    (cassandra_operation_confirm) is false; with the question the plan on the
-    screen is the guard. token_auto:
-    cassandra_token_auto (one token per node); seeds: cassandra_seeds.
+    token_auto: cassandra_token_auto (one token per node); seeds:
+    cassandra_seeds. No cap on the number of removals: the guards are the
+    replicas each datacenter keeps (checked by the playbook) and its seeds;
+    more than half of a datacenter removed is a warning (large_removals).
     Returns {add, remove: [names] in the order of the run (adds first; a
     bootstrap or decommission an earlier run started first of its kind),
     seeds: cassandra_seed_change's (applied between the adds and the removals),
@@ -117,7 +116,8 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, toke
     silent: hosts marked absent out of the ring that do not answer, unknown:
     [ring entries no host has], down: present hosts down in the ring,
     in_ring: the hosts to remove still in the ring, nodes_left: {dc: nodes
-    once done}, problems, warnings}."""
+    once done}, large_removals: [a line per datacenter losing more than half
+    of its nodes], problems, warnings}."""
     entries = _ring_entries(ring)
     present = [h for h in hosts if not h.get("absent")]
     absent = [h for h in hosts if h.get("absent")]
@@ -210,14 +210,8 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, toke
                         " address mistyped, a host missing), or remove a dead node with remove_dead_node."
                         % ", ".join(unknown))
 
-    # a run nobody confirms has a cap; the plan is read before the question otherwise
-    if not confirm and len(in_ring) > int(max_removals):
-        problems.append("the plan removes %d nodes (%s), more than cassandra_topology_max_removals (%d) for a run"
-                        " without a question (cassandra_operation_confirm false): check the inventory (a group var"
-                        " marking hosts absent?), run it with the question, or raise it if it is meant."
-                        % (len(in_ring), ", ".join(in_ring), int(max_removals)))
-    # never more than half of a datacenter at once, question or not
-    by_dc = {}
+    # more than half of a datacenter removed: said on the screen (the replicas it keeps are the guard)
+    by_dc, large_removals = {}, []
     for name in in_ring:
         h = next(x for x in absent if x["name"] == name)
         by_dc.setdefault(entries[h["address"]][0], []).append(name)
@@ -225,9 +219,8 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, toke
         # the datacenter with the nodes this run adds first
         size = len([e for e in entries.values() if e[0] == dc]) + len([h for h in present if h["name"] in new and h.get("dc") == dc])
         if len(names) * 2 > size:
-            problems.append("the plan removes %d of the %d nodes of %s (%s): more than half of the datacenter."
-                            " Remove fewer at a time (topology again once done), or the whole datacenter with"
-                            " remove_datacenter." % (len(names), size, dc, ", ".join(names)))
+            large_removals.append("%d of the %d nodes of %s removed (%s): %s left to hold their data."
+                                  % (len(names), size, dc, ", ".join(names), _plural(size - len(names), "node")))
 
     # the seeds: cassandra_seeds applied live on every node once the adds are done, before the removals
     # a host to add may have a cassandra.yaml of its own (a package's): not a list the cluster runs with
@@ -262,7 +255,7 @@ def cassandra_topology_plan(hosts, ring=None, max_removals=2, confirm=True, toke
                         % ", ".join(down))
     return {"add": add, "remove": remove, "seeds": seed_change, "finish": finish, "gone": gone, "silent": silent, "unknown": unknown, "down": down,
             "in_ring": in_ring, "joining": joining, "leaving": leaving, "nodes_left": nodes_left,
-            "problems": problems, "warnings": warnings}
+            "large_removals": large_removals, "problems": problems, "warnings": warnings}
 
 
 def cassandra_topology_steps(plan, hosts):
@@ -405,8 +398,16 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
                      " after the adds (topology runs none: the removals move data again).")
 
     # a seed change topology applies on its own, nodes added or removed or not: said where it can't be missed
-    warnings = [{"label": "seeds", "text": "the seeds will change on every node: %s -> %s (from cassandra_seeds in the"
-                 " inventory)." % (",".join(seeds["old"]) or "(none)", seeds["new"]) if seeds.get("step") else ""},
+    if not seeds.get("step"):
+        seed_warning = ""
+    elif seeds.get("removed") or seeds.get("added"):
+        seed_warning = ("the seeds will change on every node: %s -> %s (from cassandra_seeds in the inventory)."
+                        % (",".join(seeds["old"]) or "(none)", seeds["new"]))
+    else:  # the same seeds, written another way on some nodes
+        seed_warning = ("the seed list is written again on %s: %s (from cassandra_seeds in the inventory), the same seeds."
+                        % (", ".join(seeds.get("differ") or []), seeds["new"]))
+    warnings = [{"label": "seeds", "text": seed_warning},
+                {"label": "removals", "each": plan.get("large_removals") or []},
                 {"label": "racks", "each": rack_warnings},
                 {"label": "unknown", "each": ["%s is in the ring but no host of the inventory has this address: never"
                                               " touched. A typo in an address, a host missing from the inventory, or"

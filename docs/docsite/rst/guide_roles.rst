@@ -432,7 +432,7 @@ Removing a node
 ``decommission_node`` removes the nodes in ``cassandra_leaving_nodes``, one at a time: each one streams its data to the
 others, then Cassandra is stopped and disabled on it. To remove a seed, take it out of ``cassandra_seeds`` in the
 inventory: the other nodes, which still list it, then get the new list first, live, as ``change_seeds`` applies it (a
-node still in ``cassandra_seeds`` is refused). Refused too: a datacenter left with no seed, and a removal that would
+node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that keeps nodes left with no seed, and a removal that would
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). Remove the hosts from the inventory afterwards. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
@@ -481,14 +481,13 @@ rack, for example (replacing the seed ``node2`` by ``node5``):
 
 then the details of each step (the data each node streams), and asks once; each step then shows its own screen as it
 starts, without a question. Refused before anything changes: a ``--limit`` that leaves out a host of the group (the
-plan needs them all), a plan removing more than half of a datacenter, a datacenter left with no seed, more removals
-than ``cassandra_topology_max_removals`` (2) in a run without the question (``cassandra_operation_confirm: false``:
-nobody reads the plan, and a group var marking hosts absent by mistake is the case it catches; with the question there
-is no such cap), an add while a decommission is still running, two hosts with one address, a host marked absent still in the
+plan needs them all), a datacenter that keeps nodes left with no seed, a removal that would leave a datacenter with
+fewer nodes than a keyspace has replicas there (unless ``cassandra_decommission_force``), an add while a decommission is still running, two hosts with one address, a host marked absent still in the
 ring that does not answer or is down (``remove_dead_node`` then), a node of the group that does not answer, one token
 per node with adds and removals in one run (add first, then mark the hosts absent, then ``move_node``), and
 ``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or ``cassandra_reset_nodes`` on the command line (the plan says
-which nodes). The cleanup of the nodes that handed data over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked
+which nodes). No cap on the number of removals: more than half of a datacenter removed is a warning on the plan
+screen. The cleanup of the nodes that handed data over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked
 out again from the ring and the nodes' seed lists, a bootstrap or a decommission still running is waited for. Nothing
 to do: it says so.
 

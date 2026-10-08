@@ -12,7 +12,7 @@
 # A seed: take it out of cassandra_seeds in the inventory (still in it: refused);
 # the seed lists of the other nodes then drop it first, cassandra_seeds applied
 # live on each of them (change_seeds' way, no restart). Refused too: a
-# datacenter left with no seed, and one left with fewer nodes than a keyspace
+# datacenter that keeps nodes left with no seed, and one left with fewer nodes than a keyspace
 # has replicas there (cassandra_decommission_force: true goes on, at the cost
 # of those replicas).
 # CQL credentials, when authentication is on: cassandra_cql_username/_password.
