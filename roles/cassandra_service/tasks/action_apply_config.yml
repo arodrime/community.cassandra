@@ -53,6 +53,9 @@
     cassandra_config_confirm: false
     cassandra_config_reload_seeds: false  # the restart loads them
     _cassandra_config_no_restart_warning: true
+    # shown before the run was confirmed, and in its recap at the end
+    _cassandra_config_quiet: true
+    _cassandra_change_report_quiet: true
 
 - name: Drain and restart the node
   ansible.builtin.include_tasks: action_restart.yml

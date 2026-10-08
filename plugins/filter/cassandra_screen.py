@@ -26,6 +26,8 @@ cassandra_decommission_screen: the blocks of decommission_node: each node
     to remove with its dc/rack, load and share, where its data goes, where
     it runs and is checked from, and how it ends; its "step": the same on
     one line ({node, dc, rack, text}, the plan of topology).
+cassandra_apply_config_recap: the changes apply_config made (or, under
+    --check, would make) on each node, at the end of the run.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -274,6 +276,124 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
             "warnings": warnings}
 
 
+# what follows the write, by cassandra_apply_config_then: (--check, real run)
+_THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
+         "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart")}
+_DIFF_LINES = 20  # per file: a new file's whole diff is in the run's output above
+
+
+def _mask_line(line):
+    """A diff line as shown: cassandra_config masked its own secret keys; the
+    others of the shared rule (private_key...) too."""
+    return out.mask(line)
+
+
+def _setting_lines(diff):
+    """The -/+ lines of a unified diff (masked by cassandra_config), without its
+    file headers, blank lines and comments; an indented setting under the key it
+    belongs to, when that key is an unchanged line of the diff (enabled: under
+    client_encryption_options:). A line whose only change is its whitespace or
+    line ending is said so (not a masked one: its value may have changed)."""
+    lines = str(diff or "").splitlines()
+    if len(lines) > 1 and lines[0].startswith("--- ") and lines[1].startswith("+++ "):
+        lines = lines[2:]
+    out, seen, parent_shown, prev = [], [], None, None  # seen: (text, unchanged) of the hunk's settings so far
+    for line in lines:
+        mark, body = line[:1], line[1:].rstrip()
+        text = body.strip()
+        if line.startswith("@@"):
+            seen, parent_shown, prev = [], None, None
+            continue
+        if mark == " ":
+            prev = None
+        if mark not in ("-", "+", " ") or not text or text.startswith("#"):
+            continue
+        if mark != " ":
+            indent = len(body) - len(body.lstrip())
+            parent = next((i for i in range(len(seen) - 1, -1, -1)
+                           if len(seen[i][0]) - len(seen[i][0].lstrip()) < indent), None) if indent else None
+            if parent is not None and seen[parent][1] and parent != parent_shown:
+                out.append(_mask_line("  " + seen[parent][0]))
+                parent_shown = parent
+            # the line just removed, added back: a masked value may have changed (both kept)
+            if mark == "+" and prev == ("-", body) and "****" not in _mask_line(body):
+                out[-1] = _mask_line("  %s  (whitespace or line ending only)" % body)
+                prev = None
+            else:
+                out.append(_mask_line("%s %s" % (mark, body)))
+                prev = (mark, body)
+        seen.append((body, mark == " "))
+    return out
+
+
+def _change_lines(items):
+    """cassandra_config's _cassandra_config_items -> the lines of one node:
+    a file's settings diff, a file's owner, group and mode on one line, a
+    directory's (data dir /var/lib/cassandra/data) after the files."""
+    files, perms, other, dirs = [], {}, [], []
+    for item in items or []:
+        name = str(item.get("item") or "")
+        if item.get("dir"):
+            dirs.append("  %s %s  owner/group/mode  %s -> %s" % (item["dir"], item.get("path"), item.get("before"), item.get("after")))
+        elif "diff" in item:
+            files.append((name.rsplit("/", 1)[-1], _setting_lines(item["diff"])))
+        elif name.endswith(" (owner:group mode)"):
+            perms[name[:-len(" (owner:group mode)")].rsplit("/", 1)[-1]] = "%s -> %s" % (item.get("before"), item.get("after"))
+        else:  # the RPM conf dir alternative
+            other.append("  %s  %s -> %s" % (name, item.get("before") or "(none)", item.get("after")))
+    diffs = dict(files)
+    width = max([len(f) for f in perms] or [0]) + 4
+    out = list(other)
+    for name in list(diffs) + [f for f in perms if f not in diffs]:
+        if name in perms:
+            out.append("  %s%s" % (name.ljust(width), "owner/group/mode  " + perms[name]))
+        else:
+            out.append("  " + name)
+        lines = diffs.get(name)
+        if lines is None:
+            continue
+        if not lines:
+            out.append("    (comments or layout only)")
+        out.extend("    " + line for line in lines[:_DIFF_LINES])
+        if len(lines) > _DIFF_LINES:
+            out.append("    ... %d more lines (the whole diff: above, or -v)" % (len(lines) - _DIFF_LINES))
+    return out + dirs
+
+
+def cassandra_apply_config_recap(nodes, check=False):
+    """nodes: [{name, todo, done, then, result, items, notes}] in inventory
+    order: todo, whether the node had something to apply; done, whether its
+    turn ended well (node_operation's cassandra_op_done); then, its
+    cassandra_apply_config_then; result, its cassandra_op_result (said as is
+    when not done: skipped, not reached, ...); items, cassandra_config's
+    _cassandra_config_items (diffs masked); notes, more lines (a restart
+    pending, data dirs another account owns), said whatever the outcome.
+    Nodes with the same outcome and changes share one line, their names as
+    a range when they follow (node3..node5). Not cassandra_output's
+    perm_lines/changed_lines: owner:group as the role reports it, and the
+    key a nested setting is under."""
+    groups, order = {}, []
+    for node in nodes or []:
+        notes = ["  " + str(n) for n in node.get("notes") or []]
+        if node.get("todo") and node.get("done"):
+            then = _THEN.get(node.get("then"), ("", ""))[0 if check else 1]
+            outcome = ("would apply" if check else "applied") + (", " + then if then else "")
+            lines = notes + _change_lines(node.get("items"))
+        else:
+            outcome = str(node.get("result") or "nothing to apply")
+            lines = notes
+        key = (outcome, tuple(lines))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(str(node["name"]))
+    shown = ["CHANGES (--check: nothing was changed)" if check else "CHANGES"]
+    for key in order:
+        shown.append("%s  %s" % (out.nodes(groups[key]), key[0]))
+        shown.extend(key[1])
+    return shown
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -281,4 +401,5 @@ class FilterModule(object):
             "cassandra_screen_title": cassandra_screen_title,
             "cassandra_decommission_screen": cassandra_decommission_screen,
             "cassandra_reset_warnings": cassandra_reset_warnings,
+            "cassandra_apply_config_recap": cassandra_apply_config_recap,
         }

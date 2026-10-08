@@ -14,6 +14,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     DEFAULTS as IMPORT_DEFAULTS,
     ROLE,
+    cassandra_dir_permission_changes,
     cassandra_file_permissions,
     cassandra_permissions_import,
     mode_text,
@@ -198,7 +199,9 @@ def test_directories_not_owned_by_the_account():
     out = cassandra_permissions_import({}, {"user": "dbsvc", "group": "dbgrp"}, "50x", dirs)
     note = [n for n in out["notes"] if n.startswith("Directories")]
     assert note == ["Directories not owned by dbsvc:dbgrp, the account Cassandra runs as (cassandra_config leaves them"
-                    " as they are; it creates the missing ones dbsvc:dbgrp 0750): /var/log/cassandra root:root 0755"]
+                    " as they are, but a data, commitlog, saved_caches or hints directory that account cannot use; it creates the missing"
+                    " ones dbsvc:dbgrp 0750):"
+                    " /var/log/cassandra root:root 0755"]
 
 
 def test_numeric_owner_without_a_name():
@@ -223,3 +226,48 @@ def test_changes_for_the_report():
     settings = dict(DEFAULTS, user="990")
     assert cassandra_permission_changes(results, settings) == [
         {"item": "/c/cassandra-env.sh (owner:group mode)", "before": "root:cassandra 0640", "after": "root:cassandra 0644"}]
+
+
+def dir_results(*dirs):
+    return [{"item": [kind, path], "stat": dict(stat, isdir=True) if stat.get("exists") else stat} for kind, path, stat in dirs]
+
+
+@pytest.mark.parametrize("owner, group, mode, after", [
+    # the account cannot write or search it: given to it, u+rwx, the other bits kept
+    ("root", "cassandra", "0750", "cassandra:cassandra 0750"),
+    ("root", "root", "0755", "cassandra:cassandra 0755"),
+    ("cassandra", "cassandra", "0000", "cassandra:cassandra 0700"),
+    ("cassandra", "cassandra", "0555", "cassandra:cassandra 0755"),
+    ("dbsvc", "dbgrp", "0770", "cassandra:cassandra 0770"),
+    # it can: left as it is (a package's 0755, a group's 0770, a 0700: no change after an import)
+    ("cassandra", "cassandra", "0755", None),
+    ("cassandra", "cassandra", "0700", None),
+    ("root", "cassandra", "0770", None),
+    ("root", "root", "0777", None),
+])
+def test_dir_permission_changes(owner, group, mode, after):
+    out = cassandra_dir_permission_changes(dir_results(("data dir", "/srv/data", st(owner, group, mode))), "cassandra", "cassandra")
+    if after is None:
+        assert out == []
+    else:
+        assert out == [{"item": "data dir /srv/data (owner:group mode)", "path": "/srv/data", "dir": "data dir",
+                        "before": "%s:%s %s" % (owner, group, mode), "after": after, "owner": "cassandra",
+                        "group": "cassandra", "mode": after.split()[1]}]
+
+
+def test_dir_permission_changes_skip_missing_files_and_root():
+    results = dir_results(("hints dir", "/srv/hints", {"exists": False}), ("commitlog dir", "/srv/cl", {}))
+    results.append({"item": ["data dir", "/srv/file"], "stat": dict(st("root", "root", "0600"), isdir=False)})
+    assert cassandra_dir_permission_changes(results, "cassandra", "cassandra") == []
+    # Cassandra run as root reads and writes everywhere
+    assert cassandra_dir_permission_changes(dir_results(("data dir", "/d", st("x", "x", "0000"))), "root", "root") == []
+    # a numeric owner matches its number
+    assert cassandra_dir_permission_changes(
+        dir_results(("data dir", "/d", {"exists": True, "uid": 1234, "gid": 1234, "mode": "0750"})), "1234", "1234") == []
+
+
+@pytest.mark.parametrize("path", ["/", "/var/lib", "/var/lib/", "/srv", "/opt", "/home"])
+def test_dir_permission_changes_never_a_system_dir(path):
+    # a mistyped cassandra_commitlog_dir: /var/lib is never given to Cassandra
+    assert cassandra_dir_permission_changes(dir_results(("commitlog dir", path, st("root", "root", "0755"))), "cassandra", "cassandra") == []
+    assert cassandra_dir_permission_changes(dir_results(("commitlog dir", "/srv/cl", st("root", "root", "0755"))), "cassandra", "cassandra")

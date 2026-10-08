@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
-    cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen)
+    cassandra_apply_config_recap, cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen)
 
 SPEC = {
     "operation": "stop_rack", "cluster": "Orders", "version": "4.1.5", "summary": "stop dc1 / rack2",
@@ -184,3 +184,209 @@ def test_a_step_of_another_playbook_asks_nothing():
     # --check says so first: nothing changes
     assert cassandra_screen({"operation": "add_node"}, check=True, asked_by="topology").endswith(
         "--check: nothing will be changed (the plan only, no question).")
+
+
+# cassandra_config's _cassandra_config_items: a masked diff per file, an owner/mode change per file
+PERMS = [{"item": "/etc/cassandra/conf/cassandra.yaml (owner:group mode)", "before": "root:cassandra 0640",
+          "after": "cassandra:dbgrp 0640"},
+         {"item": "/etc/cassandra/conf/cassandra-env.sh (owner:group mode)", "before": "root:cassandra 0640",
+          "after": "cassandra:dbgrp 0644"}]
+DIFF = ("--- /etc/cassandra/conf/cassandra.yaml (live)\n+++ (new)\n@@ -10,3 +10,3 @@\n cluster_name: Orders\n"
+        "-concurrent_writes: 32\n+concurrent_writes: 48\n # a comment\n-# old comment\n+\n"
+        "-jmx_password: ****\n+jmx_password: ****\n")
+SETTINGS = [{"item": "/etc/cassandra/conf/cassandra.yaml", "before": "current", "after": "4 line(s) changed", "diff": DIFF}]
+
+
+def recap_nodes():
+    return [{"name": "node1", "todo": True, "done": True, "then": "none", "items": PERMS},
+            {"name": "node2", "todo": True, "done": True, "then": "restart", "items": SETTINGS},
+            {"name": "node3", "todo": False, "result": "nothing to apply"},
+            {"name": "node4", "todo": False, "result": "nothing to apply"},
+            {"name": "node5", "todo": False, "result": "nothing to apply"}]
+
+
+def test_apply_config_recap_under_check():
+    assert cassandra_apply_config_recap(recap_nodes(), check=True) == [
+        "CHANGES (--check: nothing was changed)",
+        "node1  would apply, no restart",
+        "  cassandra.yaml      owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0640",
+        "  cassandra-env.sh    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0644",
+        "node2  would apply, then restart",
+        "  cassandra.yaml",
+        "    - concurrent_writes: 32",
+        "    + concurrent_writes: 48",
+        "    - jmx_password: ****",
+        "    + jmx_password: ****",
+        "node3..node5  nothing to apply"]
+
+
+def test_apply_config_recap_real_run():
+    nodes = recap_nodes()
+    nodes[2] = {"name": "node3", "todo": True, "done": True, "then": "start", "items": PERMS[1:]}
+    nodes[3] = {"name": "node4", "todo": True, "done": True, "then": "write", "items": SETTINGS + PERMS[:1]}
+    assert cassandra_apply_config_recap(nodes) == [
+        "CHANGES",
+        "node1  applied, no restart",
+        "  cassandra.yaml      owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0640",
+        "  cassandra-env.sh    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0644",
+        "node2  applied, restarted",
+        "  cassandra.yaml",
+        "    - concurrent_writes: 32",
+        "    + concurrent_writes: 48",
+        "    - jmx_password: ****",
+        "    + jmx_password: ****",
+        "node3  applied, started",
+        "  cassandra-env.sh    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0644",
+        # content and owner of one file: one name, its diff under it
+        "node4  applied, left stopped",
+        "  cassandra.yaml    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0640",
+        "    - concurrent_writes: 32",
+        "    + concurrent_writes: 48",
+        "    - jmx_password: ****",
+        "    + jmx_password: ****",
+        "node5  nothing to apply"]
+
+
+def test_apply_config_recap_groups_same_changes_and_says_the_others_as_they_are():
+    nodes = [{"name": "node%d" % i, "todo": True, "done": True, "then": "restart", "items": SETTINGS} for i in (1, 2)]
+    nodes += [{"name": "node3", "todo": True, "done": True, "then": "restart",
+               "notes": ["restart pending (cassandra.yaml changed since the running Cassandra started)"]},
+              {"name": "node4", "todo": True, "done": False, "result": "apply_config skipped, done in the interrupted run"},
+              {"name": "node5", "todo": True, "result": "not reached"},
+              {"name": "node6", "result": "not in this run (--limit)"}]
+    assert cassandra_apply_config_recap(nodes, check=True) == [
+        "CHANGES (--check: nothing was changed)",
+        "node1, node2  would apply, then restart",
+        "  cassandra.yaml",
+        "    - concurrent_writes: 32",
+        "    + concurrent_writes: 48",
+        "    - jmx_password: ****",
+        "    + jmx_password: ****",
+        "node3  would apply, then restart",
+        "  restart pending (cassandra.yaml changed since the running Cassandra started)",
+        "node4  apply_config skipped, done in the interrupted run",
+        "node5  not reached",
+        "node6  not in this run (--limit)"]
+
+
+def test_apply_config_recap_long_and_comment_only_diffs():
+    long_diff = "--- a (live)\n+++ (new)\n" + "".join("+key_%d: %d\n" % (i, i) for i in range(25))
+    items = [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": long_diff},
+             {"item": "/etc/cassandra/conf/logback.xml", "diff": "--- a (live)\n+++ (new)\n-# old\n+# new\n"},
+             {"item": "/etc/cassandra/conf", "before": "/etc/cassandra/default.conf", "after": "/etc/cassandra/site"}]
+    out = cassandra_apply_config_recap([{"name": "node1", "todo": True, "done": True, "then": "restart", "items": items}])
+    assert out[:4] == ["CHANGES", "node1  applied, restarted", "  /etc/cassandra/conf  /etc/cassandra/default.conf -> /etc/cassandra/site",
+                       "  cassandra.yaml"]
+    assert out[4:24] == ["    + key_%d: %d" % (i, i) for i in range(20)]
+    assert out[24:] == ["    ... 5 more lines (the whole diff: above, or -v)", "  logback.xml", "    (comments or layout only)"]
+
+
+def test_apply_config_recap_nothing_to_apply():
+    nodes = [{"name": "node%d" % i, "todo": False, "result": "nothing to apply"} for i in (1, 2, 3)]
+    assert cassandra_apply_config_recap(nodes) == ["CHANGES", "node1..node3  nothing to apply"]
+    assert cassandra_apply_config_recap(nodes, check=True) == [
+        "CHANGES (--check: nothing was changed)", "node1..node3  nothing to apply"]
+
+
+def test_apply_config_recap_nested_settings_and_whitespace():
+    # an indented setting under its key (an unchanged line of the diff), once per key;
+    # a line whose only change is its line ending is said so
+    diff = ("--- a (live)\n+++ (new)\n@@ -1,8 +1,8 @@\n client_encryption_options:\n"
+            "   # a comment\n-  enabled: false\n+  enabled: true\n-  optional: true\n+  optional: false\n"
+            "@@ -20,3 +20,3 @@\n server_encryption_options:\n   internode_encryption: none\n-  enabled: false\n+  enabled: true\n"
+            "@@ -40,2 +40,2 @@\n-MAX_HEAP_SIZE=8G\r\n+MAX_HEAP_SIZE=8G\n")
+    items = [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": diff}]
+    assert cassandra_apply_config_recap([{"name": "node1", "todo": True, "done": True, "then": "restart", "items": items}]) == [
+        "CHANGES",
+        "node1  applied, restarted",
+        "  cassandra.yaml",
+        "      client_encryption_options:",
+        "    -   enabled: false",
+        "    +   enabled: true",
+        "    -   optional: true",
+        "    +   optional: false",
+        "      server_encryption_options:",
+        "    -   enabled: false",
+        "    +   enabled: true",
+        "      MAX_HEAP_SIZE=8G  (whitespace or line ending only)"]
+
+
+def test_apply_config_recap_moved_lines_and_same_parent_names():
+    # the same text removed in one place and added in another is no whitespace change; a key named as
+    # one shown before (another hunk) is shown again
+    diff = ("--- a (live)\n+++ (new)\n@@ -1,4 +1,3 @@\n client_encryption_options:\n-  enabled: true\n   optional: false\n"
+            "@@ -30,3 +29,4 @@\n audit_logging_options:\n   logger: BinAuditLogger\n+  enabled: true\n"
+            "@@ -40,2 +40,2 @@\n   parameters:\n-      - seeds: a\n+      - seeds: b\n"
+            "@@ -60,2 +60,2 @@\n   parameters:\n-      - chunk_length_in_kb: 16\n+      - chunk_length_in_kb: 64\n"
+            "@@ -70,3 +70,3 @@\n-key_a: 1\n same: x\n+key_a: 1\n")
+    items = [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": diff}]
+    assert cassandra_apply_config_recap([{"name": "node1", "todo": True, "done": True, "then": "restart", "items": items}])[2:] == [
+        "  cassandra.yaml",
+        "      client_encryption_options:",
+        "    -   enabled: true",
+        "      audit_logging_options:",
+        "    +   enabled: true",
+        "        parameters:",
+        "    -       - seeds: a",
+        "    +       - seeds: b",
+        "        parameters:",
+        "    -       - chunk_length_in_kb: 16",
+        "    +       - chunk_length_in_kb: 64",
+        "    - key_a: 1",
+        "    + key_a: 1"]
+
+
+def test_apply_config_recap_a_line_moved_past_a_comment_is_no_whitespace_change():
+    diff = "--- a (live)\n+++ (new)\n@@ -1,3 +1,3 @@\n-d: 1\n # a comment\n \n+d: 1\n"
+    out = cassandra_apply_config_recap([{"name": "node1", "todo": True, "done": True, "then": "restart",
+                                         "items": [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": diff}]}])
+    assert out[2:] == ["  cassandra.yaml", "    - d: 1", "    + d: 1"]
+
+
+def test_apply_config_recap_names_the_nodes_of_a_group_as_ranges():
+    # Q3: a range from 3 consecutive names, 2 listed, a gap breaks it, the count over 5
+    def node(i, then):
+        return {"name": "node%d" % i, "todo": True, "done": True, "then": then, "items": SETTINGS}
+    nodes = [node(i, "restart") for i in (1, 2, 3, 5)] + [node(i, "none") for i in (4, 6)]
+    nodes += [{"name": "node%d" % i, "todo": False, "result": "nothing to apply"} for i in range(7, 13)]
+    out = cassandra_apply_config_recap(nodes)
+    assert [line for line in out if not line.startswith(" ")] == [
+        "CHANGES", "node1..node3, node5  applied, restarted", "node4, node6  applied, no restart",
+        "6 nodes: node7..node12  nothing to apply"]
+
+
+def test_apply_config_recap_masks_every_secret_kind():
+    # cassandra_config masks password/secret keys; the shared rule also hides a private key value
+    diff = "--- a (live)\n+++ (new)\n@@ -1 +1 @@\n-ssl_private_key: abc\n+ssl_private_key: def\n"
+    out = cassandra_apply_config_recap([{"name": "node1", "todo": True, "done": True, "then": "restart",
+                                         "items": [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": diff}]}])
+    assert out[2:] == ["  cassandra.yaml", "    - ssl_private_key: ****", "    + ssl_private_key: ****"]
+    assert not any("abc" in line or "def" in line for line in out)
+
+
+def test_apply_config_recap_directories_and_warnings():
+    # a directory's owner and mode after the files; a node's warnings said whatever its outcome
+    dirs = [{"item": "data dir /srv/data (owner:group mode)", "path": "/srv/data", "dir": "data dir",
+             "before": "root:cassandra 0750", "after": "cassandra:cassandra 0750"}]
+    warning = "WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are: ...)"
+    nodes = [{"name": "node1", "todo": True, "done": True, "then": "none", "items": PERMS[:1] + dirs},
+             {"name": "node2", "todo": True, "done": True, "then": "start", "items": dirs},
+             {"name": "node3", "todo": False, "result": "nothing to apply", "notes": [warning]},
+             {"name": "node4", "todo": False, "result": "nothing to apply"}]
+    assert cassandra_apply_config_recap(nodes, check=True) == [
+        "CHANGES (--check: nothing was changed)",
+        "node1  would apply, no restart",
+        "  cassandra.yaml    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0640",
+        "  data dir /srv/data  owner/group/mode  root:cassandra 0750 -> cassandra:cassandra 0750",
+        "node2  would apply, then start",
+        "  data dir /srv/data  owner/group/mode  root:cassandra 0750 -> cassandra:cassandra 0750",
+        "node3  nothing to apply",
+        "  " + warning,
+        "node4  nothing to apply"]
+
+
+def test_apply_config_recap_masks_a_secret_whose_line_ending_only_changed():
+    diff = "--- a (live)\n+++ (new)\n@@ -1 +1 @@\n-ssl_private_key: abc\r\n+ssl_private_key: abc\n"
+    out = cassandra_apply_config_recap([{"name": "node1", "todo": True, "done": True, "then": "restart",
+                                         "items": [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": diff}]}])
+    assert not any("abc" in line for line in out)

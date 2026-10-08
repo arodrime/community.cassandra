@@ -49,7 +49,9 @@
 
     - name: Record the result
       ansible.builtin.set_fact:
-        cassandra_op_result: "cleanup done in {{ now().timestamp() | int - _cassandra_cleanup_start | int }}s"
+        cassandra_op_result: >-
+          {{ 'would clean up' if ansible_check_mode
+             else 'cleanup done in ' ~ (now().timestamp() | int - _cassandra_cleanup_start | int) ~ 's' }}
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ _todo }}"

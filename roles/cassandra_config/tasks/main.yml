@@ -143,8 +143,8 @@
 
     # The package creates the stock directories only: others (a data disk, a
     # log dir) must exist, owned by the service user, before the node first
-    # starts. Existing ones are left as they are; missing parents are made
-    # root-owned, 0755.
+    # starts. Existing ones get that owner when it could not use them (below);
+    # missing parents are made root-owned, 0755.
     - name: Look for the Cassandra directories
       ansible.builtin.stat:
         path: "{{ item }}"
@@ -381,6 +381,7 @@
                 a = read(live) if os.path.exists(live) else []
                 b = read(new)
                 d = list(difflib.unified_diff(a, b, live + " (live)", "(new)"))
+                d = [x if x.endswith(("\n", "\r")) else x + "\n" for x in d]  # a last line without one: not joined to the next
                 # values of password/secret keys never reach the output: all of the line after the key
                 secret = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*[ \t]*[:=][ \t]*)\S[^\r\n]*")
                 out = "".join(secret.sub(r"\1****", line) for line in d)
@@ -560,7 +561,9 @@
         msg: >-
           {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _cassandra_config_kept)
              | map(attribute='stdout_lines') | flatten }}
-      when: _cassandra_config_changes | length > 0
+      when:
+        - _cassandra_config_changes | length > 0
+        - not _cassandra_config_quiet | default(false)  # shown by the caller (apply_config: before its run)
 
     - name: Say which files are left as they are
       ansible.builtin.debug:
@@ -601,13 +604,88 @@
         _cassandra_config_perm_changes: >-
           {{ cassandra_config_live_stat.results | community.cassandra.cassandra_permission_changes(_cassandra_config_perm_settings) }}
 
+    # Cassandra's own directories, the top level only (a data dir can hold TBs): owned by the account it
+    # runs as, which needs to read, write and search them; the other bits stay (a package's 0755)
+    - name: Read the owner and mode of Cassandra's directories
+      ansible.builtin.stat:
+        path: "{{ item.1 }}"
+        follow: true  # a link to a disk: the disk's directory
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      loop: "{{ _dirs }}"
+      loop_control:
+        label: "{{ item.1 }}"
+      register: cassandra_config_dir_stat
+      vars:
+        _dirs: >-
+          {%- set out = [] -%}
+          {%- for kind, paths in [['data dir', cassandra_data_file_directories], ['commitlog dir', [cassandra_commitlog_dir]],
+                                  ['saved_caches dir', [cassandra_saved_caches_dir]], ['hints dir', [cassandra_hints_dir]]] -%}
+          {%-   for d in paths if d and d not in out | map(attribute=1) -%}{%- set _ = out.append([kind, d]) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # the mode bits miss its other groups and ACLs: what the filter finds is tried as that account
+    - name: Try the directories as the account Cassandra runs as
+      ansible.builtin.command:
+        argv: [runuser, -u, "{{ _cassandra_config_perm_settings.user }}", --, test, -r, "{{ item.path }}", -a, -w, "{{ item.path }}",
+               -a, -x, "{{ item.path }}"]
+      loop: >-
+        {{ cassandra_config_dir_stat.results
+           | community.cassandra.cassandra_dir_permission_changes(_cassandra_config_perm_settings.user,
+                                                                  _cassandra_config_perm_settings.user_group) }}
+      loop_control:
+        label: "{{ item.path }}"
+      register: cassandra_config_dir_try
+      changed_when: false
+      failed_when: false  # no access: rc 1; no runuser: the mode bits decide
+      check_mode: false  # reads only
+
+    - name: List the owner, group and mode changes of the directories
+      ansible.builtin.set_fact:
+        _cassandra_config_dir_changes: >-
+          {%- set out = [] -%}
+          {%- for r in cassandra_config_dir_try.results | default([]) if r.rc | default(1) != 0 -%}{%- set _ = out.append(r.item) -%}{%- endfor -%}
+          {{ out }}
+
+    # What is in a data dir is not changed (a recursive chown of TBs is the operator's call): a sample of the
+    # keyspace and table dirs another account owns, said in apply_config's recap
+    - name: Look for keyspace and table dirs another account owns
+      ansible.builtin.command:
+        argv: [sh, -c, 'find -H "$1" -mindepth 1 -maxdepth 2 -name lost+found -prune -o -type d ! -user "$2" -print 2>/dev/null | head -n 4', sh, "{{ item.item.1 }}",
+               "{{ _cassandra_config_perm_settings.user }}"]
+      loop: "{{ cassandra_config_dir_stat.results | selectattr('item.0', 'equalto', 'data dir') | selectattr('stat.isdir', 'defined')
+                | selectattr('stat.isdir') | list }}"
+      loop_control:
+        label: "{{ item.item.1 }}"
+      register: cassandra_config_dir_foreign
+      changed_when: false
+      failed_when: false  # an account the node does not know: nothing said
+      check_mode: false  # reads only
+
+    - name: Note the dirs another account owns
+      ansible.builtin.set_fact:
+        _cassandra_config_dir_notes: >-
+          {%- set out = [] -%}
+          {%- for r in cassandra_config_dir_foreign.results | default([]) if r.stdout_lines | default([]) -%}
+          {%-   set _ = out.append('WARNING data dir ' ~ r.item.item.1 ~ ': not owned by ' ~ _cassandra_config_perm_settings.user ~ ': '
+                                   ~ r.stdout_lines[:3] | join(', ') ~ (', ...' if r.stdout_lines | length > 3 else '')
+                                   ~ ' (left as they are: chown -R them if Cassandra cannot read them)') -%}
+          {%- endfor -%}
+          {{ out }}
+
     - name: Show the owner, group and mode changes
       ansible.builtin.debug:
         msg: >-
           {%- set out = [] -%}
-          {%- for c in _cassandra_config_perm_changes -%}{%- set _ = out.append(c.item ~ ': ' ~ c.before ~ ' -> ' ~ c.after) -%}{%- endfor -%}
-          {{ out }}
-      when: _cassandra_config_perm_changes | length > 0
+          {%- for c in _cassandra_config_perm_changes + _cassandra_config_dir_changes -%}
+          {%-   set _ = out.append(c.item ~ ': ' ~ c.before ~ ' -> ' ~ c.after) -%}
+          {%- endfor -%}
+          {{ out + _cassandra_config_dir_notes }}
+      when:
+        - (_cassandra_config_perm_changes + _cassandra_config_dir_changes + _cassandra_config_dir_notes) | length > 0
+        - not _cassandra_config_quiet | default(false)
 
     # The diffs are masked above: no password reaches the report
     - name: Record the changes for the report
@@ -615,7 +693,7 @@
         _cassandra_config_items: >-
           {{ ([{'item': '/etc/cassandra/conf', 'before': _conf_target, 'after': cassandra_rpm_conf_alternative}]
               if _conf_target | default(cassandra_rpm_conf_alternative, true) != cassandra_rpm_conf_alternative else [])
-             + _files + _cassandra_config_perm_changes }}
+             + _files + _cassandra_config_perm_changes + _cassandra_config_dir_changes }}
       vars:
         _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
         _files: >-
@@ -754,6 +832,17 @@
       loop: "{{ cassandra_config_dirs.results | rejectattr('stat.exists') | list }}"
       loop_control:
         label: "{{ item.item }}"
+
+    - name: Set the owner and mode of the existing ones
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory  # not recursive: what is in it stays as it is
+        owner: "{{ _cassandra_config_perm_settings.user }}"  # as in item (the filter's), from the same variables
+        group: "{{ _cassandra_config_perm_settings.user_group }}"
+        mode: "{{ item.mode }}"
+      loop: "{{ _cassandra_config_dir_changes }}"
+      loop_control:
+        label: "{{ item.path }}"
 
     - name: Check whether Cassandra is running
       ansible.builtin.service_facts:
