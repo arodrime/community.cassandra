@@ -66,8 +66,13 @@ def test_values_grouped_with_their_nodes():
     lines = report([node(1), node(2), node(3), node(4, "16G"), node(5, "16G")])
     at = lines.index("  cassandra_max_heap_size: 8G                 node1, node2, node3")  # the report: every name
     assert lines[at + 1] == u"                           16G                node4, node5      ← differs (host_vars)"
-    assert lines[1] == "Written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/node4, node5/" or \
-        lines[1].startswith("Written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/")
+    # (the heap per host)
+    assert lines[1] == ("Written: inventories/my_cluster.yml, group_vars/my_cluster*/,"
+                        " host_vars/<node>/ (node1, node2, node3, node4, node5)")
+    lines = report([node(1, keep={"cassandra_firewall_manage": False}), node(2)])
+    assert lines[1] == "Written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/node1/"
+    seven = [node(i) for i in range(1, 5)] + [node(i, "16G") for i in range(5, 8)]
+    assert report(seven, screen=True)[1].endswith("host_vars/<node>/ (node1..node7)")  # the screen: a range
     screen = report([node(i) for i in range(1, 5)] + [node(i, "16G") for i in range(5, 7)], screen=True)
     assert "  cassandra_max_heap_size: 8G                 node1..node4" in screen  # the screen: ranges
 
@@ -160,9 +165,9 @@ def test_differs_from_your_group_vars_all():
     at = lines.index(u"DIFFERS FROM YOUR group_vars/all — kept as found; delete the line to apply your standard")
     assert lines[at + 1:at + 5] == [
         "  cassandra_config_group:  yours: svccassandra (group_vars/all/standard.yml)",
-        u"                           cassandra   node1, node2      \u2190 kept, in host_vars",
+        u"                           cassandra   node1, node2   \u2190 kept, in host_vars",
         "  cassandra_config_user:   yours: cassandra (group_vars/all/standard.yml)",
-        u"                           root        node1, node2      \u2190 kept, in host_vars"]
+        u"                           root        node1, node2   \u2190 kept, in host_vars"]
     # SETTINGS: the value the others get from group_vars/all, not "the collection's default"
     at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_config_user:")][0]
     assert lines[at].split()[1:] == ["cassandra", "node3,", "node4,", "node5"]
@@ -170,3 +175,18 @@ def test_differs_from_your_group_vars_all():
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True)
     assert not [line for line in screen if line.startswith("DIFFERS")]
     assert any("(see DIFFERS FROM YOUR group_vars/all in the report)" in line for line in screen)
+
+
+def test_differs_one_line_per_file_of_yours():
+    # a value of yours in group_vars/all, another in a host's own file: each with its nodes
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    nodes = [node(i) for i in range(1, 4)]
+    for n in nodes:
+        n["vars"].update(cassandra_config_user="cassandra")
+    layout = cassandra_inventory_layout_over(nodes, "My Cluster", [
+        {"path": "group_vars/all/s.yml", "content": "cassandra_config_user: zz\n"},
+        {"path": "host_vars/node1/mine.yml", "content": "cassandra_config_user: yy\n"}])
+    lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True)
+    at = lines.index(u"DIFFERS FROM YOUR OWN VARIABLES — kept as found; delete the line to apply yours")
+    text = "\n".join(lines[at:at + 6])
+    assert "yours: zz (group_vars/all/s.yml)" in text and "yours: yy (host_vars/node1/mine.yml)" in text

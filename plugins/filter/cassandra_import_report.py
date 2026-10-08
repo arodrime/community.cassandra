@@ -154,8 +154,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         return out.path_from(path, cwd)
 
     with_vars = sorted(h for h, v in (layout.get("host_vars") or {}).items() if v)
-    host_dirs = _compress(with_vars)
-    host_dirs = ("host_vars/%s/" % host_dirs if "," not in host_dirs else "host_vars/<node>/ (%s)" % host_dirs) \
+    host_dirs = ("host_vars/%s/" % with_vars[0] if len(with_vars) == 1 else
+                 "host_vars/<node>/ (%s)" % (out.full_list(with_vars) if full else _compress(with_vars))) \
         if with_vars else ""
     lines = ["IMPORT %s%s %s %s read / %d %s SELF-CHECK %s" % (
         cluster, " (--check, nothing written)" if check else "", DASH, out.plural(len(read), "node"), len(nodes),
@@ -169,7 +169,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     for n in read:
         edit_names += [_edit_name(name) for name, dummy in _edit_pairs(n) if _edit_name(name) not in edit_names]
     yours = layout.get("yours") or []
-    standard = bool(yours) and all(y["path"].startswith("group_vars/all") for y in yours)
+    alls = ("group_vars/all", "group_vars/all.yml", "group_vars/all.yaml", "group_vars/all.json")
+    standard = bool(yours) and all("/".join(y["path"].split("/")[:2]) in alls for y in yours)
     differs_title = "DIFFERS FROM YOUR group_vars/all" if standard else "DIFFERS FROM YOUR OWN VARIABLES"
     todo = []
     if unread:
@@ -266,19 +267,26 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
 
     # DIFFERS FROM YOUR group_vars/all: the value found, the nodes, yours, where the import keeps it
     if yours:
-        rows = _by_value([(y["node"], y["key"], "(in secrets.yml)" if _secret(y["key"], y["value"])
+        def yours_text(y):
+            return "yours: %s (%s)" % ("(in a vars file)" if _secret(y["key"], y["yours"]) else _plain(y["yours"]),
+                                       y["path"])
+
+        # by setting, then by the value of yours (one per file of yours), each value found with its nodes
+        rows = _by_value([(y["node"], (y["key"], yours_text(y)), "(in secrets.yml)" if _secret(y["key"], y["value"])
                            else _plain(y["value"])) for y in yours])
-        theirs = dict((y["key"], "yours: %s (%s)" % ("(in a vars file)" if _secret(y["key"], y["yours"])
-                                                     else _plain(y["yours"]), y["path"])) for y in yours)
         lines.append("%s %s kept as found; delete the line to apply %s" % (
             differs_title, DASH, "your standard" if standard else "yours"))
-        label, width = _width(rows) + 1, _value_width(rows)
-        for name, values in rows:
-            lines.append("  %s %s" % (("%s:" % name).ljust(label), theirs[name]))
+        label = max(len(key) + 1 for (key, dummy), dummy2 in rows) + 1
+        width = _value_width(rows)
+        who_width = max(len(out.full_list(members)) for dummy, values in rows for dummy2, members in values)
+        last = None
+        for (name, theirs), values in rows:
+            lines.append("  %s %s" % (("%s:" % name if name != last else "").ljust(label), theirs))
+            last = name
             for text, members in sorted(values, key=lambda v: (-len(v[1]), v[0])):
-                lines.append("  %s %s %s      %s kept, in %s" % (
+                lines.append("  %s %s %s   %s kept, in %s" % (
                     "".ljust(label), text.ljust(width) if len(text) < width else text + " ",
-                    out.full_list(members), out.ARROW, placed(name, members) or "?"))
+                    out.full_list(members).ljust(who_width), out.ARROW, placed(name, members) or "?"))
         lines.append("")
 
     # HAND EDITS

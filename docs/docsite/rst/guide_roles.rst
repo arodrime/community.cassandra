@@ -913,9 +913,9 @@ In ``<cluster group>.yml`` every node is named by its hostname, the short one it
 address in the ring. ``import_cluster_host_names`` picks the name: ``hostname`` (default), ``fqdn`` or ``ip``;
 ``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address.
 The nodes found in the ring are reached as the given one is: by the name the given node knows them by (``getent
-hosts`` there), with its connection variables (``ansible_user``, port, key, ssh arguments, become), at their ring
-address only when the given node has an ``ansible_host`` of its own; so an ssh configuration that matches host names
-works for them too. A node that could not be reached keeps the name it was given, or its address, and is listed in
+hosts`` there) when the controller can reach that name (it resolves it, or the ssh configuration gives it a
+``HostName`` or a jump host; a connection by name such as docker always), else by their address; with its connection variables (``ansible_user``,
+port, key, ssh arguments, become), at their ring address when the given node has an ``ansible_host`` of its own. A node that could not be reached keeps the name it was given, or its address, and is listed in
 TO DO. In the ``group_vars`` and
 ``host_vars`` files, the variables are grouped by subject (cluster and topology, versions, directories, network,
 JMX, JVM, ``cassandra.yaml`` settings, logging, service, Medusa), one commented block each. The report, and the end
@@ -1072,11 +1072,11 @@ on their own. A file from an
 earlier release, whose first line names no cluster, is this cluster's when this cluster's hosts file alone names its
 group or host; otherwise it is kept as it is and listed in the report. A ``<cluster group>.yml`` without that first
 line that holds this cluster's group alone (an old ``hosts.yml`` moved there by hand, or one edited by hand) is its
-hosts file: replaced, the old one kept as a backup. A file without that first line laid out as the import writes it
-(``---``, blank lines, then a block title such as ``# Cluster & topology``: an import from before that line) is an
-earlier import's too: this cluster's when its hosts file there, or else the one it writes, names its group or host;
-replaced with a backup, or removed when the import no longer writes it (a node named by its address then, by its
-hostname now). Files of an earlier import that no hosts file says are this cluster's stop the import;
+hosts file: replaced, the old one kept as a backup. A ``main.yml`` or ``secrets.yml`` without that first line laid
+out as the import writes it (``---``, blank lines, then one of its block titles as it is, such as
+``# Cluster & topology``: an import from before that line) is an earlier import's too: this cluster's when its hosts
+file there, or else the one it writes, names its group or host; replaced, or removed when the import no longer writes
+it (a node named by its address then, by its hostname now), each kept as a backup. Files of an earlier import that no hosts file says are this cluster's stop the import;
 ``-e import_cluster_adopt=true`` takes them over (the ones at the paths it writes, or in its groups' and hosts'
 dirs), each file replaced kept as ``<file>.<date>~``. Never a file whose first line names another cluster. The report lists the files removed, the files
 kept (down to ``group_vars/<group>/``), and the files replaced at its paths that did not have its header, each kept

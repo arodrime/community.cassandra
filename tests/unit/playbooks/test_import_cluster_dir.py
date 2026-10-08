@@ -226,6 +226,8 @@ def test_hosts_file_named_after_the_cluster():
     (["cluster_a.yml", "group_vars/all/x.yml", ".git/x", "notes.md", "a.yml~"], ""),  # no other inventory file
     (["cluster_a.yml", "cluster_b.yml"], "cluster_a"),                          # another cluster: -e cassandra_hosts
     (["web.ini"], "cluster_a"),
+    (["cluster_a.yml", "lab/hosts.ini"], "cluster_a"),                      # Ansible reads subdirs too
+    (["cluster_a.yml", "group_vars/cluster_b/main.yml", "host_vars/x/main.yml"], ""),
 ])
 def test_next_commands_name_the_cluster_only_with_others(files, hosts):
     existing = {"files": [{"path": "/inv/" + f} for f in files]}
@@ -237,6 +239,23 @@ def test_next_commands_without_i_on_the_default_inventory():
         "lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST')", "default_list")
     assert render(template, _dir="/p/inventories", default_list=["/p/inventories"]) == ""
     assert render(template, _dir="/p/inventories", default_list=["/etc/ansible/hosts"]) == "/p/inventories"
+    # one of several sources: -i kept (the others may hold other clusters)
+    assert render(template, _dir="/p/inventories", default_list=["/p/inventories", "/p/lab.ini"]) == "/p/inventories"
+
+
+def test_user_files_counted_are_the_layouts():
+    # the user's files at a path the import writes are replaced: left out of the self-check too
+    keep = TASKS["Keep your files the import does not write over"]["ansible.builtin.set_fact"]["_user_files"]
+    assert render(keep, _user_files=[{"path": "group_vars/c/main.yml"}, {"path": "group_vars/all/x.yml"}],
+                  _layout={"user_paths": ["group_vars/all/x.yml"]}) == [{"path": "group_vars/all/x.yml"}]
+
+
+def test_files_known_by_their_layout_backed_up_before_removal():
+    names = [t.get("name") for play in PLAYS for t in play.get("tasks", [])]
+    backup = TASKS["Keep a backup of the files it removes that do not say they are its"]
+    assert names.index("Keep a backup of the files it removes that do not say they are its") < names.index(
+        "Remove the files an earlier import wrote and this one does not")
+    assert backup["loop"] == "{{ _leftovers.backup | default([]) }}" and backup["ansible.builtin.copy"]["remote_src"]
 
 
 @pytest.mark.parametrize("force, hosts_exists, passed", [
@@ -323,6 +342,9 @@ def test_check_diff_writes_nothing():
     assert TASKS["Write group_vars and host_vars"]["no_log"] == "{{ item.secret }}"
     assert "check=_report_args.check | bool" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
     assert "screen=true" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
+    # the ops callback prints them as they are
+    assert TASKS["Show the summary"]["vars"]["cassandra_output"] is True
+    assert TASKS["Stop on a failed self-check"]["vars"]["cassandra_output"] is True
     assert render(WRITE_VARS["_report_args"]["check"], ansible_check_mode=True) is True
 
 

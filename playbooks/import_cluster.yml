@@ -69,9 +69,12 @@
 # its address.
 # The nodes found in the ring are reached as the given node is: by the name it
 # knows them by (getent hosts there; short, or the fqdn when the given name has
-# a domain), with its connection variables (ansible_user, port, key, ssh args,
-# become...), at their ring address when the given node has an ansible_host;
-# one not reached is named by its address, and listed as not read.
+# a domain) when the controller can reach that name (it resolves it, or the ssh
+# config gives it a HostName or a jump host; always with a connection by name,
+# docker...), else by
+# their address; with its connection variables (ansible_user, port, key, ssh
+# args, become...), at their ring address when the given node has an
+# ansible_host; one not reached is named by its address, and listed as not read.
 # The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
 # time sync, firewall) is listed in the report, and what a variable covers is
 # carried into the inventory for the nodes added later.
@@ -181,7 +184,8 @@
           {{ out | select | unique | list }}
 
     # reached as the given node is: by the name it knows them by (ssh config and known_hosts entries match
-    # names), with its connection variables; at their ring address only when the given node has one too
+    # names), with its connection variables; at their ring address when the given node has an address of its
+    # own (ansible_host), or when nothing on the controller knows that name (no address, no ssh config entry)
     - name: Find the names of the nodes found in the ring, as the given node knows them
       ansible.builtin.command:
         argv: "{{ ['getent', 'hosts'] + import_cluster_new }}"
@@ -193,39 +197,89 @@
       check_mode: false
       when: import_cluster_new | length > 0
 
+    - name: Check the controller can reach them by these names (an address, or an ssh config entry)
+      ansible.builtin.shell: |
+        set -f
+        for n in $IMPORT_CLUSTER_NAMES; do
+          # an address, or an ssh config entry: a HostName of its own, or a jump host
+          g=$(ssh -G "$n" 2>/dev/null)
+          h=$(printf '%s\n' "$g" | awk 'tolower($1) == "hostname" {print tolower($2); exit}')
+          l=$(printf '%s\n' "$n" | tr '[:upper:]' '[:lower:]')
+          if getent ahosts "$n" >/dev/null 2>&1 || { [ -n "$h" ] && [ "$h" != "$l" ]; } \
+             || printf '%s\n' "$g" | grep -qiE '^(proxyjump|proxycommand) '; then echo "$n"; fi
+        done
+      args:
+        executable: /bin/sh
+      environment:
+        IMPORT_CLUSTER_NAMES: "{{ _names.values() | reject('in', import_cluster_new) | join(' ') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: import_cluster_peer_usable
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: import_cluster_new | length > 0 and not _by_name | bool
+      vars:
+        ansible_connection: local  # never an inventory's connection to localhost
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+        _names: >-
+          {{ import_cluster_peer_names.stdout | default('')
+             | community.cassandra.cassandra_ring_names(import_cluster_new, import_cluster_from) }}
+        _by_name: "{{ hostvars[import_cluster_from].ansible_connection | default('ssh') | regex_replace('^ansible[.]builtin[.]', '') not in _ssh }}"
+        _ssh: [ssh, smart, paramiko, paramiko_ssh, local]
+
     - name: Add the nodes the inventory does not have yet
       ansible.builtin.add_host:
         name: "{{ _name }}"
-        ansible_host: "{{ item if _name == item or _by_address else omit }}"
+        ansible_host: "{{ item if _name == item or (_by_address | bool and not _by_name | bool) else omit }}"
         import_cluster_address: "{{ item }}"
         groups: [import_cluster_found]
-        ansible_connection: "{{ _given.ansible_connection | default(omit) }}"
+        ansible_connection: "{{ omit if _connection in ['', 'local', 'ansible.builtin.local'] else _connection }}"
         ansible_user: "{{ _given.ansible_user | default(omit) }}"
+        ansible_ssh_user: "{{ _given.ansible_ssh_user | default(omit) }}"
         ansible_port: "{{ _given.ansible_port | default(omit) }}"
+        ansible_ssh_port: "{{ _given.ansible_ssh_port | default(omit) }}"
         ansible_password: "{{ _given.ansible_password | default(omit) }}"
         ansible_ssh_pass: "{{ _given.ansible_ssh_pass | default(omit) }}"
         ansible_private_key_file: "{{ _given.ansible_private_key_file | default(omit) }}"
         ansible_ssh_private_key_file: "{{ _given.ansible_ssh_private_key_file | default(omit) }}"
         ansible_ssh_common_args: "{{ _given.ansible_ssh_common_args | default(omit) }}"
         ansible_ssh_extra_args: "{{ _given.ansible_ssh_extra_args | default(omit) }}"
+        ansible_ssh_executable: "{{ _given.ansible_ssh_executable | default(omit) }}"
+        ansible_scp_extra_args: "{{ _given.ansible_scp_extra_args | default(omit) }}"
+        ansible_sftp_extra_args: "{{ _given.ansible_sftp_extra_args | default(omit) }}"
+        ansible_ssh_pipelining: "{{ _given.ansible_ssh_pipelining | default(omit) }}"
+        ansible_timeout: "{{ _given.ansible_timeout | default(omit) }}"
         ansible_become: "{{ _given.ansible_become | default(omit) }}"
         ansible_become_method: "{{ _given.ansible_become_method | default(omit) }}"
         ansible_become_user: "{{ _given.ansible_become_user | default(omit) }}"
         ansible_become_password: "{{ _given.ansible_become_password | default(omit) }}"
         ansible_become_pass: "{{ _given.ansible_become_pass | default(omit) }}"
+        ansible_become_exe: "{{ _given.ansible_become_exe | default(omit) }}"
+        ansible_become_flags: "{{ _given.ansible_become_flags | default(omit) }}"
+        ansible_remote_tmp: "{{ _given.ansible_remote_tmp | default(omit) }}"
         ansible_python_interpreter: "{{ _given.ansible_python_interpreter | default(omit) }}"
       loop: "{{ import_cluster_new }}"
       run_once: true
       no_log: true  # the given node's passwords, if any
       vars:
         _given: "{{ hostvars[import_cluster_from] }}"
+        _connection: "{{ _given.ansible_connection | default('') }}"
         _names: >-
           {{ import_cluster_peer_names.stdout | default('')
              | community.cassandra.cassandra_ring_names(import_cluster_new, import_cluster_from) }}
-        # a name the inventory has already (another host, maybe another cluster's): the address instead
-        _name: "{{ item if _names[item] in groups['all'] else _names[item] }}"
-        # the given node reached at an address of its own (ansible_host): the found ones at theirs
-        _by_address: "{{ _given.ansible_host | default(import_cluster_from) != import_cluster_from }}"
+        # a connection that reaches its hosts by name only (docker, podman, lxd...): by the name, as it is
+        _by_name: "{{ _given.ansible_connection | default('ssh') | regex_replace('^ansible[.]builtin[.]', '') not in _ssh }}"
+        _ssh: [ssh, smart, paramiko, paramiko_ssh, local]
+        # by name when the controller can reach it so (an address, an ssh config entry), else by the address;
+        # a name the inventory has already (another host, maybe another cluster's): the address
+        _usable: "{{ _by_name | bool or _names[item] in (import_cluster_peer_usable.stdout | default('')).split() }}"
+        _name: "{{ item if _names[item] in groups['all'] or not _usable | bool else _names[item] }}"
+        # the given node reached at an address of its own (ansible_host, or the older ansible_ssh_host): the found
+        # ones at theirs
+        _by_address: >-
+          {{ _given.ansible_host | default(_given.ansible_ssh_host | default(import_cluster_from)) != import_cluster_from }}
 
     - name: Stop if no node answered
       ansible.builtin.assert:
@@ -1011,10 +1065,11 @@
     _hosts_file: "{{ _layout.cluster_group ~ '.yml' }}"
     # what the playbooks are run with on this inventory: no -i when it is ansible.cfg's, no -e cassandra_hosts
     # when it holds this cluster alone (no other inventory file at its top)
-    _next_inventory: "{{ '' if _dir in lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | map('realpath') | list else _dir }}"
+    _next_inventory: "{{ '' if lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | map('realpath') | list == [_dir] else _dir }}"
     _next_hosts: >-
       {{ _layout.cluster_group if import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
-                                  | reject('search', '/') | reject('match', '[.]') | reject('search', '([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$')
+                                  | reject('match', '(group_vars|host_vars)/') | reject('match', '(.*/)?[.]')
+                                  | reject('search', '([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$')
                                   | reject('equalto', _hosts_file) | list else '' }}
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
@@ -1070,11 +1125,15 @@
             _host: >-
               {%- set found = [] -%}
               {%- for h in _given + groups['import_cluster_found'] | default([]) -%}
-              {#-   a node found, reached by name: the machine reached must have its address (else it is not this node) -#}
-              {%-   set addrs = (hostvars[h].ansible_facts.all_ipv4_addresses | default([]))
-                                + [hostvars[h].ansible_facts.default_ipv4.address | default(''), hostvars[h].ansible_host | default('')]
-                                + ([hostvars[h].import_cluster_address | default('')]
-                                   if hostvars[h].ansible_facts.all_ipv4_addresses is not defined else []) -%}
+              {#-   the machine reached must have the address (else it is not this node): its interfaces' when known,
+                    else the address it was reached at -#}
+              {%-   set f = hostvars[h].ansible_facts | default({}) -%}
+              {%-   set addrs = (f.all_ipv4_addresses | default([])) + (f.all_ipv6_addresses | default([]))
+                                + [f.default_ipv4.address | default(''), f.default_ipv6.address | default('')]
+                                + ([hostvars[h].ansible_host | default(''), hostvars[h].import_cluster_address | default('')]
+                                   if f.all_ipv4_addresses is not defined else [])
+                                + ([hostvars[h].ansible_host] if hostvars[h].ansible_host | default('') is match('^[0-9.]+$|.*:')
+                                   else []) -%}
               {%-   if item.address in addrs -%}{%- set _ = found.append(h) -%}{%- endif -%}
               {%- endfor -%}
               {{ found | first | default(item.address) }}
@@ -1210,6 +1269,12 @@
                    if _read else {} }}
               # the OS tuning found on it, for the report
               os: "{{ _hv.import_cluster_os | default({}) if _read else {} }}"
+              # what of Medusa was read: its medusa.ini (imported), its install (its version)
+              medusa:
+                ini: >-
+                  {{ _read | bool and _hv.import_cluster_medusa_ini.content is defined
+                     and _hv.import_cluster_medusa.notes | default([]) | select('search', 'NOT imported') | list | length == 0 }}
+                install: "{{ _read | bool and 'cassandra_medusa_version' in _hv.import_cluster_medusa.vars | default({}) }}"
               # a node not read is an existing node too: nothing of it is taken over. The firewall (or none)
               # is the node's: no mark tells one the role set up
               keep: >-
@@ -1396,6 +1461,13 @@
                         | map(attribute='content') | map('b64decode')))
              | community.cassandra.cassandra_inventory_user_files(_layout, _vault_secret | default('')) }}
 
+    # a file of yours at a path the import writes is replaced (kept as <file>.<date>~): its values are not
+    # yours any more (laid out without it)
+    - name: Keep your files the import does not write over
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+      ansible.builtin.set_fact:
+        _user_files: "{{ _user_files | selectattr('path', 'in', _layout.user_paths) | list }}"
+
     # Each node read: what the roles would write with the inventory's variables
     # (read back from the files about to be written, over the roles' defaults,
     # with the node's facts), against the node's files, setting by setting
@@ -1493,6 +1565,16 @@
           {%- endfor -%}
           {{ out }}
 
+    # known as an earlier import's by their layout only (no first line), or taken over: kept as <file>.<date>~
+    - name: Keep a backup of the files it removes that do not say they are its
+      ansible.builtin.copy:
+        src: "{{ _dir }}/{{ item }}"
+        dest: "{{ _dir }}/{{ item }}.{{ now(fmt='%Y-%m-%d@%H:%M:%S') }}~"
+        mode: preserve
+        remote_src: true
+      loop: "{{ _leftovers.backup | default([]) }}"
+      no_log: true  # (a secrets.yml)
+
     - name: Remove the files an earlier import wrote and this one does not
       ansible.builtin.file:
         path: "{{ _dir }}/{{ item }}"
@@ -1571,6 +1653,8 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), screen=true) }}
+      vars:
+        cassandra_output: true  # printed as is by the ops callback
 
     - name: Stop on a failed self-check
       ansible.builtin.fail:
@@ -1583,3 +1667,5 @@
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
+      vars:
+        cassandra_output: true  # its message as is (the ops callback), no task dump
