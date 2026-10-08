@@ -40,7 +40,7 @@ to do, the questions and the failures (`-v` for everything); with the default ca
 - `help`- Read-only, from the inventory alone (no node contacted): the clusters it describes, every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables).
 - `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
-- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster, one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.
+- `add_node`- Adds the nodes in `cassandra_new_nodes` to a running cluster: all prepared at once (nothing started), then started and bootstrapped one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.
 - `move_node`- One token per node: moves nodes to new tokens one at a time (by default, the fewest moves that even out each datacenter), then cleans up.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).

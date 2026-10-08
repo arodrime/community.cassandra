@@ -68,8 +68,8 @@ OPERATIONS = [
      "summary": "Checks the nodes against the inventory before a change: settings that must match, racks for the"
                 " token allocator, versions, seeds."},
     {"name": "add_node", "theme": "nodes", "cql": "plan",
-     "summary": "Adds new hosts to the running cluster, one at a time. Put them in their rack's group first, not in"
-                " cassandra_seeds.",
+     "summary": "Adds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in"
+                " turn. Put them in their rack's group first, not in cassandra_seeds.",
      "options": [("-e cassandra_new_nodes=NEW_NODE", "the hosts to add (comma-separated), already in the inventory",
                   None),
                  ("-e cassandra_add_node_reset=false", "refuses a new node that has data instead of emptying it (only"
