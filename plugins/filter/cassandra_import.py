@@ -16,7 +16,8 @@ cassandra_config_ignored_vars: variable names, series -> the cassandra_config
 cassandra_import_error: a failed task's result -> why it failed, without the
     values (the import's no_log tasks hold passwords).
 cassandra_ring_names: getent hosts on a given node and on the controller ->
-    the name to reach each node found in the ring by.
+    the name to reach each node found in the ring by (cassandra_ring_lookups:
+    the names to look up on the controller).
 
 Their unexpected errors do not quote the error message, which may show a value
 read from the config (a password): its type and where it happened only.
@@ -36,6 +37,7 @@ import sys
 import traceback
 
 import jinja2
+import jinja2.sandbox
 import yaml
 
 from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
@@ -1065,6 +1067,203 @@ def cassandra_inventory_layout(nodes, cluster_name):
             "names": dict((n["address"], n["name"]) for n in nodes if n.get("address")), "nodes": nodes}
 
 
+ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
+
+
+def _roles_defaults():
+    """Every role's defaults (the variables a host gets when nothing sets them)."""
+    out = {}
+    for role in sorted(os.listdir(ROLES)):
+        path = os.path.join(ROLES, role, "defaults", "main.yml")
+        if os.path.exists(path):
+            with open(path) as f:
+                out.update(yaml.safe_load(f) or {})
+    return out
+
+
+def _templated(value):
+    return isinstance(value, str) and not isinstance(value, _Unsafe) and re.search(r"\{[{%]", value) is not None
+
+
+def _resolved(key, values, defaults):
+    """key's value as the node has it: its value read (never templated), else the collection's default (a
+    template of other defaults rendered in a sandbox, a list or number again as Ansible would give it); MISSING
+    when unknown (a default made of facts, a filter of Ansible's)."""
+    if key in values:
+        return values[key]
+    if key not in defaults:
+        return MISSING
+    value = defaults[key]
+    env = jinja2.sandbox.SandboxedEnvironment(undefined=jinja2.StrictUndefined)
+    for dummy in range(5):  # a default made of other ones
+        if not _templated(value):
+            return value
+        try:
+            value = env.from_string(value).render(**dict(defaults, **values))
+        except Exception:  # pylint: disable=broad-except
+            return MISSING
+        try:
+            value = ast.literal_eval(value)  # "['/x']" -> ['/x'], "7199" -> 7199, as Ansible's templating
+        except (ValueError, SyntaxError):
+            pass
+    return MISSING
+
+
+def _vars_dir(path):
+    """group_vars/x.yml, group_vars/x/y.yml -> group_vars/x (the group or host they are for)."""
+    parts = path.split("/")
+    return parts[0] + "/" + (os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1])
+
+
+def _chains(hosts):
+    """The hosts file's data -> {host: [its groups, top down]}."""
+    out = {}
+
+    def walk(group, chain):
+        for host in (group.get("hosts") or {}):
+            out[host] = chain
+        for child, sub in sorted((group.get("children") or {}).items()):
+            walk(sub or {}, chain + [child])
+    walk(hosts.get("all") or {}, [])
+    return out
+
+
+def _effective(name, chain, layout, user, mine=True):
+    """The variables a host gets: the user's files and the import's (main.yml), as Ansible reads them (all, the
+    groups top down, the host; for each, its dir if there is one, its files by name, else the first of
+    <name>.yml, .yaml, .json) -> {key: (value, path)}. mine false: the import's dirs count, not its values."""
+    out = {}
+    for where in ["group_vars/all"] + ["group_vars/%s" % g for g in chain] + ["host_vars/%s" % name]:
+        files = [(p, data) for p, data in user if _vars_dir(p) == where]
+        written = (layout.get("group_vars") or {}).get(where.split("/", 1)[1]) if where.startswith("group_vars/") \
+            else (layout.get("host_vars") or {}).get(name)
+        in_dir = [f for f in files if f[0].count("/") == 2]
+        if in_dir or written:  # a dir: <name>.yml next to it is not read
+            files = in_dir + ([(where + "/main.yml", written)] if written and mine else [])
+        else:
+            files = [f for ext in ("yml", "yaml", "json") for f in files if f[0] == "%s.%s" % (where, ext)][:1]
+        for path, data in sorted(files, key=lambda f: f[0]):
+            for key, value in data.items():
+                out[key] = (value, path)
+    return out
+
+
+# the variable that wins over another one in the roles (its former name)
+_ALIASES = {"cassandra_config_owner": "cassandra_config_user"}
+
+
+def cassandra_inventory_user_files(read, layout, password=""):
+    """read: {path: text} of the vars files of the inventory dir; layout: cassandra_inventory_layout's.
+    -> [{path, content}]: the user's own (not the import's) that apply to this cluster's hosts: group_vars/all,
+    its groups', its hosts'; a vaulted one decrypted with password (else its content None)."""
+    groups = ["all"] + sorted(layout.get("group_vars") or {})
+    hosts = [n["name"] for n in layout.get("nodes") or []]
+    out = []
+    for path, text in sorted((read or {}).items()):
+        if not re.match(r"^(group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)$", path):
+            continue
+        kind, name = _vars_dir(path).split("/", 1)
+        if name not in (groups if kind == "group_vars" else hosts):
+            continue
+        if str(text).startswith("$ANSIBLE_VAULT"):
+            text = _decrypt(text, password)
+            if text is None:  # not read: said in the report
+                out.append({"path": path, "content": None})
+                continue
+        if written_for(text) is None:  # the import's own: written again
+            out.append({"path": path, "content": text})
+    return out
+
+
+@_values_hidden
+def cassandra_inventory_layout_over(nodes, cluster_name, user_files):
+    """cassandra_inventory_layout, with the user's own variables files of the inventory dir (user_files: [{path,
+    content}], group_vars/all and those of this cluster's groups and hosts) taken into account: a node whose value
+    one of them would change gets its value written (the node as it is wins), and is listed in 'yours': [{node,
+    key, value, yours, path}]; a value of theirs equal to the node's is not written again. 'not_compared': the keys
+    of theirs not compared (a template, a vaulted value, a default not known here); 'unread_files': theirs not read
+    (vaulted, no password); 'theirs_win': [{node, key, path}] a file of theirs still wins over the import's."""
+    user, unread = [], []
+    for f in user_files or []:
+        if f.get("content") is None:
+            unread.append(f["path"])
+            continue
+        try:
+            data = yaml.load(f["content"], Loader=_UserLoader)  # nosec B506: the loader builds no object
+        except yaml.YAMLError:
+            data = None
+        if isinstance(data, dict):
+            user.append((f["path"], data))
+    defaults = _roles_defaults()
+    nodes = [dict(n, vars=dict(n.get("vars") or {})) for n in nodes]
+    live_vars = dict((n["name"], dict(n["vars"])) for n in nodes)  # as found, whatever is written
+    yours, not_compared, theirs_win = [], [], []
+
+    def live_of(n, key):
+        return _resolved(_ALIASES.get(key, key), live_vars[n["name"]], defaults)
+
+    def comparable(key, value):
+        if _templated(value) or isinstance(value, _Vaulted) or (isinstance(value, (dict, list)) and _Vaulted in [
+                type(v) for v in (value.values() if isinstance(value, dict) else value)]):
+            if key not in not_compared:
+                not_compared.append(key)
+            return False
+        return True
+
+    layout = cassandra_inventory_layout(nodes, cluster_name)
+    # a value theirs gives already, as the node has it: left to theirs (where Ansible reads it once written)
+    chains = _chains(layout["hosts"])
+    for n in nodes:
+        name = layout["names"].get(n.get("address"), n["name"])
+        theirs = _effective(name, chains.get(name, []), layout, user, mine=False)
+        for key in [k for k in n["vars"] if k in theirs and k not in ALWAYS and k not in ("cassandra_dc", "cassandra_rack")]:
+            if comparable(key, theirs[key][0]) and _same(key, theirs[key][0], n["vars"][key]):
+                del n["vars"][key]
+    layout = cassandra_inventory_layout(nodes, cluster_name)
+    for dummy in range(3):  # each round writes the values theirs would change; the layout again
+        chains = _chains(layout["hosts"])
+        changed, pins = False, []
+        for n in nodes:
+            if not boolean(n.get("read", False), strict=False):
+                continue
+            name = layout["names"].get(n.get("address"), n["name"])
+            own = ["group_vars/%s/main.yml" % g for g in chains.get(name, [])] + ["host_vars/%s/main.yml" % name]
+            for key, (value, path) in sorted(_effective(name, chains.get(name, []), layout, user).items()):
+                if path in own or not comparable(key, value):
+                    continue
+                live = live_of(n, key)
+                if live is MISSING:
+                    if key not in not_compared:
+                        not_compared.append(key)
+                    continue
+                if _same(key, value, live):
+                    continue
+                if _same(key, n["vars"].get(key, MISSING), live):  # written, theirs wins (a host file of theirs)
+                    pins.append((name, key, live))
+                else:
+                    n["vars"][key] = live
+                    changed = True
+                if not any(y["node"] == name and y["key"] == key for y in yours):
+                    yours.append({"node": name, "key": key, "value": live, "yours": value, "path": path})
+        if not changed:
+            for name, key, live in pins:
+                layout["host_vars"].setdefault(name, {})[key] = live
+            break
+        layout = cassandra_inventory_layout(nodes, cluster_name)
+    # a file of theirs that still wins (sorted after main.yml in a host's dir): said, not hidden
+    chains = _chains(layout["hosts"])
+    for y in yours:
+        n = next((n for n in nodes if layout["names"].get(n.get("address"), n["name"]) == y["node"]), None)
+        got = _effective(y["node"], chains.get(y["node"], []), layout, user).get(y["key"])
+        if n is not None and got and not _same(y["key"], got[0], y["value"]):
+            theirs_win.append({"node": y["node"], "key": y["key"], "path": got[1]})
+    layout["yours"] = yours
+    layout["not_compared"] = sorted(not_compared)
+    layout["unread_files"] = unread
+    layout["theirs_win"] = theirs_win
+    return layout
+
+
 def _by_nodes(pairs):
     """pairs: [(node name, lines)] -> report lines, each line once under the
     nodes that have it: the ones every node has first."""
@@ -1320,6 +1519,17 @@ class _Unsafe(str):
 
 _TagsLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
 _TagsLoader.add_constructor("!unsafe", lambda loader, node: _Unsafe(loader.construct_scalar(node)))
+
+
+class _Vaulted(object):
+    """An inline !vault value of the user's: not read."""
+
+
+class _UserLoader(_TagsLoader):  # pylint: disable=too-many-ancestors
+    pass
+
+
+_UserLoader.add_constructor("!vault", lambda loader, node: _Vaulted())
 # the files Ansible reads as inventory in a dir (not its own ignored extensions), other than YAML: INI
 _INVENTORY_IGNORED = re.compile(r"(\.(pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$")
 _INI_GROUP = re.compile(r"^\[([^:\]\s]+)(?::(\w+))?\]\s*(?:#.*)?$")  # a section, as Ansible's ini plugin reads it
@@ -1597,7 +1807,8 @@ def _getent(text):
 
 def cassandra_ring_names(on_node, on_controller, addresses, given):
     """on_node: getent hosts <addresses> on the given node that read the ring;
-    on_controller: getent hosts <the names it gave> on the controller;
+    on_controller: {name: getent ahostsv4 <name> on the controller} for the
+    names it gave;
     addresses: the nodes found in the ring; given: that given node's
     inventory name. Returns {address: the name to reach it by}: the name in
     the form the given one has (its short name, or the fqdn when the given
@@ -1606,7 +1817,8 @@ def cassandra_ring_names(on_node, on_controller, addresses, given):
     if _IPV4.match(str(given)) or ":" in str(given):
         return dict((a, a) for a in addresses)
     names, dummy = _getent(on_node)
-    dummy, resolved = _getent(on_controller)
+    resolved = dict((name, [line.split()[0] for line in (text or "").splitlines() if line.split()])
+                    for name, text in (on_controller or {}).items())
     out = {}
     for address in addresses:
         found = names.get(address) or []
@@ -1634,6 +1846,8 @@ class FilterModule(object):
             "cassandra_ring_nodes": cassandra_ring_nodes,
             "cassandra_config_import": cassandra_config_import,
             "cassandra_inventory_layout": cassandra_inventory_layout,
+            "cassandra_inventory_layout_over": cassandra_inventory_layout_over,
+            "cassandra_inventory_user_files": cassandra_inventory_user_files,
             "cassandra_inventory_files": cassandra_inventory_files,
             "cassandra_inventory_generated": cassandra_inventory_generated,
             "cassandra_inventory_leftovers": cassandra_inventory_leftovers,

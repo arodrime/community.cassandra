@@ -33,8 +33,8 @@ def test_compress():
 
 def test_clean_import_ready():
     lines = report([node(i) for i in range(1, 6)])
-    assert lines[:4] == ["IMPORT my_cluster - 5 nodes read / 5 - SELF-CHECK PASSED",
-                         "Written: /p/inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/node1..node5/",
+    assert lines[:4] == ["IMPORT my_cluster - 5 node(s) read / 5 - SELF-CHECK PASSED",
+                         "Written: /p/inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/<node>/ (none)",
                          "Report:  /p/reports/my_cluster/report.txt", ""]
     assert lines[4] == "READY - nothing to do; review and commit:  git diff && git commit"
     text = "\n".join(lines)
@@ -59,17 +59,17 @@ def test_things_to_do_and_hand_edits():
     lines = report(nodes, ok=False, secrets_clear=["group_vars/my_cluster/secrets.yml"],
                    leftovers={"unsure": ["host_vars/old/main.yml"]},
                    self_check={"node1": {"differences": ["cassandra.yaml: concurrent_writes"], "notes": []}})
-    assert lines[0] == "IMPORT my_cluster - 3 nodes read / 4 - SELF-CHECK FAILED"
+    assert lines[0] == "IMPORT my_cluster - 3 node(s) read / 4 - SELF-CHECK FAILED"
     at = lines.index("TO DO (5)")
     assert lines[at + 1:at + 6] == [
         "  1. Not read: node4 (unreachable): start Cassandra or fix the access, then import again"
         " (or -e import_cluster_allow_unread=true)",
         "  2. Hand edits the roles would revert: cassandra.yaml concurrent_writes, jvm-server.options -Dcassandra.weird"
         " (see HAND EDITS)",
-        "  3. Passwords written in clear: cd /p/inventories && ansible-vault encrypt group_vars/my_cluster/secrets.yml",
-        "  4. Files of an earlier import whose cluster is not known, kept: host_vars/old/main.yml (remove them if they"
-        " are this cluster's)",
-        "  5. Review then commit:  git diff && git commit"]
+        "  3. Self-check: the roles would change settings on node1 (see DETAILS)",
+        "  4. Passwords written in clear: cd /p/inventories && ansible-vault encrypt group_vars/my_cluster/secrets.yml",
+        "  5. Files of an earlier import whose cluster is not known, kept: host_vars/old/main.yml (remove them if they"
+        " are this cluster's)"]
     at = lines.index("HAND EDITS - no variable covers them; cassandra_config would revert")
     assert lines[at + 1:at + 4] == ["  cassandra.yaml concurrent_writes:     48                           node1, node2",
                                     "  jvm-server.options -Dcassandra.weird: 1                            node3",
@@ -82,10 +82,50 @@ def test_things_to_do_and_hand_edits():
 def test_screen_and_check():
     lines = report([node(i) for i in range(1, 4)], check=True, screen=True,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
-    assert lines[0] == "IMPORT my_cluster (--check, nothing written) - 3 nodes read / 3 - SELF-CHECK PASSED"
+    assert lines[0] == "IMPORT my_cluster (--check, nothing written) - 3 node(s) read / 3 - SELF-CHECK PASSED"
     assert lines[1].startswith("Would write: ") and lines[2] == "Report:  not written under --check"
     assert "TO DO (1)" in lines and "  1. Write it: the same command without --check" in lines
     assert lines[-1] == "Full report: written by the run without --check"
     assert "HAND EDITS" not in "\n".join(lines) and "NEXT" not in lines and "DETAILS" not in lines
     full = report([node(i) for i in range(1, 4)], check=True, leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert "Would be removed (an earlier import's, not written again): host_vars/gone/main.yml" in full
+
+
+def test_where_each_value_is_kept():
+    nodes = [dict(node(1, "8G"), dc="dc1"), dict(node(2, "8G"), dc="dc1"), dict(node(3, "16G"), dc="dc2"),
+             dict(node(4, "16G"), dc="dc2"), dict(node(5, "4G"), dc="dc3"), dict(node(6, "4G"), dc="dc3"),
+             dict(node(7, "4G"), dc="dc3")]
+    lines = report(nodes)
+    at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_max_heap_size:")][0]
+    assert lines[at].split()[-1] == "node5..node7"
+    assert sorted(lines[at + 1:at + 3]) == [
+        "                           16G                          node3, node4  <- differs (group_vars/my_cluster_dc2)",
+        "                           8G                           node1, node2  <- differs (group_vars/my_cluster_dc1)"]
+
+
+def test_self_check_named_with_hand_edits_elsewhere_and_a_note():
+    nodes = [node(1, hand=["cassandra.yaml, line 10:", "  + concurrent_writes: 48"]),
+             node(2, hand=["jmxremote.password: its users NOT imported: set cassandra_jmx_users by hand"])]
+    checks = {"node3": {"differences": ["owner, group and mode: x"], "notes": []},
+              "node1": {"differences": ["cassandra.yaml: y"], "notes": []}}
+    lines = report(nodes, ok=False, self_check=checks)
+    assert "  2. Self-check: the roles would change settings on node1, node3 (see DETAILS)" in lines
+    assert not [line for line in lines if "Review then commit" in line]  # not a valid inventory
+    assert [line for line in lines if line.startswith("  jmxremote.password:")][0].split()[1:4] == [
+        "its", "users", "NOT"]
+
+
+def test_differs_from_your_variables():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    nodes = [node(1), node(2), node(3), node(4), node(5)]
+    for n in nodes[2:]:
+        n["vars"].update(cassandra_config_user="cassandra", cassandra_config_group="svccassandra")
+    layout = cassandra_inventory_layout_over(nodes, "My Cluster", [{
+        "path": "group_vars/all/standard.yml",
+        "content": "cassandra_config_user: cassandra\ncassandra_config_group: svccassandra\n"}])
+    lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, inventory_args=ARGS)
+    assert ("  1. Kept as found against your own variables: cassandra_config_group, cassandra_config_user"
+            " (see DIFFERS FROM YOUR VARIABLES)") in lines
+    at = lines.index("DIFFERS FROM YOUR VARIABLES - kept as found; delete the line to apply yours")
+    assert [line.split("  ")[-1] for line in lines[at + 1:at + 3]] == ["-> host_vars", "-> host_vars"]
+    assert "root (yours: cassandra, group_vars/all/standard.yml)" in lines[at + 2]

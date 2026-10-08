@@ -18,7 +18,7 @@ import re
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    KEEP, _hand_edits_kept, _secret, _sort_key, _values_hidden)
+    KEEP, _chains, _hand_edits_kept, _secret, _sort_key, _values_hidden)
 
 # shown in the header, or the ring's (dc and rack): not among the settings
 _NOT_SETTINGS = ("cassandra_cluster_name", "cassandra_dc", "cassandra_rack")
@@ -107,8 +107,10 @@ def _edit_pairs(node):
             out.append(("%s %s" % (file_name, setting.group(1)), setting.group(2) or "present"))
         elif plus:
             out.append((file_name, " / ".join(plus)))
-        else:
+        elif minus:
             out.append((file_name, "removed: " + " / ".join(minus)))
+        else:  # a line of its own (e.g. jmxremote.password's users not imported)
+            out.append((file_name, head.split(":", 1)[1].strip() if ":" in head else head))
 
     for line in edits:
         if not line.startswith(" "):
@@ -148,11 +150,11 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     names = [n["name"] for n in read]
     leftovers = leftovers or {}
     hosts_file, inventory_dir = written
-    lines = ["IMPORT %s%s - %d nodes read / %d - SELF-CHECK %s" % (
+    lines = ["IMPORT %s%s - %d node(s) read / %d - SELF-CHECK %s" % (
         cluster, " (--check, nothing written)" if check else "", len(read), len(nodes),
         "PASSED" if self_check_ok else "FAILED"),
-        "%s %s, group_vars/%s*/, host_vars/%s/" % ("Would write:" if check else "Written:", hosts_file, cluster,
-                                                   _compress([n["name"] for n in nodes])),
+        "%s %s, group_vars/%s*/, host_vars/<node>/ (%s)" % ("Would write:" if check else "Written:", hosts_file,
+                                                            cluster, _compress(sorted(layout.get("host_vars") or {})) or "none"),
         "Report:  %s" % ("not written under --check" if check else report_file), ""]
 
     # TO DO
@@ -168,9 +170,23 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see HAND EDITS)" % ", ".join(edit_names))
     others = sorted(name for name, c in (self_check or {}).items() if c.get("differences"))
-    if not self_check_ok and (self_check_error or (others and not edit_names)):
+    if not self_check_ok and (self_check_error or others):
         todo.append("Self-check: %s (see DETAILS)" % (self_check_error or "the roles would change settings on "
                                                       + _compress(others)))
+    yours = layout.get("yours") or []
+    if yours:
+        todo.append("Kept as found against your own variables: %s (see DIFFERS FROM YOUR VARIABLES)"
+                    % ", ".join(sorted({y["key"] for y in yours})))
+    if layout.get("theirs_win"):
+        todo.append("Your files still win over the import there, the roles would change these nodes: %s (rename or"
+                    " fix them)" % ", ".join(sorted({"%s: %s (%s)" % (w["node"], w["key"], w["path"])
+                                                     for w in layout["theirs_win"]})))
+    if layout.get("unread_files"):
+        todo.append("Your vaulted files not read (no vault password file): %s: their values are not compared with"
+                    " the nodes" % ", ".join(layout["unread_files"]))
+    if layout.get("not_compared"):
+        todo.append("Not compared with the nodes, check them (yours sets them with a template or a vaulted value,"
+                    " or their default is not known here): %s" % ", ".join(layout["not_compared"]))
     if secrets_clear:
         todo.append("Passwords written in clear: cd %s && ansible-vault encrypt %s"
                     % (inventory_dir, " ".join(secrets_clear)))
@@ -179,7 +195,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                     " cluster's)" % ", ".join(leftovers["unsure"]))
     if check:
         todo.append("Write it: the same command without --check")
-    elif todo:
+    elif todo and self_check_ok:
         todo.append("Review then commit:  git diff && git commit")
     if todo:
         lines.append("TO DO (%d)" % len(todo))
@@ -206,17 +222,31 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                 text = _plain(value)
             pairs.append((n["name"], key, text))
     settings = _by_value(pairs)
-    where = {}
-    for key, values in settings:
-        for text, members in values:
-            if all(key in (layout.get("host_vars") or {}).get(m, {}) for m in members):
-                where[(key, text)] = "host_vars"
+    chains = _chains(layout.get("hosts") or {})
+
+    def placed(key, members):
+        """Where the inventory keeps key for these nodes (their most specific level that has it)."""
+        found = []
+        for m in members:
+            if key in (layout.get("host_vars") or {}).get(m, {}):
+                place = "host_vars"
             else:
-                group = next((g for g, v in sorted((layout.get("group_vars") or {}).items()) if g != cluster and key in v), "")
-                if group:
-                    where[(key, text)] = "group_vars/%s" % group
+                place = next(("group_vars/%s" % g for g in reversed(chains.get(m, []))
+                              if key in (layout.get("group_vars") or {}).get(g, {})), "")
+            if place and place not in found:
+                found.append(place)
+        return ", ".join(found)
+
+    where = dict(((key, text), placed(key, members)) for key, values in settings for text, members in values)
     lines.append("SETTINGS - not the collection's default")
     lines += _rows(_width(settings), settings, names, where) or ["  none"]
+    if yours:
+        rows = _by_value([(y["node"], y["key"], "%s (yours: %s, %s)" % (
+            "(in secrets.yml)" if _secret(y["key"], y["value"]) else _plain(y["value"]),
+            "(in a vars file)" if _secret(y["key"], y["yours"]) else _plain(y["yours"]), y["path"])) for y in yours])
+        lines += ["", "DIFFERS FROM YOUR VARIABLES - kept as found; delete the line to apply yours"]
+        lines += [line + "  -> " + placed(name, members) for (name, values) in rows for text, members in values
+                  for line in _rows(_width(rows), [(name, [(text, members)])], [])]
     if screen:
         return lines + ["", "Full report: %s" % ("written by the run without --check" if check else report_file)]
     lines.append("")

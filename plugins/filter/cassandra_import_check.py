@@ -65,16 +65,25 @@ with open(os.path.join(ROLES, "cassandra_config", "vars", "main.yml")) as _vars:
 
 @_values_hidden
 def cassandra_inventory_host_vars(files, hosts, name):
-    """The variables `name` gets from the inventory files, as Ansible merges
-    them: parent groups first, then child groups, then the host."""
-    data = {}
+    """The variables `name` gets from the inventory files (the import's, and the
+    user's own: group_vars/all...), as Ansible merges them: all, parent groups
+    first, then child groups, then the host; in a dir, its files by name."""
+    by_where = {}
     for f in files:
-        data.setdefault(f["path"].rsplit("/", 1)[0], {}).update(yaml.load(f["content"], Loader=Loader) or {})
+        parts = f["path"].split("/")
+        by_where.setdefault(parts[0] + "/" + (parts[1].rsplit(".", 1)[0] if len(parts) == 2 else parts[1]), []).append(f)
+    data = {}
+    for where, found in by_where.items():
+        # its dir if there is one (<name>.yml next to it is not read), else the first of .yml, .yaml, .json
+        in_dir = [f for f in found if f["path"].count("/") == 2]
+        found = in_dir or [f for ext in ("yml", "yaml", "json") for f in found if f["path"] == "%s.%s" % (where, ext)][:1]
+        for f in sorted(found, key=lambda f: f["path"]):
+            data.setdefault(where, {}).update(yaml.load(f["content"], Loader=Loader) or {})
     chain = _groups_of(hosts.get("all", {}), name, [])
     if chain is None:
         raise AnsibleFilterError("cassandra_inventory_host_vars: %s is not in the inventory" % name)
     out = {}
-    for group in chain:
+    for group in ["all"] + chain:
         out.update(data.get("group_vars/%s" % group, {}))
     out.update(data.get("host_vars/%s" % name, {}))
     return out
@@ -85,6 +94,7 @@ class Loader(yaml.SafeLoader):
 
 
 Loader.add_constructor("!unsafe", lambda loader, node: Unsafe(loader.construct_scalar(node)))
+Loader.add_constructor("!vault", lambda loader, node: None)  # a user's inline vaulted value: not read
 
 
 def _trusted(value):

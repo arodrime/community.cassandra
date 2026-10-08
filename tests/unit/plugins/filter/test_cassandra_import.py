@@ -1338,7 +1338,8 @@ def test_ring_names_as_the_given_node():
     found = ["10.0.0.2", "10.0.0.3", "10.0.0.4"]  # 10.0.0.4: no name on the node
     assert cassandra_ring_lookups(GETENT_NODE, found, "node1") == [
         "node2.example.org", "node2", "node3.example.org", "node3"]
-    controller = "10.0.0.2 node2\n10.0.0.2 node2.example.org\n10.0.0.3 node3.example.org\n10.0.0.9 node3\n"
+    controller = {"node2": "10.0.0.2 STREAM node2.example.org\n10.0.0.2 DGRAM\n", "node2.example.org": "10.0.0.2 STREAM\n",
+                  "node3.example.org": "10.0.0.3 STREAM\n", "node3": "10.0.0.9 STREAM node3\n"}
     assert cassandra_ring_names(GETENT_NODE, controller, found, "node1") == {
         "10.0.0.2": "node2", "10.0.0.3": "10.0.0.3", "10.0.0.4": "10.0.0.4"}  # node3: another address here
     assert cassandra_ring_names(GETENT_NODE, controller, found, "node1.example.org") == {
@@ -1346,4 +1347,142 @@ def test_ring_names_as_the_given_node():
     # the given node named by its address: the others too; nothing resolved on the controller: addresses
     assert cassandra_ring_names(GETENT_NODE, controller, found, "10.0.0.1") == dict((a, a) for a in found)
     assert cassandra_ring_lookups(GETENT_NODE, found, "10.0.0.1") == []
-    assert cassandra_ring_names(GETENT_NODE, "", found, "node1") == dict((a, a) for a in found)
+    assert cassandra_ring_names(GETENT_NODE, {}, found, "node1") == dict((a, a) for a in found)
+
+
+def _owner_nodes():
+    nodes = []
+    for i in range(1, 6):
+        v = {"cassandra_cluster_name": "Orders"}
+        if i > 2:  # 3 nodes cassandra:svccassandra, 2 at the collection's default (root, the cassandra group)
+            v.update(cassandra_config_user="cassandra", cassandra_config_group="svccassandra")
+        nodes.append({"name": "n%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r%d" % (i % 2), "read": True,
+                      "vars": v, "hand_edits": [], "normalized": [], "notes": []})
+    return nodes
+
+
+STANDARD = [{"path": "group_vars/all/standard.yml",
+             "content": "cassandra_config_user: cassandra\ncassandra_config_group: svccassandra\n"}]
+
+
+def test_layout_over_the_users_group_vars_all():
+    """group_vars/all of the inventory dir sets a standard some nodes do not follow: after the import, every host
+    gets its live value from the effective inventory (theirs + the import's), so the roles change nothing."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        _chains, _effective, cassandra_inventory_files, cassandra_inventory_layout_over)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
+        cassandra_inventory_host_vars)
+    layout = cassandra_inventory_layout_over(_owner_nodes(), "Orders", STANDARD)
+    live = {"n1": ("root", "cassandra"), "n2": ("root", "cassandra")}
+    files = cassandra_inventory_files(layout) + STANDARD
+    for name in ("n1", "n2", "n3", "n4", "n5"):
+        got = cassandra_inventory_host_vars(files, layout["hosts"], name)
+        assert (got.get("cassandra_config_user", "root"), got.get("cassandra_config_group", "cassandra")) == \
+            live.get(name, ("cassandra", "svccassandra")), name
+        effective = _effective(name, _chains(layout["hosts"])[name], layout, [(f["path"], {}) for f in STANDARD])
+        assert "cassandra_config_user" in effective or name not in live
+    # the nodes that follow it: nothing written for them, theirs applies
+    assert not any("cassandra_config_user" in v for v in layout["group_vars"].values())
+    assert sorted(h for h, v in layout["host_vars"].items() if "cassandra_config_user" in v) == ["n1", "n2"]
+    assert sorted((y["node"], y["key"]) for y in layout["yours"]) == [
+        ("n1", "cassandra_config_group"), ("n1", "cassandra_config_user"),
+        ("n2", "cassandra_config_group"), ("n2", "cassandra_config_user")]
+    # without theirs: as before
+    plain = cassandra_inventory_layout_over(_owner_nodes(), "Orders", [])
+    assert plain["yours"] == [] and sorted(plain["host_vars"]) == ["n3", "n4", "n5"]
+
+
+def test_layout_over_a_host_file_of_theirs():
+    """A host file of theirs beats the import's group value: the host gets its own value written."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    nodes = _owner_nodes()[2:]
+    theirs = [{"path": "host_vars/n3/local.yml", "content": "cassandra_config_user: root\n"}]
+    layout = cassandra_inventory_layout_over(nodes, "Orders", theirs)
+    assert layout["host_vars"]["n3"]["cassandra_config_user"] == "cassandra"
+    assert [(y["node"], y["key"], y["path"]) for y in layout["yours"]] == [
+        ("n3", "cassandra_config_user", "host_vars/n3/local.yml")]
+    # a template of theirs, for nodes the import writes nothing for: not compared, listed
+    theirs = [{"path": "group_vars/all.yml", "content": "cassandra_config_user: \"{{ my_user }}\"\n"}]
+    assert cassandra_inventory_layout_over(_owner_nodes()[:2], "Orders", theirs)["not_compared"] == [
+        "cassandra_config_user"]
+
+
+def test_users_own_files_that_apply():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        GENERATED, cassandra_inventory_layout, cassandra_inventory_user_files)
+    layout = cassandra_inventory_layout(_owner_nodes(), "Orders")
+    read = {"group_vars/all/standard.yml": "a: 1", "group_vars/all.yml": "b: 1",
+            "group_vars/orders/local.yml": "c: 1", "group_vars/orders/main.yml": GENERATED % "orders",
+            "group_vars/billing/main.yml": "d: 1", "host_vars/n1/x.yml": "e: 1", "host_vars/web/x.yml": "f: 1",
+            "group_vars/all/vault.yml": "$ANSIBLE_VAULT;1.1;AES256\n3031\n", "orders.yml": "all:"}
+    files = cassandra_inventory_user_files(read, layout)
+    assert [f["path"] for f in files] == [
+        "group_vars/all.yml", "group_vars/all/standard.yml", "group_vars/all/vault.yml", "group_vars/orders/local.yml",
+        "host_vars/n1/x.yml"]
+    assert [f["path"] for f in files if f["content"] is None] == ["group_vars/all/vault.yml"]  # no password
+
+
+def _over(nodes, theirs):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    return cassandra_inventory_layout_over(nodes, "Orders", [{"path": p, "content": c} for p, c in theirs])
+
+
+def test_layout_over_files_ansible_does_not_read():
+    """group_vars/orders.yml: not read by Ansible next to the dir the import writes; all.yml not next to all/:
+    the node's value is written anyway. host_vars/n1.yml, no host dir written: read, left to theirs."""
+    nodes = _owner_nodes()[:1]
+    nodes[0]["vars"]["cassandra_concurrent_writes"] = 91
+    for theirs in ([("group_vars/orders.yml", "cassandra_concurrent_writes: 91\n")],
+                   [("group_vars/all.yml", "cassandra_concurrent_writes: 91\n"), ("group_vars/all/x.yml", "a: 1\n")]):
+        layout = _over([dict(n, vars=dict(n["vars"])) for n in nodes], theirs)
+        assert any(v.get("cassandra_concurrent_writes") == 91 for v in list(layout["group_vars"].values())
+                   + list(layout["host_vars"].values())), theirs
+    # read when nothing else is there: left to theirs
+    for theirs in ([("group_vars/all.yml", "cassandra_concurrent_writes: 91\n")],
+                   [("host_vars/n1.yml", "cassandra_concurrent_writes: 91\n")]):
+        layout = _over([dict(n, vars=dict(n["vars"])) for n in nodes], theirs)
+        assert not any("cassandra_concurrent_writes" in v for v in list(layout["group_vars"].values())
+                       + list(layout["host_vars"].values())), theirs
+
+
+def test_layout_over_defaults_as_ansible_types_them():
+    """A default made of another (a list, a number): compared as Ansible would give it, never written as text."""
+    nodes = _owner_nodes()[:1]
+    same = _over(nodes, [("group_vars/all/x.yml", "cassandra_data_file_directories: [/var/lib/cassandra/data]\n")])
+    assert same["yours"] == []
+    other = _over(nodes, [("group_vars/all/x.yml", "cassandra_data_file_directories: [/data1]\n")])
+    assert [(y["key"], y["value"]) for y in other["yours"]] == [
+        ("cassandra_data_file_directories", ["/var/lib/cassandra/data"])]
+
+
+def test_layout_over_what_is_not_compared():
+    nodes = _owner_nodes()[:1]
+    # a default made of facts: not known here, said
+    assert "cassandra_conf_dir" in _over(nodes, [("group_vars/all/x.yml", "cassandra_conf_dir: /opt/c\n")])["not_compared"]
+    # an inline vaulted value of theirs
+    vaulted = "cassandra_jmx_password: !vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  3031\n"
+    layout = _over(nodes, [("group_vars/all/x.yml", vaulted)])
+    assert layout["not_compared"] == ["cassandra_jmx_password"] and layout["yours"] == []
+    # a vaulted file not read
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    layout = cassandra_inventory_layout_over(nodes, "Orders", [{"path": "group_vars/all/vault.yml", "content": None}])
+    assert layout["unread_files"] == ["group_vars/all/vault.yml"]
+
+
+def test_layout_over_the_former_name():
+    """cassandra_config_owner of theirs (it wins over cassandra_config_user): the node's owner written under it."""
+    layout = _over(_owner_nodes()[:1], [("group_vars/all/x.yml", "cassandra_config_owner: cassandra\n")])
+    assert layout["group_vars"]["orders"]["cassandra_config_owner"] == "root"
+
+
+def test_layout_over_a_file_of_theirs_after_main():
+    """host_vars/n1/zz.yml sorts after the import's main.yml: it still wins, said so."""
+    layout = _over(_owner_nodes()[:1], [("host_vars/n1/zz.yml", "cassandra_config_user: cassandra\n")])
+    assert layout["theirs_win"] == [{"node": "n1", "key": "cassandra_config_user", "path": "host_vars/n1/zz.yml"}]
+
+
+def test_layout_over_never_renders_a_node_value():
+    nodes = _owner_nodes()[:1]
+    nodes[0]["vars"]["cassandra_cluster_name"] = "{{ 7 * 7 }}"
+    layout = _over(nodes, [("host_vars/n1/zz.yml", "cassandra_cluster_name: x\n")])
+    assert [y["value"] for y in layout["yours"]] == ["{{ 7 * 7 }}"]

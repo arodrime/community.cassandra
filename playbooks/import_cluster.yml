@@ -188,7 +188,7 @@
 
     - name: Check the controller resolves them to the same addresses
       ansible.builtin.command:
-        argv: "{{ ['getent', 'hosts'] + _names }}"
+        argv: [getent, ahostsv4, "{{ item }}"]
       delegate_to: localhost
       become: false
       run_once: true
@@ -196,7 +196,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
-      when: _names | length > 0
+      loop: "{{ _names }}"
       vars:
         ansible_connection: local  # never an inventory's connection to localhost
         ansible_become: false  # an inventory ansible_become beats the become keyword
@@ -206,8 +206,8 @@
 
     - name: Add the nodes the inventory does not have yet
       ansible.builtin.add_host:
-        name: "{{ _names[item] }}"
-        ansible_host: "{{ item if _names[item] == item else omit }}"
+        name: "{{ _name }}"
+        ansible_host: "{{ item if _name == item else omit }}"
         import_cluster_address: "{{ item }}"
         groups: [import_cluster_found]
       loop: "{{ import_cluster_new }}"
@@ -215,8 +215,13 @@
       vars:
         _names: >-
           {{ import_cluster_peer_names.stdout | default('')
-             | community.cassandra.cassandra_ring_names(import_cluster_peer_lookups.stdout | default(''),
+             | community.cassandra.cassandra_ring_names(dict(import_cluster_peer_lookups.results | default([])
+                                                             | map(attribute='item')
+                                                             | zip(import_cluster_peer_lookups.results | default([])
+                                                                   | map(attribute='stdout', default=''))),
                                                         import_cluster_new, import_cluster_from) }}
+        # a name the inventory has already (another host, maybe another cluster's): the address instead
+        _name: "{{ item if _names[item] in groups['all'] else _names[item] }}"
 
     - name: Stop if no node answered
       ansible.builtin.assert:
@@ -1029,6 +1034,15 @@
            inventory_args=_report_args.inventory_args, allow_unread=_report_args.allow_unread | bool,
            self_check_error=_self_check_error | default('')) | join('\n') }}
   tasks:
+    # the first play had no host: a group that matches nothing (or only hosts marked absent), a --limit
+    - name: Stop when no node was given
+      ansible.builtin.assert:
+        that: groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined') | list | length > 0
+        fail_msg: >-
+          No node given: -i <node>, or, with the inventory, -e cassandra_hosts=<a group with nodes not marked
+          absent> (--limit is refused). Nothing was written.
+        quiet: true
+
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory
       block:
@@ -1044,9 +1058,11 @@
             _host: >-
               {%- set found = [] -%}
               {%- for h in _given + groups['import_cluster_found'] | default([]) -%}
+              {#-   a node found, reached by name: the machine reached must have its address (else it is not this node) -#}
               {%-   set addrs = (hostvars[h].ansible_facts.all_ipv4_addresses | default([]))
-                                + [hostvars[h].ansible_facts.default_ipv4.address | default(''), hostvars[h].ansible_host | default(''),
-                                   hostvars[h].import_cluster_address | default('')] -%}
+                                + [hostvars[h].ansible_facts.default_ipv4.address | default(''), hostvars[h].ansible_host | default('')]
+                                + ([hostvars[h].import_cluster_address | default('')]
+                                   if hostvars[h].ansible_facts.all_ipv4_addresses is not defined else []) -%}
               {%-   if item.address in addrs -%}{%- set _ = found.append(h) -%}{%- endif -%}
               {%- endfor -%}
               {{ found | first | default(item.address) }}
@@ -1256,47 +1272,6 @@
             # the ring nodes it failed on, and what of the error shows no value
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
-    # Each node read: what the roles would write with the inventory's variables
-    # (read back from the files about to be written, over the roles' defaults,
-    # with the node's facts), against the node's files, setting by setting
-    - name: Self-check
-      block:
-        - name: Render what the roles would write, and compare with the nodes' files
-          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
-          ansible.builtin.set_fact:
-            _self_check: "{{ _self_check | default({}) | combine({_name: _result}) }}"
-          loop: "{{ _nodes }}"
-          loop_control:
-            label: "{{ item.address }}"
-          when: item.read | bool
-          vars:
-            _hv: "{{ hostvars[item.host] }}"
-            _name: "{{ _layout.names[item.address] }}"
-            _slurped: >-
-              {{ _hv.import_cluster_slurp.results + _hv.import_cluster_jmx_slurp.results | default([])
-                 + ([_hv.import_cluster_unit_slurp | combine({'item': 'cassandra.service'})]
-                    if _hv.import_cluster_unit_slurp.content is defined else [])
-                 + ([_hv.import_cluster_medusa_ini | combine({'item': 'medusa.ini'})]
-                    if _hv.import_cluster_medusa_ini.content is defined else []) }}
-            _live: >-
-              {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
-                      | zip(_slurped | selectattr('content', 'defined') | map(attribute='content') | map('b64decode'))) }}
-            _result: >-
-              {{ _files | community.cassandra.cassandra_import_self_check(_layout.hosts, _name, _hv.ansible_facts, _live,
-                                                                          _hv.import_cluster_unit.env | default({}),
-                                                                          _hv.import_cluster_storage_dir | default(''),
-                                                                          _hv.import_cluster_java | default(''),
-                                                                          _hv.import_cluster_conf_dir,
-                                                                          _hv.import_cluster_perms.files | default(none)) }}
-      rescue:
-        - name: Keep why for the report
-          ansible.builtin.set_fact:
-            _self_check_error: >-
-              the self-check could not run ("{{ ansible_failed_task.name | default('?') }}" failed{{ (': ' ~ _why) if _why else '' }}):
-              nothing says the variables reproduce the nodes
-          vars:
-            _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
-
     # made absolute here, on the controller: the modules would take a relative
     # path from their own working directory, not the one the playbook was run from
     - name: Pick the output dirs
@@ -1385,7 +1360,7 @@
     - name: Read the group_vars and host_vars files already there
       ansible.builtin.slurp:
         src: "{{ _dir }}/{{ item }}"
-      loop: "{{ _found | select('match', '^((group_vars|host_vars)/[^/]+/(main|secrets)[.]yml|' ~ _top ~ ')$') | list }}"
+      loop: "{{ _found | select('match', '^((group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)|' ~ _top ~ ')$') | list }}"
       register: import_cluster_existing_vars
       no_log: true  # a secrets.yml in clear
       vars:
@@ -1394,6 +1369,61 @@
         # (not a big file left there: a dump, an archive)
         _found: "{{ import_cluster_existing.files | default([]) | selectattr('size', 'le', 1048576) | map(attribute='path')
                     | map('relpath', _dir) | reject('match', '(.*/)?[.]') | list }}"
+
+    # the user's own variables files there (group_vars/all...) apply to these hosts too: a value of theirs that
+    # would change a node is written as the node has it (listed in the report)
+    - name: Lay out again over your own variables
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+      ansible.builtin.set_fact:
+        _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout_over(_layout.cluster_name, _theirs) }}"
+        _user_files: "{{ _theirs }}"
+      vars:
+        _theirs: >-
+          {{ dict(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined') | map(attribute='item')
+                  | zip(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined')
+                        | map(attribute='content') | map('b64decode')))
+             | community.cassandra.cassandra_inventory_user_files(_layout, _vault_secret | default('')) }}
+
+    # Each node read: what the roles would write with the inventory's variables
+    # (read back from the files about to be written, over the roles' defaults,
+    # with the node's facts), against the node's files, setting by setting
+    - name: Self-check
+      block:
+        - name: Render what the roles would write, and compare with the nodes' files
+          no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+          ansible.builtin.set_fact:
+            _self_check: "{{ _self_check | default({}) | combine({_name: _result}) }}"
+          loop: "{{ _nodes }}"
+          loop_control:
+            label: "{{ item.address }}"
+          when: item.read | bool
+          vars:
+            _hv: "{{ hostvars[item.host] }}"
+            _name: "{{ _layout.names[item.address] }}"
+            _slurped: >-
+              {{ _hv.import_cluster_slurp.results + _hv.import_cluster_jmx_slurp.results | default([])
+                 + ([_hv.import_cluster_unit_slurp | combine({'item': 'cassandra.service'})]
+                    if _hv.import_cluster_unit_slurp.content is defined else [])
+                 + ([_hv.import_cluster_medusa_ini | combine({'item': 'medusa.ini'})]
+                    if _hv.import_cluster_medusa_ini.content is defined else []) }}
+            _live: >-
+              {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
+                      | zip(_slurped | selectattr('content', 'defined') | map(attribute='content') | map('b64decode'))) }}
+            _result: >-
+              {{ (_user_files | default([]) + _files) | community.cassandra.cassandra_import_self_check(_layout.hosts, _name, _hv.ansible_facts, _live,
+                                                                          _hv.import_cluster_unit.env | default({}),
+                                                                          _hv.import_cluster_storage_dir | default(''),
+                                                                          _hv.import_cluster_java | default(''),
+                                                                          _hv.import_cluster_conf_dir,
+                                                                          _hv.import_cluster_perms.files | default(none)) }}
+      rescue:
+        - name: Keep why for the report
+          ansible.builtin.set_fact:
+            _self_check_error: >-
+              the self-check could not run ("{{ ansible_failed_task.name | default('?') }}" failed{{ (': ' ~ _why) if _why else '' }}):
+              nothing says the variables reproduce the nodes
+          vars:
+            _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
     - name: Sort out the files an earlier import wrote
       ansible.builtin.set_fact:

@@ -236,7 +236,8 @@ def test_stop_rather_than_overwrite(force, hosts_exists, passed):
 
 
 def test_files_read_and_written():
-    """Read: every file Ansible reads as inventory (whose hosts, which groups), and the vars files."""
+    """Read: every file Ansible reads as inventory (whose hosts, which groups), and the vars files (the user's
+    own too: they apply to the hosts)."""
     found = ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml", "group_vars/all/main.yml",
              "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml", "hosts", "mine.yaml", "README.md",
              "cluster_a.yml.2026-10-07@10:00:00~", "x.retry", "group_vars/all/local.yml"]
@@ -245,7 +246,8 @@ def test_files_read_and_written():
     variables["_top"] = render(task["vars"]["_top"], **variables)
     assert render(task["loop"], **variables) == [
         "cluster_a.yml", "cluster_b.yml", "hosts.yml", "notes.yml", "group_vars/all/main.yml",
-        "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml", "hosts", "mine.yaml"]
+        "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml", "hosts", "mine.yaml",
+        "group_vars/all/local.yml"]
     written = TASKS["Sort out the files an earlier import wrote"]["vars"]["_written"]
     files = [{"path": "group_vars/cluster_a/main.yml"}]
     assert render(written, _files=files, **write_vars()) == ["cluster_a.yml", "group_vars/cluster_a/main.yml"]

@@ -151,7 +151,7 @@ def test_limit_refused_and_the_nodes_read():
 def test_found_nodes_matched_by_their_address():
     # a node found in the ring, added under its name: matched to its ring address without facts too
     write = next(play for play in PLAYS if play["name"] == "Write the inventory")
-    match = next(t for t in write["tasks"][0]["block"] if t["name"] == "Match the ring with the hosts")
+    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"] if t["name"] == "Match the ring with the hosts")
     hostvars = {"node1": {"ansible_facts": {"all_ipv4_addresses": ["10.0.0.1"], "hostname": "node1"}},
                 "node2": {"import_cluster_address": "10.0.0.2"}}
     variables = {"_given": ["node1"], "groups": {"import_cluster_found": ["node2"]}, "hostvars": hostvars,
@@ -167,3 +167,23 @@ def test_found_nodes_matched_by_their_address():
     variables["_hv"] = {"ansible_facts": {"hostname": "node2"}}
     assert Templar(loader=DataLoader(), variables=variables).template(
         trust_as_template(match["vars"]["_name"])) == "node2"
+
+
+def test_found_node_not_taken_for_another_machine():
+    # reached by name, the machine has not the ring's address: not this node (named by its address, not read)
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"] if t["name"] == "Match the ring with the hosts")
+    hostvars = {"node1": {"ansible_facts": {"all_ipv4_addresses": ["10.0.0.1"]}},
+                "node2": {"import_cluster_address": "10.0.0.2", "ansible_facts": {"all_ipv4_addresses": ["10.9.9.9"]}}}
+    variables = {"_given": ["node1"], "groups": {"import_cluster_found": ["node2"]}, "hostvars": hostvars,
+                 "item": {"address": "10.0.0.2"}}
+    assert Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(match["vars"]["_host"])) == "10.0.0.2"
+
+
+def test_found_name_of_an_inventory_host_not_taken():
+    add = task("Add the nodes the inventory does not have yet")
+    variables = {"item": "10.0.0.2", "_names": {"10.0.0.2": "web1"}, "groups": {"all": ["node1", "web1"]}}
+    assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(add["vars"]["_name"])) == "10.0.0.2"
+    variables["groups"] = {"all": ["node1"]}
+    assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(add["vars"]["_name"])) == "web1"

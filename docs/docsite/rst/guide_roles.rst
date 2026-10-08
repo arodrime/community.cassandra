@@ -94,7 +94,7 @@ Then, naming the cluster on each run (see `Inventory`_):
 Without ``-i node1,`` (a re-import with the inventory of ``ansible.cfg``), the import is given every host of the
 inventory, with their variables (the JMX login, the connection): fine when it holds this cluster alone; with other
 clusters there, add ``-e cassandra_hosts=orders`` (``--limit`` is refused: it would leave out the nodes found in the ring
-and the controller, where the inventory is written). Given nodes of two rings stop the import before it reads them.
+and the controller, where the inventory is written). Given nodes of two rings stop the import before it reads them. The import does not read ``CASSANDRA_CLUSTER``.
 
 Ansible reads the ``group_vars`` and ``host_vars`` next to an inventory source only: with ``inventory =
 ./inventories``, the ones of a subdirectory (``inventories/orders/group_vars``) are not read. Hence one flat
@@ -1072,6 +1072,14 @@ hosts file: replaced, the old one kept as a backup. The report lists the files r
 kept (down to ``group_vars/<group>/``), and the files replaced at its paths that did not have its header, each kept
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).
+
+Your own variables files in the inventory directory (``group_vars/all/*.yml``, and those of this cluster's groups
+and hosts) apply to the hosts too: the import takes them into account. A node whose value one of them would change
+gets its value written (the node as it is wins, listed under ``DIFFERS FROM YOUR VARIABLES``: delete the line to
+apply yours), and a value yours already gives is not written again; the self-check reads them too. What it can't
+compare (a template or a vaulted value of yours, a vaulted file without the vault password, a default made of facts)
+is listed under ``TO DO``. Not read: the groups your own hosts files give these hosts, and the variables written in
+hosts files; keep your settings in ``group_vars/all``. Then ``apply_config --check --diff`` changes nothing.
 
 ``report.txt`` starts with the verdict (nodes read, self-check) and what is left to do (``TO DO``: nodes not read,
 hand edits the roles would revert, passwords written in clear, files of unknown origin; ``READY`` when there is
