@@ -2,6 +2,11 @@
 # on the nodes:
 #   ansible-playbook -i node1,node2 community.cassandra.import_cluster
 # Any reachable nodes will do: the others are found with nodetool status.
+# Without -i, the inventory of ansible.cfg: every host there is given (with
+# its variables), or the hosts of -e cassandra_hosts=<cluster group> when it
+# holds other clusters (--limit is refused: it would leave out the nodes found
+# and the controller, which writes the inventory); nodes of two rings stop the
+# import.
 # One inventory dir for every cluster (ansible.cfg inventory = that dir, the
 # playbooks run with -e cassandra_hosts=<cluster group>): the hosts go to
 # <cluster group>.yml there, the variables to group_vars/ and host_vars/, side
@@ -71,7 +76,7 @@
 # running Java removed by an update) fails the import, as its settings are
 # unknown: import_cluster_allow_unread=true accepts it.
 - name: Find the cluster from the given nodes
-  hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
+  hosts: "{{ query('community.cassandra.cassandra_nodes', group=cassandra_hosts | default('all', true)) }}"
   gather_facts: true
   gather_subset: [network]
   become: true  # nodetool reads the JMX password file (cassandra's, 0400)
@@ -80,6 +85,16 @@
       ansible.builtin.assert:
         that: import_cluster_host_names | default('hostname') in ['hostname', 'fqdn', 'ip']
         fail_msg: "import_cluster_host_names must be hostname, fqdn or ip, not {{ import_cluster_host_names | default('') }}"
+        quiet: true
+      run_once: true
+
+    # --limit would leave out the nodes found in the ring, and localhost, whose play writes the inventory
+    - name: Stop on --limit
+      ansible.builtin.assert:
+        that: ansible_limit is not defined
+        fail_msg: >-
+          --limit would leave out the nodes found in the ring and localhost, which writes the inventory: give the
+          nodes with -i <node>, or, with the inventory, -e cassandra_hosts=<cluster group>. Nothing was written.
         quiet: true
       run_once: true
 
@@ -101,6 +116,34 @@
         community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
       register: import_cluster_ring
       failed_when: false
+
+    # without -i <node>, (the inventory of ansible.cfg) every host there is given: one cluster's only
+    - name: Stop on nodes of several clusters
+      ansible.builtin.assert:
+        that: _apart | length == 0
+        fail_msg: >-
+          {{ _apart | join(', ') }} not in the ring of {{ _rings | list | first }}: the given nodes are of several
+          clusters. Give a node of one cluster (-i <node>,), or run with the inventory and -e cassandra_hosts=<its
+          cluster group>. Nothing was written.
+        quiet: true
+      run_once: true
+      vars:
+        # each given node that answered: the addresses of its ring
+        _rings: >-
+          {%- set out = {} -%}
+          {%- for h in import_cluster_given if hostvars[h].import_cluster_ring.cluster_status | default({}) -%}
+          {%-   set addrs = [] -%}
+          {%-   for dc, info in hostvars[h].import_cluster_ring.cluster_status.items() -%}
+          {%-     set _ = addrs.extend(info.nodes | map(attribute='address')) -%}
+          {%-   endfor -%}
+          {%-   set _ = out.update({h: addrs}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _apart: >-
+          {%- set first = _rings[_rings | list | first] if _rings else [] -%}
+          {%- set out = [] -%}
+          {%- for h, addrs in _rings.items() if not addrs | intersect(first) -%}{%- set _ = out.append(h) -%}{%- endfor -%}
+          {{ out }}
 
     - name: Add the nodes the inventory does not have yet
       ansible.builtin.add_host:
@@ -144,8 +187,12 @@
           {{ out }}
       run_once: true
 
+
+# the given nodes and the ones found in the ring (not the inventory's other hosts)
 - name: Read every node
-  hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
+  hosts: >-
+    {{ (groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined')
+        | map(attribute='import_cluster_given') | first | default([])) + groups['import_cluster_found'] | default([]) }}
   gather_facts: false
   ignore_unreachable: true
   become: true

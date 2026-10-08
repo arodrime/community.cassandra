@@ -112,3 +112,37 @@ def test_node_read_needs_a_supported_series_and_its_cassandra_yaml():
               "ansible_failed_result": {"failed": True, "msg": "file not found: /etc/cassandra/conf/cassandra.yaml"}}
     why = Templar(loader=DataLoader(), variables=rescue).template(trust_as_template(block["rescue"][0]["vars"]["_why"]))
     assert why == "file not found: /etc/cassandra/conf/cassandra.yaml"
+
+
+def _status(*addresses):
+    return {"cluster_status": {"dc1": {"nodes": [{"address": a} for a in addresses]}}}
+
+
+def test_stops_on_nodes_of_several_clusters():
+    # without -i <node>, every host of the inventory is given: two clusters' nodes stop the import
+    stop = task("Stop on nodes of several clusters")
+    hostvars = {"a1": {"import_cluster_ring": _status("10.0.0.1", "10.0.0.2")},
+                "a2": {"import_cluster_ring": _status("10.0.0.2", "10.0.0.1")},
+                "b1": {"import_cluster_ring": _status("10.0.1.1")},
+                "down": {"import_cluster_ring": {"failed": True}}, "gone": {}}
+    for given, apart in ((["a1", "a2", "down", "gone"], []), (["a1", "b1", "a2"], ["b1"]), (["b1", "a1", "a2"], ["a1", "a2"])):
+        variables = {"import_cluster_given": given, "hostvars": hostvars}
+        variables["_rings"] = Templar(loader=DataLoader(), variables=variables).template(
+            trust_as_template(stop["vars"]["_rings"]))
+        assert Templar(loader=DataLoader(), variables=variables).template(
+            trust_as_template(stop["vars"]["_apart"])) == apart, given
+    assert stop["run_once"] is True
+
+
+def test_limit_refused_and_the_nodes_read():
+    # --limit would leave out the nodes found and localhost (the inventory written nowhere, rc 0)
+    stop = task("Stop on --limit")
+    assert stop["ansible.builtin.assert"]["that"] == "ansible_limit is not defined" and stop["run_once"] is True
+    assert [t["name"] for t in PLAYS[0]["tasks"]][:2] == ["Check the options", "Stop on --limit"]
+    # -e cassandra_hosts: that group's hosts given; read: the given ones and the ones found, not the inventory's others
+    assert "group=cassandra_hosts | default('all', true)" in PLAYS[0]["hosts"]
+    read = next(play for play in PLAYS if play["name"] == "Read every node")
+    hostvars = {"a1": {"import_cluster_given": ["a1"]}, "b1": {}, "10.0.0.2": {}}
+    groups = {"all": ["a1", "b1", "10.0.0.2"], "import_cluster_found": ["10.0.0.2"]}
+    templar = Templar(loader=DataLoader(), variables={"groups": groups, "hostvars": hostvars})
+    assert templar.template(trust_as_template(read["hosts"])) == ["a1", "10.0.0.2"]

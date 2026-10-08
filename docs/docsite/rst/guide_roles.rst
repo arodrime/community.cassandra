@@ -91,6 +91,11 @@ Then, naming the cluster on each run (see `Inventory`_):
     $ ansible-playbook community.cassandra.health_check -e cassandra_hosts=orders
     $ CASSANDRA_CLUSTER=orders ansible-playbook community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
 
+Without ``-i node1,`` (a re-import with the inventory of ``ansible.cfg``), the import is given every host of the
+inventory, with their variables (the JMX login, the connection): fine when it holds this cluster alone; with other
+clusters there, add ``-e cassandra_hosts=orders`` (``--limit`` is refused: it would leave out the nodes found in the ring
+and the controller, where the inventory is written). Given nodes of two rings stop the import before it reads them.
+
 Ansible reads the ``group_vars`` and ``host_vars`` next to an inventory source only: with ``inventory =
 ./inventories``, the ones of a subdirectory (``inventories/orders/group_vars``) are not read. Hence one flat
 directory, the one the import writes (``import_cluster_dir``, default ``inventories``): each cluster's hosts in
