@@ -218,7 +218,7 @@ def test_progress_report_knows_the_status_before_the_block_ends():
         assert status not in where["ansible.builtin.set_fact"] and now in where["ansible.builtin.set_fact"]
         assert keep["ansible.builtin.set_fact"][status] == "{{ %s }}" % now
         assert "status=%s" % now in write["ansible.builtin.set_fact"]["_cassandra_stream_report"]
-        assert progress["ansible.builtin.debug"]["msg"] == "{{ _cassandra_stream_report }}"
+        assert progress["ansible.builtin.debug"]["msg"] == "{{ _cassandra_stream_report | join('\n') }}"
         # the first waits are shorter (cassandra_stream_progress's wait), and the progress knows the interval
         wait = block[names.index("Wait before the next check")]
         assert wait["ansible.builtin.pause"]["seconds"] == "{{ _cassandra_stream_state.wait }}"

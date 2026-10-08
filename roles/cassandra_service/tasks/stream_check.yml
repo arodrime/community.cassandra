@@ -124,7 +124,7 @@
 
     - name: Progress of the {{ _cassandra_stream_what }}
       ansible.builtin.debug:
-        msg: "{{ _cassandra_stream_report }}"
+        msg: "{{ _cassandra_stream_report | join('\n') }}"
       vars:
         cassandra_output: true
 

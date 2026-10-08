@@ -3,7 +3,7 @@
 # stops once with every problem found: root access, the Cassandra directories
 # (mounted where fstab or systemd expects, empty, free space), the Pythons of
 # cqlsh and Medusa, the packages and where they come from, the network to the
-# seeds, its own ports free, no Cassandra running, no *_manage: false switch
+# seeds it joins with (join_seeds.yml), its own ports free, no Cassandra running, no *_manage: false switch
 # import_cluster wrote (host_vars of a node it found) on a host with no Cassandra. Read-only, also
 # under --check. Runs after the preflight play (its facts and ring). A host already
 # in the ring is left out when _cassandra_new_node_skip_in_ring (add_node
@@ -125,9 +125,14 @@
           failed_when: false
           check_mode: false  # read-only
 
+        - name: Work out the seeds it joins with
+          ansible.builtin.include_tasks: join_seeds.yml
+
         - name: Work out what to check
           ansible.builtin.set_fact:
             _cassandra_new_node_plan: "{{ lookup('ansible.builtin.template', 'new_node_checks_plan.j2') | from_json }}"
+          vars:
+            cassandra_seeds: "{{ _cassandra_join_seeds }}"  # the ones it reaches to join
           # URLs with credentials or a signature
           no_log: >-
             {{ [cassandra_java_tarball, cassandra_medusa_pip_index_url, cassandra_install_url,
@@ -242,16 +247,28 @@
                      running=_cassandra_preflight_running | default(false),
                      reset=_cassandra_new_node_reset | default(false)) }}
 
+        # topology: in its plan (NOTE and WARNING lines)
         - name: What {{ inventory_hostname }} has
           ansible.builtin.debug:
-            msg: "{{ _cassandra_new_node_check.info + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING: ') | list }}"
+            msg: >-
+              {{ (_cassandra_new_node_check.info | map('regex_replace', '^', inventory_hostname ~ ': ') | list
+                  + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING  ' ~ inventory_hostname ~ ': ') | list)
+                 | join(_nl) }}
+          when: not _cassandra_notes_deferred | default(false) | bool
+          vars:
+            _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+            cassandra_output: true
 
     - name: Every problem found
       ansible.builtin.debug:
-        msg: "{{ _lines }}"
+        msg: "{{ _lines | join(_nl) }}"
       run_once: true
-      when: _lines | length > 0
+      when:
+        - _lines | length > 0
+        - not _cassandra_notes_deferred | default(false) | bool  # topology: in its refusal
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true
         _lines: >-
           {%- set l = [] -%}
           {%- for h in ansible_play_hosts if hostvars[h]._cassandra_new_node_check is defined -%}

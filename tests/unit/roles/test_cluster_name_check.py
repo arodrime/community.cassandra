@@ -128,7 +128,7 @@ def test_the_same_name_passes(tmp_path):
 def test_no_node_answering_is_said(tmp_path):
     rc, out, asked, went_on = run(tmp_path, "my_cluster", "my_cluster", down=("n1", "n2", "n3"))
     assert rc == 0, out
-    assert "WARNING: no node of the cluster answered nodetool (gone: " in out
+    assert "WARNING no node of the cluster answered nodetool (gone: " in out  # spaces collapsed
     assert ("; n3: nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.): the cluster "
             "name is not checked against cassandra_cluster_name (my_cluster).") in out
     assert asked == ["n1", "n2", "n3"] and went_on == ["n0", "n9"]

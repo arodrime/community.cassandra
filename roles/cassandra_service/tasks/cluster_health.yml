@@ -164,12 +164,13 @@
 - name: Go on despite the problems (cassandra_service_health_force)
   ansible.builtin.debug:
     msg: >-
-      {{ ['WARNING: cassandra_service_health_force is set, going on with an unhealthy cluster.',
-          'Taking this node down now can make data unavailable (reads/writes failing at QUORUM) or lose writes:']
-         + cassandra_health_problems }}
+      {{ (['WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster: taking this node down'
+           ~ ' now can make data unavailable (reads/writes failing at QUORUM) or lose writes:']
+          + cassandra_health_problems | map('regex_replace', '^', '  ') | list) | join(_nl) }}
   when:
     - cassandra_health_problems | length > 0
     - cassandra_service_health_force | bool
     - not cassandra_service_health_report_only | default(false) | bool
   vars:
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     cassandra_output: true

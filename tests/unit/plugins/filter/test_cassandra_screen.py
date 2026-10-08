@@ -102,7 +102,8 @@ def test_decommission_two_racks_rf2_goes_to_the_rack():
         "load 1 GiB, share unknown (the keyspaces replicate differently)",
         "data goes to the other nodes of rack2 (2 racks in dc1, its replication factor): node1, node5",
         "runs on node3 (nodetool decommission), the ring checked from node1 before and after",
-        "end state: out of the ring, Cassandra stopped and disabled, its data left on disk"]}]
+        "end state: out of the ring, Cassandra stopped and disabled, its data left on disk"],
+        "step": {"node": "node3", "dc": "dc1", "rack": "rack2", "text": "load 1 GiB -> node1, node5 (the other nodes of rack2)"}}]
     assert spec["after"] == ["Afterwards dc1 keeps 5 nodes: node1, node2, node4, node5, node6.",
                              "Then remove node3 from the inventory; wipe the data directories before reusing the host."]
     assert spec["warnings"] == []
@@ -124,6 +125,9 @@ def test_decommission_multi_dc_simple_strategy_and_order():
         "node8 is removed later and hands this data on again"]
     assert second["lines"][2] == ("data goes to the other nodes of dc2: none; SimpleStrategy keyspaces (system_auth):"
                                   " any node of the cluster")
+    # the same on one line (topology's plan)
+    assert first["step"]["text"] == "load 1 GiB -> node8; SimpleStrategy keyspaces: any node; node8 removed later"
+    assert second["step"]["text"] == "load 1 GiB -> none (no node left in dc2); SimpleStrategy keyspaces: any node"
     assert spec["intro"][0].startswith("2 nodes to remove, one after the other: first node7, then node8.")
     assert spec["after"][0] == "Afterwards dc2 has no node left."
 

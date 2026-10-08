@@ -3,7 +3,8 @@
 # topology for the hosts marked cassandra_node_state: absent): the
 # cassandra_config defaults, whether it is a seed (seed_facts.yml) and
 # _cassandra_preflight, its settings and addresses as the other nodes see
-# them, and whether Cassandra runs there (_cassandra_preflight_running).
+# them, the seed list its cassandra.yaml has, and whether Cassandra runs
+# there (_cassandra_preflight_running).
 # Needs the network facts.
 - name: Load the cassandra_config defaults
   ansible.builtin.include_role:
@@ -16,6 +17,16 @@
     name: community.cassandra.cassandra_service
     tasks_from: seed_facts.yml
     public: true
+
+# The seed list it runs with now, as change_seeds compares it ('' without a
+# cassandra.yaml: a host not set up yet)
+- name: Read the seed list of its cassandra.yaml
+  ansible.builtin.slurp:
+    src: "{{ cassandra_conf_dir }}/cassandra.yaml"
+  register: cassandra_node_facts_yaml
+  failed_when: false
+  check_mode: false  # read-only
+  no_log: true  # the file may hold passwords
 
 # Role defaults are not visible through hostvars: each node records its own values
 - name: Record this node's settings
@@ -30,6 +41,9 @@
       cassandra_initial_token: "{{ '' if cassandra_initial_token is none else cassandra_initial_token | string }}"
       cassandra_data_file_directories: "{{ cassandra_data_file_directories }}"
       _cassandra_service_seeds: "{{ _cassandra_service_seeds }}"
+      live_seeds: >-
+        {{ cassandra_node_facts_yaml.content | default('') | b64decode
+           | regex_findall('(?m)^\s*- seeds:\s*["\x27]?([^"\x27\n]*)') | first | default('') }}
       cassandra_dc: "{{ cassandra_dc }}"
       cassandra_rack: "{{ cassandra_rack }}"
       address: "{{ _address }}"
@@ -50,6 +64,11 @@
 
 - name: Read the services
   ansible.builtin.service_facts:
+
+# the whole file, passwords included: not kept for the rest of the run
+- name: Forget the file
+  ansible.builtin.set_fact:
+    cassandra_node_facts_yaml: {}
 
 - name: Is Cassandra running here
   ansible.builtin.set_fact:

@@ -259,15 +259,18 @@
 - name: What the reset of {{ inventory_hostname }} would do
   ansible.builtin.debug:
     msg: >-
-      {{ ['Reset of ' ~ inventory_hostname ~ (' (replacing ' ~ cassandra_node_reset_replace_address ~ ')'
+      {{ (['Reset of ' ~ inventory_hostname ~ (' (replacing ' ~ cassandra_node_reset_replace_address ~ ')'
           if cassandra_node_reset_replace_address | default('') else '') ~ ':']
          + (['  stop Cassandra' ~ (' and keep it from starting at boot' if _p.disable | bool else '')] if _p.stop | bool
             else ['  keep Cassandra from starting at boot'] if _p.disable | bool else [])
          + _p.dirs | map('regex_replace', '^', '  empty ') | list
          + ([] if _p.delete else ['  nothing to delete'])
          + _p.info | map('regex_replace', '^', '  ') | list
-         + _p.problems | map('regex_replace', '^', '  REFUSED: ') | list }}
+         + _p.problems | map('regex_replace', '^', '  REFUSED: ') | list) | join(_nl) }}
+  when: not _cassandra_notes_deferred | default(false) | bool  # topology: in its plan
   vars:
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    cassandra_output: true
     _p: "{{ _cassandra_node_reset_plan }}"
 
 - name: Refuse the reset of {{ inventory_hostname }}

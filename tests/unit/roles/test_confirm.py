@@ -207,19 +207,21 @@ def screen_run(tmp_path, *extra):
 def test_screen_under_check_is_printed_once_without_question(tmp_path):
     run = screen_run(tmp_path, "--check")
     assert run.returncode == 0, run.stdout
-    assert run.stdout.count('"decommission_node: remove node7",') == 1
-    assert '"--check: nothing will be changed (the plan only, no question).",' in run.stdout
-    assert '"WARNING - replication: orders keeps 2 replicas",' in run.stdout
-    assert '"(A real run would also warn about: session.)"' in run.stdout
+    # one string (plain text under callback_result_format=yaml), not a list of lines
+    assert '"msg": "decommission_node: remove node7\\n' in run.stdout
+    assert run.stdout.count('decommission_node: remove node7\\n') == 1
+    assert '--check: nothing will be changed (the plan only, no question).' in run.stdout
+    assert 'WARNING - replication: orders keeps 2 replicas' in run.stdout
+    assert '(A real run would also warn about: session.)' in run.stdout
     assert "No terminal" not in run.stdout
 
 
 def test_screen_with_confirm_false_is_printed_and_goes_on(tmp_path):
     run = screen_run(tmp_path, "-e", "cassandra_operation_confirm=false")
     assert run.returncode == 0, run.stdout
-    assert '"cassandra_operation_confirm is false: no question, the run goes on.",' in run.stdout
-    assert run.stdout.count('"decommission_node: remove node7",') == 1 and "Answer yes" not in run.stdout
-    assert '"WARNING - session: this run is not inside tmux or screen' in run.stdout
+    assert 'cassandra_operation_confirm is false: no question, the run goes on.' in run.stdout
+    assert run.stdout.count('decommission_node: remove node7\\n') == 1 and "Answer yes" not in run.stdout
+    assert 'WARNING - session: this run is not inside tmux or screen' in run.stdout
 
 
 def test_screen_then_the_question(tmp_path):
@@ -234,8 +236,8 @@ def test_screen_then_the_question(tmp_path):
     output = read_until(fd, output, lambda out: b"PLAY RECAP" in out, time.time() + 120).decode()
     os.waitpid(pid, 0)
     # the screen printed once (in the logs too), then the question alone
-    assert output.count('"decommission_node: remove node7",') == 1
-    assert '"WARNING - replication: orders keeps 2 replicas"' in output
+    assert output.count('decommission_node: remove node7\\n') == 1
+    assert 'WARNING - replication: orders keeps 2 replicas' in output
     assert re.search(r"Confirm the operation\]\r?\nRemove node7\?\r?\nAnswer yes to go on, no to stop", output)
     assert "Stopped at your request, nothing changed." in output
 
@@ -243,5 +245,5 @@ def test_screen_then_the_question(tmp_path):
 def test_screen_is_printed_before_a_run_without_terminal_stops(tmp_path):
     run = screen_run(tmp_path)
     assert run.returncode != 0
-    assert run.stdout.count('"decommission_node: remove node7",') == 1
+    assert run.stdout.count('decommission_node: remove node7\\n') == 1
     assert "No terminal to answer the confirmation on" in run.stdout

@@ -24,12 +24,14 @@
     - name: Say the change cannot be told pending
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} has no {{ _cassandra_service_config_snapshot | dirname }} to record the
+          WARNING  {{ inventory_hostname }} has no {{ _cassandra_service_config_snapshot | dirname }} to record the
           config the running Cassandra started with: apply_config will not tell that this change waits for a
           restart. Restart it (rolling_restart).
       when:
         - cassandra_jvm.pid is defined
         - not cassandra_seed_dir.stat.isdir | default(false)
+      vars:
+        cassandra_output: true
 
     - name: Checksum the config files
       ansible.builtin.find:

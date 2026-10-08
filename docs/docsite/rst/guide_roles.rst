@@ -327,14 +327,15 @@ node is stopped, kept from starting at boot and emptied, then the cluster is cre
 Adding a node
 -------------
 
-Add the host to the inventory, in its datacenter's group, without adding it to ``cassandra_seeds``, then:
+Add the host to the inventory, in its datacenter's group, then:
 
 .. code-block:: console
 
     $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
 
-The other nodes are not touched. A node that has never started and is listed in ``cassandra_seeds`` is refused while
-another seed answers: seeds don't bootstrap, so it would join without its data. Add it, then make it a seed.
+The other nodes are not touched, unless the new host is listed in ``cassandra_seeds`` too: a seed does not bootstrap,
+so it joins as a regular node, its ``cassandra.yaml`` listing the other seeds (never itself, nor another host not in
+the ring yet), and once the adds are done the new list is applied live on every node, as ``change_seeds`` applies it.
 
 Before installing anything, ``add_node`` and ``replace_node`` check the new hosts and stop with every problem found at
 once: Ansible runs as root; the data, commitlog, hints and saved_caches directories are empty and on the file system
@@ -435,9 +436,11 @@ Removing a node
 ---------------
 
 ``decommission_node`` removes the nodes in ``cassandra_leaving_nodes``, one at a time: each one streams its data to the
-others, then Cassandra is stopped and disabled on it. It refuses a seed (take it out of ``cassandra_seeds`` with
-``change_seeds`` first) and a removal that would leave a datacenter with fewer nodes than a keyspace has replicas
-there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
+others, then Cassandra is stopped and disabled on it. To remove a seed, take it out of ``cassandra_seeds`` in the
+inventory: the other nodes, which still list it, then get the new list first, live, as ``change_seeds`` applies it (a
+node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that still has nodes afterwards left with no
+seed (one removed whole needs none), and a removal that would
+leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). Remove the hosts from the inventory afterwards. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
 decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
@@ -454,34 +457,61 @@ The inventory as the desired state
 ``topology`` makes the ring match the inventory, so adding and removing nodes is an edit of the inventory, reviewed
 and committed like any other change:
 
-1. Edit the inventory: a new host goes in its datacenter's (or rack's) group, not in ``cassandra_seeds``; a node to
-   remove gets ``cassandra_node_state: absent`` (a host var, or a group var for several).
+1. Edit the inventory: a new host goes in its datacenter's (or rack's) group; a node to remove gets
+   ``cassandra_node_state: absent`` (a host var, or a group var for several); ``cassandra_seeds`` is the seed list
+   wanted (a seed to remove out of it, a new host in it to make a seed).
 2. ``ansible-playbook -i inventory community.cassandra.topology --check`` shows the plan and changes nothing.
 3. ``ansible-playbook -i inventory community.cassandra.topology`` shows the same plan, asks once, then does it.
 4. Commit the inventory. Delete the lines of the hosts removed, or leave them marked absent.
 
 A host of the cluster's group that is not in the ring is added as ``add_node`` adds it (its checks,
 ``cassandra_add_node_reset``, ``cassandra_initial_token`` or ``cassandra_token_auto=bisect|balanced`` with one token
-per node). A host marked absent that is still in the ring is decommissioned as ``decommission_node`` does it (refused:
-a seed, a datacenter left with fewer nodes than a keyspace has replicas there unless ``cassandra_decommission_force``).
+per node); one listed in ``cassandra_seeds`` joins as a regular node. When ``cassandra_seeds`` differs from the seed
+lists the nodes run with, it is applied on every node, live (``change_seeds``' way: the seeds line of
+``cassandra.yaml`` written and reloaded, no restart). A host marked absent that is still in the ring is decommissioned
+as ``decommission_node`` does it (refused: one still in ``cassandra_seeds``, a datacenter left with fewer nodes than a
+keyspace has replicas there unless ``cassandra_decommission_force``).
 A host marked absent, out of the ring and stopped needs nothing ("already removed"). A node of the ring no host of the
 inventory has is never touched: it is reported (a mistyped address, a host missing from the inventory, a dead node to
 remove with ``remove_dead_node``), and a plan with something to do is refused while it is there.
 
-One node at a time, the adds first (the cluster never has fewer nodes than it ends with), then the removals, the
-cluster checked before and after each node; the run stops at the first problem. One screen lists every step, with
-the data each node streams, and asks once; each step then shows its own screen as it starts, without a question.
-Refused before anything changes: a ``--limit`` that leaves out a host of the group (the plan needs them all), a plan
-removing more nodes than ``cassandra_topology_max_removals`` (2) or more than half of a datacenter
-(``cassandra_topology_allow_large_removal: true`` goes on: a group var marking hosts absent by mistake is the case it
-catches), an add while a decommission is still running, two hosts with one address, a host marked absent still in the
-ring that does not answer or is down (``remove_dead_node`` then), a node of the group that does not answer, one token
-per node with adds and removals in one run (add first, then mark the hosts absent, then ``move_node``), and
-``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or ``cassandra_reset_nodes`` on the command line (the plan says
-which nodes). The cleanup of the nodes that handed data over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked
-out again from the ring, a bootstrap or a decommission still running is waited for. Nothing to add or remove: it says so.
+One node at a time, the adds first (the cluster never has fewer nodes than it ends with), then the seeds (a new seed
+is up by then, a seed to remove is still there), then the removals, the cluster checked before and after each node;
+the run stops at the first problem. The plan screen lists the steps in that order, each node with its datacenter and
+rack, then each datacenter once done, what is left to do by hand, and the WARNING lines right above the question, for
+example (replacing the seed ``node2`` by ``node5``):
 
-``add_node``, ``decommission_node`` and ``remove_dead_node`` stay for explicit use. Every playbook leaves the hosts
+.. code-block:: text
+
+    PLAN  topology  my_cluster (Cassandra 5.0.4)  3 steps, one node at a time
+      1.  add node5           dc1/rack1  bootstrap, ~32.1 GiB to stream (the load of dc1 / 5 nodes); joins as a regular node, a seed at the seed step
+      2.  seeds                          10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5  written and reloaded live on every node, no restart
+      3.  decommission node2  dc1/rack1  load 40.1 GiB, owns 25.0% -> node1, node3..node5
+
+    dc1 after:  4 nodes: node1, node3..node5   highest RF 3 (orders)
+    then:       delete node2 from the inventory (or leave it marked absent); wipe its data directories before reusing the host
+    cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
+
+    WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
+    Run these 3 steps?
+
+It asks once; each step then shows its own screen as it starts, without a question. ``--check`` shows the same plan,
+the same warnings, and asks nothing. The warnings: the seeds changing on every node (the seed step, with or without
+nodes added or removed), more than half of a datacenter removed (``WARNING  3 of 5 nodes of dc1 removed``), racks
+of different sizes once done, ring nodes no host has, a node down, the data a reset deletes. No cap on the number
+of removals: the guards are the replicas and the seeds. Refused before anything changes: a ``--limit`` that leaves
+out a host of the group (the plan needs them all), a datacenter that still has nodes after the run left with no seed
+(a datacenter removed whole needs none), a removal that would leave a datacenter with fewer nodes than a keyspace
+has replicas there (unless ``cassandra_decommission_force``), an add while a decommission is still running, two hosts
+with one address, a host marked absent still in the ring that does not answer or is down (``remove_dead_node``
+then), a node of the group that does not answer, one token per node with adds and removals in one run (add first,
+then mark the hosts absent, then ``move_node``), and ``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or
+``cassandra_reset_nodes`` on the command line (the plan says which nodes). The cleanup of the nodes that handed data
+over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked out
+again from the ring and the nodes' seed lists, a bootstrap or a decommission still running is waited for. Nothing to
+do: it says so.
+
+``add_node``, ``decommission_node``, ``change_seeds`` and ``remove_dead_node`` stay for explicit use. Every playbook leaves the hosts
 marked absent out: preflight, the health checks and the node counts they expect, rolling operations, ``status`` (which
 names them while they are still in the ring) and ``import_cluster``. While one is still in the ring, the health checks
 count one node too many and stop, naming it: run ``topology``. The lookup ``community.cassandra.cassandra_nodes`` gives
@@ -659,7 +689,9 @@ Changing the seeds
 ------------------
 
 Change ``cassandra_seeds`` in the inventory first, then run ``change_seeds``. It writes the new list on every node
-and loads it live, no restart needed. Other configuration differences it finds are shown, not applied.
+and loads it live, no restart needed. Other configuration differences it finds are shown, not applied. ``topology``
+applies it the same way, between its adds and its removals, and ``add_node`` and ``decommission_node`` do when the
+seed list changes with the nodes they add or remove.
 
 If you replace a seed, update the clients' contact points as well.
 

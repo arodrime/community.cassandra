@@ -29,12 +29,14 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def test_operation_summary_is_a_list():
-    msg = load("roles", "cassandra_service", "tasks", "summary.yml")[0]["ansible.builtin.debug"]["msg"]
+def test_operation_summary_is_one_line_per_node():
+    task = load("roles", "cassandra_service", "tasks", "summary.yml")[0]
+    msg = task["ansible.builtin.debug"]["msg"]
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
+    # one string, a line per node (plain text under any callback)
     assert render(msg, cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]},
-                  ansible_play_hosts_all=["n1", "n2"]) == \
-        ["n1: add done in 5s", "n2: not reached", "n3: not in this run (--limit)"]
+                  ansible_play_hosts_all=["n1", "n2"], _nl=task["vars"]["_nl"]) == \
+        "n1: add done in 5s\nn2: not reached\nn3: not in this run (--limit)"
 
 
 def test_health_check_report_inputs_are_a_list_and_a_dict():

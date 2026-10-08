@@ -1,7 +1,11 @@
 ---
 # Adds nodes to a running cluster, one at a time. Add them to the cluster's
-# inventory group first (not to cassandra_seeds), then:
+# inventory group first, then:
 #   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7,node8
+# A new node listed in cassandra_seeds too joins as a regular node (a seed does
+# not bootstrap: its cassandra.yaml lists the other seeds while it joins), then,
+# once the adds are done, cassandra_seeds is applied live on every node
+# (change_seeds' way, no restart).
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
 # cassandra, else the inventory's cluster group (lookup
@@ -56,7 +60,6 @@
         _cassandra_new_node_skip_in_ring: true  # an interrupted run: checked next
         _cassandra_new_node_reset: "{{ cassandra_add_node_reset | default(false) | bool }}"
 
-# Seeds don't bootstrap: a new node listed in cassandra_seeds would join without its data
 - name: Check the new nodes
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
@@ -87,14 +90,6 @@
 
     - name: Check this node
       block:
-        - name: A new node can't be a seed
-          ansible.builtin.assert:
-            that: not _cassandra_service_is_seed | bool
-            fail_msg: >-
-              {{ inventory_hostname }} is in cassandra_seeds: seeds don't bootstrap, it would join without
-              its data. Add it as a regular node, then make it a seed with change_seeds.
-            quiet: true
-
         - name: Find which ones already joined (an interrupted run)
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
@@ -278,6 +273,10 @@
           {%-   for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) -%}
           {%-     set _ = lines.append('about ' ~ (e.bytes / 1073741824) | round(1) ~ ' GiB to stream (' ~ e.basis ~ ')') -%}
           {%-   endfor -%}
+          {%-   if m._cassandra_service_is_seed | default(false) | bool -%}
+          {%-     set _ = lines.append('in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed'
+                                       ~ ' once it is up (cassandra_seeds applied live on every node)') -%}
+          {%-   endif -%}
           {%-   if m.cassandra_medusa_enabled | default(false) | bool -%}
           {%-     set _ = lines.append('Medusa fqdn ' ~ ((m.cassandra_medusa_fqdn if m.cassandra_medusa_fqdn is defined
                     else (((m.ansible_facts.hostname | default(h)) ~ '.' ~ m.cassandra_medusa_fqdn_domain)
@@ -314,6 +313,10 @@
           blocks: "{{ _blocks }}"
           after:
             - >-
+              {{ ('Once the adds are done, cassandra_seeds (' ~ (cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(','))
+                  ~ ') is applied live on every node (no restart): ' ~ _seeds_added | join(', ') ~ ' then a seed.')
+                 if _seeds_added and not _cassandra_screen_asked_by | default('') else '' }}
+            - >-
               Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
                 'sequential': 'one node at a time', 'rack': 'a rack at a time', 'dc': 'a datacenter at a time',
                 'all': 'every node at once: heavy I/O'}[_cleanup] }}
@@ -337,6 +340,9 @@
             {{ _resets | community.cassandra.cassandra_reset_warnings
                + [{'label': 'racks', 'each': cassandra_add_node_plan.warnings},
                   {'label': 'tokens', 'each': cassandra_add_node_tokens.warnings | default([]) if _single | bool and _new else []}] }}
+        _seeds_added: >-
+          {{ (_new + _joining) | map('extract', hostvars) | selectattr('_cassandra_service_is_seed', 'defined')
+             | selectattr('_cassandra_service_is_seed') | map(attribute='inventory_hostname') | list }}
         _resets: >-
           {%- set l = [] -%}
           {%- for h in _new if hostvars[h]._cassandra_node_reset_plan is defined -%}
@@ -421,6 +427,31 @@
         cassandra_service_joining_before: "{{ _joining }}"
         cassandra_service_joining_after: "{{ _joining | reject('equalto', cassandra_new_node_address) | list }}"
 
+# A new node in cassandra_seeds joined as a regular node (join_seeds.yml): now
+# that it is up, cassandra_seeds goes live on every node. In topology, its own
+# step does it (between the adds and the removals).
+- name: Apply cassandra_seeds now that the new seeds are up
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes')
+       if query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) and not _cassandra_screen_asked_by | default('')
+       else 'localhost:!localhost' }}
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Apply cassandra_seeds on every node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: seeds_apply.yml
+      when:
+        - _new_seeds | length > 0
+        - not ansible_check_mode  # nothing was set up
+      vars:
+        _new_seeds: >-
+          {{ query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) | map('extract', hostvars)
+             | selectattr('_cassandra_service_is_seed', 'defined') | selectattr('_cassandra_service_is_seed')
+             | map(attribute='inventory_hostname') | list }}
+
 - name: Summary
   hosts: "{{ cassandra_new_nodes }}"
   gather_facts: false
@@ -435,16 +466,20 @@
 
     - name: Say which nodes to move (one token per node, balanced)
       ansible.builtin.debug:
-        msg:
-          - "The ring is even once {{ _moves | map(attribute='name') | join(', ') }} move, one at a time (the plan shown at the start):"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.move_node -e cassandra_hosts={{ lookup('community.cassandra.cassandra_hosts') }}"
+        msg: >-
+          {{ ['TO DO', '  1. even out the ring: move ' ~ _moves | map(attribute='name') | join(', ')
+              ~ ', one at a time (the plan shown at the start):',
+              '     ansible-playbook -i ' ~ ansible_inventory_sources | first ~ ' community.cassandra.move_node -e cassandra_hosts='
+              ~ lookup('community.cassandra.cassandra_hosts')] | join(_nl) }}
       run_once: true
       when:
         - _moves | length > 0
         - ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_add_node_token_kind', 'defined')
           | selectattr('cassandra_add_node_token_kind', 'equalto', 'balanced') | list | length > 0
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _moves: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_add_node_tokens.moves | default([]) }}"
+        cassandra_output: true
 
 # The nodes that handed ranges over still hold that data until a cleanup: the
 # datacenter's nodes, or only the new nodes' racks when every keyspace has as
@@ -469,20 +504,21 @@
   tasks:
     - name: Say which cleanups to run
       ansible.builtin.debug:
-        msg:
-          - "Once the cluster is fine, clean up the nodes that handed data over ({{ _scope }}):"
-          - "  ansible-playbook -i {{ ansible_inventory_sources | first }} community.cassandra.cleanup{{ _hosts_option }}
-            --limit {{ _targets | join(',') }} -e cassandra_cleanup_mode={{ cassandra_cleanup_mode | default('sequential') }}
-            -e cassandra_cleanup_jobs={{ cassandra_cleanup_jobs }}"
-          - ""
-          - "  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)"
-          - "                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)"
-          - "  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)"
+        msg: >-
+          {{ ['Once the cluster is fine, clean up the nodes that handed data over (' ~ _scope ~ '):',
+              '  ansible-playbook -i ' ~ ansible_inventory_sources | first ~ ' community.cassandra.cleanup' ~ _hosts_option
+              ~ ' --limit ' ~ _targets | join(',') ~ ' -e cassandra_cleanup_mode=' ~ cassandra_cleanup_mode | default('sequential')
+              ~ ' -e cassandra_cleanup_jobs=' ~ cassandra_cleanup_jobs, '',
+              '  cassandra_cleanup_mode: sequential (one node at a time, default) | rack (a rack at a time)',
+              '                          | dc (a datacenter at a time) | all (every node at once: heavy I/O)',
+              '  cassandra_cleanup_jobs: compaction threads per node, default 2 (0 = all compaction threads)'] | join(_nl) }}
       run_once: true
       when:
         - _targets | length > 0
         - _mode == 'none'
       vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true
         # the group the lookup finds by itself is left out
         _hosts_option: "{{ (' -e cassandra_hosts=' ~ cassandra_hosts) if cassandra_hosts is defined else '' }}"
         _scope: >-

@@ -44,7 +44,12 @@ def hint(playbook, **variables):
               "_hosts_option": trust_as_template(task["vars"]["_hosts_option"])}
     values.update(variables)
     templar = Templar(loader=DataLoader(), variables=values)
-    return [templar.template(trust_as_template(line)) for line in task["ansible.builtin.debug"]["msg"]]
+    msg = task["ansible.builtin.debug"]["msg"]
+    if isinstance(msg, str):  # one multi-line string (plain text under any callback)
+        assert (task.get("vars") or {}).get("cassandra_output") is True
+        templar.available_variables = dict(values, _nl="\n")
+        return templar.template(trust_as_template(msg)).split("\n")
+    return [templar.template(trust_as_template(line)) for line in msg]
 
 
 def test_add_node_prints_both_options_at_their_defaults():
