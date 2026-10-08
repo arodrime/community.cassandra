@@ -446,13 +446,14 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     done_total = amount(done, total) if total else ""
     if status == "done":
         line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
-    elif status not in ("going",) or idle_checks:
+    elif status not in ("going",) or (idle_checks and total):  # before any stream: still waiting for them
         word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED"}.get(
             status, "STALLED" if idle_checks else status.upper())
         count_text = "%s %d/%d checks" % (word, idle_checks, limit) if idle_checks and limit else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
     elif not total:
-        line = "  ".join([head, "waiting for streams", elapsed])
+        line = "  ".join([head, "waiting for streams"] + (["%d/%d checks" % (idle_checks, limit)] if idle_checks and limit
+                                                           else []) + [elapsed])
     else:
         eta = ""
         if speed and total > done:
