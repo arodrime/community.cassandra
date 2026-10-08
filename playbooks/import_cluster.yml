@@ -2,24 +2,46 @@
 # on the nodes:
 #   ansible-playbook -i node1,node2 community.cassandra.import_cluster
 # Any reachable nodes will do: the others are found with nodetool status.
-# Writes hosts.yml, group_vars/ and host_vars/ to import_cluster_dir (default
-# ./<cluster group>; a relative path is from the current dir), which must not
-# exist yet unless import_cluster_force is true, and report.txt to
-# import_cluster_report_dir (default the same dir).
-# -e import_cluster_shared_dir=true: import_cluster_dir holds several clusters,
-# one inventory for all (ansible.cfg inventory = that dir, the playbooks run
-# with -e cassandra_hosts=<cluster group>): the hosts go to <cluster group>.yml
-# there (which must not exist yet unless import_cluster_force is true), the
-# report to ./reports/<cluster group>/report.txt by default; the group_vars and
-# host_vars of the clusters sit side by side, and a host or group name another
-# cluster has already stops the import.
+# One inventory dir for every cluster (ansible.cfg inventory = that dir, the
+# playbooks run with -e cassandra_hosts=<cluster group>): the hosts go to
+# <cluster group>.yml there, the variables to group_vars/ and host_vars/, side
+# by side with the other clusters'; a host or group name another cluster has
+# already stops the import.
+# Options (-e), with their default:
+#   import_cluster_dir: the inventory dir (default inventories; a relative path
+#     is from the current dir).
+#   import_cluster_report_dir: where report.txt goes (default reports/<cluster
+#     group> next to import_cluster_dir: ./reports/<cluster group> for the
+#     default).
+#   import_cluster_force: false; true imports a cluster whose <cluster group>.yml
+#     is there already (a re-import).
+#   import_cluster_host_names: hostname (default, the short one as the node
+#     reports it), fqdn or ip: the name of each node.
+#   import_cluster_set_ansible_host: true; false leaves ansible_host out.
+#   import_cluster_vault_password_file, import_cluster_vault_id: none, default
+#     (see the passwords below).
+#   import_cluster_medusa_path: none (see Medusa below).
+#   import_cluster_keep_hand_edits: false (see the hand edits below).
+#   import_cluster_allow_unread: false (see the nodes not read below).
+#   import_cluster_strict: true; false writes an inventory that fails the
+#     self-check without failing the run.
+#   import_cluster_runbook: false; true also writes RUNBOOK.md next to
+#     report.txt (the help playbook: the cluster, every operation's command for
+#     this inventory, advice).
+#   import_cluster_debug: false; true shows an error while writing the
+#     inventory, hidden otherwise (the variables hold passwords).
+# Review a re-import before it writes anything: --check --diff shows the
+# changes of each file it would write or remove (secrets.yml hidden), and
+# writes nothing:
+#   ansible-playbook -i <node>, community.cassandra.import_cluster -e import_cluster_force=true --check --diff
+# then the same without --check --diff.
 # Each file it writes starts with a "# Written by ...import_cluster for
-# <cluster group>" line: a re-import (import_cluster_force) replaces those,
-# removes the ones of this cluster it no longer writes (a node gone), and keeps
-# every other file (group_vars/all/*.yml, the other clusters', notes). A file
-# from an earlier release, whose line names no cluster, is taken as this
-# cluster's in a dir of its own; in a shared dir, only when this cluster's hosts
-# file alone names its group or host (else it is kept, and listed in the report).
+# <cluster group>" line: a re-import replaces those, removes the ones of this
+# cluster it no longer writes (a node gone), and keeps every other file
+# (group_vars/all/*.yml, the other clusters', notes). A file from an earlier
+# release, whose line names no cluster, is this cluster's only when this
+# cluster's hosts file alone names its group or host (else it is kept, and
+# listed in the report).
 # Passwords found in the config go to secrets.yml files next to the other
 # variables: encrypted with ansible-vault with the vault password file of
 # Ansible (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not
@@ -32,10 +54,8 @@
 # Root on the nodes (sudo; nodetool reads the JMX password file, the service
 # account's): the playbook asks for it itself, no -b needed. None on the
 # controller: the files are written as the user running Ansible.
-# hosts.yml names each node by its hostname (import_cluster_host_names:
-# hostname, the short one as the node reports it, fqdn or ip) with
-# ansible_host set to its address in the ring (import_cluster_set_ansible_host:
-# false leaves it out); a node without facts keeps the name it was given, or
+# Each node is named by import_cluster_host_names, with ansible_host set to its
+# address in the ring; a node without facts keeps the name it was given, or
 # its address.
 # The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
 # time sync, firewall) is listed in the report, and what a variable covers is
@@ -44,17 +64,13 @@
 # medusa script, a full path on the nodes), else in the PATH, else in the usual
 # places, else in the PATH of a login shell of cassandra, then of root, and
 # last in any virtualenv under /opt.
-# -e import_cluster_runbook=true also writes RUNBOOK.md next to report.txt (the
-# help playbook: the cluster, every operation's command for this inventory, advice).
-# An error while writing the inventory is hidden (the variables hold
-# passwords): -e import_cluster_debug=true shows it.
 # A host marked cassandra_node_state: absent (an inventory given back) is not read.
-# Hand edits no variable covers fail the self-check: -e
+# Hand edits no variable covers fail the self-check:
 # import_cluster_keep_hand_edits=true leaves those files as they are on their
 # node (cassandra_config_keep_files) instead.
 # A ring node it could not read (down, unreachable, nodetool not found, its
-# running Java removed by an update) fails the import, as its settings are unknown: -e
-# import_cluster_allow_unread=true accepts it.
+# running Java removed by an update) fails the import, as its settings are
+# unknown: import_cluster_allow_unread=true accepts it.
 - name: Find the cluster from the given nodes
   hosts: "{{ query('community.cassandra.cassandra_nodes', group='all') }}"
   gather_facts: true
@@ -65,13 +81,6 @@
       ansible.builtin.assert:
         that: import_cluster_host_names | default('hostname') in ['hostname', 'fqdn', 'ip']
         fail_msg: "import_cluster_host_names must be hostname, fqdn or ip, not {{ import_cluster_host_names | default('') }}"
-        quiet: true
-      run_once: true
-
-    - name: Check the shared dir is given
-      ansible.builtin.assert:
-        that: not import_cluster_shared_dir | default(false) | bool or import_cluster_dir | default('', true) != ''
-        fail_msg: "import_cluster_shared_dir: set import_cluster_dir too, the inventory dir the clusters share"
         quiet: true
       run_once: true
 
@@ -894,11 +903,9 @@
       {{ (import_cluster_vault_password_file | default('', true)
           or lookup('ansible.builtin.config', 'DEFAULT_VAULT_PASSWORD_FILE') | default('', true)) | string | expanduser }}
     _vault: "{{ _vault_file != '' }}"
-    _shared: "{{ import_cluster_shared_dir | default(false) | bool }}"
-    _hosts_file: "{{ _layout.cluster_group ~ '.yml' if _shared | bool else 'hosts.yml' }}"
+    _hosts_file: "{{ _layout.cluster_group ~ '.yml' }}"
     # what the playbooks are run with on this inventory
-    _inventory_args: >-
-      {{ ('-i ' ~ _dir ~ ' -e cassandra_hosts=' ~ _layout.cluster_group) if _shared | bool else ('-i ' ~ _dir ~ '/hosts.yml') }}
+    _inventory_args: "{{ '-i ' ~ _dir ~ ' -e cassandra_hosts=' ~ _layout.cluster_group }}"
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
     # not one node read: nothing checked, nothing valid; a ring node not read (down, unreachable): not
@@ -1156,7 +1163,7 @@
                 {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
                    + _hv.import_cluster_perms.notes | default([])
                    + _hv.import_cluster_medusa.notes | default([])
-                   + ([('reached at ' ~ _hv.ansible_host ~ ', hosts.yml has its ring address ' ~ item.address
+                   + ([('reached at ' ~ _hv.ansible_host ~ ', its hosts file has its ring address ' ~ item.address
                         ~ ' (import_cluster_set_ansible_host: false leaves ansible_host out)')]
                       if _host != item.address and _hv.ansible_host | default(item.address) != item.address
                          and import_cluster_set_ansible_host | default(true) | bool else [])
@@ -1256,35 +1263,32 @@
     # path from their own working directory, not the one the playbook was run from
     - name: Pick the output dirs
       ansible.builtin.set_fact:
-        _dir: "{{ _given_dir if _given_dir is abs else _given_dir | realpath }}"
+        _dir: "{{ _abs_dir }}"
         _report_dir: "{{ _given_report_dir if _given_report_dir is abs else _given_report_dir | realpath }}"
       vars:
-        _given_dir: "{{ import_cluster_dir | default(_layout.cluster_group, true) | expanduser }}"
+        _given_dir: "{{ import_cluster_dir | default('inventories', true) | expanduser }}"
+        _abs_dir: "{{ (_given_dir if _given_dir is abs else _given_dir | realpath) | regex_replace('(?<=.)(/+[.]?)+$', '') }}"
+        # reports/<cluster group> next to the inventory dir as given (through a symlink too; /x/inv/. as /x/inv)
         _given_report_dir: >-
-          {{ import_cluster_report_dir | default(('reports/' ~ _layout.cluster_group) if _shared | bool else _given_dir, true)
-             | expanduser }}
+          {{ import_cluster_report_dir | default([_given_dir | regex_replace('(?<=.)(/+[.]?)+$', '') | dirname, 'reports',
+                                                  _layout.cluster_group] | path_join, true) | expanduser }}
 
     - name: Check the output dir
       ansible.builtin.stat:
         path: "{{ _dir }}"
       register: import_cluster_dir_stat
 
-    # a shared dir: this cluster's hosts file
     - name: Check the hosts file
       ansible.builtin.stat:
         path: "{{ _dir }}/{{ _hosts_file }}"
       register: import_cluster_hosts_stat
-      when: _shared | bool
 
     - name: Stop rather than overwrite an inventory
       ansible.builtin.assert:
-        that: >-
-          import_cluster_force | default(false) | bool
-          or not (import_cluster_hosts_stat.stat.exists if _shared | bool else import_cluster_dir_stat.stat.exists)
+        that: import_cluster_force | default(false) | bool or not import_cluster_hosts_stat.stat.exists
         fail_msg: >-
-          {{ (_dir ~ '/' ~ _hosts_file ~ ' exists: this cluster is imported there already, set import_cluster_force=true'
-              ~ ' to import it again') if _shared | bool
-             else (_dir ~ ' exists: pick another import_cluster_dir, or set import_cluster_force=true') }}
+          {{ _dir ~ '/' ~ _hosts_file }} exists: this cluster is imported there already, set import_cluster_force=true
+          to import it again (with --check --diff first to see the changes)
 
     # The vault password: import_cluster_vault_password_file, else Ansible's own
     # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE); a
@@ -1347,10 +1351,8 @@
       register: import_cluster_existing_vars
       no_log: true  # a secrets.yml in clear
       vars:
-        # every hosts file (whose they are); a shared dir: every file Ansible reads as inventory (its groups)
-        _top: >-
-          {{ '(?!(group_vars|host_vars)/)(?!.*([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$).+'
-             if _shared | bool else '[^/]+[.]yml' }}|report[.]txt
+        # every file Ansible reads as inventory (the hosts files: whose they are; the user's: their groups)
+        _top: "(?!(group_vars|host_vars)/)(?!.*([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$).+"
         # (not a big file left there: a dump, an archive)
         _found: "{{ import_cluster_existing.files | default([]) | selectattr('size', 'le', 1048576) | map(attribute='path')
                     | map('relpath', _dir) | reject('match', '(.*/)?[.]') | list }}"
@@ -1359,25 +1361,26 @@
       ansible.builtin.set_fact:
         _leftovers: >-
           {{ _found | community.cassandra.cassandra_inventory_leftovers(_read, _written, _layout.cluster_group,
-                                                                         _vault_secret | default(''), _shared | bool,
+                                                                         _vault_secret | default(''),
                                                                          _layout.hosts, _layout.cluster_name) }}
       vars:
+        # (not the report, when import_cluster_report_dir puts it there: written again below)
         _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
-                    | reject('match', '(.*/)?[.]') | list }}"
-        # the first line is enough to tell (a vaulted file: decrypted to its first line; an inventory file
-        # of a shared dir, and the cluster's main.yml for its cluster name: all of it), and a secret's value
-        # never leaves this task
+                    | reject('match', '(.*/)?[.]') | reject('in', _report_files) | list }}"
+        _report_files: "{{ ['report.txt', 'RUNBOOK.md'] | map('regex_replace', '^', _report_dir ~ '/') | map('relpath', _dir) | list }}"
+        # the first line is enough to tell (a vaulted file: decrypted to its first line; an inventory file,
+        # and the cluster's main.yml for its cluster name: all of it), and a secret's value never leaves
+        # this task
         _read: >-
           {%- set out = {} -%}
           {%- for r in import_cluster_existing_vars.results -%}
           {%-   set t = r.content | b64decode -%}
-          {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') or (_shared | bool and not r.item is match('(group|host)_vars/'))
+          {%-   set _ = out.update({r.item: t if t.startswith('$ANSIBLE_VAULT') or not r.item is match('(group|host)_vars/')
                                               or r.item == 'group_vars/' ~ _layout.cluster_group ~ '/main.yml'
                                          else t.split('\n') | first}) -%}
           {%- endfor -%}
           {{ out }}
-        _written: >-
-          {{ [_hosts_file] + (['report.txt'] if _report_dir == _dir else []) + _files | map(attribute='path') | list }}
+        _written: "{{ [_hosts_file] + _files | map(attribute='path') | list }}"
 
     - name: Stop rather than write over another cluster's files
       ansible.builtin.assert:
@@ -1471,11 +1474,12 @@
           {{ (_report_dir ~ '/report.txt') is file
              and not lookup('ansible.builtin.file', _report_dir ~ '/report.txt').startswith(
                        '# Written by community.cassandra.import_cluster for ' ~ _layout.cluster_group ~ ':') }}
-      when: not ansible_check_mode or _report_dir is directory  # --check creates no dir to write it in
+      when: not ansible_check_mode  # shown below
 
     - name: Show the report
       ansible.builtin.debug:
-        msg: "{{ (_report ~ '\nWritten to ' ~ _dir ~ ((', the report to ' ~ _report_dir) if _report_dir != _dir else '')).split('\n') }}"
+        msg: "{{ (_report ~ '\n' ~ ('--check: nothing written, it would write to ' if ansible_check_mode else 'Written to ') ~ _dir
+                  ~ ((', the report to ' ~ _report_dir) if _report_dir != _dir else '')).split('\n') }}"
 
     - name: Show the differences between nodes
       ansible.builtin.debug:
@@ -1494,7 +1498,7 @@
           SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
           roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
           if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See SELF-CHECK and
-          NOT CHECKED in {{ _report_dir }}/report.txt.
+          NOT CHECKED in {{ 'the report above' if ansible_check_mode else _report_dir ~ '/report.txt' }}.
           (-e import_cluster_strict=false: the same inventory and report, without this failure)
       when:
         - not _self_check_ok | bool
@@ -1506,7 +1510,7 @@
   ansible.builtin.import_playbook: help.yml
   when: import_cluster_runbook | default(false) | bool and not ansible_check_mode
   vars:
-    help_inventory: "{{ _dir if import_cluster_shared_dir | default(false) | bool else _dir ~ '/hosts.yml' }}"
+    help_inventory: "{{ _dir }}"
     help_runbook_dir: "{{ _report_dir }}"
     cassandra_hosts: "{{ _layout.cluster_group }}"
     help_write: true

@@ -50,10 +50,12 @@ def test_unread_ring_node_fails_the_check(nodes, extra, expected):
 
 
 def test_report_and_stop_name_them():
-    variables = dict(_nodes=NODES, _layout=LAYOUT, _dir="/inv", _report_dir="/inv")
+    variables = dict(_nodes=NODES, _layout=LAYOUT, _dir="/inv", _report_dir="/reports/c", ansible_check_mode=False)
     variables["_unchecked"] = trust_as_template(WRITE["vars"]["_unchecked"])
     msg = render(STOP["ansible.builtin.fail"]["msg"], **variables)
-    assert "n2 not read" in msg
+    assert "n2 not read" in msg and "NOT CHECKED in /reports/c/report.txt." in msg
+    variables["ansible_check_mode"] = True  # --check writes no report
+    assert "NOT CHECKED in the report above." in render(STOP["ansible.builtin.fail"]["msg"], **variables)
     report = WRITE["vars"]["_report"]
     assert "THE IMPORT FAILS" in report and "import_cluster_allow_unread=true" in report
     assert "import_cluster_strict | default(true) | bool" in STOP["when"]

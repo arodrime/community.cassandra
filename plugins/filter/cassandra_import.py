@@ -951,7 +951,7 @@ def _hand_edits_kept(node):
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
     vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
-    'differences', 'report', 'names' (address -> name in hosts.yml)}. Nodes sharing a name are named by their address instead."""
+    'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead."""
     cluster = _slug(cluster_name)
     names = [n["name"] for n in nodes]
     shared = sorted({name for name in names if names.count(name) > 1})
@@ -1261,7 +1261,7 @@ def _split_secrets(variables):
 
 @_values_hidden
 def cassandra_inventory_files(layout):
-    """[{path, content, secret}] for hosts.yml, group_vars/<group>/ and
+    """[{path, content, secret}] for group_vars/<group>/ and
     host_vars/<host>/: main.yml, and secrets.yml for variables named like
     passwords (and extra settings holding one)."""
     files = []
@@ -1390,23 +1390,25 @@ def _own_names(path, text):
     return groups - set(["all", "ungrouped"]), set()
 
 
-def cassandra_inventory_leftovers(paths, read, written, cluster, password="", shared=False, inventory=None, cluster_name=None):
-    """paths: the files in the inventory dir (relative paths); read: {path:
-    its first line (a vaulted file, and a hosts file in a shared dir: all of
-    it)} for those read; written: the paths this import writes; cluster: its
-    cluster group; password: the vault password, if any; shared: the dir holds
-    other clusters too, each with its <cluster group>.yml; inventory: the hosts
-    this import writes; cluster_name: its cassandra_cluster_name. Returns {'stale': the files an earlier import of this
-    cluster wrote that this one does not (to remove), 'kept': the files no
-    import wrote (left as they are), 'replaced': the files at a path it writes
-    that no import wrote, 'unsure': the files an earlier import wrote that may
-    be another cluster's (left as they are), 'conflicts': why this import
-    would write over another cluster's files, or share its hosts or groups}.
-    A file whose first line names no cluster (an earlier release) is this
-    cluster's in its own dir; in a shared dir, when this cluster's hosts file
-    alone names its group or host. Two clusters whose names make the same
-    group, the user's own inventory files with a group of this cluster's, and
-    a cluster group all or ungrouped in a shared dir are conflicts too."""
+def cassandra_inventory_leftovers(paths, read, written, cluster, password="", inventory=None, cluster_name=None):
+    """paths: the files in the inventory dir, which holds every cluster, each
+    with its <cluster group>.yml (relative paths); read: {path: its first line
+    (a vaulted file, and an inventory file: all of it)} for those read;
+    written: the paths this import writes; cluster: its cluster group;
+    password: the vault password, if any; inventory: the hosts this import
+    writes; cluster_name: its cassandra_cluster_name. Returns {'stale': the
+    files an earlier import of this cluster wrote that this one does not (to
+    remove), 'kept': the files no import wrote (left as they are), 'replaced':
+    the files at a path it writes that no import wrote, 'unsure': the files an
+    earlier import wrote that may be another cluster's (left as they are),
+    'conflicts': why this import would write over another cluster's files, or
+    share its hosts or groups}. A file whose first line names no cluster (an
+    earlier release) is this cluster's when this cluster's hosts file alone
+    names its group or host. Two clusters whose names make the same group, the
+    user's own inventory files with a group of this cluster's, a hosts file of
+    an import into a dir of its own (an earlier layout: hosts.yml, at the top
+    or in a subdir) and a cluster group all, ungrouped or cassandra are
+    conflicts too."""
     found = dict((p, read.get(p)) for p in paths)
 
     def header(path):
@@ -1416,23 +1418,22 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", sh
         return written_for(text)
 
     headers = dict((p, header(p)) for p in found)
-    # shared: the clusters' hosts files (the import's), by cluster, and the user's own inventory files
+    # the clusters' hosts files (the import's), by cluster, and the user's own inventory files
     clusters, own, conflicts = {}, {}, []
-    if shared and cluster in ("all", "ungrouped", "cassandra"):
-        conflicts.append("cluster group %s: a group the playbooks or Ansible take on their own, not for a dir of"
-                         " several clusters" % cluster)
+    if cluster in ("all", "ungrouped", "cassandra"):
+        conflicts.append("cluster group %s (from the cluster name): a group the playbooks or Ansible take on their own,"
+                         " not one cluster's of an inventory dir" % cluster)
     for path, name in sorted(headers.items()):
-        if name is None and shared and found[path] is not None and not any(
-                p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)
-                for p in path.split("/")):
-            own[path] = _own_names(path, found[path])
-        if "/" in path or not path.endswith(".yml") or name is None:
-            continue
-        if not shared and path != "hosts.yml":
-            conflicts.append("%s: the hosts of a cluster in a shared dir, set import_cluster_shared_dir=true" % path)
-        elif shared and path == "hosts.yml":
-            conflicts.append("hosts.yml: the hosts of a dir of its own, rename it <cluster group>.yml for a shared dir")
-        elif shared:
+        if any(p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)
+               for p in path.split("/")):
+            continue  # not read by Ansible as inventory
+        if name is None:
+            if found[path] is not None:
+                own[path] = _own_names(path, found[path])
+        elif "/" in path or (path == "hosts.yml" and name != "hosts"):  # an import into a dir of its own
+            conflicts.append("%s: an import's hosts file of a dir of its own (an earlier layout), read by Ansible too:"
+                             " move it out of the inventory dir" % path)
+        elif path.endswith(".yml"):
             clusters[path] = (name or path[:-len(".yml")], _yaml_names(found[path]))
     # the same group for another cluster (names that differ only by case or punctuation)
     previous = "group_vars/%s/main.yml" % cluster
@@ -1458,8 +1459,6 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", sh
         name = headers[path]
         if name or name is None:
             return name
-        if not shared:  # a dir of its own: the earlier releases' files are its cluster's
-            return cluster
         if path in clusters:  # a hosts file
             return clusters[path][0]
         if "/" not in path:
@@ -1481,7 +1480,7 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", sh
             (stale if _OWNABLE.match(path) else kept).append(path)
         elif who == "":
             unsure.append(path)
-    if shared and inventory:
+    if inventory:
         groups, hosts = _inventory_names(inventory)
         for path, (who, (their_groups, their_hosts)) in sorted(clusters.items()):
             if who != cluster:

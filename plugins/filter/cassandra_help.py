@@ -207,15 +207,12 @@ OPERATIONS = [
                 " time. Move its clients first.",
      "options": [("-e cassandra_target_dc=DC_TO_REMOVE", "the datacenter to remove", None)]},
     {"name": "import_cluster", "theme": "takeover",
-     "summary": "Reads the running cluster into an inventory, changing nothing on the nodes; a re-import into"
-                " an inventory it wrote keeps the files it did not write.",
-     "options": [("-e import_cluster_dir=<dir>", "where to write the inventory", "./<cluster group>"),
-                 ("-e import_cluster_shared_dir=true", "import_cluster_dir holds several clusters (<cluster>.yml"
-                                                       " each)", "false"),
+     "summary": "Reads the running cluster into an inventory, changing nothing on the nodes; a re-import keeps"
+                " the files it did not write, --check --diff shows its changes first.",
+     "options": [("-e import_cluster_dir=<dir>", "the inventory dir, every cluster's", "inventories"),
                  ("-e import_cluster_report_dir=<dir>", "where to write report.txt (and RUNBOOK.md)",
-                  "import_cluster_dir; in a shared dir, ./reports/<cluster group>"),
-                 ("-e import_cluster_force=true", "a re-import (into a dir that exists; in a shared dir, over this"
-                                                  " cluster's files)", "false"),
+                  "reports/<cluster group> next to import_cluster_dir"),
+                 ("-e import_cluster_force=true", "a re-import, over this cluster's files", "false"),
                  ("-e import_cluster_runbook=true", "also writes RUNBOOK.md next to report.txt (the help playbook)",
                   "false"),
                  ("-e import_cluster_allow_unread=true", "accepts a ring node it could not read (else the import"
@@ -434,13 +431,12 @@ def _command(op, model, cluster, cwd, extra=()):
                 jmx.append(_e(key, placeholder))
         address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
                         if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
-        # into this inventory's dir only when the import wrote it and it holds this cluster alone (a re-import
-        # writes hosts.yml with this cluster's nodes only), or wrote this cluster there among others
-        shared = cluster.name in (model.get("shared_imported") or [])
-        here = shared or (model.get("imported") and len(model.get("clusters") or []) == 1)
-        target = ([_e("import_cluster_dir", _path(_inventory_dir(model), cwd))]
-                  + (["-e import_cluster_shared_dir=true"] if shared else [])
-                  + ["-e import_cluster_force=true", "-e import_cluster_runbook=true"]) if here else ["-e import_cluster_dir=NEW_DIR"]
+        # into this inventory's dir only when the import wrote this cluster there (its <cluster>.yml)
+        target = ["-e import_cluster_dir=NEW_DIR"]
+        if cluster.name in (model.get("imported") or []):
+            where = _path(_inventory_dir(model), cwd)
+            target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + [
+                "-e import_cluster_force=true", "-e import_cluster_runbook=true"]
         parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
                  + ["community.cassandra.import_cluster"] + target + jmx)
         return " ".join(p for p in parts if p)
@@ -463,9 +459,9 @@ def _command(op, model, cluster, cwd, extra=()):
 
 
 def _hosts_given(model, cluster):
-    """Whether the commands give -e cassandra_hosts: not the group the playbooks take by default, or in a dir
-    shared with other clusters (even while it is alone there)."""
-    return model.get("auto") != cluster.name or cluster.name in (model.get("shared_imported") or [])
+    """Whether the commands give -e cassandra_hosts: not the group the playbooks take by default, or a cluster
+    the import wrote (even while it is alone in its inventory dir)."""
+    return model.get("auto") != cluster.name or cluster.name in (model.get("imported") or [])
 
 
 def _name(arg):

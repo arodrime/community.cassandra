@@ -231,13 +231,13 @@ def test_import_cluster_writes_the_runbook_on_request():
         last = yaml.safe_load(f)[-1]
     assert last["ansible.builtin.import_playbook"] == "help.yml"
     assert last["when"] == "import_cluster_runbook | default(false) | bool and not ansible_check_mode"
-    assert last["vars"] == {"help_inventory": "{{ _dir if import_cluster_shared_dir | default(false) | bool else _dir ~ '/hosts.yml' }}",
+    assert last["vars"] == {"help_inventory": "{{ _dir }}",
                             "help_runbook_dir": "{{ _report_dir }}", "cassandra_hosts": "{{ _layout.cluster_group }}",
                             "help_write": True, "help_show": False}
 
 
-def test_runbook_of_a_cluster_in_a_shared_dir(tmp_path):
-    # import_cluster_shared_dir: help reads the whole dir, for this cluster, and writes RUNBOOK.md with the report
+def test_runbook_of_an_imported_cluster(tmp_path):
+    # import_cluster_runbook: help reads the whole inventory dir, for this cluster, and writes RUNBOOK.md with the report
     inv = inventory(tmp_path)
     shared = tmp_path / "inventories"
     (inv / "hosts.yml").rename(shared / "orders.yml")

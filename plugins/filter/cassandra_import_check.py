@@ -4,7 +4,7 @@
 write each node's config as the node has it?
 
 cassandra_import_self_check: the files import_cluster writes (group_vars,
-    host_vars), hosts.yml's data, a host, its facts, {file: what the node has}
+    host_vars), the hosts file's data, a host, its facts, {file: what the node has}
     -> the files the roles would write for that host (their templates, by
     Ansible's template lookup, with the variables read back from the files'
     text as Ansible merges them, over the roles' defaults), compared with the
@@ -288,7 +288,7 @@ def _render(variables, facts, live, conf_dir=""):
 @_values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
                                 conf_dir="", permissions=None):
-    """files, hosts, name: the inventory files, hosts.yml's data and the node's
+    """files, hosts, name: the inventory files, the hosts file's data and the node's
     name there (the variables it gets: cassandra_inventory_host_vars); facts: its ansible_facts;
     live: {file: text the node has}; node_environment: what the node's unit
     gives Cassandra today (MAX_HEAP_SIZE and HEAP_NEWSIZE count wherever they

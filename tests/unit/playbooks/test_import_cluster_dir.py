@@ -40,8 +40,8 @@ def pick(**variables):
 
 def picked(**variables):
     variables["_layout"] = {"cluster_group": "prod"}
-    variables["_shared"] = variables.get("import_cluster_shared_dir", False)
     variables["_given_dir"] = render(PICK["vars"]["_given_dir"], **variables)
+    variables["_abs_dir"] = render(PICK["vars"]["_abs_dir"], **variables)
     variables["_given_report_dir"] = render(PICK["vars"]["_given_report_dir"], **variables)
     return dict((k, render(v, **variables)) for k, v in PICK["ansible.builtin.set_fact"].items())
 
@@ -56,8 +56,8 @@ def test_relative_from_the_current_dir(tmp_path, monkeypatch):
 
 def test_default_in_the_current_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert pick() == str(tmp_path.resolve() / "prod")
-    assert pick(import_cluster_dir="") == str(tmp_path.resolve() / "prod")
+    assert pick() == str(tmp_path.resolve() / "inventories")
+    assert pick(import_cluster_dir="") == str(tmp_path.resolve() / "inventories")
 
 
 def test_reached_through_a_symlink(tmp_path, monkeypatch):
@@ -70,15 +70,21 @@ def test_reached_through_a_symlink(tmp_path, monkeypatch):
 
 
 def test_report_dir(tmp_path, monkeypatch):
-    """With the inventory in its own dir by default; for a shared dir, ./reports/<cluster group>."""
+    """reports/<cluster group> next to the inventory dir, out of it."""
     monkeypatch.chdir(tmp_path)
-    assert picked(import_cluster_dir="inv/prod")["_report_dir"] == str(tmp_path.resolve() / "inv" / "prod")
-    assert picked()["_report_dir"] == str(tmp_path.resolve() / "prod")
-    assert picked(import_cluster_dir="inv", import_cluster_shared_dir=True) == {
-        "_dir": str(tmp_path.resolve() / "inv"), "_report_dir": str(tmp_path.resolve() / "reports" / "prod")}
+    assert picked() == {"_dir": str(tmp_path.resolve() / "inventories"),
+                        "_report_dir": str(tmp_path.resolve() / "reports" / "prod")}
+    assert picked(import_cluster_dir="a/inv/")["_report_dir"] == str(tmp_path.resolve() / "a" / "reports" / "prod")
+    assert picked(import_cluster_dir="/x/y/inventories/") == {"_dir": "/x/y/inventories", "_report_dir": "/x/y/reports/prod"}
+    assert picked(import_cluster_dir="/inv")["_report_dir"] == "/reports/prod"
+    assert picked(import_cluster_dir="/x/inv/.") == {"_dir": "/x/inv", "_report_dir": "/x/reports/prod"}
+    assert picked(import_cluster_dir="/x/y/../inv")["_report_dir"] == "/x/y/../reports/prod"  # kept as given, like _dir
+    (tmp_path / "data" / "inv").mkdir(parents=True)
+    (tmp_path / "inventories").symlink_to(tmp_path / "data" / "inv")  # next to the dir as given, not its target
+    assert picked()["_report_dir"] == str(tmp_path.resolve() / "reports" / "prod")
+    assert picked(import_cluster_dir="/")["_report_dir"] == "/reports/prod"
     assert picked(import_cluster_dir="inv", import_cluster_report_dir="~/r")["_report_dir"] == os.path.expanduser("~/r")
-    assert picked(import_cluster_dir="inv", import_cluster_shared_dir=True,
-                  import_cluster_report_dir="out/r")["_report_dir"] == str(tmp_path.resolve() / "out" / "r")
+    assert picked(import_cluster_dir="inv", import_cluster_report_dir="out/r")["_report_dir"] == str(tmp_path.resolve() / "out" / "r")
 
 
 def test_absolute_kept(tmp_path, monkeypatch):
@@ -170,9 +176,21 @@ def test_client_script_gets_the_vault_id(path, client):
 
 def test_files_in_dot_dirs_are_not_looked_at():
     found = render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_found"], _dir="/inv",
+                   _report_files=["../reports/p/report.txt", "../reports/p/RUNBOOK.md"],
                    import_cluster_existing={"files": [{"path": "/inv/.git/HEAD"}, {"path": "/inv/host_vars/.x/main.yml"},
                                                       {"path": "/inv/notes"}, {"path": "/inv/host_vars/n1/main.yml"}]})
     assert found == ["notes", "host_vars/n1/main.yml"]
+
+
+def test_report_in_the_inventory_dir_not_a_leftover():
+    """import_cluster_report_dir in the inventory dir: its report is not listed as kept, it is written again."""
+    task = TASKS["Sort out the files an earlier import wrote"]["vars"]
+    files = [{"path": "/inv/notes"}, {"path": "/inv/report.txt"}, {"path": "/inv/reports/p/RUNBOOK.md"}]
+    for report_dir, left in (("/inv", ["notes", "reports/p/RUNBOOK.md"]), ("/inv/reports/p", ["notes", "report.txt"]),
+                             ("/reports/p", ["notes", "report.txt", "reports/p/RUNBOOK.md"])):
+        variables = {"_dir": "/inv", "_report_dir": report_dir, "import_cluster_existing": {"files": files}}
+        variables["_report_files"] = render(task["_report_files"], **variables)
+        assert render(task["_found"], **variables) == left, report_dir
 
 
 def test_no_clear_secrets_over_a_vaulted_file():
@@ -190,69 +208,46 @@ def test_no_clear_secrets_over_a_vaulted_file():
     assert render(task["vars"]["_vaulted"], **variables) == []
 
 
-def write_vars(shared, **given):
-    variables = {"_layout": {"cluster_group": "cluster_a"}, "import_cluster_shared_dir": shared, "_dir": "/inv",
-                 "_report_dir": "/inv"}
+def write_vars(**given):
+    variables = {"_layout": {"cluster_group": "cluster_a"}, "_dir": "/inv", "_report_dir": "/reports/cluster_a"}
     variables.update(given)
-    for name in ("_shared", "_hosts_file", "_inventory_args"):
+    for name in ("_hosts_file", "_inventory_args"):
         variables[name] = render(WRITE_VARS[name], **variables)
     return variables
 
 
-def test_shared_dir_names_the_hosts_file_after_the_cluster():
-    assert write_vars(False)["_hosts_file"] == "hosts.yml"
-    assert write_vars(True)["_hosts_file"] == "cluster_a.yml"
-    assert write_vars(False)["_inventory_args"] == "-i /inv/hosts.yml"
-    assert write_vars(True)["_inventory_args"] == "-i /inv -e cassandra_hosts=cluster_a"
+def test_hosts_file_named_after_the_cluster():
+    assert write_vars()["_hosts_file"] == "cluster_a.yml"
+    assert write_vars()["_inventory_args"] == "-i /inv -e cassandra_hosts=cluster_a"
 
 
-@pytest.mark.parametrize("shared, force, dir_exists, hosts_exists, passed", [
-    (False, False, False, None, True),
-    (False, False, True, None, False),
-    (False, True, True, None, True),
-    (True, False, True, False, True),    # another cluster's dir: this cluster not there yet
-    (True, False, True, True, False),    # this cluster there already
-    (True, True, True, True, True),
+@pytest.mark.parametrize("force, hosts_exists, passed", [
+    (False, False, True),    # a dir of other clusters, or none yet: this cluster not there yet
+    (False, True, False),    # this cluster there already
+    (True, True, True),
 ])
-def test_stop_rather_than_overwrite(shared, force, dir_exists, hosts_exists, passed):
+def test_stop_rather_than_overwrite(force, hosts_exists, passed):
     task = TASKS["Stop rather than overwrite an inventory"]["ansible.builtin.assert"]
-    variables = write_vars(shared, import_cluster_force=force, import_cluster_dir_stat={"stat": {"exists": dir_exists}})
-    if hosts_exists is not None:
-        variables["import_cluster_hosts_stat"] = {"stat": {"exists": hosts_exists}}
-    else:
-        variables["import_cluster_hosts_stat"] = {"skipped": True}
+    variables = write_vars(import_cluster_force=force, import_cluster_hosts_stat={"stat": {"exists": hosts_exists}})
     assert render("{{ %s }}" % task["that"], **variables) is passed
-    msg = render(task["fail_msg"], **variables)
-    assert msg.startswith("/inv/cluster_a.yml exists: this cluster is imported there already" if shared else "/inv exists: pick")
+    assert render(task["fail_msg"], **variables).startswith(
+        "/inv/cluster_a.yml exists: this cluster is imported there already, set import_cluster_force=true")
 
 
 def test_files_read_and_written():
+    """Read: every file Ansible reads as inventory (whose hosts, which groups), and the vars files."""
     found = ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml", "group_vars/all/main.yml",
-             "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml"]
-    files = [{"path": "group_vars/cluster_a/main.yml"}]
+             "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml", "hosts", "mine.yaml", "README.md",
+             "cluster_a.yml.2026-10-07@10:00:00~", "x.retry", "group_vars/all/local.yml"]
     task = TASKS["Read the group_vars and host_vars files already there"]
-    found += ["hosts", "mine.yaml", "README.md", "cluster_a.yml.2026-10-07@10:00:00~", "x.retry"]
-    for shared, read in ((False, ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml",
-                                  "group_vars/all/main.yml", "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml"]),
-                         (True, ["cluster_a.yml", "cluster_b.yml", "hosts.yml", "report.txt", "notes.yml",
-                                 "group_vars/all/main.yml", "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml",
-                                 "sub/x.yml", "hosts", "mine.yaml"])):
-        variables = write_vars(shared, _found=found)
-        variables["_top"] = render(task["vars"]["_top"], **variables)
-        assert render(task["loop"], **variables) == read
+    variables = write_vars(_found=found)
+    variables["_top"] = render(task["vars"]["_top"], **variables)
+    assert render(task["loop"], **variables) == [
+        "cluster_a.yml", "cluster_b.yml", "hosts.yml", "notes.yml", "group_vars/all/main.yml",
+        "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml", "hosts", "mine.yaml"]
     written = TASKS["Sort out the files an earlier import wrote"]["vars"]["_written"]
-    assert render(written, _files=files, **write_vars(False)) == ["hosts.yml", "report.txt", "group_vars/cluster_a/main.yml"]
-    variables = write_vars(True, _report_dir="/reports/cluster_a")
-    assert render(written, _files=files, **variables) == ["cluster_a.yml", "group_vars/cluster_a/main.yml"]
-
-
-def test_shared_dir_needs_the_dir():
-    task = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") == "Check the shared dir is given"][0]
-    that = "{{ %s }}" % task["ansible.builtin.assert"]["that"]
-    assert render(that, import_cluster_shared_dir=True) is False
-    assert render(that, import_cluster_shared_dir=True, import_cluster_dir="") is False
-    assert render(that, import_cluster_shared_dir=True, import_cluster_dir="inventories") is True
-    assert render(that) is True
+    files = [{"path": "group_vars/cluster_a/main.yml"}]
+    assert render(written, _files=files, **write_vars()) == ["cluster_a.yml", "group_vars/cluster_a/main.yml"]
 
 
 def test_stop_on_another_clusters_files():
@@ -271,7 +266,7 @@ def test_stop_on_another_clusters_files():
                                               ("/reports/cluster_a", "# NOT VALID: the import self-check failed,"
                                                                      " see ../reports/cluster_a/report.txt")])
 def test_invalid_hosts_file_points_to_the_report(report_dir, line):
-    variables = write_vars(True, _report_dir=report_dir, _self_check_ok=False)
+    variables = write_vars(_report_dir=report_dir, _self_check_ok=False)
     variables["_layout"]["hosts"] = {"all": {}}
     content = render(TASKS["Write the hosts file"]["ansible.builtin.copy"]["content"], **variables)
     assert content.split("\n")[1] == line
@@ -280,10 +275,27 @@ def test_invalid_hosts_file_points_to_the_report(report_dir, line):
 def test_report_of_another_kept(tmp_path):
     task = TASKS["Write report.txt"]
     report = tmp_path / "report.txt"
-    variables = write_vars(True, _report_dir=str(tmp_path))
+    variables = write_vars(_report_dir=str(tmp_path))
     assert render(task["ansible.builtin.copy"]["backup"], **variables) is False  # none there yet
     for text, backup in (("# Written by community.cassandra.import_cluster for cluster_a: x\n", False),
                          ("# Written by community.cassandra.import_cluster for cluster_ab: x\n", True),
                          ("my notes\n", True)):
         report.write_text(text)
         assert render(task["ansible.builtin.copy"]["backup"], **variables) is backup, text
+
+
+def test_check_diff_writes_nothing():
+    """--check --diff reviews a re-import: the tasks that write or remove run in check mode (their diff shown, the
+    secrets hidden), the report and RUNBOOK.md are not written."""
+    write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
+    for task in write:
+        if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")):
+            assert "check_mode" not in task and "diff" not in task, task["name"]
+    assert TASKS["Write report.txt"]["when"] == "not ansible_check_mode"
+    assert TASKS["Write group_vars and host_vars"]["no_log"] == "{{ item.secret }}"
+    assert "not ansible_check_mode" in PLAYS[-1]["when"]
+    shown = TASKS["Show the report"]["ansible.builtin.debug"]["msg"]
+    assert render(shown, _report="R", _dir="/inv", _report_dir="/reports/a", ansible_check_mode=True) == [
+        "R", "--check: nothing written, it would write to /inv, the report to /reports/a"]
+    assert render(shown, _report="R", _dir="/inv", _report_dir="/reports/a", ansible_check_mode=False)[-1] == (
+        "Written to /inv, the report to /reports/a")
