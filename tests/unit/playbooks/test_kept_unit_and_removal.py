@@ -221,7 +221,9 @@ def test_progress_report_knows_the_status_before_the_block_ends():
         assert progress["ansible.builtin.debug"]["msg"] == "{{ _cassandra_stream_report | join('\n') }}"
         # the first waits are shorter (cassandra_stream_progress's wait), and the progress knows the interval
         wait = block[names.index("Wait before the next check")]
-        assert wait["ansible.builtin.pause"]["seconds"] == "{{ _cassandra_stream_state.wait }}"
+        assert wait["ansible.builtin.wait_for"]["timeout"] == "{{ _cassandra_stream_state.wait }}"
+        # quiet, on the controller: pause would print "Pausing for ..." between the progress lines
+        assert wait["delegate_to"] == "localhost" and wait["become"] is False and wait["vars"]["ansible_become"] is False
         assert "interval=cassandra_stream_check_interval | int" in block[names.index("Work out the progress")][
             "ansible.builtin.set_fact"]["_cassandra_stream_state"]
 

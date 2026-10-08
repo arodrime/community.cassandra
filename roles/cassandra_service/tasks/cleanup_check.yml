@@ -78,7 +78,12 @@
         _cassandra_cleanup_status: "{{ _cassandra_cleanup_now }}"
 
     # 10 s, 30 s, 1, 2 and 4 minutes, then every cassandra_stream_check_interval
+    # on the controller, quiet (pause prints "Pausing for ..." on a terminal, between the progress lines)
     - name: Wait before the next check
-      ansible.builtin.pause:
-        seconds: "{{ _cassandra_stream_state.wait }}"
+      ansible.builtin.wait_for:
+        timeout: "{{ _cassandra_stream_state.wait }}"
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
       when: _cassandra_cleanup_status == 'going'
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
