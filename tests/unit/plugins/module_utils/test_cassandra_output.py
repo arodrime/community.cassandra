@@ -324,6 +324,12 @@ def test_inventory_steps_with_and_without_git(tmp_path):
     ("password: abc, def", "password: ****"),
     ("-Dssl.keyStorePassword=ab,cd -Dx=1", "-Dssl.keyStorePassword=****"),
     ("{password: abc, user: u}", "{password: ****, user: u}"),
+    # a brace in the value or Jinja on the line: still to the end of the line; every secret of a flow mapping
+    ("keystore_password: P@ss{1,2}word", "keystore_password: ****"),
+    ("-Dcassandra.jmx.password=a{b}c,d", "-Dcassandra.jmx.password=****"),
+    ("msg: {{ x }} password=hunter2,xyz", "msg: {{ x }} password=****"),
+    ("{password: abc, secret: b, user: u}", "{password: ****, secret: ****, user: u}"),
+    ('{"a": {"password": "x"}, "b": 1}', '{"a": {"password": ****}, "b": 1}'),
 ])
 def test_mask_more_forms(text, masked):
     assert out.mask(text) == masked

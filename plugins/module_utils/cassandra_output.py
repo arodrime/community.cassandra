@@ -206,6 +206,23 @@ _HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|--password)\s+|\bcqlsh\b[^\n]*?\s-
 _BLOCK = re.compile(r"^\s*[|>][-+]?\d*\s*$")
 
 
+def _in_flow(before):
+    """True when text before a key leaves a flow mapping or JSON object open
+    (a "{" not closed, Jinja's "{{" aside)."""
+    before = before.replace("{{", "").replace("}}", "")
+    return before.count("{") > before.count("}")
+
+
+def _mask_flow(match):
+    """Inside an open {...}: the value up to the next comma or brace."""
+    return match.group(1) + MASK if _in_flow(match.string[:match.start()]) else match.group(0)
+
+
+def _mask_line(match):
+    """Elsewhere: the value up to the end of the line (a comment aside)."""
+    return match.group(0) if _in_flow(match.string[:match.start()]) else match.group(1) + MASK
+
+
 def mask(text):
     """text with the value of every secret setting in it as ****: key: value,
     key=value, "key": "value", -pw value, --password value, and the lines of a
@@ -221,7 +238,7 @@ def mask(text):
         match = _HIDDEN_VALUE.search(line)
         if match and _BLOCK.match(match.group(2)):
             block = indent
-        line = (_HIDDEN_FLOW_VALUE if "{" in line else _HIDDEN_VALUE).sub(r"\1" + MASK, line)
+        line = _HIDDEN_VALUE.sub(_mask_line, _HIDDEN_FLOW_VALUE.sub(_mask_flow, line))
         out.append(_HIDDEN_OPTION.sub(r"\1" + MASK, line))
     return "\n".join(out)
 
