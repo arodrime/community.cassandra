@@ -62,9 +62,17 @@ would otherwise repeat:
     # read by Ansible for every run (which fails if it is missing), and by import_cluster to
     # encrypt the passwords it finds; keep it outside the project, mode 0600
     vault_password_file = ~/.ansible/vault_pass
-    stdout_callback = ansible.builtin.default
+    # only what an operator reads: plans, progress, recaps, failures (-v: everything)
+    stdout_callback = community.cassandra.ops
     callback_result_format = yaml
     interpreter_python = auto_silent
+
+``stdout_callback = community.cassandra.ops`` prints only the collection's operator messages (each verdict, plan,
+progress line, recap and TO DO list), the confirmation questions, and every failure in full (the task, the host,
+its message and stderr), instead of a header and a line per host for each of the hundreds of tasks of an
+operation. With ``-v`` or more, the output is the default callback's. Without it (``stdout_callback =
+ansible.builtin.default``), ``callback_result_format = yaml`` shows the same messages as plain text. The
+conventions of these messages, and how a playbook writes them: :ref:`ansible_collections.community.cassandra.docsite.guide_output`.
 
 No ``become`` in ``ansible.cfg`` (nor ``-b``): the collection's playbooks ask for root on the nodes themselves, where
 they need it (``status`` and ``health_check`` only to read ``cassandra_jmx_password_file``, ``help`` nowhere), and

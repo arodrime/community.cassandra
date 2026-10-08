@@ -16,6 +16,7 @@ description:
   - An operator message is a task with the task variable C(cassandra_output) set to C(true) (a literal, in the
     task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
     M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way.
+    A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
     (C(ignore_unreachable)) on one line. Diffs (C(--diff)) too.
@@ -35,8 +36,8 @@ from ansible import constants as C
 
 MARKER = "cassandra_output"
 # the actions whose failure is the message itself (a verdict)
-_VERDICTS = ("assert", "fail", "ansible.builtin.assert", "ansible.builtin.fail",
-             "ansible.legacy.assert", "ansible.legacy.fail")
+_ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
+_VERDICTS = _ASSERTS + ("fail", "ansible.builtin.fail", "ansible.legacy.fail")
 
 
 def _task(result):
@@ -88,13 +89,19 @@ class CallbackModule(DefaultCallback):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_on_ok(result)
         task = _task(result)
-        if marked(task) and not (task.loop and "results" in _result(result)):
+        if marked(task) and not (task.loop and "results" in _result(result)) and self._says(task):
             self._print(_result(result).get("msg"))
+
+    @staticmethod
+    def _says(task):
+        """A passed assert says something only with a success_msg (else
+        "All assertions passed")."""
+        return task.action not in _ASSERTS or "success_msg" in (task.args or {})
 
     def v2_runner_item_on_ok(self, result):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_item_on_ok(result)
-        if marked(_task(result)):
+        if marked(_task(result)) and self._says(_task(result)):
             self._print(_result(result).get("msg"))
 
     def _own_failure(self, result):

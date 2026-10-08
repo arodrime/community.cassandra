@@ -1,7 +1,10 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_health_problems: the problems found by the cluster health check
-(roles/cassandra_service/tasks/cluster_health.yml), as readable sentences.
+(roles/cassandra_service/tasks/cluster_health.yml), as readable sentences;
+cassandra_health_findings: the same as data, for cassandra_health_report:
+the health_check playbook's report, a line per problem (each one once,
+whatever node saw it), the verdict first.
 cassandra_leaving_state: where a node given to decommission_node stands.
 cassandra_removal_state: where a dead node given to remove_dead_node stands.
 cassandra_removal_force_target: the node to run removenode force on."""
@@ -10,6 +13,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 
 def _nodes(cluster_status):
@@ -22,19 +27,19 @@ def _error(result):
     return "%s (%s)" % (msg, stderr.splitlines()[-1]) if stderr and stderr not in msg else msg
 
 
-def cassandra_health_problems(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
+def cassandra_health_findings(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
                               down_ok=None, joining_ok=None, leaving_ok=None):
-    """views: [{'from': host, 'result': cassandra_status result}]; the others
-    are this node's registered results (ports: a wait_for loop over
-    {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
-    node being replaced). joining_ok: addresses expected up and joining (a
-    bootstrap still running). leaving_ok: addresses expected up and leaving (a
-    decommission still running). Returns a list of problems."""
-    problems = []
+    """The problems of cassandra_health_problems (same arguments) as
+    [{kind, text (its sentence), ...}]: kind state (address, rack, state,
+    seen_from), count (ring, expected, seen_from), nodetool (on, error), port
+    (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
+    schema (msg)."""
+    found = []
     for view in views:
         result = view["result"]
         if not result.get("cluster_status"):
-            problems.append("nodetool status failed on %s: %s" % (view["from"], _error(result)))
+            found.append({"kind": "nodetool", "on": view["from"], "error": _error(result),
+                          "text": "nodetool status failed on %s: %s" % (view["from"], _error(result))})
             continue
         nodes = _nodes(result["cluster_status"])
         for n in nodes:
@@ -45,26 +50,131 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
             if n["status"] + n["state"] == "UL" and n["address"] in (leaving_ok or []):
                 continue
             if n["status"] != "U" or n["state"] != "N":
-                problems.append("%s (%s) is %s%s, seen from %s" % (n["address"], n["rack"], n["status"], n["state"], view["from"]))
+                found.append({"kind": "state", "address": n["address"], "rack": n["rack"],
+                              "state": n["status"] + n["state"], "seen_from": view["from"],
+                              "text": "%s (%s) is %s%s, seen from %s" % (n["address"], n["rack"], n["status"], n["state"],
+                                                                        view["from"])})
         if len(nodes) != int(expected):
-            problems.append("the ring has %d nodes, the inventory %d (seen from %s): a node is missing from the ring, "
-                            "or the inventory is incomplete" % (len(nodes), int(expected), view["from"]))
+            found.append({"kind": "count", "ring": len(nodes), "expected": int(expected), "seen_from": view["from"],
+                          "text": "the ring has %d nodes, the inventory %d (seen from %s): a node is missing from the ring, "
+                                  "or the inventory is incomplete" % (len(nodes), int(expected), view["from"])})
     for port in (ports or {}).get("results", []):
         if port.get("failed"):
             item = port["item"]
-            problems.append("%s port %s is not answering on %s (%s)" % (item["name"], item["port"], node, item["host"]))
+            found.append({"kind": "port", "name": item["name"], "port": item["port"], "on": node, "host": item["host"],
+                          "text": "%s port %s is not answering on %s (%s)" % (item["name"], item["port"], node, item["host"])})
     if gossip is not None and not gossip.get("is_up"):
-        problems.append("gossip is not running on %s" % node)
+        found.append({"kind": "gossip", "on": node, "text": "gossip is not running on %s" % node})
     if binary is not None and not binary.get("is_up"):
-        problems.append("the native transport (CQL) is not running on %s" % node)
+        found.append({"kind": "cql", "on": node, "text": "the native transport (CQL) is not running on %s" % node})
     if netstats is not None:
         if netstats.get("failed") or "streaming" not in netstats:
-            problems.append("nodetool netstats failed on %s: %s" % (node, _error(netstats)))
+            found.append({"kind": "netstats", "on": node, "error": _error(netstats),
+                          "text": "nodetool netstats failed on %s: %s" % (node, _error(netstats))})
         elif netstats["streaming"]:
-            problems.append("streams in progress on %s (nodetool netstats)" % node)
+            found.append({"kind": "streams", "on": node, "text": "streams in progress on %s (nodetool netstats)" % node})
     if schema is not None and schema.get("failed"):
-        problems.append("schema disagreement: %s" % schema.get("msg", ""))
-    return problems
+        found.append({"kind": "schema", "msg": schema.get("msg", ""), "text": "schema disagreement: %s" % schema.get("msg", "")})
+    return found
+
+
+def cassandra_health_problems(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
+                              down_ok=None, joining_ok=None, leaving_ok=None):
+    """views: [{'from': host, 'result': cassandra_status result}]; the others
+    are this node's registered results (ports: a wait_for loop over
+    {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
+    node being replaced). joining_ok: addresses expected up and joining (a
+    bootstrap still running). leaving_ok: addresses expected up and leaving (a
+    decommission still running). Returns a list of problems."""
+    return [f["text"] for f in cassandra_health_findings(
+        views, expected, node, gossip=gossip, binary=binary, netstats=netstats, schema=schema, ports=ports,
+        down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok)]
+
+
+def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=None, names=None, members=None,
+                            topology_command=""):
+    """The health_check report. findings: {host: its
+    cassandra_health_findings} for the hosts checked; hosts: every host of
+    the run; unreachable: the ones Ansible did not reach (or whose check
+    did not run); absent: the hosts marked cassandra_node_state: absent;
+    names: {address: inventory name}; members: the ring's size as a node
+    saw it; topology_command: the command that removes the absent nodes.
+    Each problem once, with every node that saw it. Returns {healthy,
+    problems (count), lines}: "HEALTHY  my_cluster  6 nodes  6 UN, schema
+    agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
+    checked, 2 problems", a line per problem, then a TO DO."""
+    names = names or {}
+    unreachable = [h for h in hosts if h in (unreachable or [])]
+    checked = [h for h in hosts if h not in unreachable]
+    rows, seen = [], {}
+
+    def add(label, key, text, who=None):
+        if key not in seen:
+            seen[key] = [label, text, []]
+            rows.append(key)
+        if who and who not in seen[key][2]:
+            seen[key][2].append(who)
+
+    for host in checked:
+        for f in (findings or {}).get(host) or []:
+            kind = f.get("kind")
+            if kind == "state":
+                name = names.get(f["address"])
+                add("ring", ("state", f["address"], f["state"]), "%s%s (%s) %s" % (
+                    (name + " ") if name else "", f["address"], f["rack"], f["state"]), f["seen_from"])
+            elif kind == "count":
+                add("ring", ("count", f["ring"], f["expected"]), "%d members, inventory %d" % (f["ring"], f["expected"]),
+                    f["seen_from"])
+            elif kind == "nodetool":
+                add("nodetool", ("nodetool", f["on"]), "status failed on %s: %s" % (f["on"], f["error"]))
+            elif kind == "port":
+                add("ports", ("port", f["name"], f["port"]), "%s %s not answering on" % (f["name"], f["port"]), f["on"])
+            elif kind == "gossip":
+                add("gossip", ("gossip",), "not running on", f["on"])
+            elif kind == "cql":
+                add("CQL", ("cql",), "native transport not running on", f["on"])
+            elif kind == "streams":
+                add("streams", ("streams",), "in progress on", f["on"])
+            elif kind == "netstats":
+                add("netstats", ("netstats", f["error"]), "failed (%s) on" % f["error"], f["on"])
+            elif kind == "schema":
+                add("schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"])
+            else:
+                add("other", ("other", f.get("text")), f.get("text", ""))
+    for host in unreachable:
+        add("ssh", ("ssh",), "not reached by Ansible:", host)
+
+    lines = []
+    width = max([len(seen[k][0]) for k in rows] or [0]) + 1
+    for key in rows:
+        label, text, who = seen[key]
+        if key[0] in ("state", "count"):
+            text += "   seen from %s" % out.nodes(who)
+        elif who:
+            text += " " + out.nodes(who)
+        lines.append("  %s  %s" % ((label + ":").ljust(width), text))
+    counted = any(k[0] == "count" for k in rows)
+    absent = list(absent or [])
+    if absent and counted:
+        lines.append("  not counted, marked cassandra_node_state: absent: %s" % out.nodes(absent))
+    if not rows:
+        size = members if members is not None else len(hosts)
+        return {"healthy": True, "problems": 0, "lines": [
+            "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (cluster, out.plural(len(hosts), "node"),
+                                                                             size)]}
+    todo = []
+    down = [names.get(k[1], k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
+    if down:
+        todo.append("start Cassandra on %s (its server first if it is down); a node that can't be recovered: "
+                    "replace_node" % ", ".join(down))
+    if absent and counted and topology_command:
+        todo.append({"text": "remove %s from the ring" % out.nodes(absent), "command": topology_command})
+    if unreachable:
+        todo.append("reach %s over SSH, then run this again" % out.nodes(unreachable))
+    if any(k[0] == "streams" for k in rows):
+        todo.append("wait for the streams to end (nodetool netstats), then run this again")
+    head = "NOT HEALTHY  %s  %s checked, %s" % (cluster, out.plural(len(checked), "node"), out.plural(len(rows), "problem"))
+    return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo)}
 
 
 def _ring_node(cluster_status, address):
@@ -240,6 +350,8 @@ def cassandra_removal_force_target(rings, address, removal):
 class FilterModule(object):
     def filters(self):
         return {"cassandra_health_problems": cassandra_health_problems,
+                "cassandra_health_findings": cassandra_health_findings,
+                "cassandra_health_report": cassandra_health_report,
                 "cassandra_leaving_state": cassandra_leaving_state,
                 "cassandra_removal_state": cassandra_removal_state,
                 "cassandra_removal_force_target": cassandra_removal_force_target}
