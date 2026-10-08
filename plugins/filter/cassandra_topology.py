@@ -404,7 +404,10 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
         after.append("The nodes that hand data over to the new ones keep it until a cleanup: its command is printed"
                      " after the adds (topology runs none: the removals move data again).")
 
-    warnings = [{"label": "racks", "each": rack_warnings},
+    # a seed change topology applies on its own, nodes added or removed or not: said where it can't be missed
+    warnings = [{"label": "seeds", "text": "the seeds will change on every node: %s -> %s (from cassandra_seeds in the"
+                 " inventory)." % (",".join(seeds["old"]) or "(none)", seeds["new"]) if seeds.get("step") else ""},
+                {"label": "racks", "each": rack_warnings},
                 {"label": "unknown", "each": ["%s is in the ring but no host of the inventory has this address: never"
                                               " touched. A typo in an address, a host missing from the inventory, or"
                                               " a dead node (remove_dead_node -e cassandra_dead_node_address=%s)."

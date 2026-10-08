@@ -305,6 +305,8 @@ def test_plan_replaces_a_seed_in_one_run():
     assert "\n    from: 10.0.0.1,10.0.0.2\n    to:   10.0.0.1,10.0.0.5\n" in text
     assert "Decommission 1 node:  node2 (dc1/r1)\n\nThe inventory is the desired state" in text
     assert "    a seed until now: the other nodes' seed lists drop it first" in text
+    assert ("WARNING - seeds: the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from"
+            " cassandra_seeds in the inventory).") in " ".join(text.split())
     # the seed still in cassandra_seeds: refused, whatever the rest
     hosts[1]["seed"] = True
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2", "10.0.0.5"])
@@ -321,6 +323,11 @@ def test_plan_seed_change_alone_and_its_refusal():
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2", "10.0.0.4"])
     assert plan["add"] == [] and plan["remove"] == [] and plan["problems"] == []
     assert cassandra_topology_steps(plan, hosts) == ["Change seeds:  node3 (dc2/r1) -> node4 (dc2/r1)"]
+    # nothing added nor removed: the seed change alone, warned about, under --check too
+    for check in (False, True):
+        text = " ".join(cassandra_screen(cassandra_topology_screen(plan, hosts, ring=r), check=check).split())
+        assert ("WARNING - seeds: the seeds will change on every node: 10.0.0.1,10.0.0.2,10.0.0.3 ->"
+                " 10.0.0.1,10.0.0.2,10.0.0.4 (from cassandra_seeds in the inventory).") in text
     # dc2 left with no seed: refused
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2"])
     assert plan["problems"] == ["dc2 would be left with no seed (node3 leaves the seed list): put a node of dc2 in"
@@ -337,3 +344,4 @@ def test_steps_count_and_group_the_nodes():
     assert cassandra_topology_steps(plan, hosts) == [
         "Add 2 nodes:           node5 (dc1/r1), node6 (dc1/r2)",
         "Decommission 2 nodes:  node3 (dc1/r1), node4 (dc1/r2)"]
+    assert "WARNING - seeds" not in cassandra_screen(cassandra_topology_screen(plan, hosts))  # the seeds stay
