@@ -1,0 +1,6 @@
+bugfixes:
+  - "add_node playbook - under ``--check``, a new node that a real run resets first (the package's stock instance) is previewed as reset instead of refused by the identity check of its config."
+  - "add_node playbook - the cleanup command printed at the end leaves out ``-i`` when the inventory is ansible.cfg's, and says it is for after the real run under ``--check``."
+  - "Operator output - a secret value with a comma or a brace in it, or on a line with Jinja, is masked whole."
+  - "Stream and cleanup waits - no ``Pausing for ...`` lines between the progress lines in a terminal."
+  - "Rolling operations - ``--check --diff`` no longer shows the controller's progress directory."
