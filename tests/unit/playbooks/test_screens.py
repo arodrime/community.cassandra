@@ -6,6 +6,7 @@ __metaclass__ = type
 # role, rendered by Ansible with neutral data.
 
 import os
+import re
 import warnings
 
 import pytest
@@ -324,7 +325,7 @@ def test_apply_config_and_update_java_screens():
                   play["vars"], check=True)
     assert text == ("apply_config: would apply the config on node1, node3, node4, node5\n"
                     "--check: nothing will be changed (the plan only, no question).\n\n"
-                    "A real run would write each node in turn (diffs above), then restart or start it as said below.\n\n"
+                    "A real run would write each node in turn, then restart or start it as said below.\n\n"
                     "  node1\n    cassandra.yaml to change\n    then drained and restarted\n\n"
                     "  node3\n    owner, group or mode to change: cassandra.yaml\n    no restart (Cassandra reads its config at start)\n\n"
                     "  node4\n    owner, group or mode to change: cassandra-env.sh\n"
@@ -332,7 +333,7 @@ def test_apply_config_and_update_java_screens():
                     "  node5\n    cassandra.yaml to change\n    its Cassandra is stopped: written, left stopped (read when it starts)")
     text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars}, t["vars"], play["vars"])
     assert text.startswith("apply_config: apply the config on node1\n\n"
-                           "Writes the config one node at a time (diffs above), then restarts or starts it as said below.\n\n")
+                           "Writes the config one node at a time, then restarts or starts it as said below.\n\n")
     t, play = task("update_java.yml", "Show the plan and confirm the run")
     text = screen({"groups": {"cassandra_update_java_True": ["node2"]}, "cassandra_java_version": 17,
                    "hostvars": {"node2": {"cassandra_update_java_running": "Java 11"}}}, t["vars"], play.get("vars"))
@@ -462,8 +463,9 @@ def test_apply_config_recap():
         variables.update(trust(t["vars"]), ansible_check_mode=check)
         return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["ansible.builtin.debug"]["msg"]))
 
+    variables["cassandra_cluster_name"] = "my_cluster"
     assert recap(True) == [
-        "CHANGES (--check: nothing was changed)",
+        "CHECK  apply_config  my_cluster  2 would apply, 1 nothing to apply, 1 not reached, 1 not in this run",
         "node1  would apply, no restart",
         "  cassandra.yaml    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0640",
         "node2  would apply, then restart",
@@ -474,18 +476,38 @@ def test_apply_config_recap():
         "node3  nothing to apply",
         "node4  not reached",
         "node5  not in this run (--limit)"]
+    # a real run showed the changes in its plan, before its question: the outcomes here
     assert recap(False) == [
-        "CHANGES",
+        "DONE  apply_config  my_cluster  2 applied, 1 nothing to apply, 1 not reached, 1 not in this run",
         "node1  applied, no restart",
-        "  cassandra.yaml    owner/group/mode  root:cassandra 0640 -> cassandra:dbgrp 0640",
         "node2  applied, restarted",
         "  restart pending: jvm11-server.options changed since the running Cassandra started",
-        "  cassandra.yaml",
-        "    - concurrent_writes: 32",
-        "    + concurrent_writes: 48",
         "node3  nothing to apply",
         "node4  not reached",
         "node5  not in this run (--limit)"]
+    # how long the run took, from its start (the first play)
+    hostvars["node3"]["_cassandra_apply_config_start"] = 0
+    assert re.match(r"^DONE  apply_config  my_cluster  2 applied, .* not in this run [(][0-9dhms]+[)]$", recap(False)[0])
+
+
+def test_apply_config_plan_shows_the_changes_before_the_question():
+    t, play = task("apply_config.yml", "Show the plan and confirm the run")
+    diff = "--- /etc/cassandra/conf/cassandra.yaml (live)\n+++ (new)\n@@ -1 +1 @@\n-concurrent_reads: 32\n+concurrent_reads: 48\n"
+    hostvars = {"node1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "restart",
+                          "cassandra_apply_config_reasons": ["cassandra.yaml to change"],
+                          "_cassandra_config_items": [{"item": "/etc/cassandra/conf/cassandra.yaml", "diff": diff}]},
+                "node2": {"cassandra_apply_config_todo": False}}
+
+    def blocks(check):
+        variables = dict(trust(t["vars"]), **trust(play["vars"]), hostvars=hostvars, ansible_play_hosts=["node1", "node2"],
+                         ansible_check_mode=check)
+        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(t["vars"]["_blocks"]))
+
+    assert blocks(False) == [{"title": "node1", "lines": ["cassandra.yaml to change", "then drained and restarted",
+                                                         {"pre": ["  cassandra.yaml", "    - concurrent_reads: 32",
+                                                                  "    + concurrent_reads: 48"]}]}]
+    # --check asks nothing: the changes are in the recap
+    assert blocks(True) == [{"title": "node1", "lines": ["cassandra.yaml to change", "then drained and restarted"]}]
 
 
 # node_operation.yml and restart_batch.yml: test_check_mode_results.py
@@ -503,13 +525,13 @@ def test_batch_result_under_check(tasks_file, would, done):
 
 
 def test_apply_config_shows_the_changes_once():
-    # the diffs before the confirmation (the compare step), then the recap at the end (an ops
-    # callback message): not again by the role while writing, nor by the change report
+    # the changes in the plan of a real run (before its question), in the recap under --check (an ops
+    # callback message): not by the role while comparing or writing, nor by the change report
     t, play = task("apply_config.yml", "Print the changes")
     assert t["vars"]["cassandra_output"] is True
     compare, play = task("apply_config.yml", "Compare the config")
     assert compare["vars"]["_cassandra_change_report_quiet"] is True
-    assert not compare["vars"].get("_cassandra_config_quiet")
+    assert compare["vars"]["_cassandra_config_quiet"] is True
     write = next(t for t in load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
                  if t.get("name") == "Write the config")
     assert write["vars"]["_cassandra_config_quiet"] is True and write["vars"]["_cassandra_change_report_quiet"] is True

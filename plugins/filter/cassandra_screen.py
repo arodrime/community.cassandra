@@ -26,8 +26,10 @@ cassandra_decommission_screen: the blocks of decommission_node: each node
     to remove with its dc/rack, load and share, where its data goes, where
     it runs and is checked from, and how it ends; its "step": the same on
     one line ({node, dc, rack, text}, the plan of topology).
-cassandra_apply_config_recap: the changes apply_config made (or, under
-    --check, would make) on each node, at the end of the run.
+cassandra_apply_config_recap: the end of apply_config: a verdict line, what
+    each node got (under --check: would get, with its changes).
+cassandra_apply_config_changes: a node's change lines (the plan of a real
+    apply_config run, before its question).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -356,11 +358,29 @@ def _change_lines(items):
             out.append("    (comments or layout only)")
         out.extend("    " + line for line in lines[:_DIFF_LINES])
         if len(lines) > _DIFF_LINES:
-            out.append("    ... %d more lines (the whole diff: above, or -v)" % (len(lines) - _DIFF_LINES))
+            out.append("    ... %d more lines (the whole diff: -v)" % (len(lines) - _DIFF_LINES))
     return out + dirs
 
 
-def cassandra_apply_config_recap(nodes, check=False):
+def cassandra_apply_config_changes(items):
+    """cassandra_config's _cassandra_config_items of a node -> its change
+    lines (settings diffs masked, owner/group/mode before -> after): the plan
+    of a real run shows them before its question."""
+    return _change_lines(items)
+
+
+def _tally(outcome, todo_done, check):
+    if todo_done:
+        return "would apply" if check else "applied"
+    if "FAILED" in outcome:
+        return "failed"
+    for word in ("nothing to apply", "not reached", "not in this run", "skipped"):
+        if word in outcome:
+            return word
+    return "not touched"
+
+
+def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None):
     """nodes: [{name, todo, done, then, result, items, notes}] in inventory
     order: todo, whether the node had something to apply; done, whether its
     turn ended well (node_operation's cassandra_op_done); then, its
@@ -368,26 +388,37 @@ def cassandra_apply_config_recap(nodes, check=False):
     when not done: skipped, not reached, ...); items, cassandra_config's
     _cassandra_config_items (diffs masked); notes, more lines (a restart
     pending, data dirs another account owns), said whatever the outcome.
-    Nodes with the same outcome and changes share one line, their names as
-    a range when they follow (node3..node5). Not cassandra_output's
-    perm_lines/changed_lines: owner:group as the role reports it, and the
-    key a nested setting is under."""
-    groups, order = {}, []
+    Line 1, the verdict as the other operations' recaps: "CHECK  apply_config
+    my_cluster  2 would apply, 3 nothing to apply (12s)" (DONE, FAILED when a
+    node failed). Then nodes with the same outcome share one line, their
+    names as a range when they follow (node3..node5). Under check, each
+    node's changes under it (no question was asked: the plan did not show
+    them); a real run showed them in its plan, the recap says the outcomes.
+    Not cassandra_output's perm_lines/changed_lines: owner:group as the role
+    reports it, and the key a nested setting is under."""
+    groups, order, counts = {}, [], {}
     for node in nodes or []:
         notes = ["  " + str(n) for n in node.get("notes") or []]
-        if node.get("todo") and node.get("done"):
+        todo_done = bool(node.get("todo") and node.get("done"))
+        if todo_done:
             then = _THEN.get(node.get("then"), ("", ""))[0 if check else 1]
             outcome = ("would apply" if check else "applied") + (", " + then if then else "")
-            lines = notes + _change_lines(node.get("items"))
+            lines = notes + (_change_lines(node.get("items")) if check else [])
         else:
             outcome = str(node.get("result") or "nothing to apply")
             lines = notes
+        word = _tally(outcome, todo_done, check)
+        counts[word] = counts.get(word, 0) + 1
         key = (outcome, tuple(lines))
         if key not in groups:
             groups[key] = []
             order.append(key)
         groups[key].append(str(node["name"]))
-    shown = ["CHANGES (--check: nothing was changed)" if check else "CHANGES"]
+    verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
+    said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
+    if seconds is not None:
+        said += " (%s)" % out.duration(seconds)
+    shown = ["  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)]
     for key in order:
         shown.append("%s  %s" % (out.nodes(groups[key]), key[0]))
         shown.extend(key[1])
@@ -402,4 +433,5 @@ class FilterModule(object):
             "cassandra_decommission_screen": cassandra_decommission_screen,
             "cassandra_reset_warnings": cassandra_reset_warnings,
             "cassandra_apply_config_recap": cassandra_apply_config_recap,
+            "cassandra_apply_config_changes": cassandra_apply_config_changes,
         }

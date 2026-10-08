@@ -1,6 +1,6 @@
 ---
-# Applies the inventory's config to a running cluster. Every node's diff is
-# shown first and the whole run is confirmed once; then the nodes are done one
+# Applies the inventory's config to a running cluster. Every node's changes are
+# shown first (--check: in the recap at the end) and the whole run is confirmed once; then the nodes are done one
 # at a time: cluster checked, config written, node drained and restarted,
 # cluster checked again. Only the nodes whose config changes, or whose running
 # Cassandra did not start with its config files or its systemd unit (written by
@@ -30,6 +30,11 @@
   gather_facts: false
   become: true
   tasks:
+    - name: Note when the run started
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_start: "{{ now().timestamp() | int }}"
+      run_once: true
+
     # Check mode: shows the diffs, writes nothing
     - name: Compare the config
       ansible.builtin.include_role:
@@ -42,7 +47,9 @@
         cassandra_config_reload_seeds: false
         cassandra_change_report_dir: ""  # the real run reports
         _cassandra_config_no_restart_warning: true
-        _cassandra_change_report_quiet: true  # the diffs just shown are the changes; the recap ends the run
+        # the changes once: in the plan of a real run (before its question), in the recap under --check
+        _cassandra_config_quiet: true
+        _cassandra_change_report_quiet: true
 
     - name: Look for a restart still pending
       ansible.builtin.include_role:
@@ -158,8 +165,12 @@
         _blocks: >-
           {%- set l = [] -%}
           {%- for h in _todo -%}
+          {#-   a real run: the changes before its question (--check: in the recap, no question) -#}
+          {%-   set changes = [] if ansible_check_mode
+                              else hostvars[h]._cassandra_config_items | default([]) | community.cassandra.cassandra_apply_config_changes -%}
           {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})),
-                                    'lines': hostvars[h].cassandra_apply_config_reasons + [_then[hostvars[h].cassandra_apply_config_then]]}) -%}
+                                    'lines': hostvars[h].cassandra_apply_config_reasons + [_then[hostvars[h].cassandra_apply_config_then]]
+                                             + ([{'pre': changes}] if changes else [])}) -%}
           {%- endfor -%}
           {{ l }}
         _then:
@@ -173,9 +184,9 @@
           summary: "{{ 'would apply' if ansible_check_mode else 'apply' }} the config on {{ _todo | join(', ') }}"
           intro:
             - >-
-              {{ 'A real run would write each node in turn (diffs above), then restart or start it as said below.'
+              {{ 'A real run would write each node in turn, then restart or start it as said below.'
                  if ansible_check_mode else
-                 'Writes the config one node at a time (diffs above), then restarts or starts it as said below.' }}
+                 'Writes the config one node at a time, then restarts or starts it as said below.' }}
           blocks: "{{ _blocks }}"
   vars:
     _todo: >-
@@ -232,10 +243,15 @@
   tasks:
     - name: Print the changes
       ansible.builtin.debug:
-        msg: "{{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode) }}"
+        msg: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
+                                                                        seconds=(now().timestamp() | int - _start | int) if _start else none) }}
       run_once: true
       vars:
         cassandra_output: true
+        _start: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_start', 'defined')
+             | map(attribute='_cassandra_apply_config_start') | first | default('') }}
         _nodes: >-
           {%- set out = [] -%}
           {%- for h in query('community.cassandra.cassandra_nodes') -%}
