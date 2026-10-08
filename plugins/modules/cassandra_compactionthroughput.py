@@ -16,6 +16,7 @@ requirements:
   - nodetool
 description:
     - Sets the compaction throughput.
+    - Without C(value), only reads the current compaction throughput.
 
 extends_documentation_fragment:
   - community.cassandra.nodetool_module_options
@@ -23,15 +24,19 @@ extends_documentation_fragment:
 options:
   value:
     description:
-      - MB value to set compaction throughput to.
+      - Compaction throughput to set, in MiB per second (nodetool prints MB/s without -d), or 0 to disable throttling.
+      - When omitted, the module only returns the current value and changes nothing.
     type: int
-    required: True
 '''
 
 EXAMPLES = '''
 - name: Set compactionthroughput with module
-  cassandra_compactionthroughput:
+  community.cassandra.cassandra_compactionthroughput:
     value: 32
+
+- name: Read the current compaction throughput
+  community.cassandra.cassandra_compactionthroughput:
+  register: compactionthroughput
 '''
 
 RETURN = '''
@@ -39,20 +44,41 @@ cassandra_compactionthroughput:
   description: The return state of the executed command.
   returned: success
   type: str
+current:
+  description:
+    - The compaction throughput read before any change, in C(unit).
+    - 0 means unlimited (no throttling).
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: float
+  sample: 64.0
+unit:
+  description: The unit printed by nodetool.
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: MiB/s
+current_raw:
+  description: The line printed by the get command.
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: "Current compaction throughput: 64.0 MiB/s"
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolGetSetCommand
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import (
+    NodeToolGetSetCommand, cassandra_version_at_least, parse_nodetool_get)
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
 def main():
     argument_spec = cassandra_common_argument_spec()
     argument_spec.update(
-        value=dict(type='int', required=True)
+        value=dict(type='int')
     )
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -64,6 +90,11 @@ def main():
     value = module.params['value']
 
     n = NodeToolGetSetCommand(module, get_cmd, set_cmd)
+
+    # Since 4.1 the value is in MiB/s and can be fractional, which only
+    # -d prints (without it nodetool fails on a fractional value).
+    if cassandra_version_at_least(module.params['cassandra_version'], "4.1"):
+        n.get_cmd += " -d"
 
     rc = None
     out = ''
@@ -79,8 +110,21 @@ def main():
         if err:
             result['stderr'] = err
 
-    get_response = "Current compaction throughput: {0} MB/s".format(value)
-    if get_response == out:
+    current, unit, line = parse_nodetool_get(out)
+    if rc == 0 and current is not None:
+        result['current'] = current
+        result['unit'] = unit
+        result['current_raw'] = line
+
+    if value is None:
+        if rc != 0:
+            module.fail_json(name=n.get_cmd,
+                             msg="get command failed", **result)
+        if current is None:
+            module.fail_json(name=n.get_cmd,
+                             msg="unable to parse the get command output: {0}".format(out), **result)
+        result['changed'] = False
+    elif current == value:
 
         if rc != 0:
             result['changed'] = False

@@ -22,8 +22,40 @@
   register: traceprobability
 
 - name: Assert starting status of traceprobability
-  assert:
+  ansible.builtin.assert:
     that: "'Current trace probability: 0.0' == traceprobability.stdout"
+
+- name: Read traceprobability with module (no value)
+  community.cassandra.cassandra_traceprobability:
+  register: read_mode
+
+- name: Assert the module returned the starting traceprobability and changed nothing
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 0.0
+      - read_mode.current_raw == traceprobability.stdout
+
+- name: Set traceprobability with module and get the value before the change
+  community.cassandra.cassandra_traceprobability:
+    value: 0.5
+  register: set_mode
+
+- name: Assert the set returned the value before the change
+  ansible.builtin.assert:
+    that:
+      - set_mode.changed == True
+      - set_mode.current == read_mode.current
+
+- name: Read traceprobability again with module
+  community.cassandra.cassandra_traceprobability:
+  register: read_mode
+
+- name: Assert the module read the new traceprobability
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 0.5
 
 - name: Increase traceprobability with module
   community.cassandra.cassandra_traceprobability:
@@ -35,7 +67,7 @@
   register: traceprobability
 
 - name: Assert traceprobability is 0.1
-  assert:
+  ansible.builtin.assert:
     that: "'Current trace probability: 0.1' == traceprobability.stdout"
 
 - name: Set traceprobability to 0.9
@@ -48,7 +80,7 @@
   register: traceprobability
 
 - name: Assert traceprobability is 0.9
-  assert:
+  ansible.builtin.assert:
     that: "'Current trace probability: 0.9' == traceprobability.stdout"
 
 - name: Test module with check_mode = true
@@ -59,7 +91,7 @@
   register: traceprobability
 
 - name: Assert traceprobability has changed (check_mode)
-  assert:
+  ansible.builtin.assert:
     that: traceprobability.changed == True
 
 - name: Get traceprobability
@@ -67,7 +99,7 @@
   register: traceprobability
 
 - name: Assert traceprobability is still 0.9
-  assert:
+  ansible.builtin.assert:
     that: "'Current trace probability: 0.9' == traceprobability.stdout"
 
 - name: Set traceprobability to 0.0
@@ -80,7 +112,7 @@
   register: traceprobability
 
 - name: Assert traceprobability is 0.0
-  assert:
+  ansible.builtin.assert:
     that: "'Current trace probability: 0.0' == traceprobability.stdout"
 
 - name: Set traceprobability 0.0 should not change
@@ -94,12 +126,12 @@
   register: traceprobability
 
 - name: Assert traceprobability is still 0.0 and module reports no change
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current trace probability: 0.0' == traceprobability.stdout"
       - module_nochange.changed == False
 
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Set traceprobability 1 when auth is enabled
@@ -117,7 +149,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert traceprobability is 1.0
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current trace probability: 1.0' == traceprobability.stdout"
       - traceprobability.changed == True
@@ -137,7 +169,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert traceprobability is again 0.1
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current trace probability: 0.1' == traceprobability.stdout"
       - traceprobability.changed == True
@@ -154,7 +186,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert failed login
-  assert:
+  ansible.builtin.assert:
     that:
       - login_status.failed == True
       - "'Invalid username or password' in login_status.stderr"
@@ -170,6 +202,6 @@
   when: cassandra_auth_tests == True
 
 - name: Assert no such file
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Error executing command' in nodetool_path_error.msg or 'No such file or directory' in nodetool_path_error.msg"

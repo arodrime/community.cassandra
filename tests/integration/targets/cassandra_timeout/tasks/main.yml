@@ -22,8 +22,44 @@
   register: read
 
 - name: Assert starting status of timeout read
-  assert:
+  ansible.builtin.assert:
     that: "'Current timeout for type read: 5000 ms' == read.stdout"
+
+- name: Read the read timeout with module (no value)
+  community.cassandra.cassandra_timeout:
+    timeout_type: read
+  register: read_mode
+
+- name: Assert the module returned the starting read timeout and changed nothing
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 5000
+      - read_mode.unit == 'ms'
+      - read_mode.current_raw == read.stdout
+
+- name: Set read timeout with module and get the value before the change
+  community.cassandra.cassandra_timeout:
+    timeout_type: read
+    timeout: 7000
+  register: set_mode
+
+- name: Assert the set returned the value before the change
+  ansible.builtin.assert:
+    that:
+      - set_mode.changed == True
+      - set_mode.current == read_mode.current
+
+- name: Read the read timeout again with module
+  community.cassandra.cassandra_timeout:
+    timeout_type: read
+  register: read_mode
+
+- name: Assert the module read the new read timeout
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 7000
 
 - name: Increase read timeout with module
   community.cassandra.cassandra_timeout:
@@ -32,7 +68,7 @@
     debug: true
   register: read
 
-- assert:
+- ansible.builtin.assert:
     that: 
       - read.changed
       - "read.msg == 'read timeout changed'"
@@ -42,7 +78,7 @@
   register: timeout
 
 - name: Assert timeout is 15000 ms
-  assert:
+  ansible.builtin.assert:
     that: "'Current timeout for type read: 15000 ms' == timeout.stdout"
 
 - name: Set throughput to 15000 again
@@ -52,7 +88,7 @@
     debug: true
   register: timeout
 
-- assert:
+- ansible.builtin.assert:
     that: 
       - "timeout.changed == False"
       - "timeout.msg == 'read timeout unchanged'"
@@ -65,7 +101,7 @@
   check_mode: yes
   register: timeout
 
-- assert:
+- ansible.builtin.assert:
     that:
       - timeout.changed
       - "timeout.msg == 'read timeout changed'"
@@ -75,7 +111,7 @@
   register: timeout
 
 - name: Ensure timeout is 15000
-  assert:
+  ansible.builtin.assert:
     that:
       - "timeout.stdout == 'Current timeout for type read: 15000 ms'"
 
@@ -86,7 +122,7 @@
     debug: true
   register: timeout  
 
-- assert:
+- ansible.builtin.assert:
     that:
       - timeout.changed
       - "timeout.msg == 'read timeout changed'"
@@ -96,7 +132,7 @@
   register: timeout
 
 - name: Ensure timeout is 0
-  assert:
+  ansible.builtin.assert:
     that:
       - "timeout.stdout == 'Current timeout for type read: 0 ms'"
 
@@ -107,11 +143,11 @@
     timeout: 5000
     timeout_type: read
 
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Test various timeout settings in loop
-  include_tasks: timeout_test.yml
+  ansible.builtin.include_tasks: timeout_test.yml
   with_items: "{{ cassandra_3_timeouts if cassandra_version.startswith('3') else cassandra_4_timeouts }}"
 
 
@@ -127,7 +163,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert failed login
-  assert:
+  ansible.builtin.assert:
     that:
       - login_status.failed == True
       - "'Invalid username or password' in login_status.stderr"
@@ -144,6 +180,6 @@
   when: cassandra_auth_tests == True
 
 - name: Assert no such file
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Error executing command' in nodetool_path_error.msg or 'No such file or directory' in nodetool_path_error.msg"

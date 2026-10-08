@@ -32,6 +32,24 @@ def cassandra_version_at_least(version_string, minimum_version):
     return parts(version_string) >= parts(minimum_version)
 
 
+def parse_nodetool_get(out, cast=float):
+    """Parse the value printed by a nodetool get* command, such as
+    "Current stream throughput: 200.0 Mb/s" or "Current trace probability: 0.1".
+
+    Returns (value, unit, line): unit is None when nodetool prints none,
+    and "unlimited" (printed for 0 by the throughput commands since 4.1)
+    is returned as 0. Returns (None, None, None) when no value is found.
+    The number is read as Java prints it, exponent included ("1.0E7").
+    """
+    match = re.search(r'^[^:\n]+:\s*(unlimited|-?\d+(?:\.\d+)?(?:E-?\d+)?)(?:\s+(\S+))?\s*$',
+                      out, re.MULTILINE)
+    if match is None:
+        return None, None, None
+    if match.group(1) == 'unlimited':
+        return cast(0), None, match.group(0).strip()
+    return cast(float(match.group(1))), match.group(2), match.group(0).strip()
+
+
 class NodeToolCmd(object):
     """
     This is a generic NodeToolCmd class for building nodetool commands

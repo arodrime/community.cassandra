@@ -17,6 +17,7 @@ requirements:
 description:
     - Manages the timeout.
     - Set the specified timeout in ms, or 0 to disable timeout.
+    - Without C(timeout), only reads the current timeout of C(timeout_type).
 
 extends_documentation_fragment:
   - community.cassandra.nodetool_module_options
@@ -25,8 +26,8 @@ options:
   timeout:
     description:
       - Timeout in milliseconds.
+      - When omitted, the module only returns the current value and changes nothing.
     type: int
-    required: True
   timeout_type:
     description:
       - Type of timeout.
@@ -55,6 +56,11 @@ EXAMPLES = '''
   community.cassandra.cassandra_timeout:
     timeout: 0
     timeout_type: write
+
+- name: Read the current read timeout
+  community.cassandra.cassandra_timeout:
+    timeout_type: read
+  register: read_timeout
 '''
 
 RETURN = '''
@@ -62,13 +68,32 @@ cassandra_timeout:
   description: The return state of the executed command.
   returned: success
   type: str
+current:
+  description:
+    - The timeout read before any change, in C(unit).
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: int
+  sample: 5000
+unit:
+  description: The unit printed by nodetool.
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: ms
+current_raw:
+  description: The line printed by the get command.
+  returned: when the get command succeeds and its output is parsed
+  version_added: 2.1.0
+  type: str
+  sample: "Current timeout for type read: 5000 ms"
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolGetSetCommand
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolGetSetCommand, parse_nodetool_get
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -79,7 +104,7 @@ def main():
 
     argument_spec = cassandra_common_argument_spec()
     argument_spec.update(
-        timeout=dict(type='int', required=True),
+        timeout=dict(type='int'),
         timeout_type=dict(type='str', choices=timeout_type_choices, default='read')
     )
     module = AnsibleModule(
@@ -108,8 +133,22 @@ def main():
         if err:
             result['stderr'] = err
 
-    get_response = "Current timeout for type {0}: {1} ms".format(timeout_type, timeout)
-    if get_response == out:
+    current, unit, line = parse_nodetool_get(out, int)
+    if rc == 0 and current is not None:
+        result['current'] = current
+        result['unit'] = unit
+        result['current_raw'] = line
+
+    if timeout is None:
+        if rc != 0:
+            module.fail_json(name=n.get_cmd,
+                             msg="get command failed", **result)
+        if current is None:
+            module.fail_json(name=n.get_cmd,
+                             msg="unable to parse the get command output: {0}".format(out), **result)
+        result['changed'] = False
+        result['msg'] = "{0} timeout is {1} ms".format(timeout_type, current)
+    elif current == timeout:
 
         if rc != 0:
             module.fail_json(name=get_cmd,

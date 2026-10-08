@@ -1,0 +1,9 @@
+minor_changes:
+  - cassandra_streamthroughput, cassandra_interdcstreamthroughput, cassandra_compactionthroughput, cassandra_batchlogreplaythrottle, cassandra_maxhintwindow, cassandra_traceprobability, cassandra_timeout - the value to set (``value``, ``timeout`` for cassandra_timeout) is now optional; without it the module only reads the setting. The value read before any change is returned in ``current``, with ``unit`` (when nodetool prints one) and the nodetool line in ``current_raw``.
+  - cassandra_compactionthroughput - reads the throughput with ``getcompactionthroughput -d`` on Cassandra 4.1 and later, so a fractional value no longer makes the get command fail.
+bugfixes:
+  - cassandra_streamthroughput, cassandra_interdcstreamthroughput - setting ``value`` to 0 (no throttling) reported a change on every run on Cassandra 4.1 and later, where nodetool prints ``unlimited``.
+  - cassandra_traceprobability - a probability that nodetool prints with an exponent (for example ``1.0E-4``) reported a change on every run.
+  - cassandra_streamthroughput, cassandra_interdcstreamthroughput - the ``value`` documentation said MB; nodetool takes megabits per second.
+  - cassandra_compactionthroughput - the ``value`` documentation now gives the unit nodetool uses, MiB per second.
+  - cassandra_maxhintwindow - the message when the window is already set gave the value in KB/s instead of ms.

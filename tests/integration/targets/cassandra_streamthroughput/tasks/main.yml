@@ -19,7 +19,7 @@
 # ===========================================================
 # TODO - The integer, e.g. 200 Mb/s checks in this file (each with an OR currently) can be removed when we test against 4.1 and above only
 - name: "Set flag what cassandra_version is 4.1"
-  set_fact:
+  ansible.builtin.set_fact:
     additional_flags: "-d"
   when: cassandra_version in ["41x", "50x"]
 
@@ -28,8 +28,41 @@
   register: streamthroughput
 
 - name: Assert starting status of streamthroughput
-  assert:
+  ansible.builtin.assert:
     that: "'Current stream throughput: 200 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 201.326592 Mb/s' == streamthroughput.stdout"
+
+- name: Read streamthroughput with module (no value)
+  community.cassandra.cassandra_streamthroughput:
+  register: read_mode
+
+- name: Assert the module returned the starting streamthroughput and changed nothing
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current in [200.0, 201.326592]
+      - read_mode.unit == 'Mb/s'
+      - read_mode.current_raw == streamthroughput.stdout
+
+- name: Set streamthroughput with module and get the value before the change
+  community.cassandra.cassandra_streamthroughput:
+    value: 300
+  register: set_mode
+
+- name: Assert the set returned the value before the change
+  ansible.builtin.assert:
+    that:
+      - set_mode.changed == True
+      - set_mode.current == read_mode.current
+
+- name: Read streamthroughput again with module
+  community.cassandra.cassandra_streamthroughput:
+  register: read_mode
+
+- name: Assert the module read the new streamthroughput
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 300
 
 - name: Increase streamthroughput with module
   community.cassandra.cassandra_streamthroughput:
@@ -41,7 +74,7 @@
   register: streamthroughput
 
 - name: Assert streamthroughput is 500MB
-  assert:
+  ansible.builtin.assert:
     that: "'Current stream throughput: 500 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 500.0 Mb/s' == streamthroughput.stdout"
 
 - name: Set throughput to 200
@@ -54,7 +87,7 @@
   register: streamthroughput
 
 - name: Assert streamthroughput is 200MB
-  assert:
+  ansible.builtin.assert:
     that: "'Current stream throughput: 200 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == streamthroughput.stdout"
 
 - name: Test module with check_mode = true
@@ -65,7 +98,7 @@
   register: streamthroughput
 
 - name: Assert streamthroughput has changed (check_mode)
-  assert:
+  ansible.builtin.assert:
     that: streamthroughput.changed == True
 
 - name: Get streamthroughput
@@ -73,7 +106,7 @@
   register: streamthroughput
 
 - name: Assert streamthroughput is still 200MB
-  assert:
+  ansible.builtin.assert:
     that: "'Current stream throughput: 200 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == streamthroughput.stdout"
 
 - name: Set streamthroughput to 250
@@ -86,7 +119,7 @@
   register: streamthroughput
 
 - name: Assert streamthroughput is 250MB
-  assert:
+  ansible.builtin.assert:
     that: "'Current stream throughput: 250 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 250.0 Mb/s' == streamthroughput.stdout"
 
 - name: Set streamthroughput 250 should not change
@@ -100,12 +133,12 @@
   register: streamthroughput
 
 - name: Assert streamthroughput is still 250MB and module reports no change
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current stream throughput: 250 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 250.0 Mb/s' == streamthroughput.stdout"
       - module_nochange.changed == False
 
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Set streamthroughput 300MB when auth is enabled
@@ -123,7 +156,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert streamthroughput is 300MB
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current stream throughput: 300 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 300.0 Mb/s' == streamthroughput.stdout"
       - streamthroughput.changed == True
@@ -143,7 +176,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert streamthroughput is again 200MB
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current stream throughput: 200 Mb/s' == streamthroughput.stdout or 'Current stream throughput: 200.0 Mb/s' == streamthroughput.stdout"
       - streamthroughput.changed == True
@@ -160,7 +193,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert failed login
-  assert:
+  ansible.builtin.assert:
     that:
       - login_status.failed == True
       - "'Invalid username or password' in login_status.stderr"
@@ -176,6 +209,6 @@
   when: cassandra_auth_tests == True
 
 - name: Assert no such file
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Error executing command' in nodetool_path_error.msg or 'No such file or directory' in nodetool_path_error.msg"
