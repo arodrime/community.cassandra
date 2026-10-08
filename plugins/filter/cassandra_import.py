@@ -1325,10 +1325,13 @@ _INI_GROUP = re.compile(r"^\[([^:\]\s]+)(?::(\w+))?\]\s*(?:#.*)?$")  # a section
 
 def _inventory_names(data):
     """A YAML inventory (parsed) -> (its groups but all, its hosts)."""
-    groups, hosts = set(), set()
+    groups, hosts, seen = set(), set(), set()
 
     def walk(level):
-        for name, group in (level.items() if isinstance(level, dict) else []):
+        if not isinstance(level, dict) or id(level) in seen:  # an anchor that loops back
+            return
+        seen.add(id(level))
+        for name, group in level.items():
             groups.add(name)
             if isinstance(group, dict):
                 hosts.update(group["hosts"] if isinstance(group.get("hosts"), dict) else {})
@@ -1390,6 +1393,18 @@ def _own_names(path, text):
     return groups - set(["all", "ungrouped"]), set()
 
 
+def _cluster_tree(text, cluster):
+    """True when a YAML inventory holds the group cluster alone (and what is under it): this cluster's hosts file,
+    without the import's first line (from before that line, or edited by hand)."""
+    try:
+        data = yaml.load(text, Loader=_TagsLoader)  # nosec B506: the loader builds no object
+    except yaml.YAMLError:
+        return False
+    if isinstance(data, dict) and list(data) == ["all"] and isinstance(data["all"], dict) and list(data["all"]) == ["children"]:
+        data = data["all"]["children"]
+    return isinstance(data, dict) and list(data) == [cluster] and isinstance(data[cluster], dict)
+
+
 def cassandra_inventory_leftovers(paths, read, written, cluster, password="", inventory=None, cluster_name=None):
     """paths: the files in the inventory dir, which holds every cluster, each
     with its <cluster group>.yml (relative paths); read: {path: its first line
@@ -1404,11 +1419,14 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
     'conflicts': why this import would write over another cluster's files, or
     share its hosts or groups}. A file whose first line names no cluster (an
     earlier release) is this cluster's when this cluster's hosts file alone
-    names its group or host. Two clusters whose names make the same group, the
-    user's own inventory files with a group of this cluster's, a hosts file of
-    an import into a dir of its own (an earlier layout: hosts.yml, at the top
-    or in a subdir) and a cluster group all, ungrouped or cassandra are
-    conflicts too."""
+    names its group or host. A <cluster group>.yml without the import's
+    first line that holds this cluster's group alone is its hosts file (an
+    earlier release's, or edited by hand). Two clusters whose names make the
+    same group (the cassandra_cluster_name of group_vars/<cluster group>/main.yml,
+    with the import's first line or none), the user's own inventory files with
+    a group of this cluster's, a hosts file of an import into a dir of its own
+    (an earlier layout: hosts.yml, at the top or in a subdir) and a cluster
+    group all, ungrouped or cassandra are conflicts too."""
     found = dict((p, read.get(p)) for p in paths)
 
     def header(path):
@@ -1428,7 +1446,9 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
                for p in path.split("/")):
             continue  # not read by Ansible as inventory
         if name is None:
-            if found[path] is not None:
+            if path == cluster + ".yml" and found[path] is not None and _cluster_tree(found[path], cluster):
+                clusters[path] = (cluster, _yaml_names(found[path]))  # replaced, the old one kept as <file>.<date>~
+            elif found[path] is not None:
                 own[path] = _own_names(path, found[path])
         elif "/" in path or (path == "hosts.yml" and name != "hosts"):  # an import into a dir of its own
             conflicts.append("%s: an import's hosts file of a dir of its own (an earlier layout), read by Ansible too:"
@@ -1437,7 +1457,7 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
             clusters[path] = (name or path[:-len(".yml")], _yaml_names(found[path]))
     # the same group for another cluster (names that differ only by case or punctuation)
     previous = "group_vars/%s/main.yml" % cluster
-    if cluster_name is not None and headers.get(previous) in (cluster, ""):
+    if cluster_name is not None and found.get(previous) is not None and headers[previous] in (cluster, "", None):
         try:
             data = yaml.load(found[previous], Loader=_TagsLoader)  # nosec B506: the loader builds no object
         except yaml.YAMLError:

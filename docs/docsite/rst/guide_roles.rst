@@ -1058,7 +1058,9 @@ with the defaults after moving the old directory out of ``inventories``. A clust
 ``all`` or ``ungrouped`` (cluster name ``Cassandra``) cannot be imported: the playbooks or Ansible take those groups
 on their own. A file from an
 earlier release, whose first line names no cluster, is this cluster's when this cluster's hosts file alone names its
-group or host; otherwise it is kept as it is and listed in the report. The report lists the files removed, the files
+group or host; otherwise it is kept as it is and listed in the report. A ``<cluster group>.yml`` without that first
+line that holds this cluster's group alone (an old ``hosts.yml`` moved there by hand, or one edited by hand) is its
+hosts file: replaced, the old one kept as a backup. The report lists the files removed, the files
 kept (down to ``group_vars/<group>/``), and the files replaced at its paths that did not have its header, each kept
 as a ``<file>.<timestamp>~`` backup. A file of the import you edit by hand is replaced by the next import: put your own
 settings in files of your own (``group_vars/all/local.yml``, ``group_vars/<cluster>/local.yml``).

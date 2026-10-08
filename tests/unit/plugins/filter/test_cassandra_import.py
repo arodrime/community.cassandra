@@ -1078,6 +1078,63 @@ def test_files_of_an_earlier_release():
                    "conflicts": []}
 
 
+# as an import from before the first line was written, moved by hand from inventories/cluster_a/hosts.yml
+OLD_MAIN_A = "---\n\n\n# Cluster & Topology\ncassandra_cluster_name: Cluster A\n"
+
+
+@pytest.mark.parametrize("first", ["---", "", "# moved from inventories/cluster_a/hosts.yml"])
+def test_hosts_file_moved_from_a_dir_of_its_own(first):
+    """An earlier import's hosts.yml moved by hand to <cluster group>.yml, without the import's first line, next to
+    its group_vars and host_vars without it either (or with the unnamed one): this cluster's, replaced with a
+    backup."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+        GENERATED, GENERATED_UNNAMED, cassandra_inventory_leftovers)
+    found = _two_clusters(GENERATED_UNNAMED, GENERATED % "cluster_b")
+    found.update({"cluster_a.yml": first + "\n" + HOSTS_A, "group_vars/cluster_a/main.yml": OLD_MAIN_A,
+                  "group_vars/cluster_a_dc1/main.yml": "---\ncassandra_dc: dc1\n", "host_vars/node1/main.yml": "---\n"})
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A,
+                                        cluster_name="Cluster A")
+    assert out == {"stale": ["host_vars/gone/main.yml"], "kept": ["group_vars/all/main.yml"],
+                   "replaced": ["cluster_a.yml", "group_vars/cluster_a/main.yml", "group_vars/cluster_a_dc1/main.yml",
+                                "host_vars/node1/main.yml"], "unsure": [], "conflicts": []}
+    # without the all level, as an inventory may be written too
+    found["cluster_a.yml"] = first + "\n" + yaml.safe_dump(yaml.safe_load(HOSTS_A)["all"]["children"])
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
+    assert out["conflicts"] == [] and out["stale"] == ["host_vars/gone/main.yml"] and "cluster_a.yml" in out["replaced"]
+    # another cluster whose name makes the same group: its main.yml tells, with no first line too
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A,
+                                        cluster_name="cluster-a")
+    assert out["conflicts"] == ["group_vars/cluster_a/main.yml: cluster 'Cluster A', not 'cluster-a' (two clusters,"
+                                " one group cluster_a)"]
+
+
+@pytest.mark.parametrize("text, conflicts", [
+    (HOSTS_A + "    linux:\n      hosts: {node1: }\n",                 # a group of the user's next to the cluster's
+     ["group cluster_a: in cluster_a.yml too", "group cluster_a_dc1: in cluster_a.yml too",
+      "group cluster_a_dc1_rack1: in cluster_a.yml too"]),
+    (HOSTS_A + "  vars: {x: 1}\n",                                        # vars on all
+     ["group cluster_a: in cluster_a.yml too", "group cluster_a_dc1: in cluster_a.yml too",
+      "group cluster_a_dc1_rack1: in cluster_a.yml too"]),
+    (HOSTS_A + "  hosts: {web1: }\n",                                     # hosts on all
+     ["group cluster_a: in cluster_a.yml too", "group cluster_a_dc1: in cluster_a.yml too",
+      "group cluster_a_dc1_rack1: in cluster_a.yml too"]),
+    ("cluster_a_dc1:\n  hosts: {node1: }\n", ["group cluster_a_dc1: in cluster_a.yml too"]),  # part of the cluster
+])
+def test_hosts_file_without_the_line_not_the_clusters_alone(text, conflicts):
+    """<cluster group>.yml without the import's first line, holding more than this cluster's group: the user's."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    found = {"cluster_a.yml": text}
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
+    assert out["conflicts"] == conflicts
+
+
+def test_hosts_file_with_a_looping_anchor():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    found = {"cluster_a.yml": "cluster_a: &x\n  children:\n    sub: *x\n"}
+    out = cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)
+    assert out["conflicts"] == [] and out["replaced"] == ["cluster_a.yml"]
+
+
 def test_first_import_next_to_another_cluster():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
         GENERATED, cassandra_inventory_leftovers)

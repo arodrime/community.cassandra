@@ -41,7 +41,9 @@
 # (group_vars/all/*.yml, the other clusters', notes). A file from an earlier
 # release, whose line names no cluster, is this cluster's only when this
 # cluster's hosts file alone names its group or host (else it is kept, and
-# listed in the report).
+# listed in the report). A <cluster group>.yml without that line holding this
+# cluster's group alone (moved from an earlier layout, or edited by hand) is
+# its hosts file: replaced, the old one kept as <file>.<date>~.
 # Passwords found in the config go to secrets.yml files next to the other
 # variables: encrypted with ansible-vault with the vault password file of
 # Ansible (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not
