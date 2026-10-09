@@ -1121,6 +1121,15 @@ Without a password file, they are written in clear with mode ``0600``, and the r
 ``ansible-vault encrypt`` command to run; a vaulted ``secrets.yml`` already there is then never overwritten in clear
 (the import stops). A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
 
+With CQL authentication on (a ``PasswordAuthenticator``), the operations that read the replication (``decommission_node``,
+``topology``, ``rolling_restart``...) log in with ``cassandra_cql_username`` and ``cassandra_cql_password``, which no
+node gives. When your inventory (any ``group_vars`` or ``host_vars`` file, vaulted or not) or ``-e`` sets them, the
+import checks them with a real CQL login on one node (as the operations log in) and does not ask, nor write them (a
+refused login is a ``TO DO``). A login an earlier import wrote is kept on a re-import (``-i <node>,`` too). Otherwise it asks for them on the terminal (the password not shown), checks each one
+(3 tries), and writes them with the cluster's variables, the password in ``secrets.yml`` (vaulted as above). Without
+a terminal, under ``--check`` or with ``-e cassandra_operation_confirm=false`` it does not ask: a ``TO DO`` says how
+to set them. No password is shown on the screen, in the report or in a log.
+
 Every file the import writes starts with ``# Written by community.cassandra.import_cluster for <cluster group>``. A
 cluster whose ``<cluster group>.yml`` is there already is refused unless ``import_cluster_force=true`` (the directory
 itself may exist, with other clusters); then the import writes the files at its own paths (``<cluster group>.yml``,

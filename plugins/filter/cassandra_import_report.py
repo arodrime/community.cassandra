@@ -145,7 +145,7 @@ def _edit_name(name):
 @_values_hidden
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
-                            self_check_error="", cwd=None, in_git=None, changes=None):
+                            self_check_error="", cwd=None, in_git=None, changes=None, todo=None):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes; self_check: {node: {differences, notes}}; self_check_ok;
     secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers'; check:
@@ -154,7 +154,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     the run only (header, TO DO, SETTINGS); cwd: paths shown relative to it; in_git: the inventory dir is in a
     git work tree (None: looked for); changes: what the run wrote or would write, {changed: [the files written
     that change], removed: [the files removed], existed: [the files there before]}, paths in the inventory dir
-    (None: not known). Returns the lines."""
+    (None: not known); todo: more TO DO items (the CQL login). Returns the lines."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
@@ -193,7 +193,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     alls = ("group_vars/all", "group_vars/all.yml", "group_vars/all.yaml", "group_vars/all.json")
     standard = bool(yours) and all("/".join(y["path"].split("/")[:2]) in alls for y in yours)
     differs_title = "DIFFERS FROM YOUR group_vars/all" if standard else "DIFFERS FROM YOUR OWN VARIABLES"
-    todo = []
+    more, todo = list(todo or []), []
     if unread:
         todo.append("Not read: %s: start Cassandra or fix the access, then import again%s" % (
             ", ".join("%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread),
@@ -226,6 +226,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if leftovers.get("unsure"):
         todo.append("Files of an earlier import whose cluster is not known, kept: %s (remove them if they are this"
                     " cluster's, or import again with -e import_cluster_adopt=true)" % ", ".join(leftovers["unsure"]))
+    todo += more
     git = out.in_git_work_tree(inventory_dir) if in_git is None else in_git
     review = "git diff && git commit" if git else "the files written in %s" % shown(inventory_dir)
     if check and not same:

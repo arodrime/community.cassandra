@@ -1428,6 +1428,7 @@ BLOCKS = [
     ("JMX", [
         "cassandra_jmx_port", "cassandra_local_jmx", "cassandra_jmx_rmi_hostname", "cassandra_jmx_username",
         "cassandra_jmx_password_file", "cassandra_jmx_password", "cassandra_jmx_users"]),
+    ("CQL login (the operations that read the replication)", ["cassandra_cql_username", "cassandra_cql_password"]),
     ("JVM & heap (cassandra-env.sh, jvm*-server.options)", [
         "cassandra_heap_size", "cassandra_heap_newsize", "cassandra_max_direct_memory_size", "cassandra_jvm_gc",
         "cassandra_jvm_max_gc_pause_millis", "cassandra_jvm_g1_heap_region_size", "cassandra_jvm_g1_new_size_percent",
@@ -1885,6 +1886,28 @@ def cassandra_inventory_same_secret(existing, content, password):
     return _decrypt(existing, password) == content
 
 
+@_values_hidden
+def cassandra_inventory_own_values(read, cluster_group, keys, password=""):
+    """read: {path: text} of the vars files of the inventory dir -> {key: value} of keys as an earlier import of
+    this cluster wrote them in its own files of the cluster group (group_vars/<cluster group>/main.yml and
+    secrets.yml, with the import's first line naming the group; a vaulted one decrypted with password). What a
+    re-import keeps when nothing else gives it (the CQL login: no node gives it)."""
+    out = {}
+    for name in ("main.yml", "secrets.yml"):
+        text = (read or {}).get("group_vars/%s/%s" % (cluster_group, name))
+        if text and str(text).startswith("$ANSIBLE_VAULT"):
+            text = _decrypt(text, password)
+        if not text or written_for(text) != cluster_group:
+            continue
+        try:
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            continue
+        if isinstance(data, dict):
+            out.update((k, data[k]) for k in keys if k in data and isinstance(data[k], (str, int)))
+    return out
+
+
 def cassandra_config_ignored_vars(names, cassandra_version):
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
@@ -1990,6 +2013,7 @@ class FilterModule(object):
             "cassandra_inventory_generated": cassandra_inventory_generated,
             "cassandra_inventory_leftovers": cassandra_inventory_leftovers,
             "cassandra_inventory_same_secret": cassandra_inventory_same_secret,
+            "cassandra_inventory_own_values": cassandra_inventory_own_values,
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,
