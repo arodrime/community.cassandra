@@ -317,3 +317,30 @@ def test_a_rescued_failure_on_one_line(tmp_path):
     assert "failed: [node1] (item=/bin/false)" not in output
     # a failure in a rescue is not handled: in full
     assert "TASK [Fails again]" in output and "the real failure" in output
+
+
+def test_a_play_with_no_host_says_nothing(tmp_path):
+    playbook = """
+- hosts: "{{ groups['nothing_to_do'] | default([]) }}"
+  gather_facts: false
+  tasks:
+    - name: Never
+      ansible.builtin.debug:
+        msg: never
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Load defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+      when: true
+    - name: Done
+      ansible.builtin.debug:
+        msg: done
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook, INVENTORY="node1,")
+    assert rc == 0, output
+    assert output.splitlines() == ["done"]  # no "skipping: no hosts matched", no noop warning

@@ -220,4 +220,5 @@ class CallbackModule(DefaultCallback):
     v2_playbook_on_notify = _quiet("v2_playbook_on_notify")
     v2_playbook_on_stats = _quiet("v2_playbook_on_stats")
     v2_playbook_on_no_hosts_remaining = _quiet("v2_playbook_on_no_hosts_remaining")  # after the failures shown
+    v2_playbook_on_no_hosts_matched = _quiet("v2_playbook_on_no_hosts_matched")  # a step with nothing to do
     del _quiet

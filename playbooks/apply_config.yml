@@ -193,7 +193,7 @@
       {%- set out = [] -%}{%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | default(false) | bool -%}{%-          set _ = out.append(h) -%}{%- endfor -%}{{ out }}
 
 - name: Set up the progress file
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_apply_config_True"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
   gather_facts: false
   become: true
   vars:
@@ -205,7 +205,7 @@
         tasks_from: progress.yml
 
 - name: Apply the config, one node at a time
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_apply_config_True"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
   serial: 1
   any_errors_fatal: true
   become: true

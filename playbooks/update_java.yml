@@ -131,7 +131,7 @@
       when: groups['cassandra_update_java_True'] | default([]) | length > 0
 
 - name: Set up the progress file
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_update_java_True"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_update_java_True'] | default([])) | list }}"
   gather_facts: false
   become: true
   vars:
@@ -143,7 +143,7 @@
         tasks_from: progress.yml
 
 - name: Move to the new Java, one node at a time
-  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_update_java_True"
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_update_java_True'] | default([])) | list }}"
   serial: 1
   any_errors_fatal: true
   become: true
