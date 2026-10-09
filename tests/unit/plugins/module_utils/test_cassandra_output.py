@@ -100,6 +100,28 @@ def test_mask_secret_shown():
     assert out.secret("opts", "-Dtruststore_password=y") and not out.secret("cassandra_jmx_password", "")
     assert out.secret("server_encryption_options", {"keystore_password": "x"})
     assert out.shown("keystore_password", "x") == "****"
+
+
+SECRETS = [  # (key, value): each one hidden on screen and filed in secrets.yml
+    ("cassandra_jmx_password", "x"), ("ldap_auth_token", "t"), ("cassandra_repository_pw", "p"),
+    ("svc_pass", "p"), ("pw", "p"), ("pass", "p"), ("internode_ca_key", "k"), ("jmx_kspw", "k"), ("jmx_tspw", "k"),
+    ("cassandra_medusa_s3_access_key_id", "AKIA"), ("tde", {"key_material": "m"}), ("opts", "-Dkeystore_pw=k"),
+    ("opts", "nodetool -u u -pw secret1 status"), ("cmd", "cqlsh -u u -p secret2 host"),
+    ("settings", {"auth": {"ca_key": "k"}}), ("settings", "{\"password\": \"x\"}"), ("tokens", ["-Dauth_token=x"]),
+    ("cassandra_cql_password", 1234)]
+NOT_SECRETS = [("cassandra_jmx_password_file", "/etc/x"), ("cassandra_jmx_password", ""),
+               ("cassandra_jmx_password", None), ("concurrent_reads", 32), ("opts", "-Xmx8G -p 9042"),
+               ("compass", "x"), ("bypass", "x"), ("passive_mode", "x"), ("settings", {"keystore": "conf/.keystore"})]
+
+
+def test_one_rule_for_secrets():
+    # what the output hides is what import_cluster files in secrets.yml: nothing hidden on screen in clear there
+    for key, value in SECRETS:
+        assert out.hidden(key, value) and out.secret(key, value), (key, value)
+        assert out.shown(key, value) == "****"
+    for key, value in NOT_SECRETS:
+        assert not out.hidden(key, value) and not out.secret(key, value), (key, value)
+    assert out.secret is out.hidden
     assert [out.shown("k", v) for v in ("text", 32, True, None, ["a"], {"b": 1})] == \
         ["text", "32", "true", "null", '["a"]', '{"b": 1}']
 

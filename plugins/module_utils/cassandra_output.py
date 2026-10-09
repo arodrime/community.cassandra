@@ -185,22 +185,22 @@ def nodes(names, keep_order=False, full=False):
 
 # --- secrets -------------------------------------------------------------------------------
 
-# A variable or setting whose value is a secret (sse_c_key, access_key: Medusa's)
-SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material", re.I)
-# A secret inside a line of text (a config file line, a JVM option): its value
-SECRET_VALUE = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret|private_key)[\w.-]*\s*[:=]\s*)"
-                          r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|\S.*?(?=\s+#|$))", re.M)
+# One rule for what is a secret: what the output hides (****) and what import_cluster files in secrets.yml.
+# A variable or setting whose value is a secret (sse_c_key, access_key: Medusa's; kspw, tspw: a keystore's and a
+# truststore's in a JVM option; ca_key, auth_token, a name ending in _pw or _pass)
+SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|auth_token|ca_key"
+                    r"|_kspw$|_tspw$|_pw$|_pass$|^pw$|^pass$", re.I)
+_HIDDEN = SECRET
 MASK = "****"
-# What the output hides besides (secret and SECRET_VALUE are also what import_cluster files as secrets: kept as
-# they are): more names, a quote between the name and the colon (JSON, Python), the command line forms
-_HIDDEN = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|auth_token"
-                     r"|_pw$|_pass$|^pw$|^pass$|ca_key", re.I)
-_HIDDEN_KEY = (r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token|_pw|_pass)"
-               r"[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
+# A secret inside a line of text (a config file line, a JVM option): its name (as above, inside a longer one),
+# a quote between the name and the colon (JSON, Python), then its value
+_HIDDEN_KEY = (r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
+               r"|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
 # an unquoted value runs to the end of the line (a comment aside), as a YAML plain scalar or a JVM option may hold
 # a comma; inside a flow mapping or JSON ({...} before it) it ends at the next comma or brace
 _HIDDEN_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|$))", re.M)
 _HIDDEN_FLOW_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|,\s|[,}]|$))", re.M)
+SECRET_VALUE = _HIDDEN_VALUE
 # nodetool -pw, --password; -p only after cqlsh (elsewhere a port or mkdir -p)
 _HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|--password)\s+|\bcqlsh\b[^\n]*?\s-p\s+)(\S+)", re.M)
 _BLOCK = re.compile(r"^\s*[|>][-+]?\d*\s*$")
@@ -244,30 +244,22 @@ def mask(text):
 
 
 def hidden(key, value):
-    """True when the output shows value of key as ****: a secret, or a name or
-    a value the output hides too."""
+    """True when value of key is (or holds) a secret: the output shows it as ****, import_cluster writes it to
+    secrets.yml. A name of SECRET (not a path: cassandra_jmx_password_file), or a secret inside the value (a
+    key: value, key=value, -pw value in a string, a dict or list that holds one); never an empty value."""
     if isinstance(value, dict):
         return any(hidden(str(k), v) for k, v in value.items())
     if isinstance(value, (list, tuple)):
         return bool(_HIDDEN.search(key)) or any(hidden(key, v) for v in value)
     if value == "" or value is None:
-        return False
-    if isinstance(value, str) and mask(value) != value:
-        return True
-    return secret(key, value) or (bool(_HIDDEN.search(key)) and not key.endswith("_file"))
-
-
-def secret(key, value):
-    """True when the value of key is (or holds) a secret."""
-    if isinstance(value, dict):
-        return any(secret(k, v) for k, v in value.items())
-    if isinstance(value, list):
-        return bool(SECRET.search(key)) or any(secret(key, v) for v in value if isinstance(v, (dict, str)))
-    if value == "":
         return False  # e.g. a password variable set to "" to leave it out
-    if isinstance(value, str) and SECRET_VALUE.search(value):
+    if isinstance(value, str) and mask(value) != value:
         return True  # e.g. a unit's JVM_EXTRA_OPTS=-Djavax.net.ssl.keyStorePassword=...
-    return bool(SECRET.search(key)) and not key.endswith("_file")  # a path, e.g. cassandra_jmx_password_file
+    return bool(_HIDDEN.search(key)) and not key.endswith("_file")
+
+
+# what import_cluster files in secrets.yml: the same rule, nothing hidden on screen in clear in group_vars
+secret = hidden
 
 
 def shown(key, value):
