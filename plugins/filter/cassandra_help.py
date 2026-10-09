@@ -168,10 +168,11 @@ OPERATIONS = [
                                                                " cluster name is the default 'Test Cluster'", "false")],
      "example": CHECK},
     {"name": "apply_config", "theme": "cluster",
-     "summary": "Applies the inventory's config: shows every diff, asks once, then writes the nodes that need it,"
-                " one at a time, restarting only those that need it.",
+     "summary": "Applies the inventory's config: shows the settings that differ (the inventory's value, then each"
+                " other value with its nodes), asks once, then writes the nodes that need it, one at a time,"
+                " restarting only those that need it.",
      "options": [RESUME],
-     "example": ("every diff, changing nothing", ["--check"])},
+     "example": ("the settings that differ, changing nothing", ["--check"])},
     {"name": "change_seeds", "theme": "cluster",
      "summary": "Applies a new cassandra_seeds list to every node, live (no restart); topology, add_node and"
                 " decommission_node apply it too when nodes come and go.",

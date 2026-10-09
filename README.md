@@ -48,7 +48,7 @@ comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a da
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
 - `update_java`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
-- `apply_config`- Applies the inventory's config: shows every diff, asks once, then writes the nodes that need it, one at a time, restarting only those that need it.
+- `apply_config`- Applies the inventory's config: shows the settings that differ (the inventory's value, then each other value with its nodes), asks once, then writes the nodes that need it, one at a time, restarting only those that need it.
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
 - `status`- Read-only view of the ring from one node (`nodetool status` per datacenter, a summary per datacenter, inventory hosts missing from the ring and the reverse); fails only when no node answers (of `cassandra_target_nodes`, when given).
 - `cleanup`- Runs `nodetool cleanup` node by node, rack by rack, DC by DC or everywhere at once, checking the cluster before each batch.

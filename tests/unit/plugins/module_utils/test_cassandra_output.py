@@ -107,27 +107,52 @@ def test_mask_secret_shown():
 # --- a setting and its value per node ---
 
 def test_setting_lines_all_and_differs():
-    assert out.setting_lines("concurrent_reads", {"node1": 32, "node2": 32}) == ["concurrent_reads:  32   all"]
+    assert out.setting_lines("concurrent_reads", {"node1": 32, "node2": 32}) == ["concurrent_reads: 32   all"]
     lines = out.setting_lines("concurrent_reads", {"node1": 32, "node2": 32, "node3": 64, "node4": 32})
-    assert lines == ["concurrent_reads:  32   node1, node2, node4",
-                     "                   64   node3                 %s differs" % ARROW]
+    assert lines == ["concurrent_reads: 32   node1, node2, node4",
+                     "                  64   node3                 %s differs" % ARROW]
 
 
 def test_setting_lines_not_all_when_nodes_missing():
     # node3 of the run has no value: not "all"
     assert out.setting_lines("x", {"node1": 1, "node2": 1}, all_nodes=["node1", "node2", "node3"]) == \
-        ["x:  1   node1, node2"]
+        ["x: 1   node1, node2"]
 
 
 def test_setting_lines_expected_notes_where_and_secrets():
     lines = out.setting_lines("heap", {"n1": "8G", "n2": "8G", "n3": "16G"}, expected="16G",
                               where={"8G": "host_vars"}, notes={"16G": "set by hand"})
-    assert lines == ["heap:  8G    n1, n2   in host_vars  %s differs" % ARROW,
-                     "       16G   n3       (collection value)  (set by hand)"]
-    assert out.setting_lines("heap", {"n1": "8G"}, where="group_vars/all.yml") == ["heap:  8G   all   in group_vars/all.yml"]
+    assert lines == ["heap: 8G    n1, n2   in host_vars  %s differs" % ARROW,
+                     "      16G   n3       (collection value)  (set by hand)"]
+    assert out.setting_lines("heap", {"n1": "8G"}, where="group_vars/all.yml") == ["heap: 8G   all   in group_vars/all.yml"]
     lines = out.setting_lines("keystore_password", {"n1": "s3cret1", "n2": "s3cret2"})
-    assert "s3cret" not in " ".join(lines) and lines[0].startswith("keystore_password:  ****   n1")
+    assert "s3cret" not in " ".join(lines) and lines[0].startswith("keystore_password: ****   n1")
     assert out.setting_lines("x", {}) == []
+
+
+def test_settings_lines_one_column_each_across_settings():
+    # the names, values and nodes aligned across the settings, a heading between them, a long name on its own line
+    entries = ["cassandra.yaml",
+               out.setting_rows("max_hint_window", {"n1": "3h", "n2": "3h", "n3": "6h"}),
+               "jvm-server.options",
+               ("-Ddemo.drift=1", [("present", "n2", ARROW + " differs (not in the inventory)")]),
+               ("client_encryption_options.keystore_password", [("****", "n1, n2", "")])]
+    assert out.settings_lines(entries) == [
+        "cassandra.yaml",
+        "  max_hint_window: 3h        n1, n2",
+        "                   6h        n3       %s differs" % ARROW,
+        "jvm-server.options",
+        "  -Ddemo.drift=1:  present   n2       %s differs (not in the inventory)" % ARROW,
+        "  client_encryption_options.keystore_password:",
+        "                   ****      n1, n2"]
+    # a value longer than the column pushes its nodes only
+    assert out.settings_lines([("a", [("x" * 35, "n1", "")]), ("b", [("y", "n2", "")])], max_value=10) == [
+        "  a: %s  n1" % ("x" * 35), "  b: y          n2"]
+    assert out.settings_lines(["only a heading"]) == ["only a heading"] and out.settings_lines([]) == []
+    # a long node list pushes its own note only
+    many = ", ".join("node%d" % i for i in range(1, 40, 2))
+    assert out.settings_lines([("x", [("1", many, "(inventory)"), ("2", "node2", ARROW + " differs")])]) == [
+        "  x: 1   %s   (inventory)" % many, "     2   node2                            %s differs" % ARROW]
 
 
 def test_by_nodes():

@@ -13,8 +13,16 @@ Conventions
 - **Verdict first.** Line 1 says what happens or happened: ``PLAN``, ``READY``, ``REFUSED``, ``DONE``,
   ``FAILED``, ``CHECK``, ``HEALTHY``, ``NOT HEALTHY``, then the operation and the cluster.
 - **One fact per line**, no prose: the documentation explains, the output states.
-- **Setting-centric**, grouped: ``setting:  value   nodes``, ``all`` when every node agrees, a line per other
-  value, ``← differs`` on the minority ones. Secrets are always shown as ``****``.
+- **Setting-centric**, grouped: ``setting: value   nodes``, ``all`` when every node agrees, a line per other
+  value, ``← differs`` on the minority ones. Secrets are always shown as ``****``. Several settings share one
+  column each for the names, the values and the nodes (``settings_lines``): the import report and
+  ``apply_config``'s settings that differ, where the inventory's value comes first with the nodes already on it::
+
+    cassandra.yaml
+      max_hint_window:  3h                            node1..node3, node5   (inventory)
+                        6h                            node4                 ← differs
+    jvm-server.options
+      -Ddemo.drift=1:   present                       node2                 ← differs (not in the inventory)
 - **Node lists** are short: ``node1..node5, node7`` (a range from 3 consecutive names, 2 names listed, a gap breaks
   the range), ``6 nodes:`` first when there are more than 5. Files and ``-v`` give every name; ``--limit`` in a
   command always lists every host.
@@ -91,7 +99,7 @@ Blocks
 ------
 
 ``cassandra_node_list``, ``cassandra_size``, ``cassandra_rate``, ``cassandra_duration``,
-``cassandra_setting_lines``, ``cassandra_by_nodes``, ``cassandra_plan``, ``cassandra_progress_line``,
+``cassandra_setting_lines``, ``cassandra_settings_lines``, ``cassandra_by_nodes``, ``cassandra_plan``, ``cassandra_progress_line``,
 ``cassandra_recap``, ``cassandra_perm_lines``, ``cassandra_diff_lines``, ``cassandra_changed_lines``,
 ``cassandra_command``, ``cassandra_todo``, ``cassandra_inventory_steps``, ``cassandra_in_git_work_tree``,
 ``cassandra_mask``: their arguments are in ``plugins/filter/cassandra_output.py`` and the module_utils functions

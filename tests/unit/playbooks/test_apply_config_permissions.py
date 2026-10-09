@@ -95,13 +95,14 @@ def note(changes=(), perms=(), pending=False, running=True, unit="inactive", jvm
     variables = {"_cassandra_config_changes": list(changes), "_cassandra_config_perm_changes": list(perms),
                  "cassandra_config_restart_pending": pending, "cassandra_config_newer_files": ["cassandra.yaml"],
                  "_cassandra_preflight_running": running, "cassandra_jvm": jvm or {},
+                 "_cassandra_config_dir_notes": [],
                  "cassandra_apply_config_unit": {"skipped": True} if running else {
                      "status": {"ActiveState": unit, "Result": result, "ExecMainStatus": status}}}
     variables = with_task_vars(NOTE, variables)
     facts = NOTE["ansible.builtin.set_fact"]
     return (render(facts["cassandra_apply_config_todo"], variables) in (True, "True"),
             render(facts["cassandra_apply_config_then"], variables),
-            render(facts["cassandra_apply_config_reasons"], variables))
+            render(facts["cassandra_apply_config_notes"], variables))
 
 
 # Written by a run without the inventory: root:cassandra; the inventory has
@@ -125,14 +126,13 @@ def test_owner_and_mode_changes_are_listed_under_the_former_name_too():
 def test_a_node_with_only_owner_and_mode_to_change_is_done_without_a_restart():
     perms = perm_changes(LIVE, **INVENTORY)
     # it was left out (nothing to do) before: the files kept root:cassandra
-    assert note(perms=perms) == (True, "none", ["owner, group or mode to change: cassandra.yaml, cassandra-env.sh"])
+    assert note(perms=perms) == (True, "none", [])
 
 
 @pytest.mark.parametrize("unit", ["failed", "activating"])
 def test_a_node_that_failed_to_start_is_started_once_written(unit):
     perms = perm_changes(LIVE, **INVENTORY)
-    assert note(perms=perms, running=False, unit=unit) == (
-        True, "start", ["owner, group or mode to change: cassandra.yaml, cassandra-env.sh"])
+    assert note(perms=perms, running=False, unit=unit) == (True, "start", [])
     assert note(changes=["cassandra.yaml"], running=False, unit=unit)[:2] == (True, "start")
     # not running, nothing to change: left as it is
     assert note(running=False, unit=unit)[0] is False
@@ -163,15 +163,14 @@ def test_a_jvm_the_unit_did_not_start_counts_as_running():
     assert names.index("Read the state of its unit") < names.index("Note what this node needs")
 
 
-@pytest.mark.parametrize("changes, pending, reasons", [
-    (["cassandra.yaml"], False, ["cassandra.yaml to change"]),
+@pytest.mark.parametrize("changes, pending, notes", [
+    (["cassandra.yaml"], False, []),
     ([], True, ["restart pending (cassandra.yaml changed since the running Cassandra started)"]),
 ])
-def test_new_settings_restart_a_running_node(changes, pending, reasons):
-    assert note(changes=changes, pending=pending) == (True, "restart", reasons)
-    both = note(changes=changes, perms=perm_changes(LIVE, **INVENTORY), pending=pending)
-    assert both[:2] == (True, "restart") and set(reasons) < set(both[2])
-    assert "owner, group or mode to change: cassandra.yaml, cassandra-env.sh" in both[2]
+def test_new_settings_restart_a_running_node(changes, pending, notes):
+    # the settings are said by the view of what differs; a restart pending, under the node's outcome
+    assert note(changes=changes, pending=pending) == (True, "restart", notes)
+    assert note(changes=changes, perms=perm_changes(LIVE, **INVENTORY), pending=pending) == (True, "restart", notes)
 
 
 def test_nothing_to_do():
@@ -311,12 +310,13 @@ def test_a_node_not_running_has_no_restart_pending_unless_a_resumed_run_stopped_
             "restart pending (cassandra.yaml changed since the running Cassandra started)"]))):
         variables = {"_cassandra_config_changes": [], "_cassandra_config_perm_changes": [], "cassandra_config_restart_pending": True,
                      "cassandra_config_newer_files": ["cassandra.yaml"], "_cassandra_preflight_running": False, "cassandra_jvm": {},
+                     "_cassandra_config_dir_notes": [],
                      "cassandra_apply_config_unit": {"status": {"ActiveState": "inactive"}}, "cassandra_rolling_resume": resume}
         variables = with_task_vars(NOTE, variables)
         facts = NOTE["ansible.builtin.set_fact"]
         assert (render(facts["cassandra_apply_config_todo"], variables) in (True, "True"),
                 render(facts["cassandra_apply_config_then"], variables),
-                render(facts["cassandra_apply_config_reasons"], variables)) == expected
+                render(facts["cassandra_apply_config_notes"], variables)) == expected
 
 
 def test_the_second_node_checked_from_is_not_one_expected_down():

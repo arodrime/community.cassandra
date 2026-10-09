@@ -45,23 +45,25 @@ def _plain(value):
     return str(value)
 
 
-def _rows(label_width, settings, everyone, where=None, full=True, width=28):
+def _rows(settings, everyone, where=None, full=True):
     """settings: [(name, [(value text, [nodes])])], most nodes first -> the lines of a section: the setting, its
     value and the nodes that have it ("all": every one), a line per other value marked "<- differs" on the values
-    fewer nodes have, with where the inventory keeps them. full: every node named (else node1..node3)."""
-    lines = []
+    fewer nodes have, with where the inventory keeps them, aligned by cassandra_output's settings_lines.
+    full: every node named (else node1..node3)."""
+    entries = []
     for name, values in settings:
+        rows = []
         values = sorted(values, key=lambda v: (-len(v[1]), v[0]))
         for i, (text, nodes) in enumerate(values):
             who = "all" if everyone and sorted(nodes) == sorted(everyone) else (
                 out.full_list(nodes) if full else _compress(nodes))
-            head = ("%s:" % name if i == 0 else "").ljust(label_width)
-            line = "  %s %s %s" % (head, text.ljust(width) if len(text) < width else text + " ", who)
+            note = ""
             if i > 0 and len(values) > 1:
                 kept = (where or {}).get((name, text))
-                line += "      %s differs" % out.ARROW + (" (%s)" % kept if kept else "")
-            lines.append(line.rstrip())
-    return lines
+                note = "%s differs" % out.ARROW + (" (%s)" % kept if kept else "")
+            rows.append((text, who, note))
+        entries.append((name, rows))
+    return out.settings_lines(entries)
 
 
 def _by_value(pairs):
@@ -73,10 +75,6 @@ def _by_value(pairs):
             found[name] = {}
         found[name].setdefault(text, []).append(node)
     return [(name, list(found[name].items())) for name in order]
-
-
-def _width(settings):
-    return max([len(name) + 1 for name, dummy in settings] or [0])
 
 
 def _value_width(settings):
@@ -259,7 +257,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
 
     where = dict(((key, text), placed(key, members)) for key, values in settings for text, members in values)
     lines.append("SETTINGS %s not the collection's default" % DASH)
-    lines += _rows(_width(settings), settings, names, where, full, _value_width(settings)) or ["  none"]
+    lines += _rows(settings, names, where, full) or ["  none"]
     if screen:
         return lines + ["", "full report: %s" % ("written by the run without --check" if check
                                                  else shown(report_file))]
@@ -294,7 +292,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     layout_only = sum(len(n.get("normalized") or []) + len(n.get("comments") or []) for n in read)
     if edits or layout_only:
         lines.append("HAND EDITS %s no variable covers them; cassandra_config would revert" % DASH)
-        lines += _rows(_width(edits), edits, names, full=full, width=_value_width(edits))
+        lines += _rows(edits, names, full=full)
         if layout_only:
             lines.append("  + %d layout-only edits, no effect (details at the end)" % layout_only)
         lines.append("")
@@ -327,14 +325,14 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                                        else out.full_list(members)))
         if kept:
             left = _by_value(kept)
-            lines += _rows(_width(left), left, everyone, width=_value_width(left))
+            lines += _rows(left, everyone)
         lines.append("")
 
     # OS TUNING
     tuning = _by_value([(n["name"],) + _os_pair(line) for n in read for line in (n.get("os") or {}).get("lines") or []])
     if tuning:
         lines.append("OS TUNING %s live value (collection's value)" % DASH)
-        lines += _rows(_width(tuning), tuning, names, width=_value_width(tuning)) + [""]
+        lines += _rows(tuning, names) + [""]
 
     # FILES
     for key, what in (("stale", "Removed (an earlier import's, not written again)"),

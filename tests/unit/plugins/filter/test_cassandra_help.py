@@ -139,8 +139,9 @@ Cluster:
   start_rack - Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.
     $ $PLAY $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
 
-  apply_config - Applies the inventory's config: shows every diff, asks once, then writes the nodes
-    that need it, one at a time, restarting only those that need it.
+  apply_config - Applies the inventory's config: shows the settings that differ (the inventory's
+    value, then each other value with its nodes), asks once, then writes the nodes that need it, one
+    at a time, restarting only those that need it.
     $ $PLAY $C.apply_config
 
   change_seeds - Applies a new cassandra_seeds list to every node, live (no restart); topology,
