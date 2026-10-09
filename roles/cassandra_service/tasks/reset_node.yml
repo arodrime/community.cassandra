@@ -116,6 +116,8 @@
       register: _cassandra_node_reset_typed
       run_once: true
       when: _given == ''
+      vars:
+        cassandra_output_gap: true  # a blank line above the question (ops callback)
 
     - name: The name typed is this cluster's
       ansible.builtin.assert:

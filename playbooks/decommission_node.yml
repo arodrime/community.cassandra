@@ -278,5 +278,6 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
         _one: "{{ ansible_play_hosts_all | length == 1 }}"
         _it: "{{ 'it' if _one | bool else 'them' }}"

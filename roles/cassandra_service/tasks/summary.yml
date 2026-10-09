@@ -14,3 +14,4 @@
   vars:
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     cassandra_output: true
+    cassandra_output_gap: true  # a block of its own (ops callback)

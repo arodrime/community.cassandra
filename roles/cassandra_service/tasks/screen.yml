@@ -38,6 +38,7 @@
       when: not _cassandra_screen_asked_by | default('')
       vars:
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
 
     # a step of topology: its plan showed the rest
     - name: Show the step's own tables
@@ -49,6 +50,7 @@
         - _step | length > 0
       vars:
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _step: >-
           {%- set l = [] -%}

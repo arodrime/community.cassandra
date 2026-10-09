@@ -3,10 +3,11 @@
 """The screen an operation playbook shows before it changes anything.
 
 cassandra_screen: spec -> the text, the same layout for every operation:
-    a header line (operation, cluster, Cassandra version, what it does), what
-    --check or cassandra_operation_confirm false means for this run, the
-    intro, one block per node, what comes after, then the warnings, each one
-    on its own paragraph and labelled ("WARNING - replication: ...").
+    a header line (operation, cluster, Cassandra version, what it does), the
+    intro, one block per node, what comes after, the warnings together, each
+    one labelled ("WARNING - replication: ..."), then, in the question's
+    place, what --check or cassandra_operation_confirm false means for this
+    run. One blank line between two blocks, none for an empty one.
     spec: {operation, cluster, version, summary: str,
            intro: [item], blocks: [{title, lines: [item]}], after: [item],
            warnings: [{label, text: str or [str, item...], real_run: bool}
@@ -79,9 +80,9 @@ def _warning(warning):
 
 def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
     """check: --check; asks: false when a question would be asked but
-    cassandra_operation_confirm is false (said under the header); session:
-    the tmux/screen warning, if any; asked_by: the playbook that showed the
-    whole plan and asked already (topology), said under the header."""
+    cassandra_operation_confirm is false (said at the end); session: the
+    tmux/screen warning, if any; asked_by: the playbook that showed the
+    whole plan and asked already (topology), said at the end."""
     spec = spec or {}
     header = str(spec.get("operation") or "")
     if spec.get("cluster"):
@@ -91,13 +92,6 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
     if spec.get("summary"):
         header += ": %s" % spec["summary"]
     sections = [_wrap(header, "", "  ")]
-    if check:
-        sections[0].append("--check: nothing will be changed (the plan only, no question).")
-    elif asked_by:
-        sections[0].append("A step of %s, confirmed on its screen: no question here." % asked_by)
-    elif not asks:
-        sections[0].append("cassandra_operation_confirm is false: no question, the run goes on.")
-
     sections.append(_items(spec.get("intro")))
     for block in spec.get("blocks") or []:
         sections.append(_wrap(block.get("title") or "", "  ", "    ") + _items(block.get("lines"), "    ", "  "))
@@ -115,15 +109,23 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
             continue
         seen.add(key)
         warnings.append(warning)
-    skipped = []
+    skipped, warned = [], []
     for warning in warnings:
         if check and warning.get("real_run"):
             if warning.get("label") not in skipped:
                 skipped.append(warning.get("label"))
             continue
-        sections.append(_warning(warning))
+        warned.extend(_warning(warning))
     if skipped:
-        sections.append(["(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped)])
+        warned.append("(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped))
+    sections.append(warned)  # the warnings together, just above the question
+    # in the question's place (screen.yml asks it right below)
+    if check:
+        sections.append(["--check: nothing will be changed (the plan only, no question)."])
+    elif asked_by:
+        sections.append(["A step of %s, confirmed on its screen: no question here." % asked_by])
+    elif not asks:
+        sections.append(["cassandra_operation_confirm is false: no question, the run goes on."])
 
     lines = []
     for section in sections:

@@ -23,6 +23,8 @@
 - name: Start following it
   ansible.builtin.set_fact:
     _cassandra_stream_status: going
+  vars:
+    cassandra_output_gap: true  # its progress lines, a block of their own (ops callback)
 
 - name: Check the progress, then every {{ cassandra_stream_check_interval }}s
   ansible.builtin.include_tasks: wait_loop.yml

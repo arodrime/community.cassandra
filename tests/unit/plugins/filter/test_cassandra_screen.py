@@ -35,13 +35,10 @@ Stops Cassandra on every node of the rack at once.
 They stay down until start_rack.
 
 WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails
-
 WARNING - replicas: forced although:
   - orders loses 2 replicas
   - events loses 2 replicas
-
 WARNING - data loss: everything is deleted.
-
 WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,
   the run stops."""
 
@@ -51,15 +48,15 @@ def test_layout():
 
 
 def test_check_names_the_real_run_warnings_on_one_line():
-    head, rest = REAL.split("\n", 1)
-    expected = head + "\n--check: nothing will be changed (the plan only, no question).\n" + \
-        rest.split("\n\nWARNING - data loss:")[0] + "\n\n(A real run would also warn about: data loss, session.)"
+    # the warnings together, then in the question's place what --check means, one blank line apart
+    expected = REAL.split("\nWARNING - data loss:", maxsplit=1)[0] + "\n(A real run would also warn about: data loss, session.)" + \
+        "\n\n--check: nothing will be changed (the plan only, no question)."
     assert cassandra_screen(SPEC, check=True, session=SESSION) == expected
 
 
 def test_no_question():
     lines = cassandra_screen(SPEC, asks=False).split("\n")
-    assert lines[1] == "cassandra_operation_confirm is false: no question, the run goes on."
+    assert lines[-2:] == ["", "cassandra_operation_confirm is false: no question, the run goes on."]
     assert "WARNING - session" not in "\n".join(lines)  # no session given: short operation
 
 
@@ -180,8 +177,8 @@ def test_reset_warnings_one_per_node_with_something_to_do():
 
 def test_a_step_of_another_playbook_asks_nothing():
     text = cassandra_screen({"operation": "add_node", "summary": "add node7"}, asked_by="topology")
-    assert text == "add_node: add node7\nA step of topology, confirmed on its screen: no question here."
-    # --check says so first: nothing changes
+    assert text == "add_node: add node7\n\nA step of topology, confirmed on its screen: no question here."
+    # --check says so in its place: nothing changes
     assert cassandra_screen({"operation": "add_node"}, check=True, asked_by="topology").endswith(
         "--check: nothing will be changed (the plan only, no question).")
 

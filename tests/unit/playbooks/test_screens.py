@@ -144,14 +144,13 @@ def test_decommission_screen():
 
 def test_decommission_screen_under_check():
     text = decommission(["rack1", "rack2", "rack3"], check=True)
-    head, rest = DECOMMISSION.split("\n", 1)
-    assert text == head + "\n--check: nothing will be changed (the plan only, no question).\n" + \
-        rest.rsplit("\n\nWARNING - session:", 1)[0] + "\n\n(A real run would also warn about: session.)"
+    assert text == DECOMMISSION.rsplit("\n\nWARNING - session:", 1)[0] + "\n\n(A real run would also warn about: session.)" + \
+        "\n\n--check: nothing will be changed (the plan only, no question)."
 
 
 def test_decommission_screen_without_question():
     text = decommission(["rack1", "rack2", "rack3"], confirm=False)
-    assert text.split("\n")[1] == "cassandra_operation_confirm is false: no question, the run goes on."
+    assert text.split("\n")[-2:] == ["", "cassandra_operation_confirm is false: no question, the run goes on."]
     assert "WARNING - session:" in text
 
 
@@ -229,11 +228,11 @@ def test_replace_node_screen():
     assert reset.endswith(
         "WARNING - data loss: node9: Cassandra stopped, then 1 entries DELETED for good (no snapshot, no\n"
         "  backup), in:\n"
-        "    /var/lib/cassandra/data (data; from the inventory): 1 entries: system\n\n"
+        "    /var/lib/cassandra/data (data; from the inventory): 1 entries: system\n"
         "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,\n"
         "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen."), reset
     reset = screen(reset_vars, t["vars"], play.get("vars"), check=True)
-    assert reset.endswith("\n\n(A real run would also warn about: data loss, session.)")
+    assert reset.endswith("\n\n(A real run would also warn about: data loss, session.)\n\n--check: nothing will be changed (the plan only, no question).")
 
 
 def test_resets_asked_on_the_operation_screen_only():
@@ -300,13 +299,13 @@ def test_stop_rack_screen():
                  "_cassandra_rack_down_here": [], "_cassandra_rack_down_elsewhere": ["10.0.1.5"]}
     forced = screen(dict(variables, cassandra_rack_force=True, _cassandra_rack_down_here=["10.0.0.9"]), t["vars"], play["vars"])
     assert "\n\nWARNING - replicas: cassandra_rack_force is true: the rack goes down although it takes more than one\n" \
-           "  replica of some data down:\n  - already down in dc1: 10.0.0.9\n\n" in forced
+           "  replica of some data down:\n  - already down in dc1: 10.0.0.9\nWARNING - replication" in forced
     text = screen(variables, t["vars"], play["vars"])
     assert text == (
         "stop_rack on cluster 'Orders': stop dc1 / rack2\n\n"
         "Stops Cassandra on every node of the rack at once; they stay down until start_rack.\n\n"
         "  node2  10.0.0.2  dc1 / rack2\n\n"
-        "WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails\n\n"
+        "WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails\n"
         "WARNING - down nodes: down in another datacenter: 10.0.1.5")
 
 
@@ -323,14 +322,14 @@ def test_apply_config_and_update_java_screens():
                           "cassandra_apply_config_reasons": ["cassandra.yaml to change"]}}
     text = screen({"ansible_play_hosts": ["node1", "node2", "node3", "node4", "node5"], "hostvars": hostvars}, t["vars"],
                   play["vars"], check=True)
-    assert text == ("apply_config: would apply the config on node1, node3, node4, node5\n"
-                    "--check: nothing will be changed (the plan only, no question).\n\n"
+    assert text == ("apply_config: would apply the config on node1, node3, node4, node5\n\n"
                     "A real run would write each node in turn, then restart or start it as said below.\n\n"
                     "  node1\n    cassandra.yaml to change\n    then drained and restarted\n\n"
                     "  node3\n    owner, group or mode to change: cassandra.yaml\n    no restart (Cassandra reads its config at start)\n\n"
                     "  node4\n    owner, group or mode to change: cassandra-env.sh\n"
                     "    its Cassandra is not running: started once written (down over max_hint_window? repair it)\n\n"
-                    "  node5\n    cassandra.yaml to change\n    its Cassandra is stopped: written, left stopped (read when it starts)")
+                    "  node5\n    cassandra.yaml to change\n    its Cassandra is stopped: written, left stopped (read when it starts)\n\n"
+                    "--check: nothing will be changed (the plan only, no question).")
     text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars}, t["vars"], play["vars"])
     assert text.startswith("apply_config: apply the config on node1\n\n"
                            "Writes the config one node at a time, then restarts or starts it as said below.\n\n")
@@ -362,13 +361,14 @@ def test_datacenter_screens():
                  "cassandra_remove_dc_alter": ["ALTER KEYSPACE \"orders\" WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3};"]}
     text = screen(variables, t["vars"], check=True)
     assert text == (
-        "remove_datacenter: remove dc2\n--check: nothing will be changed (the plan only, no question).\n\n"
+        "remove_datacenter: remove dc2\n\n"
         "First the replication changes, from node1:\n"
         "  ALTER KEYSPACE \"orders\" WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3};\n"
         "Then these nodes are removed, one at a time:\n\n"
         "  node5  10.0.0.5  dc1 / rack1\n\n"
-        "WARNING - clients: clients still using dc2 will fail.\n\n"
-        "(A real run would also warn about: session.)")
+        "WARNING - clients: clients still using dc2 will fail.\n"
+        "(A real run would also warn about: session.)\n\n"
+        "--check: nothing will be changed (the plan only, no question).")
     t, play = task("add_datacenter.yml", "Show the plan and confirm")
     hostvars = {"node9": {"_cassandra_preflight": preflight(9, cassandra_dc="dc2")}}
     variables = {"ansible_play_hosts_all": ["node9"], "hostvars": hostvars, "cassandra_rebuild_source_dc": "dc1",
@@ -387,7 +387,7 @@ def test_move_node_and_create_cluster_screens():
     text = screen({"_plan": plan, "_cassandra_preflight": preflight(1), "cassandra_move_cleanup": "none"}, t["vars"])
     assert text.split("\n", 1)[0] == "move_node on cluster 'Orders': move node2"
     assert text.split("\n\n")[2:] == ["dc1 ring\nCleanup afterwards (cassandra_move_cleanup=none).",
-                                      "WARNING - tokens: dc1: loads not all known", "WARNING - session: this run is not inside"
+                                      "WARNING - tokens: dc1: loads not all known\nWARNING - session: this run is not inside"
                                       " tmux or screen: if the SSH session to this machine drops,\n  the run stops (the operation"
                                       " itself goes on, unwatched). Run it inside tmux or screen."]
     t, play = task("create_cluster.yml", "Show the ring and confirm the tokens")
@@ -405,7 +405,7 @@ def test_create_cluster_reset_screen():
     # no question here (the name is typed next): no word about cassandra_operation_confirm
     assert "cassandra_operation_confirm" not in screen(variables, t["vars"], confirm=False)
     for check, end in ((False, "WARNING - data loss: every node is stopped and emptied: ALL THE DATA of cluster 'Orders' is LOST."),
-                       (True, "(A real run would also warn about: data loss.)")):
+                       (True, "(A real run would also warn about: data loss.)\n\n--check: nothing will be changed (the plan only, no question).")):
         text = screen(variables, t["vars"], check=check)
         assert text.startswith("create_cluster on cluster 'Orders': wipe the cluster and create it again")
         assert "\n\n  node1  10.0.0.1  dc1 / rack1\n    Cassandra running now, then joins as above, a seed\n\n" \

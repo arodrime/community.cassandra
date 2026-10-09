@@ -354,6 +354,7 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
 
     - name: Show the plan
       ansible.builtin.debug:
@@ -370,13 +371,14 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
         _tp_names: >-
           {{ dict(cassandra_topology_hosts | map(attribute='address') | zip(cassandra_topology_hosts | map(attribute='name'))) }}
         _tp_version: >-
           {{ ((cassandra_preflight_describe | default({})).stdout | default('') ~ '\n').split('Database versions:')[1:]
              | first | default('') | regex_findall('(?m)^\s+([0-9][^:]*): \[') | join(', ') }}
 
-    # its prompt right under the plan's WARNING lines
+    # its question one blank line under the plan (ops callback)
     - name: Confirm the plan
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -481,6 +483,7 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"

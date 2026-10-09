@@ -13,6 +13,8 @@
       Answer yes to go on, no to stop{% else %}Please answer yes or no{% endif %}
   register: _cassandra_confirm_reply
   run_once: true
+  vars:
+    cassandra_output_gap: true  # a blank line above the question (ops callback)
 
 - name: Read the answer
   ansible.builtin.set_fact:

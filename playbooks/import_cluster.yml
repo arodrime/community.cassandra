@@ -1657,6 +1657,7 @@
                self_check_error=_self_check_error | default(''), screen=true) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
+        cassandra_output_gap: true  # a block of its own (ops callback)
 
     - name: Stop on a failed self-check
       ansible.builtin.fail:

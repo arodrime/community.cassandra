@@ -249,6 +249,7 @@
       run_once: true
       vars:
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
         _start: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_start', 'defined')
              | map(attribute='_cassandra_apply_config_start') | first | default('') }}

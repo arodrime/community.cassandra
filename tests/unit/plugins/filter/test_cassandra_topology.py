@@ -211,9 +211,9 @@ def test_screen_warnings_last_and_the_session_on_a_real_run_only():
     assert warned[0] == "WARNING  2 of 5 nodes of dc1 removed (node3, node4): 3 nodes left to hold their data" or \
         warned[0].startswith("WARNING  10.0.0.9")
     assert warned[-1] == "WARNING  not inside tmux or screen"
-    # the WARNING lines right above the question, nothing in between
+    # the WARNING lines together, then one blank line and the question's place
     first = lines.index(warned[0])
-    assert lines[first:] == warned + ["cassandra_operation_confirm is false: no question, the run goes on."]
+    assert lines[first:] == warned + ["", "cassandra_operation_confirm is false: no question, the run goes on."]
     check = cassandra_topology_screen(plan, hosts, ring=r, session="not inside tmux or screen", check=True)
     assert "WARNING  not inside tmux or screen" not in check
     assert [line for line in check if line.startswith("real run:")] == [

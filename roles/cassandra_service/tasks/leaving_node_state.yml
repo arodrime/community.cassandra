@@ -58,3 +58,4 @@
         - not _cassandra_notes_deferred | default(false) | bool  # topology: in its plan
       vars:
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)

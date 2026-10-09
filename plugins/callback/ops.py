@@ -22,6 +22,10 @@ description:
     (C(ignore_unreachable)) on one line. A failure the playbook handles (a task of a block with a C(rescue)) on
     one line too, its host, task and the first line of its message. Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
+  - The output goes by blocks, one blank line between two, never two in a row. A blank line comes before the
+    next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
+    like C(cassandra_output); on an operator message itself, before its own lines; on a question, a
+    M(ansible.builtin.pause), above it), and after the answer to a question (the answer stays shown).
   - With C(-v) or more, everything is printed as the default callback does.
   - Set it in C(ansible.cfg) (C([defaults]) C(stdout_callback = community.cassandra.ops)) or with
     C(ANSIBLE_STDOUT_CALLBACK=community.cassandra.ops).
@@ -35,8 +39,13 @@ requirements:
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 
 from ansible import constants as C
+from ansible.release import __version__ as _CORE_VERSION
 
 MARKER = "cassandra_output"
+GAP = "cassandra_output_gap"  # a blank line before the next operator message
+_PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
+# before 2.19, a warning ends with a blank line of its own
+_WARNING_BLANK = tuple(int(x) for x in _CORE_VERSION.split(".")[:2]) < (2, 19)
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
 _VERDICTS = _ASSERTS + ("fail", "ansible.builtin.fail", "ansible.legacy.fail")
@@ -53,10 +62,14 @@ def _result(result):
     return value if isinstance(value, dict) or hasattr(value, "get") else result._result
 
 
+def _flag(task, name):
+    value = (getattr(task, "vars", None) or {}).get(name)
+    return value is True or str(value).strip().lower() in ("true", "yes")
+
+
 def marked(task):
     """True when the task is an operator message: vars cassandra_output: true."""
-    value = (getattr(task, "vars", None) or {}).get(MARKER)
-    return value is True or str(value).strip().lower() in ("true", "yes")
+    return _flag(task, MARKER)
 
 
 def _uuid(item):
@@ -94,12 +107,58 @@ class CallbackModule(DefaultCallback):
     CALLBACK_TYPE = "stdout"
     CALLBACK_NAME = "community.cassandra.ops"
 
+    def __init__(self, *args, **kwargs):
+        super(CallbackModule, self).__init__(*args, **kwargs)
+        self._blank = True  # the last line printed was blank (or none yet): no blank line next
+        self._gap = False  # a blank line before the next message
+        self._looping = False  # the items of a loop with a gap: one blank line, before the first
+
     def _verbose(self):
         return self._display.verbosity > 0
 
+    def _line(self, line, color=None):
+        if not line.strip():
+            if self._blank:
+                return  # never two blank lines in a row
+            line = ""
+        self._display.display(line, color=color)
+        self._blank = not line
+
     def _print(self, msg, color=None):
+        if self._gap:
+            self._line("")
+            self._gap = False
         for line in lines(msg):
-            self._display.display(line, color=color)
+            self._line(line, color=color)
+
+    def _shown(self):
+        """Something else printed a line: a blank line may follow."""
+        self._blank = False
+
+    def _default(self, name, *args):
+        """The default callback's output (its task header without a second blank line above)."""
+        getattr(super(CallbackModule, self), name)(*args)
+        self._shown()
+
+    def _warned(self, res):
+        self._handle_warnings(res)  # a warning is meant to be read
+        if res.get("warnings") or res.get("deprecations"):
+            self._blank = _WARNING_BLANK
+
+    def _print_task_banner(self, task):
+        """The default callback's task header, its blank line above left out
+        when one is printed already."""
+        if not self._blank:
+            return super(CallbackModule, self)._print_task_banner(task)
+        display = self._display
+
+        def shown(msg, *args, **kwargs):
+            return type(display).display(display, msg[1:] if msg.startswith("\n") else msg, *args, **kwargs)
+        display.display = shown
+        try:
+            return super(CallbackModule, self)._print_task_banner(task)
+        finally:
+            del display.display
 
     # --- results ---
 
@@ -107,9 +166,29 @@ class CallbackModule(DefaultCallback):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_on_ok(result)
         task = _task(result)
-        self._handle_warnings(_result(result))  # a warning is meant to be read
-        if marked(task) and not (task.loop and "results" in _result(result)) and self._says(task):
+        self._warned(_result(result))
+        if task.action in _PAUSES and "user_input" in _result(result):
+            return self._answered(_result(result))
+        looped = task.loop and "results" in _result(result)
+        self._gap = self._gap or (_flag(task, GAP) and not looped)  # a loop's: before its first item
+        self._looping = False
+        if marked(task) and not looped and self._says(task):
             self._print(_result(result).get("msg"))
+
+    def _answered(self, res):
+        """pause clears the answer's line once it is read: shown again (not
+        a hidden one), then a blank line."""
+        self._blank = False  # the question
+        if res.get("echo", True) and str(res.get("user_input") or "").strip():
+            self._display.display(str(res["user_input"]))
+        self._line("")
+
+    def v2_playbook_on_task_start(self, task, is_conditional):
+        if self._verbose():
+            return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
+        if task.action in _PAUSES and _flag(task, GAP):  # a blank line above its question (skipped too: one at most)
+            self._line("")
+        return None
 
     @staticmethod
     def _says(task):
@@ -120,7 +199,9 @@ class CallbackModule(DefaultCallback):
     def v2_runner_item_on_ok(self, result):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_item_on_ok(result)
-        self._handle_warnings(_result(result))
+        self._warned(_result(result))
+        if _flag(_task(result), GAP) and not self._looping:
+            self._gap = self._looping = True
         if marked(_task(result)) and self._says(_task(result)):
             self._print(_result(result).get("msg"))
 
@@ -152,7 +233,7 @@ class CallbackModule(DefaultCallback):
             return None  # each failed item was printed already
         if rescued(_task(result)):  # its rescue handles it: one line, never silent
             return self._handled(result)
-        return super(CallbackModule, self).v2_runner_on_failed(result, ignore_errors)
+        return self._default("v2_runner_on_failed", result, ignore_errors)
 
     def _handled(self, result):
         res = _result(result)
@@ -165,6 +246,7 @@ class CallbackModule(DefaultCallback):
         # the playbook says it in full itself (a summary, a refusal): a short line here
         first = first if len(first) <= 160 else first[:157].rstrip() + "..."
         self._display.display("%s: %s: %s (the playbook handles it)" % (host.get_name(), _task(result).get_name(), first))
+        self._shown()
         return None
 
     def v2_runner_item_on_failed(self, result):
@@ -180,22 +262,26 @@ class CallbackModule(DefaultCallback):
             return self._verdict(result)
         if rescued(_task(result)):
             return self._handled(result)
-        return super(CallbackModule, self).v2_runner_item_on_failed(result)
+        return self._default("v2_runner_item_on_failed", result)
 
     def v2_runner_on_unreachable(self, result):
         if self._verbose() or not _task(result).ignore_unreachable:
-            return super(CallbackModule, self).v2_runner_on_unreachable(result)
+            return self._default("v2_runner_on_unreachable", result)
         # the playbook goes on without the host (ignore_unreachable): one line, never silent
         msg = lines(_result(result).get("msg") or "")
         host = getattr(result, "host", None) or result._host
         self._display.display("UNREACHABLE  %s  %s" % (host.get_name(), msg[0] if msg else ""), color=C.COLOR_UNREACHABLE)
+        self._shown()
         return None
 
     def v2_runner_on_async_failed(self, result):
-        return super(CallbackModule, self).v2_runner_on_async_failed(result)
+        return self._default("v2_runner_on_async_failed", result)
 
     def v2_on_file_diff(self, result):
-        return super(CallbackModule, self).v2_on_file_diff(result)
+        res = _result(result)
+        super(CallbackModule, self).v2_on_file_diff(result)
+        if any(r.get("diff") and r.get("changed") for r in ((res.get("results") or [res]) if _task(result).loop else [res])):
+            self._shown()  # the default callback prints only these
 
     # --- what is quiet without -v ---
 
@@ -214,7 +300,6 @@ class CallbackModule(DefaultCallback):
     v2_runner_on_async_ok = _quiet("v2_runner_on_async_ok")
     v2_playbook_on_start = _quiet("v2_playbook_on_start")
     v2_playbook_on_play_start = _quiet("v2_playbook_on_play_start")
-    v2_playbook_on_task_start = _quiet("v2_playbook_on_task_start")
     v2_playbook_on_handler_task_start = _quiet("v2_playbook_on_handler_task_start")
     v2_playbook_on_include = _quiet("v2_playbook_on_include")
     v2_playbook_on_notify = _quiet("v2_playbook_on_notify")

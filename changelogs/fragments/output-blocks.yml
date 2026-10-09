@@ -1,0 +1,3 @@
+minor_changes:
+  - "Operator output - the plan screens go by blocks, one blank line apart: the plan and its steps, the facts, the warnings together (no blank line between two warnings), then the question or, in its place, what ``--check`` or ``cassandra_operation_confirm: false`` means for the run (said under the header before)."
+  - "ops callback - one blank line between two blocks, never two in a row: above a question and after its answer (shown again), and before the start of each progress wait, the recaps and the TO DO lists (task variable ``cassandra_output_gap``)."

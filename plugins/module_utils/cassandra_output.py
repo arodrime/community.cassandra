@@ -397,10 +397,11 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
          check=False, verdict="PLAN"):
     """The screen before a change, the same order everywhere:
     "PLAN  operation  cluster (Cassandra x)  summary", the numbered steps
-    (each {node, dc, rack, text} or a string), a blank line, the facts
-    ([label, text] or a string), the WARNING lines, then the question (none
-    under check: a line says nothing will be changed). verdict: REFUSED,
-    READY... for the same layout."""
+    (each {node, dc, rack, text} or a string), then the facts ([label, text]
+    or a string, NOTE lines among them), the WARNING lines, and the question
+    (none under check: a line says nothing will be changed), each block
+    after one blank line, an empty block left out. verdict: REFUSED, READY...
+    for the same layout."""
     head = [verdict, operation, ("%s (Cassandra %s)" % (cluster, version)) if version and cluster else cluster,
             summary]
     lines = ["  ".join(str(x) for x in head if x)]
@@ -420,12 +421,9 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
             block.append(("%s  %s" % ((str(fact[0]) + ":").ljust(width), fact[1])).rstrip())
         elif str(fact).strip():
             block.append(str(fact))
-    tail = ["WARNING  %s" % w for w in warnings or [] if str(w).strip()]
-    if check:
-        tail.append("--check: nothing will be changed")
-    elif question:
-        tail.append(question)
-    for section in (block, tail):
+    warned = ["WARNING  %s" % w for w in warnings or [] if str(w).strip()]
+    asked = ["--check: nothing will be changed"] if check else [question] if question else []
+    for section in (block, warned, asked):
         if section:
             lines += [""] + section
     return lines

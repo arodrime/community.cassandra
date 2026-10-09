@@ -247,3 +247,80 @@ def test_screen_is_printed_before_a_run_without_terminal_stops(tmp_path):
     assert run.returncode != 0
     assert run.stdout.count('decommission_node: remove node7\\n') == 1
     assert "No terminal to answer the confirmation on" in run.stdout
+
+
+OPS_PLAYBOOK = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Before
+      ansible.builtin.debug:
+        msg: "Reset of node5:"
+      run_once: true
+      vars:
+        cassandra_output: true
+""" + SCREEN_PLAYBOOK.split("  tasks:\n", 1)[1] + """
+    - name: Start following it
+      ansible.builtin.set_fact:
+        _started: true
+      vars:
+        cassandra_output_gap: true
+
+    - name: Progress
+      ansible.builtin.debug:
+        msg: "[1/1] node7 decommission  {{ item }}"
+      loop: [LEAVING, DECOMMISSIONED]
+      run_once: true
+      vars:
+        cassandra_output: true
+
+    - name: Recap
+      ansible.builtin.debug:
+        msg: ["DONE  decommission_node", "", "TO DO", "  1. delete node7 from the inventory"]
+      run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+"""
+
+
+def on_screen(output):
+    """The lines as a terminal shows them: what follows the last carriage return, no escape sequences."""
+    return [re.sub(r"(\x1b\[?)+K?", "", line.rstrip("\r").split("\r")[-1]) for line in output.split("\n")]
+
+
+def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
+    argv, env = command(tmp_path)
+    (tmp_path / "confirm.yml").write_text(OPS_PLAYBOOK)
+    env = dict(env, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops", TMUX="", STY="")
+    pid, fd = pty.fork()
+    if pid == 0:  # the child
+        os.execve(argv[0], argv, env)
+    output = read_until(fd, b"", lambda out: prompts(out) > 0, time.time() + 120)
+    time.sleep(1)
+    os.write(fd, b"yes\r")
+    output = read_until(fd, output, lambda out: out.rstrip().endswith(b"inventory"), time.time() + 120).decode()
+    os.waitpid(pid, 0)
+    # the screen, the question, the answer, the progress and the recap: one blank line between two blocks
+    assert on_screen(output.strip()) == [
+        "Reset of node5:",
+        "",
+        "decommission_node: remove node7",
+        "",
+        "WARNING - replication: orders keeps 2 replicas",
+        "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,",
+        "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen.",
+        "",
+        "[community.cassandra.cassandra_service : Confirm the operation]",
+        "Remove node7?",
+        "Answer yes to go on, no to stop:",
+        "yes",  # pause clears it once read: shown again
+        "",
+        "[1/1] node7 decommission  LEAVING",
+        "[1/1] node7 decommission  DECOMMISSIONED",
+        "",
+        "DONE  decommission_node",
+        "",
+        "TO DO",
+        "  1. delete node7 from the inventory",
+    ], output

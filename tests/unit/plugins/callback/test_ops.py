@@ -345,3 +345,99 @@ def test_a_play_with_no_host_says_nothing(tmp_path):
     rc, output = run(tmp_path, playbook, INVENTORY="node1,")
     assert rc == 0, output
     assert output.splitlines() == ["done"]  # no "skipping: no hosts matched", no noop warning
+
+
+def test_blocks_one_blank_line_apart_never_two(tmp_path):
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: First
+      ansible.builtin.debug:
+        msg: ["", "first"]
+      vars:
+        cassandra_output: true
+    - name: A block starts after it
+      ansible.builtin.set_fact:
+        started: true
+      vars:
+        cassandra_output_gap: true
+    - name: Second
+      ansible.builtin.debug:
+        msg: ["second", "", "", "third"]
+      vars:
+        cassandra_output: true
+    - name: Same block
+      ansible.builtin.debug:
+        msg: same block
+      vars:
+        cassandra_output: true
+    - name: A block of its own, a blank line of its own too
+      ansible.builtin.debug:
+        msg: ["", "fourth"]
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    assert output.splitlines() == ["first", "", "second", "", "third", "same block", "", "fourth"]
+
+
+def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
+    (tmp_path / "same.txt").write_text("same\n")
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: One
+      ansible.builtin.debug:
+        msg: one
+      vars:
+        cassandra_output: true
+    - name: A question skipped, not one of the operator's
+      ansible.builtin.pause:
+        prompt: never
+      when: false
+    - name: Two
+      ansible.builtin.debug:
+        msg: ["two", "three", ""]
+      vars:
+        cassandra_output: true
+    - name: Unchanged, with a diff the default callback does not print
+      ansible.builtin.file:
+        path: "%s"
+        state: file
+    - name: A question skipped, one of the operator's
+      ansible.builtin.pause:
+        prompt: never
+      when: false
+      vars:
+        cassandra_output_gap: true
+    - name: Four
+      ansible.builtin.debug:
+        msg: four
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+    - name: Items, one blank line before the first
+      ansible.builtin.debug:
+        msg: "item {{ item }}"
+      loop: [a, b]
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+    - name: Five
+      ansible.builtin.debug:
+        msg: ["five", ""]
+      vars:
+        cassandra_output: true
+    - name: Fails
+      ansible.builtin.command: /bin/false
+""" % (tmp_path / "same.txt")
+    rc, output = run(tmp_path, playbook, "--diff")
+    assert rc != 0
+    lines = output.splitlines()
+    assert lines[:10] == ["one", "two", "three", "", "four", "", "item a", "item b", "five", ""], output
+    # the default callback's task header: its own blank line above left out
+    assert lines[10].startswith("TASK [Fails] *"), output

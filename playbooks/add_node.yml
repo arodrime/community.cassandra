@@ -369,6 +369,8 @@
       register: cassandra_token_choice
       run_once: true
       when: _single | bool and _auto == 'true' and _new | length > 0 and not ansible_check_mode  # --check: bisect
+      vars:
+        cassandra_output_gap: true  # a blank line above the question (ops callback)
 
     - name: Check the choice
       ansible.builtin.assert:
@@ -556,6 +558,7 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _moves: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_add_node_tokens.moves | default([]) }}"
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
 
 # The nodes that handed ranges over still hold that data until a cleanup: the
 # datacenter's nodes, or only the new nodes' racks when every keyspace has as
@@ -599,6 +602,7 @@
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
         _scope: >-
           {{ _plan.scope | dict2items | map(attribute='key') | zip(_plan.scope | dict2items | map(attribute='value')
              | map('replace', 'rack', "the new nodes' racks only") | map('replace', 'dc', 'the whole datacenter'))
