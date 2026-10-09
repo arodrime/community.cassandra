@@ -185,6 +185,13 @@ _cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.
 # add_node's mark of a bootstrap it started on a node, removed once the node
 # joined: data of this cluster without it is a former member's (reset_node_plan.yml)
 _cassandra_service_bootstrap_mark: /var/lib/cassandra/.ansible_bootstrap_started
+# Where a node that started once keeps its system keyspace (system/): a data dir
+# (cassandra_data_file_directories, cassandra_data_dir) or, 4.1+, local_system_data_file_directory
+_cassandra_service_system_dirs: >-
+  {{ ([cassandra_data_file_directories | default([])] | flatten
+      + [(cassandra_extra_settings | default({})).local_system_data_file_directory | default('', true) | string,
+         cassandra_data_dir | default('/var/lib/cassandra/data')])
+     | select | map('regex_replace', '(?<=.)/+$', '') | unique | list }}
 # an older mark is not trusted (a node that may have joined since, its end not seen)
 _cassandra_service_bootstrap_mark_days: 7
 # The files of the conf dir cassandra_config writes: the config a restart picks up

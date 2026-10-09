@@ -97,8 +97,16 @@
   block:
     - name: Check whether this node was already initialized
       ansible.builtin.stat:
-        path: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}/system"
+        path: "{{ item }}/system"
+        get_checksum: false
+      loop: "{{ _cassandra_service_system_dirs }}"
       register: cassandra_service_initialized
+
+    - name: Remember whether it was
+      ansible.builtin.set_fact:
+        cassandra_service_was_initialized: >-
+          {{ cassandra_service_initialized.results | selectattr('stat', 'defined') | selectattr('stat.exists')
+             | list | length > 0 }}
 
     - name: Work out whether this node is a seed
       ansible.builtin.include_tasks: seed_facts.yml
@@ -122,7 +130,7 @@
              | list }}
       when:
         - _cassandra_service_is_seed | bool
-        - not cassandra_service_initialized.stat.exists
+        - not cassandra_service_was_initialized | bool
         - not cassandra_service_allow_new_seed
 
     # Seeds this same run started for the first time (a cluster being created,
@@ -136,8 +144,8 @@
           (cassandra_service_allow_new_seed: true overrides this check).
       vars:
         _created_hosts: >-
-          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_service_initialized', 'defined')
-             | rejectattr('cassandra_service_initialized.stat.exists') | list }}
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_service_was_initialized', 'defined')
+             | rejectattr('cassandra_service_was_initialized') | list }}
         _created_now: >-
           {{ (_created_hosts | map(attribute='inventory_hostname') | list)
              + (_created_hosts | map(attribute='ansible_host', default='') | list)

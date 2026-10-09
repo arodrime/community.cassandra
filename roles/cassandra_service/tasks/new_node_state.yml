@@ -9,7 +9,10 @@
 # when it may (reset_node_plan.yml, _cassandra_node_reset_auto).
 - name: Where {{ inventory_hostname }} stands
   vars:
-    _data: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}"
+    # the system keyspaces found (in any data dir)
+    _data: >-
+      {{ cassandra_new_node_system.results | default([]) | selectattr('stat', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | map('regex_replace', '$', '/system') | list }}
     _from: >-
       {{ query('community.cassandra.cassandra_nodes')
          | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) | first | default('') }}
@@ -20,7 +23,7 @@
       {{ cassandra_new_node_ring.cluster_status.values() | map(attribute='nodes') | flatten
          | selectattr('address', 'equalto', _address) | first | default({}) }}
     _in_ring: "{{ (_ring.status ~ _ring.state) if _ring else 'absent' }}"
-    _has_data: "{{ cassandra_new_node_system.stat.exists }}"
+    _has_data: "{{ _data | length > 0 }}"
     _my_id: "{{ cassandra_new_node_info.stdout | default('') | regex_findall('(?m)^ID\\s*:\\s*(\\S+)') | first | default('') }}"
     # 5.0.0 to 5.0.4: nodetool can't answer on a bootstrapping node (CASSANDRA-19902)
     _no_mbean: "{{ 'InstanceNotFoundException' in cassandra_new_node_info.stderr | default('') }}"
@@ -44,7 +47,9 @@
 
     - name: Look for this node's system keyspace
       ansible.builtin.stat:
-        path: "{{ _data }}/system"
+        path: "{{ item }}/system"
+        get_checksum: false
+      loop: "{{ _cassandra_service_system_dirs }}"
       register: cassandra_new_node_system
 
     - name: Read this node's host ID
@@ -69,7 +74,7 @@
         msg: >-
           {{ inventory_hostname }} ({{ _address }}):
           {%- if _state == 'orphan' %}
-          has data ({{ _data }}/system) but is not in the ring: an interrupted bootstrap, or data of another cluster.
+          has data ({{ _data | join(', ') }}) but is not in the ring: an interrupted bootstrap, or data of another cluster.
           It was not reset: -e cassandra_add_node_reset=false was given. Without it, add_node empties such a node
           first when it may (Cassandra down, in no ring, cluster this one or the stock 'Test Cluster', no user keyspace
           but a failed bootstrap's of this cluster; what it deletes is on the screen), then adds it.

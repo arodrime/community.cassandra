@@ -74,17 +74,23 @@
 
         - name: Look for data on the new host
           ansible.builtin.stat:
-            path: "{{ cassandra_data_dir | default('/var/lib/cassandra/data') }}/system"
+            path: "{{ item }}/system"
+            get_checksum: false
+          loop: "{{ _cassandra_service_system_dirs }}"
           register: cassandra_replace_system
 
         - name: The new host is blank
           ansible.builtin.assert:
-            that: not cassandra_replace_system.stat.exists or cassandra_replace_node_reset | default(false) | bool
+            that: _found | length == 0 or cassandra_replace_node_reset | default(false) | bool
             fail_msg: >-
-              {{ inventory_hostname }} has data ({{ cassandra_data_dir | default('/var/lib/cassandra/data') }}/system): a replacement
+              {{ inventory_hostname }} has data ({{ _found | join(', ') }}): a replacement
               starts blank. A host replacing itself (a lost disk, a reinstall) whose leftovers are not needed:
               -e cassandra_replace_node_reset=true empties it first.
             quiet: true
+          vars:
+            _found: >-
+              {{ cassandra_replace_system.results | selectattr('stat', 'defined') | selectattr('stat.exists')
+                 | map(attribute='item') | map('regex_replace', '$', '/system') | list }}
 
         - name: Read the ring from {{ _from }}
           community.cassandra.cassandra_status:

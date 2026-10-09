@@ -1,0 +1,2 @@
+bugfixes:
+  - "add_node, replace_node - a node's earlier data is looked for in every data dir (``cassandra_data_file_directories``) and in ``local_system_data_file_directory`` (4.1+), not only in ``cassandra_data_dir``; so is a seed's first start (cassandra_service)."
