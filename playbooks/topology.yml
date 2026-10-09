@@ -472,10 +472,11 @@
                                                      'seeds now ' ~ _plan.seeds.new if _plan.seeds.step else '',
                                                      ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
                                                     | select | join('; '))]
-             + ((['', 'TO DO', '  1. delete ' ~ _done | community.cassandra.cassandra_node_list ~ ' from the inventory, or leave '
-                  ~ _them ~ ' marked absent (the playbooks leave ' ~ _them ~ ' out)',
-                  '  2. wipe ' ~ ('its' if _done | length == 1 else 'their') ~ ' data directories before reusing the host'
-                  ~ ('' if _done | length == 1 else 's')])
+             + (([''] + _done | community.cassandra.cassandra_removed_todo(
+                    reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
+                    inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                    hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
+                    cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent))
                 if _done | length > 0 else [])) | join(_nl) }}
       run_once: true
       when:
@@ -488,4 +489,19 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
-        _them: "{{ 'it' if _done | length == 1 else 'them' }}"
+        # a node that stays, running if one is, to re-import the cluster from
+        _others: "{{ ansible_play_hosts_all | reject('in', _done) | list }}"
+        _stays: >-
+          {%- set up = [] -%}
+          {%- for h in _others if hostvars[h]._cassandra_preflight_running | default(false) | bool -%}
+          {%-   set _ = up.append(h) -%}
+          {%- endfor -%}
+          {{ (up + _others) | first | default('') }}
+        # the inventory is import_cluster's: <inventory dir>/<cluster group>.yml, written by it (its first
+        # line says so); else the hosts are removed by hand
+        _imported: >-
+          {{ _stays != '' and _hosts_file != '' and _hosts_file is file
+             and lookup('ansible.builtin.file', _hosts_file) is search('^# Written by community[.]cassandra[.]import_cluster') }}
+        _hosts_file: >-
+          {{ (hostvars[_stays].inventory_dir ~ '/' ~ lookup('community.cassandra.cassandra_hosts') ~ '.yml')
+             if _stays != '' and hostvars[_stays].inventory_dir | default('', true) != '' else '' }}

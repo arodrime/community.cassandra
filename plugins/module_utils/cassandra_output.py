@@ -750,6 +750,49 @@ def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
     return steps
 
 
+def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
+                 unreachable=None, imported=True):
+    """The TO DO once nodes left the ring (decommission_node, topology):
+    empty them (reset_node), then drop them from the inventory by a
+    re-import read from a node that stays (reimport_from: the name or
+    address it is reached by), --check --diff first, then the commit, only
+    when the inventory dir is in a git work tree. inventory, hosts: the
+    run's (none: left out of the commands); inventory_dir: where the
+    cluster's inventory is (import_cluster_dir, given when it is not the
+    default inventories); unreachable: the ones not answering, left out of
+    the reset (the re-import drops them too); imported: the inventory is
+    import_cluster's (else: remove them from it by hand, no re-import)."""
+    removed = list(removed or [])
+    if not removed:
+        return []
+    names = nodes(removed, keep_order=True)
+    reset = [n for n in removed if n not in (unreachable or [])]
+    items = [{"text": "empty %s before reusing %s (%s data is left in place)" % (
+        nodes(reset, keep_order=True), "the host" if len(reset) == 1 else "the hosts", "its" if len(reset) == 1 else "their"),
+        "command": command("reset_node", inventory=inventory, hosts=hosts, cwd=cwd,
+                           extra={"cassandra_target_nodes": ",".join(reset)})}] if reset else []
+    shown_dir = path_from(str(inventory_dir), cwd) if inventory_dir else ""
+    reimport = [extra_var("import_cluster_force", "true")]
+    if shown_dir and os.path.normpath(shown_dir) != "inventories":
+        reimport.append(extra_var("import_cluster_dir", shown_dir))
+    if not imported or not reimport_from:
+        items.append("remove %s from the inventory (or leave %s marked cassandra_node_state: absent)" % (
+            names, "it" if len(removed) == 1 else "them"))
+    else:
+        items.append({"text": "drop %s from the inventory: re-import the cluster, its changes shown first (-i %s, leaves"
+                              " the inventory out: add your connection options, e.g. -u, when it sets them)"
+                              % (names, reimport_from),
+                      "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd,
+                                         extra=reimport + ["--check", "--diff"])})
+        items.append({"text": "then write them",
+                      "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd, extra=reimport)})
+    if shown_dir and (in_git if in_git is not None else in_git_work_tree(str(inventory_dir))):
+        # only the inventory, whatever else is staged
+        items.append({"text": "commit it", "command": "git add %s && git commit -m %s -- %s" % (
+            shlex.quote(shown_dir), shlex.quote("Inventory: %s removed" % ", ".join(removed)), shlex.quote(shown_dir))})
+    return todo(items)
+
+
 SEEDS_MIN, SEEDS_MAX = 2, 3  # per datacenter (OUTPUT Q7)
 
 

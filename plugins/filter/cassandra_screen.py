@@ -267,8 +267,9 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
         left = [m for m, r, e in members.get(dc, []) if m not in order]
         after.append("Afterwards %s keeps %d node%s: %s." % (dc, len(left), "" if len(left) == 1 else "s", ", ".join(left))
                      if left else "Afterwards %s has no node left." % dc)
-    after.append("Then remove %s from the inventory; wipe the data directories before reusing the host%s."
-                 % (", ".join(order), "" if len(order) == 1 else "s"))
+    after.append("Then empty %s (reset_node) before reusing the host%s, and re-import the cluster to drop %s from"
+                 " the inventory: the commands are printed at the end."
+                 % (", ".join(order), "" if len(order) == 1 else "s", "it" if len(order) == 1 else "them"))
 
     warnings = []
     if replication_problems:

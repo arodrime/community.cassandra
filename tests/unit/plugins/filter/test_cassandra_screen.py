@@ -102,7 +102,8 @@ def test_decommission_two_racks_rf2_goes_to_the_rack():
         "end state: out of the ring, Cassandra stopped and disabled, its data left on disk"],
         "step": {"node": "node3", "dc": "dc1", "rack": "rack2", "text": "load 1 GiB -> node1, node5 (the other nodes of rack2)"}}]
     assert spec["after"] == ["Afterwards dc1 keeps 5 nodes: node1, node2, node4, node5, node6.",
-                             "Then remove node3 from the inventory; wipe the data directories before reusing the host."]
+                             "Then empty node3 (reset_node) before reusing the host, and re-import the cluster to drop it"
+                             " from the inventory: the commands are printed at the end."]
     assert spec["warnings"] == []
 
 

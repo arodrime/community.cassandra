@@ -1,0 +1,4 @@
+minor_changes:
+  - "decommission_node, topology - the end says what is left with paste-ready commands: empty the removed hosts with ``reset_node``, drop them from the inventory with a re-import read from a node that stays (``--check --diff`` first, then the real one), and the commit only when the inventory is in a git work tree."
+bugfixes:
+  - "reset_node - a host marked ``cassandra_node_state: absent`` (removed by topology) was refused as not a node of the cluster; it is read by the preflight and emptied like the others."

@@ -132,7 +132,8 @@ nodes that stay (hours on a big node), then Cassandra is stopped and disabled on
     end state: out of the ring, Cassandra stopped and disabled, its data left on disk
 
 Afterwards dc1 keeps 6 nodes: node1, node2, node3, node4, node5, node6.
-Then remove node7, node8 from the inventory; wipe the data directories before reusing the hosts.
+Then empty node7, node8 (reset_node) before reusing the hosts, and re-import the cluster to drop
+them from the inventory: the commands are printed at the end.
 
 WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,
   the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen."""

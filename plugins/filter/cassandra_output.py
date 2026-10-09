@@ -121,6 +121,17 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
                        options=options, cwd=cwd)
 
 
+def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None, inventory_dir=None, cwd=None,
+                           default_inventory=None, in_git=None, unreachable=None, imported=True):
+    """default_inventory: ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')):
+    no -i when the run's inventory is that one."""
+    if default_inventory and _same_sources(inventory, default_inventory):
+        inventory = None
+    return out.removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
+                            inventory_dir=inventory_dir or None, cwd=cwd, in_git=in_git, unreachable=unreachable,
+                            imported=imported)
+
+
 def cassandra_todo(items, title="TO DO"):
     return out.todo(items, title=title)
 
@@ -154,6 +165,7 @@ class FilterModule(object):
             "cassandra_changed_lines": cassandra_changed_lines,
             "cassandra_command": cassandra_command,
             "cassandra_todo": cassandra_todo,
+            "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_inventory_steps": cassandra_inventory_steps,
             "cassandra_in_git_work_tree": cassandra_in_git_work_tree,
             "cassandra_mask": cassandra_mask,

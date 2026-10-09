@@ -379,3 +379,49 @@ def test_mask_cqlsh_password_and_block_values():
     assert out.changed_lines("-  keystore_password: |\n-    s3cr3t\n+  other: 1\n") == \
         ["  -  keystore_password: ****", "  -    ****", "  +  other: 1"]
     assert out.diff_lines({}, {"a": 1}) == ["  + a: 1"] and out.diff_lines(None, {}) == []
+
+
+# --- the TO DO once nodes left the ring ---
+
+def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
+    inventories = tmp_path / "inventories"
+    inventories.mkdir()
+    (tmp_path / ".git").mkdir()
+    lines = out.removed_todo(["node3"], "10.0.0.1", inventory=None, hosts=None, inventory_dir=str(inventories),
+                             cwd=str(tmp_path))
+    assert lines == [
+        "TO DO",
+        "  1. empty node3 before reusing the host (its data is left in place):",
+        "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
+        "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
+        " inventory out: add your connection options, e.g. -u, when it sets them):",
+        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        "  3. then write them:",
+        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true",
+        "  4. commit it:",
+        "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
+
+
+def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path):
+    prod = tmp_path / "inv" / "prod"
+    prod.mkdir(parents=True)
+    lines = out.removed_todo(["node3", "node4", "node9"], "node1", inventory=[str(prod)], hosts="orders",
+                             inventory_dir=str(prod), cwd=str(tmp_path), unreachable=["node9"])
+    assert lines == [
+        "TO DO",
+        "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
+        "     ansible-playbook -i inv/prod community.cassandra.reset_node -e cassandra_hosts=orders"
+        " -e cassandra_target_nodes=node3,node4",
+        "  2. drop node3, node4, node9 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves the"
+        " inventory out: add your connection options, e.g. -u, when it sets them):",
+        "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
+        " -e import_cluster_dir=inv/prod --check --diff",
+        "  3. then write them:",
+        "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
+        " -e import_cluster_dir=inv/prod"]
+    assert out.removed_todo([], "node1") == []
+    # an inventory import_cluster did not write: removed by hand, no re-import
+    assert out.removed_todo(["node3"], "node1", imported=False) == [
+        "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
+        "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
+        "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]

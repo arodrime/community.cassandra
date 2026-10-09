@@ -123,9 +123,10 @@ def test_racks_other_targets_keep_the_start_order(kind):
 
 
 def test_racks_leaving_nodes_join_nothing():
-    # n8 (r1) leaves: it is not a new node in a 2-rack ring
+    # n8 (r1) leaves: it is not a new node in a 2-rack ring; nor one reset_node empties (left the ring)
     inventory = {"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8")}
     assert passes(inventory, [N1, N2], cassandra_target_nodes="n8", _cassandra_preflight_target="leave") is True
+    assert passes(inventory, [N1, N2], cassandra_target_nodes="n8", _cassandra_preflight_target="reset") is True
     assert passes(inventory, [N1, N2], cassandra_target_nodes="n8", _cassandra_preflight_target="add") is False
 
 
@@ -185,3 +186,10 @@ def test_racks_checked_for_the_allocator_only(num_tokens, hint, checked):
     variables = dict(RACKS["vars"], cassandra_num_tokens=num_tokens,
                      cassandra_allocate_tokens_for_local_replication_factor=hint)
     assert all(render("{{ %s }}" % c, **variables) for c in RACKS["when"]) is checked
+
+
+def test_reset_node_reads_a_host_marked_absent_too():
+    """topology removed it (marked absent): reset_node empties it, its settings read like the others'."""
+    hosts = PLAY["hosts"]
+    assert "_cassandra_preflight_target | default('') in ['leave', 'reset']" in hosts
+    assert "select('in', groups[lookup('community.cassandra.cassandra_hosts')])" in hosts

@@ -448,7 +448,10 @@ inventory: the other nodes, which still list it, then get the new list first, li
 node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that still has nodes afterwards left with no
 seed (one removed whole needs none), and a removal that would
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
-authentication is on). Remove the hosts from the inventory afterwards. Run again after an interruption, a node
+authentication is on). The end says what is left, each with its command ready to paste: empty the hosts with
+``reset_node`` (their data is left in place), drop them from the inventory with a re-import of the cluster read from a
+node that stays (``import_cluster -e import_cluster_force=true``, ``--check --diff`` first), then commit the inventory
+when it is in a git work tree. ``topology`` ends the same way. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
 decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
 the operator: ``nodetool decommission`` on the node resumes it, restarting Cassandra on it cancels it.
@@ -496,7 +499,7 @@ example (replacing the seed ``node2`` by ``node5``):
       3.  decommission node2  dc1/rack1  load 40.1 GiB, owns 25.0% -> node1, node3..node5
 
     dc1 after:  4 nodes: node1, node3..node5   highest RF 3 (orders)
-    then:       delete node2 from the inventory (or leave it marked absent); wipe its data directories before reusing the host
+    then:       empty node2 (reset_node) before reusing the host, re-import the cluster to drop it from the inventory: the commands at the end
     cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
 
     WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)

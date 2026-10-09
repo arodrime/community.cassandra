@@ -11,13 +11,13 @@
 # cluster is this one or the stock 'Test Cluster' and it has no user keyspace but
 # a failed bootstrap's of this cluster (cassandra_add_node_reset_check): the plan
 # gets the line for the screen, or the refusal saying what the node holds.
+# a host marked cassandra_node_state: absent (removed by topology) is still of the group: reset_node empties it
 - name: The node belongs to the cluster's group
   ansible.builtin.assert:
-    that: inventory_hostname in query('community.cassandra.cassandra_nodes')
+    that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] | default([])
     fail_msg: >-
-      {{ inventory_hostname }} is not a node of the group {{ lookup('community.cassandra.cassandra_hosts') }} (cassandra_hosts{{
-      ', marked cassandra_node_state: absent' if inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] else '' }}):
-      the reset checks the ring of that group's nodes, so it only resets a node of that group.
+      {{ inventory_hostname }} is not a host of the group {{ lookup('community.cassandra.cassandra_hosts') }} (cassandra_hosts):
+      the reset checks the ring of that group's nodes, so it only resets a host of that group.
     quiet: true
 
 - name: Load the cassandra_config defaults (directories)
