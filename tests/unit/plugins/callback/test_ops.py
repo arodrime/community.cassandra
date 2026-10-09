@@ -332,8 +332,9 @@ def test_a_play_with_no_host_says_nothing(tmp_path):
   tasks:
     - name: Load defaults
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
+      loop: [cassandra_service, cassandra_config, cassandra_install, cassandra_medusa, cassandra_repository]
       when: true
     - name: Done
       ansible.builtin.debug:
