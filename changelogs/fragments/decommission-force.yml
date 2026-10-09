@@ -1,0 +1,4 @@
+bugfixes:
+  - "decommission_node, topology - ``cassandra_decommission_force: true`` now runs ``nodetool decommission --force``: Cassandra 4.0 and later refuse to decommission a node that leaves fewer nodes in its datacenter than a keyspace's replication factor without it, so the forced run failed there."
+minor_changes:
+  - cassandra_decommission - new ``force`` option, ``nodetool decommission --force``.

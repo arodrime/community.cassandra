@@ -57,6 +57,16 @@
     _cassandra_config_quiet: true
     _cassandra_change_report_quiet: true
 
+- name: Say the restart of {{ inventory_hostname }}
+  ansible.builtin.debug:
+    msg: "{{ 'restart' | community.cassandra.cassandra_phase(node=inventory_hostname) }}"
+  when:
+    - not ansible_check_mode
+    - cassandra_apply_config_then | default('restart') == 'restart'
+  vars:
+    cassandra_output: true  # a phase line (ops callback)
+    cassandra_output_gap: true  # a block of its own
+
 - name: Drain and restart the node
   ansible.builtin.include_tasks: action_restart.yml
   when: cassandra_apply_config_then | default('restart') == 'restart'

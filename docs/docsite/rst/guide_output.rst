@@ -30,10 +30,18 @@ Conventions
   non-zero size).
 - **Plans**: the header, the numbered steps (node and dc/rack), the facts, then the ``WARNING`` lines just above
   the question.
+- **Phases**: one line per major phase, ending with ``...`` (blue under the ops callback), e.g. ``Checking the
+  cluster (5 nodes)...``, ``Preparing the new nodes (node5, node6)...``, ``Starting node5 and waiting for its
+  bootstrap...``, ``Decommissioning node3...``, ``Waiting for every node to be UN...``, ``Restarting node2...``. Their
+  words are in one place (``PHASES`` in ``plugins/module_utils/cassandra_output.py``, filter
+  ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only.
 - **Progress**: one line per check, then always a compact line of the nodes at the other end::
 
     [1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m
           from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled
+
+  A check every 10 s for the first 5 minutes, then every 30 s; after a minute without progress the line says it
+  (``STALLED 6m/15m``: the time without progress and the limit, ``cassandra_stream_stall_time``).
 
 - **Recap**: the verdict with the counts and the duration, the nodes grouped by identical outcome, a line of its
   own for a node more than 50% slower than the median, a failed or a skipped one, with the reason. ``--check``

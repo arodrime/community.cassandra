@@ -6,6 +6,23 @@
   ansible.builtin.include_tasks: action_add_prepare.yml
   when: not _cassandra_add_prepared | default(false) | bool
 
+# Until it has joined: a node of this cluster with its keyspaces and this
+# mark is a failed bootstrap add_node may reset; without it, a former member
+# (reset_node_plan.yml). The directory may not be there yet on a node set up
+# another way: no mark then (such a node is refused rather than reset); nor
+# when the join is not waited for (cassandra_service_wait_for_normal false).
+# A wait that stops before the end leaves it: the preflight of a later run
+# removes it once the node is UN.
+- name: Mark the bootstrap as started
+  ansible.builtin.copy:
+    content: "Written by community.cassandra add_node: a bootstrap started {{ now(utc=true).isoformat() }}, not over yet\n"
+    dest: "{{ _cassandra_service_bootstrap_mark }}"
+    mode: "0644"
+  failed_when: false
+  when:
+    - cassandra_new_node_state | default('new') == 'new'
+    - cassandra_service_wait_for_normal | bool  # its end is waited for, the mark removed then
+
 - name: Start it
   ansible.builtin.include_tasks: main.yml
   vars:
@@ -62,3 +79,9 @@
           on it retries the missing ranges. To start over instead (a bootstrap that failed): stop Cassandra, empty its data, commitlog, saved_caches and
           hints directories, wait until it is gone from nodetool status (seen from another node), then
           {{ _cassandra_join_over | default('run add_node again.') }}
+
+    # joined: data of this cluster on it is a member's from now on
+    - name: Remove the mark of the bootstrap
+      ansible.builtin.file:
+        path: "{{ _cassandra_service_bootstrap_mark }}"
+        state: absent

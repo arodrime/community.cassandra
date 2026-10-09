@@ -142,6 +142,14 @@
       {{ cassandra_keyspaces | community.cassandra.cassandra_replication_problems(cassandra_topology_plan.nodes_left)
          if cassandra_topology_plan.in_ring and cassandra_keyspaces | default(none) is not none else [] }}
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'ring' | community.cassandra.cassandra_phase }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Load the role defaults (the seeds)
       ansible.builtin.include_role:
         name: "community.cassandra.{{ item }}"
@@ -181,7 +189,7 @@
     - name: Read the keyspaces for the hosts to add
       when:
         - _tp_candidates | length > 0
-        - cassandra_add_node_reset | bool
+        - cassandra_add_node_reset | community.cassandra.cassandra_reset_choice != 'false'
         - inventory_hostname == _tp_cql_node
       block:
         - name: Read the keyspaces' replication
@@ -200,7 +208,7 @@
       run_once: true
       when:
         - _tp_candidates | length > 0
-        - cassandra_add_node_reset | bool
+        - cassandra_add_node_reset | community.cassandra.cassandra_reset_choice != 'false'
         - _tp_cql_node | length > 0
 
     # The checks add_node runs first, on the hosts to add: refused here, before the question.
@@ -208,6 +216,8 @@
     # on ansible-core 2.19+ a rescued failure narrows or drops the play's hosts)
     - name: Check the hosts to add
       when: inventory_hostname in _tp_candidates
+      vars:
+        cassandra_output_rescued: true  # its rescue keeps the refusal for the plan, said there once (ops callback)
       block:
         - name: Check this host
           ansible.builtin.include_role:
@@ -215,7 +225,7 @@
             tasks_from: new_node_checks.yml
           vars:
             _cassandra_new_node_skip_in_ring: true  # a bootstrap still running
-            _cassandra_new_node_reset: "{{ cassandra_add_node_reset | bool }}"
+            _cassandra_new_node_reset: "{{ cassandra_add_node_reset | community.cassandra.cassandra_reset_choice != 'false' }}"
             _cassandra_new_node_reset_stops: false  # add_node's reset: a running Cassandra is refused
 
         - name: Find where it stands
@@ -230,7 +240,7 @@
             name: community.cassandra.cassandra_service
             tasks_from: reset_node_plan.yml
           when:
-            - cassandra_add_node_reset | bool
+            - cassandra_add_node_reset | community.cassandra.cassandra_reset_choice != 'false'
             - cassandra_new_node_state == 'new'
           vars:
             cassandra_target_nodes: "{{ _tp_candidates | join(',') }}"
@@ -443,6 +453,14 @@
   become: true
   any_errors_fatal: true  # no removal while a node still lists a leaving seed
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'seeds' | community.cassandra.cassandra_phase }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Apply cassandra_seeds on this node
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -470,10 +488,11 @@
                                                      'seeds now ' ~ _plan.seeds.new if _plan.seeds.step else '',
                                                      ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
                                                     | select | join('; '))]
-             + ((['', 'TO DO', '  1. delete ' ~ _done | community.cassandra.cassandra_node_list ~ ' from the inventory, or leave '
-                  ~ _them ~ ' marked absent (the playbooks leave ' ~ _them ~ ' out)',
-                  '  2. wipe ' ~ ('its' if _done | length == 1 else 'their') ~ ' data directories before reusing the host'
-                  ~ ('' if _done | length == 1 else 's')])
+             + (([''] + _done | community.cassandra.cassandra_removed_todo(
+                    reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
+                    inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                    hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
+                    cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent))
                 if _done | length > 0 else [])) | join(_nl) }}
       run_once: true
       when:
@@ -486,4 +505,19 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
-        _them: "{{ 'it' if _done | length == 1 else 'them' }}"
+        # a node that stays, running if one is, to re-import the cluster from
+        _others: "{{ ansible_play_hosts_all | reject('in', _done) | list }}"
+        _stays: >-
+          {%- set up = [] -%}
+          {%- for h in _others if hostvars[h]._cassandra_preflight_running | default(false) | bool -%}
+          {%-   set _ = up.append(h) -%}
+          {%- endfor -%}
+          {{ (up + _others) | first | default('') }}
+        # the inventory is import_cluster's: <inventory dir>/<cluster group>.yml, written by it (its first
+        # line says so); else the hosts are removed by hand
+        _imported: >-
+          {{ _stays != '' and _hosts_file != '' and _hosts_file is file
+             and lookup('ansible.builtin.file', _hosts_file) is search('^# Written by community[.]cassandra[.]import_cluster') }}
+        _hosts_file: >-
+          {{ (hostvars[_stays].inventory_dir ~ '/' ~ lookup('community.cassandra.cassandra_hosts') ~ '.yml')
+             if _stays != '' and hostvars[_stays].inventory_dir | default('', true) != '' else '' }}

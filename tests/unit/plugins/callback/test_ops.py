@@ -332,6 +332,51 @@ def test_a_rescued_failure_on_one_line(tmp_path):
     assert "TASK [Fails again]" in output and "the real failure" in output
 
 
+@pytest.mark.parametrize("inner, cause", [
+    ("""
+- name: Install something
+  ansible.builtin.fail:
+    msg: "Failed to download metadata for repo 'epel'"
+""", "Failed to download metadata for repo 'epel'"),
+    ("""
+- name: Loop
+  ansible.builtin.command: "{{ item }}"
+  loop: [/bin/true, /bin/false]
+""", "One or more items failed"),
+    # a verdict of its own (a marked fail): said once too, by the rescue
+    ("""
+- name: Refuse
+  ansible.builtin.fail:
+    msg: refused for a reason
+  vars:
+    cassandra_output: true
+""", "refused for a reason")])
+def test_a_rescue_that_says_the_failure_itself(tmp_path, inner, cause):
+    """cassandra_output_rescued on the block: its rescue prints the cause (as a verdict), nothing before it
+    (the failure said once), also through an include and for a looped task."""
+    (tmp_path / "inner.yml").write_text(inner)
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Prepare
+      vars:
+        cassandra_output_rescued: true
+      block:
+        - name: Inner
+          ansible.builtin.include_tasks: inner.yml
+      rescue:
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: "FAILED  op  could not be prepared: {{ ansible_failed_result.msg }}"
+          vars:
+            cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook, INVENTORY="node1,")
+    assert rc != 0
+    assert output.splitlines() == ["node1: FAILED  op  could not be prepared: " + cause]
+
+
 def test_a_play_with_no_host_says_nothing(tmp_path):
     playbook = """
 - hosts: "{{ groups['nothing_to_do'] | default([]) }}"

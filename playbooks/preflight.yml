@@ -23,7 +23,8 @@
         tasks_from: hosts_check.yml
 
 # The nodes of the cluster (without the hosts marked cassandra_node_state:
-# absent), and the nodes decommission_node removes (cassandra_target_nodes).
+# absent), and the nodes decommission_node removes or reset_node empties
+# (cassandra_target_nodes: one marked absent once topology removed it).
 # The playbook that imports this one says what its cassandra_target_nodes are
 # (_cassandra_preflight_target): add (add_node, add_datacenter, replace_node),
 # leave (decommission_node), reset (reset_node), dead (remove_dead_node) or
@@ -33,8 +34,8 @@
     {{ 'localhost:!localhost' if _cassandra_preflight_skip | default(false) | bool
        else (query('community.cassandra.cassandra_nodes')
              + (query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
-                if _cassandra_preflight_target | default('') == 'leave' and cassandra_target_nodes | default('') | length > 0 else [])
-               | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}
+                if _cassandra_preflight_target | default('') in ['leave', 'reset'] and cassandra_target_nodes | default('') | length > 0
+                else []) | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}
   gather_facts: true
   become: true
   tasks:
@@ -43,6 +44,14 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: target_nodes_check.yml
+
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'check' | community.cassandra.cassandra_phase(count=ansible_play_hosts_all | length) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
 
     # An unreachable host would silently be left out of the rest of the run
     - name: Every node answers
@@ -309,6 +318,21 @@
             _section: "{{ (cassandra_preflight_describe.stdout ~ '\\n').split('Database versions:')[1:] | first | default('') }}"
             _versions: "{{ _section.split('\\n\\n') | first | regex_findall('(?m)^\\s+(\\S+: \\[.*\\])$') }}"
 
+    # A node up and normal in the ring is a member: the mark of a bootstrap add_node started there (a wait
+    # that stopped before the end) goes, or a removal of the node later would read it as a failed bootstrap
+    # (cassandra_service reset_node_plan.yml)
+    - name: Remove the mark of a bootstrap that went through
+      ansible.builtin.file:
+        path: "{{ _cassandra_service_bootstrap_mark | default('/var/lib/cassandra/.ansible_bootstrap_started') }}"
+        state: absent
+      when:
+        - cassandra_preflight_status.cluster_status is defined
+        - _cassandra_preflight.ring_address | default('') in _un
+      vars:
+        _un: >-
+          {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
+             | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}
+
     # The token allocator refuses a node that joins a rack already in the ring
     # when the datacenter's ring has more than 1 rack but fewer than its
     # replication factor hint. The ring counts down nodes too (a dead node's
@@ -336,10 +360,10 @@
           {{ [] if _cassandra_preflight_cluster_reset | default(false) | bool
              else ((cassandra_preflight_status.cluster_status | default({}, true))[item] | default({})).nodes | default([]) }}
         _ring_racks: "{{ _ring_nodes | map(attribute='rack') | unique | list }}"
-        # the nodes to decommission (cassandra_target_nodes) join nothing
+        # the nodes to decommission or reset (cassandra_target_nodes) join nothing
         _inventory: >-
           {{ ansible_play_hosts | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
-                                       if _cassandra_preflight_target | default('') == 'leave'
+                                       if _cassandra_preflight_target | default('') in ['leave', 'reset']
                                           and cassandra_target_nodes | default('') | length > 0 else [])
              | map('extract', hostvars, '_cassandra_preflight') | selectattr('cassandra_dc', 'equalto', item) | list }}
         _inventory_racks: "{{ _inventory | map(attribute='cassandra_rack') | unique | list }}"

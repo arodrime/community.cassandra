@@ -190,8 +190,8 @@ def test_screen():
         "",
         "dc1 after:        4 nodes: node1..node3, node5   r1 2  r2 2   highest RF 3 (orders)",
         "already removed:  node6 (marked absent, out of the ring, Cassandra stopped)",
-        "then:             delete node4, node6 from the inventory (or leave them marked absent); wipe their data"
-        " directories before reusing the hosts",
+        "then:             empty node4, node6 (reset_node) before reusing the hosts, re-import the cluster to drop them"
+        " from the inventory: the commands at the end",
         "cleanup:          of the nodes that hand data over: its command is printed after the adds (topology runs"
         " none, the removals move data again)"]
     # confirm.yml asks right below; no question asked: said; --check: said, nothing asked

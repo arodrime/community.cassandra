@@ -72,9 +72,9 @@ class FakeModule(object):
 
 
 def run_main(netstats_out, check_mode=False, debug=False, netstats_rc=0,
-             decommission_rc=0, decommission_out='', decommission_err=''):
+             decommission_rc=0, decommission_out='', decommission_err='', force=False):
     """Run main() with nodetool mocked; return (exception, list of nodetool sub-commands)."""
-    FakeModule.params = {'host': '127.0.0.1', 'port': 7199, 'debug': debug,
+    FakeModule.params = {'host': '127.0.0.1', 'port': 7199, 'debug': debug, 'force': force,
                          '_check_mode': check_mode}
     commands = []
 
@@ -104,6 +104,23 @@ class TestMain:
         assert res.args[0]['changed'] is True
         assert res.args[0]['msg'] == "decommission command succeeded"
         assert commands == ["netstats", "decommission"]
+
+    def test_force_runs_decommission_force(self):
+        # 4.0+ refuses to go below the replication factor without --force (CASSANDRA-12510)
+        res, commands = run_main(netstats("NORMAL"), force=True)
+        assert isinstance(res, ExitJson) and res.args[0]['changed'] is True
+        assert commands == ["netstats", "decommission --force"]
+
+    def test_force_says_force_to_resume_a_failed_one(self):
+        res, commands = run_main(netstats("DECOMMISSION_FAILED"), force=True)
+        assert isinstance(res, FailJson) and "run nodetool decommission --force by hand" in res.args[0]['msg']
+        res, commands = run_main(netstats("DECOMMISSION_FAILED"))
+        assert "run nodetool decommission by hand" in res.args[0]['msg']
+
+    def test_force_changes_nothing_on_a_leaving_node(self):
+        res, commands = run_main(NETSTATS_LEAVING, force=True)
+        assert isinstance(res, ExitJson) and res.args[0]['changed'] is False
+        assert commands == ["netstats"]
 
     def test_normal_debug_returns_decommission_output(self):
         res, commands = run_main(netstats("NORMAL"), debug=True, decommission_out="done\n")

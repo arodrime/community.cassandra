@@ -25,7 +25,8 @@
     # 5.0.0 to 5.0.4: nodetool can't answer on a bootstrapping node (CASSANDRA-19902)
     _no_mbean: "{{ 'InstanceNotFoundException' in cassandra_new_node_info.stderr | default('') }}"
     _state: >-
-      {{ 'new' if _in_ring == 'absent' and (not _has_data or cassandra_add_node_reset | default(true) | bool)
+      {{ 'new' if _in_ring == 'absent'
+                   and (not _has_data or cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false')
          else 'orphan' if _in_ring == 'absent'
          else 'other_host' if _my_id and _my_id != _ring.host_id
          else 'joined' if _in_ring == 'UN' and _has_data and _my_id
@@ -96,3 +97,10 @@
       ansible.builtin.set_fact:
         cassandra_new_node_state: "{{ _state }}"
         cassandra_new_node_address: "{{ _address }}"
+
+    # joined (an interrupted run's bootstrap went through): the mark of that bootstrap goes (action_add.yml)
+    - name: Remove the mark of a bootstrap that went through
+      ansible.builtin.file:
+        path: "{{ _cassandra_service_bootstrap_mark }}"
+        state: absent
+      when: _state == 'joined'

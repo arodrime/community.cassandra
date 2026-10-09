@@ -80,15 +80,15 @@ def test_lookup_error():
 
 def test_playbooks_leave_the_absent_hosts_out():
     """The cluster's hosts come from cassandra_nodes; the whole group only where the hosts
-    marked absent belong: a host to decommission, the addresses the reset knows, the names."""
+    marked absent belong: a host to decommission or reset, the addresses the reset knows, the names."""
     allowed = {
         ("playbooks/decommission_node.yml", "            that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')]"),
-        ("playbooks/preflight.yml", "               | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}"),
+        ("playbooks/preflight.yml", "                else []) | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}"),
         ("playbooks/add_node.yml", "          {{ inventory_hostname }} is {{ 'marked cassandra_node_state: absent' if inventory_hostname in"
                                    " groups[lookup('community.cassandra.cassandra_hosts')]"),
+        # reset_node empties a host marked absent (removed by topology)
         ("roles/cassandra_service/tasks/reset_node_plan.yml",
-         "      ', marked cassandra_node_state: absent' if inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')]"
-         " else '' }}):"),
+         "    that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] | default([])"),
         ("roles/cassandra_service/tasks/reset_node_plan.yml",
          "      {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] | default([]) -%}"),
     }

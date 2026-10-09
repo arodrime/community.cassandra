@@ -82,7 +82,9 @@
             name: [tar, gzip]
             state: present
           retries: 3
-          when: not cassandra_offline | bool
+          when:
+            - not cassandra_offline | bool
+            - "['tar', 'gzip'] | reject('in', _cassandra_install_before | default({})) | list | length > 0"
 
         - name: Remove what an interrupted run left
           ansible.builtin.file:

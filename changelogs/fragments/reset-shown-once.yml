@@ -1,0 +1,2 @@
+bugfixes:
+  - "add_node, replace_node - what the reset of a node deletes was printed twice, before the screen and in it: only in the screen now."

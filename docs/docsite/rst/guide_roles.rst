@@ -369,13 +369,12 @@ nodes then hold different shares of the data), and a run not inside ``tmux`` or 
 SSH session stops the run).
 
 Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints its progress
-every ``cassandra_stream_check_interval`` seconds (300 by default; the first checks sooner, after 10 s, 30 s, 1, 2
-and 4 minutes, so a short operation ends in seconds): a first line with the node, a bar, the percentage
-and the rate over the last 3 checks, then the bytes and files streamed, each node it streams from with its own
-progress, and the times on the controller (now, started, expected end); a single line with the total time and average
-rate once done. It waits as long as the streams make
-progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3), a full interval apart, with nothing streamed (4 times as
-many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
+every ``cassandra_stream_early_check_interval`` seconds (10) during the first ``cassandra_stream_early_time`` seconds
+(300), so a short operation ends in seconds, then every ``cassandra_stream_check_interval`` seconds (30): one line with
+the node, a bar, the percentage, the bytes streamed, the rate, the expected end on the controller's clock and the time
+so far, then one line with each node it streams from and its own progress; a single line with the total time once
+done. It waits as long as the streams make progress: it stops only after ``cassandra_stream_stall_time`` seconds (900)
+with nothing streamed (4 times as long while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
 failed bootstrap over, stop Cassandra on the node, wait until it is gone from ``nodetool status``, and run ``add_node``
@@ -449,7 +448,10 @@ inventory: the other nodes, which still list it, then get the new list first, li
 node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that still has nodes afterwards left with no
 seed (one removed whole needs none), and a removal that would
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
-authentication is on). Remove the hosts from the inventory afterwards. Run again after an interruption, a node
+authentication is on). The end says what is left, each with its command ready to paste: empty the hosts with
+``reset_node`` (their data is left in place), drop them from the inventory with a re-import of the cluster read from a
+node that stays (``import_cluster -e import_cluster_force=true``, ``--check --diff`` first), then commit the inventory
+when it is in a git work tree. ``topology`` ends the same way. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
 decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
 the operator: ``nodetool decommission`` on the node resumes it, restarting Cassandra on it cancels it.
@@ -478,7 +480,7 @@ per node); one listed in ``cassandra_seeds`` joins as a regular node. When ``cas
 lists the nodes run with, it is applied on every node, live (``change_seeds``' way: the seeds line of
 ``cassandra.yaml`` written and reloaded, no restart). A host marked absent that is still in the ring is decommissioned
 as ``decommission_node`` does it (refused: one still in ``cassandra_seeds``, a datacenter left with fewer nodes than a
-keyspace has replicas there unless ``cassandra_decommission_force``).
+keyspace has replicas there unless ``cassandra_decommission_force``, which runs ``nodetool decommission --force``).
 A host marked absent, out of the ring and stopped needs nothing ("already removed"). A node of the ring no host of the
 inventory has is never touched: it is reported (a mistyped address, a host missing from the inventory, a dead node to
 remove with ``remove_dead_node``), and a plan with something to do is refused while it is there.
@@ -497,7 +499,7 @@ example (replacing the seed ``node2`` by ``node5``):
       3.  decommission node2  dc1/rack1  load 40.1 GiB, owns 25.0% -> node1, node3..node5
 
     dc1 after:  4 nodes: node1, node3..node5   highest RF 3 (orders)
-    then:       delete node2 from the inventory (or leave it marked absent); wipe its data directories before reusing the host
+    then:       empty node2 (reset_node) before reusing the host, re-import the cluster to drop it from the inventory: the commands at the end
     cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
 
     WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
@@ -561,8 +563,12 @@ default), but only when all hold: Cassandra is down on the node; no up node of t
 data does not show it as a member of another ring (other nodes in its ``system.peers`` while its cluster is not this
 one); its cluster name (its live ``cassandra.yaml``, which Cassandra checks against its data at start) is this
 cluster's or the stock ``Test Cluster``; it has no user keyspace, unless it is a failed bootstrap of this cluster (its
-cluster name is this one, and its keyspaces are among the cluster's when they can be read). The screen says it before
-the question, with what it deletes in a ``data loss`` warning::
+cluster name is this one, its keyspaces are among the cluster's when they can be read, and ``add_node`` started that
+bootstrap: its mark, ``/var/lib/cassandra/.ansible_bootstrap_started``, stays until the node has joined). A node of
+this cluster with its keyspaces and no such mark is a former member (removed with ``remove_dead_node`` and put back
+in the inventory): the writes only it holds would be lost, so it is refused, saying so, unless
+``-e cassandra_add_node_reset=true`` is given (snapshot or copy its data directories first if in doubt). The screen
+says it before the question, with what it deletes in a ``data loss`` warning::
 
     node7 (dc1/rack_b): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down) — will be reset
 

@@ -12,6 +12,17 @@
       ansible.builtin.set_fact:
         _cassandra_restart_start: "{{ now().timestamp() | int }}"
 
+    - name: Say what the batch does
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'restart_rack' | community.cassandra.cassandra_phase(_todo, what='rack ' ~ _p.cassandra_dc | default('?') ~ '/'
+               ~ _p.cassandra_rack | default('?')) }}
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        _p: "{{ hostvars[_todo | first]._cassandra_preflight | default({}) }}"
+
     - name: Check the cluster before the rack
       ansible.builtin.include_tasks: cluster_health.yml
 

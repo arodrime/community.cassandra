@@ -224,8 +224,11 @@ def test_progress_report_knows_the_status_before_the_block_ends():
         assert wait["ansible.builtin.wait_for"]["timeout"] == "{{ _cassandra_stream_state.wait }}"
         # quiet, on the controller: pause would print "Pausing for ..." between the progress lines
         assert wait["delegate_to"] == "localhost" and wait["become"] is False and wait["vars"]["ansible_become"] is False
-        assert "interval=cassandra_stream_check_interval | int" in block[names.index("Work out the progress")][
-            "ansible.builtin.set_fact"]["_cassandra_stream_state"]
+        progress_of = block[names.index("Work out the progress")]["ansible.builtin.set_fact"]["_cassandra_stream_state"]
+        for setting in ("interval=cassandra_stream_check_interval | int", "stall_time=cassandra_stream_stall_time | int",
+                        "early_interval=cassandra_stream_early_check_interval | int",
+                        "early_time=cassandra_stream_early_time | int"):
+            assert setting in progress_of
 
 
 @pytest.mark.parametrize("job, mode, expected", [

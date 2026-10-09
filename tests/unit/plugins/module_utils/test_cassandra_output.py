@@ -217,12 +217,26 @@ def test_progress_line_going_with_peers_always():
 def test_progress_line_waiting_stalled_done():
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", now=NOW, start=NOW - 32) == \
         ["[1/2] node5 bootstrap  JOINING  waiting for streams  32s"]
-    # checks without a stream yet (a bootstrap's ring delay): not called stalled, the count shown
-    assert out.progress_line(1, 2, "node5", "bootstrap", mode="JOINING", now=33, start=0, idle_checks=2, limit=12) == \
-        ["[1/2] node5 bootstrap  JOINING  waiting for streams  2/12 checks  33s"]
+    # no stream yet (a bootstrap's ring delay): not called stalled, the time without progress shown after a minute
+    assert out.progress_line(1, 2, "node5", "bootstrap", mode="JOINING", now=33, start=0, idle=33, limit=3600) == \
+        ["[1/2] node5 bootstrap  JOINING  waiting for streams  33s"]
+    assert out.progress_line(1, 2, "node5", "bootstrap", mode="JOINING", now=120, start=0, idle=120, limit=3600) == \
+        ["[1/2] node5 bootstrap  JOINING  waiting for streams  no progress 2m/1h00m  2m"]
+    # data left, a check or two without a byte: no news; a minute: STALLED and the limit
+    assert "STALLED" not in out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB,
+                                              now=NOW, start=NOW - 900, idle=50, limit=900)[0]
     assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
-                             start=NOW - 900, idle_checks=3, limit=12) == \
-        ["[1/2] node5 bootstrap  JOINING  STALLED 3/12 checks  37%  37.5/100.0 GiB  15m"]
+                             start=NOW - 900, idle=360, limit=900) == \
+        ["[1/2] node5 bootstrap  JOINING  STALLED 6m/15m  37%  37.5/100.0 GiB  15m"]
+    assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
+                             start=NOW - 900, idle=900, limit=900, status="stalled") == \
+        ["[1/2] node5 bootstrap  JOINING  STALLED 15m/15m  37%  37.5/100.0 GiB  15m"]
+    assert out.progress_line(1, 2, "node5", "bootstrap", "JOINING", done=37.5 * GIB, total=100 * GIB, now=NOW,
+                             start=NOW - 900, status="jmx_refused") == \
+        ["[1/2] node5 bootstrap  JOINING  JMX LOGIN REFUSED  37%  37.5/100.0 GiB  15m"]
+    # all sent, the end not there yet (index builds): finishing, quiet for a while
+    assert out.progress_line(2, 3, "node4", "decommission", "LEAVING", done=GIB, total=GIB, now=NOW, start=NOW - 600,
+                             idle=300, limit=3600)[0].endswith("all sent, finishing  no progress 5m/1h00m  10m")
     assert out.progress_line(0, 0, "node5", "bootstrap", done=10 * GIB, total=10 * GIB, now=NOW, start=NOW - 60,
                              status="done") == ["node5 bootstrap  done  10.0/10.0 GiB  1m"]
     assert out.progress_line(2, 3, "node4", "decommission", "LEAVING", done=1 * GIB, total=1 * GIB, speed=MIB,
@@ -390,3 +404,49 @@ def test_mask_cqlsh_password_and_block_values():
     assert out.changed_lines("-  keystore_password: |\n-    s3cr3t\n+  other: 1\n") == \
         ["  -  keystore_password: ****", "  -    ****", "  +  other: 1"]
     assert out.diff_lines({}, {"a": 1}) == ["  + a: 1"] and out.diff_lines(None, {}) == []
+
+
+# --- the TO DO once nodes left the ring ---
+
+def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
+    inventories = tmp_path / "inventories"
+    inventories.mkdir()
+    (tmp_path / ".git").mkdir()
+    lines = out.removed_todo(["node3"], "10.0.0.1", inventory=None, hosts=None, inventory_dir=str(inventories),
+                             cwd=str(tmp_path))
+    assert lines == [
+        "TO DO",
+        "  1. empty node3 before reusing the host (its data is left in place):",
+        "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
+        "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
+        " inventory out: add your connection options, e.g. -u, when it sets them):",
+        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        "  3. then write them:",
+        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true",
+        "  4. commit it:",
+        "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
+
+
+def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path):
+    prod = tmp_path / "inv" / "prod"
+    prod.mkdir(parents=True)
+    lines = out.removed_todo(["node3", "node4", "node9"], "node1", inventory=[str(prod)], hosts="orders",
+                             inventory_dir=str(prod), cwd=str(tmp_path), unreachable=["node9"])
+    assert lines == [
+        "TO DO",
+        "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
+        "     ansible-playbook -i inv/prod community.cassandra.reset_node -e cassandra_hosts=orders"
+        " -e cassandra_target_nodes=node3,node4",
+        "  2. drop node3, node4, node9 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves the"
+        " inventory out: add your connection options, e.g. -u, when it sets them):",
+        "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
+        " -e import_cluster_dir=inv/prod --check --diff",
+        "  3. then write them:",
+        "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
+        " -e import_cluster_dir=inv/prod"]
+    assert out.removed_todo([], "node1") == []
+    # an inventory import_cluster did not write: removed by hand, no re-import
+    assert out.removed_todo(["node3"], "node1", imported=False) == [
+        "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
+        "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
+        "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]

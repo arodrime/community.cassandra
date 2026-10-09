@@ -11,6 +11,14 @@
       ansible.builtin.set_fact:
         _cassandra_cleanup_start: "{{ now().timestamp() | int }}"
 
+    - name: Say what the batch does
+      ansible.builtin.debug:
+        msg: "{{ 'cleanup' | community.cassandra.cassandra_phase(_todo) }}"
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Check the cluster before the batch
       ansible.builtin.include_tasks: cluster_health.yml
 

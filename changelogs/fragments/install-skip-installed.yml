@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_install, cassandra_linux, cassandra_firewall, cassandra_medusa - a package installed already (python3.11, Java, the Cassandra packages without a version, jemalloc, tar, gzip, chrony, the firewall, Medusa's Python packages) is no longer installed again: the package manager call read every repository's metadata and failed when a mirror was down though nothing was to install (add_node on nodes that had python3.11). A package given with its version is still always installed."

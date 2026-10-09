@@ -88,6 +88,15 @@
   loop: "{{ cassandra_linux_sysctl | dict2items }}"
   when: cassandra_linux_sysctl_file != '/etc/sysctl.conf'
 
+# installed already: no package manager call (it reads every repository's
+# metadata, and fails when a mirror is down though nothing is to install)
+- name: Read the installed packages (time sync)
+  ansible.builtin.package_facts:
+  check_mode: false
+  when:
+    - cassandra_linux_timesync | bool
+    - not cassandra_offline | bool
+
 - name: Install time sync package
   ansible.builtin.package:
     name: "{{ _cassandra_timesync_pkg }}"
@@ -103,6 +112,7 @@
   when:
     - cassandra_linux_timesync | bool
     - not cassandra_offline | bool
+    - _cassandra_timesync_pkg not in ansible_facts['packages'] | default({})
 
 - name: Look for the time sync service (offline)
   ansible.builtin.command:

@@ -126,6 +126,17 @@
         quiet: true
       run_once: true
 
+- name: Say the reset of {{ inventory_hostname }}
+  ansible.builtin.debug:
+    msg: "{{ 'reset' | community.cassandra.cassandra_phase(inventory_hostname) }}"
+  when:
+    - not ansible_check_mode
+    - _cassandra_node_reset_plan.delete | length > 0 or _cassandra_node_reset_plan.stop | bool
+      or _cassandra_node_reset_plan.disable | bool
+  vars:
+    cassandra_output: true  # a phase line (ops callback)
+    cassandra_output_gap: true  # a block of its own
+
 - name: Stop Cassandra
   ansible.builtin.systemd_service:
     name: cassandra
@@ -182,3 +193,10 @@
     path: "{{ item }}"
     state: absent
   loop: "{{ _cassandra_node_reset_plan.delete }}"
+
+# empty now: no bootstrap of add_node left on it
+- name: Remove the mark of a bootstrap add_node started there
+  ansible.builtin.file:
+    path: "{{ _cassandra_service_bootstrap_mark }}"
+    state: absent
+  when: _cassandra_node_reset_plan.delete | length > 0

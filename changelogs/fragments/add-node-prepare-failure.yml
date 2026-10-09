@@ -1,0 +1,3 @@
+minor_changes:
+  - "add_node - new nodes that fail to be prepared are said once, as one verdict: the same cause once with the nodes that share it, cut short (the whole error with ``-v``), a repository that can't be reached named as such, then what to check (the repository command, ``cassandra_cqlsh_python_manage: false`` when python3.11 failed) and the command to run again; no line saying the playbook handles it before."
+  - "ops callback - a block that sets ``cassandra_output_rescued: true`` has its rescue say what failed: nothing is printed for the failure itself."

@@ -66,17 +66,22 @@ cassandra_service_wait_for_normal: true
 cassandra_service_wait_timeout: 600  # seconds
 
 # Streaming operations (add_node, replace_node, decommission_node,
-# remove_dead_node, add_datacenter's rebuild) are waited for as long as they
-# make progress: every cassandra_stream_check_interval seconds (the first
-# checks sooner: after 10 s, 30 s, 1, 2 and 4 minutes) nodetool netstats is
-# read and the progress printed; the run fails only after
-# cassandra_stream_stall_checks checks in a row, that interval apart, with
-# nothing streamed (no byte, no file, no session started or ended), 4 times as many while nothing
-# is left to transfer (before the first session, index or view builds after
-# the streams, hints of a decommission, a cleanup queued behind compactions). No overall limit
-# unless cassandra_stream_max_time is set (seconds, 0: none).
-cassandra_stream_check_interval: 300  # seconds
-cassandra_stream_stall_checks: 3
+# remove_dead_node, add_datacenter's rebuild, move_node, topology) and
+# cleanups are waited for as long as they make progress: nodetool netstats
+# (compactionstats) is read and the progress printed every
+# cassandra_stream_early_check_interval seconds during the first
+# cassandra_stream_early_time seconds (a short operation ends in seconds),
+# then every cassandra_stream_check_interval seconds; the run fails only
+# after cassandra_stream_stall_time seconds with nothing streamed (no byte,
+# no file, no session started or ended), 4 times as long while nothing is
+# left to transfer (before the first session, index or view builds after
+# the streams, hints of a decommission, a cleanup queued behind
+# compactions). No overall limit unless cassandra_stream_max_time is set
+# (seconds, 0: none).
+cassandra_stream_check_interval: 30  # seconds
+cassandra_stream_early_check_interval: 10  # seconds
+cassandra_stream_early_time: 300  # seconds
+cassandra_stream_stall_time: 900  # seconds
 cassandra_stream_max_time: 0  # seconds, 0: no limit
 # add_node: the cleanup of the nodes that handed data over. none: print the
 # command; sequential: run it one node at a time (one: the same); rack, dc: a
@@ -87,10 +92,13 @@ cassandra_add_node_cleanup: none
 # hold, shown and confirmed; reset_node.yml), only when Cassandra is down there,
 # no up node sees it in its ring, its cluster is this one or the stock 'Test
 # Cluster' and it has no user keyspace but a failed bootstrap's of this
-# cluster; else refused with what it holds. false refuses every node with data.
+# cluster; else refused with what it holds. auto (default): a node of this
+# cluster with its keyspaces and no bootstrap add_node left unfinished there
+# (a former member, removed with removenode) is refused too; true (given)
+# resets it; false refuses every node with data.
 # replace_node: true empties a replacement host that still holds data,
 # typically a host replacing itself (same address).
-cassandra_add_node_reset: true
+cassandra_add_node_reset: auto
 cassandra_replace_node_reset: false
 # The inventory is the desired state: a host of the cluster's group marked
 # absent (a host var or a group var) is no longer part of the cluster, the
@@ -115,13 +123,17 @@ cassandra_move_tokens: {}
 cassandra_move_cleanup: none
 cassandra_move_min_free_percent: 20
 cassandra_move_force_disk: false
+# decommission_node, topology, remove_dead_node: go on when a datacenter would
+# keep fewer nodes than a keyspace has replicas there (nodetool decommission --force)
+cassandra_decommission_force: false
 
 # checks per include level of the progress waits (wait_loop.yml): Ansible nests
-# every include one level deeper and fails past ~150 levels. A round covers
-# 6 hours (a month in 150 rounds) with 24 to 120 checks (60 s: 12.5 days), by
+# every include one level deeper and fails past ~150 levels. A round covers 6
+# hours of the check interval, 24 to 720 checks: at 30 s (the default) or more,
+# a month in 150 rounds; a shorter interval, less (10 s: 2 hours a round). By
 # groups of _cassandra_wait_size: once it ends, what is left of the round is
 # skipped by at most that many checks and groups, one task each
-_cassandra_stream_round_size: "{{ [24, [120, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
+_cassandra_stream_round_size: "{{ [24, [720, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
 _cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(0, 'ceil') | int }}"
 
 # the words of an action in a --check result ("would restart")
@@ -170,6 +182,11 @@ _cassandra_service_config_perms:
 _cassandra_service_conf_dir: >-
   {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
 _cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
+# add_node's mark of a bootstrap it started on a node, removed once the node
+# joined: data of this cluster without it is a former member's (reset_node_plan.yml)
+_cassandra_service_bootstrap_mark: /var/lib/cassandra/.ansible_bootstrap_started
+# an older mark is not trusted (a node that may have joined since, its end not seen)
+_cassandra_service_bootstrap_mark_days: 7
 # The files of the conf dir cassandra_config writes: the config a restart picks up
 # (and the JMX users' files, in the conf dir on Debian and Ubuntu)
 _cassandra_service_config_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,

@@ -149,7 +149,7 @@ argument_specs:
         description:
           - "How long to wait for a started node to reach C(Mode: NORMAL), in seconds."
           - For a node being added or replaced, how long to wait for it to answer on JMX (then
-            the bootstrap is waited for as long as it makes progress, see C(cassandra_stream_stall_checks)).
+            the bootstrap is waited for as long as it makes progress, see C(cassandra_stream_stall_time)).
       cassandra_add_node_cleanup:
         type: str
         default: none
@@ -162,11 +162,11 @@ argument_specs:
             C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
             The cluster is checked before each batch.
       cassandra_add_node_reset:
-        type: bool
-        default: true
+        type: raw
+        default: auto
         description:
           - What the C(add_node) and C(topology) playbooks do with a new node that has data but is not in the
-            ring (started once by mistake, a failed bootstrap). C(true) (the default) resets it first, the same
+            ring (started once by mistake, a failed bootstrap). C(auto) (the default) resets it first, the same
             way as the C(reset_node) playbook. It keeps Cassandra from starting at boot, then deletes what its
             data, commitlog, saved_caches, hints and cdc_raw directories hold, from the inventory and the live
             C(cassandra.yaml). The node, what it holds and the list are shown and confirmed first. C(false)
@@ -175,9 +175,13 @@ argument_specs:
             of its addresses in its ring, and its data does not show it as a member of another ring. Its cluster
             name (its live C(cassandra.yaml)) is this cluster's or the package's stock C(Test Cluster). It has no
             user keyspace, unless it is a failed bootstrap of this cluster (its cluster name is this one, its
-            keyspaces among the cluster's). Otherwise it is refused, with what it holds (size, cluster, user
-            keyspaces, ring, running or down). Paths that look wrong are refused too (a system directory, a
+            keyspaces among the cluster's) that C(add_node) started (its mark on the node, until it joined).
+            Otherwise it is refused, with what it holds (size, cluster, user keyspaces, ring, running or down). Paths that look wrong are refused too (a system directory, a
             top-level one that is not a mount point, one holding another mount point, the config or the logs).
+          - A node of this cluster that holds its keyspaces without such a bootstrap is a former member (removed
+            with C(remove_dead_node) and put back in the inventory), the writes only it holds would be lost.
+            C(auto) refuses it, saying so; C(true), given on purpose (C(-e cassandra_add_node_reset=true)), resets
+            it (snapshot or copy its data first if in doubt).
       cassandra_replace_node_reset:
         type: bool
         default: false
@@ -257,6 +261,14 @@ argument_specs:
           - C(move_node) - before each move, the nodes that receive data must keep this share of their data
             directories' disks free, counting the data the move streams to them (estimated from the loads,
             data spread evenly along the ring).
+      cassandra_decommission_force:
+        type: bool
+        default: false
+        description:
+          - C(decommission_node), C(topology), C(remove_dead_node) - go on when a datacenter would keep fewer
+            nodes than a keyspace has replicas there (those keyspaces keep fewer copies of the data). The plan
+            says it, and a node is decommissioned with C(nodetool decommission --force), which Cassandra 4.0
+            and later need then.
       cassandra_move_force_disk:
         type: bool
         default: false
@@ -269,22 +281,31 @@ argument_specs:
             streams make progress (see C(cassandra_stream_max_time)).
       cassandra_stream_check_interval:
         type: int
-        default: 300
+        default: 30
         description:
           - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
-            C(move_node)) and of a cleanup; the first checks come sooner (after 10 s, 30 s, 1, 2 and 4
-            minutes, each at most this long), so a short operation ends in seconds.
-            Each check reads C(nodetool netstats) and prints the progress, a short line (bar, percentage,
-            rate) then the data, the other nodes and the times, one item per line.
-      cassandra_stream_stall_checks:
+            C(move_node), C(topology)) and of a cleanup, after the first
+            C(cassandra_stream_early_time) seconds. Each check reads C(nodetool netstats) and prints
+            one progress line (bar, percentage, rate, expected end) and one line for the other nodes.
+      cassandra_stream_early_check_interval:
         type: int
-        default: 3
+        default: 10
         description:
-          - A streaming operation fails only after this many checks in a row without any progress in
+          - Seconds between two progress checks during the first C(cassandra_stream_early_time) seconds
+            of a wait, so a short operation ends in seconds (at most C(cassandra_stream_check_interval)).
+      cassandra_stream_early_time:
+        type: int
+        default: 300
+        description:
+          - How long, in seconds, the checks come every C(cassandra_stream_early_check_interval) seconds.
+      cassandra_stream_stall_time:
+        type: int
+        default: 900
+        description:
+          - A streaming operation or cleanup fails only after this many seconds without any progress in
             C(nodetool netstats) (no byte or file streamed, no session started or ended), 4 times as
-            many while nothing is left to transfer (before the first session, index or view builds).
-            Only the checks C(cassandra_stream_check_interval) apart count, not the sooner first ones.
+            long while nothing is left to transfer (before the first session, index or view builds).
             Nothing is stopped then; the node stays as it is.
       cassandra_stream_max_time:
         type: int

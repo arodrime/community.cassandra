@@ -78,3 +78,17 @@ def test_add_node_under_check_says_after_the_real_run_and_the_group_given():
         " datacenter):",
         "  ansible-playbook -i inventory/prod.yml community.cassandra.cleanup -e cassandra_hosts=orders"
         " --limit node1,node4 -e cassandra_cleanup_mode=sequential -e cassandra_cleanup_jobs=2"]
+
+
+def test_the_nodes_to_clean_up_in_inventory_order():
+    """The plan lists them in ring order (node4 before node1): --limit and the batches follow the inventory."""
+    with open(os.path.join(PLAYBOOKS, "add_node.yml"), encoding="utf-8") as f:
+        play = next(p for p in yaml.safe_load(f) if p.get("name") == "Clean up the nodes that handed data over")
+    variables = {"ansible_play_hosts": ["node1", "node2", "node3", "node4"],
+                 "_plan": {"cleanup": {"dc1": ["node4", "node1"], "dc2": ["node3"]}}}
+    templar = Templar(loader=DataLoader(), variables=variables)
+    assert templar.template(trust_as_template(play["vars"]["_targets"])) == ["node1", "node3", "node4"]
+    with open(os.path.join(PLAYBOOKS, "move_node.yml"), encoding="utf-8") as f:
+        move = next(p for p in yaml.safe_load(f) if "_targets" in (p.get("vars") or {}))
+    templar = Templar(loader=DataLoader(), variables={"ansible_play_hosts": ["n1", "n2", "n3"], "_listed": ["n3", "n2"]})
+    assert templar.template(trust_as_template(move["vars"]["_targets"])) == ["n2", "n3"]

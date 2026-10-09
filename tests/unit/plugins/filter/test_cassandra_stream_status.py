@@ -8,7 +8,7 @@ __metaclass__ = type
 import pytest
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
-    cassandra_ring_seen, cassandra_stream_own_error, cassandra_stream_status, cassandra_stream_waiting)
+    cassandra_jmx_refused, cassandra_ring_seen, cassandra_stream_own_error, cassandra_stream_status, cassandra_stream_waiting)
 
 BANNER = "Picked up JAVA_TOOL_OPTIONS: -Dcom.sun.jndi.rmiURLParsing=legacy"
 AUTH = ("nodetool: Failed to connect to '127.0.0.1:7199' - SecurityException: "
@@ -132,3 +132,57 @@ def test_waiting_says_why():
 def test_unreachable_is_not_stopped_for_a_decommission():
     own = {"unreachable": True, "msg": "Failed to connect to the host via ssh: ssh: connect to host n port 22: Connection refused"}
     assert cassandra_stream_status(GOING, leave=True, own=own) == "going"
+
+
+# Cassandra's own JMX authenticator (CassandraLoginModule): a wrong login, and any login on a joining node
+INTEGRATED = "nodetool: Failed to connect to '127.0.0.1:7199' - SecurityException: 'Authentication error'."
+DENIED = "error: Access Denied\n-- StackTrace --\njava.lang.SecurityException: Access Denied"
+
+
+def test_jmx_login_refused_by_a_node_in_the_ring_stops_at_once():
+    peer = {"item": "node1", "failed": False, "msg": "nodetool error: " + INTEGRATED, "cluster_status": {}}
+    refused = cassandra_jmx_refused([peer], joining="node5")
+    assert refused == [{"host": "node1", "error": "nodetool error: " + INTEGRATED}]
+    assert cassandra_stream_status(GOING, join=True, own=failed(INTEGRATED), refused=refused) == "jmx_refused"
+    # a decommission, a cleanup: the node's own refusal counts (no join)
+    leaving = dict(failed(DENIED), item="node3")
+    assert cassandra_jmx_refused([leaving]) == [{"host": "node3", "error": "error: Access Denied"}]
+    command = {"item": {"item": "node2"}, "rc": 1, "stdout": "", "stderr": INTEGRATED, "msg": "non-zero return code",
+               "failed": False}
+    assert cassandra_jmx_refused([command]) == [{"host": "node2", "error": INTEGRATED}]
+
+
+def test_a_joining_node_refuses_logins_until_its_auth_setup_is_done():
+    # Cassandra's own authenticator: not a refusal for good on the joining node itself (followed from the others)
+    assert cassandra_jmx_refused([failed(INTEGRATED), failed(DENIED)], joining="node5") == []
+    # the file-based one (jmxremote.password) refuses a wrong login whatever the node does
+    assert cassandra_jmx_refused([failed(AUTH)], joining="node5") == [{"host": "node5", "error": AUTH}]
+    assert cassandra_stream_status(GOING, join=True, own=failed(AUTH), refused=[{"host": "node5", "error": AUTH}]) \
+        == "jmx_refused"
+
+
+def test_other_errors_are_no_jmx_refusal():
+    for result in (failed(REFUSED), failed(NO_MBEAN), dict(failed(BANNER)), {"item": "node1", "unreachable": True,
+                                                                             "msg": AUTH},
+                   {"item": "node1", "skipped": True}, {"item": "node1", "rc": 0, "stdout": "Authentication failed!"}):
+        assert cassandra_jmx_refused([result]) == []
+    # over once done: the end wins over a refusal seen at the same check
+    assert cassandra_stream_status(GOING, join=True, own={"mode": "NORMAL"}, refused=[{"host": "node1", "error": "x"}]) \
+        == "done"
+
+
+def test_a_refusal_counts_only_where_the_login_never_worked_and_is_the_host_s_own():
+    peer = {"item": "node1", "msg": "nodetool error: " + INTEGRATED}
+    # node1 answered earlier in this wait: a passing refusal (Cassandra's authenticator timing out on system_auth)
+    assert cassandra_jmx_refused([peer], answered=["node1"]) == []
+    # node1 read with another login than its own (host_vars): its refusal says nothing about its login
+    assert cassandra_jmx_refused([peer], hosts=["node2"]) == []
+    assert cassandra_jmx_refused([peer], answered=["node2"], hosts=["node1"])[0]["host"] == "node1"
+
+
+def test_the_hosts_that_answered_in_this_wait_are_kept():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_stream_progress
+    s = cassandra_stream_progress([{"item": "n1", "sessions": []}, {"item": "n2", "failed": True}], None, now=0)
+    assert s["answered_hosts"] == ["n1"]
+    s = cassandra_stream_progress([{"item": "n1", "failed": True}, {"item": "n2", "sessions": []}], s, now=10)
+    assert s["answered_hosts"] == ["n1", "n2"]

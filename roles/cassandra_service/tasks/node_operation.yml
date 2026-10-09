@@ -47,6 +47,27 @@
       ansible.builtin.set_fact:
         _cassandra_op_start: "{{ now().timestamp() | int }}"
 
+    # a phase line (ops callback): what is done to this node, none for a node already done
+    - name: Say what is done to {{ inventory_hostname }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ _phase | community.cassandra.cassandra_phase(inventory_hostname, node=inventory_hostname,
+                                                         what=cassandra_replace_address | default('the dead node')) }}
+      when:
+        - not ansible_check_mode
+        - _phase | length > 0
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        _phase: >-
+          {{ {'new': 'join' if (cassandra_extra_settings | default({})).auto_bootstrap | default(true) | bool
+                     else 'join_no_stream', 'joining': 'join_again'}.get(cassandra_new_node_state | default('new'), '')
+             if cassandra_service_node_action == 'add'
+             else {'normal': 'decommission', 'leaving': 'leave_again'}.get(
+                    (cassandra_leaving_node | default({})).state | default('normal'), '')
+             if cassandra_service_node_action == 'decommission'
+             else {'apply_config': 'write_config'}.get(cassandra_service_node_action, cassandra_service_node_action) }}
+
     - name: Read the state of the node the interrupted run stopped at
       community.cassandra.cassandra_netstats:
       module_defaults:
@@ -68,6 +89,16 @@
 
     - name: Run the action
       ansible.builtin.include_tasks: "action_{{ cassandra_service_node_action }}.yml"
+
+    - name: Say the cluster is waited for
+      ansible.builtin.debug:
+        msg: "{{ 'wait_un' | community.cassandra.cassandra_phase }}"
+      when:
+        - not ansible_check_mode
+        - cassandra_service_node_action in ['add', 'decommission', 'replace', 'move']
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
 
     # --check starts or removes nothing: a node being added or replaced is not there to check, a
     # decommissioned one still is

@@ -89,13 +89,18 @@ def test_operator_messages_marked_for_the_ops_callback():
     plan = {"add": ["n4"], "remove": ["n2"], "gone": [], "silent": [], "seeds": {"step": True, "new": "n1,n4"}}
     variables = dict(done["vars"], hostvars={"n1": {"cassandra_topology_plan": plan,
                                                     "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}},
-                     ansible_play_hosts_all=["n1"])
+                     ansible_play_hosts_all=["n1"], ansible_inventory_sources=[], _imported=True)
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
     assert msg.split("\n") == [
         "DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
-        "  1. delete n2 from the inventory, or leave it marked absent (the playbooks leave it out)",
-        "  2. wipe its data directories before reusing the host"]
+        "  1. empty n2 before reusing the host (its data is left in place):",
+        "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=n2",
+        "  2. drop n2 from the inventory: re-import the cluster, its changes shown first (-i n1, leaves the"
+        " inventory out: add your connection options, e.g. -u, when it sets them):",
+        "     ansible-playbook -i n1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        "  3. then write them:",
+        "     ansible-playbook -i n1, community.cassandra.import_cluster -e import_cluster_force=true"]
 
 
 def test_check_mode_lines_up_nothing():
@@ -189,7 +194,8 @@ def test_steps_in_order_adds_seeds_removals():
     names = [p.get("name") for p in PLAYS]
     assert names.index("Add the nodes") < names.index("Change the seeds") < names.index("Remove the nodes")
     seeds = next(p for p in PLAYS if p.get("name") == "Change the seeds")
-    assert seeds["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
+    assert seeds["tasks"][0]["name"] == "Say what the run does"  # its phase line
+    assert seeds["tasks"][1]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
     assert render(seeds["hosts"], groups={"all": []}) == []
     assert render(seeds["hosts"], groups={"cassandra_topology_seeds": ["n1", "n2"]}) == ["n1", "n2"]
     line_up = task("Line up the nodes for the seed step")
@@ -250,6 +256,8 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
 
 def test_a_refused_host_to_add_gives_its_problems_and_the_reset_hint():
     block = task("Check the hosts to add")
+    # the refusal (a verdict of reset_node_plan.yml too) said once, by the plan (ops callback)
+    assert block["vars"]["cassandra_output_rescued"] is True
     record = block["rescue"][0]
     template = record["ansible.builtin.set_fact"]["_cassandra_topology_refused"]
     msg = "n5 is not ready (the problems are listed above): ... -e cassandra_add_node_reset=true (add_node) ..."

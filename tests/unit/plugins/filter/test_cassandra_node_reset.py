@@ -3,9 +3,11 @@ __metaclass__ = type
 
 import pytest
 
+from ansible.errors import AnsibleFilterError
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
     cassandra_add_node_reset_check, cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real,
-    cassandra_node_reset_ring, reset_path_problem)
+    cassandra_node_reset_ring, cassandra_reset_choice, reset_path_problem)
 
 INVENTORY = [["data", "/var/lib/cassandra/data"], ["commitlog", "/var/lib/cassandra/commitlog"],
              ["saved_caches", "/var/lib/cassandra/saved_caches"], ["hints", "/var/lib/cassandra/hints"]]
@@ -512,10 +514,45 @@ def test_auto_reset_refused_for_user_keyspaces_of_test_cluster():
 
 
 def test_auto_reset_of_a_failed_bootstrap_of_this_cluster():
-    out = _auto(live_cluster="my_cluster", keyspaces=["system", "shop"], peers=True, cluster_keyspaces={"shop": {}})
+    # add_node's mark of a bootstrap it started there, never over
+    out = _auto(live_cluster="my_cluster", keyspaces=["system", "shop"], peers=True, cluster_keyspaces={"shop": {}},
+                bootstrap_started=True)
     assert out["reset"] and out["problems"] == []
     assert out["line"] == ("node7 (dc1/rack_b): has data (12.0 GiB, cluster 'my_cluster', user keyspaces shop (a failed"
                            " bootstrap of this cluster), not in any ring, down) — will be reset")
+
+
+def test_a_former_member_of_this_cluster_only_with_the_reset_given():
+    """Its cluster and keyspaces, no bootstrap left unfinished (removed with removenode, put back in the
+    inventory): the writes only it holds would be lost. Refused by default, reset when given on purpose."""
+    former = dict(live_cluster="my_cluster", keyspaces=["system", "shop"], peers=True, cluster_keyspaces={"shop": {}})
+    out = _auto(**former)
+    assert not out["reset"]
+    assert out["problems"] == [
+        "it holds this cluster's keyspaces (shop) and no bootstrap add_node left unfinished: a former member of this"
+        " cluster (removed with removenode?). The writes only it holds would be lost: snapshot or copy its data"
+        " directories first if in doubt, then -e cassandra_add_node_reset=true resets it"]
+    assert out["line"].startswith("node7 (dc1/rack_b): has data (12.0 GiB, cluster 'my_cluster', user keyspaces shop,"
+                                  " not in any ring, down): not reset automatically, it holds this cluster's keyspaces")
+    out = _auto(explicit=True, **former)
+    assert out == {"reset": True, "problems": [], "line": (
+        "node7 (dc1/rack_b): has data (12.0 GiB, cluster 'my_cluster', user keyspaces shop (a former member of this"
+        " cluster), not in any ring, down) — will be reset (-e cassandra_add_node_reset=true: the writes only it holds"
+        " are lost; snapshot or copy its data first if in doubt)")}
+    # the explicit reset changes nothing else: still refused when running, or in the ring
+    assert not _auto(explicit=True, running=True, **former)["reset"]
+    # stock or empty nodes: as before, given or not
+    assert _auto()["reset"] and _auto(explicit=True)["reset"]
+
+
+def test_reset_choice():
+    for value, word in ((None, "auto"), ("auto", "auto"), ("", "auto"), (True, "true"), ("true", "true"), ("yes", "true"),
+                        (False, "false"), ("False", "false"), ("no", "false"), ("0", "false")):
+        assert cassandra_reset_choice(value) == word, value
+    # a typo stops the run rather than reset a node meant to be kept
+    for typo in ("flase", "disabled", "ture"):
+        with pytest.raises(AnsibleFilterError, match="must be auto .the default., true or false"):
+            cassandra_reset_choice(typo)
 
 
 def test_auto_reset_refused_for_user_keyspaces_when_the_cluster_keyspaces_are_unknown():

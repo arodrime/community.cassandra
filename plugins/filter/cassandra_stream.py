@@ -19,13 +19,10 @@ from ansible_collections.community.cassandra.plugins.module_utils.cassandra_outp
     clock as _clock, count as _count, rate as _rate, size as _size)
 
 _GIB = out.GIB
-# the rate is measured over this many check intervals
-_WINDOW = 3
+# the rate is measured over the checks of this many seconds (at least the last 3)
+_WINDOW = 90
 # beyond this, the end is shown as unknown
 _ETA_MAX = 30 * 86400
-# the waits between the first checks, seconds (then the check interval): a short
-# operation ends in seconds, a long one is checked every interval
-_BACKOFF = (10, 30, 60, 120, 240)
 # the longest report line: the default stdout callback prints a msg list
 # indented and quoted, 100 columns in all
 _WIDTH = 88
@@ -34,7 +31,8 @@ _BAR = (20, 10)
 # the other ends listed one per line, the rest summed up on one more line
 _PEERS = 4
 # the word in the header when the wait stops (stream_wait.yml statuses), FAILED for the others
-_TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED", "still_running": "STILL RUNNING"}
+_TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED", "still_running": "STILL RUNNING",
+            "jmx_refused": "JMX LOGIN REFUSED"}
 # the report's item lines: "      data:      38.2 GiB / 93.1 GiB"
 _ITEM = "      %-11s%s"
 
@@ -44,30 +42,34 @@ def _duration(seconds):
     return out.duration(seconds, short=True)
 
 
-def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_checks=3, quiet_factor=4,
-                              interval=0):
+def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_time=900, quiet_factor=4,
+                              interval=30, early_interval=10, early_time=300):
     """views: the results of cassandra_netstats looped over hosts (item: the
     host, then the module's return values); state: what
     the previous call returned (None the first time); now: epoch seconds.
     operations: the session operations to follow (e.g. ['Bootstrap']), peer:
     only the sessions with this peer (a node read from the other side).
     Progress is bytes or files streamed, or a session started or finished,
-    since the previous call. interval: the check interval, seconds; the
-    first checks come sooner (_BACKOFF) and a check without progress counts
-    towards a stall only interval seconds or more after the previous one.
-    Returns the new state, for the next call and for
+    since the previous call. interval: the check interval, seconds;
+    early_interval: the one of the first early_time seconds (a short
+    operation ends in seconds). stall_time: seconds without progress before
+    it counts as stalled (quiet_factor times more while nothing is left to
+    transfer). Returns the new state, for the next call and for
     cassandra_stream_report: streams (per session: total, done, files_total,
     files_done, other: the node at the other end, way: 'from' when the data
     comes from it, 'to' when it goes to it, 'on' for a local task, gone, moved:
-    progress at this check),
+    progress at this check, since: when it last moved),
     progressed (since the previous call), start, now, last_progress,
-    idle_checks (calls in a row without progress), limit and stalled
-    (idle_checks reached limit: stall_checks while some session has bytes
-    left, stall_checks * quiet_factor otherwise), transferring, sessions
+    idle_checks (calls in a row without progress), idle (seconds since the
+    last progress), limit and stalled (idle reached limit: stall_time while
+    some session has bytes left, stall_time * quiet_factor otherwise),
+    transferring, sessions
     (sessions in netstats now), answered (at least one view answered),
+    answered_hosts (the hosts that answered at least once in this wait),
     bytes_done/bytes_total, first_done (bytes done at the first answer),
     samples (time and bytes done of the last checks), rate (bytes per
-    second over the last 3 checks, None while unknown or when nothing moved),
+    second over the last _WINDOW seconds, 3 checks at least; None while
+    unknown or when nothing moved),
     checks (calls so far) and wait (seconds before the next check)."""
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
@@ -95,8 +97,9 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
             way = {"receiving": "from", "sending": "to"}.get(s["direction"], "on")
             if peer and way != "on":
                 way = "to" if way == "from" else "from"
+            moved = before is None or done > before["mark"]
             streams[key] = {"total": s["bytes_total"], "done": s["bytes_done"], "mark": done, "gone": False,
-                            "moved": before is None or done > before["mark"],
+                            "moved": moved, "since": now if moved else before.get("since", now),
                             "files_total": s["files_total"], "files_done": s["files_done"], "way": way,
                             "other": str(result.get("item", "")) if peer else s["peer"]}
     if answered:
@@ -104,37 +107,44 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
             if key not in current and not stream["gone"] and key.split("|", 1)[0] in answered:
                 # a finished session leaves netstats: count it as fully streamed (not when its
                 # host did not answer this time)
-                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"], moved=True)
+                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"], moved=True, since=now)
                 progressed = True
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
-    # an early check (shorter wait) without progress does not count towards a stall
-    full = not interval or now - state.get("now", now) >= int(interval)
-    idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + (1 if full else 0)
+    idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + 1
+    idle = now - last_progress
     checks = state.get("checks", 0) + 1
     # Nothing left to transfer in netstats (no session yet, or every one at 100%): phases
     # that show no bytes (ring delay, schema, the write path of tables with views or CDC,
     # index builds, hints of a decommission, a task queued behind other compactions) get
     # quiet_factor times more checks before counting as stalled.
     transferring = any(streams[k]["done"] < streams[k]["total"] for k in current)
-    limit = int(stall_checks) * (1 if transferring else int(quiet_factor))
+    limit = int(stall_time) * (1 if transferring else int(quiet_factor))
     total = sum(s["total"] for s in streams.values())
     done = sum(s["done"] for s in streams.values())
     samples = [list(x) for x in state.get("samples") or []]
     rate = None
     if answered:
-        # over the last _WINDOW check intervals; a check without answer has no new count
-        oldest = samples[-_WINDOW:][0] if samples else None
+        # over the last _WINDOW seconds; a check without answer has no new count
+        samples = _recent(samples, now)
+        oldest = samples[0] if samples else None
         if oldest and now > oldest[0] and done > oldest[1]:
             rate = (done - oldest[1]) / float(now - oldest[0])
-        samples = (samples + [[now, done]])[-_WINDOW:]
+        samples = _recent(samples + [[now, done]], now)
     return {
         "start": start, "now": now, "streams": streams, "progressed": progressed, "last_progress": last_progress,
-        "idle_checks": idle_checks, "limit": limit, "stalled": idle_checks >= limit, "sessions": len(current),
+        "idle_checks": idle_checks, "idle": idle, "limit": limit, "stalled": idle >= limit, "sessions": len(current),
         "transferring": transferring, "answered": bool(answered), "bytes_done": done, "bytes_total": total,
+        "answered_hosts": sorted(set(state.get("answered_hosts") or []) | answered),
         "first_done": state["first_done"] if state.get("samples") else done, "samples": samples, "rate": rate,
-        "checks": checks, "wait": min(int(interval), _BACKOFF[checks - 1] if checks <= len(_BACKOFF) else int(interval)),
+        "checks": checks,
+        "wait": min(int(interval), int(early_interval)) if now - start < int(early_time) else int(interval),
     }
+
+
+def _recent(samples, now):
+    """The [time, bytes] samples of the last _WINDOW seconds, the last 3 at least."""
+    return [x for i, x in enumerate(samples) if now - x[0] <= _WINDOW or i >= len(samples) - 3]
 
 
 def _header(words, done, total, rate):
@@ -241,14 +251,13 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
 
 
 def _stall(state, going):
-    """The line about the checks in a row without progress, after a blank
-    one; nothing while the last check saw progress."""
-    idle, now = state.get("idle_checks", 0), state.get("now", 0)
-    if not idle:
+    """The line about the time without progress, after a blank one; nothing
+    while the last check saw progress."""
+    if not state.get("idle_checks", 0):
         return []
-    return ["", _ITEM % ("Progress:", "none for %d check%s (%s)%s" % (
-        idle, "" if idle == 1 else "s", _duration(now - state.get("last_progress", now)),
-        (", stops after %d" % state.get("limit", 0)) if going else ""))]
+    idle = state.get("now", 0) - state.get("last_progress", state.get("now", 0))
+    return ["", _ITEM % ("Progress:", "none for %s%s" % (
+        _duration(idle), (", stops at %s" % _duration(state.get("limit", 0))) if going else ""))]
 
 
 def _host_var(hostvars, host, *path):
@@ -494,7 +503,7 @@ def cassandra_ring_seen(results, address):
 
 
 def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", job=None, removal=None, max_time=0,
-                            now=None):
+                            now=None, refused=None):
     """Where a streaming operation stands after a check (stream_check.yml):
     'done', 'going', or why the wait stops: job_failed, job_lost,
     join_failed, leave_failed, stopped, stalled, too_long.
@@ -507,7 +516,9 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
     running it (None: no job; with leave, a job that changed nothing, the
     node LEAVING already, is not the end); removal: the nodetool removenode
     status result (None: not followed): done once no removal is left;
-    max_time: cassandra_stream_max_time (0: none)."""
+    max_time: cassandra_stream_max_time (0: none); refused: the JMX logins
+    refused at this check (cassandra_jmx_refused): jmx_refused at once
+    rather than a stall much later."""
     state = state or {}
     own = own or {}
     mode = own.get("mode") or ""
@@ -531,12 +542,56 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
         return "leave_failed"
     if (join or leave) and stopped:
         return "stopped"
+    if refused:
+        return "jmx_refused"
     if state.get("stalled"):
         return "stalled"
     now = state.get("now", 0) if now is None else now
     if int(max_time or 0) > 0 and now - int(state.get("start", now)) >= int(max_time):
         return "too_long"
     return "going"
+
+
+# A JMX login or permission refused, in nodetool's error. The JDK's file-based
+# authenticator and access file say so whatever the node does; Cassandra's own
+# (CassandraLoginModule, AuthorizationProxy: "Authentication error", "Access
+# Denied") also refuse every login on a joining node until its auth setup is
+# complete, so they count there only from the nodes already in the ring.
+_JMX_REFUSED_ANYWHERE = re.compile(r"Authentication failed!|Invalid username or password|Credentials required"
+                                   r"|neither username nor password can be blank|Invalid access level")
+_JMX_REFUSED = re.compile(r"SecurityException|Authentication (failed|error)|Access (is )?denied", re.IGNORECASE)
+
+
+def _result_host(result):
+    item = result.get("item", "")
+    return str(item.get("item", "") if isinstance(item, dict) else item)
+
+
+def cassandra_jmx_refused(results, joining="", answered=None, hosts=None):
+    """The JMX logins refused at a check (stream_check.yml, cleanup_check.yml):
+    [{host, error}] from looped results of cassandra_netstats,
+    cassandra_status or a nodetool command (item: the host, or {item: host}).
+    joining: the node being added, whose own refusals count only when the
+    file-based authenticator gives them (see above). answered: the hosts
+    that answered earlier in this wait (a login that worked: a refusal now
+    is a passing one, e.g. Cassandra's own authenticator timing out on
+    system_auth), left out; hosts: the ones read with their own login (the
+    others' refusals tell nothing about theirs), None: all."""
+    refused = []
+    for result in results or []:
+        if not isinstance(result, dict) or result.get("skipped") or result.get("unreachable"):
+            continue
+        host = _result_host(result)
+        if host in (answered or []) or (hosts is not None and host not in hosts):
+            continue
+        # failed_when: false leaves failed false: the error's words tell (stdout only from a command that failed)
+        text = "\n".join(str(result.get(k) or "") for k in ("msg", "stderr", "stdout")
+                         if k != "stdout" or result.get("rc", 0))
+        lines = [x.strip() for x in text.splitlines() if _JMX_REFUSED_ANYWHERE.search(x)
+                 or (host != joining and _JMX_REFUSED.search(x))]
+        if lines and host not in [r["host"] for r in refused]:
+            refused.append({"host": host, "error": lines[0][:200]})
+    return refused
 
 
 def cassandra_stream_waiting(own, seen="", node="", join=False):
@@ -563,4 +618,5 @@ class FilterModule(object):
                 "cassandra_ring_seen": cassandra_ring_seen,
                 "cassandra_stream_status": cassandra_stream_status,
                 "cassandra_stream_waiting": cassandra_stream_waiting,
+                "cassandra_jmx_refused": cassandra_jmx_refused,
                 "cassandra_stream_own_stopped": _own_stopped}

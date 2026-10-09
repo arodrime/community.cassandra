@@ -32,6 +32,14 @@
   gather_facts: false
   become: true
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'compare_config' | community.cassandra.cassandra_phase(count=ansible_play_hosts_all | length) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Note when the run started
       ansible.builtin.set_fact:
         _cassandra_apply_config_start: "{{ now().timestamp() | int }}"

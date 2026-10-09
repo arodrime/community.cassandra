@@ -18,7 +18,7 @@ description:
     - Deactivates a node by streaming its data to another node.
     - Acts on the node reached through I(host) and I(port) (JMX), according to its mode
       (C(Mode:) line of C(nodetool netstats)).
-    - C(NORMAL) runs C(nodetool decommission).
+    - C(NORMAL) runs C(nodetool decommission) (C(nodetool decommission --force) with I(force)).
     - C(DECOMMISSIONED) and C(LEAVING) (a decommission in progress) change nothing.
     - C(DECOMMISSION_FAILED) (Cassandra 5.0+) fails. On Cassandra 4.0 and 4.1 a failed
       decommission stays C(LEAVING).
@@ -38,11 +38,24 @@ options:
       - Add additional debug to module output.
     type: bool
     default: False
+  force:
+    description:
+      - Run C(nodetool decommission --force), which Cassandra 4.0 and later need to decommission a node
+        when the nodes left in its datacenter are fewer than the replication factor of a keyspace there
+        (else it refuses with C(Not enough live nodes to maintain replication factor)). Those keyspaces then
+        keep fewer copies of the data than their replication factor.
+    type: bool
+    default: False
+    version_added: 2.1.0
 '''
 
 EXAMPLES = '''
 - name: Decommission a node
   community.cassandra.cassandra_decommission:
+
+- name: Decommission a node of a datacenter left with fewer nodes than the replication factor
+  community.cassandra.cassandra_decommission:
+    force: true
 '''
 
 RETURN = '''
@@ -77,6 +90,7 @@ def main():
     argument_spec = cassandra_common_argument_spec()
     argument_spec.update(
         debug=dict(type='bool', default=False),
+        force=dict(type='bool', default=False),
     )
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -116,7 +130,7 @@ def main():
     elif mode == "DECOMMISSION_FAILED":
         result['msg'] = ("the previous decommission of this node failed: find the cause in the logs "
                          "(disk space on the receiving nodes, network, timeouts), then run nodetool "
-                         "decommission by hand to resume it")
+                         "decommission{0} by hand to resume it".format(" --force" if module.params['force'] else ""))
         module.fail_json(**result)
     elif mode is None:
         result['msg'] = "no Mode line in the nodetool netstats output: not decommissioning"
@@ -128,7 +142,7 @@ def main():
         result['changed'] = True
         result['msg'] = "decommission command succeeded"
         if not module.check_mode:
-            n = NodeToolCommandSimple(module, "decommission")
+            n = NodeToolCommandSimple(module, "decommission --force" if module.params['force'] else "decommission")
             (rc, out, err) = n.run_command()
             out = out.strip()
             err = err.strip()

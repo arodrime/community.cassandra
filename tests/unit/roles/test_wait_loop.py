@@ -84,3 +84,26 @@ def test_stops_right_after_the_check_that_ends_it(tmp_path, size, stop):
     assert not [line for line in rest if line.startswith(("ok:", "changed:", "included:"))], "\n".join(rest)
     # no check skipped one task at a time (the old rounds skipped every task of every check left)
     assert "One check" not in "\n".join(out.rsplit("Over at check", 1)[1:])
+
+
+@pytest.mark.parametrize("interval, round_size, group", [(30, 720, 27), (10, 720, 27), (60, 360, 19), (300, 72, 9),
+                                                         (3600, 24, 5)])
+def test_rounds_of_6_hours_up_to_720_checks(interval, round_size, group):
+    """At the default 30 s, a round holds 720 checks (6 hours): a multi-day wait nests a few includes, not hundreds."""
+    import yaml
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    try:
+        from ansible.template import trust_as_template
+    except ImportError:  # ansible-core < 2.19
+        def trust_as_template(value):
+            return value
+    defaults = os.path.join(COLLECTIONS, "ansible_collections", "community", "cassandra", "roles", "cassandra_service",
+                            "defaults", "main.yml")
+    with open(defaults) as f:
+        variables = yaml.safe_load(f)
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+    variables["cassandra_stream_check_interval"] = interval
+    templar = Templar(loader=DataLoader(), variables=variables)
+    assert int(templar.template(trust_as_template("{{ _cassandra_stream_round_size }}"))) == round_size
+    assert int(templar.template(trust_as_template("{{ _cassandra_wait_size }}"))) == group

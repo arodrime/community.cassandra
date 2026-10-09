@@ -466,6 +466,55 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
     return lines
 
 
+# --- phases --------------------------------------------------------------------------------
+
+# What a run does now, a line per major phase, ending with "..." (the ops
+# callback's phase colour). {nodes}: the node list (nodes()), {count}: "5
+# nodes", {node}, {what}: as given.
+PHASES = {
+    "check": "Checking the cluster ({count})...",
+    "check_new": "Checking the new nodes ({nodes})...",
+    "check_leaving": "Checking the nodes to remove ({nodes})...",
+    "ring": "Reading the ring and seeds...",
+    "prepare": "Preparing the new nodes ({nodes})...",
+    "join": "Starting {node} and waiting for its bootstrap...",
+    "join_again": "Waiting for the bootstrap of {node} (started by an earlier run)...",
+    "join_no_stream": "Starting {node}, joining without streaming (auto_bootstrap false)...",
+    "replace": "Starting {node} and waiting while it replaces {what}...",
+    "decommission": "Decommissioning {node}...",
+    "leave_again": "Waiting for the decommission of {node} (started by an earlier run)...",
+    "move": "Moving {node}...",
+    "reboot": "Rebooting {node}...",
+    "update_java": "Updating Java on {node}...",
+    "upgrade": "Upgrading {node}...",
+    "upgradesstables": "Upgrading the SSTables of {node}...",
+    "wait_un": "Waiting for every node to be UN...",
+    "seeds": "Applying cassandra_seeds on every node...",
+    "compare_config": "Comparing the config with the inventory ({count})...",
+    "write_config": "Writing the config ({nodes})...",
+    "restart": "Restarting {node}...",
+    "restart_rack": "Restarting {what} ({nodes})...",
+    "cleanup": "Cleaning up {nodes}...",
+    "read_reset": "Reading what {nodes} hold...",
+    "reset": "Resetting {nodes}...",
+    "import_given": "Reading the cluster from {nodes}...",
+    "import_read": "Reading every node ({count})...",
+    "import_write": "Writing the inventory ({what})...",
+}
+
+
+def phase(name, names=None, node="", what="", count=None):
+    """The phase line PHASES[name], e.g. "Decommissioning node3...". names:
+    the nodes (one or a list, shown as nodes() does, in the order given);
+    count: how many nodes (the number of names when not given). "" for a
+    name PHASES does not have (a step that says nothing)."""
+    if name not in PHASES:
+        return ""
+    names = [names] if isinstance(names, str) else list(names or [])
+    number = len(names) if count is None else int(count)
+    return PHASES[name].format(nodes=nodes(names, keep_order=True), node=node, what=what, count=plural(number, "node"))
+
+
 # --- progress ------------------------------------------------------------------------------
 
 _BAR = 10
@@ -482,34 +531,42 @@ def _bar(done, total):
     return "[%s%s]" % ("#" * filled, "-" * (_BAR - filled))
 
 
+# the time without progress a progress line says, from this many seconds (a
+# check or two without a byte is no news)
+IDLE_SHOWN = 60
+
+
 def progress_line(index, total_steps, node, operation, mode="", done=0, total=0, speed=None, now=0, start=None,
-                  idle_checks=0, limit=0, peers=None, status="going"):
+                  idle=0, limit=0, peers=None, status="going"):
     """One check of a long operation (Q2), as 2 lines:
     "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
     then always the other ends: "      from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled".
     index/total_steps: the position in the run (no [i/n] when total_steps
     is 0); mode: netstats Mode; done/total: bytes; speed: bytes/s (None:
-    not known yet); now/start: epoch seconds; idle_checks/limit: the checks
-    in a row without progress and the stall limit (STALLED shown from the
-    first idle check); peers: [{name, way ('from'/'to'), done, total,
-    stalled}]; status: going, or stalled / failed / done (said in the line).
-    Before any data flows: "waiting for streams" and the elapsed time."""
+    not known yet); now/start: epoch seconds; idle/limit: the seconds
+    without progress and the stall limit (said from IDLE_SHOWN seconds:
+    "STALLED 6m/15m" while data is left, "no progress 6m/1h" before the
+    streams or once all is sent); peers: [{name, way ('from'/'to'), done,
+    total, stalled}]; status: going, or stalled / failed / done (said in the
+    line). Before any data flows: "waiting for streams" and the elapsed time."""
     start = now if start is None else start
     head = "  ".join(x for x in [("[%d/%d] %s %s" % (index, total_steps, node, operation)) if total_steps
                                  else "%s %s" % (node, operation), mode] if x)
     elapsed = duration(now - start, short=True)
     pct = "%d%%" % int(100 * min(done, total) / total) if total else ""
     done_total = amount(done, total) if total else ""
+    idle_text = ("%s/%s" % (duration(idle, short=True), duration(limit, short=True))) if idle >= IDLE_SHOWN and limit else ""
+    quiet = ("no progress " + idle_text) if idle_text else ""
     if status == "done":
         line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
-    elif status not in ("going",) or (idle_checks and total):  # before any stream: still waiting for them
-        word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED"}.get(
-            status, "STALLED" if idle_checks else status.upper())
-        count_text = "%s %d/%d checks" % (word, idle_checks, limit) if idle_checks and limit else word
+    elif status != "going" or (idle_text and total and done < total):  # before any stream: still waiting for them
+        word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED",
+                "jmx_refused": "JMX LOGIN REFUSED"}.get(
+            status, "STALLED" if status == "going" else status.upper())
+        count_text = ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
     elif not total:
-        checks = ["%d/%d checks" % (idle_checks, limit)] if idle_checks and limit else []
-        line = "  ".join([head, "waiting for streams"] + checks + [elapsed])
+        line = "  ".join(x for x in [head, "waiting for streams", quiet, elapsed] if x)
     else:
         eta = ""
         if speed and total > done:
@@ -517,8 +574,8 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
             eta = "ETA %s (%s)" % (_hhmm(now + left, now), duration(left, short=True))
         elif total <= done:
             eta = "all sent, finishing"
-        line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta, elapsed]
-                         if x)
+        line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta,
+                                     quiet if total <= done else "", elapsed] if x)
     out = [line]
     if peers:
         parts = []
@@ -777,6 +834,49 @@ def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
         steps.append({"text": "commit it", "command": "git add %s && git commit -m %s" % (
             shlex.quote(shown_path), shlex.quote(message or "Inventory: %s" % os.path.basename(shown_path)))})
     return steps
+
+
+def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
+                 unreachable=None, imported=True):
+    """The TO DO once nodes left the ring (decommission_node, topology):
+    empty them (reset_node), then drop them from the inventory by a
+    re-import read from a node that stays (reimport_from: the name or
+    address it is reached by), --check --diff first, then the commit, only
+    when the inventory dir is in a git work tree. inventory, hosts: the
+    run's (none: left out of the commands); inventory_dir: where the
+    cluster's inventory is (import_cluster_dir, given when it is not the
+    default inventories); unreachable: the ones not answering, left out of
+    the reset (the re-import drops them too); imported: the inventory is
+    import_cluster's (else: remove them from it by hand, no re-import)."""
+    removed = list(removed or [])
+    if not removed:
+        return []
+    names = nodes(removed, keep_order=True)
+    reset = [n for n in removed if n not in (unreachable or [])]
+    items = [{"text": "empty %s before reusing %s (%s data is left in place)" % (
+        nodes(reset, keep_order=True), "the host" if len(reset) == 1 else "the hosts", "its" if len(reset) == 1 else "their"),
+        "command": command("reset_node", inventory=inventory, hosts=hosts, cwd=cwd,
+                           extra={"cassandra_target_nodes": ",".join(reset)})}] if reset else []
+    shown_dir = path_from(str(inventory_dir), cwd) if inventory_dir else ""
+    reimport = [extra_var("import_cluster_force", "true")]
+    if shown_dir and os.path.normpath(shown_dir) != "inventories":
+        reimport.append(extra_var("import_cluster_dir", shown_dir))
+    if not imported or not reimport_from:
+        items.append("remove %s from the inventory (or leave %s marked cassandra_node_state: absent)" % (
+            names, "it" if len(removed) == 1 else "them"))
+    else:
+        items.append({"text": "drop %s from the inventory: re-import the cluster, its changes shown first (-i %s, leaves"
+                              " the inventory out: add your connection options, e.g. -u, when it sets them)"
+                              % (names, reimport_from),
+                      "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd,
+                                         extra=reimport + ["--check", "--diff"])})
+        items.append({"text": "then write them",
+                      "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd, extra=reimport)})
+    if shown_dir and (in_git if in_git is not None else in_git_work_tree(str(inventory_dir))):
+        # only the inventory, whatever else is staged
+        items.append({"text": "commit it", "command": "git add %s && git commit -m %s -- %s" % (
+            shlex.quote(shown_dir), shlex.quote("Inventory: %s removed" % ", ".join(removed)), shlex.quote(shown_dir))})
+    return todo(items)
 
 
 SEEDS_MIN, SEEDS_MAX = 2, 3  # per datacenter (OUTPUT Q7)

@@ -22,6 +22,14 @@
   become: true
   any_errors_fatal: true  # reset none of them if one is refused
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'read_reset' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Reset this node
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

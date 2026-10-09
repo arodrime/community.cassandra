@@ -30,8 +30,8 @@
 # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
 # outside tmux/screen).
 # A bootstrap can take hours: its progress printed every cassandra_stream_check_interval
-# seconds (300, the first checks sooner); the run stops only after
-# cassandra_stream_stall_checks checks (3) that far apart in a row with nothing streamed. Afterwards the cleanup command is printed, or
+# seconds (30, every 10 s for the first 5 minutes); the run stops only after
+# cassandra_stream_stall_time seconds (900) with nothing streamed. Afterwards the cleanup command is printed, or
 # run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
 # all (default none), the words of cassandra_cleanup_mode.
 # One token per node (cassandra_num_tokens: 1): each new node needs
@@ -50,6 +50,14 @@
   become: true
   any_errors_fatal: true  # a host that errors must not drop out of the run
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'check_new' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: A new node is a node of the cluster
       ansible.builtin.assert:
         that: inventory_hostname in query('community.cassandra.cassandra_nodes')
@@ -65,7 +73,7 @@
         tasks_from: new_node_checks.yml
       vars:
         _cassandra_new_node_skip_in_ring: true  # an interrupted run: checked next
-        _cassandra_new_node_reset: "{{ cassandra_add_node_reset | default(true) | bool }}"
+        _cassandra_new_node_reset: "{{ cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false' }}"
         _cassandra_new_node_reset_stops: false  # a running Cassandra is refused
 
 - name: Check the new nodes
@@ -242,11 +250,12 @@
         name: community.cassandra.cassandra_service
         tasks_from: reset_node_plan.yml
       when:
-        - cassandra_add_node_reset | default(true) | bool
+        - cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false'
         - cassandra_new_node_state == 'new'
         - _cassandra_node_reset_plan is not defined
       vars:
         _cassandra_node_reset_auto: true
+        _cassandra_node_reset_on_screen: true  # what it deletes: in the screen's warnings, once
 
     - name: Check the cleanup choice
       ansible.builtin.assert:
@@ -321,8 +330,8 @@
               or 'the system Python') ~ ')') if _medusa else 'off' }}.
             - >-
               {{ ('One node at a time; each one streams its share of the data (hours on big nodes), its progress printed every '
-                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after ' ~ cassandra_stream_stall_checks
-                  ~ ' checks that far apart in a row without progress.') if _new or _joining
+                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after '
+                  ~ cassandra_stream_stall_time | int | community.cassandra.cassandra_duration(true) ~ ' without progress.') if _new or _joining
                  else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
             - "{{ ('Still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
           blocks: "{{ _blocks }}"
@@ -406,7 +415,7 @@
         name: community.cassandra.cassandra_service
         tasks_from: reset_node.yml
       when:
-        - cassandra_add_node_reset | default(true) | bool
+        - cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false'
         - cassandra_new_node_state == 'new'
         - _p.delete | default([]) | length > 0 or _p.stop | default(false) | bool or _p.disable | default(false) | bool
       vars:
@@ -422,8 +431,25 @@
   any_errors_fatal: true
   become: true
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'prepare' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Prepare this node
+      vars:
+        cassandra_output_rescued: true  # the rescue says what failed, the same causes once (ops callback)
       block:
+        # an earlier rescue's failure (e.g. the keyspaces' read) stays in these facts: not this step's
+        - name: Forget an earlier failure
+          ansible.builtin.set_fact:
+            ansible_failed_result: {}
+            ansible_failed_task: {}
+
         - name: Prepare this node
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
@@ -447,26 +473,49 @@
             - cassandra_new_node_state == 'new'
             - cassandra_add_node_enabled.stdout | default('') | trim == 'enabled'
       rescue:
+        # any_errors_fatal: the other nodes come here too, without a failure of their own
         - name: Record the failure
           ansible.builtin.set_fact:
             cassandra_op_result: >-
-              {{ ('add FAILED while preparing it: ' ~ _why) if _why
+              {{ ('add FAILED while preparing it: ' ~ _failure | community.cassandra.cassandra_failure_cause(_task)) if _own | bool
                  else 'not prepared: stopped with the others (a node failed)' }}
+            # what the grouped report reads (none: no failure of its own)
+            _cassandra_add_prepare_failure: >-
+              {{ {'host': inventory_hostname, 'task': _task, 'family': ansible_facts['os_family'] | default(''), 'result': _failure}
+                 if _own | bool else none }}
           vars:
-            _why: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') | trim }}"
+            _task: "{{ ansible_failed_task.name | default('') }}"
+            # a failure of its own, with or without a message (a node stopped with the others has none)
+            _own: "{{ ansible_failed_result | default({}) | length > 0 }}"
+            # the error's text only (a whole result can be big), a loop's failed items' messages
+            _failure: >-
+              {{ dict(ansible_failed_result | default({}) | dict2items | selectattr('key', 'in', ['msg', 'failures', 'stderr'])
+                      | items2dict)
+                 | combine({'results': ansible_failed_result.results | default([]) | selectattr('failed', 'defined')
+                                       | selectattr('failed') | map(attribute='msg', default='') | list}) }}
 
-        - name: Print the summary
-          ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
-            tasks_from: summary.yml
-          vars:
-            cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
-
+        # One verdict for the nodes that failed at this step, their causes grouped, then what to check
         - name: Stop here
-          vars:
-            cassandra_output: true  # a verdict: its msg as is
           ansible.builtin.fail:
-            msg: "{{ inventory_hostname }} could not be prepared: no new node was started."
+            msg: >-
+              {{ _failures | community.cassandra.cassandra_failure_report(operation='add_node', cluster=_cluster,
+                   rerun=_rerun, python311=_failures | map(attribute='task') | select('search', 'python3.11') | list | length > 0)
+                 | join(_nl) }}
+          run_once: true
+          vars:
+            _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+            cassandra_output: true  # a verdict: its msg as is
+            _failures: >-
+              {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_cassandra_add_prepare_failure', 'defined')
+                 | map(attribute='_cassandra_add_prepare_failure') | select | list }}
+            _cluster: "{{ (_cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
+            _rerun: >-
+              {{ (_cassandra_screen_asked_by | default('') or 'add_node') | community.cassandra.cassandra_command(
+                   inventory=ansible_inventory_sources,
+                   default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                   hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'),
+                   extra={} if _cassandra_screen_asked_by | default('')
+                   else {'cassandra_target_nodes': cassandra_target_nodes}) }}
 
 # Then the starts, one at a time: each one bootstraps, waited for
 - name: Add the new nodes, one at a time
@@ -575,8 +624,9 @@
   vars:
     _plan: >-
       {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first].cassandra_add_node_plan | default({}) }}
+    # in inventory order (the play's hosts): the --limit of the command, the batches
     _targets: >-
-      {{ _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten | select('in', ansible_play_hosts) | list }}
+      {{ ansible_play_hosts | select('in', _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten) | list }}
     _mode: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
     cassandra_service_node_action: cleanup
     cassandra_cleanup_jobs: 2

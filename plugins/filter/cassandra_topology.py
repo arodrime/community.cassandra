@@ -379,10 +379,10 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
         facts.append(["not answering", "%s (marked absent, out of the ring): nothing to do" % out.nodes(plan["silent"])])
     done = plan["remove"] + plan["gone"] + plan["silent"]
     if done:
-        facts.append(["then", "delete %s from the inventory (or leave %s marked absent); wipe %s data directories"
-                              " before reusing the host%s" % (out.nodes(done, keep_order=True), "it" if len(done) == 1 else "them",
-                                                              "its" if len(done) == 1 else "their",
-                                                              "" if len(done) == 1 else "s")])
+        facts.append(["then", "empty %s (reset_node) before reusing the host%s, re-import the cluster to drop %s from"
+                              " the inventory: the commands at the end" % (
+                                  out.nodes(done, keep_order=True), "" if len(done) == 1 else "s",
+                                  "it" if len(done) == 1 else "them")])
 
     def grouped(key):
         """[(text, hosts)] of the hosts to add, in order, each text once."""

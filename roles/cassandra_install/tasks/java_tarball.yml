@@ -46,7 +46,9 @@
         name: tar
         state: present
       retries: 3
-      when: not cassandra_offline | bool
+      when:
+        - not cassandra_offline | bool
+        - "'tar' not in _cassandra_install_before | default({})"  # installed: no repository read
 
     - name: Download the Java tarball
       ansible.builtin.get_url:

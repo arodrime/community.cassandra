@@ -70,39 +70,33 @@ Role Variables
 * `cassandra_service_wait_for_normal` (default `true`) and
   `cassandra_service_wait_timeout` (seconds, default 600).
 * Streaming operations (the bootstrap of `add_node` and `replace_node`,
-  `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`)
-  and cleanups are waited for as long as they make progress: every
-  `cassandra_stream_check_interval` seconds (default 300; the first checks
-  sooner, after 10 s, 30 s, 1, 2 and 4 minutes) `nodetool netstats`
-  (`compactionstats` for a cleanup) is read and the progress printed, a
-  short first line then one item per line (a single line once done), e.g.
+  `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`,
+  `move_node`, `topology`) and cleanups are waited for as long as they make
+  progress: `nodetool netstats` (`compactionstats` for a cleanup) is read
+  every `cassandra_stream_early_check_interval` seconds (default 10) during
+  the first `cassandra_stream_early_time` seconds (default 300), then every
+  `cassandra_stream_check_interval` seconds (default 30), and the progress
+  printed, one line per check and one line for the other nodes, e.g.
 
   ```
-  node4  bootstrap  [########------------]  40%   82 MiB/s
-
-        data:      168.2 GiB / 420.0 GiB
-                   720 / 1 799 files
-
-        from:      node1   40% done  (88.1 / 220.0 GiB)
-                   node2   40% done  (52.1 / 130.0 GiB)
-                   node5   40% done  (28.0 / 70.0 GiB)
-
-        Now:       current - 13:35 CEST
-        Started:   35m ago - 13:00 CEST
-        Finish:    in 52m  - 14:27 CEST
+  [1/2] node5 bootstrap  JOINING  [####------]  40%  168.2/420.0 GiB  82 MiB/s  ETA 14:27 (52m)  35m
+        from node1 88.1/220.0 GiB ok   from node2 52.1/130.0 GiB ok   from node3 28.0/70.0 GiB stalled
   ```
 
-  The times are the controller's. A line `Progress: none for 2 checks (10m), stops after 3`
-  shows up once a check sees nothing move; once done, a single line with the
-  total time and average rate.
+  The times are the controller's. After a minute without progress the line
+  says it (`STALLED 6m/15m`: the time without progress and the limit); once
+  done, a single line with the total time.
 
-  The run fails only after `cassandra_stream_stall_checks` checks in a row
-  (default 3), a full interval apart, with nothing streamed: no byte or file, no session started or
-  ended; 4 times as many while nothing is left to transfer (before the first
+  The run fails only after `cassandra_stream_stall_time` seconds (default
+  900) with nothing streamed: no byte or file, no session started or
+  ended; 4 times as long while nothing is left to transfer (before the first
   session, index or view builds after the streams). Nothing is stopped then.
   Entire-SSTable streaming (4.0+) counts a file only once whole: with very
-  big SSTables, raise `cassandra_stream_stall_checks`. No overall limit unless
-  `cassandra_stream_max_time` (seconds) is set. The bootstrap wait also stops
+  big SSTables, raise `cassandra_stream_stall_time`. No overall limit unless
+  `cassandra_stream_max_time` (seconds) is set. A JMX login or permission
+  refused stops the wait at once, naming the node (on a node being added,
+  Cassandra's own JMX authenticator refuses every login until it has joined:
+  its bootstrap is then followed from the other nodes). The bootstrap wait also stops
   when Cassandra stops or, on 5.0, when the bootstrap fails
   (`Mode: JOINING_FAILED`). On 5.0.0 to 5.0.4 nodetool does not answer on a
   bootstrapping node (CASSANDRA-19902): its progress is read from the other
@@ -142,8 +136,13 @@ Role Variables
   what its directories hold deleted, shown and confirmed. Only when
   Cassandra is down there, no up node sees it in its ring, its cluster is
   this one or the stock `Test Cluster`, and it has no user keyspace but a
-  failed bootstrap's of this cluster; else refused with what it holds.
-  `false` refuses every new node with data. Default `true`.
+  failed bootstrap's of this cluster (one `add_node` started: its mark in
+  `/var/lib/cassandra` until the node joined); else refused with what it
+  holds. A node of this cluster with its keyspaces and no such mark is a
+  former member (removed with `remove_dead_node`, put back in the
+  inventory): the writes only it holds would be lost, so `auto` (the
+  default) refuses it too, saying so; `true`, given on purpose, resets it.
+  `false` refuses every new node with data. Default `auto`.
 * `cassandra_replace_node_reset`: the same for a replacement host that still
   holds data in `replace_node`, typically a host replacing itself (its
   address only seen down, as the node being replaced). Default `false`.
