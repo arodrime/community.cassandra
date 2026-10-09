@@ -168,8 +168,9 @@ Cluster:
 
 Takeover:
 
-  import_cluster - Reads the running cluster into an inventory, changing nothing on the nodes; a
-    re-import keeps the files it did not write, --check --diff shows its changes first.
+  import_cluster - Reads a running cluster into an inventory, changing nothing on the nodes. A new
+    cluster: give one of its nodes (-i <node>,), the others are found in the ring. A re-import keeps
+    the files it did not write, --check --diff shows its changes first.
     $ ansible-playbook -i 192.0.2.11, $C.import_cluster -e import_cluster_dir=NEW_DIR
 
 3. Advice
@@ -542,7 +543,7 @@ def test_reimport_only_into_an_inventory_the_import_wrote():
 
 def test_reimport_into_the_inventory_dir(tmp_path):
     """A cluster the import wrote (its <cluster>.yml): its re-import goes there again, import_cluster_dir left out
-    for the default inventories, and every command names its group, even while it is alone there."""
+    for the default inventories; the commands name its group only when the playbooks would not take it alone."""
     (tmp_path / "inventories").mkdir()
     sources = [str(tmp_path / "inventories")]
     billing = {"name": "billing", "hosts": [node("node9", "192.0.2.19", "rack1", cassandra_cluster_name="Billing")]}
@@ -553,8 +554,10 @@ def test_reimport_into_the_inventory_dir(tmp_path):
     assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n") in text
     alone = model(sources=sources, imported=["orders"])
     text = cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
+    assert "$ ansible-playbook -i inventories community.cassandra.status\n" in text  # alone there: not needed
+    assert "-e cassandra_hosts" not in text and "-e cassandra_hosts" not in cassandra_help(model(), PLAYBOOKS, cwd=CWD)
+    text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))  # with another cluster: needed
     assert "$ ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=orders\n" in text
-    assert "-e cassandra_hosts" not in cassandra_help(model(), PLAYBOOKS, cwd=CWD)
     # another dir: named
     text = cassandra_help(alone, PLAYBOOKS, cwd="/elsewhere")
     assert ("community.cassandra.import_cluster -e import_cluster_dir=%s/inventories -e import_cluster_force=true"
@@ -667,3 +670,36 @@ def test_java_origin(more, java):
     for host in hosts:
         host["vars"].update(more)
     assert "\n  %s\n" % java in cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+
+
+def test_commands_without_needless_options(tmp_path):
+    """No -i when the inventory is the configuration's (ansible.cfg), no -e cassandra_hosts when the playbooks
+    take the cluster without it: the inventory's only one, or on screen the one CASSANDRA_CLUSTER names (not in
+    RUNBOOK.md, read in other shells)."""
+    (tmp_path / "inventories").mkdir()
+    sources = [str(tmp_path / "inventories")]
+    configured = model(sources=sources, default_sources=[str(tmp_path / "inventories") + "/"])
+    text = cassandra_help(configured, PLAYBOOKS, cwd=str(tmp_path))
+    assert "$ ansible-playbook community.cassandra.status\n" in text and " -i inventories" not in text
+    # the import of a new cluster still needs a node (-i <node>,)
+    assert "$ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster" in text
+    topic = cassandra_help(configured, PLAYBOOKS, topic="cleanup", cwd=str(tmp_path))
+    assert "$ ansible-playbook community.cassandra.cleanup" in topic and "-i inventories" not in topic
+    # another inventory given with -i: kept
+    other = model(sources=sources, default_sources=["/etc/ansible/hosts"])
+    assert "$ ansible-playbook -i inventories community.cassandra.status\n" in cassandra_help(
+        other, PLAYBOOKS, cwd=str(tmp_path))
+    # two clusters, CASSANDRA_CLUSTER names one: help shows that one, its commands on screen without the group
+    billing = {"name": "billing", "hosts": [node("node9", "192.0.2.19", "rack1", cassandra_cluster_name="Billing")]}
+    named = model(sources=sources, default_sources=sources, auto="", env_cluster="billing", clusters=[billing])
+    text = cassandra_help(named, PLAYBOOKS, cwd=str(tmp_path))
+    assert "$ ansible-playbook community.cassandra.status\n" in text and "-e cassandra_hosts" not in text
+    runbook = cassandra_help(named, PLAYBOOKS, markdown=True, cwd=str(tmp_path))
+    assert "ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=billing" in runbook
+    # RUNBOOK.md: no -i for ansible.cfg's inventory only (not ANSIBLE_INVENTORY's), and an imported cluster named
+    runbook = cassandra_help(dict(named, default_sources_origin="cfg"), PLAYBOOKS, markdown=True, cwd=str(tmp_path))
+    assert "ansible-playbook community.cassandra.status -e cassandra_hosts=billing" in runbook
+    alone = dict(configured, default_sources_origin="cfg", imported=["orders"])
+    assert "$ ansible-playbook community.cassandra.status\n" in cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
+    assert "ansible-playbook community.cassandra.status -e cassandra_hosts=orders" in cassandra_help(
+        alone, PLAYBOOKS, markdown=True, cwd=str(tmp_path))

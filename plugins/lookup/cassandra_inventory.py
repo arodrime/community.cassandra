@@ -47,7 +47,10 @@ _raw:
       C(options) is the list of the command line options the
       printed commands need (the vault and user options of this run; no C(-b), the playbooks become root
       on the nodes themselves); C(vault_prompt_added) whether
-      C(--ask-vault-pass) is there because help found vaulted values.
+      C(--ask-vault-pass) is there because help found vaulted values; C(env_cluster) the group
+      C(CASSANDRA_CLUSTER) picked (empty when it is not set, or C(cassandra_hosts) is);
+      C(default_sources) the inventory of the configuration (C(ansible.cfg), C(ANSIBLE_INVENTORY)), used without C(-i);
+      C(default_sources_origin) where it comes from (C(cfg), C(env), C(default)).
   type: list
   elements: dict
 """
@@ -193,6 +196,7 @@ def read(sources, given=None, basedir=None, env=None):
         auto = cluster_group(None, groups)
     except ValueError:
         auto = ""
+    env_cluster = ""
     if not given and env:
 
         def cluster_name(name):
@@ -203,7 +207,7 @@ def read(sources, given=None, basedir=None, env=None):
                 return UNKNOWN  # as the playbooks' lookup: not known from the inventory alone
 
         try:
-            given = cluster_group(None, groups, env, cluster_name)
+            given = env_cluster = cluster_group(None, groups, env, cluster_name)
         except ValueError as exc:
             raise AnsibleLookupError(str(exc))
     names = [given] if given else ([auto] if auto else top_groups(groups))
@@ -234,7 +238,18 @@ def read(sources, given=None, basedir=None, env=None):
         prompt_added = True
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
             "options": options, "imported": _imported(sources, [c["name"] for c in clusters]),
-            "vault_prompt_added": prompt_added}
+            "vault_prompt_added": prompt_added, "env_cluster": env_cluster,
+            "default_sources": [str(s) for s in C.DEFAULT_HOST_LIST or []],
+            "default_sources_origin": _origin("DEFAULT_HOST_LIST")}
+
+
+def _origin(name):
+    """Where the configuration's value comes from: 'cfg' (a configuration file), 'env', 'default' (Ansible's)."""
+    try:
+        origin = str(C.config.get_config_value_and_origin(name)[1])
+    except Exception:  # pylint: disable=broad-except
+        return ""
+    return "env" if origin.startswith("env") else origin if origin in ("default", "") else "cfg"
 
 
 def _written_by_import(path):
