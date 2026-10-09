@@ -25,6 +25,10 @@ try:  # ansible-core 2.19+ renders trusted templates only
 except ImportError:
     def trust_as_template(template):
         return template
+    from ansible.utils.unsafe_proxy import wrap_var as fact  # a fact (set_fact's): not templated again
+else:
+    def fact(value):  # 2.19+: data is never templated again
+        return value
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_inventory_files, cassandra_inventory_layout, cassandra_inventory_layout_over)
@@ -228,7 +232,7 @@ def test_cql_address_of_the_node():
 
     def host(**variables):
         nodes = [node("n1", **variables)]
-        values = dict(_nodes=nodes, hostvars=hostvars)
+        values = dict(_nodes=fact(nodes), hostvars=hostvars)
         for k in ("_cql_node", "_cql_vars", "_cql_facts", "_cql_rpc"):
             values[k] = render(v[k], **values)
         return render(v["_cassandra_cql_login_host"], **values)

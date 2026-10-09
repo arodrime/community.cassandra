@@ -74,7 +74,7 @@ def test_dnf_cached_metadata_first():
 
 
 def test_one_line_per_phase():
-    names = ["Say what is read first", "Say what is read on the nodes", "Say what is read next on the nodes",
+    names = ["Say what the run does", "Say what is read on the nodes", "Say what is read next on the nodes",
              "Say the inventory is laid out", "Say the self-check runs", "Say the inventory is written"]
     found = [t for play in PLAYS for t in play.get("tasks", []) if t.get("name") in names]
     assert [t["name"] for t in found] == names
