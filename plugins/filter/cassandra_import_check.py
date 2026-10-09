@@ -45,7 +45,7 @@ except ImportError:  # before, any string not marked unsafe
 
     def trust_as_template(value):
         return value
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import Unsafe, _mask, _values_hidden
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import Unsafe, _mask, _secret, _values_hidden
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
@@ -53,7 +53,6 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
-SECRET = re.compile(r"password|passwd|secret|_kspw$|_tspw$|sse_c_key|access_key|private_key|key_material", re.I)
 # Set in cassandra-env.sh, else taken from the environment (the unit's): the
 # import may move them from one to the other, so they are compared on their own
 HEAP_ENV = ("MAX_HEAP_SIZE", "HEAP_NEWSIZE")
@@ -125,7 +124,7 @@ def _groups_of(group, name, chain):
 def _shown(key, value):
     if value is None:
         return "nothing"
-    if SECRET.search(str(key)):
+    if _secret(str(key), value):  # the one rule (cassandra_output): what secrets.yml holds, hidden on screen
         return "****"
     return _mask(json.dumps(value, default=str) if not isinstance(value, str) else repr(value))
 

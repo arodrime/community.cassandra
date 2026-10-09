@@ -1,0 +1,41 @@
+---
+# One CQL login of cql_login.yml (_cassandra_cql_try_user, _password, _asked):
+# a query on _cassandra_cql_login_from, its outcome in cassandra_cql_login.
+- name: Log in over CQL on {{ _cassandra_cql_login_from }}
+  community.cassandra.cassandra_cqlsh:
+    execute: "SELECT release_version FROM system.local;"
+    # as the operations log in (keyspaces.yml): what works here works for them
+    cqlsh_host: "{{ _cassandra_cql_login_host }}"
+    username: "{{ _cassandra_cql_try_user }}"
+    password: "{{ _cassandra_cql_try_password }}"
+    debug: true  # its error, to tell a refused login from a node cqlsh can't reach
+  delegate_to: "{{ _cassandra_cql_login_from }}"
+  run_once: true
+  register: _cassandra_cql_try
+  failed_when: false
+  changed_when: false
+  check_mode: false  # a SELECT
+  no_log: true  # the password
+
+# the reason from a fixed list: nothing of cqlsh's own text (it could quote the login)
+- name: Keep the outcome of the CQL login
+  ansible.builtin.set_fact:
+    cassandra_cql_login:
+      state: >-
+        {{ 'ok' if _cassandra_cql_try.rc | default(1) == 0
+           else 'refused' if _err is search(_refused)
+           else 'unchecked' }}
+      why: >-
+        {{ '' if _cassandra_cql_try.rc | default(1) == 0 or _err is search(_refused)
+           else 'no cqlsh on ' ~ _cassandra_cql_login_from if _cassandra_cql_try.rc | default(1) == 127
+                or _err is search('cqlsh: (command )?not found|No such file or directory')
+           else 'cqlsh could not reach ' ~ _cassandra_cql_login_host ~ ' from ' ~ _cassandra_cql_login_from if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
+           else 'cqlsh failed on ' ~ _cassandra_cql_login_from }}
+      user: "{{ _cassandra_cql_try_user }}"
+      password: "{{ _cassandra_cql_try_password }}"
+      asked: "{{ _cassandra_cql_try_asked | bool }}"
+  run_once: true
+  no_log: true
+  vars:
+    _err: "{{ (_cassandra_cql_try.err | default('')) ~ ' ' ~ (_cassandra_cql_try.msg | default('')) }}"
+    _refused: "AuthenticationFailed|Bad credentials|username and/or password are incorrect"

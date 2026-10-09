@@ -105,9 +105,11 @@
 
     - name: Say what would be installed (--check)
       ansible.builtin.debug:
-        msg: "Would download and install {{ _cassandra_install_files | join(', ') }}"
+        msg: "{{ inventory_hostname }}: would download and install {{ _cassandra_install_files | join(', ') }}"
       changed_when: true
       when: ansible_check_mode
+      vars:
+        cassandra_output: true
 
   always:
     - name: Remove the downloaded files

@@ -617,10 +617,102 @@ def _jmx_users(password_file, access_file):
     return users
 
 
-def _jmx_access_file_on(env_sh):
-    """cassandra-env.sh points the JVM at /etc/cassandra/jmxremote.access (where the role writes it)."""
-    return re.search(r"^\s*JVM_OPTS=.*-Dcom\.sun\.management\.jmxremote\.access\.file=/etc/cassandra/jmxremote\.access\b",
-                     env_sh or "", re.M) is not None
+# the JVM options naming the remote JMX files, and the ones of a JMX authentication by JAAS
+_JMX_FILE_OPTION = r"-Dcom\.sun\.management\.jmxremote\.%s\.file=(\"[^\"]*\"|'[^']*'|[^\s\"']+)"
+_JAAS = re.compile(r"-D(cassandra\.jmx\.remote\.login\.config|java\.security\.auth\.login\.config"
+                   r"|cassandra\.jmx\.authorizer)=")
+_ASSIGN = re.compile(r"^\s*(?:export\s+)?([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|\S*)\s*(?:#.*)?$")
+JMX_FILE_DEFAULTS = {"password": "/etc/cassandra/jmxremote.password", "access": "/etc/cassandra/jmxremote.access"}
+
+
+def _shell_value(text, names):
+    """A shell word with its quotes off and $NAME, ${NAME} replaced from names (not inside single quotes); None
+    when one is not known."""
+    if text[:1] == "'":
+        return text[1:-1] if text.endswith("'") and len(text) > 1 else text[1:]
+    if text[:1] == '"':
+        text = text[1:-1] if text.endswith('"') and len(text) > 1 else text[1:]
+
+    def known(match):
+        name = match.group(1) or match.group(2)
+        if name not in names:
+            raise KeyError(name)
+        return names[name]
+    try:
+        text = re.sub(r"\$\{(\w+)\}|\$(\w+)", known, text)
+    except KeyError:
+        return None
+    # what only the shell knows (${X:-d}, $(..), `..`, ~): not a path
+    return None if re.search(r"[$`]", text) or text.startswith("~") else text
+
+
+def _shell_code(line):
+    """A shell line without its comment (a # starting a word, outside quotes)."""
+    quote = None
+    for i, char in enumerate(line):
+        if quote:
+            quote = None if char == quote else quote
+        elif char in ("'", '"'):
+            quote = char
+        elif char == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
+
+
+def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", cassandra_yaml=""):
+    """Where the running JVM reads its remote JMX password and access files: its own arguments (cmdline:
+    /proc/<pid>/cmdline), else cassandra-env.sh (its last line that sets them, comments aside, $CASSANDRA_CONF
+    and the variables it sets expanded), else the JVM options files (options: {file name: text}). A path
+    cassandra-env.sh gives through what only the shell knows (a variable it does not set, ${X:-d}, $(..)) is
+    looked for in the next ones.
+    -> {password, access: the paths ('' when not found), from: where, unknown: what cassandra-env.sh gives that
+    no source resolves ('' when nothing), jaas: what says JMX authenticates by JAAS ('' when nothing does)}."""
+    names = {"CASSANDRA_CONF": conf_dir} if conf_dir else {}
+    lines = [_shell_code(line) for line in str(env_sh or "").split("\n")]
+    seen = {}
+    for line in lines:
+        assigned = _ASSIGN.match(line)
+        if assigned and assigned.group(1) != "JVM_OPTS":
+            value = _shell_value(assigned.group(2), names)
+            seen.setdefault(assigned.group(1), set()).add(value)
+            # set twice to different values (in branches of an if): not known
+            if value is not None and len(seen[assigned.group(1)]) == 1:
+                names[assigned.group(1)] = value
+            else:
+                names.pop(assigned.group(1), None)
+    # the running JVM's own arguments first: what it reads (cassandra-env.sh may set them in branches)
+    sources = [("the running JVM's arguments", re.split(r"[\0\n]", str(cmdline or "")), False),
+               ("cassandra-env.sh", lines, True)]
+    for name, text in sorted((options or {}).items()):
+        sources.append((name, [line for line in str(text or "").split("\n") if not line.lstrip().startswith("#")],
+                        False))
+    out = {"password": "", "access": "", "from": "", "unknown": "", "jaas": ""}
+    unknown = {}
+    for name, source_lines, shell in sources:
+        for kind in ("password", "access"):
+            value = raw = None
+            for line in source_lines:
+                for match in re.finditer(_JMX_FILE_OPTION % kind, line):  # the last one wins, as for the JVM
+                    raw = match.group(1)
+                    value = _shell_value(raw, names) if shell else raw.strip("\"'")
+                    # (what a shell would run or expand, from any source: never a path the role writes)
+                    value = None if value is None or re.search(r"[$`]", value) else value
+            if raw is None or out[kind]:
+                continue
+            if value:  # each file from the first source that gives it
+                out[kind] = value
+                out["from"] = out["from"] or name
+                unknown.pop(kind, None)
+            else:
+                unknown[kind] = "%s.file=%s" % (kind, raw)
+        if not out["jaas"]:
+            jaas = next((m.group(1) for line in source_lines for m in [_JAAS.search(line)] if m), "")
+            out["jaas"] = ("-D%s in %s" % (jaas, name)) if jaas else ""
+    out["unknown"] = ", ".join(unknown[k] for k in ("password", "access") if k in unknown)
+    if not out["jaas"] and re.search(r"(?m)^jmx_server_options:\s*$", str(cassandra_yaml or "")) and re.search(
+            r"(?m)^\s+login_config_(name|file):\s*\S", str(cassandra_yaml or "")):
+        out["jaas"] = "jmx_server_options in cassandra.yaml"
+    return out
 
 
 def cassandra_unit_environment(text):
@@ -650,12 +742,14 @@ def _hidden(name, where):
                               % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
 
 
-def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir=""):
+def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized', 'comments'
     (comment lines only, which set nothing)}.
     conf_target: the resolved dir the node reads its config from; storage_dir:
-    the JVM's -Dcassandra.storagedir."""
+    the JVM's -Dcassandra.storagedir; jmx_files: cassandra_jmx_files' (the
+    remote JMX files the JVM reads, under the names jmxremote.password and
+    .access in live_files)."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
@@ -663,7 +757,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     live_files = dict((k, re.sub(r"\r\n?", "\n", v) if k.endswith(".properties") and isinstance(v, str) else v)
                       for k, v in live_files.items())
     try:
-        return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir)
+        return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir, jmx_files)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
@@ -673,7 +767,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     raise error  # out of the except block: no chained message either
 
 
-def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir=""):
+def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None):
     env, ctx, files = _load_role(cassandra_version, facts)
     found, from_shell = {}, set()
     for name in files:
@@ -731,18 +825,36 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
         if extras:
             changed["cassandra_extra_settings"] = extras
-    # remote JMX users (the role writes /etc/cassandra/jmxremote.password and .access), only
-    # when the JVM reads both files there and each user's rights are in it
+    # remote JMX users: the password and access files the JVM reads (jmx_files: cassandra_jmx_files', read
+    # under the names jmxremote.password and .access), their paths kept for the role to write them there; the
+    # users only when the JVM reads both files and each user's rights are in the access file
     where[0] = "jmxremote.password"
+    if jmx_files is None:  # not read by the caller: cassandra-env.sh's
+        jmx_files = cassandra_jmx_files(live_files.get("cassandra-env.sh", ""),
+                                        cassandra_yaml=live_files.get("cassandra.yaml", ""))
+    jmx_files = dict({"password": "", "access": "", "from": "", "unknown": "", "jaas": ""}, **jmx_files)
+    for kind in ("password", "access"):
+        if jmx_files[kind] and jmx_files[kind] != JMX_FILE_DEFAULTS[kind]:
+            changed["cassandra_jmx_remote_%s_file" % kind] = jmx_files[kind]
     jmx_note = []
-    if live_files.get("jmxremote.password"):
+    if jmx_files["jaas"]:
+        jmx_note = ["JMX authentication by JAAS (%s): NOT imported, the role writes the JDK's password and access"
+                    " files only: keep cassandra-env.sh as it is (import_cluster_keep_hand_edits=true) and give the"
+                    " playbooks a JMX login (cassandra_jmx_username, cassandra_jmx_password_file)" % jmx_files["jaas"]]
+    if jmx_files["unknown"]:  # its files not read: no user taken from the role's paths
+        jmx_note.append("cassandra-env.sh gives the JMX files through a variable it does not set (%s): their users"
+                        " NOT imported, set cassandra_jmx_remote_password_file, _access_file and cassandra_jmx_users"
+                        " by hand" % jmx_files["unknown"])
+    elif live_files.get("jmxremote.password"):
         users = _jmx_users(live_files["jmxremote.password"], live_files.get("jmxremote.access"))
-        if users and "jmxremote.access" in live_files and _jmx_access_file_on(live_files.get("cassandra-env.sh")):
+        if users and "jmxremote.access" in live_files and jmx_files["access"]:
             changed["cassandra_jmx_users"] = users
         else:
-            jmx_note = ["jmxremote.password: its users NOT imported (not every user has plain password and"
-                        " readwrite/readonly rights in /etc/cassandra/jmxremote.access, the file cassandra-env.sh"
-                        " points at): set cassandra_jmx_users by hand"]
+            jmx_note.append("jmxremote.password (%s): its users NOT imported (not every user has a plain password"
+                            " and readwrite/readonly rights in the access file the JVM reads%s): set"
+                            " cassandra_jmx_users by hand" % (
+                                jmx_files["password"] or JMX_FILE_DEFAULTS["password"],
+                                (", " + jmx_files["access"]) if jmx_files["access"] else ", none given to the JVM"))
     where[0] = "comparing the files with the role's"
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
@@ -1428,6 +1540,7 @@ BLOCKS = [
     ("JMX", [
         "cassandra_jmx_port", "cassandra_local_jmx", "cassandra_jmx_rmi_hostname", "cassandra_jmx_username",
         "cassandra_jmx_password_file", "cassandra_jmx_password", "cassandra_jmx_users"]),
+    ("CQL login (the operations that read the replication)", ["cassandra_cql_username", "cassandra_cql_password"]),
     ("JVM & heap (cassandra-env.sh, jvm*-server.options)", [
         "cassandra_heap_size", "cassandra_heap_newsize", "cassandra_max_direct_memory_size", "cassandra_jvm_gc",
         "cassandra_jvm_max_gc_pause_millis", "cassandra_jvm_g1_heap_region_size", "cassandra_jvm_g1_new_size_percent",
@@ -1885,6 +1998,28 @@ def cassandra_inventory_same_secret(existing, content, password):
     return _decrypt(existing, password) == content
 
 
+@_values_hidden
+def cassandra_inventory_own_values(read, cluster_group, keys, password=""):
+    """read: {path: text} of the vars files of the inventory dir -> {key: value} of keys as an earlier import of
+    this cluster wrote them in its own files of the cluster group (group_vars/<cluster group>/main.yml and
+    secrets.yml, with the import's first line naming the group; a vaulted one decrypted with password). What a
+    re-import keeps when nothing else gives it (the CQL login: no node gives it)."""
+    out = {}
+    for name in ("main.yml", "secrets.yml"):
+        text = (read or {}).get("group_vars/%s/%s" % (cluster_group, name))
+        if text and str(text).startswith("$ANSIBLE_VAULT"):
+            text = _decrypt(text, password)
+        if not text or written_for(text) != cluster_group:
+            continue
+        try:
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            continue
+        if isinstance(data, dict):
+            out.update((k, data[k]) for k in keys if k in data and isinstance(data[k], (str, int)))
+    return out
+
+
 def cassandra_config_ignored_vars(names, cassandra_version):
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
@@ -1983,6 +2118,7 @@ class FilterModule(object):
         return {
             "cassandra_ring_nodes": cassandra_ring_nodes,
             "cassandra_config_import": cassandra_config_import,
+            "cassandra_jmx_files": cassandra_jmx_files,
             "cassandra_inventory_layout": cassandra_inventory_layout,
             "cassandra_inventory_layout_over": cassandra_inventory_layout_over,
             "cassandra_inventory_user_files": cassandra_inventory_user_files,
@@ -1990,6 +2126,7 @@ class FilterModule(object):
             "cassandra_inventory_generated": cassandra_inventory_generated,
             "cassandra_inventory_leftovers": cassandra_inventory_leftovers,
             "cassandra_inventory_same_secret": cassandra_inventory_same_secret,
+            "cassandra_inventory_own_values": cassandra_inventory_own_values,
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,

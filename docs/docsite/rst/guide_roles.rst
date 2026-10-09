@@ -66,6 +66,12 @@ would otherwise repeat:
     stdout_callback = community.cassandra.ops
     callback_result_format = yaml
     interpreter_python = auto_silent
+    # a task on that many nodes at a time (Ansible's default: 5): the node count of the largest cluster
+    forks = 30
+
+``forks``: Ansible runs each task on that many nodes at a time, 5 by default, so a 30-node cluster takes 6 rounds
+per task (``import_cluster`` reads every node, ``status`` and ``health_check`` too); its phase lines say so. Set it
+to the node count of the largest cluster (one ssh connection per node from the controller).
 
 ``stdout_callback = community.cassandra.ops`` prints only the collection's operator messages (each verdict, plan,
 progress line, recap and TO DO list), the confirmation questions, and every failure in full (the task, the host,
@@ -91,10 +97,14 @@ Then, naming the cluster on each run (see `Inventory`_):
     $ ansible-playbook community.cassandra.health_check -e cassandra_hosts=orders
     $ CASSANDRA_CLUSTER=orders ansible-playbook community.cassandra.decommission_node -e cassandra_target_nodes=node7
 
-Without ``-i node1,`` (a re-import with the inventory of ``ansible.cfg``), the import is given every host of the
-inventory, with their variables (the JMX login, the connection): fine when it holds this cluster alone; with other
-clusters there, add ``-e cassandra_hosts=orders`` (``--limit`` is refused: it would leave out the nodes found in the ring
-and the controller, where the inventory is written). Given nodes of two rings stop the import before it reads them. The import does not read ``CASSANDRA_CLUSTER``.
+A new cluster is always imported from one of its nodes, ``-i node1,`` (the trailing comma makes it a list of hosts,
+not a file): the others are found in the ring. Without it (a re-import with the inventory of ``ansible.cfg``), the
+import is given every host of the inventory, with their variables (the JMX login, the connection): fine when it holds
+this cluster alone; with other clusters there, add ``-e cassandra_hosts=orders`` or ``CASSANDRA_CLUSTER=orders``
+(``--limit`` is refused: it would leave out the nodes found in the ring and the controller, where the inventory is
+written). A cluster they name that is not in the inventory stops the import at once, saying to give one of its nodes
+with ``-i <node>,``; with ``-i <node>,``, ``CASSANDRA_CLUSTER`` is left out. Given nodes of two rings stop the import
+before it reads them.
 
 Ansible reads the ``group_vars`` and ``host_vars`` next to an inventory source only: with ``inventory =
 ./inventories``, the ones of a subdirectory (``inventories/orders/group_vars``) are not read. Hence one flat
@@ -929,7 +939,11 @@ nodes); the systemd unit's drain only uses the password file.
 
 To open JMX to remote tools (a repair scheduler, monitoring), set ``cassandra_local_jmx: false`` and list its users
 in ``cassandra_jmx_users``: the role writes ``jmxremote.password`` and ``jmxremote.access``, readable by Cassandra
-only. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
+only, at ``cassandra_jmx_remote_password_file`` and ``cassandra_jmx_remote_access_file`` (``/etc/cassandra/`` by
+default; ``cassandra-env.sh`` points the JVM at them). ``import_cluster`` reads the files the JVM reads, whatever
+their names (the running JVM's arguments, else ``cassandra-env.sh``, else the JVM options files): their users go to
+``secrets.yml``, their paths to these variables. A JMX authentication by JAAS (``-Dcassandra.jmx.remote.login.config``,
+``jmx_server_options`` in ``cassandra.yaml``) is not imported: the report says so. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
 CQL credentials, for the OS users you list. Playbooks that read the schema over CQL take ``cassandra_cql_username``
 and ``cassandra_cql_password``.
 
@@ -1126,6 +1140,15 @@ Without a password file, they are written in clear with mode ``0600``, and the r
 ``ansible-vault encrypt`` command to run; a vaulted ``secrets.yml`` already there is then never overwritten in clear
 (the import stops). A vaulted ``secrets.yml`` whose content has not changed is left as it is on a re-import.
 
+With CQL authentication on (a ``PasswordAuthenticator``), the operations that read the replication (``decommission_node``,
+``topology``, ``rolling_restart``...) log in with ``cassandra_cql_username`` and ``cassandra_cql_password``, which no
+node gives. When your inventory (any ``group_vars`` or ``host_vars`` file, vaulted or not) or ``-e`` sets them, the
+import checks them with a real CQL login on one node (as the operations log in) and does not ask, nor write them (a
+refused login is a ``TO DO``). A login an earlier import wrote is kept on a re-import (``-i <node>,`` too). Otherwise it asks for them on the terminal (the password not shown), checks each one
+(3 tries), and writes them with the cluster's variables, the password in ``secrets.yml`` (vaulted as above). Without
+a terminal, under ``--check`` or with ``-e cassandra_operation_confirm=false`` it does not ask: a ``TO DO`` says how
+to set them. No password is shown on the screen, in the report or in a log.
+
 Every file the import writes starts with ``# Written by community.cassandra.import_cluster for <cluster group>``. A
 cluster whose ``<cluster group>.yml`` is there already is refused unless ``import_cluster_force=true`` (the directory
 itself may exist, with other clusters); then the import writes the files at its own paths (``<cluster group>.yml``,
@@ -1174,10 +1197,13 @@ that is not the collection's default, with every node that has each value (``all
 the same way, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files
 removed or replaced, the next commands (without ``-i`` on the inventory of ``ansible.cfg``, without
 ``-e cassandra_hosts`` when it holds this cluster alone), and the details line by line at the end. The run ends with
-its header, ``TO DO`` and ``SETTINGS`` (node lists shortened, ``node1..node5``), and where the full report is.
+its header, ``TO DO``, ``SETTINGS`` and ``DIFFERS FROM YOUR group_vars/all`` (node lists shortened, ``node1..node5``),
+and where the full report is; nothing else is printed under the ``community.cassandra.ops`` callback.
 
 Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
-write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``):
+write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``). Its
+``TO DO`` says what the run without ``--check`` would write (``Write it: ... (2 new files; changed: ...; removed:
+...)``); a re-import that would change no file says ``READY — nothing to change``:
 
 .. code-block:: console
 

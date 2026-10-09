@@ -126,7 +126,11 @@ def test_cluster_from_the_environment(tmp_path):
     assert [c["name"] for c in read([source], env="Billing")["clusters"]] == ["billing"]
     assert [c["name"] for c in read([source], env="billing")["clusters"]] == ["billing"]
     assert [c["name"] for c in read([source], given="orders", env="Billing")["clusters"]] == ["orders"]
-    assert read([source], env="Billing")["auto"] == ""  # the commands still name the group
+    assert read([source], env="Billing")["auto"] == ""  # RUNBOOK.md's commands still name the group
+    # the screen's do not: the playbooks take it from CASSANDRA_CLUSTER
+    assert read([source], env="Billing")["env_cluster"] == "billing"
+    assert read([source], given="orders", env="Billing")["env_cluster"] == "" and read([source])["env_cluster"] == ""
+    assert isinstance(read([source])["default_sources"], list)  # the configuration's inventory: no -i
     with pytest.raises(AnsibleError, match="CASSANDRA_CLUSTER=Nope: no group"):
         read([source], env="Nope")
 

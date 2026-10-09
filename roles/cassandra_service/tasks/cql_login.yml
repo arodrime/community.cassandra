@@ -1,0 +1,33 @@
+---
+# The cluster's CQL login, when CQL authentication is on: the one given (the
+# inventory, -e) checked with a real login on one node; none given, asked on
+# the terminal (3 tries at most), each one checked. For import_cluster:
+#   include_role: name=community.cassandra.cassandra_service tasks_from=cql_login.yml
+#   vars:
+#     _cassandra_cql_login_from: the node to log in on (cqlsh runs there)
+#     _cassandra_cql_login_host: its CQL address (cqlsh logs in as the operations do)
+#     _cassandra_cql_login_given: {user, password}, empty strings when none
+#     _cassandra_cql_login_ask: asking allowed (not --check, cassandra_operation_confirm)
+# Sets cassandra_cql_login: {state, user, password, asked, why}: state ok,
+# refused, unchecked (cqlsh could not tell, why says what), not_asked,
+# no_terminal or none (no user typed). No password is ever shown (no_log), on
+# the screen or in a log.
+- name: Start the count of CQL logins asked
+  ansible.builtin.set_fact:
+    _cassandra_cql_login_tries: 0
+    cassandra_cql_login: {state: not_asked, user: "", password: "", asked: false, why: ""}
+  run_once: true
+
+- name: Check the CQL login given
+  ansible.builtin.include_tasks: cql_login_try.yml
+  vars:
+    _cassandra_cql_try_user: "{{ _cassandra_cql_login_given.user }}"
+    _cassandra_cql_try_password: "{{ _cassandra_cql_login_given.password }}"
+    _cassandra_cql_try_asked: false
+  when: _cassandra_cql_login_given.user | default('') != '' and _cassandra_cql_login_given.password | default('') != ''
+
+- name: Ask for a CQL login
+  ansible.builtin.include_tasks: cql_login_ask.yml
+  when:
+    - _cassandra_cql_login_given.user | default('') == '' or _cassandra_cql_login_given.password | default('') == ''
+    - _cassandra_cql_login_ask | bool

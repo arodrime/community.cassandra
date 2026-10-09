@@ -1,0 +1,2 @@
+minor_changes:
+  - "help - the commands leave out ``-i`` when the inventory is the configuration's (``ansible.cfg``, ``ANSIBLE_INVENTORY``), and ``-e cassandra_hosts`` when the playbooks take the cluster without it (the inventory's only cluster, or on screen the one ``CASSANDRA_CLUSTER`` names); the same in ``RUNBOOK.md``."

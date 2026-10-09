@@ -76,7 +76,7 @@ def test_the_words():
 @pytest.mark.parametrize("path, at_least", [
     (("playbooks", "preflight.yml"), 1), (("playbooks", "add_node.yml"), 2), (("playbooks", "decommission_node.yml"), 1),
     (("playbooks", "topology.yml"), 2), (("playbooks", "reset_node.yml"), 1), (("playbooks", "apply_config.yml"), 1),
-    (("playbooks", "import_cluster.yml"), 3), (("roles", "cassandra_service", "tasks", "node_operation.yml"), 2),
+    (("playbooks", "import_cluster.yml"), 1), (("roles", "cassandra_service", "tasks", "node_operation.yml"), 2),
     (("roles", "cassandra_service", "tasks", "cleanup_batch.yml"), 1),
     (("roles", "cassandra_service", "tasks", "restart_batch.yml"), 1),
     (("roles", "cassandra_service", "tasks", "action_apply_config.yml"), 1),

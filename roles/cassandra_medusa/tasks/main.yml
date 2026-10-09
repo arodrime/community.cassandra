@@ -8,6 +8,7 @@
       is now cassandra_medusa_config_user, cassandra_medusa_key_file_owner cassandra_medusa_key_file_user. Rename them
       (the former names still win while they are set).
   vars:
+    cassandra_output: true
     _former: "{{ query('ansible.builtin.varnames', '^cassandra_medusa_(config|key_file)_owner$') }}"
   when: _former | length > 0
 
@@ -99,6 +100,8 @@
           --check: no repository of {{ inventory_hostname }} offers python3.11 yet (cassandra_install adds the
           deadsnakes PPA in the real run when cqlsh needs it); the real run stops if none does.
       when: _cassandra_medusa_python_pending | bool
+      vars:
+        cassandra_output: true
 
     - name: Stop when no Python fits
       ansible.builtin.assert:
@@ -307,6 +310,8 @@
     - cassandra_medusa_link_dir != ''
     - cassandra_medusa_link.stat.exists
     - not cassandra_medusa_link.stat.islnk
+  vars:
+    cassandra_output: true
 
 - name: Put the virtualenv in the PATH of login shells
   ansible.builtin.copy:

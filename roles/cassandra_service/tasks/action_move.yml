@@ -15,6 +15,7 @@
       move but {{ 'is' if _unchecked | length == 1 else 'are' }} not in this run (--limit): disk space not checked.
   when: _unchecked | length > 0
   vars:
+    cassandra_output: true
     _unchecked: >-
       {{ cassandra_move_step.gain_bytes | dict2items | rejectattr('value', 'none') | map(attribute='key')
          | reject('in', query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')

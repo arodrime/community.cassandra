@@ -505,6 +505,7 @@ def test_colours_by_line_start():
     assert colour("[1/2] node5 bootstrap  JOINING  STALLED 2/12 checks  35s") == C.COLOR_ERROR
     assert colour("[1/2] node5 bootstrap  JOINING  52%") == colour("Checking the cluster (5 nodes)...") == C.COLOR_VERBOSE
     assert colour("NOTE  cassandra_foo is not read") == C.COLOR_VERBOSE
+    assert colour(u"READY \u2014 nothing to change") == C.COLOR_OK
     assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
 
 
@@ -622,3 +623,21 @@ def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
     assert typed == 2, text
     assert "done" in text
     assert "LEFT=[]" in text, text
+
+
+def test_the_import_screen_is_ruled(tmp_path):
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Show the summary
+      ansible.builtin.debug:
+        msg: ["IMPORT my_cluster (--check, nothing written) - 3 nodes read / 3", "", "READY - nothing to change", "",
+              "full report: written by the run without --check"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook, "--check")
+    assert rc == 0, output
+    assert shown(output) == ["====", "IMPORT my_cluster (--check, nothing written) - 3 nodes read / 3", "----",
+                             "READY - nothing to change", "----", "full report: written by the run without --check"]

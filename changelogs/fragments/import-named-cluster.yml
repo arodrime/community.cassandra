@@ -1,0 +1,4 @@
+minor_changes:
+  - "import_cluster - without ``-i <node>,``, the cluster ``CASSANDRA_CLUSTER`` names is the one read (not every host of the inventory); a cluster that ``CASSANDRA_CLUSTER`` or ``-e cassandra_hosts`` names and the inventory does not have stops the import at once, saying a new cluster is imported from one of its nodes (``-i <node>,``)."
+bugfixes:
+  - "import_cluster - when no given node could read the ring, the import says so for each node (ansible-core 2.19 and later stopped on a template error first)."

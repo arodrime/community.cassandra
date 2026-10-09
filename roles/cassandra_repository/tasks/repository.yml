@@ -54,10 +54,12 @@
 - name: Say the repository could not be checked
   ansible.builtin.debug:
     msg: >-
-      WARNING: {{ _shown }} answers {{ _codes | map('string') | map('regex_replace', '^-1$', 'nothing') | join(', ') }} for its
+      WARNING: {{ inventory_hostname }}: {{ _shown }} answers {{ _codes | map('string') | map('regex_replace', '^-1$', 'nothing') | join(', ') }} for its
       repository metadata: added all the same (dnf/apt may use a proxy of their own). Check the URL and the
       credentials if the packages don't install.
-  vars: *_cassandra_repository_check
+  vars:
+    <<: *_cassandra_repository_check
+    cassandra_output: true
   when:
     - _results | length > 0
     - 200 not in _codes and _codes | reject('equalto', 404) | list | length > 0

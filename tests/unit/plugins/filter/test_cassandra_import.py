@@ -22,6 +22,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_unit_environment,
     cassandra_import_error,
     _jmx_users,
+    cassandra_jmx_files,
     _same_setting,
 )
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import
@@ -315,6 +316,104 @@ def test_jmx_users_not_imported_without_the_access_file():
     assert any("users NOT imported" in line for line in out["hand_edits"])
 
 
+CUSTOM_ENV = """
+MAX_HEAP_SIZE=8G
+JMX_DIR="$CASSANDRA_CONF/jmx"
+#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"
+JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"
+JVM_OPTS="${JVM_OPTS} -Dcom.sun.management.jmxremote.password.file=${JMX_DIR}/my_jmx.password"
+JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file='/etc/cassandra/conf/jmx/my_jmx.access'"
+"""
+
+
+def test_jmx_files_from_cassandra_env_sh():
+    # its last line not commented out, quotes off, $CASSANDRA_CONF and its own variables expanded
+    found = cassandra_jmx_files(CUSTOM_ENV, conf_dir="/etc/cassandra/conf")
+    assert found == {"password": "/etc/cassandra/conf/jmx/my_jmx.password",
+                     "access": "/etc/cassandra/conf/jmx/my_jmx.access", "from": "cassandra-env.sh", "unknown": "",
+                     "jaas": ""}
+    # a variable not known (set elsewhere): not a path; said, unless a next source gives it
+    unknown = cassandra_jmx_files(CUSTOM_ENV)
+    assert unknown["password"] == "" and unknown["unknown"] == "password.file=${JMX_DIR}/my_jmx.password"
+    assert unknown["access"] == "/etc/cassandra/conf/jmx/my_jmx.access" and unknown["from"] == "cassandra-env.sh"
+    pw_only = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=$JMX_DIR/my.password"\n'
+    assert cassandra_jmx_files(pw_only)["unknown"] == "password.file=$JMX_DIR/my.password"
+    assert cassandra_jmx_files(pw_only, {}, "-Dcom.sun.management.jmxremote.password.file=/opt/jmx/pw")["password"] == \
+        "/opt/jmx/pw"
+    # a comment after the line, single quotes (no expansion)
+    assert cassandra_jmx_files('JVM_OPTS="x -Dcom.sun.management.jmxremote.password.file=/a" # was'
+                               ' -Dcom.sun.management.jmxremote.password.file=/b\n')["password"] == "/a"
+    assert cassandra_jmx_files("D='/etc/$x'\nE=\"/etc/$x\"\nJVM_OPTS=\"-Dcom.sun.management.jmxremote.password.file=$D/p\"\n",
+                               conf_dir="/etc/c")["unknown"] == "password.file=$D/p"  # (a $ in it: not a path)
+    # the running JVM's arguments first (what it reads), then cassandra-env.sh, then the JVM options files
+    options = {"jvm-server.options": "#-Dcom.sun.management.jmxremote.password.file=/x\n"
+                                     "-Dcom.sun.management.jmxremote.password.file=/opt/jmx/pw\n"}
+    cmdline = "java\0-Dcom.sun.management.jmxremote.password.file=/run/pw\0" \
+              "-Dcom.sun.management.jmxremote.access.file=/run/access\0org.apache.cassandra.service.CassandraDaemon\0"
+    assert cassandra_jmx_files("", options, "")["password"] == "/opt/jmx/pw"
+    assert cassandra_jmx_files("", options, "")["from"] == "jvm-server.options"
+    assert cassandra_jmx_files("", options, cmdline) == {"password": "/run/pw", "access": "/run/access",
+                                                         "from": "the running JVM's arguments", "unknown": "", "jaas": ""}
+    assert cassandra_jmx_files(CUSTOM_ENV, options, cmdline, "/etc/cassandra/conf")["password"] == "/run/pw"
+    assert cassandra_jmx_files(CUSTOM_ENV, options, "", "/etc/cassandra/conf")["from"] == "cassandra-env.sh"
+    # what only the shell knows: not a path (the next source, else unknown)
+    for word in ("${CASSANDRA_CONF:-/etc/cassandra}/p", "$(dirname $0)/p", "`pwd`/p", "~/p"):
+        env = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=%s"\n' % word
+        assert cassandra_jmx_files(env, conf_dir="/etc/c")["password"] == "", word
+        assert cassandra_jmx_files(env, conf_dir="/etc/c")["unknown"].startswith("password.file="), word
+    env = 'D=$(dirname x)\nJVM_OPTS="-Dcom.sun.management.jmxremote.password.file=$D/p"\n'
+    assert cassandra_jmx_files(env)["unknown"] == "password.file=$D/p"
+    # a variable set in the branches of an if: not known
+    env = 'if [ -d /a ]; then\n  D=/a\nelse\n  D=/b\nfi\nJVM_OPTS="-Dcom.sun.management.jmxremote.password.file=$D/p"\n'
+    assert cassandra_jmx_files(env)["unknown"] == "password.file=$D/p"
+    # shell syntax from the JVM's arguments or an options file: never a path the role writes in cassandra-env.sh
+    found = cassandra_jmx_files("", {"jvm-server.options": "-Dcom.sun.management.jmxremote.password.file=$(id)\n"},
+                                "-Dcom.sun.management.jmxremote.access.file=`id`/a")
+    assert (found["password"], found["access"]) == ("", "") and found["unknown"]
+    assert cassandra_jmx_files("", {}, "") == {"password": "", "access": "", "from": "", "unknown": "", "jaas": ""}
+
+
+def test_jmx_by_jaas_said():
+    env = 'JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.remote.login.config=CassandraLogin"\n'
+    assert cassandra_jmx_files(env)["jaas"] == "-Dcassandra.jmx.remote.login.config in cassandra-env.sh"
+    yaml_text = "jmx_server_options:\n  enabled: true\n  login_config_name: CassandraLogin\n"
+    assert cassandra_jmx_files("", cassandra_yaml=yaml_text)["jaas"] == "jmx_server_options in cassandra.yaml"
+    files = node_files("50x", cassandra_local_jmx=False)
+    files["cassandra-env.sh"] += "\n" + env
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert any(line.startswith("JMX authentication by JAAS (-Dcassandra.jmx.remote.login.config in cassandra-env.sh):"
+                               " NOT imported") for line in out["hand_edits"])
+
+
+def test_jmx_users_at_other_paths_read_back():
+    # a node whose cassandra-env.sh points the JVM at files of its own: their paths and users imported, the role
+    # then writes the same cassandra-env.sh (no hand edit: a re-import, then apply_config, change nothing)
+    users = [{"name": "ops", "password": "s3cret", "access": "readwrite"}]
+    paths = {"cassandra_jmx_remote_password_file": "/etc/cassandra/conf/jmx/my_jmx.password",
+             "cassandra_jmx_remote_access_file": "/etc/cassandra/conf/jmx/my_jmx.access"}
+    files = node_files("41x", cassandra_local_jmx=False, cassandra_jmx_users=users, **paths)
+    assert "jmxremote.password.file=/etc/cassandra/conf/jmx/my_jmx.password" in files["cassandra-env.sh"]
+    files["jmxremote.password"] = "ops s3cret\n"
+    files["jmxremote.access"] = ("ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.*"
+                                 " \\\n    unregister\n")
+    jmx = cassandra_jmx_files(files["cassandra-env.sh"], conf_dir="/etc/cassandra/conf")
+    assert (jmx["password"], jmx["access"]) == tuple(paths.values())
+    out = cassandra_config_import(files, "41x", FACTS, jmx_files=jmx)
+    assert out["hand_edits"] == []
+    assert out["vars"]["cassandra_jmx_users"] == users
+    assert dict((k, out["vars"][k]) for k in paths) == paths
+    # a path cassandra-env.sh gives through a variable no source resolves: no user taken (not the role's paths)
+    files["cassandra-env.sh"] = files["cassandra-env.sh"].replace("/etc/cassandra/conf/jmx/my_jmx.password",
+                                                                  "$JMX_DIR/my_jmx.password")
+    out = cassandra_config_import(files, "41x", FACTS, jmx_files=cassandra_jmx_files(files["cassandra-env.sh"]))
+    assert "cassandra_jmx_users" not in out["vars"]
+    assert any("through a variable it does not set (password.file=$JMX_DIR/my_jmx.password)" in line
+               for line in out["hand_edits"])
+    # the default paths: no variable
+    out = cassandra_config_import(node_files("41x", cassandra_local_jmx=False), "41x", FACTS)
+    assert not [k for k in out["vars"] if k.startswith("cassandra_jmx_remote_")]
+
+
 def test_commented_line_same_setting_in_yaml_only():
     # a commented stock value in cassandra.yaml is the default; a commented JVM_OPTS line is off
     line = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"'
@@ -452,6 +551,19 @@ def test_password_in_a_value_is_a_secret():
                                        "host_vars": {}})
     assert [f["path"] for f in files] == ["group_vars/c/main.yml", "group_vars/c/secrets.yml"]
     assert "xyz" not in files[0]["content"] and "xyz" in files[1]["content"]
+
+
+def test_every_value_hidden_on_screen_goes_to_secrets_yml():
+    # the import files a value in secrets.yml by the rule the output hides it by: none in clear in main.yml
+    from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+    from ansible_collections.community.cassandra.tests.unit.plugins.module_utils.test_cassandra_output import SECRETS
+    variables = dict(("v%d_%s" % (i, key), value) for i, (key, value) in enumerate(SECRETS))
+    variables["cassandra_cluster_name"] = "Prod"
+    files = cassandra_inventory_files({"group_vars": {"c": variables}, "host_vars": {}})
+    by_path = {f["path"]: yaml.safe_load(f["content"]) for f in files}
+    assert sorted(by_path["group_vars/c/secrets.yml"]) == sorted(k for k in variables if k != "cassandra_cluster_name")
+    assert list(by_path["group_vars/c/main.yml"]) == ["cassandra_cluster_name"]
+    assert all(out.hidden(k, v) for k, v in by_path["group_vars/c/secrets.yml"].items())
 
 
 def test_medusa_keys_are_secrets_and_empty_values_are_not():

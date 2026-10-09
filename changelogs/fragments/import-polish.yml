@@ -1,0 +1,2 @@
+minor_changes:
+  - "import_cluster - a re-import that changes no file says ``READY — nothing to change`` (under ``--check`` too, instead of ``Write it``); under ``--check`` the ``Write it`` step says what the run would write (new files, the files changed, the ones removed). The end of the run is its header, ``TO DO``, ``SETTINGS``, ``DIFFERS FROM YOUR group_vars/all`` and the report's path, nothing else."

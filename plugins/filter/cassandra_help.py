@@ -30,7 +30,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import _wrap
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
-    extra_var as _e, path_from as _path, seed_layout)
+    command as _full_command, extra_var as _e, path_from as _path, seed_layout)
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -216,8 +216,9 @@ OPERATIONS = [
                 " time. Move its clients first.",
      "options": [("-e cassandra_target_dc=DC_TO_REMOVE", "the datacenter to remove", None)]},
     {"name": "import_cluster", "theme": "takeover",
-     "summary": "Reads the running cluster into an inventory, changing nothing on the nodes; a re-import keeps"
-                " the files it did not write, --check --diff shows its changes first.",
+     "summary": "Reads a running cluster into an inventory, changing nothing on the nodes. A new cluster: give"
+                " one of its nodes (-i <node>,), the others are found in the ring. A re-import keeps the files it"
+                " did not write, --check --diff shows its changes first.",
      "options": [("-e import_cluster_dir=<dir>", "the inventory dir, every cluster's", "inventories"),
                  ("-e import_cluster_report_dir=<dir>", "where to write report.txt",
                   "reports/<cluster group> next to import_cluster_dir"),
@@ -413,9 +414,16 @@ def _options(model, cwd):
     return out
 
 
-def _command(op, model, cluster, cwd, extra=()):
-    """The command of op for this cluster, its placeholders filled; extra: arguments added (an example)."""
-    inv = " ".join("-i %s" % shlex.quote(_path(s, cwd)) for s in model.get("sources") or [])
+def _same_sources(a, b):
+    def norm(sources):
+        return sorted(os.path.realpath(os.path.expanduser(str(s))) for s in sources or [] if s)
+    return norm(a) == norm(b)
+
+
+def _command(op, model, cluster, cwd, extra=(), markdown=False):
+    """The command of op for this cluster, its placeholders filled; extra: arguments added (an example); no -i
+    when the inventory is the configuration's (ansible.cfg), no -e cassandra_hosts when the playbooks take
+    this cluster without it."""
     if op["name"] == "import_cluster":
         # -u, --private-key, -K only: the import becomes root itself, and reads its own vault password file
         options, user = [shlex.quote(o) for o in _options(model, cwd)], []
@@ -461,20 +469,27 @@ def _command(op, model, cluster, cwd, extra=()):
     # help needs no sudo password, nor the vault prompt help added for the operations
     drop = ("-K", "--ask-vault-pass") if model.get("vault_prompt_added") else ("-K",)
     options = [shlex.quote(o) for o in _options(model, cwd) if op["name"] != "help" or o not in drop]
-    parts = ["ansible-playbook", inv] + options + ["community.cassandra.%s" % op["name"]]
-    if _hosts_given(model, cluster):
-        parts.append(_e("cassandra_hosts", cluster.name))
+    sources = model.get("sources") or []
+    # (RUNBOOK.md is read in other shells: there, only ansible.cfg's inventory goes without saying)
+    if model.get("default_sources") and _same_sources(sources, model["default_sources"]) and (
+            not markdown or model.get("default_sources_origin") == "cfg"):
+        sources = []
+    args = []
     replaced = [_name(arg) for arg in extra]
     for arg in [o[0] for o in op.get("options") or [] if o[2] is None and _name(o[0]) not in replaced] + list(extra):
         filled = re.match(r"^-e (\w+)=<(\w+)>$", arg)
-        parts.append(_e(filled.group(1), fill[filled.group(2)]) if filled and filled.group(2) in fill else arg)
-    return " ".join(p for p in parts if p)
+        args.append(_e(filled.group(1), fill[filled.group(2)]) if filled and filled.group(2) in fill else arg)
+    return _full_command(op["name"], inventory=sources, options=options, cwd=cwd, extra=args,
+                         hosts=cluster.name if _hosts_given(model, cluster, markdown) else None)
 
 
-def _hosts_given(model, cluster):
-    """Whether the commands give -e cassandra_hosts: not the group the playbooks take by default, or a cluster
-    the import wrote (even while it is alone in its inventory dir)."""
-    return model.get("auto") != cluster.name or cluster.name in (model.get("imported") or [])
+def _hosts_given(model, cluster, markdown=False):
+    """Whether the commands give -e cassandra_hosts: when the playbooks would not take this cluster without
+    it: not the inventory's only cluster, nor (on screen) the one CASSANDRA_CLUSTER names. RUNBOOK.md, kept and
+    read later, names a cluster the import wrote always (its dir is shared: another cluster may come)."""
+    if markdown:
+        return model.get("auto") != cluster.name or cluster.name in (model.get("imported") or [])
+    return model.get("auto") != cluster.name and model.get("env_cluster") != cluster.name
 
 
 def _name(arg):
@@ -482,7 +497,7 @@ def _name(arg):
     return re.search(r"\w+", arg[3:]).group(0) if arg.startswith("-e ") else arg
 
 
-def _advice(model, cluster, playbooks, cwd, known):
+def _advice(model, cluster, playbooks, cwd, known, markdown=False):
     out = []
     absent = [h for h in cluster.hosts if h["absent"]]
     if absent:
@@ -490,11 +505,11 @@ def _advice(model, cluster, playbooks, cwd, known):
         if "topology" in playbooks:  # the playbook of the desired state, when the collection has it
             out.append(("Marked cassandra_node_state: absent: %s. topology --check shows the plan to remove"
                         " them, then topology without --check does it:" % names,
-                        _command(BY_NAME["topology"], model, cluster, cwd, ["--check"])))
+                        _command(BY_NAME["topology"], model, cluster, cwd, ["--check"], markdown)))
         else:
             out.append(("Marked cassandra_node_state: absent: %s. decommission_node removes them from the ring"
                         " (--check first), then take them out of the inventory:" % names,
-                        _command(BY_NAME["decommission_node"], model, cluster, cwd)))
+                        _command(BY_NAME["decommission_node"], model, cluster, cwd, markdown=markdown)))
         seeds = [h["name"] for h in absent if h["seed"]]
         if seeds:
             out.append("Seed and marked absent: %s. Take it out of cassandra_seeds in the inventory: topology"
@@ -660,7 +675,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
             ops.append(("cluster", "Cluster %s" % cluster.name))
         for theme, title in THEMES:
             ops.append(("theme", title))
-            ops += [("op", _op(op, model, cluster, cwd)) for op in OPERATIONS
+            ops += [("op", _op(op, model, cluster, cwd, markdown)) for op in OPERATIONS
                     if op["theme"] == theme and op["name"] in playbooks]
     sections.append(("2. Operations", ops))
 
@@ -672,7 +687,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
                        " option of the commands above."
                        % ", ".join(_path(p, _inventory_dir(model)) for p in model["vault_skipped"]), ""))
     for cluster in clusters:
-        for item in _advice(model, cluster, playbooks, cwd, known):
+        for item in _advice(model, cluster, playbooks, cwd, known, markdown):
             prefix = "%s: " % cluster.name if len(clusters) > 1 else ""
             advice.append((prefix + item[0], item[1]) if isinstance(item, tuple) else (prefix + item, ""))
     sections.append(("3. Advice", advice or [("Nothing to point out.", "")]))
@@ -687,20 +702,20 @@ _INTRO = ("Run the commands from the directory help was run from (the one with a
           " -e help_topic=<operation>. Placeholders such as NEW_NODE or NODE: your own values.")
 
 
-def _op(op, model, cluster, cwd):
+def _op(op, model, cluster, cwd, markdown=False):
     """What the text and RUNBOOK.md show of one operation, for this cluster."""
     summary = op["summary"]
     if op.get("single_token") and cluster.num_tokens() != 1:
         summary += " Not for this cluster (num_tokens %s)." % (cluster.num_tokens() or "mixed")
     label, extra = op.get("example") or ("", [])
-    return {"name": op["name"], "summary": summary, "command": _command(op, model, cluster, cwd),
+    return {"name": op["name"], "summary": summary, "command": _command(op, model, cluster, cwd, markdown=markdown),
             "options": op.get("options") or [],
-            "example": (label, _command(op, model, cluster, cwd, extra)) if extra else None}
+            "example": (label, _command(op, model, cluster, cwd, extra, markdown)) if extra else None}
 
 
-def _common(model, clusters, op=None):
+def _common(model, clusters, op=None, markdown=False):
     """The options of every operation that changes something (of op: without the question it does not ask)."""
-    given = any(_hosts_given(model, cluster) for cluster in clusters)
+    given = any(_hosts_given(model, cluster, markdown) for cluster in clusters)
     return [o for o in [("-e cassandra_hosts=<group>", "the cluster to run on",
                          "the one in the commands" if given else model["auto"]),
                         ("-e cassandra_operation_confirm=false", "skips the question (of the operations that ask one),"
@@ -762,7 +777,7 @@ def _markdown(header, sections, model, cwd, runbook_dir):
                           else "`%s`, relative to this file (where help was run, with its ansible.cfg if any)"
                           % where), "",
            "Options of every operation that changes something:", ""]
-    out += _markdown_options(_common(model, _clusters(model)))
+    out += _markdown_options(_common(model, _clusters(model), markdown=True))
     for title, items in sections:
         out += ["## %s" % title, ""]
         if title.startswith("1."):

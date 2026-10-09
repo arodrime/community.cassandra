@@ -140,9 +140,11 @@ def test_limit_refused_and_the_nodes_read():
     # --limit would leave out the nodes found and localhost (the inventory written nowhere, rc 0)
     stop = task("Stop on --limit")
     assert stop["ansible.builtin.assert"]["that"] == "ansible_limit is not defined" and stop["run_once"] is True
-    assert [t["name"] for t in PLAYS[0]["tasks"]][:2] == ["Check the options", "Stop on --limit"]
-    # -e cassandra_hosts: that group's hosts given; read: the given ones and the ones found, not the inventory's others
-    assert "group=cassandra_hosts | default('all', true)" in PLAYS[0]["hosts"]
+    find = next(play for play in PLAYS if play["name"] == "Find the cluster from the given nodes")
+    assert [t["name"] for t in find["tasks"]][:2] == ["Check the options", "Stop on --limit"]
+    # -e cassandra_hosts: that group's hosts given (else CASSANDRA_CLUSTER's, else all: test_import_cluster_named);
+    # read: the given ones and the ones found, not the inventory's others
+    assert "query('community.cassandra.cassandra_nodes', group=cassandra_hosts) if cassandra_hosts" in find["hosts"]
     read = next(play for play in PLAYS if play["name"] == "Read every node")
     hostvars = {"a1": {"import_cluster_given": ["a1"]}, "b1": {}, "10.0.0.2": {}}
     groups = {"all": ["a1", "b1", "10.0.0.2"], "import_cluster_found": ["10.0.0.2"]}

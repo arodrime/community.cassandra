@@ -1,0 +1,54 @@
+---
+# One question of cql_login.yml: a CQL user and its password, then a login
+# with them. It includes itself again after a refused login, 3 tries at most.
+- name: Count the CQL logins asked
+  ansible.builtin.set_fact:
+    _cassandra_cql_login_tries: "{{ _cassandra_cql_login_tries | int + 1 }}"
+  run_once: true
+
+- name: Ask for the CQL user
+  ansible.builtin.pause:
+    prompt: |-
+      {% if _cassandra_cql_login_tries | int == 1 %}CQL authentication is on: the operations that read the replication need a CQL login, which no node gives.
+      It is checked on {{ _cassandra_cql_login_from }}, then written to the inventory with the passwords (secrets.yml).
+      {% else %}{{ _cassandra_cql_login_from }} refused that login ({{ _cassandra_cql_login_tries | int - 1 }} of 3).
+      {% endif %}CQL user (Enter alone: none, set it later)
+  register: _cassandra_cql_login_user_reply
+  run_once: true
+  vars:
+    cassandra_output_gap: true  # a rule above the question (ops callback)
+
+- name: Ask for the CQL password
+  ansible.builtin.pause:
+    prompt: "Password of the CQL user {{ _cassandra_cql_login_user_reply.user_input | trim }}"
+    echo: false
+  register: _cassandra_cql_login_password_reply
+  run_once: true
+  no_log: true
+  when: _cassandra_cql_login_user_reply.user_input | default('') | trim != ''
+
+- name: Check the CQL login typed
+  ansible.builtin.include_tasks: cql_login_try.yml
+  vars:
+    _cassandra_cql_try_user: "{{ _cassandra_cql_login_user_reply.user_input | trim }}"
+    _cassandra_cql_try_password: "{{ _cassandra_cql_login_password_reply.user_input | default('') }}"
+    _cassandra_cql_try_asked: true
+  when: _cassandra_cql_login_user_reply.user_input | default('') | trim != ''
+
+# an empty answer at once: no terminal to ask on (see cassandra_confirm_answer)
+- name: Note that no CQL user was given
+  ansible.builtin.set_fact:
+    cassandra_cql_login:
+      state: "{{ 'no_terminal' if (_cassandra_cql_login_user_reply | community.cassandra.cassandra_confirm_answer) == 'no_terminal' else 'none' }}"
+      user: ""
+      password: ""
+      asked: true
+      why: ""
+  run_once: true
+  when: _cassandra_cql_login_user_reply.user_input | default('') | trim == ''
+
+- name: Ask again
+  ansible.builtin.include_tasks: cql_login_ask.yml
+  when:
+    - cassandra_cql_login.state == 'refused'
+    - _cassandra_cql_login_tries | int < 3

@@ -6,8 +6,9 @@
 #    package version, install method, Java, datacenters, racks and their nodes,
 #    seeds, the nodes marked cassandra_node_state: absent;
 # 2. every operation playbook, by theme, with its command for this inventory
-#    (its path, the cluster's group when it is needed, a datacenter and rack, the -e
-#    variables it needs; NEW_NODE, NODE...: a value only you know);
+#    (its path when it is not the configuration's, ansible.cfg's; the cluster's
+#    group when the playbooks would not take it alone; a datacenter and rack, the
+#    -e variables it needs; NEW_NODE, NODE...: a value only you know);
 # 3. advice from the inventory: nodes marked absent, authentication on without
 #    cassandra_cql_username, a variable close to one the collection reads,
 #    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,

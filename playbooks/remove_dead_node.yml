@@ -468,3 +468,6 @@
              else (_dead_address ~ ' is out of the ring. '
                    ~ ('Run a full repair now: ' ~ _method ~ ' did not stream everything.' if _method != 'removenode' else '')) }}
       run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true

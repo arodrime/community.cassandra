@@ -1,0 +1,2 @@
+minor_changes:
+  - "import_cluster - its refusals (``--limit``, nodes of several clusters, no node answered, a node not read, an inventory already there, the vault password, another cluster's files) print their message as it is under the ``community.cassandra.ops`` callback, without the task's header and result."

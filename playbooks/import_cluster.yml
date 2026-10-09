@@ -1,12 +1,15 @@
 # Reads a running cluster into an inventory for the roles, changing nothing
-# on the nodes:
-#   ansible-playbook -i node1,node2 community.cassandra.import_cluster
+# on the nodes. A new cluster: give one of its nodes (or more) with -i:
+#   ansible-playbook -i node1, community.cassandra.import_cluster
 # Any reachable nodes will do: the others are found with nodetool status.
-# Without -i, the inventory of ansible.cfg: every host there is given (with
-# its variables), or the hosts of -e cassandra_hosts=<cluster group> when it
-# holds other clusters (--limit is refused: it would leave out the nodes found
-# and the controller, which writes the inventory); nodes of two rings stop the
-# import.
+# Without -i <node>, (a re-import), the inventory (ansible.cfg's, or -i <inventory
+# file or dir>): every host there is given (with its variables), or the hosts
+# of the cluster -e cassandra_hosts=<cluster group> or the environment variable
+# CASSANDRA_CLUSTER names when it holds other clusters (a name that is not in
+# the inventory stops the import at once: a new cluster is given by a node,
+# -i <node>,; CASSANDRA_CLUSTER is left out with -i <node>,). --limit is
+# refused: it would leave out the nodes found and the controller, which writes
+# the inventory. Nodes of two rings stop the import.
 # One inventory dir for every cluster (ansible.cfg inventory = that dir, the
 # playbooks run with -e cassandra_hosts=<cluster group>): the hosts go to
 # <cluster group>.yml there, the variables to group_vars/ and host_vars/, side
@@ -58,6 +61,10 @@
 # --vault-password-file, which is not used) or
 # import_cluster_vault_password_file (and optionally import_cluster_vault_id),
 # else written 0600 for you to encrypt.
+# CQL authentication on: cassandra_cql_username and cassandra_cql_password set
+# in the inventory (or -e) are checked with a CQL login on a node; else asked
+# on the terminal (not under --check, nor with cassandra_operation_confirm
+# false), checked, and written (the password in secrets.yml).
 # JMX access: the cassandra_service variables (cassandra_jmx_port,
 # cassandra_jmx_username, cassandra_jmx_password_file...), written to the
 # inventory too.
@@ -89,10 +96,55 @@
 # A ring node it could not read (down, unreachable, nodetool not found, its
 # running Java removed by an update) fails the import, as its settings are
 # unknown: import_cluster_allow_unread=true accepts it.
+# (a play first: the hosts of the first play can't be picked by a cluster name)
+- name: Check the cluster asked for
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  tasks:
+    - name: Stop on a cluster not in the inventory
+      ansible.builtin.assert:
+        that: not _named or groups[_named] | default([]) | length > 0 or _by_name | bool
+        fail_msg: >-
+          {{ _named }} is not in the inventory{{ '' if cassandra_hosts | default('', true) else ' (CASSANDRA_CLUSTER)' }}:
+          to import a new cluster, give one of its nodes: ansible-playbook -i <node>, community.cassandra.import_cluster.
+          Nothing was written.
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # its message as is (the ops callback), no task dump
+        # the cluster asked for: -e cassandra_hosts, else CASSANDRA_CLUSTER with an inventory of files (not -i <node>,)
+        _named: >-
+          {{ cassandra_hosts | default('', true) or (lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER')
+             if ansible_inventory_sources | reject('exists') | list | length == 0 else '') }}
+        # CASSANDRA_CLUSTER may give a cassandra_cluster_name
+        _by_name: >-
+          {{ not cassandra_hosts | default('', true) and groups['all'] | map('extract', hostvars)
+             | selectattr('cassandra_cluster_name', 'defined') | selectattr('cassandra_cluster_name', 'equalto', _named)
+             | list | length > 0 }}
+
+    # in the inventory: what the next play reads, its own error if any (a name several groups have, a
+    # cassandra_node_state neither present nor absent): the next play's hosts can't say it
+    - name: Check the cluster's hosts
+      ansible.builtin.set_fact:
+        _import_cluster_named: "{{ query('community.cassandra.cassandra_nodes') }}"
+      run_once: true
+      when: >-
+        cassandra_hosts | default('', true) | length > 0 or (lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER') | length > 0
+        and ansible_inventory_sources | reject('exists') | list | length == 0)
+
 - name: Find the cluster from the given nodes
-  hosts: "{{ query('community.cassandra.cassandra_nodes', group=cassandra_hosts | default('all', true)) }}"
-  gather_facts: true
-  gather_subset: [network]
+  # -e cassandra_hosts, else CASSANDRA_CLUSTER with an inventory of files (not -i <node>,), else every host;
+  # a cluster not in the inventory: none (stops in the last play, saying how to import a new cluster)
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes', group=cassandra_hosts) if cassandra_hosts | default('', true)
+       else query('community.cassandra.cassandra_nodes', errors='ignore')
+            if lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER') and ansible_inventory_sources | reject('exists') | list | length == 0
+       else query('community.cassandra.cassandra_nodes', group='all') }}
+  gather_facts: false  # (below, after the phase line)
   become: true  # nodetool reads the JMX password file (cassandra's, 0400)
   tasks:
     - name: Check the options
@@ -101,6 +153,8 @@
         fail_msg: "import_cluster_host_names must be hostname, fqdn or ip, not {{ import_cluster_host_names | default('') }}"
         quiet: true
       run_once: true
+      vars:
+        cassandra_output: true
 
     # --limit would leave out the nodes found in the ring, and localhost, whose play writes the inventory
     - name: Stop on --limit
@@ -111,6 +165,8 @@
           nodes with -i <node>, or, with the inventory, -e cassandra_hosts=<cluster group>. Nothing was written.
         quiet: true
       run_once: true
+      vars:
+        cassandra_output: true
 
     - name: Say what the run does
       ansible.builtin.debug:
@@ -119,6 +175,10 @@
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
+
+    - name: Gather the network facts
+      ansible.builtin.setup:
+        gather_subset: [network]
 
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
@@ -144,12 +204,13 @@
       ansible.builtin.assert:
         that: _apart | length == 0
         fail_msg: >-
-          {{ _apart | join(', ') }} not in the ring of {{ _rings | list | first }}: the given nodes are of several
+          {{ _apart | join(', ') }} not in the ring of {{ _rings | list | first | default("") }}: the given nodes are of several
           clusters. Give a node of one cluster (-i <node>,), or run with the inventory and -e cassandra_hosts=<its
-          cluster group>. Nothing was written.
+          cluster group> (or CASSANDRA_CLUSTER=<its cluster group>). Nothing was written.
         quiet: true
       run_once: true
       vars:
+        cassandra_output: true
         # each given node that answered: the addresses of its ring
         _rings: >-
           {%- set out = {} -%}
@@ -197,7 +258,7 @@
     - name: Find the names of the nodes found in the ring, as the given node knows them
       ansible.builtin.command:
         argv: "{{ ['getent', 'hosts'] + import_cluster_new }}"
-      delegate_to: "{{ import_cluster_from }}"
+      delegate_to: "{{ import_cluster_from or inventory_hostname }}"  # (templated before the when, since ansible-core 2.19)
       run_once: true
       register: import_cluster_peer_names
       changed_when: false
@@ -296,6 +357,7 @@
           {{ ['nodetool status failed on every given node. Is Cassandra running, and the JMX access right'
               ~ ' (cassandra_jmx_port, cassandra_jmx_username, cassandra_jmx_password_file or _password)?'] + _errors }}
       vars:
+        cassandra_output: true
         # "Read the ring" shows ok whatever happened: each node's error
         _errors: >-
           {%- set out = [] -%}
@@ -328,19 +390,24 @@
       - cassandra-rackdc.properties
       - logback.xml
   tasks:
-    - name: Say what the run does
-      ansible.builtin.debug:
-        msg: "{{ 'import_read' | community.cassandra.cassandra_phase(count=ansible_play_hosts_all | length) }}"
-      run_once: true
-      vars:
-        cassandra_output: true  # a phase line (ops callback)
-        cassandra_output_gap: true  # a block of its own
-
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: defaults.yml
         public: true
+
+    # (one line for the run: per-node lines would come all at once, each task waits for every node)
+    - name: Say what is read on the nodes
+      ansible.builtin.debug:
+        msg: >-
+          Reading {{ ansible_play_hosts_all | length }} node{{ 's' if ansible_play_hosts_all | length > 1 else '' }}:
+          facts, packages, the running Cassandra, its config{{ (' (' ~ _forks ~ ' at a time: forks = '
+          ~ ansible_play_hosts_all | length ~ ' in ansible.cfg reads them together)')
+          if ansible_play_hosts_all | length > _forks | int else '' }}...
+      run_once: true
+      vars:
+        cassandra_output: true
+        _forks: "{{ ansible_forks | default(lookup('ansible.builtin.config', 'DEFAULT_FORKS')) | int }}"  # (-f too)
 
     - name: Gather facts
       ansible.builtin.setup:
@@ -360,7 +427,11 @@
         [ -n "$pid" ] || exit 3
         cfg=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)
         echo "config=$cfg"
-        echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
+        # its version from its jar on the classpath (apache-cassandra-4.1.5.jar), else nodetool (a JVM to start:
+        # seconds per node)
+        ver=$(tr '\0' '\n' < /proc/$pid/cmdline | tr ':' '\n' | sed -n 's#^.*/apache-cassandra-\([0-9][0-9.]*[0-9]\)\.jar$#\1#p' | head -1)
+        [ -n "$ver" ] || ver=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')
+        echo "version=$ver"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
         # the account it runs as: its effective user and group (a name, else the number)
@@ -377,7 +448,15 @@
         # (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
         # directory went too)
         bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
-        echo "java=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
+        # its Java version: the release file of its Java (11.0.20 -> 11, 1.8.0_382 -> 1.8), else the Java run
+        # once (a JVM to start)
+        jv=$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "${bin%/bin/java}/release" "${bin%/jre/bin/java}/release" 2>/dev/null | head -1)
+        case $jv in
+          1.*) jv=$(echo "$jv" | cut -d. -f1,2) ;;
+          ?*) jv=${jv%%[._+-]*} ;;
+          *) jv=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p') ;;
+        esac
+        echo "java=$jv"
         echo "javabin=$bin"
         # the package the running java comes from, empty when none (a tarball)
         pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
@@ -416,8 +495,14 @@
         else
           # a repository skipped (unreachable), other than a cassandra-* one (e.g. a plain directory declared as
           # one): nothing to conclude
-          res=$(timeout 180 dnf -q repoquery --setopt=skip_if_unavailable=True --qf 'PKG %{name}' cassandra 2>&1); rc=$?
-          bad=$(echo "$res" | sed -n "s/.*repo '\([^']*\)'.*/\1/p; s/.*Ignoring repositories: //p" | tr ', ' '\n\n' | grep . | grep -v '^cassandra-')
+          # (from the metadata dnf has cached first: no download; else the repositories)
+          bad=x
+          for c in -C ""; do
+            res=$(timeout 180 dnf -q $c repoquery --setopt=skip_if_unavailable=True --qf 'PKG %{name}' cassandra 2>&1); rc=$?
+            bad=$(echo "$res" | sed -n "s/.*repo '\([^']*\)'.*/\1/p; s/.*Ignoring repositories: //p" | tr ', ' '\n\n' | grep . | grep -v '^cassandra-')
+            # (a cached answer that it is offered is enough; that it is not, asked to the repositories)
+            [ $rc = 0 ] && [ -z "$bad" ] && echo "$res" | grep -q '^PKG ' && break
+          done
           [ $rc = 0 ] && [ -z "$bad" ] && echo "pkg_query=ok"
           echo "$res" | grep -q '^PKG ' && echo "pkg_repo=yes"
         fi
@@ -507,15 +592,43 @@
       no_log: true  # keystore passwords
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
 
-    # remote JMX users, where cassandra_config writes them
+    # remote JMX users: the password and access files the JVM reads, whatever their names (its arguments, else
+    # cassandra-env.sh, else the JVM options files), the role's paths when none is given
+    - name: Read the running JVM's arguments
+      ansible.builtin.slurp:
+        path: "/proc/{{ cassandra_jvm.pid }}/cmdline"
+      register: import_cluster_jvm_cmdline
+      failed_when: false
+      no_log: true  # (a keystore password can be one)
+      when:
+        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+        - cassandra_jvm.pid | default('') != ''
+
+    - name: Find the JMX password and access files the JVM reads
+      ansible.builtin.set_fact:
+        import_cluster_jmx_files: >-
+          {{ _live['cassandra-env.sh'] | default('') | community.cassandra.cassandra_jmx_files(
+               _live | dict2items | selectattr('key', 'match', 'jvm[0-9]*-server[.]options$') | items2dict,
+               import_cluster_jvm_cmdline.content | default('') | b64decode, import_cluster_conf_dir,
+               _live['cassandra.yaml'] | default('')) }}
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"  # the files read, on an error
+      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      vars:
+        _live: >-
+          {{ dict(import_cluster_slurp.results | selectattr('content', 'defined') | map(attribute='item')
+                  | zip(import_cluster_slurp.results | selectattr('content', 'defined') | map(attribute='content')
+                        | map('b64decode'))) }}
+
     - name: Read the JMX users
       ansible.builtin.slurp:
-        path: "/etc/cassandra/{{ item }}"
+        path: "{{ import_cluster_jmx_files[item.split('.')[1]] | default('', true) or '/etc/cassandra/' ~ item }}"
       loop: [jmxremote.password, jmxremote.access]
       register: import_cluster_jmx_slurp
       failed_when: false
       no_log: true
-      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      when:
+        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+        - not import_cluster_jmx_files.unknown | default('')  # (not the role's paths then: not read)
 
     # the Cassandra repository files: cassandra_repository takes over only the ones it would write as they are
     - name: Read the Cassandra repository files
@@ -605,7 +718,8 @@
             import_cluster_config: >-
               {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
                                                                      import_cluster_conf_target | default(''),
-                                                                     import_cluster_storage_dir | default('')) }}
+                                                                     import_cluster_storage_dir | default(''),
+                                                                     import_cluster_jmx_files | default({})) }}
           vars:
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
@@ -625,10 +739,12 @@
         - name: Say what failed on this node
           ansible.builtin.fail:
             msg: >-
-              {{ inventory_hostname }}: {{ import_cluster_error }}{{ '' if ansible_failed_task.name | default('') == 'Check cassandra.yaml was read'
+              {{ import_cluster_error }}{{ '' if ansible_failed_task.name | default('') == 'Check cassandra.yaml was read'
               else '. Its error is above.' if import_cluster_debug | default(false) | bool
               else '. The rest of the error is hidden (the config holds passwords):'
                    ~ ' rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+          vars:
+            cassandra_output: true
 
     # owner, group and mode of what cassandra_config writes or creates, read only
     - name: Read the owner and mode of the config files and directories
@@ -640,12 +756,14 @@
         get_attributes: false
       loop: >-
         {{ _files | map('regex_replace', '^', import_cluster_conf_dir ~ '/') | list
-           + ['/etc/cassandra/jmxremote.password', '/etc/cassandra/jmxremote.access'] + _dirs }}
+           + [_jmx.password | default('', true) or '/etc/cassandra/jmxremote.password',
+              _jmx.access | default('', true) or '/etc/cassandra/jmxremote.access'] + _dirs }}
       register: import_cluster_perm_stat
       failed_when: false  # not read (e.g. a data dir on NFS root can't read): left out
       when: import_cluster_config is defined
       vars:
         _cfg: "{{ import_cluster_config.vars | default({}) }}"
+        _jmx: "{{ import_cluster_jmx_files | default({}) }}"
         _dirs: >-
           {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
              + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),
@@ -668,6 +786,13 @@
       when: import_cluster_config is defined
 
     # Cassandra Medusa (backups): its install and /etc/medusa/medusa.ini
+    - name: Say what is read next on the nodes
+      ansible.builtin.debug:
+        msg: "Looking for Medusa, reading the OS tuning on {{ ansible_play_hosts | length }} node{{ 's' if ansible_play_hosts | length > 1 else '' }}..."
+      run_once: true
+      vars:
+        cassandra_output: true
+
     - name: Look for Medusa
       ansible.builtin.shell: |
         ini=/etc/medusa/medusa.ini
@@ -1079,6 +1204,53 @@
           or lookup('ansible.builtin.config', 'DEFAULT_VAULT_PASSWORD_FILE') | default('', true)) | string | expanduser }}
     _vault: "{{ _vault_file != '' }}"
     _hosts_file: "{{ _layout.cluster_group ~ '.yml' }}"
+    # CQL authentication on a node read: the operations that read the replication need a CQL login
+    _cql_on: >-
+      {{ _nodes | default([]) | selectattr('read') | map(attribute='vars') | map(attribute='cassandra_authenticator', default='')
+         | map('string') | select('search', 'PasswordAuthenticator|PasswordFallback') | list | length > 0 }}
+    # the CQL login the inventory (or -e) sets; the one an earlier import of this cluster wrote in its own files
+    _cql_set:
+      user: "{{ hostvars[_given | first].cassandra_cql_username | default('', true) }}"
+      password: "{{ hostvars[_given | first].cassandra_cql_password | default('', true) }}"
+    _cql_own: >-
+      {%- set v = dict(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined')
+                       | map(attribute='item')
+                       | zip(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined')
+                             | map(attribute='content') | map('b64decode')))
+                  | community.cassandra.cassandra_inventory_own_values(_layout.cluster_group,
+                      ['cassandra_cql_username', 'cassandra_cql_password'], _vault_secret | default('')) -%}
+      {{ {'user': v.cassandra_cql_username | default('') | string, 'password': v.cassandra_cql_password | default('') | string} }}
+    # what is left to do about it (TO DO)
+    _cql_todo: >-
+      {%- set c = cassandra_cql_login | default({}) -%}
+      {%- set set_it = 'set cassandra_cql_username and cassandra_cql_password (the password vaulted) in group_vars/'
+                       ~ _layout.cluster_group ~ '/' -%}
+      {%- set state = c.state | default('') -%}
+      {%- if _cql_on | bool and _cql_own.user and not c.asked | default(false)
+             and (c.user | default('') != _cql_own.user or c.password | default('') != _cql_own.password) -%}
+      {{ ['CQL login: the one given (cassandra_cql_username ' ~ c.user | default('') ~ ', ' ~ state ~ ') is not the one'
+          ~ ' the import keeps in group_vars/' ~ _layout.cluster_group ~ '/ (kept): remove it there to use yours only'] }}
+      {%- elif not _cql_on | bool or state == 'ok' -%}{{ [] }}
+      {%- elif state == 'refused' and not c.asked | default(false) -%}
+      {{ ['CQL login refused by ' ~ _cql_from ~ ' (cassandra_cql_username ' ~ c.user ~ '): fix cassandra_cql_username'
+          ~ ' and cassandra_cql_password where '
+          ~ ('the import keeps them (group_vars/' ~ _layout.cluster_group ~ '/), or remove them there and import again on'
+             ~ ' a terminal' if c.user == _cql_own.user and c.password == _cql_own.password else 'you set them')] }}
+      {%- elif state == 'refused' -%}
+      {{ ['CQL login: 3 logins refused by ' ~ _cql_from ~ ', none written: import again, or ' ~ set_it] }}
+      {%- elif state == 'unchecked' -%}
+      {{ ['CQL login ' ~ c.user ~ ' not checked (' ~ c.why ~ ')' ~ (', written as typed' if c.asked else '')
+          ~ ': check it with cqlsh'] }}
+      {%- else -%}
+      {{ ['CQL authentication is on and no CQL login is set (the operations that read the replication need one): '
+          ~ ('the run without --check asks for it' if ansible_check_mode
+             else 'none typed: import again to type one' if state == 'none'
+             else 'not asked (cassandra_operation_confirm false): import again without it, on a terminal'
+                  if state == 'not_asked'
+             else 'import again on a terminal, it asks for it')
+          ~ ', or ' ~ set_it] }}
+      {%- endif -%}
+    _cql_from: "{{ (_nodes | default([]) | selectattr('read') | first | default({})).name | default('') }}"
     # what the playbooks are run with on this inventory: no -i when it is ansible.cfg's, no -e cassandra_hosts
     # when it holds this cluster alone (no other inventory file at its top)
     _next_inventory: "{{ '' if lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') | map('realpath') | list == [_dir] else _dir }}"
@@ -1109,13 +1281,25 @@
       hosts: "{{ _next_hosts }}"
       cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
       allow_unread: "{{ import_cluster_allow_unread | default(false) | bool }}"
+      todo: "{{ _cql_todo }}"
     _report: >-
       {{ _layout | community.cassandra.cassandra_import_report(_report_args.written, _report_args.report_file,
            _self_check | default({}), _self_check_ok | bool, secrets_clear=_report_args.secrets_clear,
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
-           self_check_error=_self_check_error | default('')) | join(_newline) }}
+           self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo) | join(_newline) }}
+    # the files the run wrote or removed (would, under --check) and the ones there before: a re-import that
+    # changes nothing says so
+    _changes:
+      changed: >-
+        {{ ([_hosts_file] if import_cluster_wrote_hosts is changed else [])
+           + import_cluster_wrote_vars.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+             | map(attribute='item.path') | list }}
+      removed: >-
+        {{ import_cluster_removed.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+           | map(attribute='item') | list }}
+      existed: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir) | list }}"
     # (a newline: in a folded block, '\n' would stay a backslash and an n)
     _newline: "\n"
   tasks:
@@ -1127,8 +1311,17 @@
           No node given: -i <node>, or, with the inventory, -e cassandra_hosts=<a group with nodes not marked
           absent> (--limit is refused). Nothing was written.
         quiet: true
+      run_once: true  # (no host before its message)
+      vars:
+        cassandra_output: true
 
     # no_log: the variables hold the passwords read from the config
+    - name: Say the inventory is laid out
+      ansible.builtin.debug:
+        msg: "Laying out the inventory..."
+      vars:
+        cassandra_output: true
+
     - name: Build the inventory
       block:
         - name: Match the ring with the hosts
@@ -1363,7 +1556,9 @@
               "{{ ansible_failed_task.name | default('?') }}" failed{{ (' (' ~ _why ~ ')') if _why else '' }}{{ ': its error is above.'
               if import_cluster_debug | default(false) | bool else ', the rest of its error is hidden (the variables hold passwords).'
               ~ ' Rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+          run_once: true  # (no host before its message)
           vars:
+            cassandra_output: true
             # the ring nodes it failed on, and what of the error shows no value
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
@@ -1381,13 +1576,6 @@
           {{ import_cluster_report_dir | default([_given_dir | regex_replace('(?<=.)(/+[.]?)+$', '') | dirname, 'reports',
                                                   _layout.cluster_group] | path_join, true) | expanduser }}
 
-    - name: Say what the run does
-      ansible.builtin.debug:
-        msg: "{{ 'import_write' | community.cassandra.cassandra_phase(what=_dir | community.cassandra.cassandra_path_from(lookup('ansible.builtin.env', 'PWD'))) }}"
-      vars:
-        cassandra_output: true  # a phase line (ops callback)
-        cassandra_output_gap: true  # a block of its own
-
     - name: Check the output dir
       ansible.builtin.stat:
         path: "{{ _dir }}"
@@ -1404,6 +1592,9 @@
         fail_msg: >-
           {{ _dir ~ '/' ~ _hosts_file }} exists: this cluster is imported there already, set import_cluster_force=true
           to import it again (with --check --diff first to see the changes)
+      run_once: true  # (no host before its message)
+      vars:
+        cassandra_output: true
 
     # The vault password: import_cluster_vault_password_file, else Ansible's own
     # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE); a
@@ -1421,6 +1612,9 @@
             that: import_cluster_vault_stat.stat.exists
             fail_msg: "vault password file {{ _vault_file }} not found"
             quiet: true
+          run_once: true  # (no host before its message)
+          vars:
+            cassandra_output: true
 
         # a <name>-client script is asked for the vault id, as Ansible does
         - name: Run the vault password script
@@ -1446,6 +1640,9 @@
             that: _vault_secret | length > 0
             fail_msg: "empty vault password from {{ _vault_file }}"
             quiet: true
+          run_once: true  # (no host before its message)
+          vars:
+            cassandra_output: true
 
     # a re-import keeps what it did not write (group_vars/all/*, ansible.cfg,
     # notes...): it replaces its own files, and removes the ones an earlier
@@ -1472,6 +1669,55 @@
         _found: "{{ import_cluster_existing.files | default([]) | selectattr('size', 'le', 1048576) | map(attribute='path')
                     | map('relpath', _dir) | reject('match', '(.*/)?[.]') | list }}"
 
+    # CQL authentication on (a PasswordAuthenticator): the operations that read the replication (decommission,
+    # topology, rolling restarts...) log in with cassandra_cql_username and _password, which no node gives. Set
+    # in the inventory or with -e (else written by an earlier import): checked with a real login, not asked;
+    # else asked on the terminal (not under --check, nor with cassandra_operation_confirm false), checked, then
+    # written with the cluster's variables (the password in secrets.yml, vaulted with the vault password file).
+    # Not one password shown: no_log.
+    - name: Check the CQL login, or ask for one
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cql_login.yml
+      when: _cql_on | bool
+      vars:
+        _cql_node: "{{ _nodes | selectattr('read') | first | default({}) }}"
+        _cql_vars: "{{ _cql_node.vars | default({}) }}"
+        _cql_facts: "{{ hostvars[_cql_node.host].ansible_facts | default({}) }}"
+        _cql_rpc: "{{ _cql_vars.cassandra_rpc_address | default('localhost') | string }}"
+        _cassandra_cql_login_from: "{{ _cql_node.host }}"
+        # its CQL address (as the import wrote it: a value, or its hostname or address fact)
+        _cassandra_cql_login_host: >-
+          {{ '127.0.0.1' if _cql_rpc in ['', 'localhost', '0.0.0.0', '::']
+             else _cql_facts.hostname | default(_cql_node.address) if _cql_rpc is search('ansible_facts.*hostname')
+             else _cql_facts.fqdn | default(_cql_node.address) if _cql_rpc is search('ansible_facts.*fqdn')
+             else _cql_node.address if '{{' in _cql_rpc
+             else _cql_rpc }}
+        # the inventory's (or -e), else the one an earlier import of this cluster wrote
+        _cassandra_cql_login_given: "{{ _cql_set if _cql_set.user and _cql_set.password else _cql_own }}"
+        _cassandra_cql_login_ask: "{{ not ansible_check_mode and cassandra_operation_confirm | default(true) | bool }}"
+
+    # the login typed, else the one the import wrote before (kept, never lost); one of your files, or -e: not
+    # written (yours stays where you keep it)
+    - name: Write the CQL login with the cluster's variables
+      ansible.builtin.set_fact:
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for n in _nodes -%}
+          {%-   set _ = out.append(n | combine({'vars': n.vars | combine(_login)}) if n.read | bool else n) -%}
+          {%- endfor -%}
+          {{ out }}
+      no_log: true  # the password
+      when:
+        - _cql_on | bool
+        - _typed | bool or (_cql_own.user != '' and _cql_own.password != '')
+      vars:
+        _typed: >-
+          {{ cassandra_cql_login.asked | default(false) and cassandra_cql_login.state | default('') in ['ok', 'unchecked'] }}
+        _login:
+          cassandra_cql_username: "{{ cassandra_cql_login.user if _typed | bool else _cql_own.user }}"
+          cassandra_cql_password: "{{ cassandra_cql_login.password if _typed | bool else _cql_own.password }}"
+
     # the user's own variables files there (group_vars/all...) apply to these hosts too: a value of theirs that
     # would change a node is written as the node has it (listed in the report)
     - name: Lay out again over your own variables
@@ -1496,6 +1742,12 @@
     # Each node read: what the roles would write with the inventory's variables
     # (read back from the files about to be written, over the roles' defaults,
     # with the node's facts), against the node's files, setting by setting
+    - name: Say the self-check runs
+      ansible.builtin.debug:
+        msg: "Comparing with what the roles would write (self-check)..."
+      vars:
+        cassandra_output: true
+
     - name: Self-check
       block:
         - name: Render what the roles would write, and compare with the nodes' files
@@ -1572,6 +1824,9 @@
           file replaced kept as <file>.<date>~' if _leftovers.adoptable | length == _leftovers.conflicts | length else
           '. -e import_cluster_adopt=true would take over ' ~ _leftovers.adoptable | length ~ ' of them only' }}
         quiet: true
+      run_once: true  # (no host before its message)
+      vars:
+        cassandra_output: true
 
     - name: Stop rather than write in clear over a vaulted file
       ansible.builtin.assert:
@@ -1580,7 +1835,9 @@
           {{ _vaulted | join(', ') }} in {{ _dir }} are vaulted, and no vault password file is set: set
           vault_password_file in ansible.cfg (or -e import_cluster_vault_password_file=<file>)
         quiet: true
+      run_once: true  # (no host before its message)
       vars:
+        cassandra_output: true
         _vaulted: >-
           {%- set out = [] -%}
           {%- for r in import_cluster_existing_vars.results | default([]) if r.content is defined -%}
@@ -1591,6 +1848,12 @@
           {{ out }}
 
     # known as an earlier import's by their layout only (no first line), or taken over: kept as <file>.<date>~
+    - name: Say the inventory is written
+      ansible.builtin.debug:
+        msg: "{{ ('Comparing the inventory with ' if ansible_check_mode else 'Writing the inventory to ') ~ _dir }}..."
+      vars:
+        cassandra_output: true
+
     - name: Keep a backup of the files it removes that do not say they are its
       ansible.builtin.copy:
         src: "{{ _dir }}/{{ item }}"
@@ -1605,6 +1868,7 @@
         path: "{{ _dir }}/{{ item }}"
         state: absent
       loop: "{{ _leftovers.stale }}"  # files only: a dir may hold files of yours
+      register: import_cluster_removed
 
     - name: Create the dirs
       ansible.builtin.file:
@@ -1629,6 +1893,7 @@
         dest: "{{ _dir }}/{{ _hosts_file }}"
         mode: "0644"
         backup: "{{ _hosts_file in _leftovers.replaced | default([]) }}"  # not an import's
+      register: import_cluster_wrote_hosts
 
     # secrets.yml: encrypted as a whole (Ansible reads vaulted vars files), or 0600 in clear
     - name: Write group_vars and host_vars
@@ -1644,6 +1909,7 @@
       loop: "{{ _files }}"
       loop_control:
         label: "{{ item.path }}"
+      register: import_cluster_wrote_vars
       no_log: "{{ item.secret }}"
       # a vaulted file already there with the same content is left as it is (not encrypted again)
       when: >-
@@ -1677,7 +1943,8 @@
                leftovers=_leftovers | default({}), check=_report_args.check | bool,
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
-               self_check_error=_self_check_error | default(''), screen=true) }}
+               self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
+               screen=true) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)
@@ -1693,5 +1960,6 @@
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
+      run_once: true  # (no host before its message)
       vars:
         cassandra_output: true  # its message as is (the ops callback), no task dump

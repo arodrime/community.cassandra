@@ -25,12 +25,12 @@ description:
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
-    C(NOTHING TO DO) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
+    C(NOTHING TO DO), C(READY) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
     stalled or failed as an error; C(NOTE), the progress lines (C([1/2] node5 ...)) and the phase lines (ending
     with C(...)) as verbose output. The lines indented under a coloured one keep its colour. The messages
     themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
-    C(REFUSED  ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
+    C(REFUSED  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
     C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)). A light one (C(-----)) for each blank line inside
     them, under a plan's first line and above a question, and one naming the node above the first progress
     line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most.
@@ -86,13 +86,13 @@ _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"WARNING\b"), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
-    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|CHECK)\b"), "COLOR_OK"),
+    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |\S.*[^,]\.\.\.$"), "COLOR_VERBOSE"),
 )
 
 
 # a plan or a screen (its first line), a recap, a progress line
-_HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |(add_node|replace_node|decommission_node|remove_dead_node|"
+_HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_node|replace_node|decommission_node|remove_dead_node|"
                      r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|add_datacenter|"
                      r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY)  ")
@@ -346,6 +346,8 @@ class CallbackModule(DefaultCallback):
         # a command's own error rather than "non-zero return code" (its last line: JVM warnings come first)
         msg = [line.strip() for line in lines(res.get("msg") or "") if line.strip()]
         err = [line.strip() for line in lines(res.get("stderr") or "") if line.strip()]
+        # ("non-zero return code" before ansible-core 2.19, "The command exited with a non-zero return code." since)
+        msg = ["non-zero return code" if line.rstrip(".").endswith("non-zero return code") else line for line in msg]
         said = err[-1:] if err and (not msg or msg[0] == "non-zero return code") else msg
         host = getattr(result, "host", None) or result._host
         first = said[0] if said else "failed"

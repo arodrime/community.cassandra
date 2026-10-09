@@ -23,11 +23,13 @@
             wanted = json.loads(sys.stdin.read())
             same = []
             for name in ("password", "access"):
-                path = "/etc/cassandra/jmxremote." + name
+                path = wanted["paths"][name]
                 if os.path.exists(path) and entries(open(path).read()) == entries(wanted[name]):
                     same.append(name)
             print(json.dumps(same))
-        stdin: "{{ {'password': _cassandra_jmx_password_content, 'access': _cassandra_jmx_access_content} | to_json }}"
+        stdin: >-
+          {{ {'password': _cassandra_jmx_password_content, 'access': _cassandra_jmx_access_content,
+              'paths': {'password': cassandra_jmx_remote_password_file, 'access': cassandra_jmx_remote_access_file}} | to_json }}
       register: cassandra_config_jmx_same
       changed_when: false
       check_mode: false
@@ -36,10 +38,17 @@
         - _cassandra_config_initialized | default(false) | bool
         - not cassandra_config_normalize | bool
 
+    # (a dir of their own, e.g. imported from a node: made on a new node; one already there left as it is)
+    - name: Create the directories of the JMX files
+      ansible.builtin.command:
+        argv: [mkdir, -p, -m, "0755", "{{ item }}"]
+        creates: "{{ item }}"
+      loop: "{{ [cassandra_jmx_remote_password_file | dirname, cassandra_jmx_remote_access_file | dirname] | unique }}"
+
     - name: Write jmxremote.password
       ansible.builtin.copy:
         content: "{{ _cassandra_jmx_password_content }}"
-        dest: /etc/cassandra/jmxremote.password
+        dest: "{{ cassandra_jmx_remote_password_file }}"
         owner: "{{ _cassandra_config_perm.owner }}"
         group: "{{ _cassandra_config_perm.group }}"
         mode: "{{ _cassandra_config_perm.mode }}"
@@ -52,7 +61,7 @@
     - name: Write jmxremote.access
       ansible.builtin.copy:
         content: "{{ _cassandra_jmx_access_content }}"
-        dest: /etc/cassandra/jmxremote.access
+        dest: "{{ cassandra_jmx_remote_access_file }}"
         owner: "{{ _cassandra_config_perm.owner }}"
         group: "{{ _cassandra_config_perm.group }}"
         mode: "{{ _cassandra_config_perm.mode }}"
@@ -63,7 +72,7 @@
     # their content stays, not their owner, group and mode
     - name: Set the owner and mode of the JMX files left as they are
       ansible.builtin.file:
-        path: /etc/cassandra/{{ _cassandra_config_perm_file }}
+        path: "{{ cassandra_jmx_remote_password_file if item == 'password' else cassandra_jmx_remote_access_file }}"
         owner: "{{ _cassandra_config_perm.owner }}"
         group: "{{ _cassandra_config_perm.group }}"
         mode: "{{ _cassandra_config_perm.mode }}"

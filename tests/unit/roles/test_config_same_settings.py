@@ -242,9 +242,11 @@ def jmx_same(tmp_path, password, access, users):
     for name, text in (("password", password), ("access", access)):
         if text is not None:
             (root / ("jmxremote." + name)).write_text(text)
-    script = JMX_SCRIPT.replace("/etc/cassandra/", str(root) + "/")
+    # (at their paths, cassandra_jmx_remote_password_file and _access_file)
     wanted = {"password": render(PASSWORD, cassandra_jmx_users=users),
-              "access": render(ACCESS, cassandra_jmx_users=users)}
+              "access": render(ACCESS, cassandra_jmx_users=users),
+              "paths": {"password": str(root / "jmxremote.password"), "access": str(root / "jmxremote.access")}}
+    script = JMX_SCRIPT
     out = subprocess.run([sys.executable, "-c", script], input=json.dumps(wanted).encode(),
                          stdout=subprocess.PIPE, check=True).stdout
     return json.loads(out)
