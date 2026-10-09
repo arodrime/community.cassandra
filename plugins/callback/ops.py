@@ -20,7 +20,8 @@ description:
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
     (C(ignore_unreachable)) on one line. A failure the playbook handles (a task of a block with a C(rescue)) on
-    one line too, its host, task and the first line of its message. Diffs (C(--diff)) too.
+    one line too, its host, task and the first line of its message; nothing when that block sets the variable
+    C(cassandra_output_rescued) to C(true) (its rescue says what failed). Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
@@ -62,6 +63,7 @@ from ansible import constants as C
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
+RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
@@ -122,16 +124,29 @@ def _uuid(item):
     return getattr(item, "_uuid", None)
 
 
-def rescued(task):
-    """True when the task is in the block part of a block with a rescue (at
-    any level, through includes): the playbook handles its failure."""
+def _rescuer(task):
+    """The block whose rescue handles the task's failure (the task is in its
+    block part, at any level, through includes), None when there is none."""
     child, parent = task, getattr(task, "_parent", None)
     while parent is not None:
         if (getattr(parent, "rescue", None) and _uuid(child) is not None
                 and _uuid(child) in [_uuid(t) for t in getattr(parent, "block", None) or []]):
-            return True
+            return parent
         child, parent = parent, getattr(parent, "_parent", None)
-    return False
+    return None
+
+
+def rescued(task):
+    """True when the task is in the block part of a block with a rescue (at
+    any level, through includes): the playbook handles its failure."""
+    return _rescuer(task) is not None
+
+
+def reported(task):
+    """True when the rescue that handles the task's failure says what failed
+    itself (its block sets cassandra_output_rescued: true)."""
+    block = _rescuer(task)
+    return block is not None and _flag(block, RESCUED)
 
 
 def drop_typeahead():
@@ -320,6 +335,8 @@ class CallbackModule(DefaultCallback):
             return self._verdict(result)
         if _task(result).loop and "results" in _result(result):
             return None  # each failed item was printed already
+        if reported(_task(result)):  # its rescue says it
+            return None
         if rescued(_task(result)):  # its rescue handles it: one line, never silent
             return self._handled(result)
         return self._default("v2_runner_on_failed", result, ignore_errors)
@@ -349,6 +366,8 @@ class CallbackModule(DefaultCallback):
             return None
         if self._own_failure(result):
             return self._verdict(result)
+        if reported(_task(result)):
+            return None
         if rescued(_task(result)):
             return self._handled(result)
         return self._default("v2_runner_item_on_failed", result)

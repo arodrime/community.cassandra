@@ -127,7 +127,14 @@ def test_prepare_failure_of_a_node_stopped_with_the_others():
     play = next(p for p in plays if p.get("name") == "Prepare the new nodes, all at once")
     record = find(play["tasks"], "Record the failure")
     template = record["ansible.builtin.set_fact"]["cassandra_op_result"]
-    for failed, expected in (({"msg": "no repository"}, "add FAILED while preparing it: no repository"),
+    for failed, expected in (({"msg": "no repository"}, "add FAILED while preparing it: Install: no repository"),
+                             ({"rc": 1, "failed": True}, "add FAILED while preparing it: Install: failed"),  # no msg
                              ({}, "not prepared: stopped with the others (a node failed)")):
-        why = render(record["vars"]["_why"], ansible_failed_result=failed)
-        assert render(template, _why=why).strip() == expected
+        variables = dict(ansible_failed_result=failed, ansible_failed_task={"name": "Install"})
+        variables.update(dict((k, render(v, **variables)) for k, v in record["vars"].items() if k != "_failure"))
+        variables["_failure"] = render(record["vars"]["_failure"], **variables)
+        assert render(template, **variables).strip() == expected
+        # only a node's own failure goes in the grouped report
+        kept = render(record["ansible.builtin.set_fact"]["_cassandra_add_prepare_failure"],
+                      inventory_hostname="node5", ansible_facts={}, **variables)
+        assert (kept["host"] if kept else None) == ("node5" if failed else None)
