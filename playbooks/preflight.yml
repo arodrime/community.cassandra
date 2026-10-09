@@ -40,6 +40,11 @@
   become: true
   tasks:
     # also run by the first play, which --limit skips
+    - name: Check the ansible-core version
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: core_check.yml
+
     - name: Check cassandra_target_nodes
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

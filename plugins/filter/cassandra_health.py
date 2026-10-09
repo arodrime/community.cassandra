@@ -24,7 +24,17 @@ def _nodes(cluster_status):
 def _error(result):
     msg = result.get("msg", "unreachable")
     stderr = (result.get("stderr") or "").strip()
-    return "%s (%s)" % (msg, stderr.splitlines()[-1]) if stderr and stderr not in msg else msg
+    # nodetool's own error line, else the last one (not a Java stack trace line)
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    said = [line for line in lines if line.startswith("error:")] or [
+        line for line in lines if not line.startswith(("at ", "-- StackTrace --", "..."))][-1:]
+    line = said[0] if said else ""
+    return "%s (%s)" % (msg, line) if line and line not in msg and line.replace("error:", "").strip() not in msg else msg
+
+
+def _unasked(result):
+    """A check that could not ask nodetool (it failed with a message, no answer)."""
+    return "is_up" not in result and bool(result.get("msg"))
 
 
 def cassandra_health_findings(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
@@ -63,9 +73,10 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             item = port["item"]
             found.append({"kind": "port", "name": item["name"], "port": item["port"], "on": node, "host": item["host"],
                           "text": "%s port %s is not answering on %s (%s)" % (item["name"], item["port"], node, item["host"])})
-    if gossip is not None and not gossip.get("is_up"):
+    # (a check that could not ask, e.g. a JMX login refused: the nodetool failure says it, not "not running")
+    if gossip is not None and not gossip.get("is_up") and not _unasked(gossip):
         found.append({"kind": "gossip", "on": node, "text": "gossip is not running on %s" % node})
-    if binary is not None and not binary.get("is_up"):
+    if binary is not None and not binary.get("is_up") and not _unasked(binary):
         found.append({"kind": "cql", "on": node, "text": "the native transport (CQL) is not running on %s" % node})
     if netstats is not None:
         if netstats.get("failed") or "streaming" not in netstats:

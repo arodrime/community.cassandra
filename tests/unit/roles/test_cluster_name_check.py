@@ -161,7 +161,9 @@ def test_a_description_that_failed_is_refused(tmp_path):
                 "stderr": "error: Authentication failed! Credentials required\n-- StackTrace --\njava.lang.SecurityException: x"}
     rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster", describe=describe)
     assert rc != 0, out
-    assert ("nodetool describecluster failed on n3 (java.lang.SecurityException: x): the cluster name is not checked "
+    # a JMX login refused, said so; the role default name: the inventory not loaded is the likely cause
+    assert ("JMX login refused on n3 (Authentication failed! Credentials required): check cassandra_jmx_username and "
+            "cassandra_jmx_password_file or cassandra_jmx_password; the cluster name is not checked "
             "against 'Test Cluster' (cassandra_cluster_name). Nothing was changed. cassandra_cluster_name is the role "
             "default 'Test Cluster': are the inventory's group_vars loaded?") in out
     assert asked == [] and went_on == []

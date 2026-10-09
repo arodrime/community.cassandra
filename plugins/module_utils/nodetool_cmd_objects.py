@@ -32,6 +32,25 @@ def cassandra_version_at_least(version_string, minimum_version):
     return parts(version_string) >= parts(minimum_version)
 
 
+# a JMX login refused, in nodetool's error (the JDK's file login, Cassandra's own)
+_JMX_REFUSED = re.compile(r"Invalid username or password|Authentication failed|Credentials required|"
+                          r"FailedLoginException|Authentication error")
+
+
+def version_error(out, err):
+    """The message when nodetool version fails: a JMX login refused said as
+    such (the options to check), else nodetool's own error line."""
+    text = "{0}\n{1}".format(out or "", err or "")
+    said = [line.strip() for line in text.splitlines() if line.strip().startswith("error:")]
+    first = said[0][len("error:"):].strip() if said else ""
+    if _JMX_REFUSED.search(text):
+        return ("JMX login refused ({0}): check the JMX user and its password or password file "
+                "(cassandra_jmx_username, cassandra_jmx_password_file or cassandra_jmx_password)").format(
+                    first or "authentication failed")
+    errors = (err or "").strip().splitlines()
+    return "Unable to determine Cassandra version: {0}".format(first or (out or "").strip() or (errors[0] if errors else ""))
+
+
 def parse_nodetool_get(out, cast=float):
     """Parse the value printed by a nodetool get* command, such as
     "Current stream throughput: 200.0 Mb/s" or "Current trace probability: 0.1".
@@ -80,7 +99,7 @@ class NodeToolCmd(object):
                 what_is_the_version = ".".join(line[0].split(': ')[1].split(".")[:2]).strip()
                 module.params['cassandra_version'] = what_is_the_version
             else:
-                module.fail_json(msg="Unable to determine Cassandra version: {0}".format(out), stderr=err)
+                module.fail_json(msg=version_error(out, err), stderr=err)
 
     def execute_command(self, cmd):
         rc, out, err = self.module.run_command(cmd)

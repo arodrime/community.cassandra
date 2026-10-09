@@ -65,16 +65,26 @@
     quiet: true
   run_once: true  # fails every host of the play
   vars:
+    cassandra_output: true  # a verdict: its msg as is
     _found: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_found }}"
     _from: "{{ _found.from | default('') }}"
     _name: >-
       {{ _found.stdout | default('') | regex_findall('(?m)^\s*Name: (.*)$') | first | default('') | trim }}
+    # nodetool's own error line (error: ...), else the last line (not a Java stack trace line)
+    _lines: >-
+      {{ ((_found.stderr | default('')).splitlines() | map('trim') | select | list
+          or (_found.stdout | default('')).splitlines() | map('trim') | select | list) }}
     _error: >-
-      {{ ((_found.stderr | default('')).splitlines() | select | list or (_found.stdout | default('')).splitlines() | select | list)
-         | last | default('no output') }}
+      {{ (_lines | select('match', 'error:') | map('regex_replace', '^error: *', '') | list
+          or _lines | reject('match', '(at |-- StackTrace --)') | list) | first | default('no output') }}
+    _refused: "{{ (_found.stderr | default('') ~ _found.stdout | default('')) is search(_jmx_refused) }}"
+    _jmx_refused: Invalid username or password|Authentication failed|Credentials required|FailedLoginException
     _what: >-
       {{ (_from ~ " runs Cassandra for cluster '" ~ _name ~ "', not '" ~ cassandra_cluster_name ~ "'")
          if _found.rc | default(0) == 0
+         else ('JMX login refused on ' ~ _from ~ ' (' ~ _error ~ '): check cassandra_jmx_username and'
+               ~ ' cassandra_jmx_password_file or cassandra_jmx_password; the cluster name is not checked against '
+               ~ "'" ~ cassandra_cluster_name ~ "'") if _refused | bool
          else ('nodetool describecluster failed on ' ~ _from ~ ' (' ~ _error ~ "): the cluster name is not checked against '"
                ~ cassandra_cluster_name ~ "'") }}
     _hint: >-
@@ -86,4 +96,5 @@
                ~ " stock config? Check it is the right host; if it never joined '" ~ cassandra_cluster_name
                ~ "', the reset_node playbook makes it ready to join.")
          if _name == 'Test Cluster' and _found.rc | default(0) == 0
+         else '' if _refused | bool
          else 'Check the inventory (-i) and cassandra_cluster_name.' }}
