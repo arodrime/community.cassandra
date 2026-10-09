@@ -57,6 +57,14 @@
     # the nodes to remove the others still list as a seed (topology changes the seeds as its own step)
     _dn_seed_step: "{{ [] if _cassandra_screen_asked_by | default('') else _leaving | select('in', _dn_seeds.old_hosts) | list }}"
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'check_leaving' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Load the cassandra_config defaults (the seeds)
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config

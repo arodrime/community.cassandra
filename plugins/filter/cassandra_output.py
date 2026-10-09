@@ -132,6 +132,17 @@ def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None
                             imported=imported)
 
 
+def cassandra_phase(name, names=None, node="", what="", count=None):
+    """A phase line (module_utils cassandra_output PHASES): 'decommission' |
+    cassandra_phase(node='node3') -> "Decommissioning node3..."."""
+    return out.phase(name, names=names, node=node, what=what, count=count)
+
+
+def cassandra_path_from(path, cwd=None):
+    """path relative to cwd when it is under it, else as given."""
+    return out.path_from(str(path), cwd)
+
+
 def cassandra_todo(items, title="TO DO"):
     return out.todo(items, title=title)
 
@@ -165,6 +176,8 @@ class FilterModule(object):
             "cassandra_changed_lines": cassandra_changed_lines,
             "cassandra_command": cassandra_command,
             "cassandra_todo": cassandra_todo,
+            "cassandra_phase": cassandra_phase,
+            "cassandra_path_from": cassandra_path_from,
             "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_inventory_steps": cassandra_inventory_steps,
             "cassandra_in_git_work_tree": cassandra_in_git_work_tree,

@@ -194,7 +194,8 @@ def test_steps_in_order_adds_seeds_removals():
     names = [p.get("name") for p in PLAYS]
     assert names.index("Add the nodes") < names.index("Change the seeds") < names.index("Remove the nodes")
     seeds = next(p for p in PLAYS if p.get("name") == "Change the seeds")
-    assert seeds["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
+    assert seeds["tasks"][0]["name"] == "Say what the run does"  # its phase line
+    assert seeds["tasks"][1]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
     assert render(seeds["hosts"], groups={"all": []}) == []
     assert render(seeds["hosts"], groups={"cassandra_topology_seeds": ["n1", "n2"]}) == ["n1", "n2"]
     line_up = task("Line up the nodes for the seed step")

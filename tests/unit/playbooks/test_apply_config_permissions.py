@@ -182,8 +182,10 @@ def test_the_action_restarts_starts_or_only_writes():
     tasks = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
-    assert names == ["Clear the unit's failed starts", "Write the config", "Drain and restart the node",
-                     "Start the node and wait until it has joined"]
+    assert names == ["Clear the unit's failed starts", "Write the config", "Say the restart of {{ inventory_hostname }}",
+                     "Drain and restart the node", "Start the node and wait until it has joined"]
+    phase = tasks.pop(2)  # a phase line, only before a restart
+    assert "cassandra_apply_config_then | default('restart') == 'restart'" in phase["when"]
     clear, write, restart, start = tasks
     assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config" and "when" not in write
     for then, expected in (("restart", [False, True, False]), ("start", [True, False, True]), ("none", [False, False, False]),

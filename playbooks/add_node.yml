@@ -50,6 +50,14 @@
   become: true
   any_errors_fatal: true  # a host that errors must not drop out of the run
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'check_new' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: A new node is a node of the cluster
       ansible.builtin.assert:
         that: inventory_hostname in query('community.cassandra.cassandra_nodes')
@@ -423,6 +431,15 @@
   any_errors_fatal: true
   become: true
   tasks:
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'prepare' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     - name: Prepare this node
       vars:
         cassandra_output_rescued: true  # the rescue says what failed, the same causes once (ops callback)

@@ -429,6 +429,55 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
     return lines
 
 
+# --- phases --------------------------------------------------------------------------------
+
+# What a run does now, a line per major phase, ending with "..." (the ops
+# callback's phase colour). {nodes}: the node list (nodes()), {count}: "5
+# nodes", {node}, {what}: as given.
+PHASES = {
+    "check": "Checking the cluster ({count})...",
+    "check_new": "Checking the new nodes ({nodes})...",
+    "check_leaving": "Checking the nodes to remove ({nodes})...",
+    "ring": "Reading the ring and seeds...",
+    "prepare": "Preparing the new nodes ({nodes})...",
+    "join": "Starting {node} and waiting for its bootstrap...",
+    "join_again": "Waiting for the bootstrap of {node} (started by an earlier run)...",
+    "join_no_stream": "Starting {node}, joining without streaming (auto_bootstrap false)...",
+    "replace": "Starting {node} and waiting while it replaces {what}...",
+    "decommission": "Decommissioning {node}...",
+    "leave_again": "Waiting for the decommission of {node} (started by an earlier run)...",
+    "move": "Moving {node}...",
+    "reboot": "Rebooting {node}...",
+    "update_java": "Updating Java on {node}...",
+    "upgrade": "Upgrading {node}...",
+    "upgradesstables": "Upgrading the SSTables of {node}...",
+    "wait_un": "Waiting for every node to be UN...",
+    "seeds": "Applying cassandra_seeds on every node...",
+    "compare_config": "Comparing the config with the inventory ({count})...",
+    "write_config": "Writing the config ({nodes})...",
+    "restart": "Restarting {node}...",
+    "restart_rack": "Restarting {what} ({nodes})...",
+    "cleanup": "Cleaning up {nodes}...",
+    "read_reset": "Reading what {nodes} hold...",
+    "reset": "Resetting {nodes}...",
+    "import_given": "Reading the cluster from {nodes}...",
+    "import_read": "Reading every node ({count})...",
+    "import_write": "Writing the inventory ({what})...",
+}
+
+
+def phase(name, names=None, node="", what="", count=None):
+    """The phase line PHASES[name], e.g. "Decommissioning node3...". names:
+    the nodes (one or a list, shown as nodes() does, in the order given);
+    count: how many nodes (the number of names when not given). "" for a
+    name PHASES does not have (a step that says nothing)."""
+    if name not in PHASES:
+        return ""
+    names = [names] if isinstance(names, str) else list(names or [])
+    number = len(names) if count is None else int(count)
+    return PHASES[name].format(nodes=nodes(names, keep_order=True), node=node, what=what, count=plural(number, "node"))
+
+
 # --- progress ------------------------------------------------------------------------------
 
 _BAR = 10

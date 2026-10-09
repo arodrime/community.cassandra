@@ -45,6 +45,14 @@
         name: community.cassandra.cassandra_service
         tasks_from: target_nodes_check.yml
 
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'check' | community.cassandra.cassandra_phase(count=ansible_play_hosts_all | length) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
     # An unreachable host would silently be left out of the rest of the run
     - name: Every node answers
       ansible.builtin.assert:
