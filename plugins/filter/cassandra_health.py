@@ -76,9 +76,9 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     # a check that could not ask: when nodetool status failed on this node too (e.g. a JMX login refused), that
     # failure says it; else its own failure (not "not running": not known)
     node_failed = any(view["from"] == node and not view["result"].get("cluster_status") for view in views)
-    for check, what in ((gossip, "gossip"), (binary, "the native transport (CQL)")):
+    for check, what in ((gossip, "gossip"), (binary, "native transport (CQL)")):
         if check is not None and _unasked(check) and not node_failed:
-            found.append({"kind": "nodetool", "on": node, "error": _error(check),
+            found.append({"kind": "check", "what": what, "on": node, "error": _error(check),
                           "text": "the %s check failed on %s: %s" % (what, node, _error(check))})
     if gossip is not None and not gossip.get("is_up") and not _unasked(gossip):
         found.append({"kind": "gossip", "on": node, "text": "gossip is not running on %s" % node})
@@ -154,6 +154,9 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
                 add("streams", ("streams",), "in progress on", f["on"])
             elif kind == "netstats":
                 add("netstats", ("netstats", f["error"]), "failed on %s: " + str(f["error"]), f["on"])
+            elif kind == "check":
+                add("nodetool", ("check", f["what"], f["error"]), "%s check failed on %%s: %s" % (f["what"], f["error"]),
+                    f["on"])
             elif kind == "schema":
                 add("schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"])
             else:
@@ -167,7 +170,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
         label, text, who = seen[key]
         if key[0] in ("state", "count"):
             text += "   seen from %s" % out.nodes(who)
-        elif key[0] in ("nodetool", "netstats"):
+        elif key[0] in ("nodetool", "netstats", "check"):
             text = text.replace("%s", out.nodes(who), 1)
         elif who:
             text += " " + out.nodes(who)

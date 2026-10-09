@@ -8,7 +8,8 @@ __metaclass__ = type
 import pytest
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import version_error
-from ansible_collections.community.cassandra.plugins.filter.cassandra_health import _error, cassandra_health_findings
+from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
+    _error, cassandra_health_findings, cassandra_health_report)
 
 STACK = "-- StackTrace --\njavax.security.auth.login.FailedLoginException: Invalid username or password\n" \
         "\tat java.base/java.lang.Thread.run(Thread.java:840)\n"
@@ -40,7 +41,18 @@ def test_health_says_the_login_once_not_gossip_down():
     # nodetool status answered on this node: the failed checks are said as such
     found = cassandra_health_findings([{"from": "n1", "result": {"cluster_status": {"dc1": {"nodes": []}}}}], 0, "n1", gossip=failed,
                                       binary={"is_up": True})
-    assert [f["text"].split(":")[0] for f in found] == ["the gossip check failed on n1"]
+    assert [f["text"] for f in found] == ["the gossip check failed on n1: " + failed["msg"]]
+    timeout = {"failed": True, "msg": "statusbinary command failed"}
+    found = cassandra_health_findings([{"from": "n1", "result": {"cluster_status": {"dc1": {"nodes": []}}}}], 0, "n1",
+                                      gossip=failed, binary=timeout)
+    assert [f["text"] for f in found] == ["the gossip check failed on n1: " + failed["msg"],
+                                          "the native transport (CQL) check failed on n1: statusbinary command failed"]
+    # the report: said as a check that failed, not as nodetool status; not merged with a status failure
+    status_failed = {"kind": "nodetool", "on": "n2", "error": "statusbinary command failed",
+                     "text": "nodetool status failed on n2: statusbinary command failed"}
+    report = cassandra_health_report({"n1": found, "n2": [status_failed]}, "c", ["n1", "n2"])
+    assert "  nodetool:  native transport (CQL) check failed on n1: statusbinary command failed" in report["lines"]
+    assert "  nodetool:  status failed on n2: statusbinary command failed" in report["lines"]
     # a gossip that answered "not running" is still a problem
     down = cassandra_health_findings([], 3, "n1", gossip={"is_up": False}, binary={"is_up": True})
     assert [f["kind"] for f in down] == ["gossip"]
