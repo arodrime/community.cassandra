@@ -6,6 +6,7 @@ __metaclass__ = type
 # prints a ring (one node down): the whole output compared.
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -121,15 +122,22 @@ def test_status_all_up(tmp_path):
     assert lines[-1] == "  dc1: 3 nodes, 3 up, 0 down; load 260.6 MiB"
 
 
+def ruled(output):
+    """The lines, each rule (as wide as the terminal) as 4 of its characters."""
+    return [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in output.splitlines()]
+
+
 def test_health_check_a_node_down(tmp_path, port):
     rc, output = run(tmp_path, "health_check", True, "-e", "cassandra_storage_port=%d" % port,
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc != 0, output  # for scheduling
-    assert output.splitlines() == [
+    assert ruled(output) == [
+        "====",  # a recap: heavy rules around it
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  ring:  node2 10.100.100.4 (rack_b) DN   seen from node1..node3",
         "TO DO",
         "  1. start Cassandra on node2 (its server first if it is down); a node that can't be recovered: replace_node",
+        "====",
     ]
 
 
@@ -137,4 +145,4 @@ def test_health_check_healthy(tmp_path, port):
     rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc == 0, output
-    assert output.splitlines() == ["HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open"]
+    assert ruled(output) == ["====", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open", "===="]

@@ -49,7 +49,7 @@ def test_the_plan_asks_once_and_the_steps_ask_nothing():
     confirm = task("Confirm the plan")
     assert confirm["ansible.builtin.include_role"]["tasks_from"] == "confirm.yml"
     names = [t.get("name") for t in PLAN["tasks"]]
-    assert names.index("Show the plan") + 1 == names.index("Confirm the plan")  # the prompt right under the WARNING lines
+    assert names.index("Show the plan") + 1 == names.index("Confirm the plan")  # the prompt right under the plan
     plan = {"add": ["n4"], "remove": ["n2"], "seeds": {"step": True}}
     prompt = confirm["vars"]["cassandra_confirm_prompt"]
     steps = confirm["vars"]["_tp_steps"]

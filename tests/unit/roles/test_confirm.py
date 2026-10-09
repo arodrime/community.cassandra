@@ -299,28 +299,32 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
     output = read_until(fd, b"", lambda out: prompts(out) > 0, time.time() + 120)
     time.sleep(1)
     os.write(fd, b"yes\r")
-    output = read_until(fd, output, lambda out: out.rstrip().endswith(b"inventory"), time.time() + 120).decode()
+    output = read_until(fd, output, lambda out: b"TO DO" in out and out.rstrip().endswith(b"====="), time.time() + 120).decode()
     os.waitpid(pid, 0)
     # the screen, the question, the answer, the progress and the recap: one blank line between two blocks
-    assert on_screen(output.strip()) == [
+    rules = [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, re.sub(r" -{4,}$", " ----", line))
+             for line in on_screen(output.strip())]
+    assert rules == [
         "Reset of node5:",
-        "",
+        "====",  # a screen: a heavy rule above, a light one between its blocks
         "decommission_node: remove node7",
-        "",
+        "----",
         "WARNING - replication: orders keeps 2 replicas",
         "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,",
         "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen.",
-        "",
+        "----",  # above the question
         "[community.cassandra.cassandra_service : Confirm the operation]",
         "Remove node7?",
         "Answer yes to go on, no to stop:",
         "yes",  # pause clears it once read: shown again
         "",
+        "---- [1/1] node7 decommission ----",  # each node's progress: its own block
         "[1/1] node7 decommission  LEAVING",
         "[1/1] node7 decommission  DECOMMISSIONED",
-        "",
+        "====",  # the recap: heavy rules around it
         "DONE  decommission_node",
-        "",
+        "----",
         "TO DO",
         "  1. delete node7 from the inventory",
+        "====",
     ], output

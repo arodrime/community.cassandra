@@ -236,7 +236,7 @@ ring do not share; a down node is shown, not an error. ``cassandra_status_raw: t
 
 Risky operations show one screen first, the same layout for each: a header (the operation, the cluster and its running
 version), one block per node concerned (when the operation works node by node), then the warnings, each one labelled
-(``WARNING - replication: ...``) and on its own paragraph. Then they ask for confirmation: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
+(``WARNING - replication: ...``), together; one blank line between two blocks. Then they ask for confirmation: ``yes`` (or ``y``) goes on, ``no`` (or ``n``) stops, any other answer
 asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
 terminal; without one, a run that would ask fails at once. ``--check`` shows the screen, says that nothing will be
 changed and asks nothing (``add_node`` with ``cassandra_token_auto: true`` follows bisect instead of asking); the
@@ -478,7 +478,7 @@ remove with ``remove_dead_node``), and a plan with something to do is refused wh
 One node at a time, the adds first (the cluster never has fewer nodes than it ends with), then the seeds (a new seed
 is up by then, a seed to remove is still there), then the removals, the cluster checked before and after each node;
 the run stops at the first problem. The plan screen lists the steps in that order, each node with its datacenter and
-rack, then each datacenter once done, what is left to do by hand, and the WARNING lines right above the question, for
+rack, then each datacenter once done, what is left to do by hand, and the WARNING lines together, then the question, for
 example (replacing the seed ``node2`` by ``node5``):
 
 .. code-block:: text

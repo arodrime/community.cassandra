@@ -5,6 +5,7 @@ __metaclass__ = type
 # local hosts: only the marked messages, the failures in full, -v as default.
 
 import os
+import re
 import subprocess
 import sys
 
@@ -121,12 +122,20 @@ def run(tmp_path, playbook, *args, **env_extra):
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
+def shown(output):
+    """The lines, each rule as 4 of its characters (its width is the terminal's)."""
+    return [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, re.sub(r" -{4,}$", " ----", line))
+            for line in output.splitlines()]
+
+
 def test_only_the_marked_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK)
     assert rc == 0, output
-    lines = output.splitlines()
-    assert lines[:6] == [
+    lines = shown(output)
+    assert lines[:8] == [
+        "====",  # a plan: a heavy rule above, a light one under its first line
         "PLAN  op  my_cluster  2 steps",
+        "----",
         u"  1. node1  dc1/rack_a  \u2190 here",
         "line one",
         "line two",
@@ -134,13 +143,13 @@ def test_only_the_marked_messages(tmp_path):
         "item b",
     ]
     # the handlers: in whatever order the hosts end
-    assert sorted(lines[6:]) == ["handler on node1", "handler on node2"]
+    assert sorted(lines[8:]) == ["handler on node1", "handler on node2"]
 
 
 def test_check_mode_prints_the_same_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK, "--check")
     assert rc == 0, output
-    assert output.splitlines()[:2] == ["PLAN  op  my_cluster  2 steps", u"  1. node1  dc1/rack_a  \u2190 here"]
+    assert shown(output)[:4] == ["====", "PLAN  op  my_cluster  2 steps", "----", u"  1. node1  dc1/rack_a  \u2190 here"]
     assert "TASK [" not in output and "PLAY RECAP" not in output
 
 
@@ -153,7 +162,7 @@ def test_failures_in_full_and_the_verdict_as_is(tmp_path):
     # a failed loop item: the item and its task
     assert "TASK [Item breaks]" in output and "failed: [node1] (item=/bin/false)" in output
     # the verdict: its own lines, nothing else of that task
-    assert output.rstrip().splitlines()[-2:] == ["NOT HEALTHY  my_cluster  1 problem", "  ring: 3 members, inventory 2"]
+    assert shown(output.rstrip())[-4:] == ["====", "NOT HEALTHY  my_cluster  1 problem", "  ring: 3 members, inventory 2", "===="]
     assert "TASK [Verdict]" not in output and "PLAY RECAP" not in output and "NO MORE HOSTS LEFT" not in output
 
 
@@ -408,12 +417,6 @@ def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
       ansible.builtin.file:
         path: "%s"
         state: file
-    - name: A question skipped, one of the operator's
-      ansible.builtin.pause:
-        prompt: never
-      when: false
-      vars:
-        cassandra_output_gap: true
     - name: Four
       ansible.builtin.debug:
         msg: four
@@ -441,3 +444,70 @@ def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
     assert lines[:10] == ["one", "two", "three", "", "four", "", "item a", "item b", "five", ""], output
     # the default callback's task header: its own blank line above left out
     assert lines[10].startswith("TASK [Fails] *"), output
+
+
+def test_colours_by_line_start():
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour
+    assert colour("WARNING  seeds: dc1 has one seed") == C.COLOR_CHANGED
+    assert colour("         its next line", above=C.COLOR_CHANGED) == C.COLOR_CHANGED  # indented: as the line above
+    assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
+    assert colour("NOT HEALTHY  my_cluster") == colour("REFUSED  topology") == C.COLOR_ERROR
+    assert colour("[1/2] node5 bootstrap  JOINING  STALLED 2/12 checks  35s") == C.COLOR_ERROR
+    assert colour("[1/2] node5 bootstrap  JOINING  52%") == colour("Checking the cluster (5 nodes)...") == C.COLOR_VERBOSE
+    assert colour("NOTE  cassandra_foo is not read") == C.COLOR_VERBOSE
+    assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
+
+
+def test_colours_on_a_terminal_only(tmp_path):
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Lines
+      ansible.builtin.debug:
+        msg: ["WARNING  w", "plain"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
+    assert rc == 0, output
+    assert re.search("\x1b\\[[0-9;]+mWARNING  w\x1b\\[0m", output) and "\nplain" in output, repr(output)
+    rc, output = run(tmp_path, playbook)  # ANSIBLE_NOCOLOR
+    assert rc == 0 and "\x1b" not in output, repr(output)
+
+
+def test_verbose_task_headers_keep_their_blank_line(tmp_path):
+    rc, output = run(tmp_path, PLAYBOOK, "-v")
+    assert rc == 0, output
+    assert "\n\nTASK [A command]" in output and "\n\nTASK [Not marked]" in output
+
+
+def test_a_warning_then_a_block(tmp_path):
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "warner.py").write_text(
+        "from ansible.module_utils.basic import AnsibleModule\n"
+        "m = AnsibleModule(argument_spec={})\nm.warn('careful')\nm.exit_json(changed=False)\n")
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: One
+      ansible.builtin.debug:
+        msg: ["one", ""]
+      vars:
+        cassandra_output: true
+    - name: Warns
+      warner:
+    - name: Two
+      ansible.builtin.debug:
+        msg: two
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    lines = output.splitlines()
+    assert lines[:2] == ["one", ""] and "careful" in output, output
+    assert lines[-2:] == ["", "two"], output  # a blank line between the warning and the block

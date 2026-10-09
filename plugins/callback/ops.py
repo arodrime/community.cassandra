@@ -22,6 +22,17 @@ description:
     (C(ignore_unreachable)) on one line. A failure the playbook handles (a task of a block with a C(rescue)) on
     one line too, its host, task and the first line of its message. Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
+  - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
+    C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
+    C(NOTHING TO DO) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
+    stalled or failed as an error; C(NOTE), the progress lines (C([1/2] node5 ...)) and the phase lines (ending
+    with C(...)) as verbose output. The lines indented under a coloured one keep its colour. The messages
+    themselves stay plain text.
+  - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
+    C(REFUSED  ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
+    C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)). A light one (C(-----)) for each blank line inside
+    them, under a plan's first line and above a question, and one naming the node above the first progress
+    line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most.
   - The output goes by blocks, one blank line between two, never two in a row. A blank line comes before the
     next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
     like C(cassandra_output); on an operator message itself, before its own lines; on a question, a
@@ -36,16 +47,15 @@ requirements:
   - set as stdout in configuration
 """
 
+import re
+
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 
 from ansible import constants as C
-from ansible.release import __version__ as _CORE_VERSION
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
-# before 2.19, a warning ends with a blank line of its own
-_WARNING_BLANK = tuple(int(x) for x in _CORE_VERSION.split(".")[:2]) < (2, 19)
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
 _VERDICTS = _ASSERTS + ("fail", "ansible.builtin.fail", "ansible.legacy.fail")
@@ -60,6 +70,35 @@ def _result(result):
     """The result dict (result since ansible-core 2.19, _result before)."""
     value = getattr(result, "result", None)
     return value if isinstance(value, dict) or hasattr(value, "get") else result._result
+
+
+# the colour of a message line by its start, the lines indented under it the same
+_COLOURS = (
+    (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
+    (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED)\b"), "COLOR_ERROR"),
+    (re.compile(r"WARNING\b"), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
+    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|CHECK)\b"), "COLOR_OK"),
+    (re.compile(r"NOTE\b|\[\d+/\d+\] |\S.*[^,]\.\.\.$"), "COLOR_VERBOSE"),
+)
+
+
+# a plan or a screen (its first line), a recap, a progress line
+_HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |(add_node|replace_node|decommission_node|remove_dead_node|"
+                     r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|add_datacenter|"
+                     r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
+_RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY)  ")
+_STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
+
+
+def colour(line, above=None):
+    """The display colour of a message line (None: the default), above:
+    the colour of the line before, kept by an indented line."""
+    if line[:1] in (" ", "\t") and line.strip():
+        return above
+    for pattern, name in _COLOURS:
+        if pattern.match(line):
+            return getattr(C, name, None)
+    return None
 
 
 def _flag(task, name):
@@ -112,6 +151,7 @@ class CallbackModule(DefaultCallback):
         self._blank = True  # the last line printed was blank (or none yet): no blank line next
         self._gap = False  # a blank line before the next message
         self._looping = False  # the items of a loop with a gap: one blank line, before the first
+        self._ruled = ""  # the rule just printed, if any
 
     def _verbose(self):
         return self._display.verbosity > 0
@@ -119,21 +159,47 @@ class CallbackModule(DefaultCallback):
     def _line(self, line, color=None):
         if not line.strip():
             if self._blank:
-                return  # never two blank lines in a row
+                return  # never two blank lines in a row (a rule counts as one)
             line = ""
         self._display.display(line, color=color)
-        self._blank = not line
+        self._blank, self._ruled = not line, ""
+
+    def _rule(self, heavy=False, text=""):
+        """A rule as wide as the terminal (100 columns at most), never two in a row."""
+        width = min(100, max(40, (getattr(self._display, "columns", 0) or 79) - 1))
+        line = (("==== " if heavy else "---- ") + text + " ") if text else ""
+        line += ("=" if heavy else "-") * max(4, width - len(line))
+        if not self._ruled or (heavy and line != self._ruled):  # a heavy one wins over a light one
+            self._display.display(line)
+        self._ruled, self._blank = line, True
 
     def _print(self, msg, color=None):
-        if self._gap:
+        texts = lines(msg)
+        first = next((t for t in texts if t.strip()), "")
+        headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
+        if headed or recap:
+            self._rule(heavy=True)
+        elif self._gap and step:
+            self._rule(text=step.group(1))
+        elif self._gap:
             self._line("")
-            self._gap = False
-        for line in lines(msg):
-            self._line(line, color=color)
+        self._gap = False
+        above = None
+        for i, line in enumerate(texts):
+            if (headed or recap) and not line.strip():
+                self._rule()  # the blocks inside
+                above = None
+                continue
+            above = color or colour(line, above)
+            self._line(line, color=above)
+            if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
+                self._rule()  # under the plan's first line
+        if recap:
+            self._rule(heavy=True)
 
     def _shown(self):
         """Something else printed a line: a blank line may follow."""
-        self._blank = False
+        self._blank, self._ruled = False, ""
 
     def _default(self, name, *args):
         """The default callback's output (its task header without a second blank line above)."""
@@ -141,14 +207,15 @@ class CallbackModule(DefaultCallback):
         self._shown()
 
     def _warned(self, res):
+        warned = bool(res.get("warnings") or res.get("deprecations"))  # _handle_warnings takes them out
         self._handle_warnings(res)  # a warning is meant to be read
-        if res.get("warnings") or res.get("deprecations"):
-            self._blank = _WARNING_BLANK
+        if warned:
+            self._shown()
 
     def _print_task_banner(self, task):
         """The default callback's task header, its blank line above left out
         when one is printed already."""
-        if not self._blank:
+        if self._verbose() or not self._blank:
             return super(CallbackModule, self)._print_task_banner(task)
         display = self._display
 
@@ -186,8 +253,8 @@ class CallbackModule(DefaultCallback):
     def v2_playbook_on_task_start(self, task, is_conditional):
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
-        if task.action in _PAUSES and _flag(task, GAP):  # a blank line above its question (skipped too: one at most)
-            self._line("")
+        if task.action in _PAUSES and _flag(task, GAP):  # a rule above its question (skipped too: one at most)
+            self._rule()
         return None
 
     @staticmethod
@@ -280,8 +347,9 @@ class CallbackModule(DefaultCallback):
     def v2_on_file_diff(self, result):
         res = _result(result)
         super(CallbackModule, self).v2_on_file_diff(result)
-        if any(r.get("diff") and r.get("changed") for r in ((res.get("results") or [res]) if _task(result).loop else [res])):
-            self._shown()  # the default callback prints only these
+        items = res["results"] if _task(result).loop and "results" in res else [res]
+        if any(r.get("diff") and r.get("changed") and self._get_diff(r["diff"]) for r in items):
+            self._shown()  # what the default callback prints
 
     # --- what is quiet without -v ---
 

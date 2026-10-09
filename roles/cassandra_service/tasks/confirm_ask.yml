@@ -14,7 +14,7 @@
   register: _cassandra_confirm_reply
   run_once: true
   vars:
-    cassandra_output_gap: true  # a blank line above the question (ops callback)
+    cassandra_output_gap: true  # a rule above the question (ops callback)
 
 - name: Read the answer
   ansible.builtin.set_fact:

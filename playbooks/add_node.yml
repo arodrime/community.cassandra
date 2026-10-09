@@ -369,8 +369,6 @@
       register: cassandra_token_choice
       run_once: true
       when: _single | bool and _auto == 'true' and _new | length > 0 and not ansible_check_mode  # --check: bisect
-      vars:
-        cassandra_output_gap: true  # a blank line above the question (ops callback)
 
     - name: Check the choice
       ansible.builtin.assert:
