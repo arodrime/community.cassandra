@@ -467,6 +467,10 @@
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
             tasks_from: action_add_prepare.yml
+          vars:
+            # a new node: every setting goes from absent to set, a list per role and node says nothing (-v, or
+            # cassandra_change_report_dir, still have them)
+            _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"
 
         # The package may start it at boot: a reboot while the nodes before it bootstrap would make it
         # join out of turn. Its start (main.yml) enables it again.

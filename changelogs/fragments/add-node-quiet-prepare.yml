@@ -1,0 +1,2 @@
+minor_changes:
+  - "add_node - the new nodes are prepared without a list of changes per role and node (every setting of a new node goes from absent to set); ``-v`` or ``cassandra_change_report_dir`` still give them."

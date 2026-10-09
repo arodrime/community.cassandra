@@ -5,6 +5,8 @@
 - name: Prepare the node
   ansible.builtin.include_tasks: action_add_prepare.yml
   when: not _cassandra_add_prepared | default(false) | bool
+  vars:
+    _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # a new node: all of it new (-v shows it)
 
 # Until it has joined: a node of this cluster with its keyspaces and this
 # mark is a failed bootstrap add_node may reset; without it, a former member

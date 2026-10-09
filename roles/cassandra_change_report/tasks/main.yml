@@ -14,7 +14,7 @@
       {% endfor %}
   when:
     - cassandra_change_report_items | length > 0
-    - not _cassandra_change_report_quiet | default(false)
+    - not _cassandra_change_report_quiet | default(false) | bool
 
 # Same timestamp for every host and role of the run. Not under the block's
 # conditions: run_once would skip it for every host when the first one has
