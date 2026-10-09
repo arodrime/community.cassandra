@@ -3,7 +3,8 @@
 # stop, disable and delete (_cassandra_node_reset_plan), shown per node, and
 # the refusal, if any. A caller that confirms the reset on its own screen
 # (add_node, replace_node: cassandra_reset_warnings; topology for the hosts it
-# adds, its add_node step keeping that plan) runs it before that screen, then
+# adds, its add_node step keeping that plan) runs it before that screen with
+# _cassandra_node_reset_on_screen: true (shown there only, not here too), then
 # reset_node.yml with _cassandra_node_reset_confirmed: true.
 # _cassandra_node_reset_auto (add_node and topology, cassandra_add_node_reset on by
 # default): a node without data needs no reset (nothing to do, no line); one
@@ -350,6 +351,7 @@
          + _p.problems | map('regex_replace', '^', '  REFUSED: ') | list) | join(_nl) }}
   when:
     - not _cassandra_notes_deferred | default(false) | bool  # topology: in its plan
+    - not _cassandra_node_reset_on_screen | default(false) | bool  # add_node, replace_node: on their screen
     # add_node's: nothing to say about a node without data
     - not _cassandra_node_reset_auto | default(false) | bool or _p.delete | length > 0
   vars:

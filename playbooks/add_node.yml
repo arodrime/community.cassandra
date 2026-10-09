@@ -247,6 +247,7 @@
         - _cassandra_node_reset_plan is not defined
       vars:
         _cassandra_node_reset_auto: true
+        _cassandra_node_reset_on_screen: true  # what it deletes: in the screen's warnings, once
 
     - name: Check the cleanup choice
       ansible.builtin.assert:

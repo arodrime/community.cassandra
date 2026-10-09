@@ -133,6 +133,7 @@
       when: cassandra_replace_node_reset | default(false) | bool
       vars:
         cassandra_node_reset_replace_address: "{{ cassandra_replace_address }}"
+        _cassandra_node_reset_on_screen: true  # what it deletes: in the screen's warnings, once
 
     - name: Show the plan and confirm the replacement
       ansible.builtin.include_role:
