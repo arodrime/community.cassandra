@@ -23,12 +23,12 @@
     _cassandra_health_peer: >-
       {{ query('community.cassandra.cassandra_nodes')
          | reject('in', [inventory_hostname]
-                        + (query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
-                           if cassandra_new_nodes | default('') | length > 0 else [])
-                        + (query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)
-                           if cassandra_leaving_nodes | default('') | length > 0 else []))
+                        + (query('ansible.builtin.inventory_hostnames', _not_peers) if _not_peers | length > 0 else []))
          | reject('in', _down_hosts) | first | default(inventory_hostname) }}
   vars:
+    # the hosts the operation adds or removes (cassandra_target_nodes), else _cassandra_health_not_peers
+    # (remove_datacenter: its group; remove_dead_node: none, its target is an address)
+    _not_peers: "{{ _cassandra_health_not_peers | default(cassandra_target_nodes | default('')) }}"
     # nodes expected down (by their ring address): not asked
     _down: "{{ cassandra_service_health_down_ok | default([]) + cassandra_service_health_resumed_down | default([]) }}"
     _down_hosts: >-

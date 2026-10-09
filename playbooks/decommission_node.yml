@@ -3,7 +3,7 @@
 # data to the others (nodetool decommission), then Cassandra is stopped and
 # disabled on it. The cluster is checked before and after each node; the run
 # stops at the first problem.
-#   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+#   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_target_nodes=node7
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
 # cassandra, else the inventory's cluster group (lookup
@@ -23,9 +23,11 @@
 # (the operator decides: resume it with nodetool decommission, or cancel it).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_target: leave  # what cassandra_target_nodes are
 
 - name: Check the nodes to remove
-  hosts: "{{ cassandra_leaving_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true  # remove none of them if one is refused
@@ -183,7 +185,7 @@
 # Before the first one leaves: the other nodes stop listing it as a seed
 - name: Take the nodes to remove out of the seed lists
   hosts: >-
-    {{ query('community.cassandra.cassandra_nodes') | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)) | list
+    {{ query('community.cassandra.cassandra_nodes') | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) | list
        if not _cassandra_screen_asked_by | default('') else 'localhost:!localhost' }}
   gather_facts: false
   become: true
@@ -194,11 +196,11 @@
         name: community.cassandra.cassandra_service
         tasks_from: seeds_apply.yml
       when:
-        - hostvars[query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes) | first]._cassandra_decommission_seeds_apply | default(false) | bool
+        - hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first]._cassandra_decommission_seeds_apply | default(false) | bool
         - not ansible_check_mode
 
 - name: Set up the progress file
-  hosts: "{{ cassandra_leaving_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   vars:
@@ -210,7 +212,7 @@
         tasks_from: progress.yml
 
 - name: Remove the nodes, one at a time
-  hosts: "{{ cassandra_leaving_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   serial: 1
   any_errors_fatal: true
   become: true
@@ -256,7 +258,7 @@
         cassandra_service_expected_after: "{{ _staying | int + _others_in_ring | int }}"
 
 - name: Summary
-  hosts: "{{ cassandra_leaving_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   tasks:

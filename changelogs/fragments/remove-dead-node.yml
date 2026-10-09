@@ -1,2 +1,2 @@
 minor_changes:
-  - New remove_dead_node playbook - removes a dead node from the ring (removenode, removenode force, or assassinate as a last resort).
+  - "New remove_dead_node playbook - removes a dead node from the ring (``cassandra_target_nodes``: its address, host ID or inventory name; removenode, removenode force, or assassinate as a last resort)."

@@ -6,6 +6,9 @@
 # group (lookup community.cassandra.cassandra_hosts), and a name close
 # to a playbook variable (-e cassandra_host=...) is pointed out. A run with
 # --limit skips localhost, so this check too.
+- name: Check cassandra_target_nodes
+  ansible.builtin.include_tasks: target_nodes_check.yml
+
 - name: Variables close to the playbooks' own
   ansible.builtin.debug:
     msg: "WARNING  {{ item.key }} is set: did you mean {{ item.value }}?"

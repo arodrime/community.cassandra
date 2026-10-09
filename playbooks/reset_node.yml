@@ -1,7 +1,7 @@
 ---
 # Empties nodes that are not members of the cluster, for a fresh start (e.g.
 # a node started once with the wrong config, a failed bootstrap):
-#   ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_reset_nodes=node7
+#   ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7
 # Cassandra is stopped and kept from starting at boot, then what its data,
 # commitlog, saved_caches, hints and cdc_raw directories hold is deleted (from
 # the inventory and the live cassandra.yaml). Refused on a node any up node of
@@ -13,9 +13,11 @@
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_target: reset  # what cassandra_target_nodes are
 
 - name: Reset the nodes
-  hosts: "{{ cassandra_reset_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true  # reset none of them if one is refused

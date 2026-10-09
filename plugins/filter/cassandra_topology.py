@@ -149,7 +149,7 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
                 problems.append(
                     "%s (%s) is marked absent and still in the ring (%s) but does not answer: bring it back and run"
                     " topology again (it is then decommissioned), or, if it is dead for good, remove_dead_node"
-                    " -e cassandra_dead_node_address=%s" % (name, address, where, address))
+                    " -e cassandra_target_nodes=%s" % (name, address, where, address))
             elif not address and any(a not in known for a in entries):
                 problems.append(
                     "%s is marked absent, does not answer and the inventory gives no address for it, while the ring has"
@@ -162,7 +162,7 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
         elif entry and entry["status"] == "D":
             problems.append(
                 "%s (%s) is marked absent and down in the ring (%s): a dead node is not decommissioned. Start it and"
-                " run topology again, or remove it with remove_dead_node -e cassandra_dead_node_address=%s"
+                " run topology again, or remove it with remove_dead_node -e cassandra_target_nodes=%s"
                 % (name, address, where, address))
         elif entry and h.get("seed"):
             problems.append(
@@ -204,7 +204,7 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
     if leaving and (new or joining):
         problems.append("%s still leaving (a decommission an earlier run started): Cassandra adds no node while"
                         " another one leaves. Run topology again once it is out of the ring (or follow it with"
-                        " decommission_node -e cassandra_leaving_nodes=%s)." % (", ".join(leaving), ",".join(leaving)))
+                        " decommission_node -e cassandra_target_nodes=%s)." % (", ".join(leaving), ",".join(leaving)))
     if unknown and (add or remove):
         problems.append("the ring has nodes no host of the inventory has: %s. Each step checks the ring has the"
                         " inventory's nodes, so the run would stop at the first one: fix the inventory first (an"
@@ -415,7 +415,7 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     warnings.extend(plan.get("large_removals") or [])
     warnings.extend(rack_warnings)
     warnings.extend("%s is in the ring but in no host of the inventory: never touched (an address mistyped, a host"
-                    " missing, or a dead node: remove_dead_node -e cassandra_dead_node_address=%s)" % (u, u.split(" ")[0])
+                    " missing, or a dead node: remove_dead_node -e cassandra_target_nodes=%s)" % (u, u.split(" ")[0])
                     for u in plan["unknown"])
     warnings.extend(w.rstrip(".") for w in plan["warnings"])
     if force and replication_problems:

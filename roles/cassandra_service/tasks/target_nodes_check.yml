@@ -1,0 +1,49 @@
+---
+# cassandra_target_nodes, the nodes an operation targets, checked before
+# anything is done (hosts_check.yml, preflight). _cassandra_preflight_target
+# says what the playbook does with them: add, leave, reset, dead
+# (remove_dead_node), canary (upgrade) or status; unset, it takes none.
+# A string (an inventory pattern), required by add, leave, reset and dead.
+# Their own checks come later (a dead node is an address, a host ID or an
+# inventory name: remove_dead_node checks it once the ring is read).
+- name: No variable under a former name
+  ansible.builtin.assert:
+    that: _renamed | length == 0
+    fail_msg: >-
+      {{ _renamed.items() | map('join', ' is renamed ') | join('; ') }}: set cassandra_target_nodes instead.
+      Nothing was changed.
+    quiet: true
+  vars:
+    _renamed: "{{ query('ansible.builtin.varnames', '^cassandra_') | community.cassandra.cassandra_renamed_names }}"
+  run_once: true
+
+- name: Only where the playbook takes it
+  ansible.builtin.assert:
+    that: >-
+      (not _given and (_kind not in _required or _cassandra_preflight_skip | default(false) | bool))
+      or (_given and cassandra_target_nodes is string and _kind != ''
+          and (_kind != 'canary' or cassandra_upgrade_phase | default('') == 'canary')
+          and (_kind == 'dead' or _hosts | length > 0))
+    fail_msg: >-
+      {{ ('Give the dead node in cassandra_target_nodes (its address, host ID or inventory name).' if _kind == 'dead'
+           else 'Give the nodes in cassandra_target_nodes (-e cassandra_target_nodes=<hosts or groups, comma-separated>).')
+           if not _given
+         else ('cassandra_target_nodes is a string: hosts or groups, comma-separated.') if cassandra_target_nodes is not string
+         else ('This playbook takes no cassandra_target_nodes (it runs on the whole group, or on what its own variables'
+          ~ ' name): run it without.') if _kind == ''
+         else ('cassandra_target_nodes picks the node of the canary phase (cassandra_upgrade_phase=canary): run '
+               ~ (('phase ' ~ cassandra_upgrade_phase) if cassandra_upgrade_phase | default('') else 'the others')
+               ~ ' without it.') if _kind == 'canary'
+                 and cassandra_upgrade_phase | default('') != 'canary'
+         else ('cassandra_target_nodes: ' ~ cassandra_target_nodes | default('') | string ~ ' matches no host of the inventory.') }}
+      Nothing was changed.
+    quiet: true
+  vars:
+    # topology's steps: its own list, checked by its plan
+    _given: "{{ cassandra_target_nodes | default('', true) | string | length > 0 and not _cassandra_preflight_skip | default(false) | bool }}"
+    _kind: "{{ _cassandra_preflight_target | default('') }}"
+    _required: [add, leave, reset, dead]  # the others pick a default (the canary, the node status reads from)
+    _hosts: >-
+      {{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
+         if _given and cassandra_target_nodes is string and _kind != 'dead' else [] }}
+  run_once: true

@@ -3,7 +3,7 @@
 # install, OS, config, firewall, Medusa; nothing started), then started and
 # bootstrapped one at a time. Add them to the cluster's inventory group
 # first, then:
-#   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7,node8
+#   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7,node8
 # A new node listed in cassandra_seeds too joins as a regular node (a seed does
 # not bootstrap: its cassandra.yaml lists the other seeds while it joins), then,
 # once the adds are done, cassandra_seeds is applied live on every node
@@ -40,10 +40,12 @@
 # moves the nodes the screen marks) or true (shows both, asks which).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_target: add  # what cassandra_target_nodes are
 
 # Before anything is installed: every problem of the new hosts at once
 - name: Check the new hosts are ready
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true  # a host that errors must not drop out of the run
@@ -67,7 +69,7 @@
         _cassandra_new_node_reset_stops: false  # a running Cassandra is refused
 
 - name: Check the new nodes
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true  # add none of them if one is refused
@@ -107,7 +109,7 @@
             that: cassandra_new_node_state != 'new' or _joining_after | length == 0
             fail_msg: >-
               {{ _joining_after | join(', ') }} still bootstrapping (an earlier run): put
-              {{ 'it' if _joining_after | length == 1 else 'them' }} before {{ inventory_hostname }} in cassandra_new_nodes,
+              {{ 'it' if _joining_after | length == 1 else 'them' }} before {{ inventory_hostname }} in cassandra_target_nodes,
               so add_node waits for it before starting a new node.
             quiet: true
           vars:
@@ -416,7 +418,7 @@
 # Medusa), on every new node at once: nothing here starts Cassandra. A host
 # that fails stops the run before any node starts.
 - name: Prepare the new nodes, all at once
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   any_errors_fatal: true
   become: true
   tasks:
@@ -468,7 +470,7 @@
 
 # Then the starts, one at a time: each one bootstraps, waited for
 - name: Add the new nodes, one at a time
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   serial: 1
   any_errors_fatal: true
   gather_facts: false  # gathered by the play before
@@ -509,7 +511,7 @@
 - name: Apply cassandra_seeds now that the new seeds are up
   hosts: >-
     {{ query('community.cassandra.cassandra_nodes')
-       if query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) and not _cassandra_screen_asked_by | default('')
+       if query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) and not _cassandra_screen_asked_by | default('')
        else 'localhost:!localhost' }}
   gather_facts: false
   become: true
@@ -524,12 +526,12 @@
         - not ansible_check_mode  # nothing was set up
       vars:
         _new_seeds: >-
-          {{ query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) | map('extract', hostvars)
+          {{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | map('extract', hostvars)
              | selectattr('_cassandra_service_is_seed', 'defined') | selectattr('_cassandra_service_is_seed')
              | map(attribute='inventory_hostname') | list }}
 
 - name: Summary
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   tasks:
@@ -566,13 +568,13 @@
 # once), the cluster checked before each batch.
 - name: Clean up the nodes that handed data over
   hosts: >-
-    {{ query('community.cassandra.cassandra_nodes') if query('ansible.builtin.inventory_hostnames', cassandra_new_nodes)
+    {{ query('community.cassandra.cassandra_nodes') if query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
        else 'localhost:!localhost' }}
   gather_facts: false
   become: true
   vars:
     _plan: >-
-      {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_new_nodes) | first].cassandra_add_node_plan | default({}) }}
+      {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first].cassandra_add_node_plan | default({}) }}
     _targets: >-
       {{ _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten | select('in', ansible_play_hosts) | list }}
     _mode: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"

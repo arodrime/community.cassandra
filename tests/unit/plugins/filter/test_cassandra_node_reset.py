@@ -541,7 +541,7 @@ def test_auto_reset_every_reason_at_once():
     out = _auto(running=True, live_cluster="billing", keyspaces=["orders"])
     assert len(out["problems"]) == 3
     assert out["line"].endswith("Nothing was changed: check what it holds; if nothing is needed, empty it (reset_node)"
-                                " or remove it from cassandra_new_nodes")
+                                " or remove it from cassandra_target_nodes")
 
 
 def test_live_cluster_name_returned():

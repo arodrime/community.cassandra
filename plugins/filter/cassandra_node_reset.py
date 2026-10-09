@@ -406,7 +406,7 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
     if problems:
         return {"reset": False, "problems": problems,
                 "line": "%s: not reset automatically, %s. Nothing was changed: check what it holds; if nothing is"
-                        " needed, empty it (reset_node) or remove it from cassandra_new_nodes"
+                        " needed, empty it (reset_node) or remove it from cassandra_target_nodes"
                         % (holds, "; ".join(problems))}
     return {"reset": True, "problems": [], "line": "%s \u2014 will be reset" % holds}
 

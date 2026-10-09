@@ -102,8 +102,8 @@ def test_check_mode_lines_up_nothing():
     # the steps run on the groups these tasks make: none under --check
     for name in ("Line up the nodes to add, in order", "Line up the nodes to remove, in order"):
         assert task(name)["when"] == "not ansible_check_mode"
-    groups = [p["vars"]["cassandra_new_nodes"] for p in PLAYS if p.get("name") == "Add the nodes"]
-    groups += [p["vars"]["cassandra_leaving_nodes"] for p in PLAYS if p.get("name") == "Remove the nodes"]
+    groups = [p["vars"]["cassandra_target_nodes"] for p in PLAYS if p.get("name") == "Add the nodes"]
+    groups += [p["vars"]["cassandra_target_nodes"] for p in PLAYS if p.get("name") == "Remove the nodes"]
     for template in groups:
         assert render(template, groups={"all": []}) == "localhost:!localhost"
     assert render(groups[0], groups={"cassandra_topology_add": ["n4", "n5"]}) == "n4,n5"
@@ -113,7 +113,7 @@ def test_step_host_lists_and_silent_nodes_refused():
     t = task("The run sees the whole group, and a cluster that runs")
     assert "_tp_step_vars | length == 0" in t["ansible.builtin.assert"]["that"]
     assert "_tp_no_facts | length == 0" in t["ansible.builtin.assert"]["that"]
-    assert "cassandra_(new|leaving|reset)_nodes" in t["vars"]["_tp_step_vars"]
+    assert "^cassandra_target_nodes$" in t["vars"]["_tp_step_vars"]
     hostvars = {"n1": {"inventory_hostname": "n1", "_cassandra_preflight": {}}, "n2": {"inventory_hostname": "n2"}}
     assert render(t["vars"]["_tp_no_facts"], ansible_play_hosts_all=["n1", "n2"], hostvars=hostvars) == ["n2"]
 

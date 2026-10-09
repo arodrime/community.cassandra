@@ -105,7 +105,7 @@
   any_errors_fatal: true
   become: true
   vars:
-    cassandra_leaving_nodes: cassandra_leaving_dc  # the health check reads the ring from a node that stays
+    _cassandra_health_not_peers: cassandra_leaving_dc  # the health check reads the ring from a node that stays
   tasks:
     - name: Remove this node
       ansible.builtin.include_role:

@@ -1,7 +1,7 @@
 ---
 # Adds a datacenter to a running cluster:
 #   ansible-playbook -i inventory community.cassandra.add_datacenter \
-#     -e cassandra_new_nodes=my_cluster_dc3 -e cassandra_rebuild_source_dc=dc1 \
+#     -e cassandra_target_nodes=my_cluster_dc3 -e cassandra_rebuild_source_dc=dc1 \
 #     -e '{"cassandra_datacenter_replication": {"orders": 3, "system_auth": 3}}'
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
@@ -21,9 +21,11 @@
 # cassandra_initial_token get evenly spaced tokens, as create_cluster gives.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_target: add  # what cassandra_target_nodes are
 
 - name: Check the new datacenter
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true
@@ -163,7 +165,7 @@
              and inventory_hostname in cassandra_new_dc_tokens.balanced else 'bisect' }}
 
 - name: Start the new nodes, one at a time, without streaming
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   serial: 1
   any_errors_fatal: true
   become: true
@@ -191,7 +193,7 @@
           {{ query('community.cassandra.cassandra_nodes') | length - ansible_play_hosts_all | length + _done | int + 1 }}
 
 - name: Give the datacenter its replicas and data
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true
@@ -214,7 +216,7 @@
       run_once: true
 
 - name: Stream each new node's data, one at a time
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   serial: 1
@@ -263,7 +265,7 @@
           nodetool rebuild again for the keyspaces it did not finish, if any (see its system.log).
 
 - name: Finish the datacenter
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true

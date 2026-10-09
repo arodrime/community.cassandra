@@ -261,7 +261,7 @@ def test_resets_asked_on_the_operation_screen_only():
 def test_remove_dead_node_screen(method, line, warning):
     t, play = task("remove_dead_node.yml", "Show the plan and confirm")
     dead = {"address": "10.0.0.4", "rack": "rack2", "load": "50 GiB", "status": "D", "state": "N"}
-    variables = {"ansible_play_hosts": ["node1", "node2"], "cassandra_dead_node_address": "10.0.0.4",
+    variables = {"ansible_play_hosts": ["node1", "node2"], "cassandra_target_nodes": "10.0.0.4", "groups": {"all": ["node1", "node2"]},
                  "cassandra_dead_node_method": method, "cassandra_dead_node": dead,
                  "cassandra_dead_ring": {"cluster_status": {"dc1": {"nodes": [dead]}}},
                  "cassandra_dead_removal": {"state": "start"}, "_cassandra_preflight": preflight(1),

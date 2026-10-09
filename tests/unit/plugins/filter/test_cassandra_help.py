@@ -91,7 +91,7 @@ Nodes:
   add_node - Adds new hosts to the running cluster: all prepared at once, then each started and
     bootstrapped in turn. Put them in their rack's group first; one in cassandra_seeds joins as a
     regular node, then becomes a seed.
-    $ $PLAY $C.add_node -e cassandra_new_nodes=NEW_NODE
+    $ $PLAY $C.add_node -e cassandra_target_nodes=NEW_NODE
 
   topology - Makes the ring match the inventory: adds the hosts of the cluster's group not in the
     ring, applies cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node
@@ -101,19 +101,19 @@ Nodes:
   decommission_node - Removes nodes from the running cluster, one at a time, their data streamed to
     the others; a node no longer in cassandra_seeds is first dropped from the other nodes' seed
     lists; refuses a datacenter left with nodes but no seed, or fewer nodes than replicas.
-    $ $PLAY $C.decommission_node -e cassandra_leaving_nodes=node4
+    $ $PLAY $C.decommission_node -e cassandra_target_nodes=node4
 
   replace_node - Replaces a dead node by a blank host, which takes over its tokens and data. In the
     inventory, the new host in, the dead one out.
-    $ $PLAY $C.replace_node -e cassandra_new_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
+    $ $PLAY $C.replace_node -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
 
   remove_dead_node - Last resort for a dead node that will not be replaced: removenode (or
-    assassinate). Take it out of the inventory first.
-    $ $PLAY $C.remove_dead_node -e cassandra_dead_node_address=DEAD_NODE_ADDRESS
+    assassinate). Take it out of the inventory (or mark it absent) first.
+    $ $PLAY $C.remove_dead_node -e cassandra_target_nodes=DEAD_NODE_ADDRESS
 
   reset_node - Empties nodes that are not members of the ring (started once by mistake, a failed
     bootstrap) for a fresh start.
-    $ $PLAY $C.reset_node -e cassandra_reset_nodes=NODE
+    $ $PLAY $C.reset_node -e cassandra_target_nodes=NODE
 
   move_node - One token per node: moves nodes to new tokens, one at a time (by default the fewest
     moves that even out each datacenter). Not for this cluster (num_tokens 16).
@@ -160,7 +160,7 @@ Cluster:
 
   add_datacenter - Adds a datacenter: its nodes join without streaming, the keyspaces get replicas
     there, then each node rebuilds from another datacenter.
-    $ $PLAY $C.add_datacenter -e cassandra_new_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+    $ $PLAY $C.add_datacenter -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
 
   remove_datacenter - Removes a datacenter: the keyspaces stop keeping replicas there, then its
     nodes leave one at a time. Move its clients first.
@@ -359,7 +359,7 @@ def test_topic():
     lines = text.splitlines()
     assert lines[0].startswith("decommission_node (nodes): Removes nodes")
     assert ("    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
-            " -e cassandra_leaving_nodes=node4") in lines
+            " -e cassandra_target_nodes=node4") in lines
     assert "What it does and checks (playbooks/decommission_node.yml):" in lines
     assert "  Removes nodes from a running cluster, one at a time: each one streams its" in lines
     assert "- name: Preflight" not in text  # the comment only
@@ -367,7 +367,7 @@ def test_topic():
     options = lines.index("Options:")
     assert lines[options:options + 9] == [
         "Options:",
-        "    -e cassandra_leaving_nodes=<nodes>    the nodes to remove (comma-separated) (required)",
+        "    -e cassandra_target_nodes=<nodes>     the nodes to remove (comma-separated) (required)",
         "    -e cassandra_decommission_force=true  goes on when a datacenter would keep fewer nodes than",
         "                                          replicas (default: false)",
         "    -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already",
@@ -377,7 +377,7 @@ def test_topic():
         "                                          runs without a terminal (default: true)"]
     assert lines.index("Command for this inventory:") < options < lines.index("Example (changing nothing):")
     assert ("    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
-            " -e cassandra_leaving_nodes=node4 --check") in lines
+            " -e cassandra_target_nodes=node4 --check") in lines
     assert "cassandra_cql_username and cassandra_cql_password" in text
 
 
@@ -610,7 +610,7 @@ def test_no_node_chosen_for_removal():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     del hosts[3]["vars"]["cassandra_node_state"]
     text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
-    assert "community.cassandra.decommission_node -e cassandra_leaving_nodes=NODE\n" in text
+    assert "community.cassandra.decommission_node -e cassandra_target_nodes=NODE\n" in text
     topic = cassandra_help(model(hosts=hosts), PLAYBOOKS, topic="decommission_node", cwd=CWD)
     assert "Replace NODE with your own value." in topic
 

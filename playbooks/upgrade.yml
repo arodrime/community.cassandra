@@ -13,8 +13,8 @@
 #   preflight  checks everything and shows the target config; changes nothing
 #   prepare    snapshot + config copy on every node, target repository; asks you
 #              (not under --check) to confirm backups and repairs are paused and the schema frozen
-#   canary     upgrades one node (cassandra_upgrade_canary, default: the first
-#              non-seed of the first datacenter), then stops: watch it
+#   canary     upgrades one node (-e cassandra_target_nodes=<node>, default: the
+#              first non-seed of the first datacenter), then stops: watch it
 #   rolling    upgrades the others, datacenter by datacenter, rack by rack, one
 #              node at a time (nodes already upgraded are skipped: re-run it to resume)
 #   sstables   rewrites the sstables in the new format, node by node
@@ -26,6 +26,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
     cassandra_allow_mixed_versions: "{{ cassandra_upgrade_phase | default('') in ['rolling', 'sstables', 'cleanup'] }}"
+    _cassandra_preflight_target: canary  # what cassandra_target_nodes is
 
 - name: Upgrade checks
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -317,10 +318,25 @@
       {{ ansible_play_hosts | map('extract', hostvars) | sort(attribute='inventory_hostname')
          | sort(attribute='_cassandra_preflight.cassandra_rack') | sort(attribute='_cassandra_preflight.cassandra_dc')
          | map(attribute='inventory_hostname') | list }}
+    _target: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) if cassandra_target_nodes | default('') | length > 0 else [] }}"
     _canary: >-
-      {{ cassandra_upgrade_canary | default(_order | reject('in', ansible_play_hosts | map('extract', hostvars)
+      {{ _target | first | default(_order | reject('in', ansible_play_hosts | map('extract', hostvars)
          | selectattr('_cassandra_service_is_seed') | map(attribute='inventory_hostname') | list) | first | default(_order[0])) }}
   tasks:
+    # one node of the run, the canary phase's only (preflight refuses it in the other phases)
+    - name: Check the canary node
+      ansible.builtin.assert:
+        that: >-
+          cassandra_target_nodes | default('') | length == 0
+          or (cassandra_upgrade_phase == 'canary' and _target | length == 1 and _target[0] in ansible_play_hosts)
+        fail_msg: >-
+          {{ ('cassandra_target_nodes picks the node of the canary phase: run phase ' ~ cassandra_upgrade_phase ~ ' without it.')
+             if cassandra_upgrade_phase != 'canary'
+             else ('cassandra_target_nodes: one node of ' ~ lookup('community.cassandra.cassandra_hosts') ~ ' that runs here, not '
+                   ~ cassandra_target_nodes | default('') | string ~ '.') }}
+        quiet: true
+      run_once: true
+
     # add_host keeps the order, the next plays follow it
     - name: The node(s) of this phase, in order
       ansible.builtin.add_host:

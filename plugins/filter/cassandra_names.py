@@ -3,7 +3,9 @@
 """cassandra_close_names: the variables set that look like a misspelt
 variable of the playbooks (cassandra_host for cassandra_hosts).
 cassandra_unknown_names: the cassandra_* variables set that the collection
-does not know, each with the known variable it is close to (or "")."""
+does not know, each with the known variable it is close to (or "").
+cassandra_renamed_names: the variables set under a former name, each with its
+name now."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -19,6 +21,10 @@ import yaml
 _ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "roles")
 _PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
 _NAME = re.compile(r"\bcassandra_\w+")
+# former names of the playbooks' variables: every node an operation targets is cassandra_target_nodes
+RENAMED = dict((name, "cassandra_target_nodes") for name in (
+    "cassandra_new_nodes", "cassandra_leaving_nodes", "cassandra_reset_nodes", "cassandra_dead_node_address",
+    "cassandra_upgrade_canary", "cassandra_status_from"))
 
 
 def _role_variables():
@@ -80,6 +86,12 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
     return out
 
 
+def cassandra_renamed_names(names):
+    """names: the variables set. Returns {name: its name now} for those set under a former name."""
+    return dict((name, RENAMED[name]) for name in names or [] if name in RENAMED)
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_close_names": cassandra_close_names, "cassandra_unknown_names": cassandra_unknown_names}
+        return {"cassandra_close_names": cassandra_close_names, "cassandra_unknown_names": cassandra_unknown_names,
+                "cassandra_renamed_names": cassandra_renamed_names}

@@ -2,7 +2,7 @@
 # Replaces a dead node by a blank host, which takes over its tokens and
 # streams their data from the replicas (replace_address_first_boot):
 #   ansible-playbook -i inventory community.cassandra.replace_node \
-#     -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.0.14
+#     -e cassandra_target_nodes=node9 -e cassandra_replace_address=10.0.0.14
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
 # cassandra, else the inventory's cluster group (lookup
@@ -20,10 +20,12 @@
 # what it deletes is on the screen, the one question covers it).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_target: add  # what cassandra_target_nodes are
 
 # Before anything is installed: every problem of the new hosts at once
 - name: Check the new hosts are ready
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true  # a host that errors must not drop out of the run
@@ -36,7 +38,7 @@
         _cassandra_new_node_reset: "{{ cassandra_replace_node_reset | default(false) | bool }}"
 
 - name: Check the replacement
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   any_errors_fatal: true
@@ -58,7 +60,7 @@
               - ansible_play_hosts_all | length == 1
               - cassandra_replace_address | default('') | length > 0
             fail_msg: >-
-              Replace one node per run: one host in cassandra_new_nodes, the dead node's address in
+              Replace one node per run: one host in cassandra_target_nodes, the dead node's address in
               cassandra_replace_address.
             quiet: true
 
@@ -177,7 +179,7 @@
         _cassandra_node_reset_confirmed: true  # on the replace_node screen, the one question
 
 - name: Replace the node
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   serial: 1
   any_errors_fatal: true
   become: true
@@ -192,7 +194,7 @@
         cassandra_service_health_down_ok: ["{{ cassandra_replace_address | default('(not set)') }}"]
 
 - name: Summary
-  hosts: "{{ cassandra_new_nodes }}"
+  hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false
   become: true
   tasks:

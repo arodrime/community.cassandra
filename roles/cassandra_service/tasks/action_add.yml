@@ -54,7 +54,7 @@
         _cassandra_stream_join: true
         _cassandra_stream_peers: >-
           {{ query('community.cassandra.cassandra_nodes')
-             | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_new_nodes | default(inventory_hostname)))
+             | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes | default(inventory_hostname)))
              | list }}
         _cassandra_stream_advice: >-
           {{ _cassandra_join_then | default('if nodetool netstats on it still shows streams, run add_node again to go on waiting.') }}

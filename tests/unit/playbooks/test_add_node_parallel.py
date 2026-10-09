@@ -43,7 +43,7 @@ def test_prepared_all_at_once_before_the_starts_one_at_a_time():
     add = PLAYS[NAMES.index("Add the new nodes, one at a time")]
     assert NAMES.index("Prepare the new nodes, all at once") < NAMES.index("Add the new nodes, one at a time")
     assert "serial" not in prepare and prepare["any_errors_fatal"] is True
-    assert prepare["hosts"] == add["hosts"] == "{{ cassandra_new_nodes }}"
+    assert prepare["hosts"] == add["hosts"] == "{{ cassandra_target_nodes }}"
     assert "action_add_prepare.yml" in [included(t) for t in walk(prepare["tasks"])]
     assert add["serial"] == 1
     assert add["tasks"][0]["vars"]["_cassandra_add_prepared"] is True

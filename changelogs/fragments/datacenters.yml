@@ -1,2 +1,2 @@
 minor_changes:
-  - New add_datacenter and remove_datacenter playbooks.
+  - New add_datacenter (its nodes in ``cassandra_target_nodes``) and remove_datacenter playbooks.

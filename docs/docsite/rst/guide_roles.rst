@@ -89,7 +89,7 @@ Then, naming the cluster on each run (see `Inventory`_):
 
     $ ansible-playbook -i node1, community.cassandra.import_cluster
     $ ansible-playbook community.cassandra.health_check -e cassandra_hosts=orders
-    $ CASSANDRA_CLUSTER=orders ansible-playbook community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+    $ CASSANDRA_CLUSTER=orders ansible-playbook community.cassandra.decommission_node -e cassandra_target_nodes=node7
 
 Without ``-i node1,`` (a re-import with the inventory of ``ansible.cfg``), the import is given every host of the
 inventory, with their variables (the JMX login, the connection): fine when it holds this cluster alone; with other
@@ -208,20 +208,28 @@ a seed list when they are not). It also checks that the account Cassandra runs a
 warns about the ``cassandra_*`` variables set that no role or playbook knows (a typo, or a name from another version:
 they have no effect), with the known one they are close to.
 
+Every operation that targets particular nodes takes them in ``cassandra_target_nodes`` (an inventory pattern: hosts or
+groups, comma-separated): the nodes to add, decommission, reset or replace with, the dead node to remove, the
+upgrade's canary, the nodes ``status`` reads the ring from. ``cassandra_target_dc`` and ``cassandra_target_rack`` name a
+datacenter and a rack the same way. A former name (``cassandra_new_nodes``, ``cassandra_leaving_nodes``,
+``cassandra_reset_nodes``, ``cassandra_dead_node_address``, ``cassandra_upgrade_canary``, ``cassandra_status_from``)
+stops the run before anything is done, as ``cassandra_target_nodes`` given to a playbook that takes none (``help`` and
+``import_cluster`` excepted: they read the inventory alone).
+
 .. code-block:: console
 
     $ ansible-playbook -i inventory community.cassandra.preflight
     $ ansible-playbook -i inventory community.cassandra.create_cluster
-    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.rolling_restart
     $ ansible-playbook -i inventory community.cassandra.apply_config
     $ ansible-playbook -i inventory community.cassandra.health_check
     $ ansible-playbook -i inventory community.cassandra.status
     $ ansible-playbook -i inventory community.cassandra.cleanup
-    $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_leaving_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_target_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.topology --check
-    $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_new_nodes=node9 -e cassandra_replace_address=10.0.1.14
-    $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_reset_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.replace_node -e cassandra_target_nodes=node9 -e cassandra_replace_address=10.0.1.14
+    $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7
     $ ansible-playbook -i inventory community.cassandra.change_seeds
     $ ansible-playbook -i node1 community.cassandra.import_cluster
 
@@ -230,7 +238,7 @@ gossip and the native transport running, no streams, schema agreement, and the s
 node is only touched when the cluster is healthy, and the run stops at the first node that does not come back
 healthy (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same
 checks on its own, changing nothing, and fails when there is a problem, so it can be scheduled.
-``status`` only shows the ring as one node sees it (the first that answers, or ``cassandra_status_from``), per
+``status`` only shows the ring as one node sees it (the first that answers, of ``cassandra_target_nodes`` if given), per
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
 
@@ -331,7 +339,7 @@ Add the host to the inventory, in its datacenter's group, then:
 
 .. code-block:: console
 
-    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7
 
 The other nodes are not touched, unless the new host is listed in ``cassandra_seeds`` too: a seed does not bootstrap,
 so it joins as a regular node, its ``cassandra.yaml`` listing the other seeds (never itself, nor another host not in
@@ -435,7 +443,7 @@ for the token allocator then.
 Removing a node
 ---------------
 
-``decommission_node`` removes the nodes in ``cassandra_leaving_nodes``, one at a time: each one streams its data to the
+``decommission_node`` removes the nodes in ``cassandra_target_nodes``, one at a time: each one streams its data to the
 others, then Cassandra is stopped and disabled on it. To remove a seed, take it out of ``cassandra_seeds`` in the
 inventory: the other nodes, which still list it, then get the new list first, live, as ``change_seeds`` applies it (a
 node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that still has nodes afterwards left with no
@@ -505,8 +513,8 @@ out a host of the group (the plan needs them all), a datacenter that still has n
 has replicas there (unless ``cassandra_decommission_force``), an add while a decommission is still running, two hosts
 with one address, a host marked absent still in the ring that does not answer or is down (``remove_dead_node``
 then), a node of the group that does not answer, one token per node with adds and removals in one run (add first,
-then mark the hosts absent, then ``move_node``), and ``cassandra_new_nodes``, ``cassandra_leaving_nodes`` or
-``cassandra_reset_nodes`` on the command line (the plan says which nodes). The cleanup of the nodes that handed data
+then mark the hosts absent, then ``move_node``), and ``cassandra_target_nodes`` on the command line (the plan says
+which nodes). The cleanup of the nodes that handed data
 over to the new ones is left to you: its command is printed. An interrupted run is run again: the plan is worked out
 again from the ring and the nodes' seed lists, a bootstrap or a decommission still running is waited for. Nothing to
 do: it says so.
@@ -524,7 +532,7 @@ Replacing a dead node
 ``replace_node`` starts a blank host in place of a dead node: it takes over the dead node's tokens and streams their
 data from the other replicas (``replace_address_first_boot``). Put the new host in the cluster's group and take the
 dead one out of the inventory (the new host may reuse its address), then run it with the new host in
-``cassandra_new_nodes`` and the dead node's address in ``cassandra_replace_address``. Only a node that is down in the
+``cassandra_target_nodes`` and the dead node's address in ``cassandra_replace_address``. Only a node that is down in the
 ring can be replaced. A dead seed: take it out of ``cassandra_seeds`` with ``change_seeds`` first, replace it, then
 make the new node a seed.
 
@@ -545,8 +553,8 @@ directories stay, they may be mount points). The directories are those of the in
 
 .. code-block:: console
 
-    $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_reset_nodes=node7
-    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_new_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7
+    $ ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7
 
 ``add_node`` (and ``topology``, for the hosts it adds) resets such a node by itself (``cassandra_add_node_reset``, on by
 default), but only when all hold: Cassandra is down on the node; no up node of the cluster sees it in its ring and its
@@ -582,8 +590,9 @@ false`` skips the question); ``--check`` shows it and changes nothing. A second 
 before their screen, show what it deletes there (a ``data loss`` warning per node), and their one question covers it.
 
 
-When a node is dead for good and will not be replaced, take it out of the inventory and run ``remove_dead_node`` with
-its address in ``cassandra_dead_node_address``: ``removenode`` streams its ranges from the other replicas.
+When a node is dead for good and will not be replaced, take it out of the inventory (or mark it
+``cassandra_node_state: absent``) and run ``remove_dead_node`` with it in ``cassandra_target_nodes``: its address, its
+host ID, or its inventory name when marked absent. ``removenode`` streams its ranges from the other replicas.
 ``cassandra_dead_node_method: removenode_force`` finishes a removal of that node that is stuck. It runs on the node
 coordinating the removal, or else on one whose ring shows it ``DL`` (dead, being removed), and never while another
 node is leaving or being removed, since ``nodetool removenode force`` finishes every removal or decommission that node
@@ -601,7 +610,7 @@ Datacenters
 -----------
 
 ``add_datacenter`` adds a datacenter: put its nodes in the cluster's group, all with the new ``cassandra_dc``, then
-run it with them in ``cassandra_new_nodes``, the keyspaces that get replicas there in
+run it with them in ``cassandra_target_nodes``, the keyspaces that get replicas there in
 ``cassandra_datacenter_replication`` (``{"orders": 3, "system_auth": 3}``; NetworkTopologyStrategy only) and an
 existing datacenter to stream from in ``cassandra_rebuild_source_dc``. The nodes join one at a time without
 streaming, the keyspaces are altered, then each node streams those keyspaces (``nodetool rebuild``). Make one node per rack
@@ -725,7 +734,8 @@ pass). Then run ``upgrade`` once per phase, with ``-e cassandra_upgrade_phase=``
     After you confirm that backups and repairs are paused and the schema frozen: a snapshot and a copy of the
     configuration on every node.
 ``canary``
-    Upgrades one node (``cassandra_upgrade_canary``, default the first non-seed of the first datacenter). Watch it.
+    Upgrades one node (``-e cassandra_target_nodes=<node>``, default the first non-seed of the first datacenter).
+    Watch it.
 ``rolling``
     Upgrades the others, datacenter by datacenter, rack by rack, one node at a time. Re-run it to resume: upgraded
     nodes are skipped.

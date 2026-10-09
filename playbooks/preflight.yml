@@ -23,16 +23,27 @@
         tasks_from: hosts_check.yml
 
 # The nodes of the cluster (without the hosts marked cassandra_node_state:
-# absent), and the nodes decommission_node removes (cassandra_leaving_nodes)
+# absent), and the nodes decommission_node removes (cassandra_target_nodes).
+# The playbook that imports this one says what its cassandra_target_nodes are
+# (_cassandra_preflight_target): add (add_node, add_datacenter, replace_node),
+# leave (decommission_node), reset (reset_node), dead (remove_dead_node) or
+# canary (upgrade); unset, the playbook takes none (target_nodes_check.yml).
 - name: Cassandra preflight checks
   hosts: >-
     {{ 'localhost:!localhost' if _cassandra_preflight_skip | default(false) | bool
        else (query('community.cassandra.cassandra_nodes')
-             + (query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes) if cassandra_leaving_nodes | default('') | length > 0 else [])
+             + (query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
+                if _cassandra_preflight_target | default('') == 'leave' and cassandra_target_nodes | default('') | length > 0 else [])
                | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}
   gather_facts: true
   become: true
   tasks:
+    # also run by the first play, which --limit skips
+    - name: Check cassandra_target_nodes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: target_nodes_check.yml
+
     # An unreachable host would silently be left out of the rest of the run
     - name: Every node answers
       ansible.builtin.assert:
@@ -86,7 +97,9 @@
               {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
                  | map(attribute='inventory_hostname') | list }}
             # a node being added or reset may run alone, another cluster's way (e.g. the package's own instance)
-            _aside_pattern: "{{ [cassandra_new_nodes | default([]), cassandra_reset_nodes | default([])] | flatten | select | join(',') }}"
+            _aside_pattern: >-
+              {{ [cassandra_target_nodes | default([])] | flatten | select | join(',')
+                 if _cassandra_preflight_target | default('') in ['add', 'reset'] else '' }}
             _aside: "{{ query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else [] }}"
 
         # Also waits for a node that is still starting (JMX not listening yet); another
@@ -209,8 +222,8 @@
 
     # Once the cluster exists, every seed must be a live member: a stale seed
     # (decommissioned node, old IP) breaks bootstraps. A host the run adds
-    # (cassandra_new_nodes; topology: any host of the group) joins with the
-    # other seeds and is made a seed once up (cassandra_service join_seeds.yml)
+    # (add_node's cassandra_target_nodes; topology: any host of the group)
+    # joins with the other seeds and is made a seed once up (cassandra_service join_seeds.yml)
     - name: Check the running cluster
       run_once: true
       when: _cassandra_preflight_running_nodes | length > 0
@@ -245,9 +258,9 @@
                  else 'It is not a node of this cluster: check cassandra_seeds.' }}
             quiet: true
           vars:
-            # the hosts this run adds: cassandra_new_nodes (add_node), _cassandra_preflight_adding (topology)
+            # the hosts this run adds: cassandra_target_nodes (add_node), _cassandra_preflight_adding (topology)
             _new_nodes: "{{ _nn if _nn is string else _nn | join(',') }}"
-            _nn: "{{ cassandra_new_nodes | default('', true) }}"
+            _nn: "{{ cassandra_target_nodes | default('', true) if _cassandra_preflight_target | default('') == 'add' else '' }}"
             _adding: >-
               {{ (query('ansible.builtin.inventory_hostnames', _new_nodes) if _new_nodes else [])
                  + _cassandra_preflight_adding | default([]) }}
@@ -300,8 +313,9 @@
     # when the datacenter's ring has more than 1 rack but fewer than its
     # replication factor hint. The ring counts down nodes too (a dead node's
     # rack is still there for remove_dead_node and replace_node), and each new
-    # node joins the ring the next one sees (in cassandra_new_nodes order, else
-    # in create_cluster's start order: cassandra_start_order). A
+    # node joins the ring the next one sees (in the order of add_node's
+    # cassandra_target_nodes, else in create_cluster's start order:
+    # cassandra_start_order). A
     # replacement allocates nothing (it takes the dead node's tokens). A
     # datacenter not in the ring yet (or no node running): the inventory's
     # racks, 1 or at least the hint. One token per node: no allocator (the
@@ -322,10 +336,11 @@
           {{ [] if _cassandra_preflight_cluster_reset | default(false) | bool
              else ((cassandra_preflight_status.cluster_status | default({}, true))[item] | default({})).nodes | default([]) }}
         _ring_racks: "{{ _ring_nodes | map(attribute='rack') | unique | list }}"
-        # the nodes to decommission (cassandra_leaving_nodes) join nothing
+        # the nodes to decommission (cassandra_target_nodes) join nothing
         _inventory: >-
-          {{ ansible_play_hosts | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)
-                                       if cassandra_leaving_nodes | default('') | length > 0 else [])
+          {{ ansible_play_hosts | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
+                                       if _cassandra_preflight_target | default('') == 'leave'
+                                          and cassandra_target_nodes | default('') | length > 0 else [])
              | map('extract', hostvars, '_cassandra_preflight') | selectattr('cassandra_dc', 'equalto', item) | list }}
         _inventory_racks: "{{ _inventory | map(attribute='cassandra_rack') | unique | list }}"
         # the hosts of the datacenter not in its ring yet, refused in turn
@@ -339,7 +354,7 @@
           {%-   set racks = _ring_racks | list -%}
           {%-   set new = _inventory | rejectattr('address', 'in', _ring_nodes | map(attribute='address') | list) | list -%}
           {%-   set order = [] -%}
-          {%-   set nn = cassandra_new_nodes | default('', true) -%}
+          {%-   set nn = cassandra_target_nodes | default('', true) if _cassandra_preflight_target | default('') == 'add' else '' -%}
           {%-   set nn = nn | join(',') if nn is iterable and nn is not string else nn | string -%}
           {%-   set _ = order.extend(query('ansible.builtin.inventory_hostnames', nn) if nn
                                      else ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list

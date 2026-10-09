@@ -87,6 +87,7 @@ def seed_up(item, **extra):
     hostvars = {"n1": node(1, seed_entry="10.0.0.1"), "n2": node(2), "n3": node(3),
                 "n5": node(5, running=False, live="", seed_entry="10.0.0.5")}
     extra.setdefault("cassandra_preflight_status", ring(1, 2, 3))
+    extra.setdefault("_cassandra_preflight_target", "add")
     variables = dict(SEED_UP["vars"], item=item, hostvars=hostvars, ansible_play_hosts=GROUP, _from="n1",
                      groups={"all": GROUP, "prod": GROUP}, cassandra_hosts="prod", **extra)
     return render("{{ %s }}" % SEED_UP["ansible.builtin.assert"]["that"], **variables)
@@ -95,16 +96,19 @@ def seed_up(item, **extra):
 def test_preflight_refuses_a_seed_out_of_the_ring_the_run_does_not_add():
     assert seed_up("10.0.0.1") is True
     assert seed_up("10.0.0.5") is False  # e.g. rolling_restart, or add_node of another host
-    assert seed_up("10.0.0.5", cassandra_new_nodes="n3") is False
-    assert seed_up("10.0.0.9", cassandra_new_nodes="n5") is False  # no host of the cluster
+    assert seed_up("10.0.0.5", cassandra_target_nodes="n3") is False
+    assert seed_up("10.0.0.9", cassandra_target_nodes="n5") is False  # no host of the cluster
+    # the nodes of an operation that adds none (decommission_node, reset_node, upgrade...)
+    for kind in ("leave", "reset", None):
+        assert seed_up("10.0.0.5", cassandra_target_nodes="n5", _cassandra_preflight_target=kind) is False
 
 
 def test_preflight_lets_add_node_and_topology_add_a_seed():
-    assert seed_up("10.0.0.5", cassandra_new_nodes="n5") is True
-    assert seed_up("10.0.0.5", cassandra_new_nodes=["n5"]) is True
+    assert seed_up("10.0.0.5", cassandra_target_nodes="n5") is True
+    assert seed_up("10.0.0.5", cassandra_target_nodes=["n5"]) is True
     assert seed_up("10.0.0.5", _cassandra_preflight_adding=["n1", "n2", "n3", "n5"]) is True
     # still bootstrapping (an earlier run): waited for again
-    assert seed_up("10.0.0.5", cassandra_new_nodes="n5", cassandra_preflight_status=ring(1, 2, 3, 5, joining=(5,))) is True
+    assert seed_up("10.0.0.5", cassandra_target_nodes="n5", cassandra_preflight_status=ring(1, 2, 3, 5, joining=(5,))) is True
     assert seed_up("10.0.0.5", cassandra_preflight_status=ring(1, 2, 3, 5, joining=(5,))) is False
     imports = load("playbooks", "topology.yml")[0]
     assert imports["ansible.builtin.import_playbook"] == "community.cassandra.preflight"
@@ -165,11 +169,11 @@ def test_add_node_applies_the_seeds_after_the_adds():
     hostvars = {"n1": node(1, seed_entry="10.0.0.1"), "n2": node(2), "n3": node(3),
                 "n5": node(5, seed_entry="10.0.0.5")}
     variables = dict(apply["vars"], hostvars=hostvars, groups={"all": GROUP, "prod": GROUP}, cassandra_hosts="prod")
-    assert render(apply["vars"]["_new_seeds"], cassandra_new_nodes="n5", **variables) == ["n5"]
-    assert render(apply["vars"]["_new_seeds"], cassandra_new_nodes="n3", **variables) == []
+    assert render(apply["vars"]["_new_seeds"], cassandra_target_nodes="n5", **variables) == ["n5"]
+    assert render(apply["vars"]["_new_seeds"], cassandra_target_nodes="n3", **variables) == []
     # every node of the cluster, standalone; topology runs its own seed step
     variables = {"groups": {"all": GROUP, "prod": GROUP}, "cassandra_hosts": "prod", "hostvars": hostvars,
-                 "cassandra_new_nodes": "n5"}
+                 "cassandra_target_nodes": "n5"}
     assert render(step["hosts"], **variables) == GROUP
     assert render(step["hosts"], _cassandra_screen_asked_by="topology", **variables) == "localhost:!localhost"
 
@@ -219,7 +223,7 @@ def test_decommission_applies_the_seeds_only_for_a_leaving_seed_or_to_reload():
     assert "not ansible_check_mode" in when
     for value in (True, False):
         hv = {"n2": {"_cassandra_decommission_seeds_apply": value}}
-        assert render("{{ %s }}" % when[0], hostvars=hv, cassandra_leaving_nodes="n2", groups={"all": ["n2"]}) is value
+        assert render("{{ %s }}" % when[0], hostvars=hv, cassandra_target_nodes="n2", groups={"all": ["n2"]}) is value
 
 
 def test_a_failed_seed_step_stops_the_run():

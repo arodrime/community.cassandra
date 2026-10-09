@@ -9,7 +9,7 @@
   vars:
     _from: >-
       {{ query('community.cassandra.cassandra_nodes')
-         | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_leaving_nodes)) | first | default('') }}
+         | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) | first | default('') }}
     # the address the other nodes see this node by
     _address: >-
       {{ (cassandra_extra_settings | default({})).broadcast_address

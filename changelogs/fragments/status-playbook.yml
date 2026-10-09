@@ -1,2 +1,2 @@
 minor_changes:
-  - New status playbook - read-only view of the ring from one node, per datacenter with a summary line, and the differences between the inventory and the ring.
+  - New status playbook - read-only view of the ring from one node (the first that answers, of ``cassandra_target_nodes`` when given), per datacenter with a summary line, and the differences between the inventory and the ring.

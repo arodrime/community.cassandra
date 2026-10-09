@@ -67,7 +67,7 @@ def test_absent_and_unreachable():
     assert plan["remove"] == [] and plan["gone"] == [] and plan["silent"] == ["node5"]
     assert len(plan["problems"]) == 1
     assert plan["problems"][0].startswith("node4 (10.0.0.4) is marked absent and still in the ring (dc1, UN) but does not answer")
-    assert "remove_dead_node -e cassandra_dead_node_address=10.0.0.4" in plan["problems"][0]
+    assert "remove_dead_node -e cassandra_target_nodes=10.0.0.4" in plan["problems"][0]
 
 
 def test_absent_refusals():
@@ -236,7 +236,7 @@ def test_screen_reset_and_unknown_warnings():
             " (no snapshot, no backup), in:") in lines
     assert lines[lines.index("WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never"
                              " touched (an address mistyped, a host missing, or a dead node: remove_dead_node -e"
-                             " cassandra_dead_node_address=10.0.0.9)") + 1].startswith("WARNING  data loss")
+                             " cassandra_target_nodes=10.0.0.9)") + 1].startswith("WARNING  data loss")
     assert "           /d/data: 1 entries: system" in lines  # under its warning's text
     check = cassandra_topology_screen(plan, hosts, ring=r, check=True)
     assert not [line for line in check if "data loss:" in line]

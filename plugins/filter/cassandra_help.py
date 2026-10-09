@@ -58,9 +58,10 @@ OPERATIONS = [
     {"name": "status", "theme": "read-only",
      "summary": "The ring as nodetool status shows it from one node, per datacenter; a down node is shown, not an"
                 " error.",
-     "options": [("-e cassandra_status_from=<node>", "reads the ring from that node", "the first node that answers"),
+     "options": [("-e cassandra_target_nodes=<nodes>", "reads the ring from the first of them that answers",
+                  "the first node that answers"),
                  ("-e cassandra_status_raw=true", "also prints nodetool's own output", "false")],
-     "example": ("from one node", ["-e cassandra_status_from=<node>"])},
+     "example": ("from one node", ["-e cassandra_target_nodes=<node>"])},
     {"name": "health_check", "theme": "read-only",
      "summary": "Checks the cluster from every node (ring, gossip, native transport, streams, schema, ports); fails"
                 " on a problem, so it can be scheduled."},
@@ -71,7 +72,7 @@ OPERATIONS = [
      "summary": "Adds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in"
                 " turn. Put them in their rack's group first; one in cassandra_seeds joins as a regular node, then"
                 " becomes a seed.",
-     "options": [("-e cassandra_new_nodes=NEW_NODE", "the hosts to add (comma-separated), already in the inventory",
+     "options": [("-e cassandra_target_nodes=NEW_NODE", "the hosts to add (comma-separated), already in the inventory",
                   None),
                  ("-e cassandra_add_node_reset=false", "refuses a new node that has data instead of emptying it (only"
                                                        " when down, in no ring, of this cluster or 'Test Cluster',"
@@ -97,7 +98,7 @@ OPERATIONS = [
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"
                 " a node no longer in cassandra_seeds is first dropped from the other nodes' seed lists; refuses a"
                 " datacenter left with nodes but no seed, or fewer nodes than replicas.",
-     "options": [("-e cassandra_leaving_nodes=<nodes>", "the nodes to remove (comma-separated)", None),
+     "options": [("-e cassandra_target_nodes=<nodes>", "the nodes to remove (comma-separated)", None),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
                                                           " replicas", "false"),
                  RESUME],
@@ -105,15 +106,16 @@ OPERATIONS = [
     {"name": "replace_node", "theme": "nodes",
      "summary": "Replaces a dead node by a blank host, which takes over its tokens and data. In the inventory, the"
                 " new host in, the dead one out.",
-     "options": [("-e cassandra_new_nodes=NEW_NODE", "the new host", None),
+     "options": [("-e cassandra_target_nodes=NEW_NODE", "the new host", None),
                  ("-e cassandra_replace_address=DEAD_NODE_ADDRESS", "the address of the dead node", None),
                  ("-e cassandra_replace_node_reset=true", "first empties the new host (a node replacing itself)",
                   "false")],
      "example": ("a node replacing itself", ["-e cassandra_replace_node_reset=true"])},
     {"name": "remove_dead_node", "theme": "nodes", "cql": True,
      "summary": "Last resort for a dead node that will not be replaced: removenode (or assassinate). Take it out of"
-                " the inventory first.",
-     "options": [("-e cassandra_dead_node_address=DEAD_NODE_ADDRESS", "the address of the dead node", None),
+                " the inventory (or mark it absent) first.",
+     "options": [("-e cassandra_target_nodes=DEAD_NODE_ADDRESS", "the dead node: its address (or its host ID, or"
+                                                                 " its inventory name when marked absent)", None),
                  ("-e cassandra_dead_node_method=removenode_force", "removenode, removenode_force (finishes a stuck"
                                                                     " removenode) or assassinate", "removenode"),
                  ("-e cassandra_dead_node_new_removal=true", "starts a removenode when one seems to be running",
@@ -122,7 +124,7 @@ OPERATIONS = [
     {"name": "reset_node", "theme": "nodes",
      "summary": "Empties nodes that are not members of the ring (started once by mistake, a failed bootstrap) for a"
                 " fresh start.",
-     "options": [("-e cassandra_reset_nodes=NODE", "the nodes to empty (comma-separated)", None)],
+     "options": [("-e cassandra_target_nodes=NODE", "the nodes to empty (comma-separated)", None)],
      "example": CHECK},
     {"name": "move_node", "theme": "nodes", "single_token": True, "cql": "plan",
      "summary": "One token per node: moves nodes to new tokens, one at a time (by default the fewest moves that even"
@@ -183,7 +185,7 @@ OPERATIONS = [
                 " canary, rolling, sstables, cleanup.",
      "options": [("-e cassandra_upgrade_phase=preflight", "preflight, prepare, canary, rolling, sstables or cleanup,"
                                                           " in that order", None),
-                 ("-e cassandra_upgrade_canary=<node>", "the node the canary phase upgrades",
+                 ("-e cassandra_target_nodes=<node>", "canary phase: the node it upgrades",
                   "the first non-seed by datacenter, rack and name (else the first node)"),
                  ("-e cassandra_rolling_resume=true", "sstables phase: resumes an interrupted run, skipping the nodes"
                                                       " already done", "false")],
@@ -199,8 +201,8 @@ OPERATIONS = [
     {"name": "add_datacenter", "theme": "cluster", "cql": True,
      "summary": "Adds a datacenter: its nodes join without streaming, the keyspaces get replicas there, then each"
                 " node rebuilds from another datacenter.",
-     "options": [("-e cassandra_new_nodes=NEW_DC_GROUP", "the new datacenter's nodes (a group or a comma-separated"
-                                                         " list)", None),
+     "options": [("-e cassandra_target_nodes=NEW_DC_GROUP", "the new datacenter's nodes (a group or a comma-separated"
+                                                            " list)", None),
                  ("-e cassandra_rebuild_source_dc=<dc>", "the datacenter they stream from", None),
                  ("-e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'",
                   "the replicas of each keyspace in the new datacenter", None)],

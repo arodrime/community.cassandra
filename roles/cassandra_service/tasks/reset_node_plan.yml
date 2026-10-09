@@ -169,7 +169,7 @@
     - not _cassandra_node_reset_auto | default(false) | bool or _held | length > 0  # add_node's: no data, no reset
   vars:
     _held: "{{ cassandra_node_reset_found.files | default([]) | rejectattr('path', 'search', '/lost[+]found$') | list }}"
-    _aside_pattern: "{{ [cassandra_new_nodes | default([]), cassandra_reset_nodes | default([])] | flatten | select | join(',') }}"
+    _aside_pattern: "{{ [cassandra_target_nodes | default([])] | flatten | select | join(',') }}"
     # the nodes being added or reset (the play's hosts when not named: topology runs this on every node)
     _aside: >-
       {{ query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else ansible_play_hosts_all }}

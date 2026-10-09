@@ -98,7 +98,7 @@ def test_racks_hint_as_a_string_and_4():
 
 
 @pytest.mark.parametrize("new_nodes, groups, ok", [
-    # add_node runs cassandra_new_nodes in its order: n3 (r1) first joins a 1-rack ring, then n2 brings r2
+    # add_node runs cassandra_target_nodes in its order: n3 (r1) first joins a 1-rack ring, then n2 brings r2
     ("n3,n2", {}, True),
     (["n3", "n2"], {}, True),
     ("new", {"all": ["n1", "n2", "n3"], "new": ["n3", "n2"]}, True),
@@ -106,12 +106,27 @@ def test_racks_hint_as_a_string_and_4():
     ("n*:!n1:!n2", {}, True),  # n3 only, then n2 in inventory order
     # n2 first: n3 then joins r1 in a 2-rack ring
     ("n2, n3", {}, False),
-    ("", {}, True),  # no cassandra_new_nodes (create_cluster): its start order, n3 first
+    ("", {}, True),  # no cassandra_target_nodes (create_cluster): its start order, n3 first
 ])
 def test_racks_join_in_the_new_nodes_order(new_nodes, groups, ok):
     inventory = {"n1": N1, "n2": N2, "n3": ("r1", "10.0.0.3")}
     groups = groups or {"all": list(inventory)}
-    assert passes(inventory, [N1], cassandra_new_nodes=new_nodes, groups=groups) is ok
+    assert passes(inventory, [N1], cassandra_target_nodes=new_nodes, _cassandra_preflight_target="add", groups=groups) is ok
+
+
+@pytest.mark.parametrize("kind", ["leave", "reset", None])
+def test_racks_other_targets_keep_the_start_order(kind):
+    # n2 first would refuse n3; the nodes of another operation do not say the order: the start order, n3 first
+    inventory = {"n1": N1, "n2": N2, "n3": ("r1", "10.0.0.3")}
+    extra = {"_cassandra_preflight_target": kind} if kind else {}
+    assert passes(inventory, [N1], cassandra_target_nodes="n2,n3", **extra) is True
+
+
+def test_racks_leaving_nodes_join_nothing():
+    # n8 (r1) leaves: it is not a new node in a 2-rack ring
+    inventory = {"n1": N1, "n2": N2, "n8": ("r1", "10.0.0.8")}
+    assert passes(inventory, [N1, N2], cassandra_target_nodes="n8", _cassandra_preflight_target="leave") is True
+    assert passes(inventory, [N1, N2], cassandra_target_nodes="n8", _cassandra_preflight_target="add") is False
 
 
 def test_a_replacement_allocates_nothing():

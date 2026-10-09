@@ -102,7 +102,7 @@ def test_removal_status_read_on_every_node():
 
 def keep(hostvars):
     return render(KEEP["ansible.builtin.set_fact"]["cassandra_dead_removal"], ansible_play_hosts=["n1", "n2"],
-                  hostvars=hostvars, cassandra_dead_ring=DL_RING, cassandra_dead_node_address="10.0.0.4")
+                  hostvars=hostvars, cassandra_dead_ring=DL_RING, _dead_address="10.0.0.4")
 
 
 def test_removal_found_on_the_second_node():
@@ -176,7 +176,7 @@ def test_force_runs_on_the_coordinator_not_the_first_node():
     choose = next(t for t in REMOVE["tasks"] if t["name"] == "Choose the node that forces it")
     hostvars = {"n1": {"cassandra_dead_force_ring": DN_RING}, "n2": {"cassandra_dead_force_ring": DL_RING}}
     target = render(choose["ansible.builtin.set_fact"]["cassandra_dead_force"], ansible_play_hosts=["n1", "n2"],
-                    hostvars=hostvars, cassandra_dead_node_address="10.0.0.4",
+                    hostvars=hostvars, _dead_address="10.0.0.4",
                     cassandra_dead_removal={"state": "resume", "on": "n2", "reason": ""})
     assert target == {"on": "n2", "reason": ""}
     for name in ("Finish a stuck removal (removenode force, on the node chosen above)", "Read the ring after removenode force"):
@@ -242,3 +242,64 @@ def test_decommission_job_that_changed_nothing_is_not_the_end(job, mode, expecte
                      cassandra_stream_job_status=job, _cassandra_stream_self={"mode": mode},
                      _cassandra_stream_state={"stalled": False, "start": 0}, cassandra_stream_max_time=0)
     assert render(where["ansible.builtin.set_fact"]["_cassandra_stream_now"], **variables) == expected
+
+
+RING = {"cluster_status": {"dc1": {"nodes": [{"address": "10.0.0.1", "host_id": "aaaa-1"},
+                                             {"address": "10.0.0.4", "host_id": "dddd-4"}]}}}
+
+
+@pytest.mark.parametrize("target, ring, address", [
+    ("10.0.0.4", RING, "10.0.0.4"),  # its address
+    ("dddd-4", RING, "10.0.0.4"),  # its host ID, once the ring is read
+    ("dddd-4", None, "dddd-4"),  # before: as given (the ring is read before the check)
+    ("node4", RING, "10.0.0.4"),  # its inventory name: the address the inventory gives it
+    ("node5", RING, ""),  # an inventory name without an address: refused by the check
+    ("10.0.0.9", RING, "10.0.0.9"),  # an inventory host named by its address
+])
+def test_dead_node_by_address_host_id_or_inventory_name(target, ring, address):
+    variables = dict(cassandra_target_nodes=target, groups={"all": ["node1", "node4", "node5", "10.0.0.9"]},
+                     hostvars={"node4": {"ansible_host": "node4.example.com", "cassandra_listen_address": "10.0.0.4"},
+                               "node5": {"ansible_host": "node5.example.com"}, "10.0.0.9": {}},
+                     _dead_target=REMOVE["vars"]["_dead_target"], _ip=REMOVE["vars"]["_ip"])
+    if ring:
+        variables["cassandra_dead_ring"] = ring
+    assert render(REMOVE["vars"]["_dead_address"], **variables) == address
+
+
+def test_former_name_refused_with_its_name_now():
+    check = load("roles", "cassandra_service", "tasks", "target_nodes_check.yml")[0]["ansible.builtin.assert"]
+    msg = render(check["fail_msg"], _renamed={"cassandra_new_nodes": "cassandra_target_nodes"})
+    assert msg == "cassandra_new_nodes is renamed cassandra_target_nodes: set cassandra_target_nodes instead. Nothing was changed."
+
+
+DEAD_CHECK = next(t for t in REMOVE["tasks"] if t["name"] == "Check the dead node")["ansible.builtin.assert"]
+REQUEST = next(t for t in REMOVE["tasks"] if t["name"] == "Check the request")["ansible.builtin.assert"]
+
+
+@pytest.mark.parametrize("target, ok", [
+    ("10.0.0.4", True), ("dddd-4", True), ("node4", True),
+    ("dddd-9", False),  # neither an address, a host ID of the ring nor an inventory host
+    ("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", True),  # a host ID no longer in the ring: removed already, nothing to do
+    ("node5", False),  # an inventory host without an address
+    ("10.0.0.1", False),  # a node of the run
+    ("node6", False),  # an inventory name whose address is not the ring's: not taken for a node removed already
+    ("10.0.0.6", True),  # an address not in the ring: removed already, nothing to do
+    ("10.0.0.9", True),  # the same, for an inventory host named by its address
+])
+def test_dead_node_checked_once_the_ring_is_read(target, ok):
+    hostvars = {"n1": {"_cassandra_preflight": {"address": "10.0.0.1"}},
+                "node4": {"cassandra_listen_address": "10.0.0.4"}, "node5": {"ansible_host": "node5.example.com"},
+                "node6": {"ansible_host": "10.0.0.6"}, "10.0.0.9": {"ansible_host": "10.0.0.99"}}
+    task = next(t for t in REMOVE["tasks"] if t["name"] == "Check the dead node")
+    variables = dict(REMOVE["vars"], cassandra_target_nodes=target, cassandra_dead_ring=RING, ansible_play_hosts=["n1"],
+                     groups={"all": ["n1", "node4", "node5", "node6", "10.0.0.9"]}, hostvars=hostvars, **task["vars"])
+    assert all(render("{{ %s }}" % c, **variables) for c in DEAD_CHECK["that"]) is ok
+    msg = render(DEAD_CHECK["fail_msg"], **variables)
+    if not ok:
+        assert target in msg
+
+
+@pytest.mark.parametrize("target, ok", [("10.0.0.4", True), ("node4", True), ("", False), ("node4,node5", False)])
+def test_one_dead_node_per_run(target, ok):
+    variables = dict(REMOVE["vars"], cassandra_target_nodes=target)
+    assert all(render("{{ %s }}" % c, **variables) for c in REQUEST["that"]) is ok

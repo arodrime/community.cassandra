@@ -1,2 +1,2 @@
 minor_changes:
-  - New upgrade playbook - moves a cluster to the next series in phases (preflight, prepare, canary, rolling, sstables, cleanup).
+  - New upgrade playbook - moves a cluster to the next series in phases (preflight, prepare, canary, rolling, sstables, cleanup); ``cassandra_target_nodes`` picks the canary node.

@@ -94,7 +94,7 @@ def test_help_reads_the_inventory_only(tmp_path):
             ' ([defaults])",\n        "",\n        "Cassandra help for the inventory') in out
     assert "rack2: node3 192.0.2.13 (seed), node4 192.0.2.14 (absent)" in out
     assert ("$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass"
-            " community.cassandra.decommission_node -e cassandra_leaving_nodes=node4") in out
+            " community.cassandra.decommission_node -e cassandra_target_nodes=node4") in out
     assert "Vault-encrypted files not read (help decrypts nothing): group_vars/orders/secrets.yml." in out
     # the CQL user is in the file not read
     assert "cassandra_cql_username is not set in the files\",\n        \"  read (a vaulted one may set it)" in out
@@ -194,7 +194,7 @@ def test_help_write_is_idempotent(tmp_path):
     runbook = (inv / "RUNBOOK.md").read_text()
     assert runbook.startswith("# RUNBOOK\n")
     assert ("ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
-            " -e cassandra_leaving_nodes=node4\n") in runbook
+            " -e cassandra_target_nodes=node4\n") in runbook
     assert SECRET not in runbook
 
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml", "-e", "help_write=true")
