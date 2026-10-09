@@ -1,0 +1,20 @@
+---
+# ansible-core 2.21 shares one host's facts with every host of the play once a
+# run_once task ran in it (ansible/ansible#87148: the facts of setup,
+# package_facts or service_facts of one node then stand for all of them). The
+# playbooks have run_once tasks everywhere: they stop on 2.21 unless the
+# operator checked that the release in use has the fix
+# (cassandra_ansible_core_check: false).
+- name: Check the ansible-core version
+  ansible.builtin.assert:
+    that: >-
+      ansible_version.full is version('2.21.0', '<') or ansible_version.full is version('2.22.0', '>=')
+      or not cassandra_ansible_core_check | default(true) | bool
+    fail_msg: >-
+      ansible-core {{ ansible_version.full }}: 2.21 gives every node the facts of one of them after a run_once task
+      (ansible/ansible#87148), which the operations read to decide what to do on each node. Use ansible-core 2.20 or
+      older (pip install 'ansible-core<2.21'), or, with a 2.21 release that has the fix,
+      -e cassandra_ansible_core_check=false. Nothing was changed.
+    quiet: true
+  vars:
+    cassandra_output: true  # a verdict: its msg as is

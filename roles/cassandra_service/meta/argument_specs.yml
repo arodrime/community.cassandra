@@ -161,6 +161,13 @@ argument_specs:
             C(none) prints the command; C(sequential) runs it one node at a time (C(one) is the same);
             C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
             The cluster is checked before each batch.
+      cassandra_ansible_core_check:
+        type: bool
+        default: true
+        description:
+          - The playbooks stop on ansible-core 2.21, which gives every node the facts of one of them once a
+            C(run_once) task ran in the play (ansible/ansible#87148). C(false) runs them anyway, with a 2.21
+            release that has the fix.
       cassandra_add_node_reset:
         type: raw
         default: auto

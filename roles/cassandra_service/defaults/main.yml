@@ -237,3 +237,6 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 cassandra_allow_down_nodes, cassandra_accept_default_identity,
                                 cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
                                 cassandra_create_cluster_reset_confirm]
+# false: run on ansible-core 2.21 anyway (a release with the fix of
+# ansible/ansible#87148; core_check.yml)
+cassandra_ansible_core_check: true

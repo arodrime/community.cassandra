@@ -105,6 +105,11 @@
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
   tasks:
+    - name: Check the ansible-core version
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: core_check.yml
+
     - name: Stop on a cluster not in the inventory
       ansible.builtin.assert:
         that: not _named or groups[_named] | default([]) | length > 0 or _by_name | bool

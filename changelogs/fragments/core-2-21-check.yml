@@ -1,0 +1,2 @@
+bugfixes:
+  - "Playbooks - stop at once on ansible-core 2.21, which gives every node the facts of one of them once a ``run_once`` task ran in the play (ansible/ansible#87148): ``import_cluster`` read one node twice and another not at all. ``-e cassandra_ansible_core_check=false`` runs them anyway, with a 2.21 release that has the fix."

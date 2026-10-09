@@ -6,6 +6,9 @@
 # group (lookup community.cassandra.cassandra_hosts), and a name close
 # to a playbook variable (-e cassandra_host=...) is pointed out. A run with
 # --limit skips localhost, so this check too.
+- name: Check the ansible-core version
+  ansible.builtin.include_tasks: core_check.yml
+
 - name: Check cassandra_target_nodes
   ansible.builtin.include_tasks: target_nodes_check.yml
 
