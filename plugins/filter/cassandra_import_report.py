@@ -125,6 +125,18 @@ def _os_pair(line):
     return line, "present"
 
 
+def _what_changes(changed, removed, changes):
+    """ (3 new files; changed: a, b; removed: c), '' when not known."""
+    if changed is None:
+        return ""
+    existed = set((changes or {}).get("existed") or [])
+    new = [p for p in changed if p not in existed]
+    parts = ([out.plural(len(new), "new file")] if new else []) + (
+        ["changed: " + ", ".join(p for p in changed if p in existed)] if len(new) < len(changed) else []) + (
+        ["removed: " + ", ".join(removed)] if removed else [])
+    return " (%s)" % "; ".join(parts) if parts else ""
+
+
 def _edit_name(name):
     """cassandra.yaml concurrent_writes -> concurrent_writes (the file alone when it is all there is)."""
     return name.split(" ", 1)[1] if " " in name else name
@@ -133,14 +145,16 @@ def _edit_name(name):
 @_values_hidden
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
-                            self_check_error="", cwd=None, in_git=None):
+                            self_check_error="", cwd=None, in_git=None, changes=None):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes; self_check: {node: {differences, notes}}; self_check_ok;
     secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers'; check:
     --check; inventory: the -i of the next commands ('' : ansible.cfg's); hosts: their -e cassandra_hosts (''
     when the inventory holds this cluster alone); allow_unread: import_cluster_allow_unread; screen: the end of
     the run only (header, TO DO, SETTINGS); cwd: paths shown relative to it; in_git: the inventory dir is in a
-    git work tree (None: looked for). Returns the lines."""
+    git work tree (None: looked for); changes: what the run wrote or would write, {changed: [the files written
+    that change], removed: [the files removed], existed: [the files there before]}, paths in the inventory dir
+    (None: not known). Returns the lines."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
@@ -157,12 +171,19 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     host_dirs = ("host_vars/%s/" % with_vars[0] if len(with_vars) == 1 else
                  "host_vars/<node>/ (%s)" % (out.full_list(with_vars) if full else _compress(with_vars))) \
         if with_vars else ""
+    # what changes in the inventory dir (None: not known)
+    changed = removed = None
+    if changes is not None:
+        changed, removed = list(changes.get("changed") or []), list(changes.get("removed") or [])
+    same = changed == [] and removed == []
     lines = ["IMPORT %s%s %s %s read / %d %s SELF-CHECK %s" % (
         cluster, " (--check, nothing written)" if check else "", DASH, out.plural(len(read), "node"), len(nodes),
         DASH, "PASSED" if self_check_ok else "FAILED"),
-        "%s %s" % ("Would write:" if check else "Written:", ", ".join(
-            [shown(hosts_file), "group_vars/%s*/" % cluster] + ([host_dirs] if host_dirs else []))),
-        "Report:  %s" % ("not written under --check" if check else shown(report_file)), ""]
+        "%s %s" % ("Unchanged:" if same else "Would write:" if check else "Written:", ", ".join(
+            [shown(hosts_file), "group_vars/%s*/" % cluster] + ([host_dirs] if host_dirs else [])))]
+    if not screen:  # the screen ends with it
+        lines.append("Report:  %s" % ("not written under --check" if check else shown(report_file)))
+    lines.append("")
 
     # TO DO
     edit_names = []
@@ -188,7 +209,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if yours:
         todo.append("%s, kept as found: %s (see %s%s)" % (
             "Differs from your group_vars/all" if standard else "Differs from your own variables",
-            ", ".join(sorted({y["key"] for y in yours})), differs_title, " in the report" if screen else ""))
+            ", ".join(sorted({y["key"] for y in yours})), differs_title, " below" if screen else ""))
     if layout.get("theirs_win"):
         todo.append("Your files still win over the import there, the roles would change these nodes: %s (rename or"
                     " fix them)" % ", ".join(sorted({"%s: %s (%s)" % (w["node"], w["key"], w["path"])
@@ -207,13 +228,15 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                     " cluster's, or import again with -e import_cluster_adopt=true)" % ", ".join(leftovers["unsure"]))
     git = out.in_git_work_tree(inventory_dir) if in_git is None else in_git
     review = "git diff && git commit" if git else "the files written in %s" % shown(inventory_dir)
-    if check:
-        todo.append("Write it: the same command without --check")
-    elif todo and self_check_ok:
+    if check and not same:
+        todo.append("Write it: the same command without --check%s" % _what_changes(changed, removed, changes))
+    elif todo and self_check_ok and not check and not same:
         todo.append("Review then commit:  %s" % review if git else "Review %s" % review)
     if todo:
         lines.append("TO DO (%d)" % len(todo))
         lines += ["  %d. %s" % (i + 1, t) for i, t in enumerate(todo)]
+    elif same:
+        lines.append("READY %s nothing to change" % DASH)
     else:
         lines.append("READY %s nothing to do; %s" % (DASH, "review and commit:  " + review if git else "review " + review))
     lines.append("")
@@ -260,9 +283,6 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     where = dict(((key, text), placed(key, members)) for key, values in settings for text, members in values)
     lines.append("SETTINGS %s not the collection's default" % DASH)
     lines += _rows(_width(settings), settings, names, where, full, _value_width(settings)) or ["  none"]
-    if screen:
-        return lines + ["", "full report: %s" % ("written by the run without --check" if check
-                                                 else shown(report_file))]
     lines.append("")
 
     # DIFFERS FROM YOUR group_vars/all: the value found, the nodes, yours, where the import keeps it
@@ -278,7 +298,11 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             differs_title, DASH, "your standard" if standard else "yours"))
         label = max(len(key) + 1 for (key, dummy), dummy2 in rows) + 1
         width = _value_width(rows)
-        who_width = max(len(out.full_list(members)) for dummy, values in rows for dummy2, members in values)
+
+        def who(members):
+            return out.full_list(members) if full else _compress(members)
+
+        who_width = max(len(who(members)) for dummy, values in rows for dummy2, members in values)
         last = None
         for (name, theirs), values in rows:
             lines.append("  %s %s" % (("%s:" % name if name != last else "").ljust(label), theirs))
@@ -286,8 +310,13 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             for text, members in sorted(values, key=lambda v: (-len(v[1]), v[0])):
                 lines.append("  %s %s %s   %s kept, in %s" % (
                     "".ljust(label), text.ljust(width) if len(text) < width else text + " ",
-                    out.full_list(members).ljust(who_width), out.ARROW, placed(name, members) or "?"))
+                    who(members).ljust(who_width), out.ARROW, placed(name, members) or "?"))
         lines.append("")
+    if screen:
+        while lines and not lines[-1]:
+            lines.pop()
+        return lines + ["", "full report: %s" % ("written by the run without --check" if check
+                                                 else shown(report_file))]
 
     # HAND EDITS
     edits = _by_value([(n["name"], name, text) for n in read for name, text in _edit_pairs(n)])

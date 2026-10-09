@@ -116,7 +116,7 @@ def test_screen_and_check():
     lines = report([node(i) for i in range(1, 4)], check=True, screen=True,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert lines[0] == u"IMPORT my_cluster (--check, nothing written) — 3 nodes read / 3 — SELF-CHECK PASSED"
-    assert lines[1].startswith("Would write: ") and lines[2] == "Report:  not written under --check"
+    assert lines[1].startswith("Would write: ") and lines[2] == ""  # the report's path: last
     assert "TO DO (1)" in lines and "  1. Write it: the same command without --check" in lines
     assert lines[-1] == "full report: written by the run without --check"
     assert "HAND EDITS" not in "\n".join(lines) and "NEXT" not in lines and "DETAILS" not in lines
@@ -171,10 +171,12 @@ def test_differs_from_your_group_vars_all():
     # SETTINGS: the value the others get from group_vars/all, not "the collection's default"
     at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_config_user:")][0]
     assert lines[at].split()[1:] == ["cassandra", "node3,", "node4,", "node5"]
-    # the screen has no such section, its TO DO points to the report
+    # the screen has it too, its nodes as a range, then the report's path
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True)
-    assert not [line for line in screen if line.startswith("DIFFERS")]
-    assert any("(see DIFFERS FROM YOUR group_vars/all in the report)" in line for line in screen)
+    at = screen.index(u"DIFFERS FROM YOUR group_vars/all — kept as found; delete the line to apply your standard")
+    assert screen[at + 2] == u"                           cassandra   node1, node2   \u2190 kept, in host_vars"
+    assert screen[-2:] == ["", "full report: reports/my_cluster/report.txt"]
+    assert any("(see DIFFERS FROM YOUR group_vars/all below)" in line for line in screen)
 
 
 def test_differs_one_line_per_file_of_yours():
@@ -190,3 +192,51 @@ def test_differs_one_line_per_file_of_yours():
     at = lines.index(u"DIFFERS FROM YOUR OWN VARIABLES — kept as found; delete the line to apply yours")
     text = "\n".join(lines[at:at + 6])
     assert "yours: zz (group_vars/all/s.yml)" in text and "yours: yy (host_vars/node1/mine.yml)" in text
+
+
+SETTINGS_3 = [
+    u"SETTINGS — not the collection's default",
+    "  cassandra_seeds:         node1, node3       all",
+    "  cassandra_num_tokens:    16                 all",
+    "  cassandra_version:       50x                all",
+    "  cassandra_jmx_password:  (in secrets.yml)   all",
+    "  cassandra_max_heap_size: 8G                 all",
+]
+
+
+def test_reimport_check_with_nothing_to_change_is_ready():
+    # the whole screen: header, verdict, SETTINGS, the report's path; nothing else
+    unchanged = {"changed": [], "removed": [], "existed": ["my_cluster.yml", "group_vars/my_cluster/main.yml"]}
+    screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=unchanged)
+    assert screen == [
+        u"IMPORT my_cluster (--check, nothing written) — 3 nodes read / 3 — SELF-CHECK PASSED",
+        "Unchanged: inventories/my_cluster.yml, group_vars/my_cluster*/",
+        "",
+        u"READY — nothing to change",
+        ""] + SETTINGS_3 + [
+        "",
+        "full report: written by the run without --check"]
+    # the same without --check: nothing to review either
+    screen = report([node(i) for i in range(1, 4)], screen=True, changes=unchanged)
+    assert screen[3] == u"READY — nothing to change" and screen[-1] == "full report: reports/my_cluster/report.txt"
+    # a thing to do still says so, without "Write it"
+    screen = report([node(1), node(2), node(3, read=False)], check=True, screen=True, changes=unchanged)
+    assert screen[3:5] == ["TO DO (1)", "  1. Not read: node3 (unreachable): start Cassandra or fix the access, then"
+                                        " import again (or -e import_cluster_allow_unread=true)"]
+
+
+def test_check_says_what_it_would_write():
+    # a first import: every file new
+    first = {"changed": ["my_cluster.yml", "group_vars/my_cluster/main.yml", "group_vars/my_cluster/secrets.yml"],
+             "removed": [], "existed": []}
+    screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=first)
+    assert screen[1] == "Would write: inventories/my_cluster.yml, group_vars/my_cluster*/"
+    assert screen[3:5] == ["TO DO (1)", "  1. Write it: the same command without --check (3 new files)"]
+    # a re-import: the files that change, the ones it removes
+    again = {"changed": ["group_vars/my_cluster/main.yml", "host_vars/node4/main.yml"],
+             "removed": ["host_vars/gone/main.yml"], "existed": ["my_cluster.yml", "group_vars/my_cluster/main.yml"]}
+    screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=again)
+    assert screen[4] == ("  1. Write it: the same command without --check (1 new file; changed:"
+                         " group_vars/my_cluster/main.yml; removed: host_vars/gone/main.yml)")
+    # changes not known (an older caller): as before
+    assert "  1. Write it: the same command without --check" in report([node(1)], check=True, screen=True)

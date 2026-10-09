@@ -1165,10 +1165,13 @@ that is not the collection's default, with every node that has each value (``all
 the same way, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files
 removed or replaced, the next commands (without ``-i`` on the inventory of ``ansible.cfg``, without
 ``-e cassandra_hosts`` when it holds this cluster alone), and the details line by line at the end. The run ends with
-its header, ``TO DO`` and ``SETTINGS`` (node lists shortened, ``node1..node5``), and where the full report is.
+its header, ``TO DO``, ``SETTINGS`` and ``DIFFERS FROM YOUR group_vars/all`` (node lists shortened, ``node1..node5``),
+and where the full report is; nothing else is printed under the ``community.cassandra.ops`` callback.
 
 Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
-write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``):
+write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``). Its
+``TO DO`` says what the run without ``--check`` would write (``Write it: ... (2 new files; changed: ...; removed:
+...)``); a re-import that would change no file says ``READY — nothing to change``:
 
 .. code-block:: console
 

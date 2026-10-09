@@ -361,3 +361,27 @@ def test_report_lines_joined_by_a_real_newline():
     assert WRITE_VARS["_newline"] == "\n" and "join(_newline)" in WRITE_VARS["_report"]
     with open(PLAYBOOK, encoding="utf-8") as f:
         assert "join('\\n')" not in f.read()
+
+
+def test_the_files_that_change():
+    # what the screen says: the files written that change (would, under --check), removed, there before
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    changes = write["vars"]["_changes"]
+    variables = {
+        "_dir": "/p/inventories", "_hosts_file": "prod.yml",
+        "import_cluster_wrote_hosts": {"changed": False},
+        "import_cluster_wrote_vars": {"results": [
+            {"item": {"path": "group_vars/prod/main.yml"}, "changed": True},
+            {"item": {"path": "group_vars/prod/secrets.yml"}, "skipped": True, "changed": False},  # same secret
+            {"item": {"path": "host_vars/node1/main.yml"}, "changed": False}]},
+        "import_cluster_removed": {"results": [{"item": "host_vars/gone/main.yml", "changed": True}]},
+        "import_cluster_existing": {"files": [{"path": "/p/inventories/prod.yml"}]}}
+    assert render(changes["changed"], **variables) == ["group_vars/prod/main.yml"]
+    assert render(changes["removed"], **variables) == ["host_vars/gone/main.yml"]
+    assert render(changes["existed"], **variables) == ["prod.yml"]
+    variables.update(import_cluster_wrote_hosts={"changed": True}, import_cluster_removed={"skipped": True})
+    assert render(changes["changed"], **variables) == ["prod.yml", "group_vars/prod/main.yml"]
+    assert render(changes["removed"], **variables) == []
+    # both the report and the screen get them
+    show = next(t for t in write["tasks"] if t.get("name") == "Show the summary")
+    assert "changes=_changes" in show["ansible.builtin.debug"]["msg"] and "changes=_changes" in write["vars"]["_report"]

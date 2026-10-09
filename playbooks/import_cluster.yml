@@ -1099,7 +1099,18 @@
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
-           self_check_error=_self_check_error | default('')) | join(_newline) }}
+           self_check_error=_self_check_error | default(''), changes=_changes) | join(_newline) }}
+    # the files the run wrote or removed (would, under --check) and the ones there before: a re-import that
+    # changes nothing says so
+    _changes:
+      changed: >-
+        {{ ([_hosts_file] if import_cluster_wrote_hosts is changed else [])
+           + import_cluster_wrote_vars.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+             | map(attribute='item.path') | list }}
+      removed: >-
+        {{ import_cluster_removed.results | default([]) | selectattr('changed', 'defined') | selectattr('changed')
+           | map(attribute='item') | list }}
+      existed: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir) | list }}"
     # (a newline: in a folded block, '\n' would stay a backslash and an n)
     _newline: "\n"
   tasks:
@@ -1582,6 +1593,7 @@
         path: "{{ _dir }}/{{ item }}"
         state: absent
       loop: "{{ _leftovers.stale }}"  # files only: a dir may hold files of yours
+      register: import_cluster_removed
 
     - name: Create the dirs
       ansible.builtin.file:
@@ -1606,6 +1618,7 @@
         dest: "{{ _dir }}/{{ _hosts_file }}"
         mode: "0644"
         backup: "{{ _hosts_file in _leftovers.replaced | default([]) }}"  # not an import's
+      register: import_cluster_wrote_hosts
 
     # secrets.yml: encrypted as a whole (Ansible reads vaulted vars files), or 0600 in clear
     - name: Write group_vars and host_vars
@@ -1621,6 +1634,7 @@
       loop: "{{ _files }}"
       loop_control:
         label: "{{ item.path }}"
+      register: import_cluster_wrote_vars
       no_log: "{{ item.secret }}"
       # a vaulted file already there with the same content is left as it is (not encrypted again)
       when: >-
@@ -1654,7 +1668,7 @@
                leftovers=_leftovers | default({}), check=_report_args.check | bool,
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
-               self_check_error=_self_check_error | default(''), screen=true) }}
+               self_check_error=_self_check_error | default(''), changes=_changes, screen=true) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)
