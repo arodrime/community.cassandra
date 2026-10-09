@@ -52,3 +52,11 @@ def test_checked_first():
     first = load("playbooks", "import_cluster.yml")[0]["tasks"][0]
     assert first["ansible.builtin.include_role"]["tasks_from"] == "core_check.yml"
     assert load("roles", "cassandra_service", "defaults", "main.yml")["cassandra_ansible_core_check"] is True
+
+
+def test_checked_in_the_node_plays_too():
+    # --limit skips the first play (localhost): the node plays check it as well
+    for playbook, play in (("start_rack.yml", "Find the rack's nodes"), ("status.yml", "Cluster status"),
+                           ("health_check.yml", "Cluster health"), ("preflight.yml", "Cassandra preflight checks")):
+        first = next(p for p in load("playbooks", playbook) if p.get("name") == play)["tasks"][0]
+        assert first["ansible.builtin.include_role"]["tasks_from"] == "core_check.yml", playbook

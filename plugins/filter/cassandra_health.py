@@ -73,7 +73,13 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             item = port["item"]
             found.append({"kind": "port", "name": item["name"], "port": item["port"], "on": node, "host": item["host"],
                           "text": "%s port %s is not answering on %s (%s)" % (item["name"], item["port"], node, item["host"])})
-    # (a check that could not ask, e.g. a JMX login refused: the nodetool failure says it, not "not running")
+    # a check that could not ask: when nodetool status failed on this node too (e.g. a JMX login refused), that
+    # failure says it; else its own failure (not "not running": not known)
+    node_failed = any(view["from"] == node and not view["result"].get("cluster_status") for view in views)
+    for check, what in ((gossip, "gossip"), (binary, "the native transport (CQL)")):
+        if check is not None and _unasked(check) and not node_failed:
+            found.append({"kind": "nodetool", "on": node, "error": _error(check),
+                          "text": "the %s check failed on %s: %s" % (what, node, _error(check))})
     if gossip is not None and not gossip.get("is_up") and not _unasked(gossip):
         found.append({"kind": "gossip", "on": node, "text": "gossip is not running on %s" % node})
     if binary is not None and not binary.get("is_up") and not _unasked(binary):

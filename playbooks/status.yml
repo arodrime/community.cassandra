@@ -62,6 +62,12 @@
     _asked: "{{ _targets if _targets else ansible_play_hosts_all }}"
     _from: "{{ _asked | select('in', _reached) | first | default(_asked | first) }}"
   tasks:
+    # also run by the first play, which --limit skips
+    - name: Check the ansible-core version
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: core_check.yml
+
     - name: Gather the network facts
       ansible.builtin.setup:
         gather_subset: [network]

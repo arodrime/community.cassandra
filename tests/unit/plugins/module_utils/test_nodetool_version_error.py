@@ -37,6 +37,10 @@ def test_health_says_the_login_once_not_gossip_down():
                                       netstats=failed)
     assert [f["kind"] for f in found] == ["nodetool", "netstats"]
     assert "JMX login refused" in found[0]["text"]
+    # nodetool status answered on this node: the failed checks are said as such
+    found = cassandra_health_findings([{"from": "n1", "result": {"cluster_status": {"dc1": {"nodes": []}}}}], 0, "n1", gossip=failed,
+                                      binary={"is_up": True})
+    assert [f["text"].split(":")[0] for f in found] == ["the gossip check failed on n1"]
     # a gossip that answered "not running" is still a problem
     down = cassandra_health_findings([], 3, "n1", gossip={"is_up": False}, binary={"is_up": True})
     assert [f["kind"] for f in down] == ["gossip"]

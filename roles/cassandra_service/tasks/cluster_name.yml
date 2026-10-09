@@ -70,7 +70,7 @@
     _from: "{{ _found.from | default('') }}"
     _name: >-
       {{ _found.stdout | default('') | regex_findall('(?m)^\s*Name: (.*)$') | first | default('') | trim }}
-    # nodetool's own error line (error: ...), else the last line (not a Java stack trace line)
+    # nodetool's own error line (error: ...), else the first line that is not a Java stack trace line
     _lines: >-
       {{ ((_found.stderr | default('')).splitlines() | map('trim') | select | list
           or (_found.stdout | default('')).splitlines() | map('trim') | select | list) }}
@@ -78,7 +78,7 @@
       {{ (_lines | select('match', 'error:') | map('regex_replace', '^error: *', '') | list
           or _lines | reject('match', '(at |-- StackTrace --)') | list) | first | default('no output') }}
     _refused: "{{ (_found.stderr | default('') ~ _found.stdout | default('')) is search(_jmx_refused) }}"
-    _jmx_refused: Invalid username or password|Authentication failed|Credentials required|FailedLoginException
+    _jmx_refused: Invalid username or password|Authentication failed|Credentials required|FailedLoginException|Authentication error
     _what: >-
       {{ (_from ~ " runs Cassandra for cluster '" ~ _name ~ "', not '" ~ cassandra_cluster_name ~ "'")
          if _found.rc | default(0) == 0

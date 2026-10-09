@@ -1,4 +1,4 @@
 bugfixes:
   - "nodetool modules - a JMX login refused at their first nodetool call says so (``JMX login refused (Invalid username or password): check the JMX user and its password or password file``), instead of ``Unable to determine Cassandra version:`` with no reason."
-  - "Operations (the cluster name check) - a JMX login refused stops with one plain message naming ``cassandra_jmx_username`` and ``cassandra_jmx_password_file`` or ``cassandra_jmx_password``, not a task dump ending in a Java stack trace line."
-  - "health_check - a node whose nodetool calls fail (e.g. a JMX login refused) is reported once, as a nodetool failure, not also as gossip and CQL not running."
+  - "Operations (the preflight's cluster name check) - a JMX login refused stops with one plain message naming ``cassandra_jmx_username`` and ``cassandra_jmx_password_file`` or ``cassandra_jmx_password``, not a task dump ending in a Java stack trace line."
+  - "health_check - a node whose nodetool calls fail (e.g. a JMX login refused) is reported once, as a nodetool failure, not also as gossip and CQL not running; a gossip or CQL check that failed on its own is said as such."

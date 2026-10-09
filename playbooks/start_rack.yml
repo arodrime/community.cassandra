@@ -31,6 +31,12 @@
   gather_facts: false
   become: true
   tasks:
+    # also run by the first play, which --limit skips
+    - name: Check the ansible-core version
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: core_check.yml
+
     - name: Load the cassandra_config defaults (dc and rack)
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config
