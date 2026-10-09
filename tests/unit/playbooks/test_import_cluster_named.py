@@ -82,6 +82,16 @@ def test_cassandra_cluster_left_out_with_given_nodes(tmp_path):
     assert "not in the inventory" not in output and "new1: " in output, output
 
 
+def test_no_node_answered_as_plain_text(tmp_path):
+    # the refusal as it is: no task header, no JSON
+    rc, output = run(tmp_path, CASSANDRA_CLUSTER="old_cluster")
+    assert rc != 0
+    lines = output.splitlines()
+    assert lines[0].startswith("nodetool status failed on every given node."), output
+    assert sorted(line.split(":")[0] for line in lines[1:]) == ["old1", "old2"], output
+    assert "TASK [" not in output and "FAILED!" not in output and "{" not in output
+
+
 def test_the_lookup_error_itself_when_the_cluster_is_there(tmp_path):
     # a cluster in the inventory whose hosts the playbooks can't take: their own error, not a guess
     global INVENTORY  # pylint: disable=global-statement

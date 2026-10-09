@@ -150,6 +150,8 @@
         fail_msg: "import_cluster_host_names must be hostname, fqdn or ip, not {{ import_cluster_host_names | default('') }}"
         quiet: true
       run_once: true
+      vars:
+        cassandra_output: true
 
     # --limit would leave out the nodes found in the ring, and localhost, whose play writes the inventory
     - name: Stop on --limit
@@ -160,6 +162,8 @@
           nodes with -i <node>, or, with the inventory, -e cassandra_hosts=<cluster group>. Nothing was written.
         quiet: true
       run_once: true
+      vars:
+        cassandra_output: true
 
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
@@ -191,6 +195,7 @@
         quiet: true
       run_once: true
       vars:
+        cassandra_output: true
         # each given node that answered: the addresses of its ring
         _rings: >-
           {%- set out = {} -%}
@@ -337,6 +342,7 @@
           {{ ['nodetool status failed on every given node. Is Cassandra running, and the JMX access right'
               ~ ' (cassandra_jmx_port, cassandra_jmx_username, cassandra_jmx_password_file or _password)?'] + _errors }}
       vars:
+        cassandra_output: true
         # "Read the ring" shows ok whatever happened: each node's error
         _errors: >-
           {%- set out = [] -%}
@@ -658,10 +664,12 @@
         - name: Say what failed on this node
           ansible.builtin.fail:
             msg: >-
-              {{ inventory_hostname }}: {{ import_cluster_error }}{{ '' if ansible_failed_task.name | default('') == 'Check cassandra.yaml was read'
+              {{ import_cluster_error }}{{ '' if ansible_failed_task.name | default('') == 'Check cassandra.yaml was read'
               else '. Its error is above.' if import_cluster_debug | default(false) | bool
               else '. The rest of the error is hidden (the config holds passwords):'
                    ~ ' rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+          vars:
+            cassandra_output: true
 
     # owner, group and mode of what cassandra_config writes or creates, read only
     - name: Read the owner and mode of the config files and directories
@@ -1171,6 +1179,9 @@
           No node given: -i <node>, or, with the inventory, -e cassandra_hosts=<a group with nodes not marked
           absent> (--limit is refused). Nothing was written.
         quiet: true
+      run_once: true  # (no host before its message)
+      vars:
+        cassandra_output: true
 
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory
@@ -1407,7 +1418,9 @@
               "{{ ansible_failed_task.name | default('?') }}" failed{{ (' (' ~ _why ~ ')') if _why else '' }}{{ ': its error is above.'
               if import_cluster_debug | default(false) | bool else ', the rest of its error is hidden (the variables hold passwords).'
               ~ ' Rerun with -e import_cluster_debug=true to see it (it may show passwords).' }}
+          run_once: true  # (no host before its message)
           vars:
+            cassandra_output: true
             # the ring nodes it failed on, and what of the error shows no value
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
@@ -1441,6 +1454,9 @@
         fail_msg: >-
           {{ _dir ~ '/' ~ _hosts_file }} exists: this cluster is imported there already, set import_cluster_force=true
           to import it again (with --check --diff first to see the changes)
+      run_once: true  # (no host before its message)
+      vars:
+        cassandra_output: true
 
     # The vault password: import_cluster_vault_password_file, else Ansible's own
     # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE); a
@@ -1458,6 +1474,9 @@
             that: import_cluster_vault_stat.stat.exists
             fail_msg: "vault password file {{ _vault_file }} not found"
             quiet: true
+          run_once: true  # (no host before its message)
+          vars:
+            cassandra_output: true
 
         # a <name>-client script is asked for the vault id, as Ansible does
         - name: Run the vault password script
@@ -1483,6 +1502,9 @@
             that: _vault_secret | length > 0
             fail_msg: "empty vault password from {{ _vault_file }}"
             quiet: true
+          run_once: true  # (no host before its message)
+          vars:
+            cassandra_output: true
 
     # a re-import keeps what it did not write (group_vars/all/*, ansible.cfg,
     # notes...): it replaces its own files, and removes the ones an earlier
@@ -1609,6 +1631,9 @@
           file replaced kept as <file>.<date>~' if _leftovers.adoptable | length == _leftovers.conflicts | length else
           '. -e import_cluster_adopt=true would take over ' ~ _leftovers.adoptable | length ~ ' of them only' }}
         quiet: true
+      run_once: true  # (no host before its message)
+      vars:
+        cassandra_output: true
 
     - name: Stop rather than write in clear over a vaulted file
       ansible.builtin.assert:
@@ -1617,7 +1642,9 @@
           {{ _vaulted | join(', ') }} in {{ _dir }} are vaulted, and no vault password file is set: set
           vault_password_file in ansible.cfg (or -e import_cluster_vault_password_file=<file>)
         quiet: true
+      run_once: true  # (no host before its message)
       vars:
+        cassandra_output: true
         _vaulted: >-
           {%- set out = [] -%}
           {%- for r in import_cluster_existing_vars.results | default([]) if r.content is defined -%}
@@ -1733,5 +1760,6 @@
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
+      run_once: true  # (no host before its message)
       vars:
         cassandra_output: true  # its message as is (the ops callback), no task dump

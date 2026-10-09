@@ -38,6 +38,14 @@ MARKED = [
     ("roles/cassandra_service/tasks/main.yml", "Warn that a Cassandra started by the init script keeps running"),
 ]
 
+# import_cluster's refusals: their message as is, no task dump
+MARKED += [("playbooks/import_cluster.yml", name) for name in (
+    "Stop on a cluster not in the inventory", "Check the options", "Stop on --limit", "Stop on nodes of several clusters",
+    "Stop if no node answered", "Say what failed on this node", "Stop when no node was given",
+    "Say how to see the error", "Stop rather than overwrite an inventory", "Stop on a missing vault password file",
+    "Stop on an empty vault password", "Stop rather than write over another cluster's files",
+    "Stop rather than write in clear over a vaulted file", "Show the summary", "Stop on a failed self-check")]
+
 
 def tasks(path):
     with open(os.path.join(TOP, path), encoding="utf-8") as f:
