@@ -48,6 +48,11 @@
       streamed are skipped), or restart Cassandra on it to cancel it (it comes back UN).
       {%- elif _cassandra_stream_status == 'stopped' %}
       Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      {%- elif _cassandra_stream_status == 'jmx_refused' %}
+      JMX login refused on {{ _cassandra_stream_refused | map(attribute='host') | join(', ') }}: check
+      cassandra_jmx_username/password (or cassandra_jmx_password_file) for {{ 'it' if _cassandra_stream_refused | length == 1 else 'them' }}
+      (nodetool: {{ (_cassandra_stream_refused | first).error }}). Nothing was stopped: the {{ _cassandra_stream_what }} goes on
+      by itself; once fixed, run the playbook again to follow it.
       {%- elif _cassandra_stream_status == 'stalled' %}
       no streaming progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
       (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s, 4 times as long while nothing is left to transfer). Nothing was
@@ -56,5 +61,7 @@
       still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:
       {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
       {%- endif %}
+      {%- if _cassandra_stream_status != 'jmx_refused' %}
       Last progress: {{ _cassandra_stream_report | first }}
+      {%- endif %}
   when: _cassandra_stream_status not in ['done', 'going']

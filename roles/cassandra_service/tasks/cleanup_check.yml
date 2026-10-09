@@ -51,14 +51,33 @@
       ansible.builtin.set_fact:
         # kept as a fact: the skipped tasks of the next checks overwrite registered results
         _cassandra_cleanup_jobs: "{{ cassandra_cleanup_job.results }}"
+        # a JMX login refused: stop at once (not after cassandra_stream_stall_time), saying where
+        _cassandra_cleanup_refused: "{{ _refused }}"
         # the block's condition reads _cassandra_cleanup_status: set after the progress
         _cassandra_cleanup_now: >-
           {{ 'failed' if _ended | selectattr('failed', 'defined') | selectattr('failed') | list
              else 'failed' if _reached | rejectattr('finished', 'defined') | list
              else 'done' if _ended | length == cassandra_cleanup_job.results | length
+             else 'jmx_refused' if _refused
              else 'stalled' if _cassandra_stream_state.stalled
              else 'going' }}
       vars:
+        # never a host that answered earlier in this wait (a passing refusal), nor one read with another login
+        # than its own (the reads use this host's)
+        _refused: >-
+          {{ cassandra_cleanup_read.results | community.cassandra.cassandra_jmx_refused(
+               answered=_cassandra_stream_state.answered_hosts | default([]), hosts=_own_login) }}
+        _own_login: >-
+          {%- set l = [] -%}
+          {%- for h in cassandra_cleanup_jobs_started.results | map(attribute='item') -%}
+          {%-   set v = hostvars[h] | default({}) -%}
+          {%-   if v.cassandra_jmx_username | default(cassandra_jmx_username) == cassandra_jmx_username
+                   and v.cassandra_jmx_password | default(cassandra_jmx_password) == cassandra_jmx_password
+                   and v.cassandra_jmx_password_file | default(cassandra_jmx_password_file) == cassandra_jmx_password_file -%}
+          {%-     set _ = l.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ l }}
         _reached: "{{ cassandra_cleanup_job.results | rejectattr('unreachable', 'defined') | list }}"
         _ended: "{{ _reached | selectattr('finished', 'defined') | selectattr('finished', 'equalto', 1) | list }}"
 

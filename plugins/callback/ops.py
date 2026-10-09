@@ -82,7 +82,7 @@ def _result(result):
 # the colour of a message line by its start, the lines indented under it the same
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
-    (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED)\b"), "COLOR_ERROR"),
+    (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"WARNING\b"), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
     (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|CHECK)\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |\S.*[^,]\.\.\.$"), "COLOR_VERBOSE"),

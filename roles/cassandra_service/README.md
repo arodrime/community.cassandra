@@ -93,7 +93,10 @@ Role Variables
   session, index or view builds after the streams). Nothing is stopped then.
   Entire-SSTable streaming (4.0+) counts a file only once whole: with very
   big SSTables, raise `cassandra_stream_stall_time`. No overall limit unless
-  `cassandra_stream_max_time` (seconds) is set. The bootstrap wait also stops
+  `cassandra_stream_max_time` (seconds) is set. A JMX login or permission
+  refused stops the wait at once, naming the node (on a node being added,
+  Cassandra's own JMX authenticator refuses every login until it has joined:
+  its bootstrap is then followed from the other nodes). The bootstrap wait also stops
   when Cassandra stops or, on 5.0, when the bootstrap fails
   (`Mode: JOINING_FAILED`). On 5.0.0 to 5.0.4 nodetool does not answer on a
   bootstrapping node (CASSANDRA-19902): its progress is read from the other

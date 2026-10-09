@@ -115,6 +115,8 @@
           {{ dict(cassandra_stream_job_status | default({}) | dict2items
                   | selectattr('key', 'in', ['msg', 'stderr', 'rc', 'finished', 'failed']) | items2dict) }}
         _cassandra_stream_seen: "{{ _seen }}"
+        # a JMX login refused: stop at once (not after cassandra_stream_stall_time), saying where
+        _cassandra_stream_refused: "{{ _refused }}"
         # the block's condition reads _cassandra_stream_status: set after the progress line
         _cassandra_stream_now: >-
           {{ _cassandra_stream_state | community.cassandra.cassandra_stream_status(
@@ -122,8 +124,33 @@
                own=_cassandra_stream_self, seen=_seen,
                job=(cassandra_stream_job_status if _cassandra_stream_job.jid | default('') | length > 0 else none),
                removal=(cassandra_stream_removal if _cassandra_stream_removal_on | default('') | length > 0 else none),
-               max_time=cassandra_stream_max_time | int, now=now().timestamp() | int) }}
+               max_time=cassandra_stream_max_time | int, now=now().timestamp() | int, refused=_refused) }}
       vars:
+        # the joining node's own refusals count only when they are for good (its auth setup may not be done);
+        # the other side's (read when this node can't answer) only when none of them answered; never a host
+        # that answered earlier in this wait, nor one read with another login than its own
+        _refused: >-
+          {{ cassandra_stream_read.results | default([])
+             | community.cassandra.cassandra_jmx_refused(joining=inventory_hostname if _cassandra_stream_join | default(false) | bool
+                                                         else '', answered=_cassandra_stream_state.answered_hosts | default([]),
+                                                         hosts=_own_login)
+             + ((cassandra_stream_read_peers.results | default([]) + cassandra_stream_seen.results | default([]))
+                | community.cassandra.cassandra_jmx_refused(answered=_cassandra_stream_state.answered_hosts | default([]),
+                                                            hosts=_own_login)
+                if cassandra_stream_read_peers.results | default([]) | selectattr('sessions', 'defined') | list | length == 0
+                else []) }}
+        # the hosts read whose own JMX login is this host's (the reads use this host's)
+        _own_login: >-
+          {%- set l = [] -%}
+          {%- for h in (_cassandra_stream_from + _cassandra_stream_peers | default([])) | unique -%}
+          {%-   set v = hostvars[h] | default({}) -%}
+          {%-   if v.cassandra_jmx_username | default(cassandra_jmx_username) == cassandra_jmx_username
+                   and v.cassandra_jmx_password | default(cassandra_jmx_password) == cassandra_jmx_password
+                   and v.cassandra_jmx_password_file | default(cassandra_jmx_password_file) == cassandra_jmx_password_file -%}
+          {%-     set _ = l.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ l }}
         _seen: >-
           {{ cassandra_stream_seen.results | default([]) | community.cassandra.cassandra_ring_seen(
                _cassandra_preflight.ring_address | default(_cassandra_preflight.address | default(''), true)) }}

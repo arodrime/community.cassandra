@@ -474,7 +474,8 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     if status == "done":
         line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
     elif status != "going" or (idle_text and total and done < total):  # before any stream: still waiting for them
-        word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED"}.get(
+        word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED",
+                "jmx_refused": "JMX LOGIN REFUSED"}.get(
             status, "STALLED" if status == "going" else status.upper())
         count_text = ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)

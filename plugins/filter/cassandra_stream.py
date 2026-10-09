@@ -31,7 +31,8 @@ _BAR = (20, 10)
 # the other ends listed one per line, the rest summed up on one more line
 _PEERS = 4
 # the word in the header when the wait stops (stream_wait.yml statuses), FAILED for the others
-_TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED", "still_running": "STILL RUNNING"}
+_TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED", "still_running": "STILL RUNNING",
+            "jmx_refused": "JMX LOGIN REFUSED"}
 # the report's item lines: "      data:      38.2 GiB / 93.1 GiB"
 _ITEM = "      %-11s%s"
 
@@ -64,6 +65,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     some session has bytes left, stall_time * quiet_factor otherwise),
     transferring, sessions
     (sessions in netstats now), answered (at least one view answered),
+    answered_hosts (the hosts that answered at least once in this wait),
     bytes_done/bytes_total, first_done (bytes done at the first answer),
     samples (time and bytes done of the last checks), rate (bytes per
     second over the last _WINDOW seconds, 3 checks at least; None while
@@ -133,6 +135,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
         "start": start, "now": now, "streams": streams, "progressed": progressed, "last_progress": last_progress,
         "idle_checks": idle_checks, "idle": idle, "limit": limit, "stalled": idle >= limit, "sessions": len(current),
         "transferring": transferring, "answered": bool(answered), "bytes_done": done, "bytes_total": total,
+        "answered_hosts": sorted(set(state.get("answered_hosts") or []) | answered),
         "first_done": state["first_done"] if state.get("samples") else done, "samples": samples, "rate": rate,
         "checks": checks,
         "wait": min(int(interval), int(early_interval)) if now - start < int(early_time) else int(interval),
@@ -500,7 +503,7 @@ def cassandra_ring_seen(results, address):
 
 
 def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", job=None, removal=None, max_time=0,
-                            now=None):
+                            now=None, refused=None):
     """Where a streaming operation stands after a check (stream_check.yml):
     'done', 'going', or why the wait stops: job_failed, job_lost,
     join_failed, leave_failed, stopped, stalled, too_long.
@@ -513,7 +516,9 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
     running it (None: no job; with leave, a job that changed nothing, the
     node LEAVING already, is not the end); removal: the nodetool removenode
     status result (None: not followed): done once no removal is left;
-    max_time: cassandra_stream_max_time (0: none)."""
+    max_time: cassandra_stream_max_time (0: none); refused: the JMX logins
+    refused at this check (cassandra_jmx_refused): jmx_refused at once
+    rather than a stall much later."""
     state = state or {}
     own = own or {}
     mode = own.get("mode") or ""
@@ -537,12 +542,56 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
         return "leave_failed"
     if (join or leave) and stopped:
         return "stopped"
+    if refused:
+        return "jmx_refused"
     if state.get("stalled"):
         return "stalled"
     now = state.get("now", 0) if now is None else now
     if int(max_time or 0) > 0 and now - int(state.get("start", now)) >= int(max_time):
         return "too_long"
     return "going"
+
+
+# A JMX login or permission refused, in nodetool's error. The JDK's file-based
+# authenticator and access file say so whatever the node does; Cassandra's own
+# (CassandraLoginModule, AuthorizationProxy: "Authentication error", "Access
+# Denied") also refuse every login on a joining node until its auth setup is
+# complete, so they count there only from the nodes already in the ring.
+_JMX_REFUSED_ANYWHERE = re.compile(r"Authentication failed!|Invalid username or password|Credentials required"
+                                   r"|neither username nor password can be blank|Invalid access level")
+_JMX_REFUSED = re.compile(r"SecurityException|Authentication (failed|error)|Access (is )?denied", re.IGNORECASE)
+
+
+def _result_host(result):
+    item = result.get("item", "")
+    return str(item.get("item", "") if isinstance(item, dict) else item)
+
+
+def cassandra_jmx_refused(results, joining="", answered=None, hosts=None):
+    """The JMX logins refused at a check (stream_check.yml, cleanup_check.yml):
+    [{host, error}] from looped results of cassandra_netstats,
+    cassandra_status or a nodetool command (item: the host, or {item: host}).
+    joining: the node being added, whose own refusals count only when the
+    file-based authenticator gives them (see above). answered: the hosts
+    that answered earlier in this wait (a login that worked: a refusal now
+    is a passing one, e.g. Cassandra's own authenticator timing out on
+    system_auth), left out; hosts: the ones read with their own login (the
+    others' refusals tell nothing about theirs), None: all."""
+    refused = []
+    for result in results or []:
+        if not isinstance(result, dict) or result.get("skipped") or result.get("unreachable"):
+            continue
+        host = _result_host(result)
+        if host in (answered or []) or (hosts is not None and host not in hosts):
+            continue
+        # failed_when: false leaves failed false: the error's words tell (stdout only from a command that failed)
+        text = "\n".join(str(result.get(k) or "") for k in ("msg", "stderr", "stdout")
+                         if k != "stdout" or result.get("rc", 0))
+        lines = [x.strip() for x in text.splitlines() if _JMX_REFUSED_ANYWHERE.search(x)
+                 or (host != joining and _JMX_REFUSED.search(x))]
+        if lines and host not in [r["host"] for r in refused]:
+            refused.append({"host": host, "error": lines[0][:200]})
+    return refused
 
 
 def cassandra_stream_waiting(own, seen="", node="", join=False):
@@ -569,4 +618,5 @@ class FilterModule(object):
                 "cassandra_ring_seen": cassandra_ring_seen,
                 "cassandra_stream_status": cassandra_stream_status,
                 "cassandra_stream_waiting": cassandra_stream_waiting,
+                "cassandra_jmx_refused": cassandra_jmx_refused,
                 "cassandra_stream_own_stopped": _own_stopped}
