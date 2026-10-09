@@ -48,6 +48,11 @@
   ansible.builtin.include_tasks: reset_node_plan.yml
   # planned and confirmed on the caller's screen: what was shown is what is done
   when: not (_cassandra_node_reset_confirmed | default(false) | bool and _cassandra_node_reset_plan is defined)
+  vars:
+    # a real run shows what it deletes on its screen below, once (--check: the plan above is all there is)
+    _cassandra_node_reset_on_screen: >-
+      {{ not ansible_check_mode and not _cassandra_node_reset_whole_cluster | default(false) | bool
+         and not _cassandra_node_reset_confirmed | default(false) | bool }}
 
 # --check: the plan of each host above is all there is to see
 - name: Confirm the reset

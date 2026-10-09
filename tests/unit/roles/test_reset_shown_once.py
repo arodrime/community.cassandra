@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# add_node and replace_node show what a reset deletes on their own screen
+# add_node, replace_node and reset_node (a real run) show what a reset deletes on their own screen
 # (cassandra_reset_warnings): reset_node_plan.yml then prints nothing of its
 # own, the details once; reset_node itself still prints them.
 
@@ -48,3 +48,16 @@ def test_add_node_and_replace_node_show_it_on_their_screen():
                  if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") == "reset_node_plan.yml"]
         assert tasks and all(t["vars"]["_cassandra_node_reset_on_screen"] is True for t in tasks), playbook
         assert name is None or tasks[0]["name"] == name
+
+
+def test_reset_node_shows_it_on_its_screen_in_a_real_run():
+    include = next(t for t in load("roles", "cassandra_service", "tasks", "reset_node.yml")
+                   if t.get("name") == "Work out the reset")
+    on_screen = include["vars"]["_cassandra_node_reset_on_screen"]
+    for check, whole, expected in ((False, False, True), (True, False, False), (False, True, False)):
+        templar = Templar(loader=DataLoader(), variables={"ansible_check_mode": check,
+                                                          "_cassandra_node_reset_whole_cluster": whole})
+        assert templar.template(trust_as_template(on_screen)) is expected
+    # on its screen: printed once there; a node with nothing to do is not on it, said here
+    assert not shown(_cassandra_node_reset_on_screen=True)
+    assert shown(_cassandra_node_reset_on_screen=True, _p={"delete": [], "stop": False, "disable": False})

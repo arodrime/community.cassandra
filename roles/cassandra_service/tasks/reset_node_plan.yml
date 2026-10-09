@@ -351,7 +351,8 @@
          + _p.problems | map('regex_replace', '^', '  REFUSED: ') | list) | join(_nl) }}
   when:
     - not _cassandra_notes_deferred | default(false) | bool  # topology: in its plan
-    - not _cassandra_node_reset_on_screen | default(false) | bool  # add_node, replace_node: on their screen
+    # add_node, replace_node, reset_node: on their screen (a node with nothing to do is not on it)
+    - not _cassandra_node_reset_on_screen | default(false) | bool or not (_p.delete or _p.stop | default(false) | bool or _p.disable | default(false) | bool)
     # add_node's: nothing to say about a node without data
     - not _cassandra_node_reset_auto | default(false) | bool or _p.delete | length > 0
   vars:

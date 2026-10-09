@@ -489,7 +489,7 @@ PHASES = {
     "restart": "Restarting {node}...",
     "restart_rack": "Restarting {what} ({nodes})...",
     "cleanup": "Cleaning up {nodes}...",
-    "read_reset": "Reading what {nodes} hold...",
+    "read_reset": "Reading the data directories of {nodes}...",
     "reset": "Resetting {nodes}...",
     "import_given": "Reading the ring from {nodes}...",
 }

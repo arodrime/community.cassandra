@@ -1,0 +1,2 @@
+minor_changes:
+  - "reset_node - what the reset deletes is printed once, on its screen above the question (``--check``: in the plan)."
