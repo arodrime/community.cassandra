@@ -91,10 +91,14 @@ Then, naming the cluster on each run (see `Inventory`_):
     $ ansible-playbook community.cassandra.health_check -e cassandra_hosts=orders
     $ CASSANDRA_CLUSTER=orders ansible-playbook community.cassandra.decommission_node -e cassandra_target_nodes=node7
 
-Without ``-i node1,`` (a re-import with the inventory of ``ansible.cfg``), the import is given every host of the
-inventory, with their variables (the JMX login, the connection): fine when it holds this cluster alone; with other
-clusters there, add ``-e cassandra_hosts=orders`` (``--limit`` is refused: it would leave out the nodes found in the ring
-and the controller, where the inventory is written). Given nodes of two rings stop the import before it reads them. The import does not read ``CASSANDRA_CLUSTER``.
+A new cluster is always imported from one of its nodes, ``-i node1,`` (the trailing comma makes it a list of hosts,
+not a file): the others are found in the ring. Without it (a re-import with the inventory of ``ansible.cfg``), the
+import is given every host of the inventory, with their variables (the JMX login, the connection): fine when it holds
+this cluster alone; with other clusters there, add ``-e cassandra_hosts=orders`` or ``CASSANDRA_CLUSTER=orders``
+(``--limit`` is refused: it would leave out the nodes found in the ring and the controller, where the inventory is
+written). A cluster they name that is not in the inventory stops the import at once, saying to give one of its nodes
+with ``-i <node>,``; with ``-i <node>,``, ``CASSANDRA_CLUSTER`` is left out. Given nodes of two rings stop the import
+before it reads them.
 
 Ansible reads the ``group_vars`` and ``host_vars`` next to an inventory source only: with ``inventory =
 ./inventories``, the ones of a subdirectory (``inventories/orders/group_vars``) are not read. Hence one flat

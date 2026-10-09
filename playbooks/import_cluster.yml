@@ -1,12 +1,15 @@
 # Reads a running cluster into an inventory for the roles, changing nothing
-# on the nodes:
-#   ansible-playbook -i node1,node2 community.cassandra.import_cluster
+# on the nodes. A new cluster: give one of its nodes (or more) with -i:
+#   ansible-playbook -i node1, community.cassandra.import_cluster
 # Any reachable nodes will do: the others are found with nodetool status.
-# Without -i, the inventory of ansible.cfg: every host there is given (with
-# its variables), or the hosts of -e cassandra_hosts=<cluster group> when it
-# holds other clusters (--limit is refused: it would leave out the nodes found
-# and the controller, which writes the inventory); nodes of two rings stop the
-# import.
+# Without -i <node>, (a re-import), the inventory (ansible.cfg's, or -i <inventory
+# file or dir>): every host there is given (with its variables), or the hosts
+# of the cluster -e cassandra_hosts=<cluster group> or the environment variable
+# CASSANDRA_CLUSTER names when it holds other clusters (a name that is not in
+# the inventory stops the import at once: a new cluster is given by a node,
+# -i <node>,; CASSANDRA_CLUSTER is left out with -i <node>,). --limit is
+# refused: it would leave out the nodes found and the controller, which writes
+# the inventory. Nodes of two rings stop the import.
 # One inventory dir for every cluster (ansible.cfg inventory = that dir, the
 # playbooks run with -e cassandra_hosts=<cluster group>): the hosts go to
 # <cluster group>.yml there, the variables to group_vars/ and host_vars/, side
@@ -89,8 +92,54 @@
 # A ring node it could not read (down, unreachable, nodetool not found, its
 # running Java removed by an update) fails the import, as its settings are
 # unknown: import_cluster_allow_unread=true accepts it.
+# (a play first: the hosts of the first play can't be picked by a cluster name)
+- name: Check the cluster asked for
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  tasks:
+    - name: Stop on a cluster not in the inventory
+      ansible.builtin.assert:
+        that: not _named or groups[_named] | default([]) | length > 0 or _by_name | bool
+        fail_msg: >-
+          {{ _named }} is not in the inventory{{ '' if cassandra_hosts | default('', true) else ' (CASSANDRA_CLUSTER)' }}:
+          to import a new cluster, give one of its nodes: ansible-playbook -i <node>, community.cassandra.import_cluster.
+          Nothing was written.
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # its message as is (the ops callback), no task dump
+        # the cluster asked for: -e cassandra_hosts, else CASSANDRA_CLUSTER with an inventory of files (not -i <node>,)
+        _named: >-
+          {{ cassandra_hosts | default('', true) or (lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER')
+             if ansible_inventory_sources | reject('exists') | list | length == 0 else '') }}
+        # CASSANDRA_CLUSTER may give a cassandra_cluster_name
+        _by_name: >-
+          {{ not cassandra_hosts | default('', true) and groups['all'] | map('extract', hostvars)
+             | selectattr('cassandra_cluster_name', 'defined') | selectattr('cassandra_cluster_name', 'equalto', _named)
+             | list | length > 0 }}
+
+    # in the inventory: what the next play reads, its own error if any (a name several groups have, a
+    # cassandra_node_state neither present nor absent): the next play's hosts can't say it
+    - name: Check the cluster's hosts
+      ansible.builtin.set_fact:
+        _import_cluster_named: "{{ query('community.cassandra.cassandra_nodes') }}"
+      run_once: true
+      when: >-
+        cassandra_hosts | default('', true) | length > 0 or (lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER') | length > 0
+        and ansible_inventory_sources | reject('exists') | list | length == 0)
+
 - name: Find the cluster from the given nodes
-  hosts: "{{ query('community.cassandra.cassandra_nodes', group=cassandra_hosts | default('all', true)) }}"
+  # -e cassandra_hosts, else CASSANDRA_CLUSTER with an inventory of files (not -i <node>,), else every host;
+  # a cluster not in the inventory: none (stops in the last play, saying how to import a new cluster)
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes', group=cassandra_hosts) if cassandra_hosts | default('', true)
+       else query('community.cassandra.cassandra_nodes', errors='ignore')
+            if lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER') and ansible_inventory_sources | reject('exists') | list | length == 0
+       else query('community.cassandra.cassandra_nodes', group='all') }}
   gather_facts: true
   gather_subset: [network]
   become: true  # nodetool reads the JMX password file (cassandra's, 0400)
@@ -136,9 +185,9 @@
       ansible.builtin.assert:
         that: _apart | length == 0
         fail_msg: >-
-          {{ _apart | join(', ') }} not in the ring of {{ _rings | list | first }}: the given nodes are of several
+          {{ _apart | join(', ') }} not in the ring of {{ _rings | list | first | default("") }}: the given nodes are of several
           clusters. Give a node of one cluster (-i <node>,), or run with the inventory and -e cassandra_hosts=<its
-          cluster group>. Nothing was written.
+          cluster group> (or CASSANDRA_CLUSTER=<its cluster group>). Nothing was written.
         quiet: true
       run_once: true
       vars:
@@ -189,7 +238,7 @@
     - name: Find the names of the nodes found in the ring, as the given node knows them
       ansible.builtin.command:
         argv: "{{ ['getent', 'hosts'] + import_cluster_new }}"
-      delegate_to: "{{ import_cluster_from }}"
+      delegate_to: "{{ import_cluster_from or inventory_hostname }}"  # (templated before the when, since ansible-core 2.19)
       run_once: true
       register: import_cluster_peer_names
       changed_when: false

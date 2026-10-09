@@ -24,6 +24,8 @@ PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks"
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 
+FIND = next(play for play in PLAYS if play["name"] == "Find the cluster from the given nodes")
+
 MATCH = next(t for play in PLAYS for t in play.get("tasks", []) for t in t.get("block", [t])
              if t.get("name") == "Match the ring with the hosts")
 
@@ -78,7 +80,7 @@ def test_ansible_host_can_be_left_out():
 
 
 def test_host_names_option_checked():
-    check = PLAYS[0]["tasks"][0]
+    check = FIND["tasks"][0]
     assert check["name"] == "Check the options"
     that = trust_as_template("{{ " + check["ansible.builtin.assert"]["that"] + " }}")
     assert Templar(loader=DataLoader(), variables={}).template(that) is True
@@ -96,7 +98,7 @@ def test_hostname_given_to_the_layout():
 
 def test_host_names_message_renders_unset():
     # 2.19+ templates fail_msg even when the assert passes
-    msg = trust_as_template(PLAYS[0]["tasks"][0]["ansible.builtin.assert"]["fail_msg"])
+    msg = trust_as_template(FIND["tasks"][0]["ansible.builtin.assert"]["fail_msg"])
     assert "hostname, fqdn or ip" in Templar(loader=DataLoader(), variables={}).template(msg)
 
 
