@@ -47,7 +47,14 @@ requirements:
   - set as stdout in configuration
 """
 
+import os
 import re
+import sys
+
+try:
+    import termios
+except ImportError:  # not a POSIX controller
+    termios = None
 
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 
@@ -125,6 +132,21 @@ def rescued(task):
             return True
         child, parent = parent, getattr(parent, "_parent", None)
     return False
+
+
+def drop_typeahead():
+    """Drops the keys typed during the run that nothing read (an answer typed
+    again while the run was quiet): the shell would run them once the run is
+    over, "yes" then printing y lines forever. Only on a terminal the run is
+    in the foreground of."""
+    if termios is None:
+        return
+    try:
+        fd = sys.stdin.fileno()
+        if os.isatty(fd) and os.getpgrp() == os.tcgetpgrp(fd):
+            termios.tcflush(fd, termios.TCIFLUSH)
+    except (AttributeError, OSError, ValueError, termios.error):
+        pass  # no terminal (or not ours): nothing typed to drop
 
 
 def lines(msg):
@@ -371,7 +393,12 @@ class CallbackModule(DefaultCallback):
     v2_playbook_on_handler_task_start = _quiet("v2_playbook_on_handler_task_start")
     v2_playbook_on_include = _quiet("v2_playbook_on_include")
     v2_playbook_on_notify = _quiet("v2_playbook_on_notify")
-    v2_playbook_on_stats = _quiet("v2_playbook_on_stats")
     v2_playbook_on_no_hosts_remaining = _quiet("v2_playbook_on_no_hosts_remaining")  # after the failures shown
     v2_playbook_on_no_hosts_matched = _quiet("v2_playbook_on_no_hosts_matched")  # a step with nothing to do
     del _quiet
+
+    def v2_playbook_on_stats(self, stats):
+        drop_typeahead()  # the run is over: the shell reads the terminal next
+        if self._verbose():
+            return super(CallbackModule, self).v2_playbook_on_stats(stats)
+        return None

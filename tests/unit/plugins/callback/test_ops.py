@@ -6,8 +6,12 @@ __metaclass__ = type
 
 import os
 import re
+import select
 import subprocess
 import sys
+import time
+
+import pytest
 
 COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", ".."))
 
@@ -511,3 +515,65 @@ def test_a_warning_then_a_block(tmp_path):
     lines = output.splitlines()
     assert lines[:2] == ["one", ""] and "careful" in output, output
     assert lines[-2:] == ["", "two"], output  # a blank line between the warning and the block
+
+
+def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
+    """An answer typed again while the run is quiet is dropped at the end: the
+    shell would run it ("yes": y lines forever)."""
+    pty = pytest.importorskip("pty")
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Confirm
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: confirm.yml
+      vars:
+        cassandra_confirm_prompt: "Go?"
+    - name: Quiet for a while
+      ansible.builtin.wait_for:
+        timeout: 6
+    - name: Done
+      ansible.builtin.debug:
+        msg: done
+      vars:
+        cassandra_output: true
+"""
+    (tmp_path / "playbook.yml").write_text(playbook)
+    env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
+               ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_RETRY_FILES_ENABLED="0")
+    env.pop("ANSIBLE_CONFIG", None)
+    # the shell after the run: what it reads from the terminal next
+    script = ("%s -c 'from ansible.cli.playbook import main; main()' -i node1, -c local "
+              "-e ansible_python_interpreter=%s playbook.yml; read -t 3 left; echo \"LEFT=[$left]\"") % (
+        sys.executable, sys.executable)
+    pid, fd = pty.fork()
+    if pid == 0:  # the child
+        os.chdir(str(tmp_path))
+        os.execve("/bin/bash", ["/bin/bash", "--norc", "-c", script], env)
+    output, deadline, typed = b"", time.time() + 120, 0
+    while b"LEFT=[" not in output or not output.rstrip().endswith(b"]"):
+        assert time.time() < deadline, output.decode(errors="replace")
+        ready, dummy, dummy = select.select([fd], [], [], 0.5)
+        data = b""
+        if ready:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+        output += data
+        if typed == 0 and b"Answer yes to go on" in output:
+            time.sleep(1)  # pause drops what was typed before it reads
+            os.write(fd, b"yes\r")
+            typed, at = 1, time.time()
+        elif typed == 1 and time.time() - at > 2:
+            os.write(fd, b"yes\r")  # typed again during the quiet part
+            typed = 2
+    os.waitpid(pid, 0)
+    text = output.decode(errors="replace")
+    assert typed == 2, text
+    assert "done" in text
+    assert "LEFT=[]" in text, text

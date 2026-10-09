@@ -5,3 +5,4 @@ bugfixes:
   - "Stream and cleanup waits - no ``Pausing for ...`` lines between the progress lines in a terminal."
   - "Rolling operations - ``--check --diff`` no longer shows the controller's progress directory."
   - "apply_config and update_java playbooks - no ``Could not match supplied host pattern`` warning when no node has anything to do; the ops callback prints nothing for a play with no host."
+  - "ops callback - the keys typed during a run and not read (a confirmation typed again while the run is quiet) are dropped at its end instead of reaching the shell (``yes`` then printed ``y`` lines forever)."
