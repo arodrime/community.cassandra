@@ -492,7 +492,8 @@
                     reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                     inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                     hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
-                    cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent))
+                    cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent,
+                    jmx_user=cassandra_jmx_username | default('')))
                 if _done | length > 0 else [])) | join(_nl) }}
       run_once: true
       when:

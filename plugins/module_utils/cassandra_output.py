@@ -829,7 +829,7 @@ def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
 
 
 def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
-                 unreachable=None, imported=True):
+                 unreachable=None, imported=True, jmx_user=""):
     """The TO DO once nodes left the ring (decommission_node, topology):
     empty them (reset_node), then drop them from the inventory by a
     re-import read from a node that stays (reimport_from: the name or
@@ -839,7 +839,9 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
     cluster's inventory is (import_cluster_dir, given when it is not the
     default inventories); unreachable: the ones not answering, left out of
     the reset (the re-import drops them too); imported: the inventory is
-    import_cluster's (else: remove them from it by hand, no re-import)."""
+    import_cluster's (else: remove them from it by hand, no re-import);
+    jmx_user: the run's cassandra_jmx_username (the re-import reads no
+    inventory: it needs the JMX login given again)."""
     removed = list(removed or [])
     if not removed:
         return []
@@ -858,8 +860,10 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
             names, "it" if len(removed) == 1 else "them"))
     else:
         items.append({"text": "drop %s from the inventory: re-import the cluster, its changes shown first (-i %s, leaves"
-                              " the inventory out: add your connection options, e.g. -u, when it sets them)"
-                              % (names, reimport_from),
+                              " the inventory out: add your connection options, e.g. -u, when it sets them%s)"
+                              % (names, reimport_from, (", and the JMX login: %s -e cassandra_jmx_password_file=<its file"
+                                                        " on the nodes> (or cassandra_jmx_password)"
+                                                        % extra_var("cassandra_jmx_username", jmx_user)) if jmx_user else ""),
                       "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd,
                                          extra=reimport + ["--check", "--diff"])})
         items.append({"text": "then write them",

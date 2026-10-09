@@ -135,3 +135,9 @@ def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
         msg = render(template.replace(config, "_ansible_cfg_inventory"), **variables)
         assert "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3" in msg.splitlines()
         assert "-i inventories" not in msg
+
+
+def test_the_run_s_jmx_login_is_passed_on():
+    for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
+        msg = task(playbook, play, "Say what is left to do")["ansible.builtin.debug"]["msg"]
+        assert "jmx_user=cassandra_jmx_username | default('')" in msg, playbook

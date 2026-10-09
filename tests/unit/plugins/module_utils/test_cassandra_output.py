@@ -473,3 +473,13 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
         "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
         "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]
+
+
+def test_removed_todo_names_the_jmx_login_the_reimport_needs():
+    # -i node1, reads no inventory: the JMX login the run had must be given again (its password never printed)
+    lines = out.removed_todo(["node3"], "node1", in_git=False, jmx_user="jmxops")
+    assert lines[3] == ("  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves"
+                        " the inventory out: add your connection options, e.g. -u, when it sets them, and the JMX login:"
+                        " -e cassandra_jmx_username=jmxops -e cassandra_jmx_password_file=<its file on the nodes>"
+                        " (or cassandra_jmx_password)):")
+    assert "jmx" not in "\n".join(out.removed_todo(["node3"], "node1", in_git=False))

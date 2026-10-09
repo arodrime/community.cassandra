@@ -75,7 +75,7 @@
           {{ 'create_cluster' | community.cassandra.cassandra_command(
                inventory=ansible_inventory_sources,
                default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-               hosts=lookup('community.cassandra.cassandra_hosts'), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
           (it starts nothing on a running cluster),
           then restart the nodes with community.cassandra.rolling_restart.
       vars:

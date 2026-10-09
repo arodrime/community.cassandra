@@ -284,7 +284,7 @@
                reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
-               cwd=lookup('ansible.builtin.env', 'PWD')) | join(_nl) }}
+               cwd=lookup('ansible.builtin.env', 'PWD'), jmx_user=cassandra_jmx_username | default('')) | join(_nl) }}
       run_once: true
       when:
         - not _cassandra_screen_asked_by | default('')  # topology says it once, at its end

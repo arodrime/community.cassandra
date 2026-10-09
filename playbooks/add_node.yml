@@ -161,6 +161,19 @@
           ansible.builtin.set_fact:
             cassandra_keyspaces: null
 
+        # a CQL login refused or missing (authentication on): a wrong variable, said at once
+        - name: Stop on a CQL login refused
+          ansible.builtin.fail:
+            msg: >-
+              {{ _existing | first }} refused the CQL login (CQL authentication is on): check cassandra_cql_username and
+              cassandra_cql_password (e.g. group_vars/{{ lookup('community.cassandra.cassandra_hosts') }}/secrets.yml,
+              vaulted). No node was added.
+          any_errors_fatal: true
+          when: _err is search('requires authentication|AuthenticationFailed|Bad credentials')
+          vars:
+            cassandra_output: true  # a verdict: its msg as is
+            _err: "{{ ansible_failed_result.err | default('') ~ ' ' ~ ansible_failed_result.msg | default('') }}"
+
     - name: Share the replication with every new node
       ansible.builtin.set_fact:
         cassandra_keyspaces: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_keyspaces | default(none) }}"
@@ -475,6 +488,7 @@
       rescue:
         # any_errors_fatal: the other nodes come here too, without a failure of their own
         - name: Record the failure
+          no_log: true  # the raw result of the failed task (no_log ones too): the report masks what it shows
           ansible.builtin.set_fact:
             cassandra_op_result: >-
               {{ ('add FAILED while preparing it: ' ~ _failure | community.cassandra.cassandra_failure_cause(_task)) if _own | bool
@@ -599,7 +613,7 @@
               '     ' ~ 'move_node' | community.cassandra.cassandra_command(
                               inventory=ansible_inventory_sources,
                               default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-                              hosts=lookup('community.cassandra.cassandra_hosts'), cwd=lookup('ansible.builtin.env', 'PWD'))]
+                              hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))]
              | join(_nl) }}
       run_once: true
       when:

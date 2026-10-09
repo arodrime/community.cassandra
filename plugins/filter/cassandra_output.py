@@ -129,14 +129,14 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
 
 
 def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None, inventory_dir=None, cwd=None,
-                           default_inventory=None, in_git=None, unreachable=None, imported=True):
+                           default_inventory=None, in_git=None, unreachable=None, imported=True, jmx_user=""):
     """default_inventory: ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')):
     no -i when the run's inventory is that one."""
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None
     return out.removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
                             inventory_dir=inventory_dir or None, cwd=cwd, in_git=in_git, unreachable=unreachable,
-                            imported=imported)
+                            imported=imported, jmx_user=jmx_user or "")
 
 
 def cassandra_phase(name, names=None, node="", what="", count=None):

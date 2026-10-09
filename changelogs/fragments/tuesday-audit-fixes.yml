@@ -1,0 +1,5 @@
+bugfixes:
+  - "add_node - a CQL login refused while reading the keyspaces' replication (authentication on) stops the run at once, naming ``cassandra_cql_username`` and ``cassandra_cql_password``, instead of planning without the replication."
+  - "add_node - the failure of a node being prepared is recorded with ``no_log`` (the raw result of a task that has ``no_log`` itself is never shown, even with ``-v``)."
+minor_changes:
+  - "decommission_node, topology - the re-import in the end TO DO names the JMX login the run had (``-e cassandra_jmx_username=...``, the password or password file to add): a re-import read from one node (``-i node,``) reads no inventory."
