@@ -92,7 +92,7 @@ OPERATIONS = [
                  ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
                   "false"),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
-                                                          " replicas", "false")],
+                                                          " replicas (nodetool decommission --force)", "false")],
      "example": ("the plan only", ["--check"])},
     {"name": "decommission_node", "theme": "nodes", "cql": True,
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"
@@ -100,7 +100,7 @@ OPERATIONS = [
                 " datacenter left with nodes but no seed, or fewer nodes than replicas.",
      "options": [("-e cassandra_target_nodes=<nodes>", "the nodes to remove (comma-separated)", None),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
-                                                          " replicas", "false"),
+                                                          " replicas (nodetool decommission --force)", "false"),
                  RESUME],
      "example": CHECK},
     {"name": "replace_node", "theme": "nodes",

@@ -120,6 +120,9 @@ cassandra_move_tokens: {}
 cassandra_move_cleanup: none
 cassandra_move_min_free_percent: 20
 cassandra_move_force_disk: false
+# decommission_node, topology, remove_dead_node: go on when a datacenter would
+# keep fewer nodes than a keyspace has replicas there (nodetool decommission --force)
+cassandra_decommission_force: false
 
 # checks per include level of the progress waits (wait_loop.yml): Ansible nests
 # every include one level deeper and fails past ~150 levels. A round covers 6

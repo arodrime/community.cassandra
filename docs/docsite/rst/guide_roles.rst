@@ -477,7 +477,7 @@ per node); one listed in ``cassandra_seeds`` joins as a regular node. When ``cas
 lists the nodes run with, it is applied on every node, live (``change_seeds``' way: the seeds line of
 ``cassandra.yaml`` written and reloaded, no restart). A host marked absent that is still in the ring is decommissioned
 as ``decommission_node`` does it (refused: one still in ``cassandra_seeds``, a datacenter left with fewer nodes than a
-keyspace has replicas there unless ``cassandra_decommission_force``).
+keyspace has replicas there unless ``cassandra_decommission_force``, which runs ``nodetool decommission --force``).
 A host marked absent, out of the ring and stopped needs nothing ("already removed"). A node of the ring no host of the
 inventory has is never touched: it is reported (a mistyped address, a host missing from the inventory, a dead node to
 remove with ``remove_dead_node``), and a plan with something to do is refused while it is there.

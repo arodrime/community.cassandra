@@ -369,7 +369,7 @@ def test_topic():
         "Options:",
         "    -e cassandra_target_nodes=<nodes>     the nodes to remove (comma-separated) (required)",
         "    -e cassandra_decommission_force=true  goes on when a datacenter would keep fewer nodes than",
-        "                                          replicas (default: false)",
+        "                                          replicas (nodetool decommission --force) (default: false)",
         "    -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already",
         "                                          done (default: false)",
         "    -e cassandra_hosts=<group>            the cluster to run on (default: orders)",

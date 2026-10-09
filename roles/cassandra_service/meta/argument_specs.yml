@@ -257,6 +257,14 @@ argument_specs:
           - C(move_node) - before each move, the nodes that receive data must keep this share of their data
             directories' disks free, counting the data the move streams to them (estimated from the loads,
             data spread evenly along the ring).
+      cassandra_decommission_force:
+        type: bool
+        default: false
+        description:
+          - C(decommission_node), C(topology), C(remove_dead_node) - go on when a datacenter would keep fewer
+            nodes than a keyspace has replicas there (those keyspaces keep fewer copies of the data). The plan
+            says it, and a node is decommissioned with C(nodetool decommission --force), which Cassandra 4.0
+            and later need then.
       cassandra_move_force_disk:
         type: bool
         default: false

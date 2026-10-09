@@ -43,8 +43,9 @@
       {%- elif _cassandra_stream_status == 'join_failed' %}
       the bootstrap failed (Mode JOINING_FAILED): see why in its system.log. {{ _cassandra_stream_advice | default('') }}
       {%- elif _cassandra_stream_status == 'leave_failed' %}
-      the decommission failed (Mode DECOMMISSION_FAILED): see why in its system.log. Once fixed, nodetool decommission
-      on it resumes it (the ranges already streamed are skipped), or restart Cassandra on it to cancel it (it comes back UN).
+      the decommission failed (Mode DECOMMISSION_FAILED): see why in its system.log. Once fixed, nodetool decommission{{
+      ' --force' if cassandra_decommission_force | default(false) | bool else '' }} on it resumes it (the ranges already
+      streamed are skipped), or restart Cassandra on it to cancel it (it comes back UN).
       {%- elif _cassandra_stream_status == 'stopped' %}
       Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
       {%- elif _cassandra_stream_status == 'stalled' %}

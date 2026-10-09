@@ -10,6 +10,9 @@
 - name: Decommission the node
   community.cassandra.cassandra_decommission:
     debug: true  # nodetool's stderr in the result: the reason of a failure
+    # 4.0+ refuses to leave fewer nodes than a keyspace's replication factor in the datacenter without
+    # --force; the plan let it through only with cassandra_decommission_force (decommission_node, topology)
+    force: "{{ cassandra_decommission_force | default(false) | bool }}"
   module_defaults:
     community.cassandra.cassandra_decommission: "{{ _cassandra_service_jmx }}"
   async: "{{ cassandra_decommission_timeout | default(_cassandra_stream_async) }}"
@@ -40,7 +43,8 @@
     _cassandra_stream_advice: >-
       the node is still LEAVING: check nodetool netstats and system.log on it. Nothing else was touched;
       don't start another decommission meanwhile. On 4.0 and 4.1 a failed decommission stays LEAVING with no
-      stream (system.log: "Error while decommissioning"): nodetool decommission on it resumes it, or restart
+      stream (system.log: "Error while decommissioning"): nodetool decommission{{ ' --force' if cassandra_decommission_force | default(false) | bool else '' }}
+      on it resumes it, or restart
       Cassandra on it to cancel it (it comes back UN).
 
 - name: Stop and disable Cassandra
