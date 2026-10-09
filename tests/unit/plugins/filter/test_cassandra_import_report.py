@@ -149,22 +149,22 @@ def test_self_check_named_with_hand_edits_elsewhere_and_a_note():
 
 
 def test_differs_from_your_group_vars_all():
-    """Real case: group_vars/all sets the config files' owner; 2 nodes root:cassandra, 3 cassandra:svccassandra."""
+    """Real case: group_vars/all sets the config files' owner; 2 nodes root:cassandra, 3 cassandra:cassandraops."""
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
     nodes = [node(i) for i in range(1, 6)]
     for n in nodes[:2]:
         n["vars"].update(cassandra_config_user="root", cassandra_config_group="cassandra")
     for n in nodes[2:]:
-        n["vars"].update(cassandra_config_user="cassandra", cassandra_config_group="svccassandra")
+        n["vars"].update(cassandra_config_user="cassandra", cassandra_config_group="cassandraops")
     layout = cassandra_inventory_layout_over(nodes, "My Cluster", [{
         "path": "group_vars/all/standard.yml",
-        "content": "cassandra_config_user: cassandra\ncassandra_config_group: svccassandra\n"}])
+        "content": "cassandra_config_user: cassandra\ncassandra_config_group: cassandraops\n"}])
     lines = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True)
     assert ("  1. Differs from your group_vars/all, kept as found: cassandra_config_group, cassandra_config_user"
             " (see DIFFERS FROM YOUR group_vars/all)") in lines
     at = lines.index(u"DIFFERS FROM YOUR group_vars/all — kept as found; delete the line to apply your standard")
     assert lines[at + 1:at + 5] == [
-        "  cassandra_config_group:  yours: svccassandra (group_vars/all/standard.yml)",
+        "  cassandra_config_group:  yours: cassandraops (group_vars/all/standard.yml)",
         u"                           cassandra   node1, node2   \u2190 kept, in host_vars",
         "  cassandra_config_user:   yours: cassandra (group_vars/all/standard.yml)",
         u"                           root        node1, node2   \u2190 kept, in host_vars"]

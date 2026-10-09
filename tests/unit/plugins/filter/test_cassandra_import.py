@@ -1566,15 +1566,15 @@ def _owner_nodes():
     nodes = []
     for i in range(1, 6):
         v = {"cassandra_cluster_name": "Orders"}
-        if i > 2:  # 3 nodes cassandra:svccassandra, 2 at the collection's default (root, the cassandra group)
-            v.update(cassandra_config_user="cassandra", cassandra_config_group="svccassandra")
+        if i > 2:  # 3 nodes cassandra:cassandraops, 2 at the collection's default (root, the cassandra group)
+            v.update(cassandra_config_user="cassandra", cassandra_config_group="cassandraops")
         nodes.append({"name": "n%d" % i, "address": "10.0.0.%d" % i, "dc": "dc1", "rack": "r%d" % (i % 2), "read": True,
                       "vars": v, "hand_edits": [], "normalized": [], "notes": []})
     return nodes
 
 
 STANDARD = [{"path": "group_vars/all/standard.yml",
-             "content": "cassandra_config_user: cassandra\ncassandra_config_group: svccassandra\n"}]
+             "content": "cassandra_config_user: cassandra\ncassandra_config_group: cassandraops\n"}]
 
 
 def test_layout_over_the_users_group_vars_all():
@@ -1590,7 +1590,7 @@ def test_layout_over_the_users_group_vars_all():
     for name in ("n1", "n2", "n3", "n4", "n5"):
         got = cassandra_inventory_host_vars(files, layout["hosts"], name)
         assert (got.get("cassandra_config_user", "root"), got.get("cassandra_config_group", "cassandra")) == \
-            live.get(name, ("cassandra", "svccassandra")), name
+            live.get(name, ("cassandra", "cassandraops")), name
         effective = _effective(name, _chains(layout["hosts"])[name], layout, [(f["path"], {}) for f in STANDARD])
         assert "cassandra_config_user" in effective or name not in live
     # the nodes that follow it: nothing written for them, theirs applies

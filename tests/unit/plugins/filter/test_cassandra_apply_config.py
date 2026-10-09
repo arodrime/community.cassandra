@@ -78,7 +78,7 @@ class Node(object):
                                    "diff": role_diff(tmp_path, files.get(f), targets[f], f)})
         self.items += list(perms or []) + list(dirs or [])
         self.live = [{"cassandra_apply_config_file": f, "content": b64(text)} for f, text in files.items() if text is not None]
-        self.stats = [{"cassandra_config_file": "cassandra-env.sh", "stat": stat(env_owner, "svccassandra")},
+        self.stats = [{"cassandra_config_file": "cassandra-env.sh", "stat": stat(env_owner, "cassandraops")},
                       {"cassandra_config_file": "cassandra.yaml", "stat": stat("root")}]
         self.dir_stats = [{"item": ["data dir", "/var/lib/cassandra/data"], "stat": stat(data_owner, mode="0750")}]
 
@@ -92,7 +92,7 @@ def view(*nodes):
 
 def test_the_four_drifts_setting_centric_target_first(tmp_path):
     env_perms = [{"item": "/etc/cassandra/conf/cassandra-env.sh (owner:group mode)", "before": "root:root 0640",
-                  "after": "cassandra:svccassandra 0640"}]
+                  "after": "cassandra:cassandraops 0640"}]
     data_dir = [{"item": "data dir /var/lib/cassandra/data (owner:group mode)", "path": "/var/lib/cassandra/data",
                  "dir": "data dir", "before": "root:root 0750", "after": "cassandra:cassandra 0750"}]
     nodes = [Node(tmp_path, "node1"),
@@ -105,7 +105,7 @@ def test_the_four_drifts_setting_centric_target_first(tmp_path):
         "  max_hint_window:  3h                            node1..node3, node5          (inventory)",
         "                    6h                            node4                        %s differs" % ARROW,
         "cassandra-env.sh",
-        "  owner/group/mode: cassandra:svccassandra 0640   node1..node3, node5          (inventory)",
+        "  owner/group/mode: cassandra:cassandraops 0640   node1..node3, node5          (inventory)",
         "                    root:root 0640                node4                        %s differs" % ARROW,
         "jvm-server.options",
         "  -Ddemo.drift=1:   present                       node2                        %s differs (not in the inventory)" % ARROW,
