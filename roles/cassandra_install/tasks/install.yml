@@ -100,6 +100,9 @@
           {{ _cassandra_install_java_names
           | difference(cassandra_java_policy.stdout | regex_findall(_available_re)) }}
 
+# Installed already (by its exact name: a pinned version is never skipped): no
+# package manager call, which reads every repository's metadata and fails when
+# a mirror is down though nothing is to install
 - name: Install Java
   ansible.builtin.package:
     name: "{{ cassandra_java_package }}"
@@ -109,6 +112,7 @@
     - cassandra_install_java | bool
     - _cassandra_java_home == ''
     - not cassandra_offline | bool
+    - "[cassandra_java_package] | flatten | reject('in', _cassandra_install_before) | list | length > 0"
 
 - name: Java from a tarball, or already unpacked (cassandra_java_home)
   ansible.builtin.include_tasks: java_tarball.yml
@@ -174,6 +178,7 @@
     - ansible_check_mode
     - not cassandra_offline | bool
     - cassandra_install_method == 'repository'
+    - _cassandra_packages | reject('in', _cassandra_install_before) | list | length > 0
 
 - name: Check the installed version against cassandra_package_version
   when: cassandra_package_version != ""
@@ -198,7 +203,7 @@
 - name: Install Cassandra Packages
   when:
     - not cassandra_offline | bool
-    - not ansible_check_mode or cassandra_install_method == 'packages' or cassandra_install_available.rc == 0
+    - not ansible_check_mode or cassandra_install_method == 'packages' or cassandra_install_available.rc | default(0) == 0
   vars:
     _cassandra_install_names: >-
       {{ _cassandra_packages if cassandra_package_version == ''
@@ -215,6 +220,7 @@
         - cassandra_policy_rc_d.rc != 1
       changed_when: false
 
+    # installed already by these names (a version given: never skipped)
     - name: Install Cassandra Packages
       ansible.builtin.package:
         name: "{{ _cassandra_install_names }}"
@@ -224,6 +230,7 @@
         - cassandra_install_method == 'repository'
         - not (_cassandra_install_upgrade | default(false) and ansible_facts['os_family'] == 'Debian')
         - _cassandra_java_home == '' or ansible_facts['os_family'] == 'Debian'
+        - _cassandra_install_names | reject('in', _cassandra_install_before) | list | length > 0
 
     # The RedHat packages depend on a Java package: with Java from a tarball
     # they are installed without their dependencies, plus the ones Cassandra
@@ -245,6 +252,7 @@
             name: [procps-ng, python3, shadow-utils]
             state: present
           retries: 3
+          when: "['procps-ng', 'python3', 'shadow-utils'] | reject('in', _cassandra_install_before) | list | length > 0"
 
         - name: Start from an empty download directory
           ansible.builtin.file:
@@ -351,16 +359,20 @@
     - ansible_facts['os_family'] == 'RedHat'
     - cassandra_install_jemalloc | bool
     - not cassandra_offline | bool
+    - "'jemalloc' not in _cassandra_install_before"
 
 - name: Install jemalloc
   ansible.builtin.package:
-    name: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
+    name: "{{ _jemalloc }}"
     state: present
   retries: 3
   when:
     - cassandra_install_jemalloc | bool
     - not cassandra_offline | bool
-    - ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout != ''
+    - _jemalloc not in _cassandra_install_before
+    - ansible_facts['os_family'] == 'Debian' or cassandra_jemalloc_query.stdout | default('') != ''
+  vars:
+    _jemalloc: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
 
 # cqlsh only runs on some Python versions (4.x: 3.6-3.11, 5.0: 3.8-3.13):
 # when python3 is outside that range, install python3.11 next to it for cqlsh.
@@ -457,6 +469,7 @@
             name: python3-debian
             state: present
           retries: 3
+          when: "'python3-debian' not in _cassandra_install_before"
 
         - name: Add the deadsnakes repository
           ansible.builtin.deb822_repository:
@@ -498,15 +511,18 @@
         quiet: true
       when: cassandra_python311_query is not skipped
 
-    # --check: apt can't resolve it before the PPA above is really added
+    # --check: apt can't resolve it before the PPA above is really added; installed already: no dnf call
+    # (it would read every repository's metadata, and fail when a mirror is down)
     - name: Install python3.11
       ansible.builtin.package:
         name: python3.11
         state: present
       retries: 3
-      when: >-
-        not (ansible_check_mode and ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != ''
-             and cassandra_python311_policy.stdout is not search('Candidate: [0-9]'))
+      when:
+        - "'python3.11' not in _cassandra_install_before"
+        - >-
+          not (ansible_check_mode and ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != ''
+               and cassandra_python311_policy.stdout is not search('Candidate: [0-9]'))
 
 # The rpm installs cqlshlib for python3.6 only: link it into the Pythons
 # cqlsh may run with (CASSANDRA-19206).

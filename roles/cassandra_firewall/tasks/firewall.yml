@@ -24,13 +24,25 @@
   ansible.builtin.set_fact:
     _cassandra_firewall_before: "{{ dict(cassandra_firewall_snapshot.stdout_lines | map('split', '|', 1)) }}"
 
+# installed already: no package manager call (it reads every repository's
+# metadata, and fails when a mirror is down though nothing is to install).
+# python-firewall is a name python3-firewall provides
+- name: Read the installed packages
+  ansible.builtin.package_facts:
+  check_mode: false
+  when: not cassandra_offline | bool
+
 - name: Ensure firewall package is installed
   ansible.builtin.package:
     name: "{{ firewall_packages }}"
     state: present
   retries: 3
   register: cassandra_firewall_install
-  when: not cassandra_offline | bool
+  when:
+    - not cassandra_offline | bool
+    - >-
+      [firewall_packages] | flatten | map('regex_replace', '^python-firewall$', 'python3-firewall')
+      | reject('in', ansible_facts['packages'] | default({})) | list | length > 0
 
 - name: Check the firewall is installed (offline)
   when: cassandra_offline | bool
