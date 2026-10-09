@@ -550,15 +550,43 @@
       no_log: true  # keystore passwords
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
 
-    # remote JMX users, where cassandra_config writes them
+    # remote JMX users: the password and access files the JVM reads, whatever their names (its arguments, else
+    # cassandra-env.sh, else the JVM options files), the role's paths when none is given
+    - name: Read the running JVM's arguments
+      ansible.builtin.slurp:
+        path: "/proc/{{ cassandra_jvm.pid }}/cmdline"
+      register: import_cluster_jvm_cmdline
+      failed_when: false
+      no_log: true  # (a keystore password can be one)
+      when:
+        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+        - cassandra_jvm.pid | default('') != ''
+
+    - name: Find the JMX password and access files the JVM reads
+      ansible.builtin.set_fact:
+        import_cluster_jmx_files: >-
+          {{ _live['cassandra-env.sh'] | default('') | community.cassandra.cassandra_jmx_files(
+               _live | dict2items | selectattr('key', 'match', 'jvm[0-9]*-server[.]options$') | items2dict,
+               import_cluster_jvm_cmdline.content | default('') | b64decode, import_cluster_conf_dir,
+               _live['cassandra.yaml'] | default('')) }}
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"  # the files read, on an error
+      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      vars:
+        _live: >-
+          {{ dict(import_cluster_slurp.results | selectattr('content', 'defined') | map(attribute='item')
+                  | zip(import_cluster_slurp.results | selectattr('content', 'defined') | map(attribute='content')
+                        | map('b64decode'))) }}
+
     - name: Read the JMX users
       ansible.builtin.slurp:
-        path: "/etc/cassandra/{{ item }}"
+        path: "{{ import_cluster_jmx_files[item.split('.')[1]] | default('', true) or '/etc/cassandra/' ~ item }}"
       loop: [jmxremote.password, jmxremote.access]
       register: import_cluster_jmx_slurp
       failed_when: false
       no_log: true
-      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+      when:
+        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+        - not import_cluster_jmx_files.unknown | default('')  # (not the role's paths then: not read)
 
     # the Cassandra repository files: cassandra_repository takes over only the ones it would write as they are
     - name: Read the Cassandra repository files
@@ -648,7 +676,8 @@
             import_cluster_config: >-
               {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
                                                                      import_cluster_conf_target | default(''),
-                                                                     import_cluster_storage_dir | default('')) }}
+                                                                     import_cluster_storage_dir | default(''),
+                                                                     import_cluster_jmx_files | default({})) }}
           vars:
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
@@ -685,12 +714,14 @@
         get_attributes: false
       loop: >-
         {{ _files | map('regex_replace', '^', import_cluster_conf_dir ~ '/') | list
-           + ['/etc/cassandra/jmxremote.password', '/etc/cassandra/jmxremote.access'] + _dirs }}
+           + [_jmx.password | default('', true) or '/etc/cassandra/jmxremote.password',
+              _jmx.access | default('', true) or '/etc/cassandra/jmxremote.access'] + _dirs }}
       register: import_cluster_perm_stat
       failed_when: false  # not read (e.g. a data dir on NFS root can't read): left out
       when: import_cluster_config is defined
       vars:
         _cfg: "{{ import_cluster_config.vars | default({}) }}"
+        _jmx: "{{ import_cluster_jmx_files | default({}) }}"
         _dirs: >-
           {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
              + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),

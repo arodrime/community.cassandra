@@ -192,10 +192,12 @@ SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|ke
                     r"|_kspw$|_tspw$|_pw$|_pass$|^pw$|^pass$", re.I)
 _HIDDEN = SECRET
 MASK = "****"
-# A secret inside a line of text (a config file line, a JVM option): its name (as above, inside a longer one),
-# a quote between the name and the colon (JSON, Python), then its value
+# A secret inside a line of text (a config file line, a JVM option): its name (as above, inside a longer one;
+# not a path: a name ending in file or path, e.g. -Dcom.sun.management.jmxremote.password.file), a quote between
+# the name and the colon (JSON, Python), then its value
 _HIDDEN_KEY = (r"(?i)([\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
-               r"|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*[\"']?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
+               r"|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*(?<![._-]file)(?<![._-]path)[\"']?\s*[:=]\s*)"
+               r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
 # an unquoted value runs to the end of the line (a comment aside), as a YAML plain scalar or a JVM option may hold
 # a comma; inside a flow mapping or JSON ({...} before it) it ends at the next comma or brace
 _HIDDEN_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|$))", re.M)

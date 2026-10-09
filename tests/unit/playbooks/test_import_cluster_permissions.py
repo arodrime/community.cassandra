@@ -68,3 +68,22 @@ def test_stats_matched_to_their_file_and_dir():
     assert set(dirs) == {"/var/lib/cassandra/data", "/var/lib/cassandra/commitlog", "/var/lib/cassandra/hints",
                          "/var/lib/cassandra/saved_caches", "/logs"}
     assert all(dirs[p]["path"] == p for p in dirs)
+
+
+def test_jmx_files_at_their_own_paths():
+    # the files the JVM reads (cassandra_jmx_files): read, and their owner and mode, at their paths
+    jmx = {"password": "/etc/cassandra/conf/jmx/my_jmx.password", "access": "/etc/cassandra/conf/jmx/my_jmx.access"}
+    variables = dict(STAT["vars"], _files=FILES, import_cluster_conf_dir="/etc/cassandra",
+                     import_cluster_config={"vars": {}}, import_cluster_log_dir="", import_cluster_jmx_files=jmx)
+    paths = render(STAT["loop"], variables)
+    assert paths[len(FILES):len(FILES) + 2] == [jmx["password"], jmx["access"]]
+    read = next(t for t in READ["tasks"] if t["name"] == "Read the JMX users")
+    assert [render(read["ansible.builtin.slurp"]["path"], dict(item=i, import_cluster_jmx_files=jmx))
+            for i in read["loop"]] == [jmx["password"], jmx["access"]]
+    assert [render(read["ansible.builtin.slurp"]["path"], dict(item=i, import_cluster_jmx_files={"password": ""}))
+            for i in read["loop"]] == ["/etc/cassandra/jmxremote.password", "/etc/cassandra/jmxremote.access"]
+    # found before they are read; the JVM's arguments read without showing them
+    names = [t["name"] for t in READ["tasks"]]
+    assert names.index("Read the running JVM's arguments") < names.index("Find the JMX password and access files the JVM reads") \
+        < names.index("Read the JMX users")
+    assert next(t for t in READ["tasks"] if t["name"] == "Read the running JVM's arguments")["no_log"] is True

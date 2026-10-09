@@ -924,7 +924,11 @@ nodes); the systemd unit's drain only uses the password file.
 
 To open JMX to remote tools (a repair scheduler, monitoring), set ``cassandra_local_jmx: false`` and list its users
 in ``cassandra_jmx_users``: the role writes ``jmxremote.password`` and ``jmxremote.access``, readable by Cassandra
-only. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
+only, at ``cassandra_jmx_remote_password_file`` and ``cassandra_jmx_remote_access_file`` (``/etc/cassandra/`` by
+default; ``cassandra-env.sh`` points the JVM at them). ``import_cluster`` reads the files the JVM reads, whatever
+their names (the running JVM's arguments, else ``cassandra-env.sh``, else the JVM options files): their users go to
+``secrets.yml``, their paths to these variables. A JMX authentication by JAAS (``-Dcassandra.jmx.remote.login.config``,
+``jmx_server_options`` in ``cassandra.yaml``) is not imported: the report says so. For cqlsh on the nodes, ``cassandra_cqlsh_credentials`` writes a ``cqlshrc`` that points at the node, with the
 CQL credentials, for the OS users you list. Playbooks that read the schema over CQL take ``cassandra_cql_username``
 and ``cassandra_cql_password``.
 

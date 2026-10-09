@@ -1230,11 +1230,25 @@ argument_specs:
         default: []
         description:
         - Remote JMX users (with O(cassandra_local_jmx) false), written to
-          C(/etc/cassandra/jmxremote.password) and C(jmxremote.access), readable
+          O(cassandra_jmx_remote_password_file) and O(cassandra_jmx_remote_access_file), readable
           by cassandra only. Each item has C(name), C(password) and C(access)
           (C(readwrite), the default, or C(readonly)). A C(readwrite) user also gets the C(create) and
           C(unregister) rights of the JDK's controlRole, unless C(create_unregister) is false. Keep the passwords
           in a vault.
+      cassandra_jmx_remote_password_file:
+        type: path
+        default: /etc/cassandra/jmxremote.password
+        description:
+        - The remote JMX password file C(cassandra-env.sh) points the JVM at
+          (C(-Dcom.sun.management.jmxremote.password.file)), where the role writes O(cassandra_jmx_users).
+          import_cluster reads the node's.
+      cassandra_jmx_remote_access_file:
+        type: path
+        default: /etc/cassandra/jmxremote.access
+        description:
+        - The remote JMX access file C(cassandra-env.sh) points the JVM at
+          (C(-Dcom.sun.management.jmxremote.access.file)), where the role writes the rights of
+          O(cassandra_jmx_users). import_cluster reads the node's.
       cassandra_cqlsh_credentials:
         type: list
         elements: dict

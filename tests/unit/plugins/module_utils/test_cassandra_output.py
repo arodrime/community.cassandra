@@ -111,7 +111,8 @@ SECRETS = [  # (key, value): each one hidden on screen and filed in secrets.yml
     ("cassandra_cql_password", 1234)]
 NOT_SECRETS = [("cassandra_jmx_password_file", "/etc/x"), ("cassandra_jmx_password", ""),
                ("cassandra_jmx_password", None), ("concurrent_reads", 32), ("opts", "-Xmx8G -p 9042"),
-               ("compass", "x"), ("bypass", "x"), ("passive_mode", "x"), ("settings", {"keystore": "conf/.keystore"})]
+               ("compass", "x"), ("bypass", "x"), ("passive_mode", "x"), ("settings", {"keystore": "conf/.keystore"}),
+               ("opts", "-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/conf/jmx/my_jmx.password")]
 
 
 def test_one_rule_for_secrets():

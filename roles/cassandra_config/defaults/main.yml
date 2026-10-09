@@ -338,11 +338,15 @@ cassandra_config_backup: true
 cassandra_config_force_identity_change: false
 
 # Remote JMX users (with cassandra_local_jmx: false), written to
-# /etc/cassandra/jmxremote.password and .access, readable by cassandra only:
+# cassandra_jmx_remote_password_file and _access_file, readable by cassandra only:
 # [{name: ..., password: ..., access: readwrite|readonly}]; a readwrite user
 # also gets the create (monitor, timer MBeans) and unregister rights, unless
 # create_unregister: false. Keep the passwords in a vault.
 cassandra_jmx_users: []
+# Where cassandra-env.sh points the JVM for them (and the role writes them):
+# their password and access files (import_cluster reads the node's paths)
+cassandra_jmx_remote_password_file: /etc/cassandra/jmxremote.password
+cassandra_jmx_remote_access_file: /etc/cassandra/jmxremote.access
 
 # cqlsh set up for OS users (~/.cassandra/cqlshrc, pointing at this node, and
 # the credentials file), mode 0600: [{os_user: root, username: ..., password: ...}]
