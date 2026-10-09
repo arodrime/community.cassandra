@@ -445,34 +445,41 @@ def _bar(done, total):
     return "[%s%s]" % ("#" * filled, "-" * (_BAR - filled))
 
 
+# the time without progress a progress line says, from this many seconds (a
+# check or two without a byte is no news)
+IDLE_SHOWN = 60
+
+
 def progress_line(index, total_steps, node, operation, mode="", done=0, total=0, speed=None, now=0, start=None,
-                  idle_checks=0, limit=0, peers=None, status="going"):
+                  idle=0, limit=0, peers=None, status="going"):
     """One check of a long operation (Q2), as 2 lines:
     "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
     then always the other ends: "      from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled".
     index/total_steps: the position in the run (no [i/n] when total_steps
     is 0); mode: netstats Mode; done/total: bytes; speed: bytes/s (None:
-    not known yet); now/start: epoch seconds; idle_checks/limit: the checks
-    in a row without progress and the stall limit (STALLED shown from the
-    first idle check); peers: [{name, way ('from'/'to'), done, total,
-    stalled}]; status: going, or stalled / failed / done (said in the line).
-    Before any data flows: "waiting for streams" and the elapsed time."""
+    not known yet); now/start: epoch seconds; idle/limit: the seconds
+    without progress and the stall limit (said from IDLE_SHOWN seconds:
+    "STALLED 6m/15m" while data is left, "no progress 6m/1h" before the
+    streams or once all is sent); peers: [{name, way ('from'/'to'), done,
+    total, stalled}]; status: going, or stalled / failed / done (said in the
+    line). Before any data flows: "waiting for streams" and the elapsed time."""
     start = now if start is None else start
     head = "  ".join(x for x in [("[%d/%d] %s %s" % (index, total_steps, node, operation)) if total_steps
                                  else "%s %s" % (node, operation), mode] if x)
     elapsed = duration(now - start, short=True)
     pct = "%d%%" % int(100 * min(done, total) / total) if total else ""
     done_total = amount(done, total) if total else ""
+    idle_text = ("%s/%s" % (duration(idle, short=True), duration(limit, short=True))) if idle >= IDLE_SHOWN and limit else ""
+    quiet = ("no progress " + idle_text) if idle_text else ""
     if status == "done":
         line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
-    elif status not in ("going",) or (idle_checks and total):  # before any stream: still waiting for them
+    elif status != "going" or (idle_text and total and done < total):  # before any stream: still waiting for them
         word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED"}.get(
-            status, "STALLED" if idle_checks else status.upper())
-        count_text = "%s %d/%d checks" % (word, idle_checks, limit) if idle_checks and limit else word
+            status, "STALLED" if status == "going" else status.upper())
+        count_text = ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
     elif not total:
-        checks = ["%d/%d checks" % (idle_checks, limit)] if idle_checks and limit else []
-        line = "  ".join([head, "waiting for streams"] + checks + [elapsed])
+        line = "  ".join(x for x in [head, "waiting for streams", quiet, elapsed] if x)
     else:
         eta = ""
         if speed and total > done:
@@ -480,8 +487,8 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
             eta = "ETA %s (%s)" % (_hhmm(now + left, now), duration(left, short=True))
         elif total <= done:
             eta = "all sent, finishing"
-        line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta, elapsed]
-                         if x)
+        line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta,
+                                     quiet if total <= done else "", elapsed] if x)
     out = [line]
     if peers:
         parts = []

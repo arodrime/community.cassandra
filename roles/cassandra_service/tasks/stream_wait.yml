@@ -1,8 +1,8 @@
 ---
 # Waits for a streaming operation as long as it makes progress: every
 # cassandra_stream_check_interval seconds (sooner at first), reads nodetool netstats where the
-# data streams, prints the progress (cassandra_stream_report), and fails only after
-# cassandra_stream_stall_checks checks in a row without any byte or file
+# data streams, prints the progress (cassandra_progress_line), and fails only after
+# cassandra_stream_stall_time seconds without any byte or file
 # streamed (or after cassandra_stream_max_time,
 # when set). The checks (stream_check.yml) run in wait_loop.yml, which stops
 # right after the one that ends it.
@@ -48,8 +48,8 @@
       {%- elif _cassandra_stream_status == 'stopped' %}
       Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
       {%- elif _cassandra_stream_status == 'stalled' %}
-      no streaming progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s
-      apart (cassandra_stream_stall_checks, 4 times as many while nothing is left to transfer). Nothing was
+      no streaming progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
+      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s, 4 times as long while nothing is left to transfer). Nothing was
       stopped: {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
       {%- else %}
       still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:

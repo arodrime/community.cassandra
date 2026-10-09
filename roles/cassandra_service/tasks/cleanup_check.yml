@@ -34,12 +34,14 @@
       ansible.builtin.set_fact:
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
-               now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
-               interval=cassandra_stream_check_interval | int) }}
+               now=now().timestamp() | int, operations=['Cleanup'], stall_time=cassandra_stream_stall_time | int,
+               interval=cassandra_stream_check_interval | int, early_interval=cassandra_stream_early_check_interval | int,
+               early_time=cassandra_stream_early_time | int) }}
         _cassandra_cleanup_states: >-
           {{ _views | community.cassandra.cassandra_stream_progress_by_host(_cassandra_cleanup_states | default({}),
-               now=now().timestamp() | int, operations=['Cleanup'], stall_checks=cassandra_stream_stall_checks | int,
-               interval=cassandra_stream_check_interval | int) }}
+               now=now().timestamp() | int, operations=['Cleanup'], stall_time=cassandra_stream_stall_time | int,
+               interval=cassandra_stream_check_interval | int, early_interval=cassandra_stream_early_check_interval | int,
+               early_time=cassandra_stream_early_time | int) }}
       vars:
         _views: >-
           {{ cassandra_cleanup_read.results | zip(cassandra_cleanup_jobs_started.results | map(attribute='item'))
@@ -77,7 +79,7 @@
       ansible.builtin.set_fact:
         _cassandra_cleanup_status: "{{ _cassandra_cleanup_now }}"
 
-    # 10 s, 30 s, 1, 2 and 4 minutes, then every cassandra_stream_check_interval
+    # every cassandra_stream_early_check_interval for cassandra_stream_early_time, then every cassandra_stream_check_interval
     # on the controller, quiet (pause prints "Pausing for ..." on a terminal, between the progress lines)
     - name: Wait before the next check
       ansible.builtin.wait_for:

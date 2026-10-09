@@ -93,21 +93,24 @@ n4  bootstrap  [##########----------]  50%   341 MiB/s
       Finish:    in 5m   - 00:26 UTC"""
 
 
-def test_stall_after_checks_in_a_row_without_bytes():
+def test_stall_after_a_time_without_bytes():
     views = [read("n4", session("10.0.0.1", 10, 100))]
-    s = cassandra_stream_progress(views, None, now=0, stall_checks=3)
-    s = cassandra_stream_progress(views, s, now=300, stall_checks=3)
-    assert not s["progressed"] and not s["stalled"] and report(s).endswith("\n\n      Progress:  none for 1 check (5m), stops after 3")
-    s = cassandra_stream_progress(views, s, now=600, stall_checks=3)
-    assert not s["stalled"] and s["idle_checks"] == 2
+    s = cassandra_stream_progress(views, None, now=0, stall_time=900)
+    s = cassandra_stream_progress(views, s, now=300, stall_time=900)
+    assert not s["progressed"] and not s["stalled"] and report(s).endswith("\n\n      Progress:  none for 5m, stops at 15m")
+    s = cassandra_stream_progress(views, s, now=870, stall_time=900)
+    assert not s["stalled"] and s["idle"] == 870
     # once it has ended (DECOMMISSIONED, NORMAL...): one line, no no-progress count
-    assert report(s, status="done") == "n4  bootstrap  done  10 B, after 10m"
-    # one more byte resets the count
-    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=900, stall_checks=3)
-    assert s["progressed"] and s["idle_checks"] == 0
-    for now in (1200, 1500, 1800):
-        s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=now, stall_checks=3)
-    assert s["stalled"] and s["idle_checks"] == 3
+    assert report(s, status="done") == "n4  bootstrap  done  10 B, after 14m"
+    # one more byte resets the time
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=900, stall_time=900)
+    assert s["progressed"] and s["idle"] == 0 and s["idle_checks"] == 0
+    # the time counts, not the checks: 90 checks 10 s apart are no stall, 900 s are
+    for now in range(910, 1800, 10):
+        s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=now, stall_time=900)
+    assert not s["stalled"] and s["idle_checks"] == 89
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 11, 100))], s, now=1800, stall_time=900)
+    assert s["stalled"] and s["idle"] == 900
 
 
 def test_finished_session_counts_as_done_and_as_progress():
@@ -126,7 +129,7 @@ n4  bootstrap  total unknown
 
       Now:       current - 00:00 UTC
       Started:   0s ago  - 00:00 UTC"""
-    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=100, stall_checks=1, quiet_factor=1)
+    s = cassandra_stream_progress([{"item": "n4", "failed": True, "msg": "x"}], s, now=100, stall_time=100, quiet_factor=1)
     assert not s["answered"] and s["stalled"]
     assert report(s, status="stalled") == """\
 n4  bootstrap  STALLED  total unknown
@@ -137,7 +140,7 @@ n4  bootstrap  STALLED  total unknown
       Now:       current - 00:01 UTC
       Started:   1m ago  - 00:00 UTC
 
-      Progress:  none for 1 check (1m)"""
+      Progress:  none for 1m"""
 
 
 def test_filters_operation_and_peer():
@@ -263,12 +266,12 @@ def test_cleanup_progress_line_and_failed_read():
 def test_quiet_phases_get_more_checks():
     # every session at 100% (e.g. views written through the write path) or none yet
     for views in ([read("n4", session("10.0.0.1", 100, 100))], [read("n4")]):
-        s = cassandra_stream_progress(views, None, now=0, stall_checks=3, quiet_factor=4)
+        s = cassandra_stream_progress(views, None, now=0, stall_time=900, quiet_factor=4)
         for i in range(1, 12):
-            s = cassandra_stream_progress(views, s, now=i * 300, stall_checks=3, quiet_factor=4)
-        assert not s["transferring"] and s["idle_checks"] == 11 and not s["stalled"]
-        s = cassandra_stream_progress(views, s, now=12 * 300, stall_checks=3, quiet_factor=4)
-        assert s["stalled"] and report(s, status="stalled").endswith("\n      Progress:  none for 12 checks (1h00m)")
+            s = cassandra_stream_progress(views, s, now=i * 300, stall_time=900, quiet_factor=4)
+        assert not s["transferring"] and s["idle"] == 3300 and not s["stalled"]
+        s = cassandra_stream_progress(views, s, now=12 * 300, stall_time=900, quiet_factor=4)
+        assert s["stalled"] and report(s, status="stalled").endswith("\n      Progress:  none for 1h00m")
 
 
 def test_simple_strategy_user_keyspace_cleans_every_dc():
@@ -290,11 +293,11 @@ def test_node_joined_in_an_earlier_run_is_cleaned_when_another_joins_after():
 def test_a_host_that_does_not_answer_keeps_its_sessions():
     views = [read("n1", session("10.0.0.7", 10, 100, op="Restore replica count")),
              read("n2", session("10.0.0.8", 10, 100, op="Restore replica count"))]
-    s = cassandra_stream_progress(views, None, now=0, stall_checks=3)
+    s = cassandra_stream_progress(views, None, now=0, stall_time=900)
     for now in (300, 600):
-        s = cassandra_stream_progress([views[0], {"item": "n2", "failed": True, "msg": "x"}], s, now=now, stall_checks=3)
+        s = cassandra_stream_progress([views[0], {"item": "n2", "failed": True, "msg": "x"}], s, now=now, stall_time=900)
         assert not s["progressed"] and (s["bytes_done"], s["bytes_total"]) == (20, 200)
-    s = cassandra_stream_progress([views[0], {"item": "n2", "failed": True, "msg": "x"}], s, now=900, stall_checks=3)
+    s = cassandra_stream_progress([views[0], {"item": "n2", "failed": True, "msg": "x"}], s, now=900, stall_time=900)
     assert s["stalled"]
 
 
@@ -460,9 +463,9 @@ n5  cleanup  done  88.2 MiB in 1m (90.1 MiB in all), 903 KiB/s on average
       Now:       current - 00:01 UTC
       Started:   1m ago  - 00:00 UTC"""
     # one node: no batch line, its clocks in its block; a stalled batch, a job that can't be followed
-    lines = cassandra_cleanup_report({"n1": s["n1"]}, jobs[:1], dict(batch, idle_checks=3, limit=3), status="stalled")
+    lines = cassandra_cleanup_report({"n1": s["n1"]}, jobs[:1], dict(batch, idle_checks=3, limit=900, last_progress=40), status="stalled")
     assert lines[1].startswith("n1  cleanup  STALLED  [###") and "Finish counts" not in lines[0]
-    assert "      Started:   1m ago  - 00:00 UTC" in lines and lines[-1] == "      Progress:  none for 3 checks (0s)"
+    assert "      Started:   1m ago  - 00:00 UTC" in lines and lines[-1] == "      Progress:  none for 1m"
     lines = cassandra_cleanup_report({"n1": s["n1"]}, [{"item": {"item": "n1"}, "msg": "lost"}], batch, status="failed")
     assert lines[1].startswith("n1  cleanup  FAILED  [###")
 
@@ -545,7 +548,7 @@ n4  bootstrap  STALLED  [#######-------------]  37%
       Now:       current - 13:39 UTC
       Started:   25m ago - 13:14 UTC
 
-      Progress:  none for 3 checks (15m)"""
+      Progress:  none for 15m"""
     for status, label in (("join_failed", "FAILED"), ("job_lost", "FAILED"), ("too_long", "TOO LONG"), ("stopped", "STOPPED")):
         assert header(s, status=status) == "n4  bootstrap  %s  [#######-------------]  37%%" % label
 
@@ -639,18 +642,27 @@ def test_host_addresses():
     assert cassandra_host_addresses(["n4"], {"n4": Broken()}) == {"n4": "n4"}
 
 
-def test_first_checks_come_sooner_and_do_not_count_towards_a_stall():
+def test_checks_every_10s_for_5_minutes_then_every_30s():
     views = [read("n4", session("10.0.0.1", 10, 100))]
     s, now, waits = None, 0, []
-    for dummy in range(8):
-        s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
+    for dummy in range(34):
+        s = cassandra_stream_progress(views, s, now=now)
         waits.append(s["wait"])
         now += s["wait"]
-    assert waits == [10, 30, 60, 120, 240, 300, 300, 300]
-    # nothing moved: only the checks 300 s after the previous one count
-    assert s["idle_checks"] == 2 and not s["stalled"] and s["checks"] == 8
-    s = cassandra_stream_progress(views, s, now=now, stall_checks=3, interval=300)
+    assert waits == [10] * 30 + [30] * 4 and s["checks"] == 34
+    # nothing moved since the first check: 15 minutes make a stall, whatever the number of checks
+    assert s["idle"] == 390 and not s["stalled"]
+    s = cassandra_stream_progress(views, s, now=900)
     assert s["stalled"]
-    # a check interval shorter than the first waits caps them
-    s = cassandra_stream_progress(views, None, now=0, interval=20)
-    assert s["wait"] == 10 and cassandra_stream_progress(views, s, now=10, interval=20)["wait"] == 20
+    # the settings (a check interval shorter than the early one caps it)
+    s = cassandra_stream_progress(views, None, now=0, interval=60, early_interval=5, early_time=20)
+    assert s["wait"] == 5 and cassandra_stream_progress(views, s, now=20, interval=60, early_interval=5, early_time=20)["wait"] == 60
+    assert cassandra_stream_progress(views, None, now=0, interval=4)["wait"] == 4
+
+
+def test_rate_over_the_last_90_seconds():
+    s = None
+    for now in range(0, 310, 10):  # 1 MiB every 10 s, then 10 MiB every 10 s from 200 s
+        done = (now // 10) * MIB if now <= 200 else 20 * MIB + (now - 200) // 10 * 10 * MIB
+        s = cassandra_stream_progress([read("n4", session("10.0.0.1", done, GIB))], s, now=now)
+    assert s["rate"] == 10 * MIB / 10.0 and len(s["samples"]) == 10

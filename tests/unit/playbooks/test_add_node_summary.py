@@ -57,7 +57,7 @@ def summary(new_nodes=("node7",), joining=(), **inventory):
         "hostvars": {"node7": new, "node1": {"cassandra_preflight_describe": {"stdout": ""}}},
         "_new": list(new_nodes), "_joining": list(joining), "_existing": ["node1"], "ansible_play_hosts_all": ["node7"],
         "cassandra_add_node_plan": {"estimate": [], "cleanup": {}, "scope": {}, "warnings": []},
-        "cassandra_stream_check_interval": 300, "cassandra_stream_stall_checks": 3, "_cassandra_session_warning": "",
+        "cassandra_stream_check_interval": 30, "cassandra_stream_stall_time": 900, "_cassandra_session_warning": "",
         "_single": False, "_auto": "false", "ansible_check_mode": False, "cassandra_operation_confirm": True,
     }
     variables.update(inventory)
@@ -125,7 +125,7 @@ def test_medusa_on_when_only_the_new_node_has_it():
 def test_a_run_again_for_a_joining_node_says_it_waits():
     text = summary(new_nodes=(), joining=("node7",))
     assert "Still bootstrapping, waited for first: node7" in flat(text)
-    assert "its progress printed every 300s (sooner at first)" in flat(text) and "No node to add" not in text
+    assert "its progress printed every 30s (sooner at first); the run stops after 15m without progress" in flat(text) and "No node to add" not in text
     assert "No node to add (node7 already in the ring)" in flat(summary(new_nodes=()))
 
 

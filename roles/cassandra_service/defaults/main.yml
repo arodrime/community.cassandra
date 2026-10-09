@@ -66,17 +66,22 @@ cassandra_service_wait_for_normal: true
 cassandra_service_wait_timeout: 600  # seconds
 
 # Streaming operations (add_node, replace_node, decommission_node,
-# remove_dead_node, add_datacenter's rebuild) are waited for as long as they
-# make progress: every cassandra_stream_check_interval seconds (the first
-# checks sooner: after 10 s, 30 s, 1, 2 and 4 minutes) nodetool netstats is
-# read and the progress printed; the run fails only after
-# cassandra_stream_stall_checks checks in a row, that interval apart, with
-# nothing streamed (no byte, no file, no session started or ended), 4 times as many while nothing
-# is left to transfer (before the first session, index or view builds after
-# the streams, hints of a decommission, a cleanup queued behind compactions). No overall limit
-# unless cassandra_stream_max_time is set (seconds, 0: none).
-cassandra_stream_check_interval: 300  # seconds
-cassandra_stream_stall_checks: 3
+# remove_dead_node, add_datacenter's rebuild, move_node, topology) and
+# cleanups are waited for as long as they make progress: nodetool netstats
+# (compactionstats) is read and the progress printed every
+# cassandra_stream_early_check_interval seconds during the first
+# cassandra_stream_early_time seconds (a short operation ends in seconds),
+# then every cassandra_stream_check_interval seconds; the run fails only
+# after cassandra_stream_stall_time seconds with nothing streamed (no byte,
+# no file, no session started or ended), 4 times as long while nothing is
+# left to transfer (before the first session, index or view builds after
+# the streams, hints of a decommission, a cleanup queued behind
+# compactions). No overall limit unless cassandra_stream_max_time is set
+# (seconds, 0: none).
+cassandra_stream_check_interval: 30  # seconds
+cassandra_stream_early_check_interval: 10  # seconds
+cassandra_stream_early_time: 300  # seconds
+cassandra_stream_stall_time: 900  # seconds
 cassandra_stream_max_time: 0  # seconds, 0: no limit
 # add_node: the cleanup of the nodes that handed data over. none: print the
 # command; sequential: run it one node at a time (one: the same); rack, dc: a
@@ -117,11 +122,12 @@ cassandra_move_min_free_percent: 20
 cassandra_move_force_disk: false
 
 # checks per include level of the progress waits (wait_loop.yml): Ansible nests
-# every include one level deeper and fails past ~150 levels. A round covers
-# 6 hours (a month in 150 rounds) with 24 to 120 checks (60 s: 12.5 days), by
+# every include one level deeper and fails past ~150 levels. A round covers 6
+# hours of the check interval, 24 to 720 checks: at 30 s (the default) or more,
+# a month in 150 rounds; a shorter interval, less (10 s: 2 hours a round). By
 # groups of _cassandra_wait_size: once it ends, what is left of the round is
 # skipped by at most that many checks and groups, one task each
-_cassandra_stream_round_size: "{{ [24, [120, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
+_cassandra_stream_round_size: "{{ [24, [720, 21600 // ([1, cassandra_stream_check_interval | int] | max)] | min] | max }}"
 _cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(0, 'ceil') | int }}"
 
 # the words of an action in a --check result ("would restart")

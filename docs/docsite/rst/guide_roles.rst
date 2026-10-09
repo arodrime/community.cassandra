@@ -369,13 +369,12 @@ nodes then hold different shares of the data), and a run not inside ``tmux`` or 
 SSH session stops the run).
 
 Each new node bootstraps: it streams its share of the data, hours on big nodes. The playbook prints its progress
-every ``cassandra_stream_check_interval`` seconds (300 by default; the first checks sooner, after 10 s, 30 s, 1, 2
-and 4 minutes, so a short operation ends in seconds): a first line with the node, a bar, the percentage
-and the rate over the last 3 checks, then the bytes and files streamed, each node it streams from with its own
-progress, and the times on the controller (now, started, expected end); a single line with the total time and average
-rate once done. It waits as long as the streams make
-progress: it stops only after ``cassandra_stream_stall_checks`` checks in a row (3), a full interval apart, with nothing streamed (4 times as
-many while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
+every ``cassandra_stream_early_check_interval`` seconds (10) during the first ``cassandra_stream_early_time`` seconds
+(300), so a short operation ends in seconds, then every ``cassandra_stream_check_interval`` seconds (30): one line with
+the node, a bar, the percentage, the bytes streamed, the rate, the expected end on the controller's clock and the time
+so far, then one line with each node it streams from and its own progress; a single line with the total time once
+done. It waits as long as the streams make progress: it stops only after ``cassandra_stream_stall_time`` seconds (900)
+with nothing streamed (4 times as long while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
 failed bootstrap over, stop Cassandra on the node, wait until it is gone from ``nodetool status``, and run ``add_node``

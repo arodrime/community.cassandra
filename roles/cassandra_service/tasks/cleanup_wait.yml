@@ -3,7 +3,7 @@
 # progress: every cassandra_stream_check_interval seconds (sooner at first), reads nodetool
 # compactionstats on the batch's nodes, prints the progress (bytes cleaned
 # by the running Cleanup tasks, cassandra_stream_report), and fails only after
-# cassandra_stream_stall_checks checks in a row without progress. The checks
+# cassandra_stream_stall_time seconds without progress. The checks
 # (cleanup_check.yml) run in wait_loop.yml until every cleanup job has ended.
 # Run once; expects
 # cassandra_cleanup_jobs_started (the async jobs) and _cassandra_stream_state
@@ -31,8 +31,8 @@
       {{ _cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed')
          | map(attribute='msg', default='') | join('; ') }} (see system.log there).
       {% else %}
-      no cleanup progress in {{ _cassandra_stream_state.idle_checks }} checks in a row, {{ cassandra_stream_check_interval }}s apart
-      (nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
+      no cleanup progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
+      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s, 4 times as long while no task runs; nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
       {% endif %}
       Last progress: {{ (_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
                           status=_cassandra_cleanup_status) | first) }}

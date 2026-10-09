@@ -26,6 +26,9 @@ import os
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
+# a peer with data left is called stalled once it has moved nothing for this long, seconds
+_PEER_STALL = 60
+
 
 def cassandra_node_list(names, keep_order=False, full=False):
     return out.nodes(names, keep_order=keep_order, full=full)
@@ -73,11 +76,13 @@ def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode
                                                                     "done": 0, "total": 0, "stalled": False})
         peer["done"] += stream.get("done", 0)
         peer["total"] += stream.get("total", 0)
-        if stream.get("done", 0) < stream.get("total", 0) and not stream.get("moved", True):
+        # still to send, and nothing moved for a while (a single quiet check is no stall)
+        if stream.get("done", 0) < stream.get("total", 0) and not stream.get("moved", True) \
+                and state.get("now", 0) - stream.get("since", 0) >= _PEER_STALL:
             peer["stalled"] = True
     return out.progress_line(index, steps, node, operation, mode=mode, done=state.get("bytes_done", 0),
                              total=state.get("bytes_total", 0), speed=state.get("rate"), now=state.get("now", 0),
-                             start=state.get("start"), idle_checks=state.get("idle_checks", 0),
+                             start=state.get("start"), idle=state.get("idle", 0) if state.get("idle_checks") else 0,
                              limit=state.get("limit", 0), peers=[p for p in peers.values() if p["total"]],
                              status=status)
 

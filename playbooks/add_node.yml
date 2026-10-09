@@ -30,8 +30,8 @@
 # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
 # outside tmux/screen).
 # A bootstrap can take hours: its progress printed every cassandra_stream_check_interval
-# seconds (300, the first checks sooner); the run stops only after
-# cassandra_stream_stall_checks checks (3) that far apart in a row with nothing streamed. Afterwards the cleanup command is printed, or
+# seconds (30, every 10 s for the first 5 minutes); the run stops only after
+# cassandra_stream_stall_time seconds (900) with nothing streamed. Afterwards the cleanup command is printed, or
 # run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
 # all (default none), the words of cassandra_cleanup_mode.
 # One token per node (cassandra_num_tokens: 1): each new node needs
@@ -321,8 +321,8 @@
               or 'the system Python') ~ ')') if _medusa else 'off' }}.
             - >-
               {{ ('One node at a time; each one streams its share of the data (hours on big nodes), its progress printed every '
-                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after ' ~ cassandra_stream_stall_checks
-                  ~ ' checks that far apart in a row without progress.') if _new or _joining
+                  ~ cassandra_stream_check_interval ~ 's (sooner at first); the run stops after '
+                  ~ cassandra_stream_stall_time | int | community.cassandra.cassandra_duration(true) ~ ' without progress.') if _new or _joining
                  else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
             - "{{ ('Still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
           blocks: "{{ _blocks }}"
