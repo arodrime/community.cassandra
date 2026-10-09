@@ -7,6 +7,7 @@ __metaclass__ = type
 # task file and rendered by Ansible.
 
 import os
+import time
 import warnings
 
 import pytest
@@ -48,7 +49,8 @@ def render(template, variables):
 
 
 def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", peers=(), cluster="Test Cluster",
-          keyspaces=None, ring_problems=(), auto=True, enabled="enabled", dir_problems=(), skipped=None):
+          keyspaces=None, ring_problems=(), auto=True, enabled="enabled", dir_problems=(), skipped=None, mark=None,
+          given=None):
     v = {
         "inventory_hostname": "node7", "cassandra_cluster_name": "my_cluster", "_cassandra_node_reset_auto": auto,
         "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "rack_b"},
@@ -64,7 +66,13 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
              "from": ["inventory"]}]},
         "_cassandra_node_reset_ring": {"problems": list(ring_problems), "info": []},
         "cassandra_node_reset_sysv": {},
+        # add_node's mark of a bootstrap it started (None: not looked at, as for reset_node)
+        "cassandra_node_reset_bootstrap_mark": {"stat": {"exists": bool(mark), "mtime": time.time() - (
+            mark if mark is not True and mark else 0)}} if mark is not None else {"skipped": True},
+        "_cassandra_service_bootstrap_mark_days": 7,
     }
+    if given is not None:  # -e cassandra_add_node_reset=...
+        v["cassandra_add_node_reset"] = given
     if keyspaces is not None:
         v["cassandra_keyspaces"] = keyspaces
     v.update(trust(CHECK["vars"]))
@@ -123,11 +131,45 @@ def test_user_keyspace_of_test_cluster_refused():
     assert plan["problems"] == ["it holds user keyspaces (shop): only a failed bootstrap of this cluster may"]
 
 
+PEERS = [DATA + "/system/peers_v2-c4325fbb8e5e3bafbd070f9250ed818e/nb-1-big-Data.db"]
+
+
 def test_failed_bootstrap_of_this_cluster_reset():
-    plan = facts(found=STOCK + [DATA + "/shop"], cluster="my_cluster", keyspaces={"shop": {"rf": 3}},
-                 peers=[DATA + "/system/peers_v2-c4325fbb8e5e3bafbd070f9250ed818e/nb-1-big-Data.db"])["_cassandra_node_reset_plan"]
+    plan = facts(found=STOCK + [DATA + "/shop"], cluster="my_cluster", keyspaces={"shop": {"rf": 3}}, peers=PEERS,
+                 mark=True)["_cassandra_node_reset_plan"]
     assert plan["problems"] == []
     assert "user keyspaces shop (a failed bootstrap of this cluster)" in plan["line"]
+
+
+def test_an_old_mark_is_not_trusted():
+    """A mark older than a week: the node may have joined since (its end not seen): a former member."""
+    for age, ok in ((3600, True), (8 * 86400, False)):
+        plan = facts(found=STOCK + [DATA + "/shop"], cluster="my_cluster", keyspaces={"shop": {"rf": 3}}, peers=PEERS,
+                     mark=age)["_cassandra_node_reset_plan"]
+        assert (plan["problems"] == []) is ok, age
+
+
+@pytest.mark.parametrize("given", [None, "auto", "yes", True, "true", "false"])
+def test_former_member_of_this_cluster_reset_only_when_given(given):
+    """Removed with removenode, put back in the inventory: no mark of an unfinished bootstrap."""
+    v = facts(found=STOCK + [DATA + "/shop"], cluster="my_cluster", keyspaces={"shop": {"rf": 3}}, peers=PEERS,
+              mark=False, given=given)
+    plan = v["_cassandra_node_reset_plan"]
+    if str(given).lower() in ("yes", "true"):
+        assert plan["problems"] == [] and plan["refusal"] == ""
+        assert plan["line"].endswith("user keyspaces shop (a former member of this cluster), not in any ring, down) —"
+                                     " will be reset (-e cassandra_add_node_reset=true: the writes only it holds are"
+                                     " lost; snapshot or copy its data first if in doubt)")
+    else:
+        assert plan["line"] == ""
+        assert "a former member of this cluster (removed with removenode?)" in plan["refusal"]
+        assert "-e cassandra_add_node_reset=true resets it" in plan["refusal"]
+        assert render(REFUSE["ansible.builtin.fail"]["msg"], dict(v, **trust(REFUSE["vars"]))) == plan["refusal"]
+
+
+def test_the_refusal_is_a_verdict():
+    # the ops callback prints its msg as is, red, no task header nor fatal: dump
+    assert REFUSE["vars"]["cassandra_output"] is True
 
 
 def test_member_of_another_ring_refused():

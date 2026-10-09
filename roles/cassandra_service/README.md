@@ -136,8 +136,13 @@ Role Variables
   what its directories hold deleted, shown and confirmed. Only when
   Cassandra is down there, no up node sees it in its ring, its cluster is
   this one or the stock `Test Cluster`, and it has no user keyspace but a
-  failed bootstrap's of this cluster; else refused with what it holds.
-  `false` refuses every new node with data. Default `true`.
+  failed bootstrap's of this cluster (one `add_node` started: its mark in
+  `/var/lib/cassandra` until the node joined); else refused with what it
+  holds. A node of this cluster with its keyspaces and no such mark is a
+  former member (removed with `remove_dead_node`, put back in the
+  inventory): the writes only it holds would be lost, so `auto` (the
+  default) refuses it too, saying so; `true`, given on purpose, resets it.
+  `false` refuses every new node with data. Default `auto`.
 * `cassandra_replace_node_reset`: the same for a replacement host that still
   holds data in `replace_node`, typically a host replacing itself (its
   address only seen down, as the node being replaced). Default `false`.

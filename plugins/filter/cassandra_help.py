@@ -76,8 +76,10 @@ OPERATIONS = [
                   None),
                  ("-e cassandra_add_node_reset=false", "refuses a new node that has data instead of emptying it (only"
                                                        " when down, in no ring, of this cluster or 'Test Cluster',"
-                                                       " without user keyspaces but a failed bootstrap's)",
-                  "true"),
+                                                       " without user keyspaces but a failed bootstrap's); true also"
+                                                       " empties a former member of this cluster (the writes only it"
+                                                       " holds are lost)",
+                  "auto"),
                  ("-e cassandra_add_node_cleanup=sequential", "runs the cleanup afterwards: sequential, rack, dc or"
                                                               " all; none prints its command", "none"),
                  ("-e cassandra_token_auto=bisect", "one token per node: how the new nodes get their tokens, bisect,"
@@ -87,8 +89,9 @@ OPERATIONS = [
      "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, applies"
                 " cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node at a time,"
                 " --check shows the plan and its warnings.",
-     "options": [("-e cassandra_add_node_reset=false", "refuses a host to add that has data instead of emptying it",
-                  "true"),
+     "options": [("-e cassandra_add_node_reset=false", "refuses a host to add that has data instead of emptying it;"
+                                                       " true also empties a former member of this cluster",
+                  "auto"),
                  ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
                   "false"),
                  ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"

@@ -92,10 +92,13 @@ cassandra_add_node_cleanup: none
 # hold, shown and confirmed; reset_node.yml), only when Cassandra is down there,
 # no up node sees it in its ring, its cluster is this one or the stock 'Test
 # Cluster' and it has no user keyspace but a failed bootstrap's of this
-# cluster; else refused with what it holds. false refuses every node with data.
+# cluster; else refused with what it holds. auto (default): a node of this
+# cluster with its keyspaces and no bootstrap add_node left unfinished there
+# (a former member, removed with removenode) is refused too; true (given)
+# resets it; false refuses every node with data.
 # replace_node: true empties a replacement host that still holds data,
 # typically a host replacing itself (same address).
-cassandra_add_node_reset: true
+cassandra_add_node_reset: auto
 cassandra_replace_node_reset: false
 # The inventory is the desired state: a host of the cluster's group marked
 # absent (a host var or a group var) is no longer part of the cluster, the
@@ -179,6 +182,11 @@ _cassandra_service_config_perms:
 _cassandra_service_conf_dir: >-
   {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
 _cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
+# add_node's mark of a bootstrap it started on a node, removed once the node
+# joined: data of this cluster without it is a former member's (reset_node_plan.yml)
+_cassandra_service_bootstrap_mark: /var/lib/cassandra/.ansible_bootstrap_started
+# an older mark is not trusted (a node that may have joined since, its end not seen)
+_cassandra_service_bootstrap_mark_days: 7
 # The files of the conf dir cassandra_config writes: the config a restart picks up
 # (and the JMX users' files, in the conf dir on Debian and Ubuntu)
 _cassandra_service_config_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,

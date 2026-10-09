@@ -331,12 +331,12 @@ class CallbackModule(DefaultCallback):
             return super(CallbackModule, self).v2_runner_on_failed(result, ignore_errors)
         if ignore_errors:
             return None  # the playbook expects it (ignore_errors) and handles it
+        if reported(_task(result)):  # its rescue says it (a verdict too: said once, there)
+            return None
         if self._own_failure(result) and not (_task(result).loop and "results" in _result(result)):
             return self._verdict(result)
         if _task(result).loop and "results" in _result(result):
             return None  # each failed item was printed already
-        if reported(_task(result)):  # its rescue says it
-            return None
         if rescued(_task(result)):  # its rescue handles it: one line, never silent
             return self._handled(result)
         return self._default("v2_runner_on_failed", result, ignore_errors)
@@ -364,10 +364,10 @@ class CallbackModule(DefaultCallback):
             ignored = _task(result).ignore_errors
         if ignored is True or str(ignored).strip().lower() in ("true", "yes"):
             return None
-        if self._own_failure(result):
-            return self._verdict(result)
         if reported(_task(result)):
             return None
+        if self._own_failure(result):
+            return self._verdict(result)
         if rescued(_task(result)):
             return self._handled(result)
         return self._default("v2_runner_item_on_failed", result)

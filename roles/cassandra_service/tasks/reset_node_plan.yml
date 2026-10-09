@@ -219,6 +219,14 @@
     - _cassandra_node_reset_auto | default(false) | bool
     - cassandra_node_reset_found.files | default([]) | length > 0  # a blank host: no system dir to look in
 
+# add_node's mark of a bootstrap it started there and that never ended (action_add.yml)
+- name: Look for a bootstrap add_node left unfinished
+  ansible.builtin.stat:
+    path: "{{ _cassandra_service_bootstrap_mark }}"
+    get_checksum: false
+  register: cassandra_node_reset_bootstrap_mark
+  when: _cassandra_node_reset_auto | default(false) | bool
+
 # The whole cluster (create_cluster's reset): every node is wiped, the caller checked the ring
 - name: Work out whether this node may be reset
   ansible.builtin.set_fact:
@@ -266,6 +274,9 @@
            peers=cassandra_node_reset_peers.files | default([]) | map(attribute='path') | select('search', '/peers(_v2)?-[^/]*/') | list | length > 0,
            cluster_keyspaces=(cassandra_keyspaces.keys() | list) if cassandra_keyspaces | default(none) is mapping else none,
            ring_problems=_cassandra_node_reset_ring.problems,
+           bootstrap_started=cassandra_node_reset_bootstrap_mark.stat.exists | default(false)
+             and now().timestamp() - cassandra_node_reset_bootstrap_mark.stat.mtime | default(0) < _cassandra_service_bootstrap_mark_days * 86400,
+           explicit=cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice == 'true',
            title=inventory_hostname ~ ((' (' ~ _p.cassandra_dc ~ '/' ~ _p.cassandra_rack | default('?') ~ ')') if _p.cassandra_dc | default('') else '')) }}
   when: _cassandra_node_reset_auto | default(false) | bool
   vars:
@@ -347,12 +358,13 @@
     _p: "{{ _cassandra_node_reset_plan }}"
 
 - name: Refuse the reset of {{ inventory_hostname }}
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    # the directory problems, besides what the add_node check says
+    _other: "{{ _cassandra_node_reset_plan.problems | reject('in', _cassandra_node_reset_check.problems | default([])) | list }}"
   ansible.builtin.fail:
     msg: >-
       {{ (_cassandra_node_reset_plan.refusal ~ ((' Also: ' ~ _other | join('; ') ~ '.') if _other else ''))
          if _cassandra_node_reset_plan.refusal
          else 'Reset of ' ~ inventory_hostname ~ ' refused, nothing was changed: ' ~ _cassandra_node_reset_plan.problems | join('; ') ~ '.' }}
   when: _cassandra_node_reset_plan.problems | length > 0
-  vars:
-    # the directory problems, besides what the add_node check says
-    _other: "{{ _cassandra_node_reset_plan.problems | reject('in', _cassandra_node_reset_check.problems | default([])) | list }}"

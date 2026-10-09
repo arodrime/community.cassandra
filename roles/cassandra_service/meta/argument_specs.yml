@@ -162,11 +162,11 @@ argument_specs:
             C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
             The cluster is checked before each batch.
       cassandra_add_node_reset:
-        type: bool
-        default: true
+        type: raw
+        default: auto
         description:
           - What the C(add_node) and C(topology) playbooks do with a new node that has data but is not in the
-            ring (started once by mistake, a failed bootstrap). C(true) (the default) resets it first, the same
+            ring (started once by mistake, a failed bootstrap). C(auto) (the default) resets it first, the same
             way as the C(reset_node) playbook. It keeps Cassandra from starting at boot, then deletes what its
             data, commitlog, saved_caches, hints and cdc_raw directories hold, from the inventory and the live
             C(cassandra.yaml). The node, what it holds and the list are shown and confirmed first. C(false)
@@ -175,9 +175,13 @@ argument_specs:
             of its addresses in its ring, and its data does not show it as a member of another ring. Its cluster
             name (its live C(cassandra.yaml)) is this cluster's or the package's stock C(Test Cluster). It has no
             user keyspace, unless it is a failed bootstrap of this cluster (its cluster name is this one, its
-            keyspaces among the cluster's). Otherwise it is refused, with what it holds (size, cluster, user
-            keyspaces, ring, running or down). Paths that look wrong are refused too (a system directory, a
+            keyspaces among the cluster's) that C(add_node) started (its mark on the node, until it joined).
+            Otherwise it is refused, with what it holds (size, cluster, user keyspaces, ring, running or down). Paths that look wrong are refused too (a system directory, a
             top-level one that is not a mount point, one holding another mount point, the config or the logs).
+          - A node of this cluster that holds its keyspaces without such a bootstrap is a former member (removed
+            with C(remove_dead_node) and put back in the inventory), the writes only it holds would be lost.
+            C(auto) refuses it, saying so; C(true), given on purpose (C(-e cassandra_add_node_reset=true)), resets
+            it (snapshot or copy its data first if in doubt).
       cassandra_replace_node_reset:
         type: bool
         default: false

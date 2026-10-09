@@ -309,6 +309,21 @@
             _section: "{{ (cassandra_preflight_describe.stdout ~ '\\n').split('Database versions:')[1:] | first | default('') }}"
             _versions: "{{ _section.split('\\n\\n') | first | regex_findall('(?m)^\\s+(\\S+: \\[.*\\])$') }}"
 
+    # A node up and normal in the ring is a member: the mark of a bootstrap add_node started there (a wait
+    # that stopped before the end) goes, or a removal of the node later would read it as a failed bootstrap
+    # (cassandra_service reset_node_plan.yml)
+    - name: Remove the mark of a bootstrap that went through
+      ansible.builtin.file:
+        path: "{{ _cassandra_service_bootstrap_mark | default('/var/lib/cassandra/.ansible_bootstrap_started') }}"
+        state: absent
+      when:
+        - cassandra_preflight_status.cluster_status is defined
+        - _cassandra_preflight.ring_address | default('') in _un
+      vars:
+        _un: >-
+          {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
+             | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}
+
     # The token allocator refuses a node that joins a rack already in the ring
     # when the datacenter's ring has more than 1 rack but fewer than its
     # replication factor hint. The ring counts down nodes too (a dead node's

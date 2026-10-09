@@ -250,6 +250,8 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
 
 def test_a_refused_host_to_add_gives_its_problems_and_the_reset_hint():
     block = task("Check the hosts to add")
+    # the refusal (a verdict of reset_node_plan.yml too) said once, by the plan (ops callback)
+    assert block["vars"]["cassandra_output_rescued"] is True
     record = block["rescue"][0]
     template = record["ansible.builtin.set_fact"]["_cassandra_topology_refused"]
     msg = "n5 is not ready (the problems are listed above): ... -e cassandra_add_node_reset=true (add_node) ..."

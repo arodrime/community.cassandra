@@ -65,7 +65,7 @@
         tasks_from: new_node_checks.yml
       vars:
         _cassandra_new_node_skip_in_ring: true  # an interrupted run: checked next
-        _cassandra_new_node_reset: "{{ cassandra_add_node_reset | default(true) | bool }}"
+        _cassandra_new_node_reset: "{{ cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false' }}"
         _cassandra_new_node_reset_stops: false  # a running Cassandra is refused
 
 - name: Check the new nodes
@@ -242,7 +242,7 @@
         name: community.cassandra.cassandra_service
         tasks_from: reset_node_plan.yml
       when:
-        - cassandra_add_node_reset | default(true) | bool
+        - cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false'
         - cassandra_new_node_state == 'new'
         - _cassandra_node_reset_plan is not defined
       vars:
@@ -406,7 +406,7 @@
         name: community.cassandra.cassandra_service
         tasks_from: reset_node.yml
       when:
-        - cassandra_add_node_reset | default(true) | bool
+        - cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false'
         - cassandra_new_node_state == 'new'
         - _p.delete | default([]) | length > 0 or _p.stop | default(false) | bool or _p.disable | default(false) | bool
       vars:

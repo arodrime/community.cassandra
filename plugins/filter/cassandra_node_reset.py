@@ -24,6 +24,8 @@ import re
 
 import yaml
 
+from ansible.errors import AnsibleFilterError
+
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
 
 # cassandra.yaml keys of the directories a reset empties, their kind, and the
@@ -345,8 +347,25 @@ def _true_value(value):
     return str(value).strip().lower() in ("true", "yes", "1")
 
 
+def cassandra_reset_choice(value):
+    """cassandra_add_node_reset as one word: 'auto' (the default: only a
+    node that can't hold anything of value), 'true' (given: also a former
+    member of this cluster) or 'false' (refuse every node with data)."""
+    word = str("auto" if value is None else value).strip().lower()
+    if word in ("false", "no", "off", "0", "n", "f"):
+        return "false"
+    if word in ("true", "yes", "on", "1", "y", "t"):
+        return "true"
+    if word in ("auto", ""):
+        return "auto"
+    # a typo must not reset a node the operator meant to keep
+    raise AnsibleFilterError("cassandra_add_node_reset must be auto (the default), true or false, not %r: nothing was"
+                             " changed" % (value,))
+
+
 def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_data=False, running=False, size=0,
-                                   keyspaces=None, peers=False, cluster_keyspaces=None, ring_problems=None, title=""):
+                                   keyspaces=None, peers=False, cluster_keyspaces=None, ring_problems=None, title="",
+                                   bootstrap_started=False, explicit=False):
     """add_node's reset of a new node holding data (cassandra_add_node_reset,
     on by default): done only when the node is down, in no ring, of this
     cluster or the package's stock 'Test Cluster', and has no user keyspace
@@ -360,7 +379,12 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
     data (it met other nodes); cluster_keyspaces: the cluster's keyspaces
     (None: unknown); ring_problems: cassandra_node_reset_ring's problems (an
     up node of the cluster sees it, no node answered...); title: how the
-    lines name it, e.g. "node7 (dc1/rack_b)".
+    lines name it, e.g. "node7 (dc1/rack_b)"; bootstrap_started: add_node
+    started a bootstrap there that never ended (its mark on the node); else
+    a node of this cluster with its keyspaces is a former member (removed
+    with removenode, put back in the inventory), whose writes no other
+    replica got would be lost: refused unless explicit
+    (-e cassandra_add_node_reset=true given).
     Returns {'reset': bool, 'problems': [...], 'line': str}: without data,
     nothing to reset (no line); else the line for the plan ("... - will be
     reset") or the refusal, which says what the node holds."""
@@ -393,6 +417,14 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
                             " are a failed bootstrap's can't be checked" % _names(users))
         elif foreign:
             problems.append("it holds keyspaces this cluster does not have (%s)" % _names(foreign))
+    # this cluster's keyspaces, and no bootstrap of add_node left unfinished there: a former member
+    former = bool(ours and users and cluster_keyspaces is not None and not problems
+                  and not _true_value(bootstrap_started))
+    if former and not _true_value(explicit):
+        problems.append("it holds this cluster's keyspaces (%s) and no bootstrap add_node left unfinished: a former"
+                        " member of this cluster (removed with removenode?). The writes only it holds would be lost:"
+                        " snapshot or copy its data directories first if in doubt, then -e cassandra_add_node_reset=true"
+                        " resets it" % _names(users))
     seen = [p for p in ring_problems if " sees " in p]
     ring = ("in the ring of this cluster" if seen else "ring unknown" if ring_problems
             else "in another ring" if _true_value(peers) and not ours else "not in any ring")
@@ -400,7 +432,8 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
             else "cluster unknown"]
     if users:
         held.append("user keyspaces %s" % _names(users)
-                    + (" (a failed bootstrap of this cluster)" if ours and not problems else ""))
+                    + ((" (a former member of this cluster)" if former else " (a failed bootstrap of this cluster)")
+                       if ours and not problems else ""))
     held.extend([ring, "running" if running else "down"])
     holds = "%s: has data (%s)" % (title, ", ".join(held))
     if problems:
@@ -408,13 +441,16 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
                 "line": "%s: not reset automatically, %s. Nothing was changed: check what it holds; if nothing is"
                         " needed, empty it (reset_node) or remove it from cassandra_target_nodes"
                         % (holds, "; ".join(problems))}
-    return {"reset": True, "problems": [], "line": "%s \u2014 will be reset" % holds}
+    return {"reset": True, "problems": [], "line": "%s \u2014 will be reset%s" % (holds, (
+        " (-e cassandra_add_node_reset=true: the writes only it holds are lost; snapshot or copy its data first if in"
+        " doubt)") if former else "")}
 
 
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_add_node_reset_check": cassandra_add_node_reset_check,
+            "cassandra_reset_choice": cassandra_reset_choice,
             "cassandra_cluster_reset_check": cassandra_cluster_reset_check,
             "cassandra_node_reset_dirs": cassandra_node_reset_dirs,
             "cassandra_node_reset_real": cassandra_node_reset_real,

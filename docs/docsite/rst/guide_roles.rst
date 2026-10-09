@@ -560,8 +560,12 @@ default), but only when all hold: Cassandra is down on the node; no up node of t
 data does not show it as a member of another ring (other nodes in its ``system.peers`` while its cluster is not this
 one); its cluster name (its live ``cassandra.yaml``, which Cassandra checks against its data at start) is this
 cluster's or the stock ``Test Cluster``; it has no user keyspace, unless it is a failed bootstrap of this cluster (its
-cluster name is this one, and its keyspaces are among the cluster's when they can be read). The screen says it before
-the question, with what it deletes in a ``data loss`` warning::
+cluster name is this one, its keyspaces are among the cluster's when they can be read, and ``add_node`` started that
+bootstrap: its mark, ``/var/lib/cassandra/.ansible_bootstrap_started``, stays until the node has joined). A node of
+this cluster with its keyspaces and no such mark is a former member (removed with ``remove_dead_node`` and put back
+in the inventory): the writes only it holds would be lost, so it is refused, saying so, unless
+``-e cassandra_add_node_reset=true`` is given (snapshot or copy its data directories first if in doubt). The screen
+says it before the question, with what it deletes in a ``data loss`` warning::
 
     node7 (dc1/rack_b): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down) — will be reset
 
