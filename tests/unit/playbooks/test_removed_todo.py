@@ -111,3 +111,27 @@ def test_reset_node_takes_a_host_marked_absent():
         # the cluster's group, as lookup('community.cassandra.cassandra_hosts') finds it
         expr = that.replace("lookup('community.cassandra.cassandra_hosts')", "'my_cluster'")
         assert templar.template(trust_as_template("{{ %s }}" % expr)) is ok
+
+
+def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
+    """Run with ansible.cfg's inventory: the reset_node command has no -i (ansible.cfg finds it)."""
+    inventories = tmp_path / "inventories"
+    inventories.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
+    config = "lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST')"
+    for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
+        say = task(playbook, play, "Say what is left to do")
+        template = say["ansible.builtin.debug"]["msg"]
+        assert template.count(config) == 1, playbook  # the shared rule (cassandra_command's)
+        plan = {"add": [], "remove": ["node3"], "gone": [], "silent": [], "seeds": {"step": False}}
+        hostvars = {"node1": {"cassandra_topology_plan": plan, "inventory_dir": str(inventories), "ansible_host": "10.0.0.1",
+                              "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}}
+        variables = dict(say["vars"], ansible_inventory_sources=[str(inventories)], hostvars=hostvars,
+                         _imported=True, _ansible_cfg_inventory=[str(inventories)],
+                         ansible_play_hosts_all=["node3"] if playbook == "decommission_node.yml" else ["node1"])
+        if playbook == "decommission_node.yml":
+            variables["_stays"] = "node1"  # (from the inventory: its lookup)
+        msg = render(template.replace(config, "_ansible_cfg_inventory"), **variables)
+        assert "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3" in msg.splitlines()
+        assert "-i inventories" not in msg

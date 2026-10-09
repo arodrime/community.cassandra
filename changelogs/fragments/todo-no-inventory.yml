@@ -1,0 +1,2 @@
+minor_changes:
+  - "add_node (the moves to run), move_node (the cleanups) and change_seeds (the config to apply) - their commands leave ``-i`` out when the run's inventory is ``ansible.cfg``'s, as the other TO DO commands do."
