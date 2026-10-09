@@ -607,8 +607,9 @@
   vars:
     _plan: >-
       {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first].cassandra_add_node_plan | default({}) }}
+    # in inventory order (the play's hosts): the --limit of the command, the batches
     _targets: >-
-      {{ _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten | select('in', ansible_play_hosts) | list }}
+      {{ ansible_play_hosts | select('in', _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten) | list }}
     _mode: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
     cassandra_service_node_action: cleanup
     cassandra_cleanup_jobs: 2

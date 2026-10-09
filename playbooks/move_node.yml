@@ -310,7 +310,7 @@
     _listed: >-
       {{ (_plan.cleanup | default([]) + (lookup('ansible.builtin.file', _move_record, errors='ignore') | default('', true)).splitlines())
          | select | unique | list }}
-    _targets: "{{ _listed | select('in', ansible_play_hosts) | list }}"
+    _targets: "{{ ansible_play_hosts | select('in', _listed) | list }}"  # in inventory order
     _left: "{{ _listed | reject('in', ansible_play_hosts) | list }}"
     _mode: "{{ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) }}"
     # not "move-...": a resume of the moves must not pick this file
