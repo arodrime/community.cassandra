@@ -329,6 +329,8 @@ class CallbackModule(DefaultCallback):
         # a command's own error rather than "non-zero return code" (its last line: JVM warnings come first)
         msg = [line.strip() for line in lines(res.get("msg") or "") if line.strip()]
         err = [line.strip() for line in lines(res.get("stderr") or "") if line.strip()]
+        # ("non-zero return code" before ansible-core 2.19, "The command exited with a non-zero return code." since)
+        msg = ["non-zero return code" if line.rstrip(".").endswith("non-zero return code") else line for line in msg]
         said = err[-1:] if err and (not msg or msg[0] == "non-zero return code") else msg
         host = getattr(result, "host", None) or result._host
         first = said[0] if said else "failed"
