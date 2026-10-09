@@ -6,7 +6,8 @@ returns text lines, which a debug task marked cassandra_output: true prints.
 
 cassandra_node_list: names -> "node1..node5, node7".
 cassandra_size, cassandra_rate, cassandra_duration: bytes, bytes/s, seconds as text.
-cassandra_setting_lines: {node: value} -> "setting:  value  all" and the other values.
+cassandra_setting_lines: {node: value} -> "setting: value  all" and the other values.
+cassandra_settings_lines: several settings, their names, values and nodes in aligned columns.
 cassandra_by_nodes: [[node, [lines]]] -> each line once under the nodes that have it.
 cassandra_plan: {operation, cluster, version, summary, steps, facts, warnings,
     question} -> the plan screen.
@@ -47,6 +48,12 @@ def cassandra_setting_lines(values, setting, all_nodes=None, expected=None, note
                             indent=""):
     return out.setting_lines(setting, values or {}, all_nodes=all_nodes, expected=expected, notes=notes, where=where,
                              full=full, indent=indent)
+
+
+def cassandra_settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=30):
+    """settings: [[setting, [[value, nodes, note]]] or a heading str] -> aligned lines."""
+    entries = [s if isinstance(s, str) else (s[0], [tuple(r) for r in s[1]]) for s in settings or []]
+    return out.settings_lines(entries, indent=indent, max_value=max_value, max_label=max_label, max_nodes=max_nodes)
 
 
 def cassandra_by_nodes(pairs, full=False, every="all"):
@@ -140,6 +147,7 @@ class FilterModule(object):
             "cassandra_rate": cassandra_rate,
             "cassandra_duration": cassandra_duration,
             "cassandra_setting_lines": cassandra_setting_lines,
+            "cassandra_settings_lines": cassandra_settings_lines,
             "cassandra_by_nodes": cassandra_by_nodes,
             "cassandra_plan": cassandra_plan,
             "cassandra_progress_line": cassandra_progress_line,

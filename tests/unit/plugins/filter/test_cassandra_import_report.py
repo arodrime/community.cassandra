@@ -65,7 +65,7 @@ def test_review_step_only_with_git():
 def test_values_grouped_with_their_nodes():
     lines = report([node(1), node(2), node(3), node(4, "16G"), node(5, "16G")])
     at = lines.index("  cassandra_max_heap_size: 8G                 node1, node2, node3")  # the report: every name
-    assert lines[at + 1] == u"                           16G                node4, node5      ← differs (host_vars)"
+    assert lines[at + 1] == u"                           16G                node4, node5          ← differs (host_vars)"
     # (the heap per host)
     assert lines[1] == ("Written: inventories/my_cluster.yml, group_vars/my_cluster*/,"
                         " host_vars/<node>/ (node1, node2, node3, node4, node5)")
@@ -132,8 +132,8 @@ def test_where_each_value_is_kept():
     at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_max_heap_size:")][0]
     assert lines[at].endswith("node5, node6, node7")
     assert sorted(lines[at + 1:at + 3]) == [
-        u"                           16G                node3, node4      ← differs (group_vars/my_cluster_dc2)",
-        u"                           8G                 node1, node2      ← differs (group_vars/my_cluster_dc1)"]
+        u"                           16G                node3, node4          ← differs (group_vars/my_cluster_dc2)",
+        u"                           8G                 node1, node2          ← differs (group_vars/my_cluster_dc1)"]
 
 
 def test_self_check_named_with_hand_edits_elsewhere_and_a_note():

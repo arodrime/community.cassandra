@@ -1,7 +1,9 @@
 ---
-# Applies the inventory's config to a running cluster. Every node's changes are
-# shown first (--check: in the recap at the end) and the whole run is confirmed once; then the nodes are done one
-# at a time: cluster checked, config written, node drained and restarted,
+# Applies the inventory's config to a running cluster. The settings that differ
+# are shown first, each with the inventory's value and the nodes already on it,
+# then the value of each node to change, and what each node gets (--check: the
+# settings in the recap at the end); the whole run is confirmed once; then the
+# nodes are done one at a time: cluster checked, config written, node drained and restarted,
 # cluster checked again. Only the nodes whose config changes, or whose running
 # Cassandra did not start with its config files or its systemd unit (written by
 # cassandra_config or cassandra_service, which do not restart, or by a run
@@ -90,11 +92,11 @@
           {{ ('restart' if _files | length > 0 or _pending | bool else 'none') if _running | bool
              else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
         cassandra_apply_config_pending: "{{ _pending }}"
-        cassandra_apply_config_reasons: >-
-          {{ ([_files | join(', ') ~ ' to change'] if _files | length > 0 else [])
-             + (['owner, group or mode to change: ' ~ (_perms + _dirs) | join(', ')] if (_perms + _dirs) | length > 0 else [])
-             + (['restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)']
-                if _pending | bool else []) }}
+        # said under the node's outcome, in the plan and the recap (whatever the outcome)
+        cassandra_apply_config_notes: >-
+          {{ (['restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)']
+              if _pending | bool else [])
+             + _cassandra_config_dir_notes | default([]) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
@@ -146,6 +148,38 @@
           {%- endif -%}
           {{ out }}
 
+    # every node's value of the settings that differ somewhere: the live files that differ on a node, read on
+    # each one (only shown masked)
+    - name: Read the live files that differ on a node
+      ansible.builtin.slurp:
+        src: "{{ cassandra_conf_dir }}/{{ cassandra_apply_config_file }}"
+      loop: >-
+        {{ ansible_play_hosts | map('extract', hostvars) | map(attribute='_cassandra_config_items', default=[]) | flatten
+           | selectattr('diff', 'defined') | map(attribute='item') | map('basename') | unique | list }}
+      loop_control:
+        loop_var: cassandra_apply_config_file
+      register: cassandra_apply_config_live
+      failed_when: false  # not on this node: no value of its own shown
+      no_log: true  # passwords
+      check_mode: false  # reads only
+
+    # setting-centric, the nodes grouped: in the plan of a real run (before its question), in the recap under --check
+    - name: Put the settings that differ side by side
+      ansible.builtin.set_fact:
+        cassandra_apply_config_diff: "{{ _nodes | community.cassandra.cassandra_apply_config_diff }}"
+      run_once: true
+      vars:
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set _ = out.append({'name': h, 'items': v._cassandra_config_items | default([]),
+                                    'live': v.cassandra_apply_config_live.results | default([]),
+                                    'stats': v.cassandra_config_live_stat.results | default([]),
+                                    'dir_stats': v.cassandra_config_dir_stat.results | default([])}) -%}
+          {%- endfor -%}
+          {{ out }}
+
     - name: Group the nodes to do
       ansible.builtin.group_by:
         key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"
@@ -162,32 +196,30 @@
         tasks_from: screen.yml
       when: _todo | length > 0
       vars:
-        _blocks: >-
-          {%- set l = [] -%}
-          {%- for h in _todo -%}
-          {#-   a real run: the changes before its question (--check: in the recap, no question) -#}
-          {%-   set changes = [] if ansible_check_mode
-                              else hostvars[h]._cassandra_config_items | default([]) | community.cassandra.cassandra_apply_config_changes -%}
-          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(hostvars[h]._cassandra_preflight | default({})),
-                                    'lines': hostvars[h].cassandra_apply_config_reasons + [_then[hostvars[h].cassandra_apply_config_then]]
-                                             + ([{'pre': changes}] if changes else [])}) -%}
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
+                                    'then': v.cassandra_apply_config_then | default(''),
+                                    'result': v.cassandra_op_result | default('nothing to apply'),
+                                    'notes': v.cassandra_apply_config_notes | default([])}) -%}
           {%- endfor -%}
-          {{ l }}
-        _then:
-          restart: then drained and restarted
-          start: "its Cassandra is not running: started once written (down over max_hint_window? repair it)"
-          write: "its Cassandra is stopped: written, left stopped (read when it starts)"
-          none: no restart (Cassandra reads its config at start)
-        cassandra_screen_question: "Apply the config on {{ _todo | join(', ') }}?"
+          {{ out }}
+        cassandra_screen_question: "Apply the config on {{ _todo | community.cassandra.cassandra_node_list }}?"
         cassandra_screen:
           operation: apply_config
-          summary: "{{ 'would apply' if ansible_check_mode else 'apply' }} the config on {{ _todo | join(', ') }}"
+          summary: "{{ 'would apply' if ansible_check_mode else 'apply' }} the config on {{ _todo | community.cassandra.cassandra_node_list }}"
           intro:
             - >-
-              {{ 'A real run would write each node in turn, then restart or start it as said below.'
+              {{ 'A real run would write each node in turn, then restart or start it as said below; the settings
+                 that differ are in the recap at the end.'
                  if ansible_check_mode else
                  'Writes the config one node at a time, then restarts or starts it as said below.' }}
-          blocks: "{{ _blocks }}"
+          # a real run: the settings that differ before its question (--check: in the recap, no question)
+          sections:
+            - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
+            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true) }}"
   vars:
     _todo: >-
       {%- set out = [] -%}{%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | default(false) | bool -%}{%-          set _ = out.append(h) -%}{%- endfor -%}{{ out }}
@@ -235,7 +267,7 @@
           {{ out if cassandra_apply_config_then != 'restart' or ansible_check_mode else [] }}
         _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 
-# What each node got (--check: would get), its settings diffs (secrets masked) and owner/mode changes
+# What each node got; under --check, first the settings that differ (secrets masked), owner/mode changes included
 - name: Summary
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
@@ -245,7 +277,8 @@
       ansible.builtin.debug:
         msg: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
-                                                                        seconds=(now().timestamp() | int - _start | int) if _start else none) }}
+                                                                        seconds=(now().timestamp() | int - _start | int) if _start else none,
+                                                                        diff=_diff) }}
       run_once: true
       vars:
         cassandra_output: true
@@ -253,6 +286,10 @@
         _start: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_start', 'defined')
              | map(attribute='_cassandra_apply_config_start') | first | default('') }}
+        # the settings that differ (said under --check only: a real run showed them before its question)
+        _diff: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_diff', 'defined')
+             | map(attribute='cassandra_apply_config_diff') | first | default([]) }}
         _nodes: >-
           {%- set out = [] -%}
           {%- for h in query('community.cassandra.cassandra_nodes') -%}
@@ -261,10 +298,6 @@
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all
                                                                                 else 'not in this run (--limit)'),
-                                    'items': v._cassandra_config_items | default([]),
-                                    'notes': (['restart pending: ' ~ v.cassandra_config_newer_files | default([]) | join(', ')
-                                               ~ ' changed since the running Cassandra started']
-                                              if v.cassandra_apply_config_pending | default(false) | bool else [])
-                                             + v._cassandra_config_dir_notes | default([])}) -%}
+                                    'notes': v.cassandra_apply_config_notes | default([])}) -%}
           {%- endfor -%}
           {{ out }}

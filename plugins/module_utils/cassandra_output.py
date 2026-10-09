@@ -10,7 +10,8 @@ docs/docsite/rst/guide_output.rst.
   count, plural;
 - node lists: nodes (node1..node5, node7), full_list;
 - secrets: secret, mask, shown;
-- a setting and its value per node: setting_lines, by_nodes;
+- a setting and its value per node: setting_lines, settings_lines (several,
+  aligned), setting_rows, by_nodes;
 - before a change: plan; during it: progress_line; at the end: recap,
   perm_lines, diff_lines, changed_lines;
 - what is left to do: command, extra_var, todo, inventory_steps,
@@ -303,20 +304,18 @@ def _groups(values, order):
     return [tuple(group) for group in ranked]
 
 
-def setting_lines(setting, values, all_nodes=None, expected=None, notes=None, where=None, full=False, indent=""):
-    """One setting across nodes, setting-centric: "setting:  value  nodes".
-    values: {node: value}; all_nodes: the nodes of the run (default: the
-    ones of values), "all" when they all have the same value; one more line
-    per other value, the minority ones marked "<- differs" (the ones not
+def setting_rows(setting, values, all_nodes=None, expected=None, notes=None, where=None, full=False):
+    """One setting across nodes -> (setting, [(shown value, nodes, note)]) for
+    settings_lines. values: {node: value}; all_nodes: the nodes of the run
+    (default: the ones of values), "all" when they all have the same value;
+    one row per value, the minority ones marked "<- differs" (the ones not
     the expected value, when it is given). expected: the value the
     collection sets, annotated "(collection value)"; notes: {shown value:
     annotation}; where: where the value is written, a string for all or
-    {shown value: place}. Secrets as ****. Returns the lines."""
+    {shown value: place}. Secrets as ****."""
     order = list(all_nodes or sorted(values, key=_natural))
     order += [n for n in sorted(values, key=_natural) if n not in order]
     groups = _groups(values, order)
-    if not groups:
-        return []
     notes = dict(notes or {})
     rows = []
     for index, (raw, names) in enumerate(groups):
@@ -336,14 +335,52 @@ def setting_lines(setting, values, all_nodes=None, expected=None, notes=None, wh
             differs = index > 0
         if differs and len(groups) > 1:
             extra.append(ARROW + " differs")
-        rows.append([text, who, "  ".join(extra)])
-    width, nodes_width = max(len(r[0]) for r in rows), max(len(r[1]) for r in rows)
-    head = "%s%s:  " % (indent, setting)
+        rows.append((text, who, "  ".join(extra)))
+    return (setting, rows)
+
+
+def settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=30):
+    """Several settings, aligned: one column for their names, one for the
+    values, one for the nodes, then the notes ("<- differs"), the same
+    columns across all of them (import_cluster's report, apply_config).
+    settings: [(setting, [(value, nodes, note)])], a row per value (the
+    setting named on its first one), or a str: a heading line printed as is
+    between them (a file name). The value column is as wide as the longest
+    value, up to max_value (a longer one pushes its nodes only), the nodes
+    one up to max_nodes (a longer list pushes its note only); a name longer
+    than max_label on a line of its own, its values below."""
+    rows = [s for s in settings or [] if not isinstance(s, str)]
+    if not rows:
+        return [s for s in settings or [] if isinstance(s, str)]
+    labels = [len("%s:" % name) for name, values in rows if values]
+    label = max([n for n in labels if n <= max_label] or [0])
+    width = min(max([len(str(v[0])) for n, values in rows for v in values] or [0]) + 2, max_value)
+    who = min(max([len(str(v[1])) for n, values in rows for v in values] or [0]), max_nodes)
     out = []
-    for index, (text, who, extra) in enumerate(rows):
-        lead = head if index == 0 else " " * len(head)
-        out.append(("%s%s   %s   %s" % (lead, text.ljust(width), who.ljust(nodes_width), extra)).rstrip())
+    for entry in settings:
+        if isinstance(entry, str):
+            out.append(entry)
+            continue
+        name, values = entry
+        head = "%s:" % name
+        if values and len(head) > label:
+            out.append(indent + head)
+            head = ""
+        for index, (value, names, note) in enumerate(values):
+            value, names = str(value), str(names)
+            line = "%s%s %s %s" % (indent, (head if index == 0 else "").ljust(label),
+                                   value.ljust(width) if len(value) < width else value + " ",
+                                   (names.ljust(who) if len(names) < who else names) + "   " + note if note else names)
+            out.append(line.rstrip())
     return out
+
+
+def setting_lines(setting, values, all_nodes=None, expected=None, notes=None, where=None, full=False, indent=""):
+    """One setting across nodes, setting-centric: "setting: value  nodes",
+    a line per other value (see setting_rows), aligned as settings_lines
+    does. Returns the lines."""
+    entry = setting_rows(setting, values, all_nodes=all_nodes, expected=expected, notes=notes, where=where, full=full)
+    return settings_lines([entry], indent=indent) if entry[1] else []
 
 
 def by_nodes(pairs, full=False, every="all"):

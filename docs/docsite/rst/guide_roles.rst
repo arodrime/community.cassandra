@@ -774,7 +774,7 @@ something else, is not restarted by ``apply_config``, which names those files: r
 changed a setting.
 
 To change the configuration of a running cluster, use ``apply_config`` instead of running the role: it shows the
-diff of every node, asks once, then goes node by node, writing the files and restarting the node, with the cluster
+settings that differ, asks once, then goes node by node, writing the files and restarting the node, with the cluster
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
 restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is
@@ -782,9 +782,12 @@ restarted too. A node whose files only need another owner, group or mode gets th
 its config when it starts). A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). Each node's health check needs another node up to read the ring from: a cluster with
-no node running is not handled. The run ends with what each node got (``--check``: would get): the changed
-setting lines of its diffs (passwords as ``****``) and its owner, group and mode changes, the nodes with the same
-outcome on one line.
+no node running is not handled. The settings that differ come per file, each with the inventory's value and the
+nodes already on it, then the value of each node to change, with its nodes (``← differs``): ``cassandra.yaml`` keys (a nested one as
+``parent.key``), the lines of the JVM options files and ``cassandra-env.sh`` (``-Xmx``, ``-Dname``, ``NAME=``), the
+owner, group and mode of a file or a directory as one setting; passwords as ``****``. Then what each node gets, the
+nodes with the same outcome on one line (``node2, node4  would apply, then restart``). A real run shows them before
+its question and ends with what each node got; ``--check`` shows them in the recap at the end.
 
 Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
 ``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``
