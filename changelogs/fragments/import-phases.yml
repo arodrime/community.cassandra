@@ -1,0 +1,3 @@
+minor_changes:
+  - "import_cluster - one line per phase (reading the ring, reading the nodes, Medusa and the OS tuning, laying out the inventory, the self-check, writing the inventory), the ops callback printing nothing else while they run; the line of the nodes' reading says when ``forks`` makes them go a few at a time."
+  - "import_cluster - faster on many nodes: the Cassandra version from its jar on the classpath and the Java version from its release file (no JVM started on each node; nodetool and the Java run only when they are not found), and dnf's cached metadata asked first for whether a repository offers the cassandra package."

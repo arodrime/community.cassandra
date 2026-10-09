@@ -87,8 +87,9 @@ def test_no_node_answered_as_plain_text(tmp_path):
     rc, output = run(tmp_path, CASSANDRA_CLUSTER="old_cluster")
     assert rc != 0
     lines = output.splitlines()
-    assert lines[0].startswith("nodetool status failed on every given node."), output
-    assert sorted(line.split(":")[0] for line in lines[1:]) == ["old1", "old2"], output
+    assert lines[0] == "Reading the ring from old1, old2..."  # its phase line
+    assert lines[1].startswith("nodetool status failed on every given node."), output
+    assert sorted(line.split(":")[0] for line in lines[2:]) == ["old1", "old2"], output
     assert "TASK [" not in output and "FAILED!" not in output and "{" not in output
 
 

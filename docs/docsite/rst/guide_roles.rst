@@ -66,6 +66,12 @@ would otherwise repeat:
     stdout_callback = community.cassandra.ops
     callback_result_format = yaml
     interpreter_python = auto_silent
+    # a task on that many nodes at a time (Ansible's default: 5): the node count of the largest cluster
+    forks = 30
+
+``forks``: Ansible runs each task on that many nodes at a time, 5 by default, so a 30-node cluster takes 6 rounds
+per task (``import_cluster`` reads every node, ``status`` and ``health_check`` too); its phase lines say so. Set it
+to the node count of the largest cluster (one ssh connection per node from the controller).
 
 ``stdout_callback = community.cassandra.ops`` prints only the collection's operator messages (each verdict, plan,
 progress line, recap and TO DO list), the confirmation questions, and every failure in full (the task, the host,

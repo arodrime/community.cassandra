@@ -144,8 +144,7 @@
        else query('community.cassandra.cassandra_nodes', errors='ignore')
             if lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER') and ansible_inventory_sources | reject('exists') | list | length == 0
        else query('community.cassandra.cassandra_nodes', group='all') }}
-  gather_facts: true
-  gather_subset: [network]
+  gather_facts: false  # (below, after the phase line)
   become: true  # nodetool reads the JMX password file (cassandra's, 0400)
   tasks:
     - name: Check the options
@@ -168,6 +167,17 @@
       run_once: true
       vars:
         cassandra_output: true
+
+    - name: Say what is read first
+      ansible.builtin.debug:
+        msg: "Reading the ring from {{ ansible_play_hosts_all | community.cassandra.cassandra_node_list }}..."
+      run_once: true
+      vars:
+        cassandra_output: true
+
+    - name: Gather the network facts
+      ansible.builtin.setup:
+        gather_subset: [network]
 
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
@@ -385,6 +395,19 @@
         tasks_from: defaults.yml
         public: true
 
+    # (one line for the run: per-node lines would come all at once, each task waits for every node)
+    - name: Say what is read on the nodes
+      ansible.builtin.debug:
+        msg: >-
+          Reading {{ ansible_play_hosts_all | length }} node{{ 's' if ansible_play_hosts_all | length > 1 else '' }}:
+          facts, packages, the running Cassandra, its config{{ (' (' ~ _forks ~ ' at a time: forks = '
+          ~ ansible_play_hosts_all | length ~ ' in ansible.cfg reads them together)')
+          if ansible_play_hosts_all | length > _forks | int else '' }}...
+      run_once: true
+      vars:
+        cassandra_output: true
+        _forks: "{{ ansible_forks | default(lookup('ansible.builtin.config', 'DEFAULT_FORKS')) | int }}"  # (-f too)
+
     - name: Gather facts
       ansible.builtin.setup:
         gather_subset: [network, distribution]
@@ -403,7 +426,11 @@
         [ -n "$pid" ] || exit 3
         cfg=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)
         echo "config=$cfg"
-        echo "version=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')"
+        # its version from its jar on the classpath (apache-cassandra-4.1.5.jar), else nodetool (a JVM to start:
+        # seconds per node)
+        ver=$(tr '\0' '\n' < /proc/$pid/cmdline | tr ':' '\n' | sed -n 's#^.*/apache-cassandra-\([0-9][0-9.]*[0-9]\)\.jar$#\1#p' | head -1)
+        [ -n "$ver" ] || ver=$({{ _cassandra_service_nodetool }} version | sed -n 's/^ReleaseVersion: //p')
+        echo "version=$ver"
         echo "logdir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.logdir=##p' | head -1)"
         echo "storagedir=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
         # the account it runs as: its effective user and group (a name, else the number)
@@ -420,7 +447,15 @@
         # (a java replaced since it started, e.g. a JDK update: "<path> (deleted)", still run from /proc unless its
         # directory went too)
         bin=$(readlink /proc/$pid/exe | sed 's/ (deleted)$//')
-        echo "java=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p')"
+        # its Java version: the release file of its Java (11.0.20 -> 11, 1.8.0_382 -> 1.8), else the Java run
+        # once (a JVM to start)
+        jv=$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "${bin%/bin/java}/release" "${bin%/jre/bin/java}/release" 2>/dev/null | head -1)
+        case $jv in
+          1.*) jv=$(echo "$jv" | cut -d. -f1,2) ;;
+          ?*) jv=${jv%%[._+-]*} ;;
+          *) jv=$(/proc/$pid/exe -XshowSettings:properties -version 2>&1 | sed -n 's/.*java.specification.version = //p') ;;
+        esac
+        echo "java=$jv"
         echo "javabin=$bin"
         # the package the running java comes from, empty when none (a tarball)
         pkg=$(rpm -qf --qf '%{NAME}\n' "$bin" 2>/dev/null) && pkg=$(echo "$pkg" | head -1) || pkg=$(dpkg -S "$bin" 2>/dev/null | cut -d: -f1) || pkg=
@@ -459,8 +494,14 @@
         else
           # a repository skipped (unreachable), other than a cassandra-* one (e.g. a plain directory declared as
           # one): nothing to conclude
-          res=$(timeout 180 dnf -q repoquery --setopt=skip_if_unavailable=True --qf 'PKG %{name}' cassandra 2>&1); rc=$?
-          bad=$(echo "$res" | sed -n "s/.*repo '\([^']*\)'.*/\1/p; s/.*Ignoring repositories: //p" | tr ', ' '\n\n' | grep . | grep -v '^cassandra-')
+          # (from the metadata dnf has cached first: no download; else the repositories)
+          bad=x
+          for c in -C ""; do
+            res=$(timeout 180 dnf -q $c repoquery --setopt=skip_if_unavailable=True --qf 'PKG %{name}' cassandra 2>&1); rc=$?
+            bad=$(echo "$res" | sed -n "s/.*repo '\([^']*\)'.*/\1/p; s/.*Ignoring repositories: //p" | tr ', ' '\n\n' | grep . | grep -v '^cassandra-')
+            # (a cached answer that it is offered is enough; that it is not, asked to the repositories)
+            [ $rc = 0 ] && [ -z "$bad" ] && echo "$res" | grep -q '^PKG ' && break
+          done
           [ $rc = 0 ] && [ -z "$bad" ] && echo "pkg_query=ok"
           echo "$res" | grep -q '^PKG ' && echo "pkg_repo=yes"
         fi
@@ -744,6 +785,13 @@
       when: import_cluster_config is defined
 
     # Cassandra Medusa (backups): its install and /etc/medusa/medusa.ini
+    - name: Say what is read next on the nodes
+      ansible.builtin.debug:
+        msg: "Looking for Medusa, reading the OS tuning on {{ ansible_play_hosts | length }} node{{ 's' if ansible_play_hosts | length > 1 else '' }}..."
+      run_once: true
+      vars:
+        cassandra_output: true
+
     - name: Look for Medusa
       ansible.builtin.shell: |
         ini=/etc/medusa/medusa.ini
@@ -1267,6 +1315,12 @@
         cassandra_output: true
 
     # no_log: the variables hold the passwords read from the config
+    - name: Say the inventory is laid out
+      ansible.builtin.debug:
+        msg: "Laying out the inventory..."
+      vars:
+        cassandra_output: true
+
     - name: Build the inventory
       block:
         - name: Match the ring with the hosts
@@ -1687,6 +1741,12 @@
     # Each node read: what the roles would write with the inventory's variables
     # (read back from the files about to be written, over the roles' defaults,
     # with the node's facts), against the node's files, setting by setting
+    - name: Say the self-check runs
+      ansible.builtin.debug:
+        msg: "Comparing with what the roles would write (self-check)..."
+      vars:
+        cassandra_output: true
+
     - name: Self-check
       block:
         - name: Render what the roles would write, and compare with the nodes' files
@@ -1787,6 +1847,12 @@
           {{ out }}
 
     # known as an earlier import's by their layout only (no first line), or taken over: kept as <file>.<date>~
+    - name: Say the inventory is written
+      ansible.builtin.debug:
+        msg: "{{ ('Comparing the inventory with ' if ansible_check_mode else 'Writing the inventory to ') ~ _dir }}..."
+      vars:
+        cassandra_output: true
+
     - name: Keep a backup of the files it removes that do not say they are its
       ansible.builtin.copy:
         src: "{{ _dir }}/{{ item }}"

@@ -352,7 +352,7 @@ def test_short_screen_at_the_end():
     """The run ends with the summary (the report goes to report.txt), then the self-check failure if any."""
     write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
     debug = [t["name"] for t in write if "ansible.builtin.debug" in t]
-    assert debug == ["Show the summary"]
+    assert [n for n in debug if not n.startswith("Say ")] == ["Show the summary"]  # (and the phase lines)
     assert [t["name"] for t in write][-2:] == ["Show the summary", "Stop on a failed self-check"]
 
 
