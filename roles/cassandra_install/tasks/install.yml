@@ -412,6 +412,8 @@
         - cassandra_cqlsh_python_manage | bool
         - _cassandra_cqlsh_python == '/usr/bin/python3.11'
         - "'python3.11' not in ansible_facts['packages']"
+      vars:
+        cassandra_output: true
 
     - name: Say jemalloc is missing (optional)
       ansible.builtin.debug:
@@ -419,6 +421,7 @@
           {{ inventory_hostname }} has no jemalloc ({{ _jemalloc }}): Cassandra runs without it, with the glibc
           allocator. Install it from your image or mirror to use it.
       vars:
+        cassandra_output: true
         _jemalloc: "{{ 'libjemalloc2' if ansible_facts['os_family'] == 'Debian' else 'jemalloc' }}"
       when:
         - cassandra_install_jemalloc | bool

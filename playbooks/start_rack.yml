@@ -91,6 +91,8 @@
         msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
       run_once: true
       when: ansible_check_mode
+      vars:
+        cassandra_output: true
 
     - name: Check the whole cluster from one node
       ansible.builtin.include_role:

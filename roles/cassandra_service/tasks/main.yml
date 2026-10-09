@@ -68,6 +68,8 @@
   when:
     - cassandra_service_jvm.rc | default(1) == 0
     - cassandra_service_unit_manage | bool
+  vars:
+    cassandra_output: true
 
 # Stopped before the boot setting: the stop is what stop_rack and decommission
 # are for, and a kept unit or init script that fails to disable (e.g. no

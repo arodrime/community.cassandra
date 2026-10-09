@@ -136,3 +136,6 @@
           {{ cassandra_target_dc }} is gone. Remove {{ ansible_play_hosts_all | join(', ') }} from the inventory;
           their data directories are left in place.
       run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true

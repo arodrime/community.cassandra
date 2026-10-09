@@ -259,6 +259,9 @@
           Review the config diffs above, then run -e cassandra_upgrade_phase=prepare.
       run_once: true
       when: _phase == 'preflight'
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
 
 - name: Prepare
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') == 'prepare' else 'localhost:!localhost' }}"
@@ -308,6 +311,9 @@
           Snapshots pre-upgrade-{{ cassandra_upgrade_from }} and config copies in {{ cassandra_conf_dir }}.pre-upgrade-{{
           cassandra_upgrade_from }}. Next: -e cassandra_upgrade_phase=canary.
       run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
 
 - name: Pick the nodes and their order
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
@@ -423,6 +429,9 @@
           Upgrade over. Resume backups and repairs. The config copies ({{ cassandra_conf_dir }}.pre-upgrade-*) are kept;
           remove them when you no longer need to roll back.
       run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
 
 - name: Summary
   hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
@@ -443,3 +452,6 @@
               'rolling': 'Every node runs ' ~ cassandra_package_version ~ '. ' ~ ('Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then NONE and apply_config again (NONE is the point of no return). ' if cassandra_version == '50x' and cassandra_upgrade_from_series != '50x' else '') ~ 'Then -e cassandra_upgrade_phase=sstables.',
               'sstables': 'sstables rewritten. Last: -e cassandra_upgrade_phase=cleanup.'}[cassandra_upgrade_phase] }}
       run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true

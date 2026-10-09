@@ -5,11 +5,12 @@
 #   _cassandra_change_report_quiet: true when the caller shows them its own way (written all the same)
 - name: Show changes ({{ cassandra_change_report_role }})
   ansible.builtin.debug:
-    msg: "{{ lines.splitlines() }}"
+    msg: "{{ [inventory_hostname ~ ' (' ~ cassandra_change_report_role ~ '):'] + lines.splitlines() }}"
   vars:
+    cassandra_output: true  # (the ops callback names no host: the first line does)
     lines: |-
       {% for c in cassandra_change_report_items %}
-      {{ c.item }}: {{ c.before }} -> {{ c.after }}
+        {{ c.item }}: {{ c.before }} -> {{ c.after }}
       {% endfor %}
   when:
     - cassandra_change_report_items | length > 0

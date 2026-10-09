@@ -125,6 +125,8 @@
     - cassandra_linux_timesync | bool
     - cassandra_offline | bool
     - cassandra_timesync_unit.rc != 0
+  vars:
+    cassandra_output: true
 
 - name: Ensure timesync service starts
   ansible.builtin.service:
@@ -288,9 +290,10 @@
 - name: Say which data directories are not tuned
   ansible.builtin.debug:
     msg: >-
-      WARNING: not tuned: {{ _untuned | join(', ') }} - not a plain disk or partition (LVM, RAID, dm-crypt, overlay...).
+      WARNING: {{ inventory_hostname }}: not tuned: {{ _untuned | join(', ') }} - not a plain disk or partition (LVM, RAID, dm-crypt, overlay...).
       Set cassandra_data_block_devices to the disks.
   vars:
+    cassandra_output: true
     _untuned: >-
       {{ (_cassandra_disk_sources | reject('in', cassandra_data_lsblk.results | default([])
            | selectattr('stdout', 'defined') | selectattr('stdout', 'search', '"type": ?"(disk|part)"')

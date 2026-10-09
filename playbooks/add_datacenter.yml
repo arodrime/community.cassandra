@@ -288,6 +288,8 @@
         msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
       run_once: true
       when: ansible_check_mode
+      vars:
+        cassandra_output: true
 
     - name: Check the cluster
       ansible.builtin.include_role:
@@ -305,3 +307,6 @@
           per rack of it a seed (cassandra_seeds, then change_seeds), and point that region's clients at it.
       run_once: true
       when: not ansible_check_mode
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true

@@ -56,6 +56,8 @@
         - not cassandra_install_dsbulk.stat.exists
         - cassandra_offline | bool
         - _from_network | bool
+      vars:
+        cassandra_output: true
 
     # Unpacked next to its final place, then renamed: an interrupted run
     # never leaves a partial version that looks installed

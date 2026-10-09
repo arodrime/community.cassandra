@@ -19,6 +19,8 @@
       DEPRECATION WARNING: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
       (the former name still wins while it is set).
   when: cassandra_config_owner is defined
+  vars:
+    cassandra_output: true
 
 # Cassandra refuses to start without a period above zero in periodic mode
 # (4.1+: a duration in ms or a larger unit)
@@ -132,10 +134,11 @@
     - name: Say when Cassandra is newer than the templates
       ansible.builtin.debug:
         msg: >-
-          Cassandra {{ _cassandra_config_installed }} is newer than {{ _templates }}, the release the
+          {{ inventory_hostname }}: Cassandra {{ _cassandra_config_installed }} is newer than {{ _templates }}, the release the
           {{ _cassandra_config_series }} templates come from: settings it added are not variables, set them with
           cassandra_extra_settings.
       vars:
+        cassandra_output: true
         _templates: "{{ _cassandra_config_template_versions[_cassandra_config_series] }}"
       when:
         - _cassandra_config_installed != ''
