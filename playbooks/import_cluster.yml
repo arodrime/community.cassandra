@@ -368,8 +368,10 @@
           {%- set out = [] -%}
           {%- for h in import_cluster_given -%}
           {%-   set r = hostvars[h].import_cluster_ring | default({}) -%}
+          {%-   set m = r.msg | default('no result') -%}
+          {%-   set e = (r.stderr | default('')).splitlines() | first | default('') -%}
           {%-   set _ = out.append(h ~ ': ' ~ ('unreachable' if r == {}
-                                              else (r.msg | default('no result') ~ ' ' ~ (r.stderr | default('')).splitlines() | first | default(''))
+                                              else (m ~ ('' if e | regex_replace('^error: *', '') in m else ' ' ~ e))
                                                    | trim | truncate(400))) -%}
           {%- endfor -%}
           {{ out }}

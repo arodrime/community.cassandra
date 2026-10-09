@@ -45,12 +45,15 @@ def test_failure_shows_each_node_error():
         "n1": {"import_cluster_ring": {"failed": True, "msg": "Unable to determine Cassandra version: ",
                                        "stderr": "error: ******** (Permission denied)\n-- StackTrace --\n..."}},
         "n2": {},  # unreachable: the task never ran there
+        # the module said it already: not twice
+        "n3": {"import_cluster_ring": {"failed": True, "msg": "JMX login refused (Invalid username or password): check",
+                                       "stderr": "error: Invalid username or password\n-- StackTrace --\n..."}},
     }
-    variables = {"import_cluster_given": ["n1", "n2"], "hostvars": hostvars}
+    variables = {"import_cluster_given": ["n1", "n2", "n3"], "hostvars": hostvars}
     templar = Templar(loader=DataLoader(), variables=variables)
     errors = templar.template(trust_as_template(stop["vars"]["_errors"]))
     assert errors == ["n1: Unable to determine Cassandra version:  error: ******** (Permission denied)",
-                      "n2: unreachable"]
+                      "n2: unreachable", "n3: JMX login refused (Invalid username or password): check"]
 
 
 def test_given_nodes_found_when_a_discovered_node_comes_first():
