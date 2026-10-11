@@ -243,7 +243,8 @@ def test_decommission_job_that_changed_nothing_is_not_the_end(job, mode, expecte
     where = next(t for t in block if t["name"] == "Where it stands")
     variables = dict(where["vars"], _cassandra_stream_leave=True, _cassandra_stream_job={"jid": "1"},
                      cassandra_stream_job_status=job, _cassandra_stream_self={"mode": mode},
-                     _cassandra_stream_state={"stalled": False, "start": 0}, cassandra_stream_max_time=0)
+                     _cassandra_stream_state={"stalled": False, "start": 0}, cassandra_stream_max_time=0,
+                     _cassandra_stream_from=[])  # for _own_login, which _refused reads (2.21 renders it)
     assert render(where["ansible.builtin.set_fact"]["_cassandra_stream_now"], **variables) == expected
 
 
