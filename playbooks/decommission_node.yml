@@ -57,6 +57,13 @@
     # the nodes to remove the others still list as a seed (topology changes the seeds as its own step)
     _dn_seed_step: "{{ [] if _cassandra_screen_asked_by | default('') else _leaving | select('in', _dn_seeds.old_hosts) | list }}"
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Say what the run does
       ansible.builtin.debug:
         msg: "{{ 'check_leaving' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
@@ -199,6 +206,13 @@
   become: true
   any_errors_fatal: true  # no removal while a node still lists it
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Apply cassandra_seeds on the nodes that stay
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -214,6 +228,13 @@
   vars:
     cassandra_service_node_action: decommission
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Set up the progress file
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -225,6 +246,13 @@
   any_errors_fatal: true
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     # read again: a decommission may have moved on since the checks (the confirmation, the nodes before this one)
     - name: Where this node stands now
       ansible.builtin.include_role:
@@ -270,6 +298,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Print the summary
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

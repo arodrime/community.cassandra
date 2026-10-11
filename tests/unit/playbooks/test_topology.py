@@ -84,7 +84,7 @@ def test_operator_messages_marked_for_the_ops_callback():
                    " inventory, or leave them",
                    "WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never touched",
                    "WARNING  seeds: dc1 has one seed"]  # the checks' notes kept for the plan
-    done = next(p for p in PLAYS if p.get("name") == "Say what is left to do")["tasks"][0]
+    done = next(p for p in PLAYS if p.get("name") == "Say what is left to do")["tasks"][1]
     assert done["vars"]["cassandra_output"] is True
     plan = {"add": ["n4"], "remove": ["n2"], "gone": [], "silent": [], "seeds": {"step": True, "new": "n1,n4"}}
     variables = dict(done["vars"], hostvars={"n1": {"cassandra_topology_plan": plan,
@@ -194,8 +194,8 @@ def test_steps_in_order_adds_seeds_removals():
     names = [p.get("name") for p in PLAYS]
     assert names.index("Add the nodes") < names.index("Change the seeds") < names.index("Remove the nodes")
     seeds = next(p for p in PLAYS if p.get("name") == "Change the seeds")
-    assert seeds["tasks"][0]["name"] == "Say what the run does"  # its phase line
-    assert seeds["tasks"][1]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
+    assert seeds["tasks"][1]["name"] == "Say what the run does"  # its phase line (after the facts task)
+    assert seeds["tasks"][2]["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
     assert render(seeds["hosts"], groups={"all": []}) == []
     assert render(seeds["hosts"], groups={"cassandra_topology_seeds": ["n1", "n2"]}) == ["n1", "n2"]
     line_up = task("Line up the nodes for the seed step")

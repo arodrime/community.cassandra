@@ -26,6 +26,13 @@
          | map(attribute='inventory_hostname') | list }}
     _staying: "{{ ansible_play_hosts_all | reject('in', _leaving) | list }}"
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: The datacenter has nodes, and others stay
       ansible.builtin.assert:
         that:
@@ -107,6 +114,13 @@
   vars:
     _cassandra_health_not_peers: cassandra_leaving_dc  # the health check reads the ring from a node that stays
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Remove this node
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -123,6 +137,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Print the summary
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

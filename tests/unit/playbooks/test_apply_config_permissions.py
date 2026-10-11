@@ -259,7 +259,7 @@ def test_apply_config_passes_a_member_seed_down(resume, down_ok, expected):
 
 def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
     play = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Apply the config, one node at a time"][0]
-    include = play["tasks"][0]["vars"]
+    include = play["tasks"][1]["vars"]  # (after the facts task)
     # n5: stopped with nothing to do (not in this play); n6: outside --limit (no fact)
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])

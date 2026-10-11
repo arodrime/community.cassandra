@@ -23,6 +23,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the role defaults
       ansible.builtin.include_role:
         name: "community.cassandra.{{ item }}"
@@ -137,6 +144,13 @@
   vars:
     cassandra_service_node_action: update_java
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Set up the progress file
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -148,6 +162,13 @@
   any_errors_fatal: true
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Update this node
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -160,6 +181,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Print the summary
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

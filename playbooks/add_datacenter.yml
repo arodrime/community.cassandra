@@ -35,6 +35,13 @@
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
     _single: "{{ _p0.cassandra_num_tokens | int == 1 }}"
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -170,6 +177,13 @@
   any_errors_fatal: true
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     # Computed first: a var can't be defined from itself (recursive template)
     - name: Add auto_bootstrap false to the settings
       ansible.builtin.set_fact:
@@ -198,6 +212,13 @@
   become: true
   any_errors_fatal: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -222,6 +243,13 @@
   serial: 1
   any_errors_fatal: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -270,6 +298,13 @@
   become: true
   any_errors_fatal: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the cassandra_service defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

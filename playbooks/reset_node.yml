@@ -22,6 +22,13 @@
   become: true
   any_errors_fatal: true  # reset none of them if one is refused
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Say what the run does
       ansible.builtin.debug:
         msg: "{{ 'read_reset' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"

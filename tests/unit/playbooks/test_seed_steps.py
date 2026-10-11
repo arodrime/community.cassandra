@@ -164,7 +164,7 @@ def test_add_node_applies_the_seeds_after_the_adds():
     names = [p["name"] for p in ADD_PLAYS]
     assert names.index("Add the new nodes, one at a time") < names.index("Apply cassandra_seeds now that the new seeds are up") < names.index("Summary")
     step = play("add_node.yml", "Apply cassandra_seeds now that the new seeds are up")
-    apply = step["tasks"][0]
+    apply = step["tasks"][1]  # (after the facts task)
     assert apply["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
     hostvars = {"n1": node(1, seed_entry="10.0.0.1"), "n2": node(2), "n3": node(3),
                 "n5": node(5, seed_entry="10.0.0.5")}
@@ -219,7 +219,7 @@ def test_decommission_applies_the_seeds_only_for_a_leaving_seed_or_to_reload():
     assert applies(["n5"], ["10.0.0.1", "10.0.0.2", "10.0.0.3"]) is False
     step = play("decommission_node.yml", "Take the nodes to remove out of the seed lists")
     assert step["any_errors_fatal"] is True
-    when = step["tasks"][0]["when"]
+    when = step["tasks"][1]["when"]  # (after the facts task)
     assert "not ansible_check_mode" in when
     for value in (True, False):
         hv = {"n2": {"_cassandra_decommission_seeds_apply": value}}

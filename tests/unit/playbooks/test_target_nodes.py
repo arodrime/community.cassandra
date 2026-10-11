@@ -122,10 +122,10 @@ def test_former_names_used_nowhere():
 
 def test_former_names_refused_first():
     hosts_check = load("roles", "cassandra_service", "tasks", "hosts_check.yml")
-    # (after the ansible-core version)
-    assert [t["ansible.builtin.include_tasks"] for t in hosts_check[:2]] == ["core_check.yml", "target_nodes_check.yml"]
-    first = play("preflight.yml", "Cassandra preflight checks")["tasks"][:2]
-    assert [t["ansible.builtin.include_role"]["tasks_from"] for t in first] == ["core_check.yml", "target_nodes_check.yml"]
+    assert hosts_check[0]["ansible.builtin.include_tasks"] == "target_nodes_check.yml"
+    # (after the task that gives each node its own facts, and its check)
+    first = play("preflight.yml", "Cassandra preflight checks")["tasks"][2]
+    assert first["ansible.builtin.include_role"]["tasks_from"] == "target_nodes_check.yml"
 
 
 STATUS = play("status.yml", "Cluster status")
@@ -146,7 +146,7 @@ def test_status_reads_from_the_target_nodes(target, reached, from_, asked):
 
 
 UPGRADE = play("upgrade.yml", "Pick the nodes and their order")
-CANARY_CHECK = UPGRADE["tasks"][0]["ansible.builtin.assert"]
+CANARY_CHECK = UPGRADE["tasks"][1]["ansible.builtin.assert"]  # (after the facts task)
 
 
 def canary(target, phase="canary"):

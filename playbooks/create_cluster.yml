@@ -60,6 +60,13 @@
       {{ cassandra_create_cluster_reset | default(false) | bool
          or (_group | difference(ansible_play_hosts_all) | length == 0 and fresh | length == ansible_play_hosts_all | length) }}
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the cassandra_config defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config
@@ -143,6 +150,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Work out the tokens
       when: _cassandra_preflight.cassandra_num_tokens | int == 1
       vars:
@@ -226,6 +240,13 @@
   any_errors_fatal: true  # every node stopped before any is emptied, none if one is refused
   strategy: linear  # each task on every node before the next one
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Reset the whole cluster
       when: cassandra_create_cluster_reset | default(false) | bool
       vars:
@@ -338,6 +359,13 @@
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   become: true
   pre_tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play
       when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
@@ -360,6 +388,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play
       when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
@@ -384,6 +419,14 @@
   hosts: cassandra_create_start_order
   serial: 1
   become: true
+  pre_tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
   roles:
     - community.cassandra.cassandra_service
 
@@ -392,6 +435,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: The plan only (--check with cassandra_create_cluster_reset)
       ansible.builtin.meta: end_play
       when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode

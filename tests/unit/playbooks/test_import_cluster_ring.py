@@ -144,7 +144,8 @@ def test_limit_refused_and_the_nodes_read():
     stop = task("Stop on --limit")
     assert stop["ansible.builtin.assert"]["that"] == "ansible_limit is not defined" and stop["run_once"] is True
     find = next(play for play in PLAYS if play["name"] == "Find the cluster from the given nodes")
-    assert [t["name"] for t in find["tasks"]][:2] == ["Check the options", "Stop on --limit"]
+    # (after the facts and their check)
+    assert [t["name"] for t in find["tasks"]][2:4] == ["Check the options", "Stop on --limit"]
     # -e cassandra_hosts: that group's hosts given (else CASSANDRA_CLUSTER's, else all: test_import_cluster_named);
     # read: the given ones and the ones found, not the inventory's others
     assert "query('community.cassandra.cassandra_nodes', group=cassandra_hosts) if cassandra_hosts" in find["hosts"]

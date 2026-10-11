@@ -62,11 +62,32 @@
     _asked: "{{ _targets if _targets else ansible_play_hosts_all }}"
     _from: "{{ _asked | select('in', _reached) | first | default(_asked | first) }}"
   tasks:
-    # also run by the first play, which --limit skips
-    - name: Check the ansible-core version
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
-        tasks_from: core_check.yml
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check each node has its own facts
+      ansible.builtin.assert:
+        that: _shared | length == 0
+        fail_msg: >-
+          ansible-core {{ ansible_version.full }} gave {{ _shared | join(', ') }} the facts of another node
+          (ansible/ansible#87148): a run_once task ran on them earlier in this run, before they had facts of their own
+          (in a play before this playbook?). Run this playbook on its own, or gather facts first in that play.
+          Nothing was changed.
+        quiet: true
+      run_once: true
+      tags: [always]
+      vars:
+        cassandra_output: true  # its message as is (the ops callback)
+        _shared: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] -%}  {#- the ones out of the play too: they may share them with these -#}
+          {%-   if hostvars[h].ansible_facts._cassandra_own_facts | default(h) != h -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
 
     - name: Gather the network facts
       ansible.builtin.setup:
