@@ -24,6 +24,12 @@ cassandra_data_tune_shared_devices: false
 # Cassandra's random reads and fills the page cache with unneeded data.
 cassandra_data_readahead_kb: 4
 
+# When the profiles tuned runs would set the read-ahead or IO scheduler of
+# the Cassandra devices (RHEL's default ones: readahead=>4096), have it run
+# the role's cassandra-disks profile after them, which leaves those devices
+# alone (see the README). false: the role only warns.
+cassandra_linux_tuned_manage: true
+
 # sysfs block root the disk tuning reads and writes. Only meant to be
 # overridden by tests, to point at a fake tree instead of the real disks.
 cassandra_sysfs_block_root: /sys/block

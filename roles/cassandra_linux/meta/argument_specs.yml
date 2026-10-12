@@ -50,6 +50,14 @@ argument_specs:
         description:
           - Read-ahead of the data devices, in KB. The IO scheduler is set to none
             on SSD/NVMe only.
+      cassandra_linux_tuned_manage:
+        type: bool
+        default: true
+        description:
+          - When the profiles tuned runs would set the read-ahead or IO scheduler of the Cassandra devices
+            (RHEL's default profiles set C(readahead=>4096)), have it run the role's C(cassandra-disks)
+            profile after them, which leaves those devices alone (it applies the profiles again, live, once).
+          - V(false) only warns.
       cassandra_sysfs_block_root:
         type: path
         default: /sys/block

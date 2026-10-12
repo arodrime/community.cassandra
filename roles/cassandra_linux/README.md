@@ -42,6 +42,10 @@ Role Variables
   the practical minimum: read-ahead brings nothing to Cassandra's random
   reads and fills the page cache with data it doesn't need. The kernel
   rounds it down to whole memory pages (0 with 64 KB pages).
+* `cassandra_linux_tuned_manage`: when the profiles tuned runs would set the
+  read-ahead or IO scheduler of the Cassandra devices (RHEL's default ones
+  do), have it run a profile of the role's after them that leaves those
+  devices alone (see below). `false`: the role only warns. Default `true`.
 * `cassandra_linux_apply_live`: apply the kernel settings (sysctl, swapoff,
   THP, disk tuning) live, not only persist them. Defaults to `auto`: live
   everywhere except in containers (Ansible's virtualization facts, and
@@ -139,12 +143,38 @@ run of the role or the next boot.
 
 tuned: RHEL's default profiles (`throughput-performance`, and
 `virtual-guest` which includes it) set `readahead=>4096` (4 MB at least) on
-every disk, device-mapper and md device when tuned starts and when it sees a
-new device: over what the role sets, at each boot. The role warns when the
-active profile sets another read-ahead for all devices. Use a profile of
-your own that includes yours and keeps its `[disk]` section off the
-Cassandra devices (`devices=`, `devices_udev_regex=`), or sets the same
-read-ahead.
+every disk, device-mapper and md device when tuned starts (each boot) and
+when it sees a new device, over what the role sets. When the profiles tuned
+runs would set a Cassandra device (merged and matched as tuned does: the
+first `[disk]` instance by priority whose `devices` or `devices_udev_regex`
+takes it sets another read-ahead, or an IO scheduler other than `none` on an
+SSD), the role writes a profile of its own, `cassandra-disks` (in
+`/etc/tuned/profiles`, or `/etc/tuned` where tuned keeps its profiles
+directly under `/usr/lib/tuned`: before 2.23, RHEL 8 and 9), and has tuned run
+it after them: `tuned-adm profile <the active ones> cassandra-disks` (tuned
+merges the profiles it runs). It only adds a `[disk]` instance with a lower
+priority number (`priority=-100`): tuned gives each device to the first
+instance that matches it, so it takes the Cassandra devices, matched by the
+same stable ids as the udev rule (`devices_udev_regex`), and sets nothing on
+them; everything else stays as the active profiles set it. Needs tuned 2.10
+or later, running, and the role applying settings live; the role says when
+it can't (tuned stopped, no stable id, udevadm failing). Not read: a
+profile loaded after the others (`post_loaded_profile`), `readahead_multiply`,
+conditional includes. A device that appears after tuned started (a volume
+activated later, a disk attached later) may still get tuned's read-ahead,
+before udev knows its ids: the udev rule and LVM set it back at its next
+`change` event or activation, the next run of the role at once.
+
+Adding the profile applies the profiles again, live: tuned takes back what
+they set and applies them again (their scripts run again, services they
+manage are restarted), and its profile mode becomes manual (no automatic
+recommendation). The role then sets its kernel settings and THP again. It
+is done once, and again only when the Cassandra devices change. A disk
+matched by its `ID_WWN` alone (no extension) shares it with the other LUNs
+of its array: they leave tuned's `[disk]` too. `tuned-ppd` (power profiles
+daemon) switching profiles takes it off. `cassandra_linux_tuned_manage:
+false` leaves tuned alone, and the role only warns; back to the profiles
+before: that, and `tuned-adm profile <them>`.
 
 In containers, the devices are not tuned (they are the host's).
 
