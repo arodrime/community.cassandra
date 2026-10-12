@@ -444,11 +444,10 @@ def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
-        " inventory out: add your connection options, e.g. -u, when it sets them):",
-        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        P, "  2. drop node3 from the inventory: re-import the cluster with its inventory, the changes shown first:",
+        "     ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
         P, "  3. then write them:",
-        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true",
+        "     ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true",
         P, "  4. commit it:",
         "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
 
@@ -463,13 +462,13 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
         "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
         "     ansible-playbook -i inv/prod community.cassandra.reset_node -e cassandra_hosts=orders"
         " -e cassandra_target_nodes=node3,node4",
-        P, "  2. drop node3, node4, node9 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves the"
-        " inventory out: add your connection options, e.g. -u, when it sets them):",
-        "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
-        " -e import_cluster_dir=inv/prod --check --diff",
+        P, "  2. drop node3, node4, node9 from the inventory: re-import the cluster with its inventory, the changes shown"
+        " first:",
+        "     ansible-playbook -i inv/prod community.cassandra.import_cluster -e cassandra_hosts=orders"
+        " -e import_cluster_force=true -e import_cluster_dir=inv/prod --check --diff",
         P, "  3. then write them:",
-        "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
-        " -e import_cluster_dir=inv/prod"]
+        "     ansible-playbook -i inv/prod community.cassandra.import_cluster -e cassandra_hosts=orders"
+        " -e import_cluster_force=true -e import_cluster_dir=inv/prod"]
     assert out.removed_todo([], "node1") == []
     # an inventory import_cluster did not write: removed by hand, no re-import
     assert out.removed_todo(["node3"], "node1", imported=False) == [
@@ -478,12 +477,25 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
         P, "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]
 
 
-def test_removed_todo_names_the_jmx_login_the_reimport_needs():
-    # -i node1, reads no inventory: the JMX login the run had must be given again (its password never printed)
-    lines = out.removed_todo(["node3"], "node1", in_git=False, jmx_user="jmxops")
-    assert lines[3] == P
-    assert lines[4] == ("  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves"
-                        " the inventory out: add your connection options, e.g. -u, when it sets them, and the JMX login:"
-                        " -e cassandra_jmx_username=jmxops -e cassandra_jmx_password_file=<its file on the nodes>"
-                        " (or cassandra_jmx_password)):")
-    assert "jmx" not in "\n".join(out.removed_todo(["node3"], "node1", in_git=False))
+def test_removed_todo_reimport_reads_the_inventory():
+    # no -i <node>, nor JMX login: the inventory gives the connection and the logins (vaulted too)
+    lines = out.removed_todo(["node3"], "node1", inventory=["inv"], hosts="", in_git=False, reimport_hosts="orders")
+    assert lines[5] == "     ansible-playbook -i inv community.cassandra.import_cluster -e cassandra_hosts=orders" \
+        " -e import_cluster_force=true --check --diff"
+    text = "\n".join(out.removed_todo(["node3"], "node1", inventory=["inv"], in_git=False))
+    assert "jmx" not in text and "-i node1," not in text
+    # the run's -e cassandra_hosts, when no other is said
+    assert "import_cluster -e cassandra_hosts=orders" in "\n".join(out.removed_todo(["node3"], "node1", hosts="orders"))
+
+
+def test_seeds_todo_first_in_the_removed_todo():
+    change = {"auto": [{"dc": "dc2"}], "new": "10.0.0.1, 10.0.0.7"}
+    item = out.seeds_todo(change, "prod")
+    assert item["command"] == 'cassandra_seeds: ["10.0.0.1", "10.0.0.7"]'
+    assert out.seeds_todo({"auto": [], "new": "x"}) is None
+    lines = out.removed_todo(["node3"], "node1", in_git=False, first=[item], imported=False)
+    assert lines[1].startswith("  1. put the seeds the nodes now run with in the inventory (group_vars/prod/")
+    assert lines[3] == P and lines[4].startswith("  2. empty node3")
+    # nothing removed: the seeds alone
+    assert out.removed_todo([], "node1", first=[item])[0] == "TO DO"
+    assert out.removed_todo([], "node1", first=[None]) == []

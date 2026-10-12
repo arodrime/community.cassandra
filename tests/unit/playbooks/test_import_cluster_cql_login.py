@@ -6,6 +6,7 @@ __metaclass__ = type
 # cassandra_operation_confirm false): a TO DO. No password in the output, under the ops and the default callback.
 
 import fcntl
+import json
 import os
 import pty
 import select
@@ -37,18 +38,28 @@ COLLECTIONS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 GOOD, BAD = "S3cr3tGood", "Wr0ngPw"
 
-# a cqlsh that takes alice / GOOD, refuses any other login as Cassandra's driver does
-CQLSH = """#!/bin/sh
-user=""; pw=""
-while [ $# -gt 0 ]; do
-  case "$1" in --username) user="$2"; shift;; --password) pw="$2"; shift;; esac; shift
-done
-if [ "$user" = alice ] && [ "$pw" = "%s" ]; then echo " release_version"; echo " 4.1.5"; exit 0; fi
-echo "Connection error: ('Unable to connect to any servers', {'127.0.0.1:9042': AuthenticationFailed('Failed to\
- authenticate to 127.0.0.1:9042: Error from server: code=0100 [Bad credentials] message=\\"Provided username $user\
- and/or password are incorrect\\"')})" >&2
-exit 2
-""" % GOOD
+# a cqlsh that takes alice and the password in its file (GOOD), refuses any other login as Cassandra's driver
+# does; it parses its arguments as cqlsh does (--password=value or --password value), no shell in between
+CQLSH = """#!%s
+import os, sys
+args, opts = sys.argv[1:], {}
+while args:
+    arg = args.pop(0)
+    if arg.startswith("--") and "=" in arg:
+        opts[arg[:arg.index("=")]] = arg[arg.index("=") + 1:]
+    elif arg in ("--username", "--password"):
+        opts[arg] = args.pop(0)
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "password"), encoding="utf-8") as f:
+    good = f.read()
+if opts.get("--username") == "alice" and opts.get("--password") == good:
+    print(" release_version")
+    print(" 4.1.5")
+    sys.exit(0)
+sys.stderr.write("Connection error: ('Unable to connect to any servers', {'127.0.0.1:9042': AuthenticationFailed('Failed to"
+                 " authenticate to 127.0.0.1:9042: Error from server: code=0100 [Bad credentials] message=\\"Provided"
+                 " username %%s and/or password are incorrect\\"')})\\n" %% opts.get("--username"))
+sys.exit(2)
+""" % sys.executable
 
 LOGIN = """
 - hosts: localhost
@@ -71,9 +82,10 @@ LOGIN = """
 """ % GOOD
 
 
-def env_for(tmp_path, callback="community.cassandra.ops"):
+def env_for(tmp_path, callback="community.cassandra.ops", password=GOOD):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "password").write_text(password, encoding="utf-8")
     (bin_dir / "cqlsh").write_text(CQLSH)
     (bin_dir / "cqlsh").chmod(0o755)
     (tmp_path / "login.yml").write_text(LOGIN)
@@ -89,13 +101,13 @@ def argv(*args):
     return [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "login.yml"] + list(args)
 
 
-def run(tmp_path, *args, **kw):
+def run(tmp_path, *args, **kw):  # kw: env_for's
     proc = subprocess.run(argv(*args), env=env_for(tmp_path, **kw), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           stdin=subprocess.DEVNULL, check=False, cwd=str(tmp_path), timeout=300)
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
-def on_a_terminal(tmp_path, answers, timeout=240):
+def on_a_terminal(tmp_path, answers, timeout=240, password=GOOD):
     """Runs login.yml on a terminal of its own, typing each answer once its prompt shows."""
     master, slave = pty.openpty()
 
@@ -103,7 +115,7 @@ def on_a_terminal(tmp_path, answers, timeout=240):
         os.setsid()
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-    proc = subprocess.Popen(argv(), stdin=slave, stdout=slave, stderr=slave, env=env_for(tmp_path), cwd=str(tmp_path),
+    proc = subprocess.Popen(argv(), stdin=slave, stdout=slave, stderr=slave, env=env_for(tmp_path, password=password), cwd=str(tmp_path),
                             close_fds=True, preexec_fn=own_terminal)  # pylint: disable=subprocess-popen-preexec-fn
     os.close(slave)
     out, seen, pending, end = b"", 0, list(answers), time.time() + timeout
@@ -172,6 +184,29 @@ def test_three_refused_logins_and_none_typed(tmp_path):
     assert output.count("Password of the CQL user alice") == 3 and BAD not in output
     rc, output = on_a_terminal(tmp_path, [("CQL user", "")])  # Enter alone: none, set later
     assert state(output).startswith("STATE=none USER= ASKED=True")
+
+
+# a password with what a shell or shlex would split, unquote or expand: the login works as is
+NASTY = ["two words", "it's", 'say "hi"', "$HOME$(id)`id`", "back\\slash\\", "#not a comment", "a;b&&c|d",
+         "-starts-with-a-dash", " spaces around ", "pässwörd-€", "%(x)s %% {x}"]
+
+
+@pytest.mark.parametrize("password", NASTY)
+def test_given_login_with_any_character(tmp_path, password):
+    # -e as JSON: the value as is, whatever it holds
+    rc, output = run(tmp_path, "-e", json.dumps({"given_user": "alice", "given_password": password}), password=password)
+    assert rc == 0, output
+    assert state(output).startswith("STATE=ok USER=alice ASKED=False"), output
+    assert password.strip() not in output
+
+
+def test_typed_login_with_any_character(tmp_path):
+    password = "it's \"quoted\" $x \\ #1 ;é"
+    rc, output = on_a_terminal(tmp_path, [("CQL user", "alice"), ("Password of the CQL user alice", password)],
+                               password=password)
+    assert rc == 0, output
+    assert state(output).startswith("STATE=ok USER=alice ASKED=True"), output
+    assert password not in output
 
 
 # --- the import's side: when it asks, what it writes, what it says ---

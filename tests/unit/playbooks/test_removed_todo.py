@@ -60,17 +60,20 @@ def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
     assert render(say["vars"]["_imported"], _stays="node1", _hosts_file="") is False  # -i host1,host2: no dir
     variables = dict(say["vars"], ansible_play_hosts_all=["node3"], ansible_inventory_sources=[str(inventories)],
                      hostvars={"node1": {"ansible_host": "10.0.0.1", "inventory_dir": str(inventories)}},
-                     _stays="node1", _imported=True)
+                     _stays="node1", _imported=True, cassandra_hosts="my_cluster",
+                     groups={"all": ["node1", "node3", "other1"], "my_cluster": ["node1", "node3"]})
     msg = render(say["ansible.builtin.debug"]["msg"], **variables)
     assert msg.splitlines() == [
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
-        "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
-        " inventory out: add your connection options, e.g. -u, when it sets them):",
-        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_hosts=my_cluster"
+        " -e cassandra_target_nodes=node3",
+        P, "  2. drop node3 from the inventory: re-import the cluster with its inventory, the changes shown first:",
+        "     ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=my_cluster"
+        " -e import_cluster_force=true --check --diff",
         P, "  3. then write them:",
-        "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true",
+        "     ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=my_cluster"
+        " -e import_cluster_force=true",
         P, "  4. commit it:",
         "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
 
@@ -85,8 +88,10 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
     hostvars = {"node1": {"cassandra_topology_plan": plan, "inventory_dir": str(inventories),
                           "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}},
                 "node2": {"ansible_host": "10.0.0.2", "_cassandra_preflight_running": True}}  # running: the re-import's
+    # the inventory's only cluster: the import takes it without -e cassandra_hosts
     variables = dict(say["vars"], ansible_play_hosts_all=["node1", "node2"], ansible_inventory_sources=[str(inventories)],
-                     hostvars=hostvars, _imported=True)
+                     hostvars=hostvars, _imported=True, groups={"all": ["node1", "node2", "node3", "node9"],
+                                                                "my_cluster": ["node1", "node2", "node3", "node9"]})
     msg = render(say["ansible.builtin.debug"]["msg"], **variables)
     assert msg.splitlines() == [
         "DONE  topology  my_cluster  ring = inventory: removed node3",
@@ -94,11 +99,10 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        P, "  2. drop node3, node9 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.2, leaves the"
-        " inventory out: add your connection options, e.g. -u, when it sets them):",
-        "     ansible-playbook -i 10.0.0.2, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
+        P, "  2. drop node3, node9 from the inventory: re-import the cluster with its inventory, the changes shown first:",
+        "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
         P, "  3. then write them:",
-        "     ansible-playbook -i 10.0.0.2, community.cassandra.import_cluster -e import_cluster_force=true"]
+        "     ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true"]
 
 
 def test_reset_node_takes_a_host_marked_absent():
@@ -130,15 +134,40 @@ def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
                               "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}}
         variables = dict(say["vars"], ansible_inventory_sources=[str(inventories)], hostvars=hostvars,
                          _imported=True, _ansible_cfg_inventory=[str(inventories)],
+                         groups={"all": ["node1", "node3"], "my_cluster": ["node1", "node3"]},
                          ansible_play_hosts_all=["node3"] if playbook == "decommission_node.yml" else ["node1"])
         if playbook == "decommission_node.yml":
             variables["_stays"] = "node1"  # (from the inventory: its lookup)
         msg = render(template.replace(config, "_ansible_cfg_inventory"), **variables)
         assert "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3" in msg.splitlines()
+        assert "     ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true" in msg.splitlines()
         assert "-i inventories" not in msg
 
 
-def test_the_run_s_jmx_login_is_passed_on():
+def test_the_reimport_reads_the_inventory():
+    # its connection variables and logins (secrets.yml, vaulted) come with it: no -i <node>, no JMX login to give
     for playbook, play in (("decommission_node.yml", "Summary"), ("topology.yml", "Say what is left to do")):
-        msg = task(playbook, play, "Say what is left to do")["ansible.builtin.debug"]["msg"]
-        assert "jmx_user=cassandra_jmx_username | default('')" in msg, playbook
+        say = task(playbook, play, "Say what is left to do")
+        assert "jmx_user" not in say["ansible.builtin.debug"]["msg"], playbook
+        assert "reimport_hosts=_reimport_hosts" in say["ansible.builtin.debug"]["msg"], playbook
+        expr = say["vars"]["_reimport_hosts"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'")
+
+        def hosts(env="", **variables):
+            variables.setdefault("groups", {"all": ["n1", "n2", "o1"], "prod": ["n1", "n2"]})
+            variables.setdefault("ansible_inventory_sources", [TOP])  # a dir that exists
+            return render(expr.replace("lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER')", repr(env)), **variables)
+
+        assert hosts() == "prod"  # another cluster in the inventory: named
+        assert hosts(groups={"all": ["n1", "n2"], "prod": ["n1", "n2"]}) == ""  # its only cluster
+        assert hosts(env="prod") == ""  # CASSANDRA_CLUSTER names it
+        assert hosts(env="prod", ansible_inventory_sources=["n1,"]) == "prod"  # -i n1,: CASSANDRA_CLUSTER not read
+        assert hosts(cassandra_hosts="prod") == "prod"
+
+
+def test_reimport_hosts_filter():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_reimport_hosts
+    assert cassandra_reimport_hosts("prod", others=3) == "prod"
+    assert cassandra_reimport_hosts("prod", others=0) == ""
+    assert cassandra_reimport_hosts("prod", env_cluster="prod", others=3) == ""
+    assert cassandra_reimport_hosts("prod", env_cluster="prod", files=False, others=3) == "prod"
+    assert cassandra_reimport_hosts("prod", hosts="prod", others=0) == "prod"

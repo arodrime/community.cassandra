@@ -39,11 +39,14 @@
 #     self-check without failing the run.
 #   import_cluster_debug: false; true shows an error while writing the
 #     inventory, hidden otherwise (the variables hold passwords).
-# Review a re-import before it writes anything: --check --diff shows the
+# A re-import reads the cluster from the inventory (its connection variables,
+# its JMX and CQL logins, vaulted ones too), not from -i <node>, (which reads
+# none of them). Review it before it writes anything: --check --diff shows the
 # changes of each file it would write or remove (secrets.yml hidden), and
 # writes nothing:
-#   ansible-playbook -i <node>, community.cassandra.import_cluster -e import_cluster_force=true --check --diff
-# then the same without --check --diff.
+#   ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=<cluster group> -e import_cluster_force=true --check --diff
+# then the same without --check --diff (-e cassandra_hosts left out when
+# CASSANDRA_CLUSTER names the cluster or the inventory holds it alone).
 # Each file it writes starts with a "# Written by ...import_cluster for
 # <cluster group>" line: a re-import replaces those, removes the ones of this
 # cluster it no longer writes (a node gone), and keeps every other file

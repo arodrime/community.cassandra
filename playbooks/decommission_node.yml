@@ -11,11 +11,14 @@
 # Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
 # A seed: take it out of cassandra_seeds in the inventory (still in it: refused);
 # the seed lists of the other nodes then drop it first, cassandra_seeds applied
-# live on each of them (change_seeds' way, no restart). Refused too: a
-# datacenter that still has nodes afterwards left with no seed (one removed
-# whole needs none), and one left with fewer nodes than a keyspace
-# has replicas there (cassandra_decommission_force: true goes on, at the cost
-# of those replicas).
+# live on each of them (change_seeds' way, no restart). A datacenter that
+# still has nodes afterwards but no seed in cassandra_seeds gets seeds of its
+# own (2 or 3 of its nodes up, on different racks), shown in the plan with a
+# WARNING and applied with the others, live only: the end says the
+# cassandra_seeds line to put in the inventory (none of its nodes up:
+# refused; one removed whole needs none). Refused too: a datacenter left with
+# fewer nodes than a keyspace has replicas there (cassandra_decommission_force:
+# true goes on, at the cost of those replicas).
 # CQL credentials, when authentication is on: cassandra_cql_username/_password.
 # Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
 # A node still leaving from an earlier run is waited for again, one already
@@ -51,9 +54,18 @@
       {%- for h in _cluster if hostvars[h]._cassandra_preflight is defined -%}
       {%-   set p = hostvars[h]._cassandra_preflight -%}
       {%-   set _ = l.append({'name': h, 'absent': h in _leaving, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack,
-                              'names': hostvars[h]._cassandra_service_names | default([h]), 'live': p.live_seeds | default('')}) -%}
+                              'names': hostvars[h]._cassandra_service_names | default([h]), 'live': p.live_seeds | default(''),
+                              'address': p.address | default(''), 'up': h not in _leaving and p.ring_address | default('') in _dn_un}) -%}
       {%- endfor -%}
       {{ l | community.cassandra.cassandra_seed_change(cassandra_seeds) }}
+    # up and normal in the ring: a seed it may get when its datacenter is left with none
+    _dn_un: >-
+      {%- set out = [] -%}
+      {%- for dc, info in ((cassandra_preflight_status | default({})).cluster_status | default({}, true)).items() -%}
+      {%-   set _ = out.extend(info.nodes | default([]) | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N')
+                                 | map(attribute='address') | list) -%}
+      {%- endfor -%}
+      {{ out }}
     # the nodes to remove the others still list as a seed (topology changes the seeds as its own step)
     _dn_seed_step: "{{ [] if _cassandra_screen_asked_by | default('') else _leaving | select('in', _dn_seeds.old_hosts) | list }}"
   tasks:
@@ -163,6 +175,10 @@
     - name: Note whether the seeds are applied first
       ansible.builtin.set_fact:
         _cassandra_decommission_seeds_apply: "{{ _dn_seed_step | length > 0 or not _dn_seeds.step }}"
+        # the seed list applied: cassandra_seeds, with the seeds picked for a datacenter it leaves with none
+        _cassandra_decommission_seeds: "{{ _dn_seeds }}"
+        # said at the end: only when that list is applied
+        _cassandra_decommission_seeds_todo: "{{ _dn_seeds if _dn_seed_step | length > 0 or not _dn_seeds.step else {} }}"
 
     - name: Show the plan and confirm the removal
       ansible.builtin.include_role:
@@ -172,9 +188,13 @@
         cassandra_screen_session_warning: true
         cassandra_screen_question: "Remove {{ _leaving | join(', ') }} from the cluster?"
         cassandra_screen: >-
-          {{ _dn_screen | combine({'intro': ([('First, the seed lists drop ' ~ _dn_seed_step | join(', ') ~ ': cassandra_seeds ('
+          {{ _dn_screen | combine({'intro': ([('First, the seed lists drop ' ~ _dn_seed_step | join(', ') ~ ': the seed list ('
                                             ~ _dn_seeds.new ~ ') written and reloaded live on ' ~ _staying | join(', ')
-                                            ~ ' (no restart).')] if _dn_seed_step else []) + _dn_screen.intro}) }}
+                                            ~ ' (no restart).' ~ _dn_auto)] if _dn_seed_step else []) + _dn_screen.intro,
+                                  'warnings': _dn_screen.warnings | default([])
+                                              + [{'label': 'seeds', 'each': _dn_seeds.warnings
+                                                                           if _dn_seed_step or not _dn_seeds.step else []}]}) }}
+        _dn_auto: "{% for a in _dn_seeds.auto %} Change seeds: {{ a.dc }} gets {{ a.labels | join(', ') }}.{% endfor %}"
         _dn_screen: >-
           {{ _states | community.cassandra.cassandra_decommission_screen(_nodes, ring=_ring, keyspaces=_keyspaces, peer=_staying[0],
                replication_problems=_problems if cassandra_decommission_force | default(false) | bool else []) }}
@@ -217,6 +237,9 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: seeds_apply.yml
+      vars:
+        cassandra_seeds: >-
+          {{ hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first]._cassandra_decommission_seeds.new }}
       when:
         - hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first]._cassandra_decommission_seeds_apply | default(false) | bool
         - not ansible_check_mode
@@ -311,15 +334,17 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
-    # paste-ready: empty the nodes, drop them from the inventory (a re-import read from a node that stays), commit
+    # paste-ready: empty the nodes, drop them from the inventory (a re-import of the cluster from the inventory), commit
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-
           {{ ansible_play_hosts_all | community.cassandra.cassandra_removed_todo(
+               first=[hostvars[ansible_play_hosts_all[0]]._cassandra_decommission_seeds_todo | default({})
+                      | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts'))],
                reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
-               cwd=lookup('ansible.builtin.env', 'PWD'), jmx_user=cassandra_jmx_username | default('')) | join(_nl) }}
+               cwd=lookup('ansible.builtin.env', 'PWD'), reimport_hosts=_reimport_hosts) | join(_nl) }}
       run_once: true
       when:
         - not _cassandra_screen_asked_by | default('')  # topology says it once, at its end
@@ -328,7 +353,13 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
-        # a node that stays, running if one is, to re-import the cluster from
+        # the re-import reads the cluster from the inventory: -e cassandra_hosts unless it takes it without
+        _reimport_hosts: >-
+          {{ lookup('community.cassandra.cassandra_hosts') | community.cassandra.cassandra_reimport_hosts(
+               hosts=cassandra_hosts | default(''), env_cluster=lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER'),
+               files=ansible_inventory_sources | reject('exists') | list | length == 0,
+               others=groups['all'] | difference(groups[lookup('community.cassandra.cassandra_hosts')] | default([])) | length) }}
+        # a node that stays (none: no re-import), its inventory dir the one to re-import into
         _others: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
         _stays: >-
           {%- set up = [] -%}

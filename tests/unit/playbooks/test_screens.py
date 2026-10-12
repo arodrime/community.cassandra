@@ -363,9 +363,18 @@ def test_change_seeds_and_upgrade_screens():
     t, play = task("change_seeds.yml", "Show the new seed list and confirm")
     hostvars = {"node1": {"inventory_hostname": "node1", "_cassandra_preflight": {"live_seeds": "10.0.0.1"}},
                 "node2": {"inventory_hostname": "node2", "_cassandra_preflight": {"live_seeds": "10.0.0.1,10.0.0.2"}}}
-    text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars, "_new": "10.0.0.1,10.0.0.2"}, t["vars"])
+    text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars, "_new": "10.0.0.1,10.0.0.2",
+                   "_cassandra_change_seeds": {"auto": [], "warnings": []}}, t["vars"])
     assert text == ("change_seeds: the seed list in cassandra.yaml, reloaded live (no restart)\n\n"
                     "  node1\n    from: 10.0.0.1\n    to:   10.0.0.1,10.0.0.2")
+    # a datacenter cassandra_seeds leaves with no seed: the seeds picked there, in the plan, with a warning
+    auto = {"auto": [{"dc": "dc2", "labels": ["node3 (dc2/r1)"]}],
+            "warnings": ["dc2 would be left with no seed (node4 leaves the seed list): node3 (dc2/r1) made its seed, live"
+                         " only: put it in cassandra_seeds (apply_config would put the inventory's list back)"]}
+    text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": hostvars, "_new": "10.0.0.1,10.0.0.3",
+                   "_cassandra_change_seeds": auto}, t["vars"])
+    assert "\nChange seeds: dc2 gets node3 (dc2/r1), not in cassandra_seeds.\n" in text
+    assert "WARNING - seeds: dc2 would be left with no seed (node4 leaves the seed list): node3 (dc2/r1) made" in text
     t, play = task("upgrade.yml", "Show the plan and confirm")
     text = screen({"cassandra_upgrade_from": "4.0.20", "cassandra_package_version": "4.1.5"}, t["vars"])
     assert text.startswith("upgrade: phase prepare, 4.0.20 -> 4.1.5\n\nBefore the upgrade, check that:\n"

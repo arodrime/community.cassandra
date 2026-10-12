@@ -37,8 +37,10 @@
 # says so, changes nothing.
 # Refused before anything changes: a --limit that leaves out a host of the
 # group (the plan needs them all), a datacenter that still has nodes after the
-# run left with no seed, an add while a decommission is still running, two
-# hosts with one address (absent or not), a node that does not answer, one
+# run left with no seed and none of them up (with nodes up, it gets seeds of
+# its own in the seed step, with a WARNING, and the end gives the
+# cassandra_seeds line to put in the inventory), an add while a decommission
+# is still running, two hosts with one address (absent or not), a node that does not answer, one
 # token per node with adds and removals in one run, cassandra_target_nodes
 # given (the plan says which nodes). No cap on the number of removals. The
 # cleanup of the nodes that handed data over to the new ones is left to you
@@ -291,6 +293,7 @@
                                   'dc': p.cassandra_dc | default('?'), 'rack': p.cassandra_rack | default('?'),
                                   'seed': v._cassandra_service_is_seed | default(false) | bool,
                                   'names': v._cassandra_service_names | default([h]), 'live': p.live_seeds | default(''),
+                                  'entry': p.address | default(''),
                                   'running': v._cassandra_preflight_running | default(false) | bool,
                                   'state': (v.cassandra_leaving_node.state | default(none)) if absent
                                            else v.cassandra_new_node_state | default(none),
@@ -361,17 +364,21 @@
         msg: >-
           {{ (['NOTHING TO DO  topology  ' ~ _tp_cluster ~ '  the ring has the '
               ~ ansible_play_hosts_all | length ~ (' node' if ansible_play_hosts_all | length == 1 else ' nodes') ~ ' of the inventory,'
-              ~ ' they run with the seeds of cassandra_seeds']
+              ~ (' they run with the seeds of cassandra_seeds' if not (cassandra_topology_plan.seeds | default({})).auto | default([])
+                 else ' they run with the seeds of cassandra_seeds and the ones below')]
              + (['  already removed: ' ~ cassandra_topology_plan.gone | community.cassandra.cassandra_node_list
                  ~ ' (marked absent, out of the ring, Cassandra stopped): delete '
                  ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them') ~ ' from the inventory, or leave '
                  ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them')] if cassandra_topology_plan.gone else [])
              + (['  not answering: ' ~ cassandra_topology_plan.silent | community.cassandra.cassandra_node_list
                  ~ ' (marked absent, out of the ring)'] if cassandra_topology_plan.silent else [])
+             + ((cassandra_topology_plan.seeds | default({})).warnings | default([]) | map('regex_replace', '^', 'WARNING  ') | list)
              + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING  ')
                 | map('regex_replace', '$', ' is in the ring but in no host of the inventory: never touched') | list)
              + (hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])
-                | map('regex_replace', '^(?!WARNING)', 'NOTE  ') | list)) | join(_nl) }}
+                | map('regex_replace', '^(?!WARNING)', 'NOTE  ') | list)
+             + (([''] + [cassandra_topology_plan.seeds | community.cassandra.cassandra_seeds_todo(_tp_group)]
+                 | community.cassandra.cassandra_todo) if (cassandra_topology_plan.seeds | default({})).auto | default([]) else [])) | join(_nl) }}
       run_once: true
       when: not _tp_todo | bool
       vars:
@@ -486,6 +493,9 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: seeds_apply.yml
+      vars:
+        # with the seeds picked for a datacenter cassandra_seeds leaves with none
+        cassandra_seeds: "{{ cassandra_topology_plan.seeds.new }}"
 
 - name: Remove the nodes
   ansible.builtin.import_playbook: community.cassandra.decommission_node
@@ -517,12 +527,13 @@
                                                      ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
                                                     | select | join('; '))]
              + (([''] + _done | community.cassandra.cassandra_removed_todo(
+                    first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts'))],
                     reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                     inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                     hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
                     cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent,
-                    jmx_user=cassandra_jmx_username | default('')))
-                if _done | length > 0 else [])) | join(_nl) }}
+                    reimport_hosts=_reimport_hosts))
+                if _done | length > 0 or _plan.seeds.auto | default([]) else [])) | join(_nl) }}
       run_once: true
       when:
         - not ansible_check_mode
@@ -534,7 +545,13 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
-        # a node that stays, running if one is, to re-import the cluster from
+        # the re-import reads the cluster from the inventory: -e cassandra_hosts unless it takes it without
+        _reimport_hosts: >-
+          {{ lookup('community.cassandra.cassandra_hosts') | community.cassandra.cassandra_reimport_hosts(
+               hosts=cassandra_hosts | default(''), env_cluster=lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER'),
+               files=ansible_inventory_sources | reject('exists') | list | length == 0,
+               others=groups['all'] | difference(groups[lookup('community.cassandra.cassandra_hosts')] | default([])) | length) }}
+        # a node that stays (none: no re-import), its inventory dir the one to re-import into
         _others: "{{ ansible_play_hosts_all | reject('in', _done) | list }}"
         _stays: >-
           {%- set up = [] -%}

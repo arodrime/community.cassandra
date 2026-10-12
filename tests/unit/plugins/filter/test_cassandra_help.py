@@ -170,8 +170,9 @@ Cluster:
 Takeover:
 
   import_cluster - Reads a running cluster into an inventory, changing nothing on the nodes. A new
-    cluster: give one of its nodes (-i <node>,), the others are found in the ring. A re-import keeps
-    the files it did not write, --check --diff shows its changes first.
+    cluster: give one of its nodes (-i <node>,), the others are found in the ring. A re-import reads
+    the cluster from the inventory (its logins too), keeps the files it did not write, --check
+    --diff shows its changes first.
     $ ansible-playbook -i 192.0.2.11, $C.import_cluster -e import_cluster_dir=NEW_DIR
 
 3. Advice
@@ -489,14 +490,29 @@ def test_vault_skipped():
 
 
 def test_import_command_keeps_the_connection_and_jmx():
+    # a cluster the import did not write here: a new import, read from a node (-i <address>,), which reads no
+    # inventory: its connection and JMX login given on the command line
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[0]["vars"].update(ansible_user="admin", cassandra_jmx_username="monitor",
                             cassandra_jmx_password_file="/etc/cassandra/jmxremote.password")
-    text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"], **IMPORTED), PLAYBOOKS, cwd=CWD)
+    text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -u admin community.cassandra.import_cluster"
-            " -e import_cluster_force=true"
+            " -e import_cluster_dir=NEW_DIR"
             " -e cassandra_jmx_username=monitor"
             " -e cassandra_jmx_password_file=/etc/cassandra/jmxremote.password") in text
+
+
+def test_reimport_reads_the_inventory():
+    # a cluster the import wrote: re-imported from the inventory, its connection variables and logins (vaulted
+    # too) with it: no -i <node>, no JMX login on the command line, the run's options kept (the vault's)
+    hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
+    hosts[0]["vars"].update(ansible_user="admin", cassandra_jmx_username="(vaulted)", cassandra_jmx_password=True)
+    hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
+    text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"], all_hosts=[h["name"] for h in hosts], **IMPORTED),
+                          PLAYBOOKS, cwd=CWD)
+    assert ("$ ansible-playbook -i inventories/orders.yml --ask-vault-pass community.cassandra.import_cluster"
+            " -e import_cluster_force=true\n") in text
+    assert "-i 192.0.2.11," not in text and "JMX_USER" not in text and "cassandra_jmx" not in text.split("2. ")[1]
 
 
 def test_absent_nodes_with_topology():
@@ -544,18 +560,31 @@ def test_reimport_only_into_an_inventory_the_import_wrote():
 
 def test_reimport_into_the_inventory_dir(tmp_path):
     """A cluster the import wrote (its <cluster>.yml): its re-import goes there again, import_cluster_dir left out
-    for the default inventories; the commands name its group only when the playbooks would not take it alone."""
+    for the default inventories, read from the inventory; the cluster named unless the import takes it alone (the
+    inventory holds its hosts only, or CASSANDRA_CLUSTER names it)."""
     (tmp_path / "inventories").mkdir()
     sources = [str(tmp_path / "inventories")]
     billing = {"name": "billing", "hosts": [node("node9", "192.0.2.19", "rack1", cassandra_cluster_name="Billing")]}
-    shared = model(sources=sources, imported=["orders"], clusters=MODEL["clusters"] + [billing], auto="")
+    everyone = ["node%d" % i for i in range(1, 6)] + ["node9"]
+    shared = model(sources=sources, imported=["orders"], clusters=MODEL["clusters"] + [billing], auto="",
+                   all_hosts=everyone)
     text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))
-    assert ("$ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster"
+    assert ("$ ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=orders"
             " -e import_cluster_force=true\n") in text
     assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n") in text
-    alone = model(sources=sources, imported=["orders"])
+    # help -e cassandra_hosts=orders: that cluster only shown, the others still in the inventory: named
+    text = cassandra_help(model(sources=sources, imported=["orders"], all_hosts=everyone), PLAYBOOKS, cwd=str(tmp_path))
+    assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true\n" in text
+    # CASSANDRA_CLUSTER names it: not on screen, in RUNBOOK.md
+    named = model(sources=sources, imported=["orders"], all_hosts=everyone, auto="", env_cluster="orders")
+    assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true\n" in \
+        cassandra_help(named, PLAYBOOKS, cwd=str(tmp_path))
+    assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true" in \
+        cassandra_help(named, PLAYBOOKS, cwd=str(tmp_path), markdown=True)
+    alone = model(sources=sources, imported=["orders"], all_hosts=everyone[:5])
     text = cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
     assert "$ ansible-playbook -i inventories community.cassandra.status\n" in text  # alone there: not needed
+    assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true\n" in text
     assert "-e cassandra_hosts" not in text and "-e cassandra_hosts" not in cassandra_help(model(), PLAYBOOKS, cwd=CWD)
     text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))  # with another cluster: needed
     assert "$ ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=orders\n" in text
@@ -570,9 +599,9 @@ def test_import_command_placeholders_for_what_help_could_not_read():
     hosts[0]["vars"].update(cassandra_jmx_username="(vaulted)", cassandra_jmx_password=True,
                             cassandra_listen_address="10.9.9.9", ansible_port="2222")
     hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
-    text = cassandra_help(model(hosts=hosts, **IMPORTED), PLAYBOOKS, cwd=CWD)
+    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
-            " -e import_cluster_force=true"
+            " -e import_cluster_dir=NEW_DIR"
             " -e cassandra_jmx_username=JMX_USER -e cassandra_jmx_password_file=JMX_PASSWORD_FILE") in text
     assert "(vaulted)" not in text.split("1. The cluster", maxsplit=1)[0]
 
