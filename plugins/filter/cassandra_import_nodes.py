@@ -28,7 +28,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_java impor
 KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
         "import_cluster_conf_dir", "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held",
         "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package",
-        "import_cluster_jmx_slurp", "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
+        "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline", "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
         "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_package",
         "import_cluster_package_from_file", "import_cluster_packages", "import_cluster_perms", "import_cluster_repo",
         "import_cluster_repos_answer", "import_cluster_running", "import_cluster_series", "import_cluster_slurp",
@@ -51,6 +51,16 @@ def _bool(value):
     if isinstance(value, str):
         value = value.lower()
     return value in ("yes", "on", "1", "true", 1)
+
+
+def _keep_files(value):
+    """import_cluster_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
+    commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]."""
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value]
+    if isinstance(value, str) and CONFIG_FILE.match(value.split(",")[0].strip()):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return _bool(value) or []
 
 
 def _d(value):
@@ -138,7 +148,9 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         f = re.sub(r"[:,].*$", "", str(line))
         if CONFIG_FILE.match(f) and f not in hand_kept:
             hand_kept.append(f)
-    hand_kept = {"cassandra_config_keep_files": hand_kept} if hand_kept and keep_hand_edits else {}
+    # keep_hand_edits: all the files with hand edits (True), or the ones named
+    hand_kept = [f for f in hand_kept if keep_hand_edits is True or f in (keep_hand_edits or [])]
+    hand_kept = {"cassandra_config_keep_files": hand_kept} if hand_kept else {}
 
     pkgs = hv.get("import_cluster_packages", {})
     installed = {}
@@ -271,6 +283,10 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "comments": config.get("comments", []),
         # cassandra.yaml keys its Cassandra rejects: not imported, the node would not restart with them
         "not_settings": config.get("not_settings") or {},
+        # cassandra-env.sh's hand edits moved to variables, the files rewritten then, the options the JVM does not use
+        "moved": config.get("moved", []),
+        "rewritten": config.get("rewritten", []),
+        "cleanup": config.get("cleanup", []),
         "notes": notes,
     }
 
@@ -283,7 +299,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     the given hosts, the ones found in the ring; jmx: the JMX login given for
     the import; java_default: {series: the Java the roles default to};
     host_names: hostname, fqdn or ip; set_ansible_host, keep_hand_edits: the
-    import_cluster_ options -> [node] for cassandra_inventory_layout."""
+    import_cluster_ options (keep_hand_edits: a bool, or the config files to keep) -> [node] for cassandra_inventory_layout."""
     ordered = list(given) + list(found or [])
     out = []
     for item in ring:
@@ -291,7 +307,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
         error = None
         try:
             out.append(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {}, host_names,
-                             _bool(set_ansible_host), _bool(keep_hand_edits)))
+                             _bool(set_ansible_host), _keep_files(keep_hand_edits)))
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             error = AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
         if error:

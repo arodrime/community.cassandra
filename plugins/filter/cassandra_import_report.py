@@ -804,6 +804,11 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         todo.append("%s: cassandra.yaml has %s, which Cassandra %s rejects: it would not restart; remove %s" % (
             _who(members, None, groups, full), ", ".join(keys), release,
             "it" if len(keys) == 1 else "them"))
+    moves = sorted({f for n in read for f in n.get("rewritten") or []})
+    if moves:
+        todo.append("cassandra-env.sh hand edits moved to variables (see MOVED%s): apply_config rewrites %s and"
+                    " restarts %s (same JVM arguments)" % (" in the report" if screen else "", ", ".join(moves),
+                                                           _compress([n["name"] for n in read if n.get("rewritten")])))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
@@ -915,6 +920,32 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                   for (keys, release), members in rejected for k in keys]
         lines.append("")
 
+    # MOVED: cassandra-env.sh's hand edits the variables now set, the JVM getting the same arguments
+    moved = _by_value([(n["name"],) + tuple(line.split(" -> ", 1)) for n in read for line in n.get("moved") or []
+                       if " -> " in line])
+    if moved:
+        lines.append("MOVED %s cassandra-env.sh hand edits now set by variables, the JVM gets the same arguments"
+                     % DASH)
+        lines += _rows(moved, names, full=full)
+        rewrites = {}
+        for n in read:
+            if n.get("rewritten"):
+                rewrites.setdefault(", ".join(n["rewritten"]), []).append(n["name"])
+        for files, members in sorted(rewrites.items()):
+            lines.append("  apply_config rewrites %s on %s in the collection's layout (same JVM arguments; it"
+                         " restarts the nodes it writes)" % (files, "all nodes" if sorted(members) == sorted(names)
+                                                             else out.full_list(members)))
+        lines.append("")
+
+    # CLEANUP: options the running JVM does not use (where: option: why)
+    cleanup = _by_value([(n["name"], ": ".join(line.split(": ", 2)[:2]), line.split(": ", 2)[2])
+                         for n in read for line in n.get("cleanup") or [] if line.count(": ") >= 2])
+    if cleanup:
+        lines.append("CLEANUP %s options the running JVM does not use: left out of the lines moved, else left as they"
+                     " are" % DASH)
+        lines += _rows(cleanup, names, full=full)
+        lines.append("")
+
     # LEFT AS IT IS: the parts left to the node as found, grouped by the nodes that have them
     if kept or left_groups:
         lines.append("LEFT AS IT IS (*_manage: false)")
@@ -949,7 +980,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
 
     lines += ["NOT READ %s set in group_vars/all if they apply" % DASH, "  " + ", ".join(NOT_READ), ""]
     commands = [(out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
-                             extra=["--check", "--diff"], cwd=cwd), "nothing to apply"),
+                             extra=["--check", "--diff"], cwd=cwd),
+                 "%s rewritten (same JVM arguments, see MOVED), nothing else" % ", ".join(moves) if moves
+                 else "nothing to apply"),
                 (out.command("topology", inventory=inventory or None, hosts=hosts or None, extra=["--check"],
                              cwd=cwd), "nothing to do")]
     width_command = max(len(c) for c, dummy in commands) + 3

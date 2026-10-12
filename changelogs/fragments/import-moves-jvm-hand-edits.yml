@@ -1,0 +1,7 @@
+minor_changes:
+  - >-
+    import_cluster - the hand edits of ``cassandra-env.sh`` adding plain options to ``JVM_OPTS``, and its heap set elsewhere in the file, move to the variables (``cassandra_heap_size``, ``cassandra_heap_newsize``, ``cassandra_max_direct_memory_size``, ``cassandra_jvm<N>_extra_options``) when the running JVM gets the same arguments from the role's files, instead of failing the self-check; the report lists them (``MOVED``) and the options the running JVM does not use (``CLEANUP``).
+  - >-
+    import_cluster - ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the console are imported however written (quotes, attribute order, a line left out).
+  - >-
+    import_cluster - ``import_cluster_keep_hand_edits`` also takes the config files to keep (``-e import_cluster_keep_hand_edits=logback.xml``).

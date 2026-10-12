@@ -62,15 +62,16 @@ def seeded(files, seeds='"10.0.0.1:7000"'):
     return files
 
 
-def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/cassandra", keep=None):
+def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/cassandra", keep=None, jvm=None):
     """What import_cluster does for one node: its variables, the inventory
     files. -> (inventory files, layout)"""
     facts = facts or FACTS
-    imported = cassandra_config_import(files, series, facts, "", storage_dir)
+    imported = cassandra_config_import(files, series, facts, "", storage_dir, jvm=jvm)
     node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
             "vars": dict(imported["vars"], cassandra_version=series, **(tamper or {})),
             "hand_edits": imported["hand_edits"], "normalized": imported["normalized"],
-            "comments": imported["comments"], "notes": [],
+            "comments": imported["comments"], "notes": [], "moved": imported["moved"],
+            "rewritten": imported["rewritten"], "cleanup": imported["cleanup"],
             # a unit set up another way
             "keep": {"cassandra_service_unit_manage": False} if keep is None else keep}
     layout = cassandra_inventory_layout([node], imported["vars"].get("cassandra_cluster_name", "c"))
@@ -83,13 +84,15 @@ def host_vars(files, series, facts=None):
 
 
 def check(files, series, facts=None, tamper=None, env=None, storage_dir="/var/lib/cassandra", java=None, conf_dir="",
-          keep=None, permissions=None):
-    """permissions: the node's files' owner, group and mode (None: none compared)."""
+          keep=None, permissions=None, cmdline=""):
+    """permissions: the node's files' owner, group and mode (None: none compared); cmdline: the running JVM's
+    arguments (the import and the self-check get them)."""
     facts = facts or FACTS
-    inventory, layout = import_node(files, series, facts, tamper, storage_dir, keep)
     java = java or {"40x": "11", "41x": "11", "50x": "17"}[series]
+    jvm = {"cmdline": cmdline, "java": java, "environment": env or {}, "newer": []}
+    inventory, layout = import_node(files, series, facts, tamper, storage_dir, keep, jvm=jvm)
     return cassandra_import_self_check(inventory, layout["hosts"], "n1", facts, files, env or {}, storage_dir, java,
-                                       conf_dir, {} if permissions is None else permissions)
+                                       conf_dir, {} if permissions is None else permissions, jvm=jvm)
 
 
 # --- owner, group and mode -------------------------------------------------
@@ -405,6 +408,12 @@ WRITTEN_ANOTHER_WAY = [
     ("jvm-server.options", r"(?m)^(-Xss.*)$", r"\1\n-XX:+AlwaysPreTouch"),  # added in the middle
     ("jvm-server.options", r"(?m)^-Xss\S+$", "-Xss512k"),  # a stock line changed in place
     ("logback.xml", r'<root level="INFO">', '<root level="WARN">'),
+    # logback.xml as logback reads it: quotes, attribute order, spacing, a commented line left out
+    ("logback.xml", r'<root level="INFO">', "<root  level='warn' >"),
+    ("logback.xml", r'<logger name="org.apache.cassandra" level="DEBUG"/>',
+     '<logger level="INFO"\n          name="org.apache.cassandra" />'),
+    ("logback.xml", r'(?m)^\s*<appender-ref ref="ASYNCDEBUGLOG" />.*\n', ""),  # debug.log off: its line removed
+    ("logback.xml", r'(?m)^(\s*)<appender-ref ref="STDOUT" />', r'\1<!-- console off -->'),
 ]
 
 

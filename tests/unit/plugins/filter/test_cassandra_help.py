@@ -374,7 +374,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                                               fails) (default: false)
         -e import_cluster_keep_hand_edits=true
                                               leaves the config files with hand edits as they are on
-                                              their node (default: false)
+                                              their node (or the ones named: =logback.xml)
+                                              (default: false)
 
 ==== Advice ========================================================================================
 
