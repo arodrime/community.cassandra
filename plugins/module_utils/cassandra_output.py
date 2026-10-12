@@ -829,22 +829,26 @@ def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
 
 
 def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
-                 unreachable=None, imported=True, jmx_user=""):
+                 unreachable=None, imported=True, reimport_hosts=None):
     """The TO DO once nodes left the ring (decommission_node, topology):
     empty them (reset_node), then drop them from the inventory by a
-    re-import read from a node that stays (reimport_from: the name or
-    address it is reached by), --check --diff first, then the commit, only
-    when the inventory dir is in a git work tree. inventory, hosts: the
-    run's (none: left out of the commands); inventory_dir: where the
-    cluster's inventory is (import_cluster_dir, given when it is not the
-    default inventories); unreachable: the ones not answering, left out of
-    the reset (the re-import drops them too); imported: the inventory is
-    import_cluster's (else: remove them from it by hand, no re-import);
-    jmx_user: the run's cassandra_jmx_username (the re-import reads no
-    inventory: it needs the JMX login given again)."""
+    re-import of the cluster from the inventory itself (its connection
+    variables and its logins, vaulted ones too), --check --diff first, then
+    the commit, only when the inventory dir is in a git work tree.
+    reimport_from: a node that stays (none: no re-import); inventory, hosts:
+    the run's (none: left out of the commands); reimport_hosts: the
+    cluster's group for the re-import's -e cassandra_hosts ('': the import
+    takes the cluster without it, CASSANDRA_CLUSTER or the inventory's only
+    cluster; None: hosts); inventory_dir: where the cluster's inventory is
+    (import_cluster_dir, given when it is not the default inventories);
+    unreachable: the ones not answering, left out of the reset (the
+    re-import drops them too); imported: the inventory is import_cluster's
+    (else: remove them from it by hand, no re-import)."""
     removed = list(removed or [])
     if not removed:
         return []
+    if reimport_hosts is None:
+        reimport_hosts = hosts
     names = nodes(removed, keep_order=True)
     reset = [n for n in removed if n not in (unreachable or [])]
     items = [{"text": "empty %s before reusing %s (%s data is left in place)" % (
@@ -859,15 +863,14 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
         items.append("remove %s from the inventory (or leave %s marked cassandra_node_state: absent)" % (
             names, "it" if len(removed) == 1 else "them"))
     else:
-        items.append({"text": "drop %s from the inventory: re-import the cluster, its changes shown first (-i %s, leaves"
-                              " the inventory out: add your connection options, e.g. -u, when it sets them%s)"
-                              % (names, reimport_from, (", and the JMX login: %s -e cassandra_jmx_password_file=<its file"
-                                                        " on the nodes> (or cassandra_jmx_password)"
-                                                        % extra_var("cassandra_jmx_username", jmx_user)) if jmx_user else ""),
-                      "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd,
+        # read with the inventory: its connection variables and logins (secrets.yml) come with it
+        items.append({"text": "drop %s from the inventory: re-import the cluster with its inventory, the changes shown"
+                              " first" % names,
+                      "command": command("import_cluster", inventory=inventory, hosts=reimport_hosts, cwd=cwd,
                                          extra=reimport + ["--check", "--diff"])})
         items.append({"text": "then write them",
-                      "command": command("import_cluster", inventory="%s," % reimport_from, cwd=cwd, extra=reimport)})
+                      "command": command("import_cluster", inventory=inventory, hosts=reimport_hosts, cwd=cwd,
+                                         extra=reimport)})
     if shown_dir and (in_git if in_git is not None else in_git_work_tree(str(inventory_dir))):
         # only the inventory, whatever else is staged
         items.append({"text": "commit it", "command": "git add %s && git commit -m %s -- %s" % (

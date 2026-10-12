@@ -129,14 +129,30 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
 
 
 def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None, inventory_dir=None, cwd=None,
-                           default_inventory=None, in_git=None, unreachable=None, imported=True, jmx_user=""):
+                           default_inventory=None, in_git=None, unreachable=None, imported=True, reimport_hosts=""):
     """default_inventory: ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')):
-    no -i when the run's inventory is that one."""
+    no -i when the run's inventory is that one. reimport_hosts: see
+    cassandra_reimport_hosts."""
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None
     return out.removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
                             inventory_dir=inventory_dir or None, cwd=cwd, in_git=in_git, unreachable=unreachable,
-                            imported=imported, jmx_user=jmx_user or "")
+                            imported=imported, reimport_hosts=reimport_hosts)
+
+
+def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others=0):
+    """The -e cassandra_hosts of a re-import (import_cluster reading the
+    cluster from the inventory), '' when it takes the cluster without it:
+    group: the cluster's group (lookup community.cassandra.cassandra_hosts);
+    hosts: the run's -e cassandra_hosts; env_cluster: CASSANDRA_CLUSTER;
+    files: the inventory sources are files (the import reads
+    CASSANDRA_CLUSTER only then); others: how many hosts of the inventory
+    are not in that group (none: the import reads every host, this cluster's)."""
+    if hosts:
+        return hosts
+    if env_cluster and files:
+        return ""
+    return group if others else ""
 
 
 def cassandra_phase(name, names=None, node="", what="", count=None):
@@ -187,6 +203,7 @@ class FilterModule(object):
             "cassandra_phase": cassandra_phase,
             "cassandra_path_from": cassandra_path_from,
             "cassandra_removed_todo": cassandra_removed_todo,
+            "cassandra_reimport_hosts": cassandra_reimport_hosts,
             "cassandra_inventory_steps": cassandra_inventory_steps,
             "cassandra_in_git_work_tree": cassandra_in_git_work_tree,
             "cassandra_mask": cassandra_mask,

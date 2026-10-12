@@ -50,7 +50,8 @@ _raw:
       C(--ask-vault-pass) is there because help found vaulted values; C(env_cluster) the group
       C(CASSANDRA_CLUSTER) picked (empty when it is not set, or C(cassandra_hosts) is);
       C(default_sources) the inventory of the configuration (C(ansible.cfg), C(ANSIBLE_INVENTORY)), used without C(-i);
-      C(default_sources_origin) where it comes from (C(cfg), C(env), C(default)).
+      C(default_sources_origin) where it comes from (C(cfg), C(env), C(default));
+      C(all_hosts) every host of the inventory (import_cluster reads them all without C(-e cassandra_hosts)).
   type: list
   elements: dict
 """
@@ -240,7 +241,7 @@ def read(sources, given=None, basedir=None, env=None):
             "options": options, "imported": _imported(sources, [c["name"] for c in clusters]),
             "vault_prompt_added": prompt_added, "env_cluster": env_cluster,
             "default_sources": [str(s) for s in C.DEFAULT_HOST_LIST or []],
-            "default_sources_origin": _origin("DEFAULT_HOST_LIST")}
+            "default_sources_origin": _origin("DEFAULT_HOST_LIST"), "all_hosts": sorted(groups.get("all", []))}
 
 
 def _origin(name):

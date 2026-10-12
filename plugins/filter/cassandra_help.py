@@ -217,8 +217,9 @@ OPERATIONS = [
      "options": [("-e cassandra_target_dc=DC_TO_REMOVE", "the datacenter to remove", None)]},
     {"name": "import_cluster", "theme": "takeover",
      "summary": "Reads a running cluster into an inventory, changing nothing on the nodes. A new cluster: give"
-                " one of its nodes (-i <node>,), the others are found in the ring. A re-import keeps the files it"
-                " did not write, --check --diff shows its changes first.",
+                " one of its nodes (-i <node>,), the others are found in the ring. A re-import reads the cluster from"
+                " the inventory (its logins too), keeps the files it did not write, --check --diff shows its changes"
+                " first.",
      "options": [("-e import_cluster_dir=<dir>", "the inventory dir, every cluster's", "inventories"),
                  ("-e import_cluster_report_dir=<dir>", "where to write report.txt",
                   "reports/<cluster group> next to import_cluster_dir"),
@@ -424,6 +425,20 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
     """The command of op for this cluster, its placeholders filled; extra: arguments added (an example); no -i
     when the inventory is the configuration's (ansible.cfg), no -e cassandra_hosts when the playbooks take
     this cluster without it."""
+    if op["name"] == "import_cluster" and cluster.name in (model.get("imported") or []):
+        # a re-import, into this inventory's dir again: read from the inventory itself (its connection variables
+        # and logins, vaulted ones too), the cluster named unless the import takes it alone: on screen, the
+        # one CASSANDRA_CLUSTER names, or the inventory holds its hosts only (without -e it reads every host)
+        where = _path(_inventory_dir(model), cwd)
+        target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + ["-e import_cluster_force=true"]
+        sources = model.get("sources") or []
+        if model.get("default_sources") and _same_sources(sources, model["default_sources"]) and (
+                not markdown or model.get("default_sources_origin") == "cfg"):
+            sources = []
+        alone = "all_hosts" in model and set(model["all_hosts"]) <= set(h["name"] for h in cluster.hosts)
+        named = markdown or not (alone or model.get("env_cluster") == cluster.name)
+        return _full_command(op["name"], inventory=sources, options=[shlex.quote(o) for o in _options(model, cwd)],
+                             cwd=cwd, extra=target + list(extra), hosts=cluster.name if named else None)
     if op["name"] == "import_cluster":
         # -u, --private-key, -K only: the import becomes root itself, and reads its own vault password file
         options, user = [shlex.quote(o) for o in _options(model, cwd)], []
@@ -452,12 +467,8 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
                 jmx.append(_e(key, placeholder))
         address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
                         if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
-        # into this inventory's dir only when the import wrote this cluster there (its <cluster>.yml)
+        # a new cluster (not written by the import here): a dir of its own
         target = ["-e import_cluster_dir=NEW_DIR"]
-        if cluster.name in (model.get("imported") or []):
-            where = _path(_inventory_dir(model), cwd)
-            target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + [
-                "-e import_cluster_force=true"]
         parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
                  + ["community.cassandra.import_cluster"] + target + jmx)
         return " ".join(p for p in parts if p)

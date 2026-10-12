@@ -459,8 +459,9 @@ node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that st
 seed (one removed whole needs none), and a removal that would
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). The end says what is left, each with its command ready to paste: empty the hosts with
-``reset_node`` (their data is left in place), drop them from the inventory with a re-import of the cluster read from a
-node that stays (``import_cluster -e import_cluster_force=true``, ``--check --diff`` first), then commit the inventory
+``reset_node`` (their data is left in place), drop them from the inventory with a re-import of the cluster read from
+the inventory, its logins included (``import_cluster -e cassandra_hosts=<cluster group> -e import_cluster_force=true``,
+``--check --diff`` first), then commit the inventory
 when it is in a git work tree. ``topology`` ends the same way. Run again after an interruption, a node
 still leaving is waited for again, and one already decommissioned is only stopped and disabled. A failed
 decommission (``DECOMMISSION_FAILED`` on 5.0, or ``LEAVING`` with no stream for a long time on 4.0 and 4.1) is left to
@@ -1200,15 +1201,18 @@ removed or replaced, the next commands (without ``-i`` on the inventory of ``ans
 its header, ``TO DO``, ``SETTINGS`` and ``DIFFERS FROM YOUR group_vars/all`` (node lists shortened, ``node1..node5``),
 and where the full report is; nothing else is printed under the ``community.cassandra.ops`` callback.
 
-Review a re-import before it writes anything: with ``--check --diff`` it shows the changes of every file it would
+A re-import reads the cluster from the inventory (``-e cassandra_hosts=<cluster group>``, or ``CASSANDRA_CLUSTER``,
+or nothing when the inventory holds this cluster alone): its connection variables and its JMX and CQL logins, vaulted
+ones too, come with it, which ``-i <node>,`` does not give. Review it before it writes anything: with ``--check --diff``
+it shows the changes of every file it would
 write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``). Its
 ``TO DO`` says what the run without ``--check`` would write (``Write it: ... (2 new files; changed: ...; removed:
 ...)``); a re-import that would change no file says ``READY — nothing to change``:
 
 .. code-block:: console
 
-    $ ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff
-    $ ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true
+    $ ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true --check --diff
+    $ ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true
 
 Then check what the roles would change:
 

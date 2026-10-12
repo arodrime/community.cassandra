@@ -276,7 +276,7 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
-    # paste-ready: empty the nodes, drop them from the inventory (a re-import read from a node that stays), commit
+    # paste-ready: empty the nodes, drop them from the inventory (a re-import of the cluster from the inventory), commit
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-
@@ -284,7 +284,7 @@
                reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
-               cwd=lookup('ansible.builtin.env', 'PWD'), jmx_user=cassandra_jmx_username | default('')) | join(_nl) }}
+               cwd=lookup('ansible.builtin.env', 'PWD'), reimport_hosts=_reimport_hosts) | join(_nl) }}
       run_once: true
       when:
         - not _cassandra_screen_asked_by | default('')  # topology says it once, at its end
@@ -293,7 +293,13 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
-        # a node that stays, running if one is, to re-import the cluster from
+        # the re-import reads the cluster from the inventory: -e cassandra_hosts unless it takes it without
+        _reimport_hosts: >-
+          {{ lookup('community.cassandra.cassandra_hosts') | community.cassandra.cassandra_reimport_hosts(
+               hosts=cassandra_hosts | default(''), env_cluster=lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER'),
+               files=ansible_inventory_sources | reject('exists') | list | length == 0,
+               others=groups['all'] | difference(groups[lookup('community.cassandra.cassandra_hosts')] | default([])) | length) }}
+        # a node that stays (none: no re-import), its inventory dir the one to re-import into
         _others: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
         _stays: >-
           {%- set up = [] -%}

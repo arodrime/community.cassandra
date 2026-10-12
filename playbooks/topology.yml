@@ -493,7 +493,7 @@
                     inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                     hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
                     cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent,
-                    jmx_user=cassandra_jmx_username | default('')))
+                    reimport_hosts=_reimport_hosts))
                 if _done | length > 0 else [])) | join(_nl) }}
       run_once: true
       when:
@@ -506,7 +506,13 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
-        # a node that stays, running if one is, to re-import the cluster from
+        # the re-import reads the cluster from the inventory: -e cassandra_hosts unless it takes it without
+        _reimport_hosts: >-
+          {{ lookup('community.cassandra.cassandra_hosts') | community.cassandra.cassandra_reimport_hosts(
+               hosts=cassandra_hosts | default(''), env_cluster=lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER'),
+               files=ansible_inventory_sources | reject('exists') | list | length == 0,
+               others=groups['all'] | difference(groups[lookup('community.cassandra.cassandra_hosts')] | default([])) | length) }}
+        # a node that stays (none: no re-import), its inventory dir the one to re-import into
         _others: "{{ ansible_play_hosts_all | reject('in', _done) | list }}"
         _stays: >-
           {%- set up = [] -%}

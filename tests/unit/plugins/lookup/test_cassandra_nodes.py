@@ -91,6 +91,10 @@ def test_playbooks_leave_the_absent_hosts_out():
          "    that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] | default([])"),
         ("roles/cassandra_service/tasks/reset_node_plan.yml",
          "      {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] | default([]) -%}"),
+        # the hosts of the inventory outside the cluster's group (its hosts marked absent are in it)
+        ("playbooks/decommission_node.yml",
+         "               others=groups['all'] | difference(groups[lookup('community.cassandra.cassandra_hosts')]"
+         " | default([])) | length) }}"),
     }
     found = set()
     for base in ("playbooks", "roles"):
