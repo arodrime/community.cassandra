@@ -1,4 +1,5 @@
 from __future__ import (absolute_import, division, print_function)
+
 __metaclass__ = type
 
 # import_cluster: a ring node it could not read fails the import (strict), unless
@@ -17,6 +18,8 @@ try:  # ansible-core 2.19+ renders trusted templates only
 except ImportError:
     def trust_as_template(template):
         return template
+
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 with open(PLAYBOOK, encoding="utf-8") as f:
@@ -61,14 +64,6 @@ def test_report_and_stop_name_them():
 
 
 def test_air_gapped_node_noted():
-    todo = [t for p in PLAYS for t in p.get("tasks", [])]
-    match = None
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == "Match the ring with the hosts":
-            match = t["vars"]
-        todo += t.get("block", [])
-    hv = {"import_cluster_repos_answer": False, "import_cluster_newer_files": []}
-    notes = render(match["_node"]["notes"], _hv=hv, _read=True, _versions="v", _install="i", _started="s",
-                   _host="10.0.0.1", item={"address": "10.0.0.1"}, _repo={"manage": True})
+    notes = node({"import_cluster_repos_answer": False, "import_cluster_newer_files": []})["notes"]
     assert [n for n in notes if "cassandra_offline: true" in n]
+    assert not [n for n in node({"import_cluster_repos_answer": True})["notes"] if "cassandra_offline: true" in n]

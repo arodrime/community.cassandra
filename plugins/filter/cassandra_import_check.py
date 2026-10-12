@@ -31,7 +31,9 @@ import xml.etree.ElementTree as ET
 import yaml
 
 from ansible.errors import AnsibleFilterError
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.filter.core import b64decode
 from ansible.plugins.loader import lookup_loader
 from ansible.template import Templar
 
@@ -67,6 +69,11 @@ def cassandra_inventory_host_vars(files, hosts, name):
     """The variables `name` gets from the inventory files (the import's, and the
     user's own: group_vars/all...), as Ansible merges them: all, parent groups
     first, then child groups, then the host; in a dir, its files by name."""
+    return _host_vars(_read_files(files), hosts, name)
+
+
+def _read_files(files):
+    """The inventory files -> {group_vars/<group> or host_vars/<host>: its variables}."""
     by_where = {}
     for f in files:
         parts = f["path"].split("/")
@@ -78,6 +85,10 @@ def cassandra_inventory_host_vars(files, hosts, name):
         found = in_dir or [f for ext in ("yml", "yaml", "json") for f in found if f["path"] == "%s.%s" % (where, ext)][:1]
         for f in sorted(found, key=lambda f: f["path"]):
             data.setdefault(where, {}).update(yaml.load(f["content"], Loader=Loader) or {})
+    return data
+
+
+def _host_vars(data, hosts, name):
     chain = _groups_of(hosts.get("all", {}), name, [])
     if chain is None:
         raise AnsibleFilterError("cassandra_inventory_host_vars: %s is not in the inventory" % name)
@@ -225,6 +236,15 @@ def _compare(name, node, role, storage_dir=""):
 
 
 def _defaults():
+    if not _DEFAULTS:
+        _DEFAULTS.append(_read_defaults())
+    return _DEFAULTS[0]
+
+
+_DEFAULTS = []
+
+
+def _read_defaults():
     ctx = {}
     for role in ("cassandra_config", "cassandra_service", "cassandra_medusa"):
         with open(os.path.join(ROLES, role, "defaults", "main.yml")) as f:
@@ -307,7 +327,38 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     reads its config; permissions: {file: {owner, group, mode, uid, gid}} the
     node's files have (cassandra_permissions_import's files), None: not read.
     -> {'differences', 'notes'}."""
-    variables = cassandra_inventory_host_vars(files, hosts, name)
+    return _self_check(_read_files(files), hosts, name, facts, live, node_environment, storage_dir, java, conf_dir,
+                       permissions)
+
+
+@_values_hidden
+def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
+    """cassandra_import_self_check of each node read: files, hosts as for it;
+    nodes: cassandra_import_nodes; names: {address: its name in the hosts
+    file}; data: cassandra_import_host_vars of the nodes' hosts (what was read
+    on them). The files are read once for all the nodes.
+    -> {name: {'differences', 'notes'}}."""
+    files_data = _read_files(files)
+    out = {}
+    for node in nodes:
+        if not boolean(node["read"], strict=False):
+            continue
+        hv = data[node["host"]]
+        slurped = list(hv["import_cluster_slurp"]["results"]) + list(hv.get("import_cluster_jmx_slurp", {}).get("results", []))
+        for key, item in (("import_cluster_unit_slurp", "cassandra.service"), ("import_cluster_medusa_ini", "medusa.ini")):
+            if "content" in (hv.get(key) or {}):
+                slurped.append(dict(hv[key], item=item))
+        live = dict((r["item"], b64decode(r["content"])) for r in slurped if "content" in r)
+        unit = hv.get("import_cluster_unit") or {}
+        out[names[node["address"]]] = _self_check(
+            files_data, hosts, names[node["address"]], hv["ansible_facts"], live, unit.get("env", {}),
+            hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
+            (hv.get("import_cluster_perms") or {}).get("files"))
+    return out
+
+
+def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions):
+    variables = _host_vars(files_data, hosts, name)
     rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
@@ -350,4 +401,5 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_import_self_check": cassandra_import_self_check,
+            "cassandra_import_self_check_nodes": cassandra_import_self_check_nodes,
         }

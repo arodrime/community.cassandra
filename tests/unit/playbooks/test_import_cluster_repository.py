@@ -20,6 +20,8 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
@@ -34,7 +36,6 @@ def tasks(plays):
 
 
 TASKS = dict((t.get("name"), t) for t in tasks(PLAYS))
-MATCH = TASKS["Match the ring with the hosts"]["vars"]
 
 
 def render(template, **variables):
@@ -51,14 +52,14 @@ def test_key_paths_read_from_the_files():
 
 
 def test_verdict_written():
-    keep = MATCH["_node"]["keep"]
     left = {"manage": False, "vars": {}, "why": "x"}
     taken = {"manage": True, "vars": {"cassandra_install_url": "https://m/"}, "why": ""}
-    hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
-    assert render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={}, _installed={}, _repo=left)["cassandra_repository_manage"] is False
-    assert "cassandra_repository_manage" not in render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={}, _installed={}, _repo=taken)
-    pkg = render(MATCH["_pkg"], _hv={"import_cluster_package": ""}, _read=True, _repo=taken)
-    assert pkg == {"cassandra_install_url": "https://m/"}
+    out = node({"import_cluster_repo": left})
+    assert out["keep"]["cassandra_repository_manage"] is False
+    assert "Cassandra repository files left as they are: x" in out["notes"]
+    out = node({"import_cluster_repo": taken, "import_cluster_package": ""})
+    assert "cassandra_repository_manage" not in out["keep"]
+    assert out["vars"] == {"cassandra_version": "41x", "cassandra_java_tarballs": {}, "cassandra_install_url": "https://m/"}
 
 
 def test_apt_credentials_removed_only_with_the_mark():

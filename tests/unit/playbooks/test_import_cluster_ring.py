@@ -15,6 +15,8 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_nodes
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -88,10 +90,8 @@ def test_node_read_failure_is_reported_without_values():
         '"Turn them into cassandra_config variables" failed: cassandra_config_import: cassandra.yaml, KeyError in _read_line(), '
         'line 3 (message hidden: it may show a value read from the nodes)')
     # and the report gives it as the reason the node was not read
-    match = next(t for t in task("Build the inventory")["block"] if t["name"] == "Match the ring with the hosts")
     hv = {"import_cluster_running": {"rc": 0}, "import_cluster_version": "4.1.12", "import_cluster_error": "boom"}
-    templar = Templar(loader=DataLoader(), variables={"_hv": hv})
-    assert templar.template(trust_as_template(match["vars"]["_node"]["reason"])) == "boom"
+    assert node(hv, read=False)["reason"] == "boom"
 
 
 def test_node_read_needs_a_supported_series_and_its_cassandra_yaml():
@@ -158,35 +158,26 @@ def test_limit_refused_and_the_nodes_read():
 
 def test_found_nodes_matched_by_their_address():
     # a node found in the ring, added under its name: matched to its ring address without facts too
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
-    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"] if t["name"] == "Match the ring with the hosts")
     hostvars = {"node1": {"ansible_facts": {"all_ipv4_addresses": ["10.0.0.1"], "hostname": "node1"}},
                 "node2": {"import_cluster_address": "10.0.0.2"}}
-    variables = {"_given": ["node1"], "groups": {"import_cluster_found": ["node2"]}, "hostvars": hostvars,
-                 "item": {"address": "10.0.0.2"}, "import_cluster_host_names": "hostname"}
-    templar = Templar(loader=DataLoader(), variables=variables)
-    host = templar.template(trust_as_template(match["vars"]["_host"]))
-    assert host == "node2"
     # not reached (no facts): named by its address, as the report says it is not read
-    variables.update(_host=host, _hv=hostvars["node2"], _host_names="hostname")
-    assert Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(match["vars"]["_name"])) == "10.0.0.2"
+    assert matched(hostvars, "10.0.0.2") == ("node2", "10.0.0.2")
     # reached: its hostname
-    variables["_hv"] = {"ansible_facts": {"hostname": "node2"}}
-    assert Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(match["vars"]["_name"])) == "node2"
+    hostvars["node2"]["ansible_facts"] = {"hostname": "node2"}
+    assert matched(hostvars, "10.0.0.2") == ("node2", "node2")
 
 
 def test_found_node_not_taken_for_another_machine():
     # reached by name, the machine has not the ring's address: not this node (named by its address, not read)
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
-    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"] if t["name"] == "Match the ring with the hosts")
     hostvars = {"node1": {"ansible_facts": {"all_ipv4_addresses": ["10.0.0.1"]}},
                 "node2": {"import_cluster_address": "10.0.0.2", "ansible_facts": {"all_ipv4_addresses": ["10.9.9.9"]}}}
-    variables = {"_given": ["node1"], "groups": {"import_cluster_found": ["node2"]}, "hostvars": hostvars,
-                 "item": {"address": "10.0.0.2"}}
-    assert Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(match["vars"]["_host"])) == "10.0.0.2"
+    assert matched(hostvars, "10.0.0.2")[0] == "10.0.0.2"
+
+
+def matched(hostvars, address):
+    """The host and the name the ring node at address gets (node1 given, node2 found)."""
+    out = cassandra_import_nodes([{"address": address, "dc": "dc1", "rack": "r1"}], hostvars, ["node1"], ["node2"])[0]
+    return out["host"], out["name"]
 
 
 def _added(given_vars, getent, given="node2", known=(), usable=None):
@@ -272,16 +263,9 @@ def test_controller_check_of_the_names(tmp_path, ssh_g, resolves, usable):
 
 def test_found_node_matched_at_its_public_address():
     # the ring address a NAT or broadcast address on no interface: the node reached at it (ansible_host) is it
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
-    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"]
-                 if t["name"] == "Match the ring with the hosts")
     hostvars = {"node1": {"ansible_host": "54.0.0.1", "ansible_facts": {"all_ipv4_addresses": ["10.0.0.1"]}},
                 "node2": {"ansible_host": "node2.example.org", "import_cluster_address": "54.0.0.2",
                           "ansible_facts": {"all_ipv4_addresses": ["10.9.9.9"]}}}
-    variables = {"_given": ["node1"], "groups": {"import_cluster_found": ["node2"]}, "hostvars": hostvars,
-                 "item": {"address": "54.0.0.1"}}
-    assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(match["vars"]["_host"])) == "node1"
+    assert matched(hostvars, "54.0.0.1")[0] == "node1"
     # a found node reached by name whose machine does not have the address: not it
-    variables["item"] = {"address": "54.0.0.2"}
-    assert Templar(loader=DataLoader(), variables=variables).template(
-        trust_as_template(match["vars"]["_host"])) == "54.0.0.2"
+    assert matched(hostvars, "54.0.0.2")[0] == "54.0.0.2"

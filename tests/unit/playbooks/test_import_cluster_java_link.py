@@ -10,16 +10,8 @@ import os
 import pytest
 import yaml
 
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar
-
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
-
-try:  # ansible-core 2.19+ renders trusted templates only
-    from ansible.template import trust_as_template
-except ImportError:
-    def trust_as_template(template):
-        return template
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -37,13 +29,6 @@ def task(name, tasks=None):
     raise KeyError(name)
 
 
-MATCH = task("Match the ring with the hosts")["vars"]
-
-
-def render(template, **variables):
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
-
-
 @pytest.mark.parametrize("system, running, expected", [
     ("/apps/jdk17/bin/java", "/apps/jdk17/bin/java", {}),
     # Java 17 tarball run through JAVA_HOME, /usr/bin/java the Java 11 package of other programs
@@ -53,17 +38,12 @@ def render(template, **variables):
 ])
 def test_java_link(system, running, expected):
     hv = {"import_cluster_system_java": system, "import_cluster_java_bin": running}
-    assert render(MATCH["_java_link"], _hv=hv, _read=True) == expected
-
-
-def test_not_read():
-    hv = {"import_cluster_system_java": "", "import_cluster_java_bin": "/x/bin/java"}
-    assert render(MATCH["_java_link"], _hv=hv, _read=False) == {}
+    keep = node(hv)["keep"]
+    assert dict((k, v) for k, v in keep.items() if k == "cassandra_java_set_default") == expected
 
 
 def test_kept_per_node():
     # host_vars of that node only: a node added later gets the running Java as its system java
-    assert "_java_link" in MATCH["_node"]["keep"]
     base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
             "normalized": [], "notes": []}
     nodes = [dict(base, name="n1", address="10.0.0.1", keep={"cassandra_java_set_default": False}),
@@ -75,7 +55,8 @@ def test_kept_per_node():
 
 
 def test_unread_nodes_keep_it_too():
-    assert "'cassandra_java_set_default': false" in MATCH["_node"]["keep"]
+    hv = {"import_cluster_system_java": "", "import_cluster_java_bin": "/x/bin/java"}
+    assert node(hv, read=False)["keep"]["cassandra_java_set_default"] is False
 
 
 def test_role_leaves_the_system_java():
