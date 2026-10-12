@@ -478,12 +478,15 @@
          + (['WARNING: tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | default([]) | join(' ') ~ ' failed: '
              ~ (cassandra_data_tuned_switch.stderr | default('') or cassandra_data_tuned_switch.stdout | default('')).splitlines()
                | first | default('?')] if _tuned_failed else [])
-         + (['tuned: NOT switched to ' ~ _cassandra_disk_tuned.profiles | join(' ') ~ ' under a running Cassandra (tuned'
-             ~ ' applies its profiles again, live): ' ~ _cassandra_disk_tuned.name ~ ' written, switched at a run with'
-             ~ ' Cassandra stopped (or cassandra_linux_tuned_switch_running: true, or by hand: tuned-adm profile '
-             ~ _cassandra_disk_tuned.profiles | join(' ') ~ '); meanwhile tuned sets its read-ahead on the Cassandra'
-             ~ ' devices again when it starts'] if _tuned_deferred | bool else [])
-         + ([_tuned_warn] if _tuned_warn and not _tuned_ok else []) }}
+         + (['tuned: NOT ' ~ ('switched to ' ~ _cassandra_disk_tuned.profiles | join(' ')
+             if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles else 'reloaded') ~ ' under a running'
+             ~ ' Cassandra (tuned applies its profiles again, live): ' ~ _cassandra_disk_tuned.name ~ ' written; by hand:'
+             ~ ' tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')
+             ~ ', or cassandra_linux_tuned_switch_running: true (or a run of the role with Cassandra stopped)'
+             ~ (('; until then tuned sets its read-ahead and scheduler on the Cassandra devices again when it starts'
+                 ~ ' (at boot)') if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles else '')]
+            if _tuned_deferred | bool else [])
+         + ([_tuned_warn] if _tuned_warn and not _tuned_ok and not _tuned_deferred | bool else []) }}
   vars:
     cassandra_output: true
     # (no rc: a timeout)

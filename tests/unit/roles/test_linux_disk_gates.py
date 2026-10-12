@@ -82,7 +82,7 @@ def test_deferred_switch_said_with_its_command():
     assert render(say["vars"]["_tuned_failed"], **variables) is False
     assert "_tuned_deferred | bool" in say["when"][1]
     msg = " ".join(say["ansible.builtin.debug"]["msg"].split())
-    assert "by hand: tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')" in msg
+    assert "by hand:' ~ ' tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')" in msg
     assert "cassandra_linux_tuned_switch_running: true" in msg
 
 
@@ -104,3 +104,28 @@ def test_switch_timed_out_is_a_failure():
 def test_tuned_directories_are_the_data_directories(variables, dirs):
     find = task("Find the filesystem of each Cassandra directory")
     assert render(find["vars"]["_tuned"], **variables) == dirs
+
+
+def test_probe_skipped_is_not_running():
+    # both opt-ins: no probe, its result skipped (no stdout)
+    facts = task("Decide whether lvchange runs now (not under a running Cassandra)")["ansible.builtin.set_fact"]
+    variables = dict(_cassandra_data_lvm_here=True, cassandra_data_lvchange_running=True,
+                     cassandra_data_running={"skipped": True, "changed": False})
+    assert render(facts["_cassandra_data_running"], **variables) is False
+    assert render(facts["_cassandra_data_lvchange_now"], **variables) is True
+
+
+@pytest.mark.parametrize("deferred, check_mode, switch, listed", [
+    (True, False, {"skipped": True}, False),
+    (False, False, {"failed": True, "msg": "timed out"}, False),
+    (False, False, {"rc": 0, "changed": True}, True),
+    (False, True, {"skipped": True}, True),
+])
+def test_profile_change_listed_only_when_done(deferred, check_mode, switch, listed):
+    items = task("Compare the disk tuning")["ansible.builtin.set_fact"]["_cassandra_disk_items"]
+    out = render(items, _cassandra_disk_changes_seen=[], _cassandra_disk_lvm_failed=[],
+                 _cassandra_disk_tuned={"name": "cassandra-disks", "active": ["virtual-guest"],
+                                        "profiles": ["virtual-guest", "cassandra-disks"]},
+                 _cassandra_disk_tuned_deferred=deferred, ansible_check_mode=check_mode,
+                 cassandra_data_tuned_switch=switch, cassandra_data_disk_udev={"changed": False})
+    assert ("tuned profiles" in [i["item"] for i in out]) is listed

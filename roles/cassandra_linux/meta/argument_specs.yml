@@ -43,7 +43,8 @@ argument_specs:
       cassandra_data_dir:
         type: path
         description:
-          - Cassandra's data directory, used to find the data disk. No default in this role.
+          - Cassandra's data directory, used to find the data disk when O(cassandra_data_file_directories) is not
+            set. No default in this role.
       cassandra_data_lvchange_running:
         type: bool
         default: false

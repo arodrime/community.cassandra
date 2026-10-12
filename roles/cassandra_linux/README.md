@@ -85,8 +85,9 @@ Role Variables
 Disk tuning
 -----------
 
-The devices are found from the filesystems of `cassandra_data_dir`,
-`cassandra_data_file_directories` and `cassandra_commitlog_dir` (`findmnt`;
+The devices are found from the filesystems of the data directories
+(`cassandra_data_file_directories`, else `cassandra_data_dir`, as
+cassandra_config writes them) and `cassandra_commitlog_dir` (`findmnt`;
 a directory not created yet through its nearest parent), then followed down
 to the disks (`lsblk`): partitions, LVM volumes (also thin ones), md RAID,
 dm-crypt, multipath, NVMe, virtio, and any stack of them. A filesystem of
@@ -191,9 +192,11 @@ is done once, and again only when the Cassandra devices change, and only at
 a run with Cassandra stopped (a new node, before it starts): under a
 running Cassandra, the profile is written but not switched to (the role
 says so, with the `tuned-adm profile` command), unless
-`cassandra_linux_tuned_switch_running: true`. Until it is switched to,
-tuned sets its read-ahead on the Cassandra devices again when it starts
-(at boot). A disk
+`cassandra_linux_tuned_switch_running: true`. No playbook of the
+collection stops Cassandra around this role on an existing node: there,
+switch by hand or set that variable for one run. Until it is switched to,
+tuned sets its read-ahead and scheduler on the Cassandra devices again when
+it starts (at boot), until the next run of the role. A disk
 matched by its `ID_WWN` alone (no extension) shares it with the other LUNs
 of its array: they leave tuned's `[disk]` too. `tuned-ppd` (power profiles
 daemon) switching profiles takes it off. `cassandra_linux_tuned_manage:

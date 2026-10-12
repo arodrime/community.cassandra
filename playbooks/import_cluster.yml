@@ -804,8 +804,8 @@
         _cfg: "{{ import_cluster_config.vars | default({}) }}"
         _jmx: "{{ import_cluster_jmx_files | default({}) }}"
         _dirs: >-
-          {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
-             + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),
+          {{ ([_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')])]
+              | flatten) + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog'),
                 _cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),
                 _cfg.cassandra_saved_caches_dir | default('/var/lib/cassandra/saved_caches'),
                 import_cluster_log_dir | default('', true) or _cfg.cassandra_log_dir | default('/var/log/cassandra')] }}
@@ -1170,8 +1170,8 @@
       vars:
         _cfg: "{{ import_cluster_config.vars }}"
         _dirs: >-
-          {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
-             + [_commitlog] }}
+          {{ ([_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')])]
+              | flatten) + [_commitlog] }}
         _commitlog: "{{ _cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog') }}"
         # Cassandra's too: a disk under them is not shared (not tuned themselves)
         _others: >-
