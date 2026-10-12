@@ -1112,10 +1112,25 @@ path are imported. Files written another way (other keys or names, other signing
 the role's header, another series' file, or any file when the package came from a file) get
 ``cassandra_repository_manage: false`` on that node, and the report says why.
 
-Hand edits no variable covers (an extra logback appender, a ``-javaagent`` line in ``cassandra-env.sh``) fail the
+Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xmx8G
+-XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,
+``MAX_DIRECT_MEMORY_SIZE``) set elsewhere in the file, are moved to the variables that write them where the role does:
+``-Xms`` and ``-Xmx`` alike to ``cassandra_heap_size`` (with ``cassandra_heap_newsize`` the young generation the JVM
+runs with, which ``MAX_HEAP_SIZE`` needs without G1), the other options to ``cassandra_jvm<N>_extra_options`` of the
+Java the node runs. Only when the JVM gets the same arguments from the role's files: worked out from the running JVM's
+arguments (``/proc/<pid>/cmdline``), what ``cassandra-env.sh`` adds by itself from what it finds in the options (the
+heap, the GC log, the GC threads) included, the last option of a name counting; an option set again later is left out.
+Not when Cassandra is not running or its files changed since it started. ``apply_config`` then rewrites those files in
+the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
+(in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
+``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
+console, however written.
+
+Other hand edits no variable covers (an extra logback appender, a ``-javaagent`` line in ``cassandra-env.sh``) fail the
 self-check. With ``-e import_cluster_keep_hand_edits=true`` the files that have them are left as they are on their
 node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither writes nor compares
-them); nodes added later get the role's files.
+them), or only the files named (``-e import_cluster_keep_hand_edits=logback.xml``); nodes added later get the role's
+files.
 
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,

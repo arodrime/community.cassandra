@@ -229,7 +229,8 @@ OPERATIONS = [
                  ("-e import_cluster_allow_unread=true", "accepts a ring node it could not read (else the import"
                                                          " fails)", "false"),
                  ("-e import_cluster_keep_hand_edits=true", "leaves the config files with hand edits as they are on"
-                                                            " their node", "false")]},
+                                                            " their node (or the ones named: =logback.xml)",
+                  "false")]},
 ]
 
 BY_NAME = dict((op["name"], op) for op in OPERATIONS)

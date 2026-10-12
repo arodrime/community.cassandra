@@ -29,7 +29,7 @@
 #   import_cluster_vault_password_file, import_cluster_vault_id: none, default
 #     (see the passwords below).
 #   import_cluster_medusa_path: none (see Medusa below).
-#   import_cluster_keep_hand_edits: false (see the hand edits below).
+#   import_cluster_keep_hand_edits: false, true or file names (see the hand edits below).
 #   import_cluster_allow_unread: false (see the nodes not read below).
 #   import_cluster_adopt: false; true takes the files of an earlier import of
 #     this cluster that do not say whose they are (no first line naming it,
@@ -93,9 +93,15 @@
 # places, else in the PATH of a login shell of cassandra, then of root, and
 # last in any virtualenv under /opt.
 # A host marked cassandra_node_state: absent (an inventory given back) is not read.
-# Hand edits no variable covers fail the self-check:
+# cassandra-env.sh's JVM_OPTS lines of plain options and its heap set elsewhere
+# move to the variables (the heap ones, cassandra_jvm<N>_extra_options) when the
+# running JVM gets the same arguments from the role's files (MOVED in the
+# report; apply_config then rewrites them); the options it does not use are
+# listed (CLEANUP).
+# Other hand edits no variable covers fail the self-check:
 # import_cluster_keep_hand_edits=true leaves those files as they are on their
-# node (cassandra_config_keep_files) instead.
+# node (cassandra_config_keep_files) instead, or the files named (a list, or
+# import_cluster_keep_hand_edits=logback.xml).
 # A ring node it could not read (down, unreachable, nodetool not found, its
 # running Java removed by an update) fails the import, as its settings are
 # unknown: import_cluster_allow_unread=true accepts it.
@@ -805,8 +811,14 @@
               {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
                                                                      import_cluster_conf_target | default(''),
                                                                      import_cluster_storage_dir | default(''),
-                                                                     import_cluster_jmx_files | default({})) }}
+                                                                     import_cluster_jmx_files | default({}), _jvm) }}
           vars:
+            # the running JVM: cassandra-env.sh's hand edits move to variables when it gets the same arguments
+            _jvm:
+              cmdline: "{{ import_cluster_jvm_cmdline.content | default('') | b64decode }}"
+              java: "{{ import_cluster_java | default('') }}"
+              environment: "{{ import_cluster_unit.env | default({}) }}"
+              newer: "{{ import_cluster_newer_files | default([]) }}"
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
               {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
