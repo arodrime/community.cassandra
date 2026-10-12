@@ -805,8 +805,18 @@
               {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
                                                                      import_cluster_conf_target | default(''),
                                                                      import_cluster_storage_dir | default(''),
-                                                                     import_cluster_jmx_files | default({})) }}
+                                                                     import_cluster_jmx_files | default({}),
+                                                                     _release) }}
           vars:
+            # the cassandra.yaml keys are judged by the release the next start runs: the package installed
+            # since Cassandra started (a restart pending), else the running one
+            _package: >-
+              {{ import_cluster_package | default('') | regex_replace('^([0-9]+[.][0-9]+[.][0-9]+).*$', '\1') }}
+            _release: >-
+              {{ _package if _package is match('[0-9]+[.][0-9]+[.][0-9]+$')
+                            and _package.split('.')[:2] == (import_cluster_version | default('') | string).split('.')[:2]
+                            and _package is version(import_cluster_version, '>')
+                 else import_cluster_version | default('') }}
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
               {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')

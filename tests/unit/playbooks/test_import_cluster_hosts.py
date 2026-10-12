@@ -166,3 +166,10 @@ def test_task_gives_the_filter_what_it_reads():
     nodes = Templar(loader=DataLoader(), variables=variables).template(
         trust_as_template(match["ansible.builtin.set_fact"]["_nodes"]))
     assert [(n["host"], n["name"]) for n in nodes] == [("node1", "node1"), ("10.0.0.2", "node2"), ("10.0.0.3", "node3")]
+
+
+def test_keys_cassandra_rejects_carried_to_the_report():
+    rejected = {"keys": ["fake_option"], "release": "4.1.5"}
+    hostvars = dict(HOSTVARS, node1=dict(HOSTVARS["node1"], import_cluster_config={"vars": {}, "not_settings": rejected}))
+    assert nodes("10.0.0.1", hostvars)["not_settings"] == rejected
+    assert nodes("10.0.0.2")["not_settings"] == {}

@@ -1086,7 +1086,8 @@ argument_specs:
         default: {}
         description:
         - 'Settings no variable covers, written as-is at the end of C(cassandra.yaml), e.g. C({commitlog_total_space: 8192MiB}).'
-        - Keys the template already has are refused (set them with their variable). Cassandra refuses unknown keys at startup.
+        - Keys the template already has are refused (set them with their variable). Cassandra refuses unknown keys at startup;
+          so does the role, before writing anything, for a key the installed release (else the series) does not accept.
       cassandra_jvm_extra_options:
         type: list
         elements: str

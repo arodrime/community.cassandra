@@ -335,3 +335,29 @@ def test_the_screen_width_is_ansibles(monkeypatch):
     screen = cassandra_import_report(cassandra_inventory_layout(nodes, "My Cluster"), WRITTEN, REPORT, {}, True,
                                      cwd="/p", in_git=True, screen=True)
     assert max(len(line) for line in screen[1:]) <= 70 < max(len(line) for line in report(nodes, screen=True))
+
+
+def test_keys_cassandra_rejects_reported():
+    rejected = {"keys": ["fake_option"], "release": "4.1.5"}
+    nodes = [node(1, not_settings=rejected), node(2, not_settings=rejected), node(3, not_settings=rejected),
+             node(4, not_settings={"keys": ["fake_option", "other_fake"], "release": "4.1.6"}), node(5)]
+    lines = report(nodes)
+    at = lines.index("TO DO (3)")
+    assert lines[at + 1:at + 4] == [
+        "  1. node1, node2, node3: cassandra.yaml has fake_option, which Cassandra 4.1.5 rejects: it would not"
+        " restart; remove it",
+        "  2. node4: cassandra.yaml has fake_option, other_fake, which Cassandra 4.1.6 rejects: it would not restart;"
+        " remove them",
+        "  3. Review then commit:  git diff && git commit"]
+    at = lines.index(u"NOT A CASSANDRA SETTING — not imported: Cassandra refuses to start with it, cassandra_config"
+                     " leaves it out")
+    assert lines[at + 1:at + 5] == ["  fake_option  node1, node2, node3 (Cassandra 4.1.5)",
+                                    "  fake_option  node4 (Cassandra 4.1.6)",
+                                    "  other_fake   node4 (Cassandra 4.1.6)", ""]
+    # the screen: the TO DO, nodes in short
+    screen = report(nodes, screen=True)
+    assert ("  1. node1..node3: cassandra.yaml has fake_option, which Cassandra 4.1.5 rejects: it would not restart;"
+            " remove it") in screen
+    assert not [line for line in screen if line.startswith("NOT A CASSANDRA SETTING")]
+    # none: no TO DO, no section
+    assert not [line for line in report([node(1)]) if "rejects" in line or "NOT A CASSANDRA" in line]

@@ -1,0 +1,3 @@
+minor_changes:
+  - "import_cluster playbook - a ``cassandra.yaml`` key the node's Cassandra release does not accept (e.g. added by hand since it started) is no longer imported into ``cassandra_extra_settings``: the node would not restart with it. It is reported (TO DO, ``NOT A CASSANDRA SETTING``) and noted by the self-check. Keys the release accepts but no variable covers are still imported."
+  - "cassandra_config role - refuses, before writing anything, a ``cassandra_extra_settings`` key the installed Cassandra release (else the series) does not accept: it would not restart."

@@ -205,6 +205,22 @@ def _paths(paths):
                      else ", ".join(per_file[key]) for key in order)
 
 
+def _not_settings(read):
+    """[((keys, release), [nodes])]: the cassandra.yaml keys the nodes' Cassandra rejects (not imported), the nodes
+    with the same ones together."""
+    groups = []
+    for n in read:
+        found = n.get("not_settings") or {}
+        if found.get("keys"):
+            what = (tuple(str(k) for k in found["keys"]), str(found.get("release") or "?"))
+            entry = next((g for g in groups if g[0] == what), None)
+            if entry is None:
+                groups.append((what, [n["name"]]))
+            else:
+                entry[1].append(n["name"])
+    return groups
+
+
 def _what_changes(changed, removed, changes):
     """ (3 new files; changed: a, b; removed: c), '' when not known."""
     if changed is None:
@@ -414,6 +430,10 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             ", ".join("%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread),
             " (accepted: import_cluster_allow_unread)" if allow_unread else
             " (or -e import_cluster_allow_unread=true)"))
+    for (keys, release), members in _not_settings(read):
+        todo.append("%s: cassandra.yaml has %s, which Cassandra %s rejects: it would not restart; remove %s" % (
+            out.full_list(members) if full else _compress(members), ", ".join(keys), release,
+            "it" if len(keys) == 1 else "them"))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
@@ -505,6 +525,16 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         lines += _rows(edits, names, full=full, groups=groups, width=width)
         if layout_only:
             lines.append("  + %d layout-only edits, no effect (details at the end)" % layout_only)
+        lines.append("")
+
+    # NOT A CASSANDRA SETTING: cassandra.yaml keys the node's Cassandra rejects, not imported
+    rejected = _not_settings(read)
+    if rejected:
+        lines.append("NOT A CASSANDRA SETTING %s not imported: Cassandra refuses to start with it, cassandra_config"
+                     " leaves it out" % DASH)
+        width = max(len(k) for (keys, dummy), dummy2 in rejected for k in keys)
+        lines += ["  %s  %s (Cassandra %s)" % (k.ljust(width), out.full_list(members), release)
+                  for (keys, release), members in rejected for k in keys]
         lines.append("")
 
     # LEFT AS IT IS: the parts left to the node as found, grouped by the nodes that have them

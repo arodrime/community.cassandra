@@ -181,7 +181,9 @@ Role Variables
   Keys the template already has are refused: set them with their variable;
   but `audit_logging_options` takes the sub-keys no variable covers (e.g.
   `{audit_logging_options: {included_categories: DDL}}`), written in that section.
-  Cassandra refuses unknown keys at startup.
+  Cassandra refuses unknown keys at startup: so does the role, before
+  writing anything, for a key the installed release (else the series) does
+  not accept.
 * `cassandra-env.sh`: `cassandra_log_dir` (defaults to `/var/log/cassandra`,
   as the deb/rpm packages patch it; the tarball's stock value is
   `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (4.x only: without G1

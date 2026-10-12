@@ -43,6 +43,7 @@ from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import yaml_rejected
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
@@ -576,11 +577,12 @@ def _extra_settings(tpl, live):
     return extras
 
 
-def _without_extras(rendered, live, extras):
+def _without_extras(rendered, live, extras, rejected=()):
     """Both sides minus the extra settings: the role's block at the end, the commented stock lines of those keys
     (with their commented lines under them), and the node's own lines for them (their blocks); in a section of
     _extra_sections, the sub-keys' lines on both sides (the role's written after the logger, the node's), and their
-    commented stock lines on both sides."""
+    commented stock lines on both sides; the node's lines of the keys its Cassandra rejects (the role leaves them
+    out), their indented lines too."""
     if EXTRA_HEADER in rendered:
         rendered = rendered[:rendered.index(EXTRA_HEADER) - 1] + [""]
     sections = _extra_sections()
@@ -600,8 +602,16 @@ def _without_extras(rendered, live, extras):
                 if name == key:
                     drop.update(_sub_key_lines(lines, indexes + _commented_under(lines, indexes[-1]),
                                                list(extras[key]), True))
-    return ([r for i, r in enumerate(rendered) if i not in drop_rendered],
-            [n for i, n in enumerate(live) if i not in drop_live])
+    rendered = [r for i, r in enumerate(rendered) if i not in drop_rendered]
+    live = [n for i, n in enumerate(live) if i not in drop_live]
+    if rejected:
+        keys, kept, inside = "|".join(re.escape(k) for k in rejected), [], False
+        for n in live:
+            inside = bool(re.match(r"^(%s):" % keys, n)) or (inside and bool(re.match(r"^(\s|- |-$)", n)))
+            if not inside:
+                kept.append(n)
+        live = kept
+    return rendered, live
 
 
 def _snitch_reads_rackdc(snitch):
@@ -651,7 +661,7 @@ def _properties(lines):
     return out
 
 
-def _leftovers(env, series, files, ctx, live_files):
+def _leftovers(env, series, files, ctx, live_files, rejected=()):
     hand, normalized, comments = [], [], []
     extras = ctx.get("cassandra_extra_settings") or {}
     for name in files:
@@ -672,8 +682,8 @@ def _leftovers(env, series, files, ctx, live_files):
                 normalized.append("%s: same settings, comments and layout rewritten" % name)
             continue
         live = _align(rendered, live_files[name].split("\n"))
-        if name == "cassandra.yaml" and extras:
-            rendered, live = _without_extras(rendered, live, extras)
+        if name == "cassandra.yaml" and (extras or rejected):
+            rendered, live = _without_extras(rendered, live, extras, rejected)
             sections = _extra_sections()
             normalized += ["cassandra.yaml: %s kept with cassandra_extra_settings (written %s)" % (
                 k, "in its section" if k in sections else "at the end of the file") for k in sorted(extras)]
@@ -858,14 +868,18 @@ def _hidden(name, where):
                               % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
 
 
-def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None):
+def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None,
+                            release=""):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized', 'comments'
-    (comment lines only, which set nothing)}.
+    (comment lines only, which set nothing), 'not_settings' ({'keys': the
+    cassandra.yaml keys its Cassandra rejects, not imported, 'release'}),
+    'release' (the version they were judged by)}.
     conf_target: the resolved dir the node reads its config from; storage_dir:
     the JVM's -Dcassandra.storagedir; jmx_files: cassandra_jmx_files' (the
     remote JMX files the JVM reads, under the names jmxremote.password and
-    .access in live_files)."""
+    .access in live_files); release: the node's Cassandra version (4.1.5;
+    '': the keys no release of the series accepts are the ones rejected)."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
@@ -873,7 +887,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     live_files = dict((k, re.sub(r"\r\n?", "\n", v) if k.endswith(".properties") and isinstance(v, str) else v)
                       for k, v in live_files.items())
     try:
-        return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir, jmx_files)
+        return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir, jmx_files, release)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
@@ -883,8 +897,10 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     raise error  # out of the except block: no chained message either
 
 
-def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None):
+def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None,
+                   release=""):
     env, ctx, files = _load_role(cassandra_version, facts)
+    release, rejected = str(release or SERIES[cassandra_version]), []
     found, from_shell = {}, set()
     for name in files:
         if name in live_files:
@@ -939,6 +955,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             render_dirs = dirs
         tpl = _render(env, cassandra_version, "cassandra.yaml", ctx)[0]
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
+        # a key Cassandra rejects (e.g. added by hand since it started): not imported, the node would not restart
+        rejected = yaml_rejected(extras, release)
+        extras = dict((k, v) for k, v in extras.items() if str(k) not in rejected)
         if extras:
             changed["cassandra_extra_settings"] = extras
     # remote JMX users: the password and access files the JVM reads (jmx_files: cassandra_jmx_files', read
@@ -975,7 +994,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
-    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files)
+    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected)
     hand += jmx_note
     out = dict((k, v) for k, v in changed.items() if k not in RACKDC)
     if "cassandra-rackdc.properties" in live_files and not _snitch_reads_rackdc(found.get("cassandra_endpoint_snitch")):
@@ -1000,7 +1019,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             out[key] = IPV4
         elif facts.get("hostname") and out.get(key) == facts["hostname"]:
             out[key] = HOSTNAME
-    return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments}
+    return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
+            "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release}
 
 
 def _as_text(node):

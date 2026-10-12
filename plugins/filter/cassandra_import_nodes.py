@@ -269,6 +269,8 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "hand_edits": config.get("hand_edits", []),
         "normalized": config.get("normalized", []),
         "comments": config.get("comments", []),
+        # cassandra.yaml keys its Cassandra rejects: not imported, the node would not restart with them
+        "not_settings": config.get("not_settings") or {},
         "notes": notes,
     }
 
