@@ -366,9 +366,8 @@ def _analyse(args, live, role, series, java, node_env):
         if not found:
             raise NotSame("a JVM_OPTS line of cassandra-env.sh is not in the running JVM's arguments (changed since it"
                           " started?)")
-        if len(found) > 1 and any(_jvm_name(o) is None or _jvm_name(o) in LISTS for o in line["options"]):
-            raise NotSame("a JVM_OPTS line of cassandra-env.sh has options found twice in the arguments, where the"
-                          " order counts")
+        if len(found) > 1:  # which one is the line's (the other: cassandra-env.sh's own, JVM_EXTRA_OPTS...)?
+            raise NotSame("the options of a JVM_OPTS line of cassandra-env.sh are twice in the arguments")
         if any(IN_PLACE.match(o) for o in line["options"]):
             raise NotSame("a JVM_OPTS line of cassandra-env.sh reads a file of options where it is")
         line["at"] = found[0]
@@ -666,7 +665,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
     at = start + len(words)
     for line in added:
         found = [i for i in range(at, end - len(line["options"]) + 1) if args[i:i + len(line["options"])] == line["options"]]
-        if not found:
+        if len(found) != 1:
             break
         source.update((found[0] + k, "%s line %d" % (ENV, line["n"])) for k in range(len(line["options"])))
         at = found[0] + len(line["options"])
