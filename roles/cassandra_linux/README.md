@@ -196,7 +196,7 @@ says so, with the `tuned-adm profile` command), unless
 collection stops Cassandra around this role on an existing node: there,
 switch by hand or set that variable for one run. Until it is switched to,
 tuned sets its read-ahead and scheduler on the Cassandra devices again when
-it starts (at boot), until the next run of the role. A disk
+it starts (at boot); the role sets them back at its next run. A disk
 matched by its `ID_WWN` alone (no extension) shares it with the other LUNs
 of its array: they leave tuned's `[disk]` too. `tuned-ppd` (power profiles
 daemon) switching profiles takes it off. `cassandra_linux_tuned_manage:

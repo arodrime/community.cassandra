@@ -348,7 +348,8 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
         except Exception as exc:  # pylint: disable=broad-except
             # ours (their message shows no value) or a missing variable; not another filter's
             # error (2.19+: Ansible's wrapper is an AnsibleFilterError too)
-            if _undefined(exc) or (type(exc) is AnsibleFilterError and exc.__cause__ is None
+            if _undefined(exc) or (type(exc) is AnsibleFilterError  # pylint: disable=unidiomatic-typecheck
+                                   and exc.__cause__ is None
                                    and str(exc).startswith("cassandra_")):
                 raise
             # which node, not the message (it may show a value read from it)
