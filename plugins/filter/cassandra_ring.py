@@ -1,10 +1,12 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_ring_report: the cassandra_status module's cluster_status as
-readable lines for the status playbook: a verdict line, the nodes per
-datacenter as nodetool status shows them (the ones not UN marked), a summary
-line per rack and per datacenter, and where the inventory and the ring
-differ."""
+readable lines for the status playbook: a header line (the cluster, the node
+the ring is seen from), the nodes per datacenter as nodetool status shows them
+(the ones not UN marked), a summary table of its racks and the datacenter,
+where the inventory and the ring differ, and last the verdict (the nodes down,
+joining, leaving or moving; a ring that differs). Blank lines between the
+blocks."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -77,26 +79,45 @@ def _counts(nodes):
 
 
 def _summary(name, nodes):
-    """"rack1: 3 nodes, 2 up, 1 down; load 1.5 GiB (1 unknown)"."""
+    """["rack1", "3 nodes", "2 up, 1 down", "1.5 GiB", " (1 unknown)"]: a row of the summary table."""
     counts = _counts(nodes)
     sizes = [_bytes(n["load"]) for n in nodes]
     unknown = sizes.count(None)
-    states = ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES if counts[word] or word in ("up", "down"))
-    return "%s: %s, %s; load %s%s" % (name, out.plural(len(nodes), "node"), states,
-                                      out.size(sum(x for x in sizes if x is not None)),
-                                      " (%d unknown)" % unknown if unknown else "")
+    states = ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES if counts[word] or word == "up")
+    return [name, out.plural(len(nodes), "node"), states, out.size(sum(x for x in sizes if x is not None)),
+            " (%d unknown)" % unknown if unknown else ""]
 
 
-def _verdict(cluster_status, cluster, seen_from, matches, members):
-    """"my_cluster  1 DOWN  (seen from node1, ring = inventory, 3 nodes)"; OK
-    when every node is UN."""
-    nodes = [n for dc in cluster_status.values() for n in dc.get("nodes", [])]
-    counts = _counts(nodes)
-    problems = ["%d %s" % (counts[word], word.upper()) for dummy, word in _STATES if word != "up" and counts[word]]
+def _summaries(rows):
+    """The summary rows, in columns, the loads aligned to the right."""
+    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    return ["  %s   %s   %s   load %s%s" % (
+        name.ljust(widths[0]), count.ljust(widths[1]), states.ljust(widths[2]), load.rjust(widths[3]), unknown)
+        for name, count, states, load, unknown in rows]
+
+
+def _header(cluster, seen_from, matches, members, total):
+    """"my_cluster  (seen from node1, ring = inventory, 3 nodes)"."""
     where = ["seen from %s" % seen_from] if seen_from else []
     where.append(("ring = %s" % members) if matches else "ring and %s differ" % members)
-    where.append(out.plural(len(nodes), "node"))
-    return "  ".join(x for x in [cluster, ", ".join(problems) or "OK", "(%s)" % ", ".join(where)] if x)
+    where.append(out.plural(total, "node"))
+    return "  ".join(x for x in [cluster, "(%s)" % ", ".join(where)] if x)
+
+
+def _verdict(nodes, differ):
+    """"ALL 3 NODES UP" or "1 NODE DOWN: node2 (dc1/rack_b)", then the nodes
+    joining, leaving or moving and a ring that differs from the inventory.
+    nodes: (name, datacenter, node) of each node of the ring."""
+    down = ["%s (%s/%s)" % (name, dc, n["rack"]) for name, dc, n in nodes if n["status"] == "D"]
+    parts = [("%s DOWN: %s" % (out.plural(len(down), "NODE", "NODES"), ", ".join(down))) if down
+             else "ALL %s UP" % out.plural(len(nodes), "NODE", "NODES")]
+    for letter, word in _STATES[2:]:
+        moving = [name for name, dc, n in nodes if n["status"] == "U" and n["state"] == letter]
+        if moving:
+            parts.append("%d %s: %s" % (len(moving), word.upper(), ", ".join(moving)))
+    if differ:
+        parts.append("RING AND INVENTORY DIFFER")
+    return u" \u2014 ".join(parts)
 
 
 def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
@@ -109,7 +130,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     by address only (no facts, no name resolution for them). absent: the
     hosts of outside marked cassandra_node_state: absent (topology removes
     them from the ring). cluster: the cluster's name, seen_from: the node
-    the ring was read from, for the verdict line (none without either).
+    the ring was read from, for the header line (none without either).
     Returns the report as a list of lines."""
     cluster_status = cluster_status or {}
     owner = _host_of(inventory, [_ip(n["address"]) for dc in cluster_status
@@ -124,6 +145,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     stray = []
     known = []
     leaving = []
+    named = []  # (name, datacenter, node), for the verdict
     for dc in sorted(cluster_status):
         nodes = cluster_status[dc].get("nodes", [])
         rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory", ""]]
@@ -137,36 +159,43 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
                 stray.append("%s (%s, %s%s)" % (n["address"], dc, n["status"], n["state"]))
             else:
                 in_ring.add(host)
+            named.append((host or elsewhere.get(_ip(n["address"])) or n["address"], dc, n))
             mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
                 "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
             rows.append([n["status"] + n["state"], n["address"], n["load"] or "?", n["tokens"] or "",
                          n["owns"] or "", n["host_id"], n["rack"], host or "-", mark])
-        lines.append("Datacenter: %s" % dc)
-        lines.extend("  " + line for line in _table(rows))
+        lines.extend(["", "Datacenter: %s" % dc, ""])
+        lines.extend(" " + line for line in _table(rows))
         racks = sorted(set(n["rack"] for n in nodes))
-        if len(racks) > 1:
-            lines.extend("  " + _summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks)
-        lines.append("  " + _summary(dc, nodes))
+        summary = [_summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks] if len(racks) > 1 else []
+        lines.extend([""] + _summaries(summary + [_summary(dc, nodes)]))
     missing = [h for h in inventory if h not in in_ring]
     unreachable = set(unreachable or [])
     run = "this run (--limit)" if limited else group
+    notes = []
     if missing:
-        lines.append("In %s, not in the ring: " % run + ", ".join(
+        notes.append("In %s, not in the ring: " % run + ", ".join(
             h + (" (unreachable)" if h in unreachable else "") for h in missing))
     if known:
-        lines.append("In the ring and the inventory, not in %s: " % run + ", ".join(known))
+        notes.append("In the ring and the inventory, not in %s: " % run + ", ".join(known))
     if leaving:
-        lines.append("Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): "
+        notes.append("Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): "
                      + ", ".join(leaving))
     if stray:
-        lines.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
+        notes.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
                      + ", ".join(stray))
-    matches = not missing and not stray and not known and not leaving
-    if matches and not (cluster or seen_from):  # else said by the verdict
-        lines.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
+    matches = not notes
+    members = "inventory" if run == group else run
     if cluster or seen_from:
-        lines.insert(0, _verdict(cluster_status, cluster, seen_from, matches, "inventory" if run == group else run))
-    return lines
+        lines.insert(0, _header(cluster, seen_from, matches, members, len(named)))
+    elif matches:
+        notes.append("The ring and %s match (%s)" % (run, out.plural(len(inventory), "node")))
+    if notes:
+        lines.extend([""] + notes)
+    if named:
+        # a ring node that is another host of the inventory: expected under --limit or a sub-group, not a problem
+        lines.extend(["", _verdict(named, bool(missing or stray or leaving))])
+    return lines[1:] if lines[:1] == [""] else lines
 
 
 class FilterModule(object):

@@ -46,11 +46,16 @@ def test_matching_ring_and_inventory():
                                   {"n1": ["n1", "10.0.0.1"], "n2": ["10.0.0.2"]})
     assert lines == [
         "Datacenter: dc1",
-        "  --  Address   Load       Tokens  Owns   Host ID      Rack  Inventory",
-        "  UN  10.0.0.1  1.0 GiB    16      33.3%  id-10.0.0.1  r1    n1",
-        "  UN  10.0.0.2  512.0 MiB  16      33.3%  id-10.0.0.2  r1    n2",
-        "  dc1: 2 nodes, 2 up, 0 down; load 1.5 GiB",
+        "",
+        " --  Address   Load       Tokens  Owns   Host ID      Rack  Inventory",
+        " UN  10.0.0.1  1.0 GiB    16      33.3%  id-10.0.0.1  r1    n1",
+        " UN  10.0.0.2  512.0 MiB  16      33.3%  id-10.0.0.2  r1    n2",
+        "",
+        "  dc1   2 nodes   2 up   load 1.5 GiB",
+        "",
         "The ring and the inventory match (2 nodes)",
+        "",
+        "ALL 2 NODES UP",
     ]
 
 
@@ -59,23 +64,28 @@ def test_summary_counts_every_state_and_unknown_load():
         ring(node("10.0.0.1"), node("10.0.0.2", "D", load="?"), node("10.0.0.3", state="J", load="100 KiB"),
              node("10.0.0.4", state="L"), node("10.0.0.5", "D", "L", load="1,5 GiB"), node("10.0.0.6", state="M")),
         dict(("n%d" % i, ["10.0.0.%d" % i]) for i in range(1, 7)))
-    assert lines[-2] == "  dc1: 6 nodes, 4 up, 2 down, 1 joining, 2 leaving, 1 moving; load 4.5 GiB (1 unknown)"
+    assert lines[-5] == "  dc1   6 nodes   4 up, 2 down, 1 joining, 2 leaving, 1 moving   load 4.5 GiB (1 unknown)"
+    # DL: down (its state said in the table); the nodes in motion are the ones up
+    assert lines[-1] == u"2 NODES DOWN: n2 (dc1/r1), n5 (dc1/r1) \u2014 1 JOINING: n3 \u2014 1 LEAVING: n4 \u2014 1 MOVING: n6"
 
 
 def test_mismatches_both_ways():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.7", "D")),
                                   {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"], "n3": ["n3"]}, unreachable=["n3"])
-    assert "  DN  10.0.0.7  1.0 GiB  16      33.3%  id-10.0.0.7  r1    -          \u2190 down" in lines
-    assert lines[-2:] == ["In the inventory, not in the ring: n2, n3 (unreachable)",
-                          "In the ring, not in the inventory: 10.0.0.7 (dc1, DN)"]
+    assert " DN  10.0.0.7  1.0 GiB  16      33.3%  id-10.0.0.7  r1    -          \u2190 down" in lines
+    assert lines[-5:] == ["",
+                          "In the inventory, not in the ring: n2, n3 (unreachable)",
+                          "In the ring, not in the inventory: 10.0.0.7 (dc1, DN)",
+                          "",
+                          u"1 NODE DOWN: 10.0.0.7 (dc1/r1) \u2014 RING AND INVENTORY DIFFER"]
 
 
 def test_unreachable_host_found_by_its_resolved_name():
     lines = cassandra_ring_report(ring(node("10.0.0.9", "D")), {"node9.example": ["node9.example", ""]},
                                   unreachable=["node9.example"])
-    assert lines[1:3] == ["  --  Address   Load     Tokens  Owns   Host ID      Rack  Inventory",
-                          "  DN  10.0.0.9  1.0 GiB  16      33.3%  id-10.0.0.9  r1    node9.example  \u2190 down"]
-    assert lines[-1] == "The ring and the inventory match (1 node)"
+    assert lines[2:4] == [" --  Address   Load     Tokens  Owns   Host ID      Rack  Inventory",
+                          " DN  10.0.0.9  1.0 GiB  16      33.3%  id-10.0.0.9  r1    node9.example  \u2190 down"]
+    assert lines[-3:] == ["The ring and the inventory match (1 node)", "", "1 NODE DOWN: node9.example (dc1/r1)"]
 
 
 def test_multi_dc_fixture_grouped_by_dc():
@@ -83,33 +93,42 @@ def test_multi_dc_fixture_grouped_by_dc():
                                   {"a": ["10.0.0.1"], "b": ["10.0.1.1"]})
     assert lines == [
         "Datacenter: datacenter1",
-        "  --  Address   Load     Tokens  Owns   Host ID                               Rack   Inventory",
-        "  UN  10.0.0.1  1.0 GiB  16      50.0%  aaaaaaaa-1111-1111-1111-111111111111  rack1  a",
-        "  datacenter1: 1 node, 1 up, 0 down; load 1.0 GiB",
+        "",
+        " --  Address   Load     Tokens  Owns   Host ID                               Rack   Inventory",
+        " UN  10.0.0.1  1.0 GiB  16      50.0%  aaaaaaaa-1111-1111-1111-111111111111  rack1  a",
+        "",
+        "  datacenter1   1 node   1 up   load 1.0 GiB",
+        "",
         "Datacenter: datacenter2",
-        "  --  Address   Load     Tokens     Owns   Host ID                               Rack   Inventory",
-        "  UN  10.0.1.1  2.0 GiB  123456789  50.0%  bbbbbbbb-2222-2222-2222-222222222222  rack2  b",
-        "  datacenter2: 1 node, 1 up, 0 down; load 2.0 GiB",
+        "",
+        " --  Address   Load     Tokens     Owns   Host ID                               Rack   Inventory",
+        " UN  10.0.1.1  2.0 GiB  123456789  50.0%  bbbbbbbb-2222-2222-2222-222222222222  rack2  b",
+        "",
+        "  datacenter2   1 node   1 up   load 2.0 GiB",
+        "",
         "The ring and the inventory match (2 nodes)",
+        "",
+        "ALL 2 NODES UP",
     ]
 
 
 def test_token_per_node_fixture_down_node_unknown_load():
     lines = cassandra_ring_report(fixture("nodetool_status_token_per_node.txt"),
                                   {"a": ["10.100.100.136"], "b": ["10.100.100.137"]})
-    assert "  datacenter1: 2 nodes, 1 up, 1 down; load 648.2 GiB (1 unknown)" in lines
+    assert "  datacenter1   2 nodes   1 up, 1 down   load 648.2 GiB (1 unknown)" in lines
+    assert lines[-1] == "1 NODE DOWN: b (datacenter1/rack2)"
 
 
 def test_small_loads_and_empty_ring():
-    assert cassandra_ring_report(ring(node("10.0.0.1", load="512 bytes")), {"n1": ["10.0.0.1"]})[-2] \
-        == "  dc1: 1 node, 1 up, 0 down; load 512 B"
+    assert cassandra_ring_report(ring(node("10.0.0.1", load="512 bytes")), {"n1": ["10.0.0.1"]})[-5] \
+        == "  dc1   1 node   1 up   load 512 B"
     assert cassandra_ring_report({}, {"n1": ["10.0.0.1"]}) == ["In the inventory, not in the ring: n1"]
 
 
 def test_ipv6_ring_address_matches_the_compressed_facts():
     lines = cassandra_ring_report(ring(node("2001:db8:0:0:0:0:0:1")), {"a": ["a", "2001:db8::1", "fe80::1%eth0"]})
-    assert lines[2].split()[-1] == "a"
-    assert lines[-1] == "The ring and the inventory match (1 node)"
+    assert lines[3].split()[-1] == "a"
+    assert lines[-3:] == ["The ring and the inventory match (1 node)", "", "ALL 1 NODE UP"]
 
 
 def test_explicit_address_wins_first_host_wins_and_ips_never_resolved(monkeypatch):
@@ -125,7 +144,7 @@ def test_explicit_address_wins_first_host_wins_and_ips_never_resolved(monkeypatc
     lines = cassandra_ring_report(ring(node("10.0.0.9"), node("10.0.0.5"), node("10.0.0.7")),
                                   {"n1": ["10.0.0.9", "fe80::1"], "node9.example": ["node9.example"],
                                    "n2": ["10.0.0.5"], "n3": ["10.0.0.5"]})
-    assert [line.split()[-1] for line in lines[2:4]] == ["n1", "n2"]
+    assert [line.split()[-1] for line in lines[3:5]] == ["n1", "n2"]
     assert asked == ["node9.example"]
 
 
@@ -134,12 +153,13 @@ def test_no_dns_when_every_ring_address_is_known(monkeypatch):
         raise AssertionError("resolved " + name)
     monkeypatch.setattr(cassandra_ring.socket, "getaddrinfo", fail)
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["n1", "10.0.0.1"], "n2": ["n2"]})
-    assert lines[-1] == "In the inventory, not in the ring: n2"
+    assert lines[-3:] == ["In the inventory, not in the ring: n2", "", u"ALL 1 NODE UP \u2014 RING AND INVENTORY DIFFER"]
 
 
 def test_limited_run_labels_the_other_ring_nodes():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.2")), {"n1": ["10.0.0.1"]}, limited=True)
-    assert lines[-1] == "In the ring, not in this run (--limit): 10.0.0.2 (dc1, UN)"
+    assert lines[-3:] == ["In the ring, not in this run (--limit): 10.0.0.2 (dc1, UN)", "",
+                          u"ALL 2 NODES UP \u2014 RING AND INVENTORY DIFFER"]
 
 
 def test_sub_group_named_and_other_inventory_hosts_told_apart():
@@ -147,12 +167,12 @@ def test_sub_group_named_and_other_inventory_hosts_told_apart():
     lines = cassandra_ring_report(
         ring(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.9", "D")), {"n1": ["10.0.0.1"], "n3": ["10.0.0.3"]},
         group="group dc1_nodes", outside={"n2": ["n2", "10.0.0.2"], "other": ["other", ""]})
-    assert "  UN  10.0.0.2  1.0 GiB  16      33.3%  id-10.0.0.2  r1    -" in lines
-    assert lines[-3:] == ["In group dc1_nodes, not in the ring: n3",
-                          "In the ring and the inventory, not in group dc1_nodes: 10.0.0.2 = n2 (dc1, UN)",
-                          "In the ring, not in group dc1_nodes nor found elsewhere in the inventory: 10.0.0.9 (dc1, DN)"]
+    assert " UN  10.0.0.2  1.0 GiB  16      33.3%  id-10.0.0.2  r1    -" in lines
+    assert lines[-5:-2] == ["In group dc1_nodes, not in the ring: n3",
+                            "In the ring and the inventory, not in group dc1_nodes: 10.0.0.2 = n2 (dc1, UN)",
+                            "In the ring, not in group dc1_nodes nor found elsewhere in the inventory: 10.0.0.9 (dc1, DN)"]
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, group="group dc1_nodes", outside={})
-    assert lines[-1] == "The ring and group dc1_nodes match (1 node)"
+    assert lines[-3] == "The ring and group dc1_nodes match (1 node)"
 
 
 def test_other_hosts_matched_by_address_only(monkeypatch):
@@ -160,50 +180,60 @@ def test_other_hosts_matched_by_address_only(monkeypatch):
     monkeypatch.setattr(cassandra_ring.socket, "getaddrinfo", lambda name, port: pytest.fail("resolved " + name))
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("2001:db8:0:0:0:0:0:2")), {"n1": ["10.0.0.1"]},
                                   outside={"n2": ["n2.example", "2001:db8::2"]}, limited=True)
-    assert lines[-1] == "In the ring and the inventory, not in this run (--limit): 2001:db8:0:0:0:0:0:2 = n2 (dc1, UN)"
+    assert lines[-3] == "In the ring and the inventory, not in this run (--limit): 2001:db8:0:0:0:0:0:2 = n2 (dc1, UN)"
+    # the other hosts of the cluster under --limit: said, not a problem for the verdict
+    assert lines[-1] == "ALL 2 NODES UP"
 
 
 def test_hosts_marked_absent_still_in_the_ring():
     outside = {"n3": ["n3", "10.0.0.3"], "m1": ["m1", "10.0.0.9"]}
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.3", state="L"), node("10.0.0.9")),
                                   {"n1": ["10.0.0.1"]}, group="group prod", outside=outside, absent=["n3"])
-    assert lines[-2:] == [
+    assert lines[-1] == u"ALL 3 NODES UP \u2014 1 LEAVING: n3 \u2014 RING AND INVENTORY DIFFER"  # n3, absent
+    assert lines[-4:-2] == [
         "In the ring and the inventory, not in group prod: 10.0.0.9 = m1 (dc1, UN)",
         "Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): 10.0.0.3 = n3 (dc1, UL)"]
     # gone from the ring: the ring and the group match
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, group="group prod",
                                   outside=outside, absent=["n3"])
-    assert lines[-1] == "The ring and group prod match (1 node)"
+    assert lines[-3] == "The ring and group prod match (1 node)"
 
 
-def test_verdict_line_marks_and_rack_lines():
+def test_header_marks_rack_table_and_verdict():
     lines = cassandra_ring_report(
         ring(node("10.0.0.5", load="71.84 MiB", rack="rack_c"), node("10.0.0.3", load="94.39 MiB", rack="rack_a"),
              node("10.0.0.4", "D", load="94.41 MiB", rack="rack_b")),
         {"node1": ["10.0.0.3"], "node2": ["10.0.0.4"], "node3": ["10.0.0.5"]},
         group="group my_cluster", cluster="my_cluster", seen_from="node1")
     assert lines == [
-        "my_cluster  1 DOWN  (seen from node1, ring = inventory, 3 nodes)",
+        "my_cluster  (seen from node1, ring = inventory, 3 nodes)",
+        "",
         "Datacenter: dc1",
-        "  --  Address   Load       Tokens  Owns   Host ID      Rack    Inventory",
-        "  UN  10.0.0.5  71.84 MiB  16      33.3%  id-10.0.0.5  rack_c  node3",
-        "  UN  10.0.0.3  94.39 MiB  16      33.3%  id-10.0.0.3  rack_a  node1",
-        "  DN  10.0.0.4  94.41 MiB  16      33.3%  id-10.0.0.4  rack_b  node2      ← down",
-        "  rack_a: 1 node, 1 up, 0 down; load 94.4 MiB",
-        "  rack_b: 1 node, 0 up, 1 down; load 94.4 MiB",
-        "  rack_c: 1 node, 1 up, 0 down; load 71.8 MiB",
-        "  dc1: 3 nodes, 2 up, 1 down; load 260.6 MiB",
+        "",
+        " --  Address   Load       Tokens  Owns   Host ID      Rack    Inventory",
+        " UN  10.0.0.5  71.84 MiB  16      33.3%  id-10.0.0.5  rack_c  node3",
+        " UN  10.0.0.3  94.39 MiB  16      33.3%  id-10.0.0.3  rack_a  node1",
+        " DN  10.0.0.4  94.41 MiB  16      33.3%  id-10.0.0.4  rack_b  node2      ← down",
+        "",
+        "  rack_a   1 node    1 up           load  94.4 MiB",
+        "  rack_b   1 node    0 up, 1 down   load  94.4 MiB",
+        "  rack_c   1 node    1 up           load  71.8 MiB",
+        "  dc1      3 nodes   2 up, 1 down   load 260.6 MiB",
+        "",
+        "1 NODE DOWN: node2 (dc1/rack_b)",
     ]
 
 
-def test_verdict_ok_and_states_and_mismatch():
+def test_header_and_verdict_states_and_mismatch():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.2")), {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"]},
                                   cluster="prod")
-    assert lines[0] == "prod  OK  (ring = inventory, 2 nodes)"
+    assert lines[0] == "prod  (ring = inventory, 2 nodes)"
+    assert lines[-2:] == ["", "ALL 2 NODES UP"]
     lines = cassandra_ring_report(ring(node("10.0.0.1", state="J"), node("10.0.0.2", state="L"), node("10.0.0.9")),
                                   {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"], "n3": ["10.0.0.3"]}, cluster="prod",
                                   seen_from="n1", limited=True)
-    assert lines[0] == "prod  1 JOINING, 1 LEAVING  (seen from n1, ring and this run (--limit) differ, 3 nodes)"
-    assert lines[3].endswith("← joining") and lines[4].endswith("← leaving")
-    assert lines[-2:] == ["In this run (--limit), not in the ring: n3",
-                          "In the ring, not in this run (--limit): 10.0.0.9 (dc1, UN)"]
+    assert lines[0] == "prod  (seen from n1, ring and this run (--limit) differ, 3 nodes)"
+    assert lines[5].endswith("← joining") and lines[6].endswith("← leaving")
+    assert lines[-5:] == ["", "In this run (--limit), not in the ring: n3",
+                          "In the ring, not in this run (--limit): 10.0.0.9 (dc1, UN)", "",
+                          u"ALL 3 NODES UP \u2014 1 JOINING: n1 \u2014 1 LEAVING: n2 \u2014 RING AND INVENTORY DIFFER"]

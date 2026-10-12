@@ -1,0 +1,2 @@
+minor_changes:
+  - "status - easier to read output - blank lines between the blocks, the rack and datacenter summaries as an aligned table, and the verdict last, on its own (``ALL 5 NODES UP``, ``1 NODE DOWN: node1 (dc1/rack1)``, then the nodes joining, leaving or moving and a ring that differs from the inventory); under the ops callback the verdict is between heavy rules and coloured (green, yellow, red), and the rows of a node down (red) or joining, leaving or moving (yellow) are coloured."
