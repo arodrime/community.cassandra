@@ -62,6 +62,13 @@
     _cassandra_notes_deferred: true  # in the plan
     _tp_absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') }}"
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Not every host of the group is marked absent
       ansible.builtin.assert:
         that: query('community.cassandra.cassandra_nodes') | length > 0
@@ -142,6 +149,13 @@
       {{ cassandra_keyspaces | community.cassandra.cassandra_replication_problems(cassandra_topology_plan.nodes_left)
          if cassandra_topology_plan.in_ring and cassandra_keyspaces | default(none) is not none else [] }}
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Say what the run does
       ansible.builtin.debug:
         msg: "{{ 'ring' | community.cassandra.cassandra_phase }}"
@@ -453,6 +467,13 @@
   become: true
   any_errors_fatal: true  # no removal while a node still lists a leaving seed
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Say what the run does
       ansible.builtin.debug:
         msg: "{{ 'seeds' | community.cassandra.cassandra_phase }}"
@@ -481,6 +502,13 @@
   gather_facts: false
   become: true
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Say what is left to do
       ansible.builtin.debug:
         msg: >-

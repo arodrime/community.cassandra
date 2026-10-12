@@ -80,7 +80,7 @@ def test_ansible_host_can_be_left_out():
 
 
 def test_host_names_option_checked():
-    check = FIND["tasks"][0]
+    check = next(t for t in FIND["tasks"] if t["name"] == "Check the options")
     assert check["name"] == "Check the options"
     that = trust_as_template("{{ " + check["ansible.builtin.assert"]["that"] + " }}")
     assert Templar(loader=DataLoader(), variables={}).template(that) is True
@@ -98,7 +98,7 @@ def test_hostname_given_to_the_layout():
 
 def test_host_names_message_renders_unset():
     # 2.19+ templates fail_msg even when the assert passes
-    msg = trust_as_template(FIND["tasks"][0]["ansible.builtin.assert"]["fail_msg"])
+    msg = trust_as_template(next(t for t in FIND["tasks"] if t["name"] == "Check the options")["ansible.builtin.assert"]["fail_msg"])
     assert "hostname, fqdn or ip" in Templar(loader=DataLoader(), variables={}).template(msg)
 
 

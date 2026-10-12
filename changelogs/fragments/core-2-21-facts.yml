@@ -1,0 +1,2 @@
+bugfixes:
+  - "Playbooks - each play on the nodes first gives every node its own facts. On ansible-core 2.21 (and the 2.22 pre-releases), a ``run_once`` task before it gave the nodes one shared facts object, and the facts gathered next on one node (setup, package_facts, service_facts) went to all of them: ``import_cluster`` read one node twice and another not at all (ansible/ansible#87148, ansible/ansible#87415). Nodes that share their facts already (a play before the playbook, in the same run) stop the playbook at its first node play, saying so."

@@ -19,6 +19,13 @@
   vars:
     _new: "{{ cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(',') }}"  # as the template writes it
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Load the cassandra_config defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config

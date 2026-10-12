@@ -24,6 +24,13 @@
     cassandra_cleanup_mode: sequential
     cassandra_cleanup_jobs: 2
   tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
     - name: Check the mode
       ansible.builtin.assert:
         that: cassandra_cleanup_mode in ['sequential', 'rack', 'dc', 'all']

@@ -46,7 +46,7 @@ def test_prepared_all_at_once_before_the_starts_one_at_a_time():
     assert prepare["hosts"] == add["hosts"] == "{{ cassandra_target_nodes }}"
     assert "action_add_prepare.yml" in [included(t) for t in walk(prepare["tasks"])]
     assert add["serial"] == 1
-    assert add["tasks"][0]["vars"]["_cassandra_add_prepared"] is True
+    assert add["tasks"][1]["vars"]["_cassandra_add_prepared"] is True  # (after the facts task)
 
 
 def test_the_prepare_starts_nothing():

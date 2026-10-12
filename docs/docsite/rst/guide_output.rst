@@ -83,6 +83,13 @@ A verdict that also fails the run (scheduling) is a marked ``assert`` with ``qui
       vars:
         cassandra_output: true
 
+A play of your own on the nodes with a ``run_once`` task gathers facts first, or gives each node its own facts
+before that task, as the collection's playbooks do (first, a cacheable ``set_fact`` without ``run_once``, tagged
+``always``): on ansible-core 2.21 (and the 2.22 pre-releases), when a node's first facts come from a ``run_once``
+task, the nodes share them from then on, and the facts gathered after on one node go to all of them
+(ansible/ansible#87148). The first node play of each playbook stops when nodes share their facts already (a play
+before it in the same run). ``--start-at-task`` and ``--skip-tags always`` skip that first task.
+
 The ``community.cassandra.ops`` stdout callback prints:
 
 - the ``msg`` of a marked task that succeeds (each loop item, handlers too); a marked ``assert`` that passes
