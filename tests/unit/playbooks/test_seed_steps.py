@@ -300,7 +300,7 @@ def test_decommission_shows_applies_and_says_the_seeds_picked():
     note = task(DECO["tasks"], "Note whether the seeds are applied first")["ansible.builtin.set_fact"]
     assert note["_cassandra_decommission_seeds"] == "{{ _dn_seeds }}"
     step = play("decommission_node.yml", "Take the nodes to remove out of the seed lists")
-    applied = step["tasks"][0]["vars"]["cassandra_seeds"]
+    applied = task(step["tasks"], "Apply cassandra_seeds on the nodes that stay")["vars"]["cassandra_seeds"]
     assert render(applied, hostvars={"n6": {"_cassandra_decommission_seeds": {"new": "10.0.0.1,10.0.0.7"}}},
                   cassandra_target_nodes="n6", groups={"all": ["n6"]}) == "10.0.0.1,10.0.0.7"
     # the end: the cassandra_seeds line to put in the inventory
