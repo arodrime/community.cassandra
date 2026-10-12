@@ -34,7 +34,7 @@ import difflib
 import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    JVM_LISTS, JVM_UNLOCK, _jvm_name, shell_words)
+    JVM_LISTS, JVM_UNLOCK, shell_words)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
@@ -64,10 +64,35 @@ _CMS = "ignored since Java 14 (CMS removed)"
 OBSOLETE = dict([(name, (14, _CMS)) for name in (
     "UseConcMarkSweepGC", "CMSParallelRemarkEnabled", "CMSInitiatingOccupancyFraction", "UseCMSInitiatingOccupancyOnly",
     "CMSWaitDuration", "CMSParallelInitialMarkEnabled", "CMSEdenChunksRecordAlways", "CMSClassUnloadingEnabled")] + [
-    ("UseBiasedLocking", (15, "deprecated since Java 15 (biased locking off by default), ignored from Java 18")),
-    ("BiasedLockingStartupDelay", (15, "deprecated since Java 15, ignored from Java 18")),
+    ("UseBiasedLocking", (18, "ignored since Java 18 (biased locking removed)")),
+    ("BiasedLockingStartupDelay", (18, "ignored since Java 18 (biased locking removed)")),
     ("AggressiveOpts", (12, "ignored since Java 12")),
 ])
+
+
+# HotSpot options that add up when given twice (the others: the last one counts)
+LISTS = JVM_LISTS + ("DisableIntrinsic", "ControlIntrinsic", "AOTLibrary")
+# options read where they are (a file of options inserted there): never moved, and the arguments must stay as they are
+IN_PLACE = re.compile(r"^-XX:(VMOptionsFile|Flags)=|^@")
+
+
+def _jvm_name(option):
+    """The setting an option sets: -XX:[+-]Name -> Name, -Dx=1 -> -Dx, -Xmx4G -> -Xmx (and -XX:MaxHeapSize, the same
+    setting), -Xss (and -XX:ThreadStackSize); -Xms and -Xmn are not -XX:InitialHeapSize and -XX:NewSize (they also
+    set the minimum heap, the maximum young generation). None: an option without a name."""
+    m = re.match(r"^-XX:[+-]?(\w+)", option)
+    if m:
+        return {"MaxHeapSize": "-Xmx", "ThreadStackSize": "-Xss"}.get(m.group(1), m.group(1))
+    m = re.match(r"^(-D[^=]+)", option) or re.match(r"^(-X(?:mx|ms|mn|ss))", option)
+    return m.group(1) if m else None
+
+
+# options that set one same HotSpot flag under other names (-Xms: InitialHeapSize and MinHeapSize, -Xmn: NewSize and
+# MaxNewSize): the order of the last option of each name counts among them
+FAMILIES = {
+    "(initial heap)": ("-Xms", "InitialHeapSize", "MinHeapSize"),
+    "(young generation)": ("-Xmn", "NewSize", "MaxNewSize"),
+}
 
 
 class NotSame(Exception):
@@ -175,6 +200,8 @@ def env_differences(live, role):
     for op, i1, i2, j1, j2 in matcher.get_opcodes():
         if op == "equal":
             continue
+        if (i1 and GREP.match(role[i1 - 1]["text"])) or (j1 and GREP.match(live[j1 - 1]["text"])):
+            raise NotSame("cassandra-env.sh differs right after a grep (its $? read on the next line)")
         for line in role[i1:i2]:
             if line["depth"] or not SET.match(line["text"]):
                 raise NotSame("cassandra-env.sh differs from the role's otherwise than by JVM_OPTS lines and the heap")
@@ -263,6 +290,8 @@ def _kind(option):
     by output (-Xlog:<what>:<output>: a later one for an output reconfigures it, other outputs are apart)."""
     if re.match(r"^-[ed]s?a\b", option):
         return "(assertions)"
+    if re.match(r"^-(javaagent|agentlib|agentpath)[:=]", option):
+        return "(agents)"
     xlog = re.match(r"^-Xlog:[^:]+:([^:]+)", option)
     if xlog and not xlog.group(1).startswith("disable"):
         return "-Xlog:%s" % xlog.group(1)
@@ -271,8 +300,8 @@ def _kind(option):
 
 def effective(args):
     """What the JVM gets from its arguments (the program name and the main class out): {name: [option]} (the last
-    one, every one in order for the ones that add up), {kind: [options in order]} for the others, and the unlock
-    options before each -XX option that counts."""
+    one, every one in order for the ones that add up), {kind: [options in order]} for the others, the unlock
+    options before each -XX option that counts, and in each family of settings the order of their last options."""
     options, i = [], 0
     while i < len(args):
         option = args[i]
@@ -284,19 +313,20 @@ def effective(args):
             i += 1
         options.append(option)
         i += 1
-    named, unnamed, unlocked, seen = {}, {}, {}, set()
+    named, unnamed, unlocked, seen, last = {}, {}, {}, set(), {}
     # an -Xlog without an output (stdout) or -Xlog:disable acts on every output: their order with all -Xlog counts
     xlog_apart = all(_kind(o) != "-Xlog" for o in options if o.startswith("-Xlog"))
-    for option in options:
+    for position, option in enumerate(options):
         name = _jvm_name(option)
         if name is None:
             kind = _kind(option)
             unnamed.setdefault(kind if xlog_apart or not kind.startswith("-Xlog") else "-Xlog", []).append(option)
             continue
-        if name in JVM_LISTS:
+        if name in LISTS:
             named.setdefault(name, []).append(option)
         else:
             named[name] = [option]
+        last[name] = position
         if option.startswith("-XX:"):
             unlocked[name] = sorted(seen)
         else:
@@ -305,14 +335,16 @@ def effective(args):
             seen.add(name)
         elif option.startswith("-XX:-") and name in JVM_UNLOCK:
             seen.discard(name)
-    return {"named": named, "unnamed": unnamed, "unlocked": unlocked}
+    families = dict((family, [n for n in sorted(last, key=last.get) if n in members])
+                    for family, members in FAMILIES.items())
+    return {"named": named, "unnamed": unnamed, "unlocked": unlocked, "families": families}
 
 
 def differences(before, after):
     """The names (kinds) of the options the JVM gets otherwise, sorted."""
     a, b = effective(before), effective(after)
     names = set()
-    for key in ("named", "unnamed", "unlocked"):
+    for key in ("named", "unnamed", "unlocked", "families"):
         names |= set(k for k in set(a[key]) | set(b[key]) if a[key].get(k) != b[key].get(k))
     return sorted(names)
 
@@ -335,8 +367,19 @@ def _analyse(args, live, role, series, java, node_env):
         if not found:
             raise NotSame("a JVM_OPTS line of cassandra-env.sh is not in the running JVM's arguments (changed since it"
                           " started?)")
+        if len(found) > 1 and any(_jvm_name(o) is None or _jvm_name(o) in LISTS for o in line["options"]):
+            raise NotSame("a JVM_OPTS line of cassandra-env.sh has options found twice in the arguments, where the"
+                          " order counts")
+        if any(IN_PLACE.match(o) for o in line["options"]):
+            raise NotSame("a JVM_OPTS line of cassandra-env.sh reads a file of options where it is")
         line["at"] = found[0]
         at = line["at"] + len(line["options"])
+    # cassandra-env.sh read before bin/cassandra too (an init script exporting JVM_OPTS): its options before the
+    # options files' would change with it
+    before = args[1:start]
+    if any(o.startswith("-XX:CompileCommandFile=") for o in before) or any(
+            before[i:i + len(line["options"])] == line["options"] for line in added for i in range(len(before))):
+        raise NotSame("cassandra-env.sh's options are also before the options files' (read twice?)")
     # what it finds in JVM_OPTS: the options before it, its JVM_OPTS lines above the grep among them
     greps, index = {}, dict((line["n"], i) for i, line in enumerate(live_lines))
     for i, pattern in _greps(live_lines):
@@ -394,10 +437,15 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
     """Whether the role's files (role: {file: text}) give the JVM the same arguments as the node's (live) did
     (cmdline: its /proc/<pid>/cmdline; node_env, role_env: the environment the unit gives Cassandra now, and with
     the roles) -> (True, '') or (False, why)."""
+    for name in ("JVM_OPTS", "JVM_EXTRA_OPTS"):
+        if (node_env or {}).get(name) != (role_env or {}).get(name):
+            return False, "the unit would give Cassandra another %s" % name
     try:
         args, after = _launch(cmdline, live, role, series, java, node_env, role_env)
     except NotSame as exc:
         return False, str(exc)
+    if args != after and any(IN_PLACE.match(o) for o in args + after):
+        return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)"
     names = differences(args[1:], after[1:])
     if names:
         return False, "the JVM would get other values of %s" % ", ".join(names)
@@ -407,7 +455,7 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
 def _later(args, i, end):
     """The last option after args[i] (up to end) that sets the same name, None if none (or the option adds up)."""
     name = _jvm_name(args[i])
-    if name is None or name in JVM_LISTS:
+    if name is None or name in LISTS:
         return None
     later = [k for k in range(i + 1, end) if _jvm_name(args[k]) == name]
     return later[-1] if later else None
@@ -470,6 +518,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     extras_var = "cassandra_%s_extra_options" % dep.split("-")[0]
     # -Xms and -Xmx alike: the heap variables; else (or when that is not the same) every option in the extra options
     last = dict((_jvm_name(o), o) for o in keep if _jvm_name(o) in HEAP_OPTIONS)
+    last = dict((k, o) for k, o in last.items() if o.startswith(k) or k == "MaxDirectMemorySize")
     by_vars, to_vars = dict(heap_vars), []
     if "-Xmx" in last and "-Xms" in last and last["-Xmx"][4:] == last["-Xms"][4:]:
         by_vars["cassandra_heap_size"] = last["-Xmx"][4:]
@@ -484,7 +533,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
             and not by_vars.get("cassandra_heap_newsize") and not variables.get("cassandra_heap_newsize") \
             and not info["greps"].get("+UseG1GC"):
         # without G1, MAX_HEAP_SIZE needs HEAP_NEWSIZE: the young generation the JVM runs with
-        xmn = [a for a in args[1:end] if _jvm_name(a) == "-Xmn"]
+        xmn = [a for a in args[1:end] if a.startswith("-Xmn")]
         if xmn:
             by_vars["cassandra_heap_newsize"] = xmn[-1][4:]
     tries = [(by_vars, [o for o in keep if o not in to_vars])] if to_vars else []
@@ -543,21 +592,27 @@ def _moved(info, found, options, extras_var):
     for line in info["heap_lines"]:
         if line in info["dead"]:
             continue
-        var = [v for v in HEAP_VARS[SET.match(line["text"]).group(1)].values() if v in found]
-        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], out.mask(line["text"]), (
-            "%s: %s" % (var[0], out.mask(found[var[0]]))) if var else "left out, no effect"))
+        name, value = SET.match(line["text"]).groups()
+        var = [v for v in HEAP_VARS[name].values() if v in found]
+        went = "left out, no effect"
+        if var and found[var[0]] == value:
+            went = "%s: %s" % (var[0], out.mask(found[var[0]]))
+        elif var or info["live_heap"].get(name) != value:
+            went = "left out, set again later"
+        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], out.mask(line["text"]), went))
     for line in info["added"]:
         went = []
         for option in line["options"]:
             var = HEAP_OPTIONS.get(_jvm_name(option))
             where = extras_var if option in options else (
-                "%s: %s" % (var, found[var]) if var in found else "left out")
+                "%s: %s" % (var, out.mask(found[var])) if var in found else "left out")
             if where not in went:
                 went.append(where)
-        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], out.mask(" ".join(line["options"])), "; ".join(went)))
+        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], out.mask(" ".join(line["options"])) or "(no option)",
+                                               "; ".join(went) or "left out"))
     if found.get("cassandra_heap_newsize") and not any("cassandra_heap_newsize" in line for line in lines):
-        lines.append("cassandra_heap_newsize: %s (the young generation the JVM runs with: MAX_HEAP_SIZE needs it"
-                     " without G1)" % found["cassandra_heap_newsize"])
+        lines.append("the young generation the JVM runs with (MAX_HEAP_SIZE needs it without G1) -> "
+                     "cassandra_heap_newsize: %s" % out.mask(found["cassandra_heap_newsize"]))
     return lines
 
 
@@ -598,6 +653,9 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
         mine += [(o, "%s line %d" % (ENV, line["n"])) for line in added for o in line["options"]]
     lines += ["%s: %s: %s" % (where, out.mask(o), OBSOLETE[_jvm_name(o)][1]) for o, where in mine
               if _jvm_name(o) in OBSOLETE and major >= OBSOLETE[_jvm_name(o)][0]]
+    # Java 15 to 17: biased locking off by default, -XX:-UseBiasedLocking sets it as it is
+    lines += ["%s: %s: Java %d's default since Java 15 (deprecated, ignored from Java 18)" % (where, o, major)
+              for o, where in mine if o == "-XX:-UseBiasedLocking" and 15 <= major < 18]
     try:
         args = _arguments(cmdline)
         end = len(args) - 1 - args[::-1].index(MAIN_CLASS)
