@@ -99,7 +99,14 @@ The output goes by blocks, one blank line between two, never two in a row. A tas
 ``cassandra_output_gap: true`` (a literal, like ``cassandra_output``) starts a block: a blank line before the next
 message (on a message itself, before its own lines; on a question, a ``pause``, above it). The plans, the start of
 each progress wait, the recaps, the TO DO lists and the questions set it. A blank line also follows each answer,
-shown again (``pause`` clears it).
+shown again (``pause`` clears it), and each phase line. A rule has a blank line above and under it, so text never
+touches it.
+
+Inside a plan, a screen or a recap, an empty line ``""`` between two blocks is printed as a light rule; the
+paragraphs of one block (the intro's sentences, each fact, each warning, the items of a TO DO that span several
+lines) are separated by ``PARAGRAPH`` (``plugins/module_utils/cassandra_output.py``, a line with only a space),
+printed as a blank line. Under the default callback (``callback_result_format = yaml``) both show as blank lines in
+a text message.
 
 With ``-v`` or more, it is the default callback. Under the default callback, the same messages show as the
 ``msg`` of their task (as plain text with ``callback_result_format = yaml``).

@@ -3,6 +3,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen)
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH
 
 SPEC = {
     "operation": "stop_rack", "cluster": "Orders", "version": "4.1.5", "summary": "stop dc1 / rack2",
@@ -20,6 +21,8 @@ SPEC = {
 }
 SESSION = "this run is not inside tmux or screen: if the SSH session to this machine drops, the run stops."
 
+# "" between two blocks (a rule under the ops callback), PARAGRAPH (shown as ~ here) between two
+# paragraphs of a block: each warning one
 REAL = """\
 stop_rack on cluster 'Orders' (Cassandra 4.1.5): stop dc1 / rack2
 
@@ -35,12 +38,15 @@ Stops Cassandra on every node of the rack at once.
 They stay down until start_rack.
 
 WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails
+~
 WARNING - replicas: forced although:
   - orders loses 2 replicas
   - events loses 2 replicas
+~
 WARNING - data loss: everything is deleted.
+~
 WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,
-  the run stops."""
+  the run stops.""".replace("\n~\n", "\n" + PARAGRAPH + "\n")
 
 
 def test_layout():
@@ -67,6 +73,19 @@ def test_wrapping_keeps_words_and_paths_whole():
     assert all(len(line) <= 100 for line in lines if path not in line)
     assert lines[-1] == path
     assert lines[2].startswith("word word")
+
+
+def test_paragraphs_a_blank_line_apart():
+    # the intro, the sections and what comes after: each item a paragraph; a node's lines stay together
+    text = cassandra_screen({"operation": "op", "intro": ["one", "two"], "blocks": [{"title": "node1", "lines": ["a", "b"]}],
+                             "after": ["three", "", "four"]})
+    assert text.split("\n") == ["op", "", "one", PARAGRAPH, "two", "", "  node1", "    a", "    b", "", "three",
+                                PARAGRAPH, "four"]
+
+
+def test_a_lead_in_keeps_what_it_introduces():
+    text = cassandra_screen({"operation": "op", "intro": ["Check that:", {"pre": []}, {"pre": ["  - a", "  - b"]}, "next"]})
+    assert text.split("\n") == ["op", "", "Check that:", "  - a", "  - b", PARAGRAPH, "next"]
 
 
 def test_minimal_spec():

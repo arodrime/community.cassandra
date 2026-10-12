@@ -14,6 +14,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -65,12 +66,12 @@ def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
+        P, "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
         " inventory out: add your connection options, e.g. -u, when it sets them):",
         "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
-        "  3. then write them:",
+        P, "  3. then write them:",
         "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true",
-        "  4. commit it:",
+        P, "  4. commit it:",
         "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
 
 
@@ -93,10 +94,10 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook -i inventories community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        "  2. drop node3, node9 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.2, leaves the"
+        P, "  2. drop node3, node9 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.2, leaves the"
         " inventory out: add your connection options, e.g. -u, when it sets them):",
         "     ansible-playbook -i 10.0.0.2, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
-        "  3. then write them:",
+        P, "  3. then write them:",
         "     ansible-playbook -i 10.0.0.2, community.cassandra.import_cluster -e import_cluster_force=true"]
 
 

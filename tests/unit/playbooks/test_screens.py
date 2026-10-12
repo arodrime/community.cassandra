@@ -16,6 +16,8 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
+
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
 except ImportError:
@@ -132,11 +134,12 @@ nodes that stay (hours on a big node), then Cassandra is stopped and disabled on
     end state: out of the ring, Cassandra stopped and disabled, its data left on disk
 
 Afterwards dc1 keeps 6 nodes: node1, node2, node3, node4, node5, node6.
+~
 Then empty node7, node8 (reset_node) before reusing the hosts, and re-import the cluster to drop
 them from the inventory: the commands are printed at the end.
 
 WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,
-  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen."""
+  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen.""".replace("\n~\n", "\n" + P + "\n")
 
 
 def test_decommission_screen():
@@ -229,7 +232,7 @@ def test_replace_node_screen():
     assert reset.endswith(
         "WARNING - data loss: node9: Cassandra stopped, then 1 entries DELETED for good (no snapshot, no\n"
         "  backup), in:\n"
-        "    /var/lib/cassandra/data (data; from the inventory): 1 entries: system\n"
+        "    /var/lib/cassandra/data (data; from the inventory): 1 entries: system\n" + P + "\n"
         "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,\n"
         "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen."), reset
     reset = screen(reset_vars, t["vars"], play.get("vars"), check=True)
@@ -300,13 +303,13 @@ def test_stop_rack_screen():
                  "_cassandra_rack_down_here": [], "_cassandra_rack_down_elsewhere": ["10.0.1.5"]}
     forced = screen(dict(variables, cassandra_rack_force=True, _cassandra_rack_down_here=["10.0.0.9"]), t["vars"], play["vars"])
     assert "\n\nWARNING - replicas: cassandra_rack_force is true: the rack goes down although it takes more than one\n" \
-           "  replica of some data down:\n  - already down in dc1: 10.0.0.9\nWARNING - replication" in forced
+           "  replica of some data down:\n  - already down in dc1: 10.0.0.9\n" + P + "\nWARNING - replication" in forced
     text = screen(variables, t["vars"], play["vars"])
     assert text == (
         "stop_rack on cluster 'Orders': stop dc1 / rack2\n\n"
         "Stops Cassandra on every node of the rack at once; they stay down until start_rack.\n\n"
         "  node2  10.0.0.2  dc1 / rack2\n\n"
-        "WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails\n"
+        "WARNING - replication: orders has 2 replicas in dc1: with one down, (LOCAL_)QUORUM fails\n" + P + "\n"
         "WARNING - down nodes: down in another datacenter: 10.0.1.5")
 
 
@@ -379,10 +382,10 @@ def test_datacenter_screens():
     assert text == (
         "remove_datacenter: remove dc2\n\n"
         "First the replication changes, from node1:\n"
-        "  ALTER KEYSPACE \"orders\" WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3};\n"
+        "  ALTER KEYSPACE \"orders\" WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3};\n" + P + "\n"
         "Then these nodes are removed, one at a time:\n\n"
         "  node5  10.0.0.5  dc1 / rack1\n\n"
-        "WARNING - clients: clients still using dc2 will fail.\n"
+        "WARNING - clients: clients still using dc2 will fail.\n" + P + "\n"
         "(A real run would also warn about: session.)\n\n"
         "--check: nothing will be changed (the plan only, no question).")
     t, play = task("add_datacenter.yml", "Show the plan and confirm")
@@ -402,8 +405,8 @@ def test_move_node_and_create_cluster_screens():
     plan = {"steps": [{"name": "node2"}], "lines": ["dc1 ring"], "warnings": ["dc1: loads not all known"]}
     text = screen({"_plan": plan, "_cassandra_preflight": preflight(1), "cassandra_move_cleanup": "none"}, t["vars"])
     assert text.split("\n", 1)[0] == "move_node on cluster 'Orders': move node2"
-    assert text.split("\n\n")[2:] == ["dc1 ring\nCleanup afterwards (cassandra_move_cleanup=none).",
-                                      "WARNING - tokens: dc1: loads not all known\nWARNING - session: this run is not inside"
+    assert text.split("\n\n")[2:] == ["dc1 ring\n" + P + "\nCleanup afterwards (cassandra_move_cleanup=none).",
+                                      "WARNING - tokens: dc1: loads not all known\n" + P + "\nWARNING - session: this run is not inside"
                                       " tmux or screen: if the SSH session to this machine drops,\n  the run stops (the operation"
                                       " itself goes on, unwatched). Run it inside tmux or screen."]
     t, play = task("create_cluster.yml", "Show the ring and confirm the tokens")

@@ -31,10 +31,13 @@ description:
     themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
     C(REFUSED  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
-    C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)). A light one (C(-----)) for each blank line inside
+    C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)). A light one (C(-----)) for each empty line inside
     them, under a plan's first line and above a question, and one naming the node above the first progress
-    line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most.
-  - The output goes by blocks, one blank line between two, never two in a row. A blank line comes before the
+    line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a blank
+    line above and under each one. A line with only a space inside them separates two paragraphs of a block,
+    printed blank (not as a rule).
+  - The output goes by blocks, one blank line between two, never two in a row. A phase line (one line ending with
+    C(...)) is a block of its own. A blank line comes before the
     next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
     like C(cassandra_output); on an operator message itself, before its own lines; on a question, a
     M(ansible.builtin.pause), above it), and after the answer to a question (the answer stays shown).
@@ -81,13 +84,15 @@ def _result(result):
     return value if isinstance(value, dict) or hasattr(value, "get") else result._result
 
 
+# a phase line: what the run does now, a block of its own
+_PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
 # the colour of a message line by its start, the lines indented under it the same
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"WARNING\b"), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
     (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b"), "COLOR_OK"),
-    (re.compile(r"NOTE\b|\[\d+/\d+\] |\S.*[^,]\.\.\.$"), "COLOR_VERBOSE"),
+    (re.compile(r"NOTE\b|\[\d+/\d+\] |%s" % _PHASE.pattern), "COLOR_VERBOSE"),
 )
 
 
@@ -207,23 +212,27 @@ class CallbackModule(DefaultCallback):
         line = (("==== " if heavy else "---- ") + text + " ") if text else ""
         line += ("=" if heavy else "-") * max(4, width - len(line))
         if not self._ruled or (heavy and line != self._ruled):  # a heavy one wins over a light one
+            if not self._blank:
+                self._display.display("")  # text never touches a rule: a blank line above it, one under it
             self._display.display(line)
+            self._display.display("")
         self._ruled, self._blank = line, True
 
     def _print(self, msg, color=None):
         texts = lines(msg)
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
+        phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
         if headed or recap:
             self._rule(heavy=True)
         elif self._gap and step:
             self._rule(text=step.group(1))
-        elif self._gap:
+        elif self._gap or phase:
             self._line("")
         self._gap = False
         above = None
         for i, line in enumerate(texts):
-            if (headed or recap) and not line.strip():
+            if (headed or recap) and not line:  # a blank line between paragraphs (not "") stays blank
                 self._rule()  # the blocks inside
                 above = None
                 continue
@@ -233,6 +242,8 @@ class CallbackModule(DefaultCallback):
                 self._rule()  # under the plan's first line
         if recap:
             self._rule(heavy=True)
+        elif phase:
+            self._gap = True
 
     def _shown(self):
         """Something else printed a line: a blank line may follow."""

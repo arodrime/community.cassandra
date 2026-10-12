@@ -306,25 +306,38 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
              for line in on_screen(output.strip())]
     assert rules == [
         "Reset of node5:",
-        "====",  # a screen: a heavy rule above, a light one between its blocks
+        "",
+        "====",  # a screen: a heavy rule above, a light one between its blocks, a blank line each side of a rule
+        "",
         "decommission_node: remove node7",
+        "",
         "----",
+        "",
         "WARNING - replication: orders keeps 2 replicas",
+        "",  # a blank line between two warnings
         "WARNING - session: this run is not inside tmux or screen: if the SSH session to this machine drops,",
         "  the run stops (the operation itself goes on, unwatched). Run it inside tmux or screen.",
+        "",
         "----",  # above the question
+        "",
         "[community.cassandra.cassandra_service : Confirm the operation]",
         "Remove node7?",
         "Answer yes to go on, no to stop:",
         "yes",  # pause clears it once read: shown again
         "",
         "---- [1/1] node7 decommission ----",  # each node's progress: its own block
+        "",
         "[1/1] node7 decommission  LEAVING",
         "[1/1] node7 decommission  DECOMMISSIONED",
+        "",
         "====",  # the recap: heavy rules around it
+        "",
         "DONE  decommission_node",
+        "",
         "----",
+        "",
         "TO DO",
         "  1. delete node7 from the inventory",
+        "",
         "====",
     ], output

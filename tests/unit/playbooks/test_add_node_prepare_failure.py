@@ -14,6 +14,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -87,9 +88,9 @@ def test_two_nodes_one_repository_down(tmp_path):
         "TO DO",
         "  1. check the repositories of node5, node6 (a mirror down or unreachable from them):",
         '     ansible -i %s node5,node6 -b -m ansible.builtin.command -a "dnf -q makecache"' % inventory,
-        "  2. fix the repository or mirror on the node (or its proxy)",
-        "  3. or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage: false in the inventory:"
+        P, "  2. fix the repository or mirror on the node (or its proxy)",
+        P, "  3. or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage: false in the inventory:"
         " python3.11 only runs cqlsh on the new nodes (the reset check reads the keyspaces with cqlsh on a node of the"
         " cluster)",
-        "  4. run it again once fixed (nothing was started):",
+        P, "  4. run it again once fixed (nothing was started):",
         "     ansible-playbook -i %s community.cassandra.add_node -e cassandra_target_nodes=node5,node6" % inventory]

@@ -29,6 +29,11 @@ import shlex
 import time
 
 ARROW = u"←"  # the marker of a line that needs a look: "<- down", "<- differs"
+# A blank line between two paragraphs of one block: a single space (the
+# default callback's yaml format strips it). An empty line "" between two
+# blocks of a plan, a screen or a recap is a rule under the ops callback;
+# this one stays blank there.
+PARAGRAPH = " "
 GIB = 1024.0 ** 3
 # each unit from this many bytes of scale on
 _UNITS = (("TiB", 1024.0 ** 4, 1024.0 ** 4), ("GiB", GIB, GIB / 10), ("MiB", 1024.0 ** 2, 1024.0 ** 2 / 10),
@@ -424,6 +429,16 @@ def _table(rows, indent=""):
             for r in rows]
 
 
+def spaced(paragraphs):
+    """Paragraphs (each a list of lines) as one block, a PARAGRAPH line
+    between two, the empty ones left out."""
+    lines = []
+    for paragraph in paragraphs:
+        if paragraph:
+            lines += ([PARAGRAPH] if lines else []) + list(paragraph)
+    return lines
+
+
 def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=None, question="", version="",
          check=False, verdict="PLAN"):
     """The screen before a change, the same order everywhere:
@@ -447,12 +462,13 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
     block = []
     labelled = [f for f in facts or [] if isinstance(f, (list, tuple))]
     width = max([len(str(f[0])) + 1 for f in labelled] or [0])
-    for fact in facts or []:
+    for fact in facts or []:  # each fact a paragraph
         if isinstance(fact, (list, tuple)):
-            block.append(("%s  %s" % ((str(fact[0]) + ":").ljust(width), fact[1])).rstrip())
+            block.append([("%s  %s" % ((str(fact[0]) + ":").ljust(width), fact[1])).rstrip()])
         elif str(fact).strip():
-            block.append(str(fact))
-    warned = ["WARNING  %s" % w for w in warnings or [] if str(w).strip()]
+            block.append(str(fact).split("\n"))
+    block = spaced(block)
+    warned = spaced([["WARNING  %s" % w] for w in warnings or [] if str(w).strip()])
     asked = ["--check: nothing will be changed"] if check else [question] if question else []
     for section in (block, warned, asked):
         if section:
@@ -832,16 +848,15 @@ def command(playbook, inventory=None, hosts=None, limit=None, extra=None, option
 def todo(items, title="TO DO"):
     """items: a string, or {text, command} (the command on its own line under
     it) -> "TO DO", then "  1. text" numbered; nothing when no item."""
-    lines = []
-    number = 0
+    entries = []
     for item in items or []:
         if not item:
             continue
-        number += 1
         text, cmd = (item.get("text", ""), item.get("command", "")) if isinstance(item, dict) else (str(item), "")
-        lines.append("  %d. %s%s" % (number, text, ":" if cmd and text and not text.endswith(":") else ""))
-        if cmd:
-            lines.append("     " + cmd)
+        entry = ["  %d. %s%s" % (len(entries) + 1, text, ":" if cmd and text and not text.endswith(":") else "")]
+        entries.append(entry + (["     " + cmd] if cmd else []))
+    # an item on several lines: a blank line between two
+    lines = spaced(entries) if any(len(e) > 1 for e in entries) else [line for e in entries for line in e]
     return [title] + lines if lines else []
 
 
