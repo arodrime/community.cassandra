@@ -927,7 +927,12 @@ On the controller, the collection needs ``community.general`` and ``ansible.posi
 (``ansible-galaxy collection install *.tar.gz``) or from a private Galaxy/Automation Hub. The playbooks talk to the
 nodes only (JMX on 127.0.0.1, CQL on the nodes' addresses, SSH from the controller). The ``cassandra_keyspace``,
 ``cassandra_role`` and ``cassandra_table`` modules need the Python ``cassandra-driver`` on the nodes they run on;
-the roles and playbooks don't use them.
+the roles and playbooks don't use them. Install it for ``/usr/bin/python3``: where ``cassandra_install`` or
+``cassandra_medusa`` added a ``python3.11``, ansible-core's interpreter discovery may pick that one first (2.17 and
+later on RHEL 9, up to 2.19 on Ubuntu 26.04). ``cassandra_repository`` and ``cassandra_install`` then set
+``ansible_python_interpreter`` to ``/usr/bin/python3`` for the rest of the ansible-playbook run (unless an
+interpreter is set: ``ansible_python_interpreter``, even ``auto``, or ``interpreter_python`` /
+``ANSIBLE_PYTHON_INTERPRETER``); a playbook run without them needs it in the inventory.
 
 
 JMX access
