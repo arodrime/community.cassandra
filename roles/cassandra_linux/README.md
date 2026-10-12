@@ -32,8 +32,12 @@ Role Variables
   disk); the devices under them are tuned too, unless they also hold
   something else (see `cassandra_data_tune_shared_devices`). Defaults to `""`
   and `[]`. A
-  device set here that can't be tuned fails the role (not in containers,
+  device set here that can't be tuned (also one holding an OS filesystem, or a
+  partition of a disk holding one) fails the role (not in containers,
   where the disks are left alone).
+* `cassandra_data_lvchange_running`: run `lvchange --readahead`, which
+  reloads the volume, also under a running Cassandra. Default `false`: at a
+  run with Cassandra stopped (see below).
 * `cassandra_data_tune_shared_devices`: also tune the devices under the top
   one that hold something else, e.g. the disk of a volume group shared with
   the OS root. Default `false`: they are left alone, and the role says so.
@@ -76,25 +80,26 @@ Disk tuning
 
 The devices are found from the filesystems of `cassandra_data_dir`,
 `cassandra_data_file_directories` and `cassandra_commitlog_dir` (`findmnt`;
-a directory not created yet through its nearest parent, unless that is the
-root filesystem: then it is left alone until it exists, the next run of the
-role tunes it), then followed down
+a directory not created yet through its nearest parent), then followed down
 to the disks (`lsblk`): partitions, LVM volumes (also thin ones), md RAID,
-dm-crypt, multipath, NVMe, virtio, and any stack of them. Filesystems not on
-a block device (overlay, tmpfs, NFS, ZFS), btrfs (it reads ahead through a
-bdi of its own), loop devices, and a commitlog alone on the root filesystem
-(read only at a restart, whole) are left alone; the role says so. When
-something changes or is left alone, the role shows each filesystem and its
-devices, e.g.
+dm-crypt, multipath, NVMe, virtio, and any stack of them. Only filesystems of
+their own are tuned: one of the OS (`/`, `/usr`, `/var`, `/var/lib`,
+`/var/log`, `/var/tmp`, `/home`, `/opt`, `/tmp`, `/boot`, `/boot/efi`; also
+through a bind mount), or a partition of a disk holding one, is left alone,
+its volume and disks too, whatever Cassandra puts there (a data volume
+mounted at `/opt` or `/home` itself too: mount it further down, e.g.
+`/opt/cassandra/data`). So are filesystems not on a block device (overlay, tmpfs, NFS,
+ZFS), btrfs (it reads ahead through a bdi of its own) and loop devices. The
+role says so. When something changes or is left alone, the role shows each
+filesystem and its devices, e.g.
 `/var/lib/cassandra/data → vg_data-lv_cass (dm-2) → md0 → sdb1, sdc1 → sdb, sdc`.
 
 What read-ahead is used: the kernel reads ahead for a file (`read()`, and the
 read-around of `mmap` faults) with the read-ahead of the device its
 filesystem is mounted from: the top one (the LVM volume, the md array, the
 dm-crypt device), not the disks under it, which only get the I/O mapped down
-to them. That device is always tuned, whatever else the filesystem holds
-(the root filesystem too, when the data is on it; a partition has no
-read-ahead of its own: its disk is tuned). A file takes it when it is
+to them. That device is tuned, whatever else the filesystem holds (a
+partition has no read-ahead of its own: its disk is tuned). A file takes it when it is
 opened: the files Cassandra has open keep the one they had until it
 restarts.
 
@@ -104,7 +109,8 @@ cryptsetup take the device under them as a minimum when they activate a
 volume. A device under it that also holds something else (the disk of a
 volume group shared with the OS root or swap, a disk with other partitions
 in use) is left alone, unless `cassandra_data_tune_shared_devices` is
-`true`. md arrays get the same value too: md sets twice a stripe (megabytes
+`true` (never the disk of a partition next to one of the OS's). md arrays
+get the same value too: md sets twice a stripe (megabytes
 on RAID 0/5/10), for sequential reads Cassandra doesn't do.
 
 The IO scheduler is set to `none` on the devices that have one to choose and
@@ -119,11 +125,14 @@ Both are applied immediately through sysfs, and kept across reboots:
 * LVM volumes: in their metadata (`lvchange --readahead`, see
   `lvs -o +lv_read_ahead`). LVM sets it again whenever it activates or
   reloads the volume (at boot, after `lvextend`...), after the kernel, which
-  may set it back then. `lvchange` reloads the volume, a brief suspend of its
-  I/O, only when its read-ahead changes: once. When LVM refuses (a missing
-  PV, a shared VG), when the role does not apply settings live, or with
+  may set it back then. `lvchange` reloads the volume, its I/O suspended a
+  moment: it is done at a run with Cassandra stopped (a new node, before it
+  starts), once; with Cassandra running, the read-ahead is set live and the
+  udev rule keeps it meanwhile (`cassandra_data_lvchange_running: true` runs
+  `lvchange` all the same). When LVM refuses (a missing PV, a shared VG),
+  when the role does not apply settings live, or with
   `activation/readahead = "none"` in `lvm.conf`, the volume is kept by the
-  udev rule instead, and LVM may set it back when it activates the volume.
+  udev rule too, and LVM may set it back when it activates the volume.
 * the other devices: a udev rule
   (`/etc/udev/rules.d/64-cassandra-data-disk.rules`) on `add` and `change`
   events, matching each device by a stable id, never by its kernel name:

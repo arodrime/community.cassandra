@@ -19,6 +19,7 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import cassandra_disk_tuned_conflict
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disks import plan
 
 # Read in this order by sysctl --system (and systemd-sysctl): a file name
@@ -28,6 +29,8 @@ SYSCTL_DIRS = ["/etc/sysctl.d", "/run/sysctl.d", "/usr/local/lib/sysctl.d", "/us
 SYSCTL_CONF = "/etc/sysctl.conf"
 LIMITS_CONF = "/etc/security/limits.conf"
 LIMITS_OWN = "/etc/security/limits.d/cassandra.conf"  # cassandra_linux's
+# set on the node it was found on only (host_vars), not given to nodes added later
+NODE_ONLY = ("cassandra_data_disk_tuning",)
 # cassandra_linux's (61-: before it also tuned md arrays)
 OWN_UDEV_RULES = ("/etc/udev/rules.d/64-cassandra-data-disk.rules", "/etc/udev/rules.d/61-cassandra-data-disk.rules")
 # systemd unit setting -> cassandra_service variable
@@ -490,7 +493,60 @@ def _disks(recs, wanted):
     elif len(values) > 1:
         notes.append("NOT carried: the udev rules set several read-aheads (%s), set cassandra_data_readahead_kb"
                      % ", ".join(str(v) for v in sorted(values)))
+    # a node the role set up keeps its OS settings managed: so that running the
+    # roles after the import changes nothing, its devices are left as they are
+    # when cassandra_linux would change them now
+    if boolean(wanted.get("own", False), strict=False) and role_ra is not None:
+        changes = _disk_changes(recs, found["devices"], int(out.get("cassandra_data_readahead_kb", role_ra)))
+        if changes:
+            out["cassandra_data_disk_tuning"] = False
+            notes.append("cassandra_data_disk_tuning: false on this node (host_vars), its data devices left as they are"
+                         " (cassandra_linux would change %s): remove it to have them tuned" % "; ".join(changes))
     return lines, out, notes
+
+
+def _disk_changes(recs, devices, kb):
+    """What cassandra_linux would change on these devices now (import_cluster's
+    records): read-ahead, scheduler, the read-ahead of the LVM volumes, its
+    udev rule, the tuned profiles."""
+    out = []
+    for d in devices:
+        if d["ra"] and d["ra"] != str(kb):
+            out.append("read_ahead_kb %s of %s" % (d["ra"], d["label"]))
+        if d["rota"] == "0" and d["sched"] not in ("", "none"):
+            out.append("the scheduler %s of %s" % (d["sched"], d["label"]))
+    rules = set(rest.split("|", 1)[0] for kind, rest in recs if kind == "udev")
+    for old in OWN_UDEV_RULES[1:] + ("/etc/udev/rules.d/60-cassandra-data-disk.rules",):
+        if old in rules:
+            out.append("its rule of earlier versions, %s" % old)
+    if OWN_UDEV_RULES[0] not in rules and any(d["kind"] != "lvm" or d["lv_read_ahead"] != str(kb * 2) for d in devices):
+        out.append("its udev rule, %s" % OWN_UDEV_RULES[0])
+    # tuned: the records of its profiles, as cassandra_linux reads them
+    lines, profiles = [], {}
+    for kind, rest in recs:
+        if kind == "tuned":
+            active, state = _fields(rest, 2)
+            lines += ["state|" + state.strip(), "active|" + active, "version|tuned-adm 2.10"]
+    for kind, rest in recs:
+        if kind != "tuned_conf":
+            continue
+        path, line = _fields(rest, 2)
+        name = os.path.basename(os.path.dirname(path))
+        line = re.sub(r"\s+#.*$", "", line).strip()
+        m = re.match(r"^\[(.+)\]", line)
+        if m:
+            profiles[name] = m.group(1).strip()
+        elif "=" in line:
+            key, value = line.split("=", 1)
+            lines.append("opt|%s|%s|%s|%s" % (name, profiles.get(name, ""), key.strip(), value.strip()))
+    state = dict((d["kname"], {"rot": d["rota"], "choices": "2" if d["kind"] == "disk" else "1"}) for d in devices)
+    active = next((line[len("active|"):].split() for line in lines if line.startswith("active|")), [])
+    # the role switches tuned only when it runs, and not again once it runs its profile (whose
+    # udev ids the import can't match here)
+    if "state|active" in lines and active and active[-1] != "cassandra-disks" \
+            and cassandra_disk_tuned_conflict(lines, kb, devices, state, None, managed=False):
+        out.append("the profiles tuned runs (it adds cassandra-disks)")
+    return out
 
 
 TUNED_KEYS = {"vm": re.compile(r"^transparent_huge_?pages?$"), "disk": re.compile(r"^(readahead|elevator)$"),
@@ -575,7 +631,8 @@ def cassandra_os_import(text, wanted):
     ports, own, own_unit} (own: the node has cassandra_linux's own files).
     -> {'lines': [what was found, compared with the roles], 'vars': {the
     variables that give new nodes the same}, 'carried': [what they are, and
-    what is not carried and why]}."""
+    what is not carried and why], 'keep': {what the roles leave as found on
+    this node only (host_vars)}}."""
     recs = _records(text)
     wanted = wanted or {}
     lines, out, notes = [], {}, []
@@ -586,7 +643,8 @@ def cassandra_os_import(text, wanted):
         lines += part[0]
         out.update(part[1])
         notes += part[2]
-    return {"lines": lines, "vars": out, "carried": notes}
+    keep = dict((k, out.pop(k)) for k in list(out) if k in NODE_ONLY)
+    return {"lines": lines, "vars": out, "carried": notes, "keep": keep}
 
 
 class FilterModule(object):

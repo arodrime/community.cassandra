@@ -298,8 +298,48 @@ def test_old_rule_on_the_disk_under_a_volume_carried():
 def test_dir_not_created_yet():
     root = json.dumps({"filesystems": [{"maj:min": "253:0", "source": "/dev/x", "fstype": "xfs", "target": "/"}]})
     r = found(disk_records([], []) + "mnt|data|/data/x|#missing " + root + "\n" + "mnt|data|/data/y|#missing \n")
-    assert "disks: /data/x: not tuned, not created yet (it would be on the root filesystem)" in r["lines"]
+    assert "disks: /data/x: not tuned, not created yet (it would be on /, an OS filesystem)" in r["lines"]
     assert "disks: /data/y: not tuned, not found (not created yet?)" in r["lines"]
+
+
+def test_own_node_on_lvm_keeps_its_devices_as_found():
+    # set up by the role before it tuned LVM: running the roles after the import must change nothing
+    lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4096, True, "", "/data")
+    disks = disk_records([blk("sdb", "sdb", "8:16", "disk", 4096, True, "mq-deadline", children=[lv])],
+                         [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|auto"])
+    r = found(disks, own=True)
+    # on this node only (host_vars): nodes added later are tuned
+    assert r["keep"] == {"cassandra_data_disk_tuning": False} and "cassandra_data_disk_tuning" not in r["vars"]
+    assert any(n.startswith("cassandra_data_disk_tuning: false on this node (host_vars), its data devices left as they are"
+                            " (cassandra_linux would change read_ahead_kb 4096 of vg1-cassandra (dm-2)") for n in r["carried"])
+    assert found(disks)["keep"] == {}  # not the role's node: cassandra_linux_manage false
+    # tuned by this version already: nothing to keep
+    lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4, True, "", "/data")
+    done = disk_records([blk("sdb", "sdb", "8:16", "disk", 4, True, "mq-deadline", children=[lv])],
+                        [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|8"])
+    done += 'udev|/etc/udev/rules.d/64-cassandra-data-disk.rules|ENV{ID_SERIAL}=="x", ATTR{queue/read_ahead_kb}="4"\n'
+    assert found(done, own=True)["keep"] == {}
+    # ... but for tuned's profiles
+    tuned = ("tuned|virtual-guest|active\n"
+             "tuned_conf|/usr/lib/tuned/virtual-guest/tuned.conf|[main]\n"
+             "tuned_conf|/usr/lib/tuned/virtual-guest/tuned.conf|include=throughput-performance\n"
+             "tuned_conf|/usr/lib/tuned/throughput-performance/tuned.conf|[disk]\n"
+             "tuned_conf|/usr/lib/tuned/throughput-performance/tuned.conf|readahead=>4096\n")
+    r = found(done + tuned, own=True)
+    assert r["keep"] == {"cassandra_data_disk_tuning": False} and any("the profiles tuned runs" in n for n in r["carried"])
+    # tuned running the role's profile already, or not running: nothing the role would do
+    assert found(done + tuned.replace("virtual-guest|active", "virtual-guest cassandra-disks|active"), own=True)["keep"] == {}
+    assert found(done + tuned.replace("|active", "|inactive"), own=True)["keep"] == {}
+
+
+def test_own_node_with_the_old_rule_and_data_on_the_os_filesystem():
+    # the old role tuned the root disk; the role now removes its rule: kept as it is after an import
+    root = blk("vda", "vda", "252:0", "disk", 4, True, "mq-deadline", children=[
+        blk("vda1", "vda1", "252:1", "part", 4, True, "mq-deadline", "/")])
+    rule = 'udev|/etc/udev/rules.d/61-cassandra-data-disk.rules|ENV{ID_PATH}=="pci-0000:00:05.0", ATTR{queue/read_ahead_kb}="4"\n'
+    r = found(rule + disk_records([root], [("/var/lib/cassandra/data", "252:1", "/", "ext4")]), own=True)
+    assert r["keep"] == {"cassandra_data_disk_tuning": False}
+    assert any("its rule of earlier versions, /etc/udev/rules.d/61-cassandra-data-disk.rules" in n for n in r["carried"])
 
 
 def test_disk_not_a_block_device():

@@ -18,6 +18,11 @@ cassandra_data_block_devices: []
 # Also tune the devices under the top one that hold something else (a disk
 # of a volume group shared with the OS): they are left alone by default.
 cassandra_data_tune_shared_devices: false
+# lvchange --readahead (LVM keeping the read-ahead of a volume) reloads the
+# volume, its I/O suspended a moment: done at a run with Cassandra stopped
+# (a new node, before it starts), else the udev rule keeps it meanwhile.
+# true: also under a running Cassandra.
+cassandra_data_lvchange_running: false
 
 # Read-ahead in KB for those devices (queue/read_ahead_kb, not blockdev --setra
 # sectors). 4, the practical minimum: read-ahead brings nothing to

@@ -1503,6 +1503,7 @@
               keep: >-
                 {{ (_hv.import_cluster_keep | default({})
                     | combine(_env_log_dir, _java_link, {'cassandra_firewall_manage': false}, _hv.import_cluster_medusa.keep | default({}),
+                              _hv.import_cluster_os.keep | default({}),
                               {} if _repo.manage else {'cassandra_repository_manage': false}, _hand_kept, _installed)
                     if _read
                     else {'cassandra_repository_manage': false, 'cassandra_linux_manage': false,

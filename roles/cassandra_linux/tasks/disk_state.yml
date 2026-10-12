@@ -25,7 +25,7 @@
     _cassandra_disk_state: "{{ _state }}"
     _cassandra_disk_changes: >-
       {{ _cassandra_disk_devices | community.cassandra.cassandra_disk_changes(
-           _state, _cassandra_readahead_read_back, _cassandra_data_lvm_here) if _cassandra_data_live_here | bool else [] }}
+           _state, _cassandra_readahead_read_back, _cassandra_data_lvchange_now) if _cassandra_data_live_here | bool else [] }}
   vars:
     _state: "{{ cassandra_data_disk_before | community.cassandra.cassandra_disk_state }}"
 

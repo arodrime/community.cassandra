@@ -100,11 +100,34 @@
     - cassandra_data_disk_tuning | bool
     - _cassandra_disks_explicit | length == 0
 
+# lvchange reloads the volume (its I/O suspended a moment): not under a
+# running Cassandra, unless asked
+- name: Look for a running Cassandra
+  ansible.builtin.shell: |
+    systemctl is-active -q cassandra 2>/dev/null && echo running && exit 0
+    for c in /proc/[0-9]*/cmdline; do
+      tr '\0' '\n' < "$c" 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon && echo running && exit 0
+    done
+    exit 0
+  register: cassandra_data_running
+  changed_when: false
+  check_mode: false
+  when:
+    - cassandra_data_disk_tuning | bool
+    - "'\"lvm\"' in cassandra_data_lsblk.stdout | default('')"
+    - not cassandra_data_lvchange_running | bool
+
 - name: Decide whether LVM keeps the read-ahead of its volumes
   ansible.builtin.set_fact:
+    # LVM keeps it (lvchange done, or to do)
     _cassandra_data_lvm_here: >-
       {{ _cassandra_data_lvm_here | bool
          and cassandra_data_lvs.stdout_lines | default([]) | select('search', '^config.*readahead="?none') | list | length == 0 }}
+
+- name: Decide whether lvchange runs now (not under a running Cassandra)
+  ansible.builtin.set_fact:
+    _cassandra_data_lvchange_now: >-
+      {{ _cassandra_data_lvm_here | bool and 'running' not in cassandra_data_running.stdout | default('') }}
 
 # (set either way: a fact left by an earlier run of the role in the play would stay)
 - name: Pick the devices to tune
@@ -131,9 +154,11 @@
   ansible.builtin.fail:
     msg: >-
       {{ (_missing or _cassandra_disks_explicit) | join(', ') }} (from cassandra_data_block_device(s)) can't be tuned
-      ({{ cassandra_sysfs_block_root }}/<device>/queue not found, or a loop device or a part of an LVM volume): set the
+      ({{ cassandra_sysfs_block_root }}/<device>/queue not found, a loop device, a part of an LVM volume, or an OS
+      filesystem on it): set the
       devices the Cassandra filesystems are on (e.g. /dev/sdb, /dev/nvme0n1, /dev/vg/lv, /dev/md0), or leave the
-      variables empty to find them from the Cassandra directories.
+      variables empty to find them from the Cassandra directories.{{ (' ' ~ _cassandra_disk_plan.notes | join('; '))
+      if _cassandra_disk_plan.notes | default([]) else '' }}
   vars:
     _missing: >-
       {{ _cassandra_disk_plan.unusable | default([])
@@ -247,9 +272,8 @@
             mode: "0755"
 
         - name: The tuned profile
-          ansible.builtin.copy:
-            content: |
-              {{ _cassandra_disk_tuned.lines | join('\n') }}
+          ansible.builtin.template:
+            src: cassandra-disks.tuned.conf.j2
             dest: "{{ _cassandra_disk_tuned_dir }}/{{ _cassandra_disk_tuned.name }}/tuned.conf"
             mode: "0644"
           register: cassandra_data_tuned_file
@@ -341,9 +365,15 @@
         _lvm_failed: >-
           {{ cassandra_data_lvchange.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0)
              | map(attribute='item') | list }}
+        # by LVM: set now by lvchange (but where it failed), or before
         _by_lvm: >-
-          {{ _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | map(attribute='kname')
-             | reject('in', _lvm_failed | map(attribute='kname') | list) | list if _cassandra_data_lvm_here | bool else [] }}
+          {{ (_cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | map(attribute='kname')
+              | reject('in', _lvm_failed | map(attribute='kname') | list) | list
+              if _cassandra_data_lvchange_now | bool else
+              _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
+              | selectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string)
+              | map(attribute='kname') | list)
+             if _cassandra_data_lvm_here | bool else [] }}
 
     - name: Keep the settings across reboots (udev rule)
       ansible.builtin.template:
@@ -360,15 +390,18 @@
       register: cassandra_data_disk_udev_absent
       when: _cassandra_disk_udev_lines | length == 0
 
-    # what earlier versions wrote, replaced by the rule above (or by LVM)
-    - name: Remove the udev rules earlier versions of the role wrote
-      ansible.builtin.file:
-        path: "/etc/udev/rules.d/{{ item }}"
-        state: absent
-      loop:
-        - 60-cassandra-data-disk.rules
-        - 61-cassandra-data-disk.rules
-      register: cassandra_data_disk_udev_old
+
+# what earlier versions wrote, replaced by the rule above (or by LVM; or
+# nothing: they also tuned the OS's disks)
+- name: Remove the udev rules earlier versions of the role wrote
+  ansible.builtin.file:
+    path: "/etc/udev/rules.d/{{ item }}"
+    state: absent
+  loop:
+    - 60-cassandra-data-disk.rules
+    - 61-cassandra-data-disk.rules
+  register: cassandra_data_disk_udev_old
+  when: _cassandra_data_tuned_here | bool
 
 # What changes on the disks, for the summary below and the change report (not
 # a scheduler the device refused, nor the LVM read-ahead lvchange failed to set)
@@ -409,9 +442,14 @@
           ~ _cassandra_readahead_read_back ~ ' KB):'] + _cassandra_disk_plan.stacks + _cassandra_disk_plan.notes
          + (_cassandra_disk_lvm_failed | map(attribute='lv') | map('regex_replace', '^', 'WARNING: lvchange failed on ')
             | map('regex_replace', '$', ': its read-ahead is set now, and kept by the udev rule') | list)
-         + (['LVM volumes kept by the udev rule, not by LVM (not applied live, or lvm.conf activation/readahead'
-             ' "none"): LVM may set them back when it activates them'] if not _cassandra_data_lvm_here | bool
-             and _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | list | length > 0 else [])
+         + ((['LVM volumes kept by the udev rule for now: Cassandra runs, lvchange reloads the volume; LVM keeps them'
+              ' from a run with Cassandra stopped (or cassandra_data_lvchange_running: true)']
+             if _cassandra_data_lvm_here | bool and 'running' in cassandra_data_running.stdout | default('') else
+             ['LVM volumes kept by the udev rule, not by LVM (not applied live, or lvm.conf activation/readahead'
+              ' "none"): LVM may set them back when it activates them'])
+            if not _cassandra_data_lvchange_now | bool and _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
+               | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string) | list | length > 0
+            else [])
          + (['the files Cassandra has open keep the read-ahead they were opened with: restart it to read them with'
              ' the new one'] if _cassandra_disk_changes_seen | selectattr('what', 'in', ['ra', 'lvm']) | list | length > 0
              and not ansible_check_mode else [])
