@@ -474,10 +474,27 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
     assert render(hold, _cassandra_add_seeds=kept) is False
     # a datacenter left with no seed and none of its nodes up: never the inventory's list, held back
     assert render(hold, _cassandra_add_seeds=dict(kept, problems=["dc2 x"])) is True
-    say = task(step["tasks"], "Say the seeds kept for a datacenter")
-    text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=dict(kept, problems=["dc2 x"], warnings=[]),
-                  _cassandra_add_seeds_hold=True, _nl="\n")
-    assert text == ("WARNING  seed lists left as they are: dc2 x\nWARNING  seed lists left as they are: change_seeds"
-                    " applies cassandra_seeds, its change shown before its question")
+    # a plain add: nothing picked, no problem, applied
+    assert render(hold, _cassandra_add_seeds=dict(kept, auto=[], warnings=[])) is False
+    note = task(step["tasks"], "Note whether the seed list is held back")
+    assert note["when"] == work["when"] == "_new_seeds | length > 0 and not ansible_check_mode"
+    # the hold looked at only once the add applies (undefined otherwise)
+    assert apply["when"].index("not _cassandra_add_seeds_hold | bool") > apply["when"].index("not ansible_check_mode")
+    say = task(step["tasks"], "Say what happens to the seed lists")
+    assert say["when"].index("_cassandra_add_seeds_hold") > say["when"].index("not ansible_check_mode")
+    text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=change, _cassandra_add_seeds_hold=True,
+                  _new_seeds=["n2"], ansible_inventory_sources=["/work/inventories"], cassandra_hosts="prod", _nl="\n")
+    lines = text.splitlines()
+    # nothing said as applied: not the filter's "made its seed, live only"
+    assert lines[:2] == ["WARNING  seed lists left as they are: dc2 has no node in cassandra_seeds: change_seeds would pick"
+                         " its seeds",
+                         "WARNING  n2 not in the seed lists of the other nodes yet: run change_seeds, its plan (the seeds"
+                         " it picks too) comes before its question:"]
+    assert "made its seed" not in text
+    assert lines[2].startswith("     ansible-playbook ") and lines[2].endswith("community.cassandra.change_seeds -e cassandra_hosts=prod")
+    text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=dict(kept, problems=["dc2 x"], auto=[]),
+                  _cassandra_add_seeds_hold=True, _new_seeds=["n2"], ansible_inventory_sources=["/work/inventories"],
+                  cassandra_hosts="prod", _nl="\n")
+    assert text.splitlines()[0] == "WARNING  seed lists left as they are: dc2 x"
     assert render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=kept, _cassandra_add_seeds_hold=False,
                   _nl="\n") == "WARNING  " + kept["warnings"][0]

@@ -669,16 +669,26 @@
       run_once: true
       when: _new_seeds | length > 0 and not ansible_check_mode
 
-    - name: Say the seeds kept for a datacenter
+    - name: Say what happens to the seed lists
       ansible.builtin.debug:
         msg: >-
-          {{ ((_cassandra_add_seeds.problems + _cassandra_add_seeds.warnings)
-              | map('regex_replace', '^', 'seed lists left as they are: ') | list
-              + ['seed lists left as they are: change_seeds applies cassandra_seeds, its change shown before its question']
+          {{ ((((_cassandra_add_seeds.problems
+                + _cassandra_add_seeds.auto | map(attribute='dc') | map('regex_replace', '$',
+                    ' has no node in cassandra_seeds: change_seeds would pick its seeds') | list)
+               | map('regex_replace', '^', 'seed lists left as they are: ') | list
+               + [_new_seeds | join(', ') ~ ' not in the seed lists of the other nodes yet: run change_seeds, its plan'
+                  ~ ' (the seeds it picks too) comes before its question:'])
               if _cassandra_add_seeds_hold | bool else _cassandra_add_seeds.warnings)
-             | map('regex_replace', '^', 'WARNING  ') | join(_nl) }}
+             | map('regex_replace', '^', 'WARNING  ') | list
+             + (['     ' ~ 'change_seeds' | community.cassandra.cassandra_command(
+                    inventory=ansible_inventory_sources,
+                    default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                    hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))]
+                if _cassandra_add_seeds_hold | bool else [])) | join(_nl) }}
       run_once: true
-      when: _new_seeds | length > 0 and not ansible_check_mode and (_cassandra_add_seeds.warnings + _cassandra_add_seeds.problems) | length > 0
+      when: >-
+        _new_seeds | length > 0 and not ansible_check_mode
+        and (_cassandra_add_seeds_hold | bool or _cassandra_add_seeds.warnings | length > 0)
       vars:
         _nl: "\n"
         cassandra_output: true
