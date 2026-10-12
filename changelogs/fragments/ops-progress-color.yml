@@ -1,0 +1,2 @@
+minor_changes:
+  - "ops callback - the progress, phase and NOTE lines in cyan instead of Ansible's dark blue (hard to read on a dark background); new option ``progress_color`` (``[callback_cassandra_ops] progress_color`` in ``ansible.cfg``, or ``ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR``); ``COLOR_VERBOSE`` still applies when the configuration sets it."

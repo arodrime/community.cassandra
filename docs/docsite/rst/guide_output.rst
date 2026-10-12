@@ -30,9 +30,9 @@ Conventions
   non-zero size).
 - **Plans**: the header, the numbered steps (node and dc/rack), the facts, then the ``WARNING`` lines just above
   the question.
-- **Phases**: one line per major phase, ending with ``...`` (blue under the ops callback), e.g. ``Checking the
-  cluster (3 nodes; adding node4, node5)...`` (the members: not the nodes being added or reset, nor those marked
-  absent), ``Preparing the new nodes (node5, node6)...``, ``Starting node5 and waiting for its
+- **Phases**: one line per major phase, ending with ``...`` (cyan under the ops callback: its option
+  ``progress_color``), e.g. ``Checking the cluster (3 nodes; adding node4, node5)...`` (the members: not the nodes
+  being added or reset, nor those marked absent), ``Preparing the new nodes (node5, node6)...``, ``Starting node5 and waiting for its
   bootstrap...``, ``Decommissioning node3...``, ``Waiting for every node to be UN...``, ``Restarting node2...``. Their
   words are in one place (``PHASES`` in ``plugins/module_utils/cassandra_output.py``, filter
   ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only.
