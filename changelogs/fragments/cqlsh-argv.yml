@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_cqlsh - runs cqlsh with its arguments as they are, without shlex in between nor ``$VAR`` or ``~`` expanded in them, so a CQL password with a space, a quote, a backslash, ``$`` or ``~`` works (it failed the import_cluster login check and the operations' CQL reads); ``file`` and ``cqlshrc`` are of type ``path`` (``~`` and ``$VAR`` still expanded there); ``cqlsh_cmd`` gets ``$VAR`` expanded, not ``~``."
