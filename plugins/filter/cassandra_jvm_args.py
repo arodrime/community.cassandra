@@ -360,6 +360,11 @@ def _analyse(args, live, role, series, java, node_env):
         raise NotSame("cassandra-env.sh not read")
     live_lines, role_lines = env_lines(live[ENV]), env_lines(role[ENV])
     added, heap_lines = env_differences(live_lines, role_lines)
+    # options the unit gives cassandra-env.sh to add (JVM_EXTRA_OPTS, MX4J_*): a line moved to the options files
+    # would go before them, and an option of another spelling among them (-Xint and -Xmixed, -Xrs and
+    # -XX:-ReduceSignalUsage, -verbose:gc and -Xlog...) would win instead
+    if added and any((node_env or {}).get(name) for name in ("JVM_EXTRA_OPTS", "MX4J_ADDRESS", "MX4J_PORT")):
+        raise NotSame("the unit gives cassandra-env.sh options to add (JVM_EXTRA_OPTS, MX4J_*)")
     # the node's JVM_OPTS lines in the arguments, in the order cassandra-env.sh adds them
     at = after_files
     for line in added:
