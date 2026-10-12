@@ -30,6 +30,8 @@ with warnings.catch_warnings():  # already done under ansible-test
     init_plugin_loader()  # the collection's filters, under plain pytest too
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings  # noqa: E402 pylint: disable=wrong-import-position
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import (  # noqa: E402 pylint: disable=wrong-import-position
+    SCRIPT, compare as compare_files, identity_changes, preview)
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
@@ -50,20 +52,9 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-SCRIPT = task("Diff them against the live files")["ansible.builtin.command"]["argv"][2]
-
-
 def compare(tmp_path, name, live, new, storage_dir=""):
     """0: the same text (the preview's exit code), 1: differ, 2: the same settings (kept on a running node)."""
-    (tmp_path / "live").mkdir()
-    (tmp_path / "new").mkdir()
-    live_path, new_path = tmp_path / "live" / name, tmp_path / "new" / name
-    if live is not None:
-        live_path.write_text(live)
-    new_path.write_text(new)
-    rc = subprocess.run([sys.executable, "-c", SCRIPT, str(live_path), str(new_path)],
-                        stdout=subprocess.PIPE, check=False).returncode
-    assert rc in (0, 1)
+    rc = 1 if preview(tmp_path, name, live, new) else 0
     return 2 if rc == 1 and cassandra_same_settings(live, new, name, storage_dir) else rc
 
 
@@ -176,18 +167,14 @@ def b64(text):
 
 
 def kept(files, storage_dir="", given_dir=""):
-    """The files left as they are, from {name: (live, role's)} read by "Read the files that differ"."""
+    """The files left as they are, from {name: (live, role's)}: the live ones that differ read on the node
+    (None: not there, or not readable), the role's rendered on the controller."""
     templates = task("List the files to change and whether to ask first")["vars"]
-    results = []
-    for name, (live, new) in files.items():
-        if live is not None:
-            results.append({"item": [name, "/etc/c"], "content": b64(live)})
-        else:
-            results.append({"item": [name, "/etc/c"], "failed": True})
-        results.append({"item": [name, "/tmp/t"], "content": b64(new)})
-    variables = dict(cassandra_conf_dir="/etc/c", cassandra_config_tmp={"path": "/tmp/t"},
-                     cassandra_config_compared={"results": results}, cassandra_jvm={"storagedir": storage_dir},
-                     cassandra_config_storage_dir=given_dir, _keep=[])
+    variables = dict(cassandra_config_preview={"results": [{"cassandra_config_file": name} for name in files]},
+                     _cassandra_config_compared=dict((name, b64(live) if live is not None else None)
+                                                     for name, (live, new) in files.items()),
+                     _cassandra_config_new=dict((name, new) for name, (live, new) in files.items()),
+                     cassandra_jvm={"storagedir": storage_dir}, cassandra_config_storage_dir=given_dir, _keep=[])
     return render(templates["_kept"], **variables)
 
 
@@ -208,13 +195,23 @@ def test_dirs_left_to_the_storage_dir_are_kept():
 
 
 def test_compared_on_a_running_node_only():
-    read = task("Read the files that differ, to compare their settings")
-    assert "_cassandra_config_initialized | bool" in read["when"]
-    assert "not cassandra_config_normalize | bool" in read["when"]
+    read = task("Diff them against the live files")["ansible.builtin.command"]["stdin"]
+    assert "'compare': _cassandra_config_initialized | bool and not cassandra_config_normalize | bool" in read
+
+
+def test_the_live_files_that_differ_are_read_to_compare(tmp_path):
+    (tmp_path / "cassandra.yaml").write_text("x: 1  # c\n")
+    (tmp_path / "logback.xml").write_text("<a/>")
+    files = {"cassandra.yaml": HEADER + "x: 1\n", "logback.xml": "<a/>", "jvm-server.options": "-Xss256k\n"}
+    answer = compare_files(tmp_path, files, compare_live=True)
+    assert answer["live"] == {"cassandra.yaml": b64("x: 1  # c\n"), "jvm-server.options": None}  # not there: none
+    assert compare_files(tmp_path, files)["live"] == {}  # a node not initialized, or cassandra_config_normalize
 
 
 def test_preview_needs_no_pyyaml_on_the_node():
-    assert "yaml" not in SCRIPT
+    # only to check the new cassandra.yaml, when it is there
+    assert [line.strip() for line in SCRIPT.split("\n") if line.strip().startswith("import yaml")] == [
+        "import yaml  # noqa: F401 pylint: disable=unused-import", "import yaml"]
 
 
 TEMPLATES = os.path.join(TASKS, "..", "templates")
@@ -265,11 +262,6 @@ def test_jmx_files_with_the_same_users_are_kept(tmp_path, password, access, same
     assert jmx_same(tmp_path, password, access, users) == same
 
 
-IDENTITY = task("Compare the settings a joined node must keep")["ansible.builtin.command"]["argv"][2]
-with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
-    SNITCHES = json.dumps(yaml.safe_load(f)["_cassandra_config_snitches_without_rackdc"])
-
-
 @pytest.mark.parametrize("live, new, changes", [
     ("cluster_name: \"it's\"\nnum_tokens: 16\n", "cluster_name: 'it''s'\nnum_tokens: 16\n", []),
     ("cluster_name: 'X' # prod\nnum_tokens: 16 # fixed\n", "cluster_name: 'X'\nnum_tokens: 16\n", []),
@@ -280,15 +272,6 @@ with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
 ])
 def test_identity_compared_as_yaml_reads_it(tmp_path, live, new, changes):
     assert identity_changes(tmp_path, live, new) == changes
-
-
-def identity_changes(tmp_path, live, new, live_rackdc="dc=d\n", new_rackdc="dc=d\n"):
-    for name, text in (("live.yaml", live), ("new.yaml", new), ("live.p", live_rackdc), ("new.p", new_rackdc)):
-        (tmp_path / name).write_text(text)
-    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in ("live.yaml", "new.yaml", "live.p", "new.p")]
-                         + [SNITCHES],
-                         stdout=subprocess.PIPE, universal_newlines=True, check=True)
-    return json.loads(out.stdout)
 
 
 @pytest.mark.parametrize("live, new, changes", [
@@ -330,14 +313,8 @@ def test_rack_comment_is_part_of_the_value(tmp_path):
     ("cluster_name: Other\nnum_tokens: 16\n", ["cluster_name: Other -> Prod Cluster"]),
 ])
 def test_identity_of_a_joined_node_as_cassandra_reads_it(tmp_path, live, changes):
-    (tmp_path / "live.yaml").write_text(live)
-    (tmp_path / "new.yaml").write_text("cluster_name: 'Prod Cluster'\nnum_tokens: 16\n")
-    for name in ("live.properties", "new.properties"):
-        (tmp_path / name).write_text("dc=dc1\nrack=r1\n")
-    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in (
-        "live.yaml", "new.yaml", "live.properties", "new.properties")] + [SNITCHES], stdout=subprocess.PIPE,
-        check=True).stdout
-    assert json.loads(out) == changes
+    assert identity_changes(tmp_path, live, "cluster_name: 'Prod Cluster'\nnum_tokens: 16\n", "dc=dc1\nrack=r1\n",
+                            "dc=dc1\nrack=r1\n") == changes
 
 
 RACKDC_GUARD = task("Refuse rackdc lines other than the node's dc and rack under a snitch that reads them")

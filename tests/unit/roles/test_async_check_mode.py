@@ -3,7 +3,8 @@ __metaclass__ = type
 
 # Ansible refuses async under --check ("check mode and async cannot be used on
 # same task"): every async task of cassandra_service is skipped in check mode,
-# by its own when or its block's.
+# by its own when or its block's, or is a read run outside check mode
+# (check_mode: false, as the health checks' reads).
 
 import glob
 import os
@@ -36,7 +37,7 @@ def test_async_tasks_are_skipped_in_check_mode(name):
     with open(os.path.join(TASKS, name), encoding="utf-8") as f:
         items = yaml.safe_load(f)
     for task, cond in async_tasks(items):
-        assert "not ansible_check_mode" in cond, "%s: %s" % (name, task.get("name"))
+        assert "not ansible_check_mode" in cond or task.get("check_mode") is False, "%s: %s" % (name, task.get("name"))
 
 
 def test_decommission_is_one_of_them():

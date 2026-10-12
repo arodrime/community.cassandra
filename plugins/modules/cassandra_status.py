@@ -227,8 +227,8 @@ def nodetool_status_poll(module):
             cluster_status_list.append(cluster_status)
             for dc in cluster_status.keys():
                 down_running_total += len(cluster_status[dc]['down'])
-            if down_running_total == 0:
-                break  # No down nodes, we're good
+            if down_running_total == 0 or iterations == poll:
+                break  # No down nodes, we're good; or the last read: no wait after it
             else:
                 time.sleep(interval)  # Something is wrong, check again in a bit but
         else:

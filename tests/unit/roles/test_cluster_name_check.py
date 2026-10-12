@@ -186,7 +186,15 @@ def test_the_playbooks_check_it_before_any_change():
     first = play["tasks"][names.index("Read the cluster from a running node")]
     assert first["run_once"] is True
     assert [t["name"] for t in first["block"]] == ["Find a running node to read the cluster from",
-                                                   "Read the cluster description from a running node"]
+                                                   "Read the cluster description from a running node",
+                                                   "Start reading the ring from a running node"]
+    # the ring read meanwhile (collected by "Check the running cluster"), once the node answered
+    ring = first["block"][2]
+    assert ring["async"] > 0 and ring["poll"] == 0 and ring["delegate_to"] == "{{ _cassandra_preflight_from }}"
+    check_ring = play["tasks"][names.index("Check the running cluster")]["block"][0]
+    assert check_ring["ansible.builtin.async_status"]["jid"] == "{{ cassandra_preflight_status_job.ansible_job_id | default('') }}"
+    assert check_ring["register"] == "cassandra_preflight_status" and check_ring["delegate_to"] == "{{ _from }}"
+    assert check_ring["failed_when"] == "not cassandra_preflight_status.cluster_status"
     # waits for a node still starting only: a JMX login refused is told at once, by cluster_name.yml
     read = first["block"][1]
     assert read["failed_when"] is False

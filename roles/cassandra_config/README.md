@@ -24,9 +24,9 @@ with `become: true` (the collection's playbooks do).
 Changing an existing node
 -------------------------
 
-Every run first renders the files into a temp dir on the node and shows a
-`diff -u` against the live files (Ansible's own `--diff` skips files over
-100KB, like the 5.0 `cassandra.yaml`). Settings you did not set as
+Every run first renders the files on the controller and shows a `diff -u`
+against the live files, read on the node in one go (Ansible's own `--diff`
+skips files over 100KB, like the 5.0 `cassandra.yaml`). Settings you did not set as
 variables are rendered with their stock value, so a hand-edited node shows
 here what would be reverted.
 

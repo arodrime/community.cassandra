@@ -14,6 +14,7 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 
 @pytest.mark.parametrize("playbook, group", [("apply_config.yml", "cassandra_apply_config_True"),
+                                             ("apply_config.yml", "cassandra_apply_config_batch_True"),
                                              ("update_java.yml", "cassandra_update_java_True")])
 def test_the_step_plays_take_a_list_of_hosts(playbook, group):
     with open(os.path.join(TOP, "playbooks", playbook), encoding="utf-8") as f:

@@ -2,42 +2,21 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import base64
-import os
-import subprocess
-import sys
-
-import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
     ROLE_MASK, _line_settings, _patched, _yaml_settings, cassandra_apply_config_diff, cassandra_apply_config_outcomes,
     cassandra_apply_config_recap)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
 
 ARROW = u"←"
-ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
-
-
-def _walk(tasks):
-    for t in tasks or []:
-        yield t
-        for key in ("block", "rescue", "always"):
-            yield from _walk(t.get(key))
-
-
-with open(ROLE, encoding="utf-8") as f:
-    DIFF_SCRIPT = next(t for t in _walk(yaml.safe_load(f)) if t.get("name") == "Diff them against the live files")[
-        "ansible.builtin.command"]["argv"][2]
 
 
 def role_diff(tmp_path, live, new, name="cassandra.yaml"):
-    """The diff cassandra_config's preview gives (its own script: masked as the role masks)."""
-    a, b = tmp_path / ("live-" + name), tmp_path / ("new-" + name)
-    if live is not None:
-        a.write_bytes(live.encode())
-    b.write_bytes(new.encode())
-    run = subprocess.run([sys.executable, "-c", DIFF_SCRIPT, str(a), str(b)], stdout=subprocess.PIPE, check=False)
-    assert run.returncode in (0, 1)
-    return run.stdout.decode()
+    """The diff cassandra_config's preview gives (its own reader: masked as the role masks)."""
+    d = tmp_path / ("role-diff-%d" % len(list(tmp_path.iterdir())))
+    d.mkdir()
+    return preview(d, name, live, new)
 
 
 YAML = ("cluster_name: 'Demo'\n"

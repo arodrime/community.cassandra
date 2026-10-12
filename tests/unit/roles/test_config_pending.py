@@ -7,6 +7,7 @@ __metaclass__ = type
 # nothing; files written since its JVM started are only listed.
 
 import base64
+import hashlib
 import json
 import os
 import subprocess
@@ -67,19 +68,36 @@ def pending(snapshot, files, jvm=None):
     return render(NOTE["vars"]["_changed"], variables), render(NOTE["vars"]["_unknown"], variables)
 
 
-def test_only_the_files_cassandra_config_writes():
+def test_only_the_files_cassandra_config_writes(tmp_path):
     patterns = yaml.safe_load(open(os.path.join(ROLE, "defaults", "main.yml")))["_cassandra_service_config_files"]
-    find = task("config_pending.yml", "Checksum the config files")["ansible.builtin.find"]
-    assert find["patterns"] == "{{ _cassandra_service_config_files }}"
-    import fnmatch
+    read = task("config_pending.yml", "Checksum the config files and the unit, read the checksums recorded at the last start")
+    assert "+ _cassandra_service_config_files" in read["ansible.builtin.command"]["argv"]
     names = ["cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options",
              "jvm8-server.options", "cassandra-rackdc.properties", "logback.xml",
              "jmxremote.password", "jmxremote.access"]  # in the conf dir on Debian: read at start too
-    assert all(any(fnmatch.fnmatch(n, p) for p in patterns) for n in names)
     # a keystore touched, an editor backup, the topology file: not the config Cassandra restarts for
-    for other in [".keystore", "cassandra.yaml~", "cassandra.yaml.12345.2026-10-06@10:00:00~", "cassandra-topology.properties",
-                  "commitlog_archiving.properties", "logback-tools.xml"]:
-        assert not any(fnmatch.fnmatch(other, p) for p in patterns), other
+    others = [".keystore", "cassandra.yaml~", "cassandra.yaml.12345.2026-10-06@10:00:00~", "cassandra-topology.properties",
+              "commitlog_archiving.properties", "logback-tools.xml"]
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    for name in names + others:
+        (conf / name).write_text(name)
+    (conf / "jvm8-server.options").unlink()
+    (conf / "jvm8-server.options").symlink_to(conf / "logback.xml")  # a link: not a file of find's
+    (tmp_path / "unit").write_text("[Unit]\n")
+    (tmp_path / "record.json").write_text("{}")
+    argv = [sys.executable, "-c", read["vars"]["_read"], str(conf), str(tmp_path / "unit"), str(tmp_path / "record.json")] + patterns
+    found = json.loads(subprocess.run(argv, stdout=subprocess.PIPE, check=True).stdout)
+    assert sorted(os.path.basename(f["path"]) for f in found["files"]) == sorted(n for n in names if n != "jvm8-server.options")
+    for f in found["files"]:  # as the find module (get_checksum) gives them
+        assert f["checksum"] == hashlib.sha1(os.path.basename(f["path"]).encode()).hexdigest()
+        assert f["ctime"] == os.lstat(f["path"]).st_ctime
+    assert found["unit"]["exists"] is True and found["unit"]["path"] == str(tmp_path / "unit")
+    assert found["unit"]["checksum"] == hashlib.sha1(b"[Unit]\n").hexdigest()
+    assert base64.b64decode(found["record"]) == b"{}"
+    argv[4:6] = [str(tmp_path / "no-unit"), str(tmp_path / "no-record")]
+    found = json.loads(subprocess.run(argv, stdout=subprocess.PIPE, check=True).stdout)
+    assert found["unit"] == {"exists": False} and found["record"] is None
 
 
 @pytest.mark.parametrize("checksum, expected", [("y1", []), ("y2", ["cassandra.yaml"])])

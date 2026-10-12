@@ -320,6 +320,8 @@ APPLY_HOSTVARS = {
               "cassandra_apply_config_notes": ["WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1"]},
     "node4": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "start"},
     "node5": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write"}}
+# the group "Group the nodes to do" puts them in
+APPLY_GROUPS = {"cassandra_apply_config_True": [h for h, v in sorted(APPLY_HOSTVARS.items()) if v["cassandra_apply_config_todo"]]}
 APPLY_DIFF = ["cassandra.yaml", "  concurrent_reads: 32   node2   (inventory)",
               u"                    48   node1   \u2190 differs"]
 
@@ -327,12 +329,12 @@ APPLY_DIFF = ["cassandra.yaml", "  concurrent_reads: 32   node2   (inventory)",
 def test_apply_config_and_update_java_screens():
     t, play = task("apply_config.yml", "Show the plan and confirm the run")
     hosts = ["node1", "node2", "node3", "node4", "node5"]
-    text = screen({"ansible_play_hosts": hosts, "hostvars": APPLY_HOSTVARS, "cassandra_apply_config_diff": APPLY_DIFF},
-                  t["vars"], play["vars"], check=True)
+    text = screen({"ansible_play_hosts": hosts, "hostvars": APPLY_HOSTVARS, "groups": APPLY_GROUPS,
+                   "cassandra_apply_config_diff": APPLY_DIFF}, t["vars"], play["vars"], check=True)
     # --check: what each node would get; the settings that differ in the recap (no question)
     assert text == ("apply_config: would apply the config on node1, node3..node5\n\n"
-                    "A real run would write each node in turn, then restart or start it as said below; the settings\n"
-                    "that differ are in the recap at the end.\n\n"
+                    "A real run would write the nodes not restarted at once, then each other node in turn, restarting\n"
+                    "or starting it as said below; the settings that differ are in the recap at the end.\n\n"
                     "node1  would apply, then restart\n"
                     "node3  would apply, no restart (an owner, group or mode only: Cassandra reads them when it starts)\n"
                     "  WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1\n"
@@ -342,14 +344,15 @@ def test_apply_config_and_update_java_screens():
                     "node2  nothing to apply\n\n"
                     "--check: nothing will be changed (the plan only, no question).")
     # a real run: the settings that differ, then the outcomes, before its question
-    text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": APPLY_HOSTVARS, "cassandra_apply_config_diff": APPLY_DIFF},
-                  t["vars"], play["vars"])
+    text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": APPLY_HOSTVARS, "groups": APPLY_GROUPS,
+                   "cassandra_apply_config_diff": APPLY_DIFF}, t["vars"], play["vars"])
     assert text == ("apply_config: apply the config on node1\n\n"
-                    "Writes the config one node at a time, then restarts or starts it as said below.\n\n"
+                    "Writes the config on the nodes not restarted at once, then on the others one node at a time,\n"
+                    "restarting or starting each as said below.\n\n"
                     + "\n".join(APPLY_DIFF) + "\n\n"
                     "node1  would apply, then restart\nnode2  nothing to apply")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
-                                                           hostvars=APPLY_HOSTVARS))
+                                                           hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS))
     assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == \
         "Apply the config on node1, node3..node5?"
     t, play = task("update_java.yml", "Show the plan and confirm the run")
@@ -506,8 +509,10 @@ def test_apply_config_recap():
 def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
     # the live files that differ on some node, read on each node (no_log, also under --check), then the view
     import base64
+    listed, play = task("apply_config.yml", "List the files that differ on a node")
+    assert listed["run_once"] is True  # once for all
     read, play = task("apply_config.yml", "Read the live files that differ on a node")
-    assert read["no_log"] is True and read["check_mode"] is False and read["failed_when"] is False
+    assert read["no_log"] is True and read["check_mode"] is False
     side, play = task("apply_config.yml", "Put the settings that differ side by side")
     assert side["run_once"] is True
     diff = ("--- /etc/cassandra/conf/cassandra.yaml (live)\n+++ (new)\n@@ -1,2 +1,2 @@\n-concurrent_reads: 48\n"
@@ -519,8 +524,8 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
         {"cassandra_apply_config_file": "cassandra.yaml", "content": base64.b64encode(live[h].encode()).decode()}]}})
         for h in items)
     variables = {"ansible_play_hosts": list(items), "hostvars": hostvars}
-    templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(read.get("vars") or {})))
-    assert templar.template(trust_as_template(read["loop"])) == ["cassandra.yaml"]
+    templar = Templar(loader=DataLoader(), variables=variables)
+    assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
     templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(side["vars"])))
     lines = templar.template(trust_as_template(side["ansible.builtin.set_fact"]["cassandra_apply_config_diff"]))
     assert lines == ["cassandra.yaml",
