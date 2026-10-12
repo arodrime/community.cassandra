@@ -281,11 +281,14 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     out = []
     for item in ring:
         host = _match(item["address"], ordered, data, ordered)
+        error = None
         try:
             out.append(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {}, host_names,
                              _bool(set_ansible_host), _bool(keep_hand_edits)))
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
-            raise AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
+            error = AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
+        if error:
+            raise error  # (out of the except: not chained to its message, which may show a value)
     return out
 
 

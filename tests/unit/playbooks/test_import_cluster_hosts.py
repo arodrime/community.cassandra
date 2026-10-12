@@ -6,6 +6,7 @@ __metaclass__ = type
 # name, given by IP or found in the ring.
 
 import os
+import re
 
 import pytest
 import yaml
@@ -13,6 +14,9 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
+from ansible.errors import AnsibleFilterError
+
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_nodes
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -102,3 +106,18 @@ def test_other_connection_address_noted():
     assert "reached at node1.mgmt, its hosts file has its ring address 10.0.0.1" in notes[-1]
     notes = nodes("10.0.0.2")["notes"]
     assert not any("reached at" in n for n in notes)
+
+
+def test_a_node_that_fails_is_named_in_the_error():
+    # read, but what it read is broken (a repository verdict without its variables): its address and the
+    # error type only
+    hv = {"ansible_facts": {"hostname": "node1", "all_ipv4_addresses": ["10.0.0.1"]},
+          "import_cluster_config": {"vars": {}}, "import_cluster_series": "41x", "import_cluster_version": "4.1.5",
+          "import_cluster_running": {"rc": 0}, "import_cluster_java": "11", "import_cluster_conf_dir": "/etc/cassandra",
+          "import_cluster_repo": {"manage": True, "why": "hunter2"}}
+    ring = [{"address": "10.0.0.1", "dc": "dc1", "rack": "r1"}]
+    with pytest.raises(AnsibleFilterError) as err:
+        cassandra_import_nodes(ring, {"node1": hv}, ["node1"], [], {}, {})
+    msg = str(err.value)
+    assert re.match(r"cassandra_import_nodes: 10[.]0[.]0[.]1: \w+$", msg) and err.value.__context__ is None
+    assert cassandra_import_error({"failed": True, "msg": "templating failed: " + msg}) == msg

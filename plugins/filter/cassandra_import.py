@@ -736,7 +736,7 @@ def _undefined(exc):
 def _hidden(name, where):
     """The error being handled, without its message (it may quote a value)."""
     frames = [f for f in traceback.extract_tb(sys.exc_info()[2])
-              if os.path.basename(f[0]).startswith("cassandra_import.py")]
+              if re.match(r"cassandra_import(_check|_nodes)?[.]py$", os.path.basename(f[0]))]
     at = " in %s(), line %d" % (frames[-1][2], frames[-1][1]) if frames else ""
     return AnsibleFilterError("%s: %s%s%s (message hidden: it may show a value read from the nodes)"
                               % (name, (where + ", ") if where else "", sys.exc_info()[0].__name__, at))
@@ -2045,8 +2045,10 @@ def cassandra_config_ignored_vars(names, cassandra_version):
 # Parts of an error message that show no value: this filter's own messages,
 # and the name of a missing field or variable
 SAFE_REASONS = [
-    (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files): [^\n]*?\(message hidden: "
+    (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files|import_self_check_nodes): [^\n]*?"
+                r"\(message hidden: "
                 r"it may show a value read from the nodes\))"), r"\1"),
+    (re.compile(r"(cassandra_import_nodes: [0-9A-Fa-f.:]+: \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),

@@ -47,7 +47,8 @@ except ImportError:  # before, any string not marked unsafe
 
     def trust_as_template(value):
         return value
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import Unsafe, _mask, _secret, _values_hidden
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+    Unsafe, _hidden, _mask, _secret, _undefined, _values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
@@ -341,20 +342,39 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
     files_data = _read_files(files)
     out = {}
     for node in nodes:
-        if not boolean(node["read"], strict=False):
-            continue
-        hv = data[node["host"]]
-        slurped = list(hv["import_cluster_slurp"]["results"]) + list(hv.get("import_cluster_jmx_slurp", {}).get("results", []))
-        for key, item in (("import_cluster_unit_slurp", "cassandra.service"), ("import_cluster_medusa_ini", "medusa.ini")):
-            if "content" in (hv.get(key) or {}):
-                slurped.append(dict(hv[key], item=item))
-        live = dict((r["item"], b64decode(r["content"])) for r in slurped if "content" in r)
-        unit = hv.get("import_cluster_unit") or {}
-        out[names[node["address"]]] = _self_check(
-            files_data, hosts, names[node["address"]], hv["ansible_facts"], live, unit.get("env", {}),
-            hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
-            (hv.get("import_cluster_perms") or {}).get("files"))
+        error = None
+        try:
+            checked = _self_check_node(files_data, hosts, node, names, data)
+        except AnsibleFilterError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            if _undefined(exc):
+                raise
+            # which node, not the message (it may show a value read from it)
+            error = _hidden("cassandra_import_self_check_nodes", str(node.get("address")))
+        if error:
+            raise error  # (out of the except: not chained to the message)
+        if checked:
+            out[checked[0]] = checked[1]
     return out
+
+
+def _self_check_node(files_data, hosts, node, names, data):
+    """One node of cassandra_import_self_check_nodes: (its name, its check), None when not read."""
+    if not boolean(node["read"], strict=False):
+        return None
+    hv = data[node["host"]]
+    slurped = list(hv["import_cluster_slurp"]["results"]) + list(hv.get("import_cluster_jmx_slurp", {}).get("results", []))
+    for key, item in (("import_cluster_unit_slurp", "cassandra.service"), ("import_cluster_medusa_ini", "medusa.ini")):
+        if "content" in (hv.get(key) or {}):
+            slurped.append(dict(hv[key], item=item))
+    live = dict((r["item"], b64decode(r["content"])) for r in slurped if "content" in r)
+    unit = hv.get("import_cluster_unit") or {}
+    name = names[node["address"]]
+    return name, _self_check(
+        files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
+        hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
+        (hv.get("import_cluster_perms") or {}).get("files"))
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions):

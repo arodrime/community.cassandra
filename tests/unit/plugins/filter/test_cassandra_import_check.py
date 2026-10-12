@@ -4,10 +4,13 @@ __metaclass__ = type
 # The import self-check: the imported variables, rendered by the roles'
 # templates, must give each node's files back setting by setting.
 
+import base64
 import os
 import re
 
 import pytest
+
+from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IPV4,
@@ -15,6 +18,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     _mask,
     _render,
     cassandra_config_import,
+    cassandra_import_error,
     cassandra_inventory_files,
     cassandra_inventory_layout,
 )
@@ -22,6 +26,7 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _compare_files,
     cassandra_import_self_check,
+    cassandra_import_self_check_nodes,
     cassandra_inventory_host_vars,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import cassandra_permissions_import
@@ -849,3 +854,37 @@ def test_list_items_swapped_are_a_hand_edit():
     assert _same_settings("cassandra.yaml", ["    - /a", "    - /b"], ["    - /b", "    - /a"]) is None
     assert _same_settings("cassandra.yaml", ["    - /a", "# x", "    - /b"], ["# y", "    - /a", "    - /b"]) == [
         ("    - /a", "    - /a"), ("    - /b", "    - /b")]
+
+
+# --- the self-check of every node, as import_cluster calls it ------------------
+
+def slurped(files):
+    """What import_cluster's slurp of the node's files registers."""
+    return {"results": [{"item": k, "content": base64.b64encode(v.encode()).decode()} for k, v in files.items()]}
+
+
+def test_self_check_of_the_nodes_is_the_check_of_each_read_node():
+    files = seeded(stock("41x"))
+    inventory, layout = import_node(files, "41x")
+    hv = {"import_cluster_slurp": slurped(files), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
+          "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "11",
+          "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}}}
+    nodes = [{"address": "10.0.0.1", "host": "h1", "read": True},
+             {"address": "10.0.0.2", "host": "h2", "read": "false"}]  # not read: no check (no data either)
+    out = cassandra_import_self_check_nodes(inventory, layout["hosts"], nodes, {"10.0.0.1": "n1"}, {"h1": hv})
+    assert out == {"n1": cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {},
+                                                      "/var/lib/cassandra", "11", "", {})}
+
+
+def test_self_check_of_the_nodes_names_the_failing_node_not_the_value():
+    files = seeded(stock("41x"))
+    inventory, layout = import_node(files, "41x")
+    hv = {"import_cluster_slurp": {"results": [{"item": "cassandra.yaml", "content": "hunter2!"}]},  # not base64
+          "ansible_facts": FACTS, "import_cluster_conf_dir": ""}
+    nodes = [{"address": "10.0.0.1", "host": "h1", "read": True}]
+    with pytest.raises(AnsibleFilterError) as err:
+        cassandra_import_self_check_nodes(inventory, layout["hosts"], nodes, {"10.0.0.1": "n1"}, {"h1": hv})
+    msg = str(err.value)
+    assert "hunter2" not in msg and err.value.__context__ is None
+    assert msg.startswith("cassandra_import_self_check_nodes: 10.0.0.1, ")
+    assert cassandra_import_error({"failed": True, "msg": "templating failed: " + msg}) == msg
