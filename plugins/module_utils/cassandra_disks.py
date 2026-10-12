@@ -31,7 +31,8 @@ FIELDS = ("name", "type", "maj:min", "mountpoint", "fstype", "ra", "rota", "sche
 LVM_INTERNAL = re.compile(r"((?<!-)-(tpool|real|cow|vpool)$|_(tdata|tmeta|tierdata|rimage_\d+|rmeta_\d+|mimage_\d+|mlog|"
                           r"corig|cdata|cmeta|cpool|cvol|vdata|vorigin|wcorig|iorig|imeta|pmspare)(-|$))")
 # the filesystems of the OS: tuned too when Cassandra's data is on them (unless
-# tune_os is false), with a note; their LVM volumes are not reloaded (lvchange)
+# tune_os is false; not for the commitlog, hints or saved caches alone), with a
+# note; their LVM volumes are not reloaded (lvchange)
 OS_MOUNTS = ("/", "/usr", "/var", "/var/log", "/var/lib", "/var/tmp", "/home", "/opt", "/tmp", "/boot", "/boot/efi")
 # characters udev reads as a pattern in a match: no rule matches such an id
 UDEV_UNSAFE = set('*?[]|"\\')
@@ -281,10 +282,12 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
 
     # the filesystems of the Cassandra directories
     ours, tops, targets, all_dirs = set(), OrderedDict(), {}, []   # ours: their maj:min; tops: {kname: [dirs]}
-    mounted = set()
+    mounted, commitlog = set(), set()
     for r in loop_results(mounts):
         item = r.get("item") or {}
         d, tune = item.get("dir"), item.get("tune", True)
+        if item.get("commitlog"):
+            commitlog.add(d)
         all_dirs.append(d)
         fs, missing = _lookup(r)
         if not fs:
@@ -332,6 +335,8 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
     # (an OS filesystem is not: the disks under it stay the OS's)
     ours.update(nodes[k].get("maj:min") for k in tops if targets.get(k) not in OS_MOUNTS
                 and not [u for u in _other_uses(nodes, k, set()) if u in OS_MOUNTS])
+    # the devices the data is read through (a commitlog partition on such a disk reads with it too)
+    data_disks = set(disk_of(k) for k, dirs in tops.items() if not set(dirs) <= commitlog)
     for kname, dirs in tops.items():
         top = disk_of(kname)
         target = targets.get(kname)
@@ -342,8 +347,13 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
         os_disk = sorted(set(u for u in _other_uses(nodes, top, ours) if u in OS_MOUNTS)) if kname != top else []
         if (os_fs or os_disk) and not tune_os:
             notes.append("%s: not tuned, on %s, an OS filesystem (cassandra_data_tune_os_volumes: false)"
-                         % (", ".join(dirs), ", ".join(os_fs + os_disk)))
+                         % (", ".join(dirs), ", ".join(sorted(set(os_fs + os_disk)))))
             os_skipped.extend(dirs)
+            continue
+        if (os_fs or os_disk) and set(dirs) <= commitlog and top not in data_disks:
+            # read whole, sequentially: an OS filesystem is tuned for the data only
+            notes.append("%s: not tuned, the commitlog alone on %s, an OS filesystem"
+                         % (", ".join(dirs), ", ".join(sorted(set(os_fs + os_disk)))))
             continue
         if kind(top) in ("loop", "lvm-internal"):
             if explicit:

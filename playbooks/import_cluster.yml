@@ -1114,7 +1114,7 @@
           echo "mnt|$1|$2|$m$(findmnt -J -o MAJ:MIN,SOURCE,FSTYPE,TARGET --target "$e" 2>/dev/null | tr -d '\n')"
         }
         for d in "$@"; do
-          if [ "$d" = {{ _commitlog | quote }} ]; then mnt commitlog "$d"; else mnt data "$d"; fi
+          if [ "$d" = {{ _commitlog_only | quote }} ]; then mnt commitlog "$d"; else mnt data "$d"; fi
         done
         for d in {{ _others | map('quote') | join(' ') }}; do mnt other "$d"; done
         seen=
@@ -1173,6 +1173,8 @@
           {{ ([_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')])]
               | flatten) + [_commitlog] }}
         _commitlog: "{{ _cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog') }}"
+        # (not a data directory too)
+        _commitlog_only: "{{ '' if _commitlog in _dirs[:-1] else _commitlog }}"
         # Cassandra's too: a disk under them is not shared (not tuned themselves)
         _others: >-
           {{ [_cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),

@@ -34,7 +34,9 @@
   loop: >-
     {%- set out = [] -%}
     {%- for d in _tuned -%}
-    {%-   set _ = out.append({'dir': d, 'tune': true, 'commitlog': d == cassandra_commitlog_dir | default('')}) -%}
+    {%-   set _ = out.append({'dir': d, 'tune': true, 'commitlog': d == cassandra_commitlog_dir | default('')
+                                                          and d not in cassandra_data_file_directories | default([])
+                                                          and d != cassandra_data_dir | default('')}) -%}
     {%- endfor -%}
     {%- for d in _others if d not in _tuned -%}{%- set _ = out.append({'dir': d, 'tune': false}) -%}{%- endfor -%}
     {{ out }}

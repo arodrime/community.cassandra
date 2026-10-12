@@ -57,8 +57,9 @@ argument_specs:
         type: bool
         default: true
         description:
-          - Tune the filesystem Cassandra's directories are on also when it is one of the OS (C(/), C(/var)...),
-            with a note (its other files read with the same read-ahead). An LVM volume of the OS is kept by the
+          - Tune the filesystem Cassandra's data directories are on also when it is one of the OS (C(/), C(/var)...),
+            with a note (its other files read with the same read-ahead); not for the commitlog, hints or saved
+            caches alone. An LVM volume of the OS is kept by the
             udev rule, not reloaded with C(lvchange).
           - V(false) leaves it alone, with a note.
       cassandra_data_readahead_kb:

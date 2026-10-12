@@ -37,7 +37,7 @@ Role Variables
 * `cassandra_data_lvchange_running`: run `lvchange --readahead`, which
   reloads the volume, also under a running Cassandra. Default `false`: at a
   run with Cassandra stopped (see below).
-* `cassandra_data_tune_os_volumes`: tune the filesystem Cassandra's
+* `cassandra_data_tune_os_volumes`: tune the filesystem Cassandra's data
   directories are on also when it is one of the OS (see below). Default
   `true`; `false` leaves it alone, with a note.
 * `cassandra_data_tune_shared_devices`: also tune the devices under the top
@@ -93,11 +93,12 @@ to the disks (`lsblk`): partitions, LVM volumes (also thin ones), md RAID,
 dm-crypt, multipath, NVMe, virtio, and any stack of them. A filesystem of
 the OS (`/`, `/usr`, `/var`, `/var/lib`, `/var/log`, `/var/tmp`, `/home`,
 `/opt`, `/tmp`, `/boot`, `/boot/efi`, also through a bind mount, or a
-partition of a disk holding one) Cassandra's directories are on is tuned all
-the same, with a note: its other files read with the same read-ahead (at
-worst slower sequential reads for the OS, where Cassandra suffers from a
-large one); an LVM volume of the OS is kept by the udev rule, never reloaded
-with `lvchange`. `cassandra_data_tune_os_volumes: false` leaves it alone.
+partition of a disk holding one) Cassandra's data directories are on is
+tuned all the same, with a note (not for the commitlog, hints or saved
+caches alone, read whole, sequentially): its other files read with the same
+read-ahead (at worst slower sequential reads for the OS, where Cassandra
+suffers from a large one); an LVM volume of the OS is kept by the udev rule,
+never reloaded with `lvchange`. `cassandra_data_tune_os_volumes: false` leaves it alone.
 Filesystems not on a block device (overlay, tmpfs, NFS, ZFS), btrfs (it
 reads ahead through a bdi of its own) and loop devices are left alone. The
 role says so. When something changes or is left alone, the role shows each

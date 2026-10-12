@@ -350,6 +350,15 @@ def test_own_node_os_volume_needs_the_udev_rule():
     assert r["keep"] == {"cassandra_data_disk_tuning": False}
 
 
+def test_commitlog_alone_on_the_os_filesystem_is_no_change():
+    root = blk("vda", "vda", "252:0", "disk", 128, True, "mq-deadline", children=[
+        blk("vda1", "vda1", "252:1", "part", 128, True, "mq-deadline", "/")])
+    fs = json.dumps({"filesystems": [{"maj:min": "252:1", "source": "/dev/vda1", "fstype": "ext4", "target": "/"}]})
+    r = found(disk_records([root], []) + "mnt|commitlog|/var/lib/cassandra/commitlog|%s\n" % fs, own=True)
+    assert "disks: /var/lib/cassandra/commitlog: not tuned, the commitlog alone on /, an OS filesystem" in r["lines"]
+    assert r["keep"] == {}
+
+
 def test_disk_not_a_block_device():
     r = found(disk_records([], [("/var/lib/cassandra/data", "0:52", "/", "overlay")]))
     assert "disks: /var/lib/cassandra/data: not tuned, overlay on /dev/x, not a block device" in r["lines"]

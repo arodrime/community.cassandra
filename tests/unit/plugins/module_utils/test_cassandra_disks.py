@@ -185,12 +185,40 @@ def test_data_on_the_root_volume():
         DATA + ": not tuned, on /, an OS filesystem (cassandra_data_tune_os_volumes: false)"]
 
 
-def test_commitlog_on_the_root_volume_is_tuned():
+def test_commitlog_alone_on_the_root_volume_is_left_alone():
+    # an OS filesystem is tuned for the data only: the commitlog is read at a restart, whole
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto", "253|2|rhel|cassandra|auto"]
     p = plan(lsblk("shared_vg"), [mount("/data/c/data", "253:2", "/data"), mount(COMMITLOG, "253:0", "/", commitlog=True)],
              lvs=lvs)
-    assert tuned(p) == ["dm-2", "dm-0"]
-    assert p["stacks"][1].startswith(COMMITLOG + ARROW + "rhel-root (dm-0)")
+    assert tuned(p) == ["dm-2"]
+    assert COMMITLOG + ": not tuned, the commitlog alone on /, an OS filesystem" in p["notes"]
+    # with the data there too, the root volume is the data's: tuned
+    p = plan(lsblk("shared_vg"), [mount(DATA, "253:0", "/"), mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs)
+    assert tuned(p) == ["dm-0"]
+    # on a filesystem of its own, the commitlog is tuned
+    p = plan(lsblk("nvme"), [mount(COMMITLOG, "259:3", COMMITLOG, commitlog=True)])
+    assert tuned(p) == ["nvme1n1"]
+    # alone on a partition of the OS disk: not tuned
+    p = plan(lsblk("nvme"), [mount(COMMITLOG, "259:2", "/var/lib/cassandra", commitlog=True), mount(DATA, "259:3", "/d")])
+    assert tuned(p) == ["nvme1n1"]
+    assert COMMITLOG + ": not tuned, the commitlog alone on /boot, an OS filesystem" in p["notes"]
+    # bound from /: not tuned
+    p = plan(lsblk("shared_vg"), [mount(COMMITLOG, "253:0", "/cl", commitlog=True, source="/dev/mapper/rhel-root[/cl]")],
+             lvs=lvs)
+    assert p["devices"] == [] and "the commitlog alone on /" in p["notes"][0]
+    # cassandra_data_tune_os_volumes false: its own note
+    p = plan(lsblk("shared_vg"), [mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs, tune_os=False)
+    assert p["notes"] == [COMMITLOG + ": not tuned, on /, an OS filesystem (cassandra_data_tune_os_volumes: false)"]
+
+
+def test_commitlog_partition_on_the_disk_of_the_data():
+    # sda1 /, sda2 commitlog, sda3 data: the data tunes sda, the commitlog is read with it
+    parts = [{"name": "sda%d" % i, "kname": "sda%d" % i, "maj:min": "8:%d" % i, "type": "part", "mountpoint": m,
+              "fstype": "xfs"} for i, m in ((1, "/"), (2, "/cl"), (3, "/data"))]
+    text = json.dumps({"blockdevices": [{"name": "sda", "kname": "sda", "maj:min": "8:0", "type": "disk", "children": parts}]})
+    p = plan(text, [mount(COMMITLOG, "8:2", "/cl", commitlog=True), mount(DATA, "8:3", "/data")])
+    assert tuned(p) == ["sda"] and not [n for n in p["notes"] if "commitlog alone" in n]
+    assert [line for line in p["stacks"] if line.startswith(COMMITLOG)]
 
 
 def test_volume_lvs_does_not_list_is_tuned_as_a_dm_device():
@@ -240,11 +268,8 @@ def test_cassandra_dirs_on_the_os_filesystem_do_not_make_its_disks_cassandra_s()
     assert tuned(p) == ["dm-1"] and "sdb: not tuned, it also holds /" in p["notes"][0]
     # hints on /: not tuned (read whole), nor making the root disks Cassandra's
     assert tuned(plan(root_spanning_two_disks(), [data, mount(HINTS, "253:0", "/", tune=False)], lvs=lvs)) == ["dm-1"]
-    # the commitlog on /: the root volume tuned, not the disks it shares
-    p = plan(root_spanning_two_disks(), [data, mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs)
-    assert tuned(p) == ["dm-1", "dm-0"] and "sda" not in tuned(p) and "sdb" not in tuned(p)
-    assert tuned(plan(root_spanning_two_disks(), [data, mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs,
-                      tune_os=False)) == ["dm-1"]
+    # the commitlog alone on /: not tuned either
+    assert tuned(plan(root_spanning_two_disks(), [data, mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs)) == ["dm-1"]
 
 
 def test_a_dir_not_created_yet_on_the_os_filesystem():
