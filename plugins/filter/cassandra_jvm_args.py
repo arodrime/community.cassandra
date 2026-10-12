@@ -78,12 +78,13 @@ IN_PLACE = re.compile(r"^-XX:(VMOptionsFile|Flags)=|^@")
 
 def _jvm_name(option):
     """The setting an option sets: -XX:[+-]Name -> Name, -Dx=1 -> -Dx, -Xmx4G -> -Xmx (and -XX:MaxHeapSize, the same
-    setting), -Xss (and -XX:ThreadStackSize); -Xms and -Xmn are not -XX:InitialHeapSize and -XX:NewSize (they also
+    setting), -Xss (and -XX:ThreadStackSize), -Xloggc, -verbose:gc; -Xms and -Xmn are not -XX:InitialHeapSize and -XX:NewSize (they also
     set the minimum heap, the maximum young generation). None: an option without a name."""
     m = re.match(r"^-XX:[+-]?(\w+)", option)
     if m:
         return {"MaxHeapSize": "-Xmx", "ThreadStackSize": "-Xss"}.get(m.group(1), m.group(1))
-    m = re.match(r"^(-D[^=]+)", option) or re.match(r"^(-X(?:mx|ms|mn|ss))", option)
+    m = re.match(r"^(-D[^=]+)", option) or re.match(r"^(-X(?:mx|ms|mn|ss|loggc))", option) \
+        or re.match(r"^(-verbose:gc)$", option)
     return m.group(1) if m else None
 
 
@@ -92,6 +93,8 @@ def _jvm_name(option):
 FAMILIES = {
     "(initial heap)": ("-Xms", "InitialHeapSize", "MinHeapSize"),
     "(young generation)": ("-Xmn", "NewSize", "MaxNewSize"),
+    # Java 8: -Xloggc turns PrintGC and PrintGCTimeStamps on where it is, -verbose:gc PrintGC
+    "(GC log)": ("-Xloggc", "-verbose:gc", "PrintGC", "PrintGCTimeStamps"),
 }
 
 
@@ -455,8 +458,9 @@ def cassandra_jvm_args_same(cmdline, live, role, series, java, node_env=None, ro
     if args != after and any(IN_PLACE.match(o) for o in args + after):
         return False, "an option reads a file of options where it is (-XX:VMOptionsFile, -XX:Flags, @file)"
     names = differences(args[1:], after[1:])
-    if names:
-        return False, "the JVM would get other values of %s" % ", ".join(names)
+    if names:  # their names only (-Xlog:file=<path>: -Xlog, -Xmaxjitcodesize240M: -Xmaxjitcodesize)
+        names = sorted(set(re.sub(r"(?<=^-X[a-z])([a-z]*?)\d.*$", r"\1", re.split(r"[:=]", n)[0]) for n in names))
+        return False, "the JVM would get other values of %s" % ", ".join(out.mask(n) for n in names)
     return True, ""
 
 

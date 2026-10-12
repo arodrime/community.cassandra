@@ -46,9 +46,9 @@ JAVA = {"40x": "8", "41x": "11", "50x": "17"}
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash runs the files")
 
 
-def launch(files, java, where, environment=None):
-    """The arguments bin/cassandra gives the JVM with these files (pid and paths of the run made the same);
-    environment: the unit's."""
+def launch(files, java, where, environment=None, paths=False):
+    """The arguments bin/cassandra gives the JVM with these files (pid and paths of the run made the same, but with
+    paths true); environment: the unit's."""
     conf = os.path.join(str(where), "conf")
     if os.path.isdir(conf):
         shutil.rmtree(conf)
@@ -62,7 +62,8 @@ def launch(files, java, where, environment=None):
     run = subprocess.run(["bash", "launch.sh", conf, str(java)], cwd=str(where), stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, check=False, env=dict(os.environ, **(environment or {})))
     assert run.returncode == 0, run.stderr
-    return re.sub(r"pid\d+", "pid0", run.stdout.decode().replace(str(where), "/run"))
+    text = run.stdout.decode()
+    return text if paths else re.sub(r"pid\d+", "pid0", text.replace(str(where), "/run"))
 
 
 # the HotSpot flags an option sets (the -X forms set more than one)
@@ -86,6 +87,10 @@ def settings(cmdline):
             i += 1
         elif x:
             flags.update((flag, x.group(2)) for flag in X_FLAGS[x.group(1)])
+        elif arg.startswith("-Xloggc:"):  # Java 8: the GC log, PrintGC and PrintGCTimeStamps on
+            flags.update(Xloggc=arg[8:], PrintGC="+", PrintGCTimeStamps="+")
+        elif arg == "-verbose:gc":
+            flags["PrintGC"] = "+"
         elif xx and xx.group(2):
             flags[xx.group(2)] = xx.group(1)
         elif xx and xx.group(3) in ADD_UP:
@@ -224,6 +229,8 @@ NOT_MOVED = [  # bash would give the JVM other arguments from the role's files, 
     ("an agent: agents load in order", "50x", "17", before_extra('JVM_OPTS="$JVM_OPTS -agentpath:/opt/p/lib.so"')),
     ("-XX:MaxNewSize before cassandra-env.sh's -Xmn, which sets it too", "41x", "11",
      before_extra('JVM_OPTS="$JVM_OPTS -XX:MaxNewSize=2G"')),
+    ("-Xloggc turns these on where it is, Java 8", "40x", "8",
+     before_extra('JVM_OPTS="$JVM_OPTS -XX:-PrintGCTimeStamps -XX:-PrintGC"')),
     ("-XX:MaxNewSize, Java 8", "40x", "8", before_extra('JVM_OPTS="$JVM_OPTS -XX:MaxNewSize=1G -Dz=1"')),
     ("-XX:MinHeapSize before cassandra-env.sh's -Xms, which sets it too", "50x", "17",
      before_extra('JVM_OPTS="$JVM_OPTS -XX:MinHeapSize=1G"')),
@@ -486,3 +493,11 @@ def test_why_not_moved_said_in_the_report(tmp_path):
     lines = cassandra_import_report(layout, ["/p/c.yml", "/p"], "/p/r.txt", {}, False, cwd="/p", in_git=True)
     assert ("  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, the JVM would get other values of"
             " ConcGCThreads (all)") in lines
+
+
+def test_why_not_moved_holds_names_only(tmp_path):
+    # another log to cassandra-env.sh's own GC log file (its order with it counts)
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Xlog:safepoint=debug:file=%s/logs/gc.log -Dfoo=1"'
+                                           % tmp_path))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path, paths=True))[2]
+    assert node["moved"] == [] and "gc.log" not in node["not_moved"] and "-Xlog" in node["not_moved"]
