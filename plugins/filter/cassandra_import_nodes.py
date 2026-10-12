@@ -66,8 +66,8 @@ def _keep_files(value):
     names = [str(v).strip() for v in value if str(v).strip()]
     wrong = [n for n in names if not CONFIG_FILE.match(n)]
     if wrong:
-        raise AnsibleFilterError("import_cluster_keep_hand_edits: %s: not a config file of cassandra_config (true, false,"
-                                 " or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
+        raise AnsibleFilterError("import_cluster_keep_hand_edits: %s: not a config file of cassandra_config (true,"
+                                 " false, or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
                                  " cassandra-rackdc.properties, logback.xml)" % ", ".join(wrong))
     return names
 
@@ -293,6 +293,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "moved": config.get("moved", []),
         "rewritten": config.get("rewritten", []),
         "cleanup": config.get("cleanup", []),
+        "not_moved": config.get("not_moved", ""),
         "notes": notes,
     }
 

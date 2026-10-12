@@ -330,6 +330,13 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         lines += _rows(edits, names, full=full)
         if layout_only:
             lines.append("  + %d layout-only edits, no effect (details at the end)" % layout_only)
+        not_moved = {}  # why cassandra-env.sh's JVM_OPTS lines or heap stay hand edits: its nodes
+        for n in read:
+            if n.get("not_moved"):
+                not_moved.setdefault(n["not_moved"], []).append(n["name"])
+        for why, who in sorted(not_moved.items()):
+            lines.append("  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, %s (%s)" % (
+                why, "all" if sorted(who) == sorted(names) else out.full_list(who)))
         lines.append("")
 
     # MOVED: cassandra-env.sh's hand edits the variables now set, the JVM getting the same arguments
