@@ -97,7 +97,11 @@ KEEP = {
     "cassandra_service_unit_manage": "the systemd unit (or init script) Cassandra is started by",
     "cassandra_java_set_default": "the system java (/usr/bin/java), which is not the running one",
     "cassandra_firewall_manage": "the firewall (its package, service and ports), or none",
+    "cassandra_data_disk_tuning": ("the tuning of its data devices (read-ahead, scheduler, udev rule, tuned profiles),"
+                                   " which cassandra_linux would change"),
 }
+# KEEP switches of nodes the roles set up (not another way)
+SET_UP_BY_THE_ROLES = ("cassandra_data_disk_tuning",)
 IPV4 = "{{ ansible_facts['default_ipv4']['address'] }}"
 HOSTNAME = "{{ ansible_facts['hostname'] }}"
 MISSING = object()
@@ -1146,13 +1150,18 @@ def cassandra_inventory_layout(nodes, cluster_name):
     for n in read:
         report.append("== %s" % n["name"])
         report += ["  " + note for note in n.get("notes", [])]
-        if n.get("keep"):
+        other_way = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in SET_UP_BY_THE_ROLES)
+        if other_way:
             report.append("  Set up another way, LEFT AS IT IS by the roles on this node (host_vars/%s/main.yml;"
                           " remove a line to let the role take it over, after --check --diff; a host"
                           " rebuilt under this name must lose them):" % n["name"])
-            report += ["    %s (%s: false)" % (KEEP[k], k) for k in KEEP if k in n["keep"]]
+            report += ["    %s (%s: false)" % (KEEP[k], k) for k in KEEP if k in other_way]
             report += ["    %s: %s, as this node has it" % (k, _show(k, v))
-                       for k, v in sorted(n["keep"].items()) if k not in KEEP]
+                       for k, v in sorted(other_way.items()) if k not in KEEP]
+        for k in SET_UP_BY_THE_ROLES:
+            if k in (n.get("keep") or {}):
+                report.append("  Set up by the roles, LEFT AS IT IS on this node (host_vars/%s/main.yml): %s (%s: false;"
+                              " remove the line to have it done, after --check --diff)" % (n["name"], KEEP[k], k))
         kept, edits = _hand_edits_kept(n)
         if kept:
             report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
@@ -1563,7 +1572,8 @@ BLOCKS = [
         "cassandra_medusa_python", "cassandra_medusa_storage_provider", "cassandra_medusa_bucket_name",
         "cassandra_medusa_region", "cassandra_medusa_host", "cassandra_medusa_port", "cassandra_medusa_base_path",
         "cassandra_medusa_prefix", "cassandra_medusa_key_file", "cassandra_medusa_fqdn"]),
-    ("Left as it is on this node (set up another way)", list(KEEP) + [IMPORTED]),
+    ("Left as it is on this node (set up another way)", [k for k in KEEP if k not in SET_UP_BY_THE_ROLES] + [IMPORTED]),
+    ("Left as it is on this node (set up by the roles)", list(SET_UP_BY_THE_ROLES)),
     ("Other", []),
 ]
 BLOCK_PATTERNS = [

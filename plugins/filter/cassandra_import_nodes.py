@@ -219,6 +219,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
             node_vars.update(more)
         node_keep = dict(keep)
         for more in (env_log_dir, java_link, {"cassandra_firewall_manage": False}, _d(medusa.get("keep")),
+                     _d(_d(hv.get("import_cluster_os")).get("keep")),
                      {} if repo["manage"] else {"cassandra_repository_manage": False}, hand_kept, installed):
             node_keep.update(more)
     else:

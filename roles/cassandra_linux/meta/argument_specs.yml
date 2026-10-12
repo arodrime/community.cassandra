@@ -15,25 +15,65 @@ argument_specs:
         description:
           - V(false) leaves the OS settings of this node as they are, the role changes nothing on it.
             The C(import_cluster) playbook sets it on the nodes it finds set up by other means.
+      cassandra_data_disk_tuning:
+        type: bool
+        default: true
+        description:
+          - Tune the read-ahead and IO scheduler of the devices under the Cassandra
+            data and commitlog directories. V(false) leaves them as they are, and what an
+            earlier run set to keep them (udev rule, LVM metadata) too.
       cassandra_data_block_device:
         type: str
         default: ""
         description:
-          - Disk of the Cassandra data, for example C(/dev/sdb) or C(/dev/nvme0n1);
-            a partition is taken as its disk. A disk that can't be tuned fails the role.
-          - When empty (and O(cassandra_data_block_devices) too), the disks are found
-            from the data and commitlog directories. LVM, md RAID and dm-crypt are
-            not guessed.
+          - Device to tune instead of finding it from the directories, for example C(/dev/sdb),
+            C(/dev/nvme0n1), C(/dev/vg/lv) or C(/dev/md0); a partition is taken as its disk, the
+            devices under it are tuned too, unless shared (O(cassandra_data_tune_shared_devices)).
+            A device that can't be tuned fails the role.
+          - When empty (and O(cassandra_data_block_devices) too), the devices are found
+            from the data and commitlog directories, from the filesystem's device (LVM volume,
+            md array, dm-crypt, multipath) down to the disks.
+      cassandra_data_tune_shared_devices:
+        type: bool
+        default: false
+        description:
+          - Also tune the devices under the top one that hold something else, for example the
+            disk of a volume group shared with the OS. By default they are left alone and the
+            role says so.
       cassandra_data_dir:
         type: path
         description:
           - Cassandra's data directory, used to find the data disk. No default in this role.
+      cassandra_data_lvchange_running:
+        type: bool
+        default: false
+        description:
+          - C(lvchange --readahead), which keeps the read-ahead of an LVM volume in its metadata, reloads the
+            volume (its I/O suspended a moment). By default it is done at a run with Cassandra stopped (a new node,
+            before it starts); meanwhile the read-ahead is set live and kept by the udev rule.
+          - V(true) also runs it under a running Cassandra.
+      cassandra_data_tune_os_volumes:
+        type: bool
+        default: true
+        description:
+          - Tune the filesystem Cassandra's directories are on also when it is one of the OS (C(/), C(/var)...),
+            with a note (its other files read with the same read-ahead). An LVM volume of the OS is kept by the
+            udev rule, not reloaded with C(lvchange).
+          - V(false) leaves it alone, with a note.
       cassandra_data_readahead_kb:
         type: int
         default: 4
         description:
-          - Read-ahead of the data disks, in KB. The IO scheduler is set to none
-            on SSD/NVMe disks only.
+          - Read-ahead of the data devices, in KB. The IO scheduler is set to none
+            on SSD/NVMe only.
+      cassandra_linux_tuned_manage:
+        type: bool
+        default: true
+        description:
+          - When the profiles tuned runs would set the read-ahead or IO scheduler of the Cassandra devices
+            (RHEL's default profiles set C(readahead=>4096)), have it run the role's C(cassandra-disks)
+            profile after them, which leaves those devices alone (it applies the profiles again, live, once).
+          - V(false) only warns.
       cassandra_sysfs_block_root:
         type: path
         default: /sys/block
@@ -104,7 +144,7 @@ argument_specs:
         elements: str
         default: []
         description:
-          - Several disks to tune (JBOD data directories, a commitlog disk),
+          - Several devices to tune (JBOD data directories, a commitlog disk),
             e.g. C(["/dev/nvme0n1", "/dev/nvme1n1"]). Empty uses
-            O(cassandra_data_block_device), else auto-detects the disks of the
+            O(cassandra_data_block_device), else finds the devices of the
             data directories and of C(cassandra_commitlog_dir).

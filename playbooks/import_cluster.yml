@@ -1099,24 +1099,24 @@
             done
           done
         fi
-        # the disks of the data and commitlog dirs: read-ahead, scheduler, SSD or not
-        done_src=
+        # the devices of the data and commitlog dirs, from their filesystems down to the
+        # disks: read-ahead, scheduler, SSD or not, and the read-ahead of the LVM volumes
+        l=$(lsblk -J -o NAME,KNAME,MAJ:MIN,TYPE,MOUNTPOINT,FSTYPE,RA,ROTA,SCHED 2>/dev/null | tr -d '\n')
+        echo "lsblk|$l"
+        case $l in *'"lvm"'*)
+          lvs -a --noheadings --separator '|' --units s --nosuffix \
+            -o lv_kernel_major,lv_kernel_minor,vg_name,lv_name,lv_read_ahead 2>/dev/null | sed 's/^/lvs|/' ;;
+        esac
+        # (a directory not there yet: the filesystem of its nearest parent, as cassandra_linux does)
+        mnt() {
+          e=$2 m=; [ -e "$e" ] || m="#missing "
+          while [ ! -e "$e" ] && [ "$e" != / ]; do e=$(dirname "$e"); done
+          echo "mnt|$1|$2|$m$(findmnt -J -o MAJ:MIN,SOURCE,FSTYPE,TARGET --target "$e" 2>/dev/null | tr -d '\n')"
+        }
         for d in "$@"; do
-          src=$(findmnt -n -o SOURCE --target "$d" 2>/dev/null | sed 's/\[.*\]$//')
-          [ -n "$src" ] || { echo "disk|$d||||||"; continue; }
-          case " $done_src " in *" $src "*) continue ;; esac; done_src="$done_src $src"
-          l=$(lsblk -ndP -o TYPE,PKNAME,KNAME "$src" 2>/dev/null)
-          type=$(echo "$l" | sed -n 's/.*TYPE="\([^"]*\)".*/\1/p')
-          disk=
-          [ "$type" = part ] && disk=$(echo "$l" | sed -n 's/.*PKNAME="\([^"]*\)".*/\1/p')
-          [ "$type" = disk ] && disk=$(echo "$l" | sed -n 's/.*KNAME="\([^"]*\)".*/\1/p')
-          q=/sys/block/$disk/queue
-          if [ -n "$disk" ] && [ -d "$q" ]; then
-            echo "disk|$d|$src|$type|$disk|$(cat $q/read_ahead_kb)|$(sed -n 's/.*\[\(.*\)\].*/\1/p;t;p' $q/scheduler)|$(cat $q/rotational)"
-          else
-            echo "disk|$d|$src|$type|||||"
-          fi
+          if [ "$d" = {{ _commitlog | quote }} ]; then mnt commitlog "$d"; else mnt data "$d"; fi
         done
+        for d in {{ _others | map('quote') | join(' ') }}; do mnt other "$d"; done
         seen=
         for x in /etc/udev/rules.d/*.rules /run/udev/rules.d/*.rules /usr/lib/udev/rules.d/*.rules /lib/udev/rules.d/*.rules; do
           [ -L "$x" ] && [ "$(readlink -f "$x")" = /dev/null ] && { echo "masked|$x"; continue; }
@@ -1171,7 +1171,12 @@
         _cfg: "{{ import_cluster_config.vars }}"
         _dirs: >-
           {{ (_cfg.cassandra_data_file_directories | default([_cfg.cassandra_data_dir | default('/var/lib/cassandra/data')]))
-             + [_cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog')] }}
+             + [_commitlog] }}
+        _commitlog: "{{ _cfg.cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog') }}"
+        # Cassandra's too: a disk under them is not shared (not tuned themselves)
+        _others: >-
+          {{ [_cfg.cassandra_hints_dir | default('/var/lib/cassandra/hints'),
+              _cfg.cassandra_saved_caches_dir | default('/var/lib/cassandra/saved_caches')] }}
         _ports: >-
           {{ [_cfg.cassandra_storage_port | default(7000), _cfg.cassandra_native_transport_port | default(9042),
               _cfg.cassandra_jmx_port | default(cassandra_jmx_port | default(7199))] | map('string') | select('match', '^[0-9]+$') | list }}

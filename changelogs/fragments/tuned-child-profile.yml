@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_linux - when the profiles tuned runs would set the read-ahead of the Cassandra devices (RHEL's default ``throughput-performance`` and ``virtual-guest`` set ``readahead=>4096`` at each boot), or their IO scheduler on an SSD, the role has tuned run a profile of its own after them, ``cassandra-disks``, that leaves those devices alone (new ``cassandra_linux_tuned_manage``, ``false`` to only warn). This applies the profiles again, live, once.

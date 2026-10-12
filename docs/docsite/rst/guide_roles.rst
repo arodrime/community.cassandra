@@ -1057,7 +1057,9 @@ Cassandra is started by, the system java and the firewall. A part that has no ma
 ``cassandra_service_unit_manage``, with ``cassandra_imported_host: true`` for the last three), never in
 ``group_vars``: nodes added later get the roles' full setup. The same goes for a ``/usr/bin/java`` that is not the
 Java Cassandra runs (``cassandra_java_set_default: false``), the firewall (``cassandra_firewall_manage: false`` on
-every imported node) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
+every imported node), the tuning of the data devices of a node the roles set up when ``cassandra_linux`` would change
+it now (read-ahead, scheduler, its udev rule, tuned's profiles: its earlier versions did not tune LVM, md or dm-crypt,
+and named their udev rule otherwise; ``cassandra_data_disk_tuning: false``) and the packages a node lacks: ``cassandra-tools``, jemalloc, dsbulk and, on Debian and Ubuntu,
 the hold (``cassandra_install_tools``, ``cassandra_install_jemalloc``, ``cassandra_dsbulk_install``,
 ``cassandra_package_hold``); a dsbulk the role's way keeps its ``cassandra_dsbulk_version``. Remove a line to let the role take that part over,
 after a ``--check --diff``; a host rebuilt under the same name must lose them and ``cassandra_imported_host``

@@ -170,6 +170,11 @@ def test_medusa_kept_on_the_node():
                                 "cassandra_dsbulk_install": False}
 
 
+def test_disk_tuning_kept_on_the_node():
+    hv = {"import_cluster_keep": {}, "import_cluster_os": {"keep": {"cassandra_data_disk_tuning": False}}}
+    assert node(hv)["keep"]["cassandra_data_disk_tuning"] is False
+
+
 def test_os_baseline_is_the_roles_defaults_not_the_inventory():
     """The OS tuning is compared with the roles' own defaults (read from their files): a value an
     inventory already sets must still be carried when it is not the default."""

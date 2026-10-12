@@ -1755,3 +1755,19 @@ def test_layout_over_settles_without_the_users_files_it_writes():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_files
     written = set(f["path"] for f in cassandra_inventory_files(layout))
     assert "group_vars/all/x.yml" in layout["user_paths"] and not written & set(layout["user_paths"])
+
+
+def test_layout_disk_tuning_kept_on_its_node_only():
+    keep = {"cassandra_data_disk_tuning": False}
+    nodes = [dict(node(n, "dc1", "r1", cassandra_num_tokens=4), keep=keep) for n in ("n1", "n2")]
+    out = cassandra_inventory_layout(nodes, "c")
+    # host_vars only, even when every node has it: nodes added later get the role's tuning
+    assert out["host_vars"]["n1"]["cassandra_data_disk_tuning"] is False
+    assert "cassandra_data_disk_tuning" not in out["group_vars"].get("c", {})
+    assert "Set up another way" not in out["report"]
+    assert ("  Set up by the roles, LEFT AS IT IS on this node (host_vars/n1/main.yml): the tuning of its data devices"
+            in out["report"])
+    files = dict((f["path"], f["content"]) for f in cassandra_inventory_files(out))
+    text = next(v for k, v in files.items() if k.endswith("host_vars/n1/main.yml"))
+    assert "# Left as it is on this node (set up by the roles)\ncassandra_data_disk_tuning: false" in text
+    assert "set up another way" not in text

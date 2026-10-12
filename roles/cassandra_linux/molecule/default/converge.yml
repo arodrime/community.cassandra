@@ -101,7 +101,7 @@
 
     - name: Read the udev rule of the SAN LUN
       ansible.builtin.slurp:
-        src: /etc/udev/rules.d/61-cassandra-data-disk.rules
+        src: /etc/udev/rules.d/64-cassandra-data-disk.rules
       register: _san_rule
       when: not ansible_check_mode
       tags: molecule-idempotence-notest
@@ -140,7 +140,7 @@
 
         - name: Look for the udev rule
           ansible.builtin.stat:
-            path: /etc/udev/rules.d/61-cassandra-data-disk.rules
+            path: /etc/udev/rules.d/64-cassandra-data-disk.rules
           register: _check_rule
 
         - name: Check nothing was written
