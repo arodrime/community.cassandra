@@ -1030,7 +1030,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             changed[key] = value
     where[0] = "comparing the files with the role's"
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
-                                          moved["rewritten"])
+                                          moved["shown"])
     hand += jmx_note
     out = dict((k, v) for k, v in changed.items() if k not in RACKDC)
     if "cassandra-rackdc.properties" in live_files and not _snitch_reads_rackdc(found.get("cassandra_endpoint_snitch")):
@@ -1063,7 +1063,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
 def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
     """cassandra-env.sh's hand edits moved to variables when the JVM gets the same arguments from the role's files
     (cassandra_jvm_args), and the options it does not use -> {vars, moved, rewritten: the JVM's files the role
-    rewrites then (also left out of the hand edits: shown the same), cleanup}."""
+    rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits)}."""
     dep = jvm_args.options_file(series, jvm.get("java"))
     jvm_files = [f for f in (jvm_args.ENV, jvm_args.COMMON, dep) if f in files]
 
@@ -1087,7 +1087,8 @@ def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
     cleanup += [line for line in jvm_args.cassandra_jvm_args_cleanup(
         live_files, others, role, series, jvm.get("java"), cmdline, moved=bool(adopted))
         if ": ".join(line.split(": ", 2)[:2]) not in said]
-    return {"vars": found, "moved": adopted["moved"] if adopted else [], "rewritten": rewritten, "cleanup": cleanup}
+    return {"vars": found, "moved": adopted["moved"] if adopted else [], "rewritten": rewritten, "cleanup": cleanup,
+            "shown": jvm_files if adopted else []}
 
 
 def _logback(text):

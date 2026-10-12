@@ -28,7 +28,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_java impor
 KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
         "import_cluster_conf_dir", "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held",
         "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package",
-        "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline", "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
+        "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
+        "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
         "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_package",
         "import_cluster_package_from_file", "import_cluster_packages", "import_cluster_perms", "import_cluster_repo",
         "import_cluster_repos_answer", "import_cluster_running", "import_cluster_series", "import_cluster_slurp",
@@ -55,12 +56,20 @@ def _bool(value):
 
 def _keep_files(value):
     """import_cluster_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
-    commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]."""
-    if isinstance(value, (list, tuple)):
-        return [str(v).strip() for v in value]
-    if isinstance(value, str) and CONFIG_FILE.match(value.split(",")[0].strip()):
-        return [v.strip() for v in value.split(",") if v.strip()]
-    return _bool(value) or []
+    commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]; a name not of a config file fails."""
+    if isinstance(value, str) and value.strip().lower() in ("", "yes", "no", "on", "off", "true", "false", "1", "0"):
+        return _bool(value.strip()) or []
+    if isinstance(value, str):
+        value = re.sub(r"[\[\]'\"]", "", value).split(",")
+    if not isinstance(value, (list, tuple)):
+        return _bool(value) or []
+    names = [str(v).strip() for v in value if str(v).strip()]
+    wrong = [n for n in names if not CONFIG_FILE.match(n)]
+    if wrong:
+        raise AnsibleFilterError("import_cluster_keep_hand_edits: %s: not a config file of cassandra_config (true, false,"
+                                 " or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
+                                 " cassandra-rackdc.properties, logback.xml)" % ", ".join(wrong))
+    return names
 
 
 def _d(value):
@@ -299,15 +308,17 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     the given hosts, the ones found in the ring; jmx: the JMX login given for
     the import; java_default: {series: the Java the roles default to};
     host_names: hostname, fqdn or ip; set_ansible_host, keep_hand_edits: the
-    import_cluster_ options (keep_hand_edits: a bool, or the config files to keep) -> [node] for cassandra_inventory_layout."""
+    import_cluster_ options (keep_hand_edits: a bool, or the config
+    files to keep) -> [node] for cassandra_inventory_layout."""
     ordered = list(given) + list(found or [])
+    keep_files = _keep_files(keep_hand_edits)
     out = []
     for item in ring:
         host = _match(item["address"], data, ordered)
         error = None
         try:
             out.append(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {}, host_names,
-                             _bool(set_ansible_host), _keep_files(keep_hand_edits)))
+                             _bool(set_ansible_host), keep_files))
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             error = AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
         if error:

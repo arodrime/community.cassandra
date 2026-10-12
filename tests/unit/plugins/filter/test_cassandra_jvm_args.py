@@ -16,6 +16,7 @@ import pytest
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     _render as role_render,
+    cassandra_import_self_check,
     cassandra_inventory_host_vars,
 )
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
@@ -75,6 +76,14 @@ def before_extra(line):
     def edit(files):
         files["cassandra-env.sh"] = files["cassandra-env.sh"].replace(
             'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', line + '\nJVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"')
+    return edit
+
+
+def after_line(line, lines):
+    """An edit adding lines right after a stock line of cassandra-env.sh."""
+    def edit(files):
+        assert line in files["cassandra-env.sh"], line
+        files["cassandra-env.sh"] = files["cassandra-env.sh"].replace(line, line + "\n" + lines, 1)
     return edit
 
 
@@ -165,6 +174,20 @@ NOT_MOVED = [  # bash would give the JVM other arguments from the role's files, 
     ("-Xmn alone: in the options, cassandra-env.sh would stop", "40x", "8", before_extra('JVM_OPTS="$JVM_OPTS -Xmn1G"')),
     ("in a block", "50x", "17", before_extra('if [ -n "$X" ]; then\n  JVM_OPTS="$JVM_OPTS -Dfoo=1"\nfi')),
     ("with a variable", "50x", "17", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=$CASSANDRA_HOME/x"')),
+    # what the audits found
+    ("right after a grep: the $? read next is the line's", "50x", "17",
+     after_line('echo "$JVM_OPTS" | grep -qe "-[X]log:gc"', 'JVM_OPTS="$JVM_OPTS -Dfoo=1"')),
+    ("right after the CMS grep", "50x", "17",
+     after_line("echo $JVM_OPTS | grep -q UseConcMarkSweepGC", 'JVM_OPTS="$JVM_OPTS -Dfoo=1"')),
+    ("-Xmn is not -XX:NewSize: it sets MaxNewSize too", "50x", "17",
+     before_extra('JVM_OPTS="$JVM_OPTS -Xmn2G -XX:NewSize=1G"')),
+    ("a file of options read where it is", "50x", "17",
+     before_extra('JVM_OPTS="$JVM_OPTS -XX:VMOptionsFile=/etc/cassandra/heap.opts"')),
+    ("an agent: agents load in order", "50x", "17", before_extra('JVM_OPTS="$JVM_OPTS -agentpath:/opt/p/lib.so"')),
+    ("-XX:MaxNewSize before cassandra-env.sh's -Xmn, which sets it too", "41x", "11",
+     before_extra('JVM_OPTS="$JVM_OPTS -XX:MaxNewSize=2G"')),
+    ("the heap set between two of its uses", "50x", "17",
+     after_line("    export MALLOC_ARENA_MAX=4\nfi", "MAX_HEAP_SIZE=2G")),
     ("another hand edit in cassandra-env.sh", "50x", "17",
      both(before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'), before_extra("ulimit -n 100000"))),
 ]
@@ -202,8 +225,8 @@ def test_cleanup_says_what_the_jvm_does_not_use(tmp_path):
     assert cleanup == [
         "jvm11-server.options: -Xmx4G: not read, Java 17 reads jvm17-server.options",
         "jvm-server.options: -XX:+UseConcMarkSweepGC: ignored since Java 14 (CMS removed)",
-        "jvm17-server.options: -XX:-UseBiasedLocking: deprecated since Java 15 (biased locking off by default),"
-        " ignored from Java 18",
+        "jvm17-server.options: -XX:-UseBiasedLocking: Java 17's default since Java 15 (deprecated, ignored from Java"
+        " 18)",
         "jvm17-server.options: -Xss1024M: overridden by -Xss768k (jvm17-server.options line %d)"
         % (files["jvm17-server.options"].split("\n").index("-Xss768k") + 1)]
     # nothing moved: the files stay as they are, the self-check passes
@@ -307,3 +330,43 @@ def test_stock_options_as_cassandra_env_adds_them():
 def test_what_cassandra_env_looks_for(series, greps):
     """Every grep of the stock cassandra-env.sh is read: one missed would go unseen when an option moves."""
     assert [p for dummy, p in jvm._greps(jvm.env_lines(stock(series)["cassandra-env.sh"]))] == greps
+
+
+def test_not_the_same_when_the_unit_gives_other_jvm_options(tmp_path):
+    files = node_files("50x")
+    cmdline = launch(files, "17", tmp_path)
+    assert jvm.cassandra_jvm_args_same(cmdline, files, files, "50x", "17", {}, {})[0]
+    assert not jvm.cassandra_jvm_args_same(cmdline, files, files, "50x", "17", {}, {"JVM_EXTRA_OPTS": "-Da=1"})[0]
+
+
+def test_options_the_files_already_have_moved_without_hand_edits(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -XX:MaxGCPauseMillis=300 -Dfoo=1"'))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert node["moved"] and node["hand_edits"] == []
+
+
+def test_heap_assignment_set_again_said_left_out(tmp_path):
+    files = node_files("50x", both(on_top("MAX_HEAP_SIZE=6G"), before_extra('JVM_OPTS="$JVM_OPTS -Xmx7G -Xms7G"')))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert node["moved"][0] == "cassandra-env.sh line 1: MAX_HEAP_SIZE=6G -> left out, set again later"
+    assert node["moved"][1].endswith("-> cassandra_heap_size: 7G")
+
+
+def test_young_generation_said_in_the_report(tmp_path):
+    files = node_files("41x", before_extra('JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G"'))
+    inventory, layout, node = imported(files, "41x", "11", launch(files, "11", tmp_path))
+    lines = cassandra_import_report(layout, ["/p/c.yml", "/p"], "/p/r.txt", {}, True, cwd="/p", in_git=True)
+    assert [line for line in lines if "the young generation the JVM runs with" in line]
+    assert [line for line in lines if "cassandra_heap_newsize: 800M" in line]
+
+
+def test_self_check_not_shown_the_same_when_the_files_changed_since_the_jvm_started(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    cmdline = launch(files, "17", tmp_path)
+    inventory, layout, dummy = imported(files, "50x", "17", cmdline)
+    jvm_now = {"cmdline": cmdline, "newer": []}
+    assert cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17",
+                                       "", {}, jvm=jvm_now)["differences"] == []
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17",
+                                      "", {}, jvm=dict(jvm_now, newer=["cassandra-env.sh"]))
+    assert [d for d in out["differences"] if d.startswith("cassandra-env.sh")]
