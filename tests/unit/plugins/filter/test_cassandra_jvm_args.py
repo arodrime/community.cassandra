@@ -46,8 +46,9 @@ JAVA = {"40x": "8", "41x": "11", "50x": "17"}
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash runs the files")
 
 
-def launch(files, java, where):
-    """The arguments bin/cassandra gives the JVM with these files (pid and paths of the run made the same)."""
+def launch(files, java, where, environment=None):
+    """The arguments bin/cassandra gives the JVM with these files (pid and paths of the run made the same);
+    environment: the unit's."""
     conf = os.path.join(str(where), "conf")
     if os.path.isdir(conf):
         shutil.rmtree(conf)
@@ -59,7 +60,7 @@ def launch(files, java, where):
     with open(os.path.join(str(where), "launch.sh"), "w") as f:
         f.write(LAUNCH)
     run = subprocess.run(["bash", "launch.sh", conf, str(java)], cwd=str(where), stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, check=False)
+                         stderr=subprocess.PIPE, check=False, env=dict(os.environ, **(environment or {})))
     assert run.returncode == 0, run.stderr
     return re.sub(r"pid\d+", "pid0", run.stdout.decode().replace(str(where), "/run"))
 
@@ -106,9 +107,9 @@ def both(*edits):
     return edit
 
 
-def imported(files, series, java, cmdline, newer=None):
-    inventory, layout = import_node(files, series, jvm={"cmdline": cmdline, "java": java, "environment": {},
-                                                        "newer": newer or []})
+def imported(files, series, java, cmdline, newer=None, environment=None):
+    inventory, layout = import_node(files, series, jvm={"cmdline": cmdline, "java": java,
+                                                        "environment": environment or {}, "newer": newer or []})
     return inventory, layout, layout["nodes"][0]
 
 
@@ -370,3 +371,19 @@ def test_self_check_not_shown_the_same_when_the_files_changed_since_the_jvm_star
     out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "17",
                                       "", {}, dict(jvm_now, newer=["cassandra-env.sh"]))
     assert [d for d in out["differences"] if d.startswith("cassandra-env.sh")]
+
+
+@pytest.mark.parametrize("series, java, line, extra", [
+    ("50x", "17", "-Dcom.sun.management.jmxremote.authenticate=false", "-Dcom.sun.management.jmxremote.authenticate=true"),
+    ("50x", "17", "-Xms8000M", "-XX:InitialHeapSize=2G"),  # cassandra-env.sh's own -Xms, worked out on that node
+])
+def test_a_line_repeating_what_cassandra_env_adds_is_not_moved(tmp_path, series, java, line, extra):
+    """Its options twice in the arguments (cassandra-env.sh's own, the line's, JVM_EXTRA_OPTS between): which one is
+    the line's is not known."""
+    files = node_files(series, add_to("cassandra-env.sh", 'JVM_OPTS="$JVM_OPTS %s"' % line))
+    environment = {"JVM_EXTRA_OPTS": extra}
+    cmdline = launch(files, java, tmp_path, environment)
+    node = imported(files, series, java, cmdline, environment=environment)[2]
+    assert node["moved"] == []
+    assert not jvm.cassandra_jvm_args_same(cmdline, files, node_files(series), series, java, environment,
+                                           environment)[0]
