@@ -110,7 +110,14 @@ Role Variables
   (`cassandra_cqlsh_python_supported`: 3.6-3.11 for 4.x, 3.8-3.13 for 5.0);
   then `python3.11` is installed next to it and cqlsh is pointed at it
   (`/usr/local/bin/cqlsh` wrapper, `CQLSH_PYTHON` in `/etc/profile.d`).
-  The system `python3` is never changed. When no longer needed, these files
+  The system `python3` is never changed, and stays the one the modules run
+  with: where ansible-core's interpreter discovery would pick `python3.11`
+  on the next runs (2.17 and later on RHEL 9, up to 2.19 on Ubuntu 26.04),
+  without the system python3's packages, this role and `cassandra_repository`
+  set `ansible_python_interpreter` to `/usr/bin/python3` for the rest of the
+  ansible-playbook run, unless an interpreter is set already
+  (`ansible_python_interpreter`, even `auto`, or `interpreter_python` /
+  `ANSIBLE_PYTHON_INTERPRETER`) or `/usr/bin/python3` is older than 3.9. When no longer needed, these files
   are removed, only if the role wrote them. On the RedHat family the role stops
   when no repository offers `python3.11` (EL 10 with 4.x): set this then.
 * `cassandra_cqlsh_python_manage`: `false` leaves cqlsh's Python as it is on

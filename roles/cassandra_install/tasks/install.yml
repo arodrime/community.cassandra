@@ -1,4 +1,7 @@
 ---
+- name: Keep the modules on the system python3
+  ansible.builtin.import_tasks: python_interpreter.yml
+
 - name: Check the install method
   ansible.builtin.assert:
     that:

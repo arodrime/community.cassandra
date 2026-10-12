@@ -1,0 +1,35 @@
+---
+# ansible-core 2.17 and later take the first Python of a list
+# (INTERPRETER_PYTHON_FALLBACK; 2.16 picks the distribution's python3), where
+# python3.11 comes before /usr/bin/python3 and before the python3 of RHEL 9
+# (3.9), and of Ubuntu 26.04 (3.14) up to 2.19: once python3.11 is installed
+# there for cqlsh or Medusa, the next runs would run the modules with it,
+# without the system python3's packages (all of them on RHEL 9, e.g. a
+# cassandra-driver for cassandra_keyspace, cassandra_role, cassandra_table; on
+# Ubuntu the compiled ones and those installed for 3.14 only). They keep
+# running with /usr/bin/python3, as on the first run, for the rest of the
+# ansible-playbook run. Left alone: an interpreter set (ansible_python_interpreter,
+# or ansible.cfg's interpreter_python), and a /usr/bin/python3 older than 3.9
+# (RHEL 8's 3.6 runs no module of 2.17 or later).
+- name: Get the version of /usr/bin/python3
+  ansible.builtin.command: /usr/bin/python3 -c "import sys; print('%d.%d' % sys.version_info[:2])"
+  register: cassandra_module_python3_version
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when:
+    - ansible_python_interpreter is not defined
+    - lookup('ansible.builtin.config', 'INTERPRETER_PYTHON') is match('auto')
+    # not known before the first module of the run
+    - ansible_facts['discovered_interpreter_python'] | default('/usr/bin/python3.11') == '/usr/bin/python3.11'
+
+- name: Run the modules with /usr/bin/python3, not python3.11
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: /usr/bin/python3
+  when:
+    - ansible_python_interpreter is not defined
+    - ansible_facts['discovered_interpreter_python'] | default('') == '/usr/bin/python3.11'
+    - cassandra_module_python3_version is not skipped
+    - cassandra_module_python3_version.rc == 0
+    - cassandra_module_python3_version.stdout is version('3.9', '>=')
+    - cassandra_module_python3_version.stdout is version('3.11', '!=')

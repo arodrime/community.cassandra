@@ -1,0 +1,25 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Clean package manager cache
+      ansible.builtin.shell: dnf clean all
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Update the apt cache
+      ansible.builtin.shell: apt-get update && apt-get clean
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # for the system python3 only, as on a real host
+    - name: Install the Cassandra driver (Ubuntu)
+      ansible.builtin.apt:
+        name: python3-cassandra
+      retries: 3
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install the Cassandra driver (RedHat)
+      ansible.builtin.pip:
+        name: cassandra-driver
+        executable: /usr/bin/pip3
+      retries: 3
+      when: ansible_facts['os_family'] == 'RedHat'

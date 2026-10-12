@@ -1,0 +1,32 @@
+---
+- name: Converge
+  hosts: all
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install
+  post_tasks:
+    - name: Read the Python the modules run with
+      ansible.builtin.setup:
+        gather_subset: [python]
+
+    - name: Look for python3.11
+      ansible.builtin.stat:
+        path: /usr/bin/python3.11
+      register: cassandra_python311
+
+    - name: Check it is the system python3, python3.11 next to it
+      ansible.builtin.assert:
+        that:
+          - cassandra_python311.stat.exists
+          - ansible_facts['python']['version']['minor'] != 11
+
+    # nothing listens on port 1: the driver is found, the connection fails
+    - name: Run a module that needs the Cassandra driver
+      community.cassandra.cassandra_keyspace:
+        name: ks
+        state: present
+        login_host: 127.0.0.1
+        login_port: 1
+      register: cassandra_keyspace_result
+      changed_when: false
+      failed_when: "'Error connecting to cluster' not in cassandra_keyspace_result.msg | default('')"
