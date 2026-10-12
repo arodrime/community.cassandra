@@ -44,7 +44,7 @@ def render(template, **variables):
 
 def test_key_paths_read_from_the_files():
     # the loop as Ansible renders it (a backslash doubled in the YAML would reach the regex as two)
-    loop = TASKS["Read their mode and the signing keys they name"]["loop"]
+    loop = TASKS["Read the JMX users, the repository files' mode and their signing keys"]["vars"]["_repo"]
     text = "[x]\ngpgkey = file:///etc/pki/rpm-gpg/k.asc\nSigned-By: /etc/apt/keyrings/k.asc\n"
     slurp = {"results": [{"item": "/etc/yum.repos.d/cassandra-50x.repo", "content": base64.b64encode(text.encode()).decode()}]}
     assert render(loop, import_cluster_repo_slurp=slurp) == [

@@ -402,6 +402,18 @@
           {{ out }}
       run_once: true
 
+    # for the play that writes the inventory: on the controller, read there without the variables of every host
+    - name: Keep the given nodes and the ring on the controller
+      ansible.builtin.set_fact:
+        import_cluster_given: "{{ import_cluster_given }}"
+        import_cluster_ring_nodes: "{{ hostvars[import_cluster_from].import_cluster_ring.cluster_status | community.cassandra.cassandra_ring_nodes }}"
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+      become: false
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+
 
 # the given nodes and the ones found in the ring (not the inventory's other hosts)
 - name: Read every node
@@ -421,6 +433,8 @@
       - jvm17-server.options
       - cassandra-rackdc.properties
       - logback.xml
+    # reads files on a node in one go (see the script)
+    _read_files: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_service/files/import_read_files.py') }}"
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -451,9 +465,6 @@
     - name: Gather facts
       ansible.builtin.setup:
         gather_subset: [network, distribution]
-
-    - name: Read the installed packages
-      ansible.builtin.package_facts:
 
     # No module reads a running JVM: its command line and its java binary
     - name: Read the running Cassandra (conf dir, Cassandra and Java versions)
@@ -545,7 +556,25 @@
           [ $rc = 0 ] && [ -z "$bad" ] && echo "pkg_query=ok"
           echo "$res" | grep -q '^PKG ' && echo "pkg_repo=yes"
         fi
+        # the version of the packages the import looks at, installed ones only, as package_facts gives them (which
+        # reads every package: a large fact, worked out again for each later task of each node)
+        for p in $IMPORT_CLUSTER_PACKAGES; do
+          if [ "$IMPORT_CLUSTER_OS_FAMILY" = Debian ]; then
+            v=$(dpkg-query -W -f '${db:Status-Status} ${Version}\n' "$p" 2>/dev/null \
+                | awk '$1 ~ /^(installed|half-configured|unpacked|triggers-awaited|triggers-pending)$/ {print $2; exit}')
+          else
+            # (not installed: its message, rc 1)
+            v=$(rpm -q --qf '%{VERSION}\n' "$p" 2>/dev/null) && v=$(echo "$v" | head -1) || v=
+          fi
+          [ -n "$v" ] && echo "installed_$p=$v"
+        done
         exit 0
+      environment:
+        IMPORT_CLUSTER_PACKAGES: >-
+          cassandra cassandra-tools jemalloc libjemalloc2
+          {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml') | from_yaml).debian_packages
+             | join(' ') }}
+        IMPORT_CLUSTER_OS_FAMILY: "{{ ansible_facts['os_family'] }}"
       register: import_cluster_running
       changed_when: false
       failed_when: false
@@ -566,10 +595,12 @@
         # the package query answered (dnf repoquery, apt lists): else an air-gapped host, or repositories down
         import_cluster_repos_answer: "{{ _kv.pkg_query is defined }}"
         import_cluster_java_package: "{{ _kv.javapkg | default('') }}"
-        import_cluster_package: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') }}"
+        import_cluster_package: "{{ _installed.cassandra | default('') }}"
+        # {name: version} of the ones the import looks at
+        import_cluster_packages: "{{ _installed }}"
         # installed, but no configured repository offers it (the query ran): from a package file
         import_cluster_package_from_file: >-
-          {{ 'cassandra' in ansible_facts.packages and _kv.pkg_query is defined and _kv.pkg_repo is not defined }}
+          {{ 'cassandra' in _installed and _kv.pkg_query is defined and _kv.pkg_repo is not defined }}
         import_cluster_conf_dir: >-
           {{ _kv.config | dirname if _kv.config is match('/')
              else ('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
@@ -596,6 +627,8 @@
           env_files: "{{ _kv.unit_EnvironmentFiles | default('') }}"
       vars:
         _kv: "{{ dict(import_cluster_running.stdout_lines | map('split', '=', 1)) }}"
+        _pairs: "{{ _kv | dict2items | selectattr('key', 'match', 'installed_') | list }}"
+        _installed: "{{ dict(_pairs | map(attribute='key') | map('regex_replace', '^installed_', '') | zip(_pairs | map(attribute='value'))) }}"
       when: import_cluster_running.rc | default(1) == 0
 
     # config files written since Cassandra started: it may not run what they say (a restart pending, or not)
@@ -605,15 +638,48 @@
         tasks_from: jvm_started.yml
       when: import_cluster_series is defined
 
-    - name: Read when its config files were written
-      ansible.builtin.find:
-        paths: "{{ import_cluster_conf_dir }}"
-        patterns: "{{ _cassandra_service_config_files }}"
-        file_type: file
-      register: import_cluster_conf_files
-      when:
-        - import_cluster_series is defined
-        - cassandra_jvm.start is defined
+    # Each file read or stat'ed by a module is a round trip to the node: here one command per step reads them all
+    # (_read_files: what slurp, stat and find give, as they give it), its output kept as their results were.
+    # cassandra_jvm.start: the config files written since Cassandra started (it may not run what they say)
+    - name: Read the config files, when they were written, the JVM's arguments, the repository files and the unit
+      ansible.builtin.command:
+        argv: "{{ [ansible_facts.python.executable, '-c', _read_files] }}"
+        stdin: "{{ _wanted | to_json }}"
+      register: import_cluster_files
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read only
+      no_log: true  # keystore passwords, (a keystore password can be a JVM argument), credentials, the unit's Environment
+      when: _wanted | length > 0
+      vars:
+        _supported: "{{ import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x'] }}"
+        _repo: >-
+          {{ import_cluster_repo_files | default([])
+             + (['/etc/apt/auth.conf.d/cassandra.conf'] if ansible_facts['os_family'] == 'Debian' else []) }}
+        # [what, how, [[item, path]...]]: the files' content (as slurp), stat (follow), stat with a checksum, find
+        _wanted: >-
+          {{ ([['newer', 'find', [[import_cluster_conf_dir, _cassandra_service_config_files]]]]
+              if import_cluster_series is defined and cassandra_jvm.start is defined else [])
+             + ([['config', 'content', _files | zip(_files | map('regex_replace', '^', import_cluster_conf_dir ~ '/')) | list]]
+                if _supported | bool else [])
+             + ([['cmdline', 'content', [['cmdline', '/proc/' ~ cassandra_jvm.pid ~ '/cmdline']]]]
+                if _supported | bool and cassandra_jvm.pid | default('') != '' else [])
+             + ([['repo', 'content', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else [])
+             + ([['unit', 'content', [['cassandra.service', import_cluster_unit.file]]]]
+                if _supported | bool and 'cassandra_service_unit_manage' not in import_cluster_keep
+                   and import_cluster_unit.file != '' else []) }}
+
+    - name: Keep what was read
+      ansible.builtin.set_fact:
+        import_cluster_conf_files: "{{ (_read.newer | first) if 'newer' in _read else {} }}"
+        import_cluster_slurp: {results: "{{ _read.config | default([]) }}"}
+        import_cluster_jvm_cmdline: "{{ _read.cmdline | default([{}]) | first }}"
+        import_cluster_repo_slurp: {results: "{{ _read.repo | default([]) }}"}
+        import_cluster_unit_slurp: "{{ _read.unit | default([{}]) | first }}"
+      no_log: true
+      when: import_cluster_files is not skipped
+      vars:
+        _read: "{{ import_cluster_files.stdout | from_json if import_cluster_files.rc | default(1) == 0 else {} }}"
 
     - name: Note the ones written since it started
       ansible.builtin.set_fact:
@@ -622,27 +688,8 @@
              | map(attribute='path') | map('basename') | sort }}
       when: import_cluster_conf_files.files is defined
 
-    - name: Read the config files
-      ansible.builtin.slurp:
-        path: "{{ import_cluster_conf_dir }}/{{ item }}"
-      loop: "{{ _files }}"
-      register: import_cluster_slurp
-      failed_when: false
-      no_log: true  # keystore passwords
-      when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
-
     # remote JMX users: the password and access files the JVM reads, whatever their names (its arguments, else
     # cassandra-env.sh, else the JVM options files), the role's paths when none is given
-    - name: Read the running JVM's arguments
-      ansible.builtin.slurp:
-        path: "/proc/{{ cassandra_jvm.pid }}/cmdline"
-      register: import_cluster_jvm_cmdline
-      failed_when: false
-      no_log: true  # (a keystore password can be one)
-      when:
-        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
-        - cassandra_jvm.pid | default('') != ''
-
     - name: Find the JMX password and access files the JVM reads
       ansible.builtin.set_fact:
         import_cluster_jmx_files: >-
@@ -658,41 +705,53 @@
                   | zip(import_cluster_slurp.results | selectattr('content', 'defined') | map(attribute='content')
                         | map('b64decode'))) }}
 
-    - name: Read the JMX users
-      ansible.builtin.slurp:
-        path: "{{ import_cluster_jmx_files[item.split('.')[1]] | default('', true) or '/etc/cassandra/' ~ item }}"
-      loop: [jmxremote.password, jmxremote.access]
-      register: import_cluster_jmx_slurp
+    # the JMX users' files (not the role's paths when the JVM's are unknown: not read); the Cassandra repository
+    # files: cassandra_repository takes over only the ones it would write as they are (their mode, the signing
+    # keys they name)
+    - name: Read the JMX users, the repository files' mode and their signing keys
+      ansible.builtin.command:
+        argv: "{{ [ansible_facts.python.executable, '-c', _read_files] }}"
+        stdin: "{{ _wanted | to_json }}"
+      register: import_cluster_users_read
+      changed_when: false
       failed_when: false
+      check_mode: false  # read only
+      no_log: true  # the JMX passwords, the checksum of the credentials file
+      when: _wanted | length > 0
+      vars:
+        _jmx:
+          - [jmxremote.password, "{{ import_cluster_jmx_files.password | default('', true) or '/etc/cassandra/jmxremote.password' }}"]
+          - [jmxremote.access, "{{ import_cluster_jmx_files.access | default('', true) or '/etc/cassandra/jmxremote.access' }}"]
+        _repo: >-
+          {{ (import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='item') | list
+              + import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='content')
+                | map('b64decode') | map('regex_findall', '(?m)^(?:gpgkey\s*=\s*file://|Signed-By:\s*)(\S+)') | flatten)
+             | unique }}
+        _wanted: >-
+          {{ ([['jmx', 'content', _jmx]]
+              if import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
+                 and not import_cluster_jmx_files.unknown | default('') else [])
+             + ([['repo', 'checksum', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else []) }}
+
+    - name: Keep the JMX users and the repository files' mode
+      ansible.builtin.set_fact:
+        import_cluster_jmx_slurp: {results: "{{ _read.jmx | default([]) }}"}
+        import_cluster_repo_stat: {results: "{{ _read.repo | default([]) }}"}
       no_log: true
-      when:
-        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
-        - not import_cluster_jmx_files.unknown | default('')  # (not the role's paths then: not read)
+      when: import_cluster_users_read is not skipped
+      vars:
+        _read: "{{ import_cluster_users_read.stdout | from_json if import_cluster_users_read.rc | default(1) == 0 else {} }}"
 
-    # the Cassandra repository files: cassandra_repository takes over only the ones it would write as they are
-    - name: Read the Cassandra repository files
-      ansible.builtin.slurp:
-        path: "{{ item }}"
-      loop: "{{ import_cluster_repo_files + (['/etc/apt/auth.conf.d/cassandra.conf'] if ansible_facts['os_family'] == 'Debian' else []) }}"
-      register: import_cluster_repo_slurp
-      failed_when: false  # no credentials file
-      no_log: true  # credentials
-      when: import_cluster_repo_files | default([]) | length > 0
-
-    - name: Read their mode and the signing keys they name
-      ansible.builtin.stat:
-        path: "{{ item }}"
-        checksum_algorithm: sha1
-        get_mime: false
-        get_attributes: false
-      loop: >-
-        {{ (import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='item') | list
-            + import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | map(attribute='content')
-              | map('b64decode') | map('regex_findall', '(?m)^(?:gpgkey\s*=\s*file://|Signed-By:\s*)(\S+)') | flatten)
-           | unique }}
-      register: import_cluster_repo_stat
-      no_log: true  # the checksum of the credentials file
-      when: import_cluster_repo_files | default([]) | length > 0
+    # (each file's own error is in its result: the command failing is the script's, nothing of the node is read)
+    - name: Note a node whose files could not be read
+      ansible.builtin.set_fact:
+        import_cluster_error: "its files could not be read: {{ (_failed.stderr | default('', true) or _failed.msg | default('', true) or '?').splitlines() | last }}"
+      when: _failed != {}
+      vars:
+        _failed: >-
+          {{ ([import_cluster_files, import_cluster_users_read] | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list
+              + [import_cluster_files, import_cluster_users_read] | selectattr('unreachable', 'defined') | selectattr('unreachable') | list)
+             | first | default({}) }}
 
     - name: Tell whether cassandra_repository would write them as they are
       ansible.builtin.set_fact:
@@ -700,7 +759,7 @@
           {{ _files | community.cassandra.cassandra_repository_import(
                _stats, import_cluster_series, ansible_facts['os_family'],
                lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/files/KEYS', rstrip=false) | hash('sha1'),
-               ansible_facts['packages'] | default({}), import_cluster_package_from_file | bool,
+               import_cluster_packages, import_cluster_package_from_file | bool,
                (lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_repository/defaults/main.yml') | from_yaml).debian_packages) }}
       vars:
         _read: "{{ import_cluster_repo_slurp.results | default([]) | selectattr('content', 'defined') | list }}"
@@ -715,18 +774,6 @@
         - import_cluster_series is defined
         - import_cluster_repo_files | default([]) | length > 0
 
-    # the unit cassandra_service wrote (its mark): the self-check compares it with the one it would write
-    - name: Read the unit
-      ansible.builtin.slurp:
-        path: "{{ import_cluster_unit.file }}"
-      register: import_cluster_unit_slurp
-      failed_when: false
-      no_log: true  # its Environment may hold a password
-      when:
-        - import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x']
-        - "'cassandra_service_unit_manage' not in import_cluster_keep"
-        - import_cluster_unit.file != ''
-
     # its Java removed since it started (a JDK update took its directory): what it runs is unknown
     - name: Note a running Java that cannot be read
       ansible.builtin.set_fact:
@@ -738,7 +785,7 @@
         - import_cluster_java | default('') == ''
 
     # no_log hides the error too: the rescue says what failed, without the values
-    # a skipped loop registers results too: the series, not them, says it was read
+    # the series says it was read
     - name: Read this node's config
       when: import_cluster_series is defined and import_cluster_series in ['40x', '41x', '50x'] and import_cluster_error is not defined
       block:
@@ -787,20 +834,19 @@
 
     # owner, group and mode of what cassandra_config writes or creates, read only
     - name: Read the owner and mode of the config files and directories
-      ansible.builtin.stat:
-        path: "{{ item }}"
-        follow: true
-        get_checksum: false
-        get_mime: false
-        get_attributes: false
-      loop: >-
-        {{ _files | map('regex_replace', '^', import_cluster_conf_dir ~ '/') | list
-           + [_jmx.password | default('', true) or '/etc/cassandra/jmxremote.password',
-              _jmx.access | default('', true) or '/etc/cassandra/jmxremote.access'] + _dirs }}
-      register: import_cluster_perm_stat
-      failed_when: false  # not read (e.g. a data dir on NFS root can't read): left out
+      ansible.builtin.command:
+        argv: "{{ [ansible_facts.python.executable, '-c', _read_files] }}"
+        stdin: "{{ [['perms', 'stat', _paths | zip(_paths) | list]] | to_json }}"
+      register: import_cluster_perm_read
+      changed_when: false
+      failed_when: false  # (each file's own error is in its result)
+      check_mode: false  # read only
       when: import_cluster_config is defined
       vars:
+        _paths: >-
+          {{ _files | map('regex_replace', '^', import_cluster_conf_dir ~ '/') | list
+             + [_jmx.password | default('', true) or '/etc/cassandra/jmxremote.password',
+                _jmx.access | default('', true) or '/etc/cassandra/jmxremote.access'] + _dirs }}
         _cfg: "{{ import_cluster_config.vars | default({}) }}"
         _jmx: "{{ import_cluster_jmx_files | default({}) }}"
         _dirs: >-
@@ -816,10 +862,12 @@
           {{ _file_stats | community.cassandra.cassandra_permissions_import(import_cluster_account, import_cluster_series,
                                                                             _dir_stats, 'cassandra_jmx_users' in import_cluster_config.vars) }}
       vars:
-        # the files by their name, then the dirs by their path (the loop above)
+        # the files by their name, then the dirs by their path (as read above; a stat that failed, e.g. a data dir
+        # on NFS root can't read: none, left out)
+        _results: "{{ (import_cluster_perm_read.stdout | from_json).perms if import_cluster_perm_read.rc | default(1) == 0 else [] }}"
         _names: "{{ _files + ['jmxremote.password', 'jmxremote.access'] }}"
-        _paths: "{{ import_cluster_perm_stat.results | map(attribute='item') | list }}"
-        _stats: "{{ import_cluster_perm_stat.results | map(attribute='stat', default={}) | list }}"
+        _paths: "{{ _results | map(attribute='item') | list }}"
+        _stats: "{{ _results | map(attribute='stat', default={}) | list }}"
         _file_stats: "{{ dict(_names | zip(_stats[:_names | length])) }}"
         _dir_stats: "{{ dict(_paths[_names | length:] | zip(_stats[_names | length:])) }}"
       when: import_cluster_config is defined
@@ -1226,11 +1274,11 @@
   become: false  # the files are the user's, written without root
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
+    # reads files in one go (see the script)
+    _read_files: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../roles/cassandra_service/files/import_read_files.py') }}"
     # set on the given nodes only (not on the ones add_host found)
-    _given: "{{ groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined') | map(attribute='import_cluster_given') | first }}"
-    _ring: >-
-      {{ _given | map('extract', hostvars) | map(attribute='import_cluster_ring.cluster_status', default={})
-         | select | first | default({}) | community.cassandra.cassandra_ring_nodes }}
+    _given: "{{ import_cluster_given }}"
+    _ring: "{{ import_cluster_ring_nodes }}"
     _java_default: {40x: "11", 41x: "11", 50x: "17"}
     # the JMX login given for the import, which every later run needs too
     # (-e, or the given nodes' own inventory: read on the first of them)
@@ -1352,7 +1400,7 @@
     # the first play had no host: a group that matches nothing (or only hosts marked absent), a --limit
     - name: Stop when no node was given
       ansible.builtin.assert:
-        that: groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined') | list | length > 0
+        that: import_cluster_given is defined
         fail_msg: >-
           No node given: -i <node>, or, with the inventory, -e cassandra_hosts=<a group with nodes not marked
           absent> (--limit is refused). Nothing was written.
@@ -1366,12 +1414,6 @@
         msg: "Laying out the inventory..."
       vars:
         cassandra_output: true
-
-    # worked out once: a play variable is worked out anew at each use (_given: the variables of every host)
-    - name: Note the given nodes and the ring
-      ansible.builtin.set_fact:
-        _given: "{{ _given }}"
-        _ring: "{{ _ring }}"
 
     # no_log: the variables hold the passwords read from the config
     - name: Build the inventory
@@ -1503,18 +1545,41 @@
       register: import_cluster_existing
       when: import_cluster_dir_stat.stat.exists
 
+    # (one command: a slurp per file is a module run each)
     - name: Read the group_vars and host_vars files already there
-      ansible.builtin.slurp:
-        src: "{{ _dir }}/{{ item }}"
-      loop: "{{ _found | select('match', '^((group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)|' ~ _top ~ ')$') | list }}"
-      register: import_cluster_existing_vars
+      ansible.builtin.command:
+        argv: "{{ [ansible_playbook_python, '-c', _read_files] }}"
+        stdin: "{{ _wanted | to_json }}"
+      register: import_cluster_existing_read
+      changed_when: false
+      failed_when: >-
+        import_cluster_existing_read.rc != 0
+        or (import_cluster_existing_read.stdout | from_json).vars | selectattr('failed', 'defined') | list | length > 0
+      check_mode: false  # read only
       no_log: true  # a secrets.yml in clear
+      when: _read | length > 0
       vars:
+        _read: "{{ _found | select('match', '^((group_vars|host_vars)/[^/]+(/[^/]+)?[.](yml|yaml|json)|' ~ _top ~ ')$') | list }}"
+        _wanted: [[vars, content, "{{ _read | zip(_read | map('regex_replace', '^', _dir ~ '/')) | list }}"]]
         # every file Ansible reads as inventory (the hosts files: whose they are; the user's: their groups)
         _top: "(?!(group_vars|host_vars)/)(?!.*([.](pyc|pyo|swp|bak|rpm|md|txt|rst|orig|cfg|retry)|~)$).+"
         # (not a big file left there: a dump, an archive)
         _found: "{{ import_cluster_existing.files | default([]) | selectattr('size', 'le', 1048576) | map(attribute='path')
                     | map('relpath', _dir) | reject('match', '(.*/)?[.]') | list }}"
+
+    # as slurp results; their text and the mode of each file there, to leave the ones that would not change alone
+    - name: Keep the files already there
+      ansible.builtin.set_fact:
+        import_cluster_existing_vars: {results: "{{ _results }}"}
+        import_cluster_existing_text: >-
+          {{ dict(_results | map(attribute='item') | zip(_results | map(attribute='content') | map('b64decode'))) }}
+        import_cluster_existing_modes: >-
+          {{ dict(import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
+                  | zip(import_cluster_existing.files | default([]) | map(attribute='mode'))) }}
+      no_log: true  # a secrets.yml in clear
+      vars:
+        _results: >-
+          {{ (import_cluster_existing_read.stdout | from_json).vars if import_cluster_existing_read is not skipped else [] }}
 
     # CQL authentication on (a PasswordAuthenticator): the operations that read the replication (decommission,
     # topology, rolling restarts...) log in with cassandra_cql_username and _password, which no node gives. Set
@@ -1697,12 +1762,27 @@
       loop: "{{ _leftovers.stale }}"  # files only: a dir may hold files of yours
       register: import_cluster_removed
 
+    - name: Read the dirs already there
+      ansible.builtin.command:
+        argv: "{{ [ansible_playbook_python, '-c', _read_files] }}"
+        stdin: "{{ _wanted | to_json }}"
+      register: import_cluster_dirs_read
+      changed_when: false
+      check_mode: false  # read only
+      vars:
+        _dirs: "{{ [''] + _files | map(attribute='path') | map('dirname') | unique | list }}"
+        _wanted: [[dirs, stat, "{{ _dirs | zip(_dirs | map('regex_replace', '^', _dir ~ '/')) | list }}"]]
+
+    # (the ones there with their mode already left alone: a module run each)
     - name: Create the dirs
       ansible.builtin.file:
-        path: "{{ _dir }}/{{ item }}"
+        path: "{{ _dir }}/{{ item.item }}"
         state: directory
         mode: "0755"
-      loop: "{{ [''] + _files | map(attribute='path') | map('dirname') | unique | list }}"
+      loop: "{{ (import_cluster_dirs_read.stdout | from_json).dirs }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not (item.stat.isdir | default(false) and item.stat.mode == '0755')
 
     - name: Create the report dir
       ansible.builtin.file:
@@ -1711,16 +1791,22 @@
         mode: "0755"
       when: _report_dir != _dir
 
+    # (one there as it would be written, its mode too, left alone: as copy would, without its module run)
     - name: Write the hosts file
       ansible.builtin.copy:
-        content: "{{ (('' if _self_check_ok | bool else '# NOT VALID: the import self-check failed, see '
-                                                      ~ (_report_dir ~ '/report.txt') | relpath(_dir) ~ '\n')
-                      ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false))
-                     | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
+        content: "{{ _content }}"
         dest: "{{ _dir }}/{{ _hosts_file }}"
         mode: "0644"
         backup: "{{ _hosts_file in _leftovers.replaced | default([]) }}"  # not an import's
       register: import_cluster_wrote_hosts
+      when: >-
+        not (import_cluster_existing_modes[_hosts_file] | default('') == '0644'
+             and import_cluster_existing_text[_hosts_file] | default(none) == _content)
+      vars:
+        _content: "{{ (('' if _self_check_ok | bool else '# NOT VALID: the import self-check failed, see '
+                                                       ~ (_report_dir ~ '/report.txt') | relpath(_dir) ~ '\n')
+                       ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false))
+                      | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
 
     # secrets.yml: encrypted as a whole (Ansible reads vaulted vars files), or 0600 in clear
     - name: Write group_vars and host_vars
@@ -1738,16 +1824,15 @@
         label: "{{ item.path }}"
       register: import_cluster_wrote_vars
       no_log: "{{ item.secret }}"
-      # a vaulted file already there with the same content is left as it is (not encrypted again)
+      # a vaulted file already there with the same content is left as it is (not encrypted again); one in clear
+      # there as it would be written, its mode too, also (as copy would, without its module run)
       when: >-
-        not (item.secret and _vault | bool
-             and _existing[item.path] | default('') | community.cassandra.cassandra_inventory_same_secret(
-                   item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group), _vault_secret))
+        not (import_cluster_existing_text[item.path] | default('') | community.cassandra.cassandra_inventory_same_secret(_text, _vault_secret)
+             if item.secret and _vault | bool
+             else import_cluster_existing_modes[item.path] | default('') == ('0600' if item.secret else '0644')
+                  and import_cluster_existing_text[item.path] | default(none) == _text)
       vars:
-        _existing: >-
-          {{ dict(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined') | map(attribute='item')
-                  | zip(import_cluster_existing_vars.results | default([]) | selectattr('content', 'defined')
-                        | map(attribute='content') | map('b64decode'))) }}
+        _text: "{{ item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
 
     # a report.txt of the user's, or of another cluster's import: kept as <file>.<date>~
     - name: Write report.txt

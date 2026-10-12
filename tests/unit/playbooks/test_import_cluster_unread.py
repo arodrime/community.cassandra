@@ -1,5 +1,4 @@
 from __future__ import (absolute_import, division, print_function)
-
 __metaclass__ = type
 
 # import_cluster: a ring node it could not read fails the import (strict), unless

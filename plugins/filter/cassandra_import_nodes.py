@@ -2,10 +2,12 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """The nodes of an import (import_cluster), from what was read on them.
 
-cassandra_import_nodes: the ring (cassandra_ring_nodes), hostvars and the
-    given nodes -> one entry per ring node for cassandra_inventory_layout:
-    the host read at its address, its name, what of its install, Java,
-    unit... the inventory carries, what stays as it is on it, its notes.
+cassandra_import_host_vars: hostvars, host names -> what the import read on
+    each host (its facts, its import_cluster_* variables), read once.
+cassandra_import_nodes: the ring (cassandra_ring_nodes), that and the given
+    nodes -> one entry per ring node for cassandra_inventory_layout: the host
+    read at its address, its name, what of its install, Java, unit... the
+    inventory carries, what stays as it is on it, its notes.
 
 Each host's variables are read once (hostvars[host] works its variables out
 anew at each access: in a template, per node and per setting, the import of a
@@ -23,17 +25,18 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 
 # the variables of a host the import reads (its facts, and what the play read on it)
-KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config", "import_cluster_conf_dir",
-        "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held", "import_cluster_java",
-        "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package", "import_cluster_jmx_slurp",
-        "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa", "import_cluster_medusa_ini",
-        "import_cluster_newer_files", "import_cluster_os", "import_cluster_package", "import_cluster_package_from_file",
-        "import_cluster_perms", "import_cluster_repo", "import_cluster_repos_answer", "import_cluster_running",
-        "import_cluster_series", "import_cluster_slurp", "import_cluster_storage_dir", "import_cluster_system_java",
-        "import_cluster_unit", "import_cluster_unit_slurp", "import_cluster_version")
+KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
+        "import_cluster_conf_dir", "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held",
+        "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package",
+        "import_cluster_jmx_slurp", "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
+        "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_package",
+        "import_cluster_package_from_file", "import_cluster_packages", "import_cluster_perms", "import_cluster_repo",
+        "import_cluster_repos_answer", "import_cluster_running", "import_cluster_series", "import_cluster_slurp",
+        "import_cluster_storage_dir", "import_cluster_system_java", "import_cluster_unit",
+        "import_cluster_unit_slurp", "import_cluster_version")
 CONFIG_FILE = re.compile(r"^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties"
                          r"|logback[.]xml)$")
-DSBULK = re.compile(r"^/usr/share/dsbulk-[0-9]+([.][0-9]+)*/bin/dsbulk$")
+DSBULK = re.compile(r"^/usr/share/dsbulk-([0-9]+(?:[.][0-9]+)*)/bin/dsbulk$")
 NOT_READ_KEEP = {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                  "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
                  "cassandra_java_set_default": False, "cassandra_firewall_manage": False,
@@ -42,7 +45,7 @@ NOT_READ_KEEP = {"cassandra_repository_manage": False, "cassandra_linux_manage":
 
 
 def _bool(value):
-    """Ansible's bool filter."""
+    """Ansible's bool filter (as the playbook's | bool: not convert_bool's, which takes y and t too)."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -67,7 +70,7 @@ def cassandra_import_host_vars(hostvars, hosts):
     return out
 
 
-def _match(address, hosts, data, ordered):
+def _match(address, data, ordered):
     """The host the ring node at address is: the first one whose machine has that address (its interfaces' when
     known, else the address it was reached at), else the address."""
     for h in ordered:
@@ -85,6 +88,7 @@ def _match(address, hosts, data, ordered):
 
 
 def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host, keep_hand_edits):
+    """The entry of the ring node item, read on host (hv: its variables, {} when none)."""
     facts = _d(hv.get("ansible_facts"))
     read = "import_cluster_config" in hv
     config = _d(hv.get("import_cluster_config"))
@@ -102,10 +106,10 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     else:
         name = facts.get(host_names) or host
 
-    java_package = ("openjdk-%s-jre-headless" % hv.get("import_cluster_java", "") if os_family == "Debian"
-                    else "java-%s-amazon-corretto-headless" % hv.get("import_cluster_java", "")
-                    if facts.get("distribution", "") == "Amazon"
-                    else "java-%s-openjdk-headless" % hv.get("import_cluster_java", ""))
+    java_text = hv.get("import_cluster_java", "")
+    java_package = ("openjdk-%s-jre-headless" % java_text if os_family == "Debian"
+                    else "java-%s-amazon-corretto-headless" % java_text if facts.get("distribution", "") == "Amazon"
+                    else "java-%s-openjdk-headless" % java_text)
     java_vars = {}
     if read and java != java_default.get(series, ""):
         java_vars["cassandra_java_version"] = java
@@ -136,7 +140,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
             hand_kept.append(f)
     hand_kept = {"cassandra_config_keep_files": hand_kept} if hand_kept and keep_hand_edits else {}
 
-    pkgs = facts.get("packages", {})
+    pkgs = hv.get("import_cluster_packages", {})
     installed = {}
     if read and package:
         if "cassandra-tools" not in pkgs:
@@ -146,9 +150,9 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         held = hv.get("import_cluster_held", [])
         if os_family == "Debian" and [p for p in ("cassandra", "cassandra-tools") if p in pkgs and p not in held]:
             installed["cassandra_package_hold"] = False
-    dsbulk = str(hv.get("import_cluster_dsbulk", ""))
-    if read and DSBULK.match(dsbulk):
-        installed["cassandra_dsbulk_version"] = dsbulk.rsplit("/", 2)[0].rsplit("/", 1)[1][7:]
+    dsbulk = DSBULK.match(str(hv.get("import_cluster_dsbulk", "")))
+    if read and dsbulk:
+        installed["cassandra_dsbulk_version"] = dsbulk.group(1)
     elif read:
         installed["cassandra_dsbulk_install"] = False
 
@@ -256,7 +260,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         # what of Medusa was read: its medusa.ini (imported), its install (its version)
         "medusa": {
             "ini": read and "content" in _d(hv.get("import_cluster_medusa_ini"))
-            and not [n for n in medusa.get("notes", []) if re.search("NOT imported", str(n))],
+            and not [n for n in medusa.get("notes", []) if "NOT imported" in str(n)],
             "install": read and "cassandra_medusa_version" in _d(medusa.get("vars")),
         },
         # a node not read is an existing node too: nothing of it is taken over. The firewall (or none) is the
@@ -281,7 +285,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     ordered = list(given) + list(found or [])
     out = []
     for item in ring:
-        host = _match(item["address"], ordered, data, ordered)
+        host = _match(item["address"], data, ordered)
         error = None
         try:
             out.append(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {}, host_names,

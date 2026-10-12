@@ -80,6 +80,7 @@ def test_jmx_login_from_the_given_node(given_vars, jmx):
 
 
 WORK_OUT = task("Work out the series and the conf dir")["ansible.builtin.set_fact"]
+WORK_OUT_VARS = task("Work out the series and the conf dir")["vars"]
 
 
 @pytest.mark.parametrize("marks, keep", [
@@ -196,15 +197,29 @@ def test_os_baseline_is_the_roles_defaults_not_the_inventory():
         "{{ 'cassandra_", "")  # nothing else read from the play's vars
 
 
-@pytest.mark.parametrize("installed, kv, from_file", [
-    ({"cassandra": [{"version": "5.0.7"}]}, {"pkg_query": "ok"}, True),  # no configured repository offers it
-    ({"cassandra": [{"version": "5.0.7"}]}, {"pkg_query": "ok", "pkg_repo": "yes"}, False),
-    ({"cassandra": [{"version": "5.0.7"}]}, {}, False),  # the query failed (e.g. timed out): no conclusion
-    ({}, {}, False),  # not a package install
+@pytest.mark.parametrize("kv, from_file", [
+    ({"installed_cassandra": "5.0.7", "pkg_query": "ok"}, True),  # no configured repository offers it
+    ({"installed_cassandra": "5.0.7", "pkg_query": "ok", "pkg_repo": "yes"}, False),
+    ({"installed_cassandra": "5.0.7"}, False),  # the query failed (e.g. timed out): no conclusion
+    ({"pkg_query": "ok"}, False),  # not a package install
 ])
-def test_package_installed_from_a_file(installed, kv, from_file):
-    facts = {"packages": installed}
-    assert render(WORK_OUT["import_cluster_package_from_file"], _kv=kv, ansible_facts=facts) == from_file
+def test_package_installed_from_a_file(kv, from_file):
+    installed = render(WORK_OUT_VARS["_installed"], _kv=kv, _pairs=render(WORK_OUT_VARS["_pairs"], _kv=kv))
+    assert render(WORK_OUT["import_cluster_package_from_file"], _kv=kv, _installed=installed) == from_file
+    assert render(WORK_OUT["import_cluster_package"], _installed=installed) == kv.get("installed_cassandra", "")
+
+
+def test_packages_read_as_package_facts_gives_them():
+    # the version of the installed ones (rpm's VERSION, dpkg's Version), each name the import looks at
+    kv = {"installed_cassandra": "5.0.7", "installed_libjemalloc2": "5.3.0-2", "pkg_query": "ok", "version": "5.0.7"}
+    pairs = render(WORK_OUT_VARS["_pairs"], _kv=kv)
+    assert render(WORK_OUT_VARS["_installed"], _pairs=pairs) == {"cassandra": "5.0.7", "libjemalloc2": "5.3.0-2"}
+    script = task("Read the running Cassandra (conf dir, Cassandra and Java versions)")
+    assert "rpm -q --qf '%{VERSION}\\n'" in script["ansible.builtin.shell"]
+    assert "${db:Status-Status} ${Version}" in script["ansible.builtin.shell"]
+    for name in ("cassandra", "cassandra-tools", "jemalloc", "libjemalloc2"):
+        assert name in script["environment"]["IMPORT_CLUSTER_PACKAGES"]
+    assert "debian_packages" in script["environment"]["IMPORT_CLUSTER_PACKAGES"]
 
 
 @pytest.mark.parametrize("from_file, read, pkg", [

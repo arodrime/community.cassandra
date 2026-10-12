@@ -12,6 +12,8 @@ cassandra_import_self_check: the files import_cluster writes (group_vars,
     JVM options, shell words, XML elements, unit keys), not as text: the
     settings that differ, values of secrets masked; and the owner, group and
     mode cassandra_config would give its files, against the node's.
+cassandra_import_self_check_nodes: the same for each node read, the
+    inventory files read once for all of them.
 
 Their unexpected errors do not quote the error message, which may show a
 value read from the nodes (a password).
@@ -22,6 +24,7 @@ __metaclass__ = type
 
 import configparser
 import difflib
+import functools
 import json
 import os
 import re
@@ -236,16 +239,8 @@ def _compare(name, node, role, storage_dir=""):
     return out
 
 
+@functools.lru_cache(maxsize=None)
 def _defaults():
-    if not _DEFAULTS:
-        _DEFAULTS.append(_read_defaults())
-    return _DEFAULTS[0]
-
-
-_DEFAULTS = []
-
-
-def _read_defaults():
     ctx = {}
     for role in ("cassandra_config", "cassandra_service", "cassandra_medusa"):
         with open(os.path.join(ROLES, role, "defaults", "main.yml")) as f:

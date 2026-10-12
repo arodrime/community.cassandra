@@ -1,2 +1,3 @@
 bugfixes:
   - "import_cluster - laying out the inventory of a large cluster no longer takes hours: each node's variables are read once (``hostvars`` worked them out anew at each use, per node and per setting), and the self-check reads the inventory files once for all the nodes."
+  - "import_cluster - faster on many nodes: the files of a node are read by one command per step instead of a module run per file, only the packages the import looks at are read (no ``package_facts``, a large fact for every task), and the inventory files that would not change are left alone."

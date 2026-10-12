@@ -17,7 +17,9 @@ from ansible.template import Templar
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_nodes
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import (
+    KEYS, cassandra_import_host_vars, cassandra_import_nodes)
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -121,3 +123,46 @@ def test_a_node_that_fails_is_named_in_the_error():
     msg = str(err.value)
     assert re.match(r"cassandra_import_nodes: 10[.]0[.]0[.]1: \w+$", msg) and err.value.__context__ is None
     assert cassandra_import_error({"failed": True, "msg": "templating failed: " + msg}) == msg
+
+
+class _Vars(dict):
+    """hostvars as Ansible gives them: a host's variables worked out when it is looked up."""
+    def __init__(self, *args, **kwargs):
+        super(_Vars, self).__init__(*args, **kwargs)
+        self.looked_up = []
+
+    def __getitem__(self, host):
+        self.looked_up.append(host)
+        return dict.__getitem__(self, host)
+
+
+def test_each_host_read_once_with_what_the_import_needs():
+    hostvars = _Vars(HOSTVARS, node1=dict(HOSTVARS["node1"], import_cluster_config={"vars": {}}, other_var=1))
+    data = cassandra_import_host_vars(hostvars, ["node1", "10.0.0.2", "node1", "10.0.0.9"])
+    assert hostvars.looked_up == ["node1", "10.0.0.2"]  # once each; a name that is not a host left out
+    assert set(data) == {"node1", "10.0.0.2"}
+    assert set(data["node1"]) == {"ansible_host", "ansible_facts", "import_cluster_config"}  # what the import reads only
+
+
+def test_variables_read_are_the_ones_taken():
+    # each import_cluster_* variable the filters read is one cassandra_import_host_vars takes
+    root = os.path.join(os.path.dirname(PLAYBOOK), "..", "plugins", "filter")
+    used = set()
+    for name in ("cassandra_import_nodes.py", "cassandra_import_check.py"):
+        with open(os.path.join(root, name), encoding="utf-8") as f:
+            used |= set(re.findall(r"""hv(?:\.get\(|\[)"((?:import_cluster|ansible)_\w+)\"""", f.read()))
+    assert used and used <= set(KEYS)
+
+
+def test_task_gives_the_filter_what_it_reads():
+    load_collection_filters()
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    match = next(t for t in next(t for t in write["tasks"] if t.get("name") == "Build the inventory")["block"]
+                 if t["name"] == "Match the ring with the hosts")
+    ring = [{"address": a, "dc": "dc1", "rack": "r1"} for a in ("10.0.0.1", "10.0.0.2", "10.0.0.3")]
+    variables = dict(match["vars"], hostvars=HOSTVARS, _given=GIVEN, _ring=ring, _jmx={},
+                     groups={"import_cluster_found": ["10.0.0.3"]}, _java_default=write["vars"]["_java_default"])
+    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+    nodes = Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(match["ansible.builtin.set_fact"]["_nodes"]))
+    assert [(n["host"], n["name"]) for n in nodes] == [("node1", "node1"), ("10.0.0.2", "node2"), ("10.0.0.3", "node3")]

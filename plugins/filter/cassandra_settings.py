@@ -16,6 +16,7 @@ cassandra_same_settings: the text of a live file, the role's, the file name
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import functools
 import re
 import xml.etree.ElementTree as ET
 
@@ -84,9 +85,17 @@ STORAGE_DIRS = {"data_file_directories": "data", "commitlog_directory": "commitl
                 "saved_caches_directory": "saved_caches", "hints_directory": "hints", "cdc_raw_directory": "cdc_raw"}
 
 
+@functools.lru_cache(maxsize=8)
+def _compose(text):
+    """The YAML node of text, of the last ones read: the import's self-check reads each cassandra.yaml twice (its
+    settings, then whether they are the same), about a second each in pure-Python YAML. Read only (_plain makes
+    new values)."""
+    return yaml.compose(text, Loader=yaml.BaseLoader)
+
+
 def yaml_settings(text, storage_dir=""):
     """cassandra.yaml: {dotted path: value}."""
-    node = yaml.compose(text, Loader=yaml.BaseLoader)
+    node = _compose(text)
     data = _plain(node) if node is not None else {}
     if not isinstance(data, dict):
         raise yaml.YAMLError("not a mapping")

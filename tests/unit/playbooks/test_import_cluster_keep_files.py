@@ -5,17 +5,21 @@ __metaclass__ = type
 # covers are left as they are on their node (cassandra_config_keep_files), not
 # written nor compared by cassandra_config and the self-check.
 
+import base64
 import os
 import re
 
+import pytest
 import yaml
 
+from ansible.errors import AnsibleFilterError
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
+    cassandra_import_self_check, cassandra_import_self_check_nodes)
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -28,9 +32,6 @@ from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 STOCK = os.path.join(ROOT, "roles", "cassandra_config", "molecule", "default", "files", "stock-5.0.9")
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostname": "n1"}
-
-with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-    PLAYS = yaml.safe_load(f)
 
 
 def render(template, **variables):
@@ -123,3 +124,27 @@ def test_self_check_compares_the_owner_and_mode_of_the_kept_files():
     out, layout = check(files, {"cassandra_config_keep_files": ["logback.xml"]}, permissions)
     assert out["differences"] == ["logback.xml: owner:group mode: node has root:cassandra 0600,"
                                   " import would write root:cassandra 0644"]
+
+
+def test_self_check_of_every_node_read():
+    # the import's one call: each node read checked as on its own, with its files as read (base64), its unit's
+    # environment; a node not read left out
+    files = stock()
+    out, layout = check(files, {})
+    nodes = [{"address": "10.0.0.1", "host": "h1", "read": True}, {"address": "10.0.0.2", "host": "h2", "read": False}]
+    slurped = [{"item": name, "content": base64.b64encode(text.encode()).decode()} for name, text in files.items()]
+    data = {"h1": {"ansible_facts": FACTS, "import_cluster_slurp": {"results": slurped + [{"item": "x", "failed": True}]},
+                   "import_cluster_unit": {"env": {}}, "import_cluster_storage_dir": "/var/lib/cassandra",
+                   "import_cluster_java": "17", "import_cluster_conf_dir": "",
+                   "import_cluster_perms": {"files": role_permissions(files)}}}
+    every = cassandra_import_self_check_nodes(cassandra_inventory_files(layout), layout["hosts"], nodes,
+                                              {"10.0.0.1": "n1", "10.0.0.2": "n2"}, data)
+    assert every == {"n1": out}
+
+
+def test_self_check_of_every_node_names_the_one_that_failed():
+    nodes = [{"address": "10.0.0.7", "host": "h7", "read": True}]
+    with pytest.raises(AnsibleFilterError) as err:
+        cassandra_import_self_check_nodes([], {}, nodes, {"10.0.0.7": "n7"}, {"h7": {"import_cluster_slurp": {"results": [
+            {"item": "cassandra.yaml", "content": "hunter2 is not base64"}]}}})
+    assert str(err.value).startswith("cassandra_import_self_check_nodes: 10.0.0.7: ") and "hunter2" not in str(err.value)
