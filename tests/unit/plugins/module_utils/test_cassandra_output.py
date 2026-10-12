@@ -499,3 +499,99 @@ def test_seeds_todo_first_in_the_removed_todo():
     # nothing removed: the seeds alone
     assert out.removed_todo([], "node1", first=[item])[0] == "TO DO"
     assert out.removed_todo([], "node1", first=[None]) == []
+
+
+# --- node groups, wrapping (a large cluster) ---
+
+BIG_A = ["db1%d" % i for i in range(1, 7)] + ["db2%d" % i for i in range(1, 7)]  # 12
+BIG_B = ["db07%d" % i for i in range(1, 7)]  # 6
+BIG_C = ["db10%d" % i for i in range(1, 4)] + ["db111"]  # 4
+BIG = BIG_A + BIG_B + BIG_C
+
+
+def test_node_groups_are_the_partition_of_the_lists():
+    sets = [BIG_A, BIG_B + BIG_C, [n for n in BIG_B if n != "db074"], BIG_A + ["db074"], BIG_C[:3]]
+    groups = out.node_groups(sets, BIG)
+    # db074 and db111 are in other lists than their neighbours: their names; db101..db103 a group of 3
+    assert groups == [("G1", BIG_A), ("G2", ["db071", "db072", "db073", "db075", "db076"]),
+                      ("G3", ["db101", "db102", "db103"])]
+    assert out.who(BIG_B + BIG_C[:3], BIG, groups) == "G2 + G3 + db074"
+    assert out.who(BIG_A + ["db074"], BIG, groups) == "G1 + db074"
+    assert out.who(BIG, BIG, groups) == "all"
+    assert out.who([n for n in BIG if n != "db111"], BIG, groups) == "all except db111"
+    assert out.who(BIG_B + BIG_C, BIG, groups) == "all except G1"  # shorter than G2 + G3 + db074, db111
+    assert out.who(["db101", "db074"], BIG, groups) == "db074, db101"
+    singles = ["a1", "b2", "c3", "d4", "f6", "g7"]
+    assert out.who(BIG_A + singles, BIG_A + BIG_B + singles + ["e5"], [("G1", BIG_A), ("G2", BIG_B)]) == \
+        "all except (G2 + e5)"  # read as one
+    # a list of one node splits nothing (a value per node would leave no group); the nodes in no list (not
+    # read) make no group either
+    assert out.node_groups([[n] for n in BIG] + [BIG_A, BIG_B + BIG_C], BIG) == [("G1", BIG_A), ("G2", BIG_B + BIG_C)]
+    assert out.node_groups([[n] for n in BIG] + [BIG_A], BIG) == [("G1", BIG_A)]
+    # under GROUPS_FROM nodes, or every node alike: none
+    assert out.node_groups([BIG_A[:3]], BIG_A[:11]) == []
+    assert out.node_groups([BIG], BIG) == []
+
+
+def test_group_lines():
+    groups = [("G1", BIG_A), ("G2", BIG_B)]
+    assert out.group_lines(groups) == ["NODE GROUPS", "  G1 = db11..db16, db21..db26 (12 nodes)",
+                                       "  G2 = db071..db076 (6 nodes)"]
+    assert out.group_lines(groups, full=True, width=60) == [
+        "NODE GROUPS",
+        "  G1 = db11, db12, db13, db14, db15, db16, db21, db22, db23,",
+        "       db24, db25, db26 (12 nodes)",
+        "  G2 = db071, db072, db073, db074, db075, db076 (6 nodes)"]
+    assert out.group_lines([]) == []
+
+
+def test_wrap_list_never_cuts_a_name():
+    text = "db11..db16, db21..db26, db071..db076, db101..db103"
+    assert out.wrap_list(text, 30) == ["db11..db16, db21..db26,", "db071..db076, db101..db103"]
+    assert out.wrap_list("G1 + G2 + db074", 6) == ["G1", "+ G2", "+ db074"]
+    assert out.wrap_list("a-very-long-node-name.example.net", 10) == ["a-very-long-node-name.example.net"]
+    assert out.wrap_list(text, 200) == [text]
+    assert out.wrap_list("all except db006..db009, db101", 22) == ["all except", "db006..db009, db101"]
+    assert out.wrap_list("all except (G2 + db074)", 15) == ["all except (G2", "+ db074)"]
+
+
+def test_wrap_value_and_fit():
+    assert out.wrap_value("short", 20) == ["short"]
+    assert out.wrap_value("a b c d e f g h i j k l", 10) == ["a b c d e", "f g h i j", "k l"]
+    assert out.wrap_value("x" * 25, 10) == ["x" * 10, "x" * 10, "x" * 5]  # a value may be cut, not a name
+    lines = ["TO DO (1)", "  1. " + " ".join(["word"] * 20), "short"]
+    assert out.fit(lines, 40) == ["TO DO (1)", "  1. word word word word word word word", "     word word word word word word word",
+                                  "     word word word word word word", "short"]
+    assert out.fit(["  " + "y" * 50], 20) == ["  " + "y" * 50]  # one long word: whole
+    assert out.fit(lines, None) == lines
+
+
+def test_settings_lines_in_a_width():
+    entries = [("heap", [("31G", "G1", ""), ("16G", "G2 + db074", ARROW + " differs (group_vars/big_dc2)")]),
+               ("listen_address", [("{{ ansible_facts['default_ipv4']['address'] }}", "all", "")]),
+               ("seeds", [("db11, db071, db101", "db11..db16, db21..db26, db071..db076, db101..db103", "")])]
+    assert out.settings_lines(entries, width=70) == [
+        "  heap:           31G                  G1",
+        "                  16G                  G2 + db074",
+        "                                       %s differs (group_vars/big_dc2)" % ARROW,
+        "  listen_address: {{ ansible_facts['default_ipv4']['address'] }}  all",
+        "  seeds:          db11, db071, db101   db11..db16, db21..db26,",
+        "                                       db071..db076, db101..db103"]
+    # narrower: the long value goes on under its column, the note too
+    narrow = out.settings_lines(entries, width=60)
+    assert narrow[2:5] == ["%s%s differs (group_vars/big_dc2)" % (" " * 30, ARROW),  # moved left to fit
+                           "  listen_address: {{ ansible_facts['default_ipv4']['add  all",
+                           "                  ress'] }}"]
+    assert all(len(line) <= 60 for line in narrow)
+    # wide enough: a long value pushes its nodes, the notes after them
+    wide = out.settings_lines(entries, width=200)
+    assert wide[1] == "                  16G                  G2 + db074%s   %s differs (group_vars/big_dc2)" % (" " * 20, ARROW)
+    assert wide[2] == "  listen_address: {{ ansible_facts['default_ipv4']['address'] }}  all"
+    # no width: as before
+    assert out.settings_lines(entries)[2] == "  listen_address: {{ ansible_facts['default_ipv4']['address'] }}  all"
+
+
+def test_leaves():
+    assert out.leaves("x", {"a": 1, "b": {"c": [1, 2], "d": {}}}) == [("x.a", 1), ("x.b.c", [1, 2]), ("x.b.d", {})]
+    assert out.leaves("x", {}) == [("x", {})]
+    assert out.leaves("x", "v") == [("x", "v")]

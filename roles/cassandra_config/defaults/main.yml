@@ -251,7 +251,9 @@ cassandra_enable_drop_compact_storage: false
 
 # Settings no variable covers, written as-is at the end of cassandra.yaml,
 # e.g. {commitlog_total_space: 8192MiB}. Keys the template already has are
-# refused (use their variable); Cassandra refuses unknown keys at startup.
+# refused (use their variable), but audit_logging_options takes the sub-keys no
+# variable covers ({audit_logging_options: {included_categories: DDL}}),
+# written in that section; Cassandra refuses unknown keys at startup.
 cassandra_extra_settings: {}
 
 # ---- cassandra-env.sh ----

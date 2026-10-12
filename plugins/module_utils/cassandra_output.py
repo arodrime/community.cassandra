@@ -8,10 +8,12 @@ docs/docsite/rst/guide_output.rst.
 
 - sizes, rates, durations, clocks: size, amount, parse_size, rate, duration, clock,
   count, plural;
-- node lists: nodes (node1..node5, node7), full_list;
+- node lists: nodes (node1..node5, node7), full_list; by groups on a large
+  cluster: node_groups, who, group_lines;
 - secrets: secret, mask, shown;
 - a setting and its value per node: setting_lines, settings_lines (several,
-  aligned), setting_rows, by_nodes;
+  aligned, wrapped in a width: wrap_value, wrap_list), setting_rows, by_nodes;
+  lines fit in a terminal's width: fit;
 - before a change: plan; during it: progress_line; at the end: recap,
   perm_lines, diff_lines, changed_lines;
 - what is left to do: command, extra_var, todo, inventory_steps,
@@ -26,6 +28,7 @@ import json
 import os
 import re
 import shlex
+import textwrap
 import time
 
 ARROW = u"←"  # the marker of a line that needs a look: "<- down", "<- differs"
@@ -169,6 +172,12 @@ def nodes(names, keep_order=False, full=False):
     if full:
         return full_list(names, keep_order)
     names = names if keep_order else sorted(set(names), key=_natural)
+    text = _ranges(names)
+    return ("%d nodes: %s" % (len(names), text)) if len(names) > 5 else text
+
+
+def _ranges(names):
+    """Names in the order given, 3 or more consecutive numbered ones as a range."""
     parts, run, place = [], [], None
 
     def flush():
@@ -185,8 +194,7 @@ def nodes(names, keep_order=False, full=False):
         run.append(name)
         place = None
     flush()
-    text = ", ".join(parts)
-    return ("%d nodes: %s" % (len(names), text)) if len(names) > 5 else text
+    return ", ".join(parts)
 
 
 # --- secrets -------------------------------------------------------------------------------
@@ -303,6 +311,17 @@ def _groups(values, order):
     return [tuple(group) for group in ranked]
 
 
+def leaves(name, value):
+    """A dict value as one setting per sub-key, name.key (a dict in it: name.key.sub),
+    in its order: [(name.key, value)]; any other value, an empty dict too: [(name, value)]."""
+    if isinstance(value, dict) and value:
+        found = []
+        for key in value:
+            found += leaves("%s.%s" % (name, key), value[key])
+        return found
+    return [(name, value)]
+
+
 def setting_rows(setting, values, all_nodes=None, expected=None, notes=None, where=None, full=False):
     """One setting across nodes -> (setting, [(shown value, nodes, note)]) for
     settings_lines. values: {node: value}; all_nodes: the nodes of the run
@@ -338,7 +357,7 @@ def setting_rows(setting, values, all_nodes=None, expected=None, notes=None, whe
     return (setting, rows)
 
 
-def settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=30):
+def settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=30, width=None):
     """Several settings, aligned: one column for their names, one for the
     values, one for the nodes, then the notes ("<- differs"), the same
     columns across all of them (import_cluster's report, apply_config).
@@ -347,13 +366,24 @@ def settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=
     between them (a file name). The value column is as wide as the longest
     value, up to max_value (a longer one pushes its nodes only), the nodes
     one up to max_nodes (a longer list pushes its note only); a name longer
-    than max_label on a line of its own, its values below."""
+    than max_label on a line of its own, its values below. width: the lines
+    fit in it (a terminal's): names up to 35% of it, a longer value goes on
+    over lines when pushing its nodes does not fit, the nodes too, under
+    their column, never a name cut (see wrap_list); a note that does not fit
+    after them on a line of its own, under them."""
     rows = [s for s in settings or [] if not isinstance(s, str)]
     if not rows:
         return [s for s in settings or [] if isinstance(s, str)]
+    if width:
+        max_label = min(56, max(16, int(width * 0.35)))
     labels = [len("%s:" % name) for name, values in rows if values]
     label = max([n for n in labels if n <= max_label] or [0])
-    width = min(max([len(str(v[0])) for n, values in rows for v in values] or [0]) + 2, max_value)
+    lengths = [len(str(v[0])) for n, values in rows for v in values]
+    if width:  # the column of the values that fit in it, a longer one pushes its nodes
+        lengths = [n for n in lengths if n + 2 <= max_value] or [max_value - 2]
+    value_width = min(max(lengths or [0]) + 2, max_value)
+    if width:  # 20 columns at least left for the nodes
+        value_width = min(value_width, max(6, width - len(indent) - label - 24))  # (the nodes from width-22 on)
     who = min(max([len(str(v[1])) for n, values in rows for v in values] or [0]), max_nodes)
     out = []
     for entry in settings:
@@ -367,10 +397,98 @@ def settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=
             head = ""
         for index, (value, names, note) in enumerate(values):
             value, names = str(value), str(names)
-            line = "%s%s %s %s" % (indent, (head if index == 0 else "").ljust(label),
-                                   value.ljust(width) if len(value) < width else value + " ",
-                                   (names.ljust(who) if len(names) < who else names) + "   " + note if note else names)
-            out.append(line.rstrip())
+            first = (head if index == 0 else "").ljust(label)
+            if not width:
+                line = "%s%s %s %s" % (indent, first, value.ljust(value_width) if len(value) < value_width
+                                       else value + " ",
+                                       (names.ljust(who) if len(names) < who else names) + "   " + note if note
+                                       else names)
+                out.append(line.rstrip())
+                continue
+            out += _row_lines(indent + first, indent + " " * label, value, names, note, value_width, who, width)
+    return out
+
+
+def _row_lines(first, blank, value, names, note, value_width, who, width):
+    """One row of settings_lines in width: first, the line's start (indent and the setting's name), blank the
+    same as spaces; the value in its column, a longer one pushing the nodes as far as they fit, else on over lines;
+    the nodes on as many lines as they need, under their column; the note after the nodes, else on lines of its
+    own after the row's, under the nodes (further left when there is not room for it)."""
+    start = len(first) + 1
+    if len(value) >= value_width:  # pushes the nodes, as far as the line allows
+        value_width = max(value_width, min(len(value) + 1, width - start - min(len(names), 30) - 1))
+    values = wrap_value(value, value_width - 1)
+    at = start + value_width + 1  # the nodes' column
+    names = wrap_list(names, max(20, width - at))
+    lines = []
+    for i in range(max(len(values), len(names))):
+        lines.append("%s %s %s" % (first if i == 0 else blank, (values[i] if i < len(values) else "").ljust(value_width),
+                                   names[i] if i < len(names) else ""))
+    if note:
+        last = len(names) - 1
+        noted = lines[last] + " " * max(0, who - len(names[-1])) + "   " + note
+        if len(noted) <= width and last == len(lines) - 1:
+            lines[last] = noted
+        else:
+            hang = " " * min(at, max(4, width - len(note), width - 40))
+            lines += textwrap.wrap(note, width, initial_indent=hang, subsequent_indent=hang, break_long_words=False,
+                                   break_on_hyphens=False) or [hang + note]
+    return [line.rstrip() for line in lines]
+
+
+def wrap_value(text, room):
+    """A value on lines of at most room characters (one line when it fits): cut
+    at a space when there is one, else where it must."""
+    text = str(text)
+    room = max(1, int(room))
+    if len(text) <= room:
+        return [text]
+    return textwrap.wrap(text, room, break_long_words=True, break_on_hyphens=False, drop_whitespace=True) or [text]
+
+
+def wrap_list(text, room):
+    """A list of nodes or groups ("db11..db16, db21, G1 + db074") on lines of at
+    most room characters: cut after a ", " (the comma kept), before a " + " or
+    after "all except", never inside a name (one longer than room has a line
+    of its own)."""
+    text = str(text)
+    if len(text) <= room:
+        return [text]
+    lead = "all except " if text.startswith("all except ") else ""  # a word of its own
+    parts = re.split(r"(, | \+ )", text[len(lead):])
+    words = ([lead.strip()] if lead else []) + [parts[0]]
+    for sep, word in zip(parts[1::2], parts[2::2]):
+        if sep == ", ":
+            words[-1] += ","
+            words.append(word)
+        else:
+            words.append("+ " + word)
+    lines, line = [], ""
+    for word in words:
+        if line and len(line) + 1 + len(word) > room:
+            lines.append(line)
+            line = word
+        else:
+            line = (line + " " + word) if line else word
+    return lines + [line]
+
+
+def fit(lines, width):
+    """Lines no longer than width (a terminal's): a longer one goes on over
+    lines indented under its text ("  1. " of a numbered item, else its own
+    indent and 2 more), cut between words only (a path or a name longer than
+    width stays whole). None or 0: as they are."""
+    if not width:
+        return list(lines)
+    out = []
+    for line in lines:
+        if len(line) <= width:
+            out.append(line)
+            continue
+        lead = re.match(r"^(\s*)(\d+\.\s+)?", line)
+        hang = " " * (len(lead.group(0)) if lead.group(2) else len(lead.group(1)) + 2)
+        out += textwrap.wrap(line.lstrip(), width, initial_indent=lead.group(1), subsequent_indent=hang,
+                             break_long_words=False, break_on_hyphens=False) or [line]
     return out
 
 
@@ -408,6 +526,91 @@ def by_nodes(pairs, full=False, every="all"):
         out.append(every if len(names) == len(pairs) and len(pairs) > 1 else nodes(names, full=full))
         out += ["  " + line for line in lines]
     return out
+
+
+# --- node groups -------------------------------------------------------------------------
+
+# From this many nodes on, a screen names the node lists of its rows by groups:
+# "G1 + db074", "all except db111"; a group has GROUP_LEAST nodes at least
+GROUPS_FROM = 12
+GROUP_LEAST = 3
+
+
+def node_groups(sets, all_nodes, least=GROUPS_FROM):
+    """The node groups of a screen of rows (a value and its nodes): the nodes
+    that are in the same lists (sets: the node list of each row) make a group,
+    so that each list is some groups and a few nodes (a list of one node is
+    its name, e.g. a value per node: not a split). [(label, [nodes])], G1
+    the largest; a group of GROUP_LEAST nodes at least, never every node; []
+    under least nodes (their names are short enough)."""
+    order = []
+    for name in all_nodes or []:
+        if str(name) not in order:
+            order.append(str(name))
+    if len(order) < least:
+        return []
+    every = set(order)
+    seen, kinds = set(), []
+    for names in sets or []:
+        kind = frozenset(str(n) for n in names) & every
+        if len(kind) > 1 and kind != every and kind not in seen:  # a node alone: its name
+            seen.add(kind)
+            kinds.append(kind)
+    atoms = {}
+    for name in order:
+        atoms.setdefault(tuple(name in kind for kind in kinds), []).append(name)
+    atoms.pop(tuple(False for kind in kinds), None)  # in no list (a node not read): named by no row
+    big = [sorted(a, key=_natural) for a in atoms.values() if GROUP_LEAST <= len(a) < len(order)]
+    big.sort(key=lambda a: (-len(a), _natural(a[0])))
+    return [("G%d" % (i + 1), a) for i, a in enumerate(big)]
+
+
+def who(names, all_nodes=None, groups=None, full=False, counted=True):
+    """A node list by the groups of node_groups: "all" (every one of
+    all_nodes), "G1 + G3 + db074", or "all except db111" when it is shorter;
+    the nodes outside a group as nodes() names them (full: every name;
+    counted: "6 nodes: " before more than 5)."""
+    names = [str(n) for n in names or []]
+    every = [str(n) for n in all_nodes or []]
+    if every and set(every) <= set(names):
+        return "all"
+
+    def union(members):
+        left, parts = set(members), []
+        for label, group in groups or []:
+            if set(group) <= left:
+                parts.append(label)
+                left -= set(group)
+        rest = sorted(left, key=_natural)
+        if rest:
+            plain = full_list(rest) if full else nodes(rest) if counted and not parts else _ranges(rest)
+            parts.append(plain)
+        return " + ".join(parts)
+
+    text = union(names)
+    if groups and every:
+        others = [n for n in every if n not in set(names)]
+        rest = union(others)
+        alternative = "all except " + ("(%s)" % rest if " + " in rest else rest)
+        if len(alternative) < len(text):
+            return alternative
+    return text
+
+
+def group_lines(groups, full=False, width=None, indent="  "):
+    """The groups who() names, defined once at the top of a screen:
+    "NODE GROUPS", then "  G1 = db11..db16, db21..db26 (12 nodes)", a long one
+    on over lines under its nodes (full: every name)."""
+    if not groups:
+        return []
+    lines = ["NODE GROUPS"]
+    for label, members in groups:
+        head = "%s%s = " % (indent, label)
+        text = "%s (%s)" % (full_list(members) if full else _ranges(sorted(members, key=_natural)),
+                            plural(len(members), "node"))
+        chunks = wrap_list(text, max(20, width - len(head))) if width else [text]
+        lines += [(head if i == 0 else " " * len(head)) + chunk for i, chunk in enumerate(chunks)]
+    return lines
 
 
 # --- plan ----------------------------------------------------------------------------------

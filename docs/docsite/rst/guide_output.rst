@@ -25,7 +25,12 @@ Conventions
       -Ddemo.drift=1:   present                       node2                 ← differs (not in the inventory)
 - **Node lists** are short: ``node1..node5, node7`` (a range from 3 consecutive names, 2 names listed, a gap breaks
   the range), ``6 nodes:`` first when there are more than 5. Files and ``-v`` give every name; ``--limit`` in a
-  command always lists every host.
+  command always lists every host. From 12 nodes on, the import screen and report and ``apply_config``'s settings
+  that differ define ``NODE GROUPS`` first (the nodes that are always in the same lists, 3 or more:
+  ``G1 = db11..db16, db21..db26 (12 nodes)``), then a row says ``all``, ``G1``, ``G1 + db074`` or
+  ``all except db111``; report.txt's DETAILS name every node. A dict value is a row per sub-key
+  (``cassandra_extra_settings.sstable.selected_format``). A long value or node list goes on under its column (a
+  name is never cut), the import screen fits the terminal.
 - **Sizes, rates, durations** in one format: ``41.2 GiB``, ``89 MiB/s``, ``9m20s`` (never ``0.0 GiB`` for a
   non-zero size).
 - **Plans**: the header, the numbered steps (node and dc/rack), the facts, then the ``WARNING`` lines just above

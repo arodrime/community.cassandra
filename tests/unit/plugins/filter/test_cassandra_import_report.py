@@ -3,10 +3,13 @@ __metaclass__ = type
 
 # The import's report and the screen that ends the run: one setting per line, each value with the nodes that have it.
 
+import re
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     _compress, cassandra_import_report)
 
+ARROW = u"\u2190"
 WRITTEN = ["/p/inventories/my_cluster.yml", "/p/inventories"]
 REPORT = "/p/reports/my_cluster/report.txt"
 
@@ -22,6 +25,7 @@ def report(nodes, ok=True, **kwargs):
     layout = cassandra_inventory_layout(nodes, "My Cluster")
     kwargs.setdefault("cwd", "/p")
     kwargs.setdefault("in_git", True)
+    kwargs.setdefault("width", 160)
     return cassandra_import_report(layout, WRITTEN, REPORT, kwargs.pop("self_check", {}), ok, **kwargs)
 
 
@@ -172,7 +176,8 @@ def test_differs_from_your_group_vars_all():
     at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_config_user:")][0]
     assert lines[at].split()[1:] == ["cassandra", "node3,", "node4,", "node5"]
     # the screen has it too, its nodes as a range, then the report's path
-    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True)
+    screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True,
+                                     width=160)
     at = screen.index(u"DIFFERS FROM YOUR group_vars/all — kept as found; delete the line to apply your standard")
     assert screen[at + 2] == u"                           cassandra   node1, node2   \u2190 kept, in host_vars"
     assert screen[-2:] == ["", "full report: reports/my_cluster/report.txt"]
@@ -240,3 +245,93 @@ def test_check_says_what_it_would_write():
                          " group_vars/my_cluster/main.yml; removed: host_vars/gone/main.yml)")
     # changes not known (an older caller): as before
     assert "  1. Write it: the same command without --check" in report([node(1)], check=True, screen=True)
+
+
+def test_a_dict_value_one_row_per_sub_key():
+    nodes = [node(i) for i in range(1, 6)]
+    for i, n in enumerate(nodes):
+        n["vars"]["cassandra_extra_settings"] = {"streaming_connections_per_host": 2 if i < 3 else 1,
+                                                 "sstable": {"selected_format": "bti"},
+                                                 "server_encryption_options": {"keystore_password": "pw%d" % i}}
+    del nodes[4]["vars"]["cassandra_extra_settings"]["sstable"]
+    lines = report(nodes)
+    text = "\n".join(lines)
+    assert "pw0" not in text and "pw3" not in text
+    at = [i for i, line in enumerate(lines) if line.startswith("  cassandra_extra_settings.streaming_connections")][0]
+    assert lines[at].split()[1:] == ["2", "node1,", "node2,", "node3"]
+    assert lines[at + 1].split()[:4] == ["1", "node4,", "node5", ARROW]
+    sstable = [line for line in lines if line.startswith("  cassandra_extra_settings.sstable.selected_format:")]
+    assert sstable[0].split()[1:] == ["bti", "node1,", "node2,", "node3,", "node4"]
+    assert "(not set)" in lines[lines.index(sstable[0]) + 1]
+    secret = [i for i, line in enumerate(lines) if "server_encryption_options.keystore_password" in line][0]
+    assert "(in secrets.yml)" in lines[secret + 1] and "(in secrets.yml, value 5)" in "\n".join(lines[secret:secret + 7])
+    assert "{" not in "\n".join(line for line in lines if line.startswith("  cassandra_extra_settings"))
+
+
+def test_a_secret_named_sub_key_is_hidden_whatever_its_parents():
+    nodes = [node(i) for i in range(1, 3)]
+    for n in nodes:
+        n["vars"]["cassandra_medusa_extra_settings"] = {"storage": {"pw": "plain1", "bucket": "b"}}
+    lines = report(nodes)
+    assert "plain1" not in "\n".join(lines)
+    assert [line.split()[1] for line in lines if ".storage.bucket:" in line] == ["b"]
+
+
+def test_hand_edits_by_file_counted():
+    logback = ["logback.xml, line %d:" % i for i in (10, 20, 30)]
+    same = [line for head in logback for line in (head, "  - <a/>", "  + <b/>", "  + <c/>")]
+    other = same[:4]
+    nodes = [node(1, hand=same), node(2, hand=same), node(3, hand=other),
+             node(4, hand=same + ["jvm11-server.options, line 3:", "  + -XX:A=1", "  + -XX:B=2"]),
+             node(5, hand=["cassandra.yaml, line 10:", "  + concurrent_writes: 48"] * 2)]
+    lines = report(nodes)
+    assert "  1. Hand edits the roles would revert: logback.xml, jvm11-server.options, concurrent_writes" \
+           " (see below)" in lines  # each name once
+    at = lines.index(u"HAND EDITS — no variable covers them; cassandra_config would revert")
+    assert lines[at + 1:at + 5] == ["  cassandra.yaml concurrent_writes: 48        node5",
+                                    "  logback.xml:                      3 edits   node1, node2, node4",
+                                    "                                    1 edit    node3                 %s differs" % ARROW,
+                                    "  jvm11-server.options:             1 edit    node4"]
+    # two sets of as many edits: told apart, numbered among them
+    nodes = [node(1, hand=same), node(2, hand=other), node(3, hand=[line.replace("<c/>", "<d/>") for line in same])]
+    lines = report(nodes)
+    at = [i for i, line in enumerate(lines) if line.startswith("  logback.xml:")][0]
+    assert [re.search(r"\d+ edits?( \(variant \d\))?", line).group(0) for line in lines[at:at + 3]] == [
+        "1 edit", "3 edits (variant 1)", "3 edits (variant 2)"]
+
+
+def test_written_host_vars_counted_on_a_large_cluster():
+    nodes = [node(i, "16G" if i % 4 == 1 else "8G") for i in range(1, 60, 2)]  # node1, node3...: no range
+    lines = report(nodes, screen=True)
+    assert lines[1].endswith("host_vars/<node>/ of 30 nodes")
+    again = {"changed": ["host_vars/node%d/main.yml" % i for i in range(1, 30)] + ["group_vars/my_cluster/main.yml"],
+             "removed": [], "existed": ["host_vars/node%d/main.yml" % i for i in range(1, 30)]
+             + ["group_vars/my_cluster/main.yml"]}
+    lines = report(nodes, screen=True, check=True, changes=again)
+    assert ("  1. Write it: the same command without --check (changed: host_vars/<node>/main.yml of 29 nodes,"
+            " group_vars/my_cluster/main.yml)") in lines
+
+
+def test_the_screen_fits_the_terminal():
+    nodes = [node(i, hand=["cassandra.yaml, line 10:", "  + setting_%d: 1" % i]) for i in range(1, 20)]
+    for line in report(nodes, screen=True, width=80)[1:]:
+        assert len(line) <= 80, line
+
+
+def test_a_secret_setting_of_a_hand_edit_is_never_shown():
+    # (masked where the edits are made; this one as a line might come)
+    lines = report([node(1, hand=["cassandra.yaml, line 10:", "  + ldap_password: s3cret"])])
+    assert "s3cret" not in "\n".join(lines)
+    assert [line.split()[2] for line in lines if line.startswith("  cassandra.yaml ldap_password:")] == ["****"]
+
+
+def test_the_screen_width_is_ansibles(monkeypatch):
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_import_report as module
+
+    class Narrow(object):
+        columns = 70
+    monkeypatch.setattr(module, "Display", Narrow)
+    nodes = [node(i, hand=["cassandra.yaml, line 10:", "  + setting_%d: 1" % i]) for i in range(1, 20)]
+    screen = cassandra_import_report(cassandra_inventory_layout(nodes, "My Cluster"), WRITTEN, REPORT, {}, True,
+                                     cwd="/p", in_git=True, screen=True)
+    assert max(len(line) for line in screen[1:]) <= 70 < max(len(line) for line in report(nodes, screen=True))

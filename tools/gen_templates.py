@@ -29,10 +29,17 @@ def header(name):
 
 REF_SERIES = "5.0"
 # Ends every cassandra.yaml template (renders nothing when empty)
-EXTRA = """{% if cassandra_extra_settings %}
+EXTRA = """{% set _extra = {} %}
+{% for key, value in cassandra_extra_settings.items() if key not in _cassandra_config_extra_sections %}
+{% set _ = _extra.update({key: value}) %}
+{% endfor %}
+{% if _extra %}
 
 # Settings no variable covers (cassandra_extra_settings)
-{{ cassandra_extra_settings | to_nice_yaml(indent=2) }}{% endif %}"""
+{{ _extra | to_nice_yaml(indent=2) }}{% endif %}"""
+# The sub-keys cassandra_extra_settings adds to audit_logging_options (_cassandra_config_extra_sections), after
+# its logger: indented as the section's other sub-keys (fixed for each series by section_indent)
+AUDIT_LINE = "- class_name: {{ cassandra_audit_logger_class_name }}{{ ('\\n' ~ cassandra_extra_settings.audit_logging_options"
 REF_TEMPLATE = os.path.join(HERE, "..", "roles", "cassandra_config", "templates", REF_SERIES, "cassandra.yaml.j2")
 
 
@@ -301,6 +308,16 @@ def derive_yaml(ref_stock, ref_tpl, stock):
     return [quote_secret(line) for line in out], new_vars, conflicts
 
 
+def section_indent(lines):
+    """The audit_logging_options extra sub-keys indented as the section's own (2 spaces from 4.1 on, 4 in 4.0)."""
+    at = [i for i, line in enumerate(lines) if AUDIT_LINE in line]
+    assert len(at) == 1, "audit_logging_options: its logger line found %d times" % len(at)
+    start = max(i for i in range(at[0]) if lines[i].startswith("audit_logging_options:"))
+    child = next(line for line in lines[start + 1:] if line.strip() and not line.lstrip().startswith("#"))
+    lines[at[0]] = re.sub(r"indent\(\d+, true\)", "indent(%d, true)" % (len(child) - len(child.lstrip())),
+                          lines[at[0]])
+
+
 def main(series, stock_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     for name, rules in RULES[series].items():
@@ -320,6 +337,7 @@ def main(series, stock_dir, out_dir):
             assert ref_tpl[0] == header("cassandra.yaml"), "reference template must start with the header"
             lines, new_vars, conflicts = derive_yaml(a.read().split("\n"), ref_tpl[1:], c.read().split("\n"))
         replace_lines("cassandra.yaml", lines, YAML_RULES.get(series, []))
+        section_indent(lines)
         with open(os.path.join(out_dir, "cassandra.yaml.j2"), "w") as f:
             f.write("\n".join([header("cassandra.yaml")] + lines) + EXTRA)
         print("# %s: new variables" % series)

@@ -361,3 +361,25 @@ def test_the_settings_lines_filter_takes_lists():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_settings_lines
     assert cassandra_settings_lines(["f", ["x", [["1", "node1", ""], ["2", "node2", "differs"]]]]) == [
         "f", "  x: 1   node1", "     2   node2   differs"]
+
+
+def test_a_large_cluster_by_node_groups(tmp_path):
+    """From 12 nodes on, the node lists by groups defined first: 'G1', 'G2 + db074'."""
+    a = ["db1%d" % i for i in range(1, 7)] + ["db2%d" % i for i in range(1, 7)]
+    b = ["db07%d" % i for i in range(1, 7)]
+    nodes = [Node(tmp_path, n, files={"cassandra.yaml": YAML.replace("reads: 32", "reads: 64")}) for n in a]
+    nodes += [Node(tmp_path, n, files={"cassandra.yaml": YAML.replace("3h", "6h")} if n != "db074" else
+                   {"cassandra.yaml": YAML.replace("reads: 32", "reads: 64").replace("3h", "6h")}) for n in b]
+    lines = view(*nodes)
+    assert lines == [
+        "NODE GROUPS",
+        "  G1 = db11..db16, db21..db26 (12 nodes)",
+        "  G2 = db071..db073, db075, db076 (5 nodes)",
+        "",
+        "cassandra.yaml",
+        "  concurrent_reads: 32   G2           (inventory)",
+        "                    64   G1 + db074   %s differs" % ARROW,
+        "  max_hint_window:  3h   G1           (inventory)",
+        "                    6h   G2 + db074   %s differs" % ARROW]
+    # under 12 nodes: their names, as before
+    assert "NODE GROUPS" not in view(*nodes[:11])
