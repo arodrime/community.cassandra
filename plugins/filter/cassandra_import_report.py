@@ -432,7 +432,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             " (or -e import_cluster_allow_unread=true)"))
     for (keys, release), members in _not_settings(read):
         todo.append("%s: cassandra.yaml has %s, which Cassandra %s rejects: it would not restart; remove %s" % (
-            out.full_list(members) if full else _compress(members), ", ".join(keys), release,
+            _who(members, None, groups, full), ", ".join(keys), release,
             "it" if len(keys) == 1 else "them"))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
@@ -532,8 +532,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if rejected:
         lines.append("NOT A CASSANDRA SETTING %s not imported: Cassandra refuses to start with it, cassandra_config"
                      " leaves it out" % DASH)
-        width = max(len(k) for (keys, dummy), dummy2 in rejected for k in keys)
-        lines += ["  %s  %s (Cassandra %s)" % (k.ljust(width), out.full_list(members), release)
+        key_width = max(len(k) for (keys, dummy), dummy2 in rejected for k in keys)
+        lines += ["  %s  %s (Cassandra %s)" % (k.ljust(key_width), _who(members, None, groups, True), release)
                   for (keys, release), members in rejected for k in keys]
         lines.append("")
 

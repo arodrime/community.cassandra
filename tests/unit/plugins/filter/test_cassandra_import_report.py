@@ -361,3 +361,17 @@ def test_keys_cassandra_rejects_reported():
     assert not [line for line in screen if line.startswith("NOT A CASSANDRA SETTING")]
     # none: no TO DO, no section
     assert not [line for line in report([node(1)]) if "rejects" in line or "NOT A CASSANDRA" in line]
+
+
+def test_keys_cassandra_rejects_leave_the_report_width():
+    # the sections after NOT A CASSANDRA SETTING keep the report's width (a key's is not the line's)
+    os_lines = {"lines": ["sysctl vm.max_map_count: 65530 (1048575)"]}
+    nodes = [node(i, os=os_lines) for i in range(1, 4)]
+
+    def tuning(lines):
+        at = lines.index(u"OS TUNING \u2014 live value (collection's value)")
+        return lines[at + 1:at + 3]
+    plain = tuning(report(nodes))
+    assert plain[0].endswith("(1048575)   all") and plain[1] == ""
+    nodes[0]["not_settings"] = {"keys": ["x"], "release": "4.1.5"}
+    assert tuning(report(nodes)) == plain
