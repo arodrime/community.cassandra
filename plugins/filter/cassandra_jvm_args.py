@@ -518,7 +518,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
                 dropped.append("%s line %d: %s: %s by %s later, left out" % (
                     ENV, line["n"], out.mask(option), "set again" if args[later] == option else "overridden",
                     out.mask(args[later])))
-    extras_var = "cassandra_%s_extra_options" % dep.split("-")[0]
+    extras_var = "cassandra_%s_extra_options" % dep.split("-", maxsplit=1)[0]
     # -Xms and -Xmx alike: the heap variables; else (or when that is not the same) every option in the extra options
     last = dict((_jvm_name(o), o) for o in keep if _jvm_name(o) in HEAP_OPTIONS)
     last = dict((k, o) for k, o in last.items() if o.startswith(k) or k == "MaxDirectMemorySize")
@@ -569,7 +569,7 @@ def _without_dead(args, info, variables, found, live, series, java):
     words, start, end = info["words"], info["start"], info["end"]
     tidy, gone = {}, []
     for name in (COMMON, options_file(series, java)):
-        var = "cassandra_%s_extra_options" % ("jvm" if name == COMMON else name.split("-")[0])
+        var = "cassandra_%s_extra_options" % ("jvm" if name == COMMON else name.split("-", maxsplit=1)[0])
         lines = list(found.get(var, variables.get(var)) or [])
         for entry in list(variables.get(var) or []):
             at = [start + i for i, (dummy, f, n) in enumerate(words)
