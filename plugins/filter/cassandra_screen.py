@@ -53,14 +53,25 @@ def _wrap(text, indent="", subsequent=None):
     return out
 
 
-def _items(items, indent="", hang=""):
-    out = []
+def _items(items, indent="", hang="", paragraphs=False):
+    """paragraphs: each item a paragraph (a blank line between two), the
+    item after one ending with ":" (what it introduces) in the same one."""
+    parts, leads = [], False
     for item in items or []:
         if isinstance(item, Mapping):
-            out.extend(indent + str(line) for line in item.get("pre") or [])
+            lines = [indent + str(line) for line in item.get("pre") or []]
         elif str(item).strip():
-            out.extend(_wrap(item, indent, indent + hang))
-    return out
+            lines = _wrap(item, indent, indent + hang)
+        else:
+            continue
+        if not lines:
+            continue  # an empty table: the lead-in keeps what comes next
+        if parts and (leads or not paragraphs):
+            parts[-1] = parts[-1] + lines
+        else:
+            parts.append(lines)
+        leads = lines[-1].rstrip().endswith(":")
+    return out.spaced(parts)
 
 
 def _warning(warning):
@@ -89,12 +100,12 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
     if spec.get("summary"):
         header += ": %s" % spec["summary"]
     sections = [_wrap(header, "", "  ")]
-    sections.append(_items(spec.get("intro")))
+    sections.append(_items(spec.get("intro"), paragraphs=True))
     for block in spec.get("blocks") or []:
         sections.append(_wrap(block.get("title") or "", "  ", "    ") + _items(block.get("lines"), "    ", "  "))
     for section in spec.get("sections") or []:
-        sections.append(_items(section))
-    sections.append(_items(spec.get("after")))
+        sections.append(_items(section, paragraphs=True))
+    sections.append(_items(spec.get("after"), paragraphs=True))
 
     warnings, seen = [], set()
     given = []
@@ -114,10 +125,10 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
             if warning.get("label") not in skipped:
                 skipped.append(warning.get("label"))
             continue
-        warned.extend(_warning(warning))
+        warned.append(_warning(warning))
     if skipped:
-        warned.append("(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped))
-    sections.append(warned)  # the warnings together, just above the question
+        warned.append(["(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped)])
+    sections.append(out.spaced(warned))  # the warnings together, a blank line apart, just above the question
     # in the question's place (screen.yml asks it right below)
     if check:
         sections.append(["--check: nothing will be changed (the plan only, no question)."])

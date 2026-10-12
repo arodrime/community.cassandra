@@ -29,6 +29,11 @@ import shlex
 import time
 
 ARROW = u"←"  # the marker of a line that needs a look: "<- down", "<- differs"
+# A blank line between two paragraphs of one block: a single space (the
+# default callback's yaml format strips it). An empty line "" between two
+# blocks of a plan, a screen or a recap is a rule under the ops callback;
+# this one stays blank there.
+PARAGRAPH = " "
 GIB = 1024.0 ** 3
 # each unit from this many bytes of scale on
 _UNITS = (("TiB", 1024.0 ** 4, 1024.0 ** 4), ("GiB", GIB, GIB / 10), ("MiB", 1024.0 ** 2, 1024.0 ** 2 / 10),
@@ -424,6 +429,16 @@ def _table(rows, indent=""):
             for r in rows]
 
 
+def spaced(paragraphs):
+    """Paragraphs (each a list of lines) as one block, a PARAGRAPH line
+    between two, the empty ones left out."""
+    lines = []
+    for paragraph in paragraphs:
+        if paragraph:
+            lines += ([PARAGRAPH] if lines else []) + list(paragraph)
+    return lines
+
+
 def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=None, question="", version="",
          check=False, verdict="PLAN"):
     """The screen before a change, the same order everywhere:
@@ -447,12 +462,13 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
     block = []
     labelled = [f for f in facts or [] if isinstance(f, (list, tuple))]
     width = max([len(str(f[0])) + 1 for f in labelled] or [0])
-    for fact in facts or []:
+    for fact in facts or []:  # each fact a paragraph
         if isinstance(fact, (list, tuple)):
-            block.append(("%s  %s" % ((str(fact[0]) + ":").ljust(width), fact[1])).rstrip())
+            block.append([("%s  %s" % ((str(fact[0]) + ":").ljust(width), fact[1])).rstrip()])
         elif str(fact).strip():
-            block.append(str(fact))
-    warned = ["WARNING  %s" % w for w in warnings or [] if str(w).strip()]
+            block.append(str(fact).split("\n"))
+    block = spaced(block)
+    warned = spaced([["WARNING  %s" % w] for w in warnings or [] if str(w).strip()])
     asked = ["--check: nothing will be changed"] if check else [question] if question else []
     for section in (block, warned, asked):
         if section:
@@ -466,7 +482,7 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
 # callback's phase colour). {nodes}: the node list (nodes()), {count}: "5
 # nodes", {node}, {what}: as given.
 PHASES = {
-    "check": "Checking the cluster ({count})...",
+    "check": "Checking the cluster ({what})...",  # what: check_what()
     "check_new": "Checking the new nodes ({nodes})...",
     "check_leaving": "Checking the nodes to remove ({nodes})...",
     "ring": "Reading the ring and seeds...",
@@ -505,6 +521,51 @@ def phase(name, names=None, node="", what="", count=None):
     names = [names] if isinstance(names, str) else list(names or [])
     number = len(names) if count is None else int(count)
     return PHASES[name].format(nodes=nodes(names, keep_order=True), node=node, what=what, count=plural(number, "node"))
+
+
+def check_what(present, kind="", targets=None, replacing="", run=None, absent=None):
+    """What preflight's check line says of the cluster: its members and the
+    change the run makes, "3 nodes; adding node4, node5". present: the
+    cluster's hosts not marked absent (lookup cassandra_nodes, the whole
+    group, inventory order); kind: what the playbook does with targets
+    (_cassandra_preflight_target: add, leave, reset, dead, canary or none;
+    topology: plan); targets: the hosts cassandra_target_nodes names (dead: the
+    dead node as given); replacing: cassandra_replace_address (replace_node);
+    run: the run's hosts, said when --limit leaves some out; absent: the hosts
+    marked absent (topology). A host being added or reset is not a member yet,
+    one being removed (absent or not) still is; a dead node, out of the
+    inventory (or marked absent), is not counted. topology's plan comes from the
+    ring, read later: the inventory then."""
+    present, targets, absent = list(present or []), list(targets or []), list(absent or [])
+    if kind == "plan":
+        text = plural(len(present), "node") + " in the inventory"
+        if absent:
+            text += ", %s marked absent" % nodes(absent, keep_order=True)
+        whole = present
+    else:
+        named = [] if kind == "dead" else targets
+        if kind in ("add", "reset"):
+            members = [h for h in present if h not in named]
+        elif kind == "leave":
+            members = present + [h for h in named if h not in present]
+        else:
+            members = present
+        whole = members + [h for h in named if h not in members]
+        text = plural(len(members), "node")
+        listed = nodes(named, keep_order=True)
+        if kind == "add" and named and replacing:
+            text += "; replacing %s with %s" % (replacing, listed)
+        elif kind == "add" and named:
+            text += "; adding " + listed
+        elif kind == "leave" and named:
+            text += "; removing " + listed
+        elif kind == "reset" and named:
+            text += "; resetting " + listed
+        elif kind == "dead" and targets:
+            text += "; removing the dead node %s" % targets[0]
+    if run is not None and set(run) != set(whole):
+        text += "; --limit: " + nodes(run, keep_order=True)
+    return text
 
 
 # --- progress ------------------------------------------------------------------------------
@@ -787,16 +848,15 @@ def command(playbook, inventory=None, hosts=None, limit=None, extra=None, option
 def todo(items, title="TO DO"):
     """items: a string, or {text, command} (the command on its own line under
     it) -> "TO DO", then "  1. text" numbered; nothing when no item."""
-    lines = []
-    number = 0
+    entries = []
     for item in items or []:
         if not item:
             continue
-        number += 1
         text, cmd = (item.get("text", ""), item.get("command", "")) if isinstance(item, dict) else (str(item), "")
-        lines.append("  %d. %s%s" % (number, text, ":" if cmd and text and not text.endswith(":") else ""))
-        if cmd:
-            lines.append("     " + cmd)
+        entry = ["  %d. %s%s" % (len(entries) + 1, text, ":" if cmd and text and not text.endswith(":") else "")]
+        entries.append(entry + (["     " + cmd] if cmd else []))
+    # an item on several lines: a blank line between two
+    lines = spaced(entries) if any(len(e) > 1 for e in entries) else [line for e in entries for line in e]
     return [title] + lines if lines else []
 
 

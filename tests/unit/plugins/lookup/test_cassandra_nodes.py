@@ -84,6 +84,9 @@ def test_playbooks_leave_the_absent_hosts_out():
     allowed = {
         ("playbooks/decommission_node.yml", "            that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')]"),
         ("playbooks/preflight.yml", "                else []) | select('in', groups[lookup('community.cassandra.cassandra_hosts')]) | list) | unique }}"),
+        # its check line: the hosts cassandra_target_nodes names (one to decommission or reset may be marked absent)
+        ("playbooks/preflight.yml", "             else query('ansible.builtin.inventory_hostnames', _pattern)"
+                                    " | select('in', groups[lookup('community.cassandra.cassandra_hosts')])"),
         ("playbooks/add_node.yml", "          {{ inventory_hostname }} is {{ 'marked cassandra_node_state: absent' if inventory_hostname in"
                                    " groups[lookup('community.cassandra.cassandra_hosts')]"),
         # reset_node empties a host marked absent (removed by topology)

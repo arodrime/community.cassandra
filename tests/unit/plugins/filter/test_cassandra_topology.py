@@ -5,10 +5,14 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
     cassandra_seed_change, cassandra_topology_plan, cassandra_topology_screen, cassandra_topology_steps)
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH
 
 
 def screen(plan, hosts, **kwargs):
     return "\n".join(cassandra_topology_screen(plan, hosts, **kwargs))
+
+
+P = PARAGRAPH  # a blank line between two paragraphs of a block
 
 
 def warnings_of(lines):
@@ -189,9 +193,12 @@ def test_screen():
         "  2.  decommission node4  dc1/r2  load 40.1 GiB, owns 25.0% -> node1..node3, node5",
         "",
         "dc1 after:        4 nodes: node1..node3, node5   r1 2  r2 2   highest RF 3 (orders)",
+        P,  # each fact a paragraph
         "already removed:  node6 (marked absent, out of the ring, Cassandra stopped)",
+        P,
         "then:             empty node4, node6 (reset_node) before reusing the hosts, re-import the cluster to drop them"
         " from the inventory: the commands at the end",
+        P,
         "cleanup:          of the nodes that hand data over: its command is printed after the adds (topology runs"
         " none, the removals move data again)"]
     # confirm.yml asks right below; no question asked: said; --check: said, nothing asked
@@ -211,9 +218,10 @@ def test_screen_warnings_last_and_the_session_on_a_real_run_only():
     assert warned[0] == "WARNING  2 of 5 nodes of dc1 removed (node3, node4): 3 nodes left to hold their data" or \
         warned[0].startswith("WARNING  10.0.0.9")
     assert warned[-1] == "WARNING  not inside tmux or screen"
-    # the WARNING lines together, then one blank line and the question's place
+    # the WARNING lines together, a blank line apart, then the question's place
     first = lines.index(warned[0])
-    assert lines[first:] == warned + ["", "cassandra_operation_confirm is false: no question, the run goes on."]
+    spaced = [line for w in warned for line in (P, w)][1:]
+    assert lines[first:] == spaced + ["", "cassandra_operation_confirm is false: no question, the run goes on."]
     check = cassandra_topology_screen(plan, hosts, ring=r, session="not inside tmux or screen", check=True)
     assert "WARNING  not inside tmux or screen" not in check
     assert [line for line in check if line.startswith("real run:")] == [
@@ -236,7 +244,7 @@ def test_screen_reset_and_unknown_warnings():
             " (no snapshot, no backup), in:") in lines
     assert lines[lines.index("WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never"
                              " touched (an address mistyped, a host missing, or a dead node: remove_dead_node -e"
-                             " cassandra_target_nodes=10.0.0.9)") + 1].startswith("WARNING  data loss")
+                             " cassandra_target_nodes=10.0.0.9)") + 2].startswith("WARNING  data loss")
     assert "           /d/data: 1 entries: system" in lines  # under its warning's text
     check = cassandra_topology_screen(plan, hosts, ring=r, check=True)
     assert not [line for line in check if "data loss:" in line]

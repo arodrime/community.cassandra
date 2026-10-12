@@ -145,6 +145,12 @@ def cassandra_phase(name, names=None, node="", what="", count=None):
     return out.phase(name, names=names, node=node, what=what, count=count)
 
 
+def cassandra_check_what(present, kind="", targets=None, replacing="", run=None, absent=None):
+    """What preflight's check line says of the cluster (module_utils
+    cassandra_output check_what): "3 nodes; adding node4, node5"."""
+    return out.check_what(present, kind=kind or "", targets=targets, replacing=replacing or "", run=run, absent=absent)
+
+
 def cassandra_path_from(path, cwd=None):
     """path relative to cwd when it is under it, else as given."""
     return out.path_from(str(path), cwd)
@@ -185,6 +191,7 @@ class FilterModule(object):
             "cassandra_command": cassandra_command,
             "cassandra_todo": cassandra_todo,
             "cassandra_phase": cassandra_phase,
+            "cassandra_check_what": cassandra_check_what,
             "cassandra_path_from": cassandra_path_from,
             "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_inventory_steps": cassandra_inventory_steps,

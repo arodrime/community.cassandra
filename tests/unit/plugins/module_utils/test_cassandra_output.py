@@ -8,6 +8,7 @@ import pytest
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 GIB = 1024 ** 3
+P = out.PARAGRAPH  # a blank line between two paragraphs of a block
 MIB = 1024 ** 2
 ARROW = u"←"
 
@@ -196,9 +197,11 @@ def test_plan_order_warnings_above_the_question():
         "PLAN  decommission_node  my_cluster (Cassandra 4.1.5)  2 nodes, one at a time",
         "  1.  node7  dc1/rack_a  load 47.1 GiB -> node1,node4",
         "  2.  node8  dc1/rack_b  load 48.1 GiB",
-        "",
+        "",  # a rule under the ops callback, PARAGRAPH a blank line (each fact a paragraph)
         "dc1 after:  6 nodes",
+        P,
         "ring now:   8 UN",
+        P,
         "a plain fact",
         "",
         "WARNING  not inside tmux/screen",
@@ -354,7 +357,7 @@ def test_todo():
     assert out.todo([]) == []
     assert out.todo(["remove node7 from the inventory", None,
                      {"text": "cleanup the nodes that gave data", "command": "ansible-playbook x"}]) == [
-        "TO DO", "  1. remove node7 from the inventory", "  2. cleanup the nodes that gave data:",
+        "TO DO", "  1. remove node7 from the inventory", P, "  2. cleanup the nodes that gave data:",
         "     ansible-playbook x"]
 
 
@@ -441,12 +444,12 @@ def test_removed_todo_reset_then_reimport_then_commit(tmp_path):
         "TO DO",
         "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
+        P, "  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i 10.0.0.1, leaves the"
         " inventory out: add your connection options, e.g. -u, when it sets them):",
         "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
-        "  3. then write them:",
+        P, "  3. then write them:",
         "     ansible-playbook -i 10.0.0.1, community.cassandra.import_cluster -e import_cluster_force=true",
-        "  4. commit it:",
+        P, "  4. commit it:",
         "     git add inventories && git commit -m 'Inventory: node3 removed' -- inventories"]
 
 
@@ -460,11 +463,11 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
         "  1. empty node3, node4 before reusing the hosts (their data is left in place):",
         "     ansible-playbook -i inv/prod community.cassandra.reset_node -e cassandra_hosts=orders"
         " -e cassandra_target_nodes=node3,node4",
-        "  2. drop node3, node4, node9 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves the"
+        P, "  2. drop node3, node4, node9 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves the"
         " inventory out: add your connection options, e.g. -u, when it sets them):",
         "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
         " -e import_cluster_dir=inv/prod --check --diff",
-        "  3. then write them:",
+        P, "  3. then write them:",
         "     ansible-playbook -i node1, community.cassandra.import_cluster -e import_cluster_force=true"
         " -e import_cluster_dir=inv/prod"]
     assert out.removed_todo([], "node1") == []
@@ -472,13 +475,14 @@ def test_removed_todo_outside_git_another_dir_and_a_node_not_answering(tmp_path)
     assert out.removed_todo(["node3"], "node1", imported=False) == [
         "TO DO", "  1. empty node3 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=node3",
-        "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]
+        P, "  2. remove node3 from the inventory (or leave it marked cassandra_node_state: absent)"]
 
 
 def test_removed_todo_names_the_jmx_login_the_reimport_needs():
     # -i node1, reads no inventory: the JMX login the run had must be given again (its password never printed)
     lines = out.removed_todo(["node3"], "node1", in_git=False, jmx_user="jmxops")
-    assert lines[3] == ("  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves"
+    assert lines[3] == P
+    assert lines[4] == ("  2. drop node3 from the inventory: re-import the cluster, its changes shown first (-i node1, leaves"
                         " the inventory out: add your connection options, e.g. -u, when it sets them, and the JMX login:"
                         " -e cassandra_jmx_username=jmxops -e cassandra_jmx_password_file=<its file on the nodes>"
                         " (or cassandra_jmx_password)):")

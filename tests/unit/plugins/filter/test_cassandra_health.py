@@ -4,6 +4,7 @@ __metaclass__ = type
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
     cassandra_health_findings, cassandra_health_problems, cassandra_health_report, cassandra_leaving_state,
     cassandra_removal_force_target, cassandra_removal_state)
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
 
 UP = {"is_up": True}
 IDLE = {"mode": "NORMAL", "streaming": False}
@@ -399,10 +400,10 @@ def test_report_each_problem_once_with_who_saw_it():
         "  not counted, marked cassandra_node_state: absent: n7, n8",
         "TO DO",
         "  1. start Cassandra on n2 (its server first if it is down); a node that can't be recovered: replace_node",
-        "  2. remove n7, n8 from the ring:",
+        P, "  2. remove n7, n8 from the ring:",
         "     ansible-playbook community.cassandra.topology",
-        "  3. reach n2 over SSH, then run this again",
-        "  4. wait for the streams to end (nodetool netstats), then run this again",
+        P, "  3. reach n2 over SSH, then run this again",
+        P, "  4. wait for the streams to end (nodetool netstats), then run this again",
     ]
 
 

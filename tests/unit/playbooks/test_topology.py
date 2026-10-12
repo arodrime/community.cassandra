@@ -12,6 +12,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -96,10 +97,10 @@ def test_operator_messages_marked_for_the_ops_callback():
         "DONE  topology  my_cluster  ring = inventory: added n4; seeds now n1,n4; removed n2", "", "TO DO",
         "  1. empty n2 before reusing the host (its data is left in place):",
         "     ansible-playbook community.cassandra.reset_node -e cassandra_target_nodes=n2",
-        "  2. drop n2 from the inventory: re-import the cluster, its changes shown first (-i n1, leaves the"
+        P, "  2. drop n2 from the inventory: re-import the cluster, its changes shown first (-i n1, leaves the"
         " inventory out: add your connection options, e.g. -u, when it sets them):",
         "     ansible-playbook -i n1, community.cassandra.import_cluster -e import_cluster_force=true --check --diff",
-        "  3. then write them:",
+        P, "  3. then write them:",
         "     ansible-playbook -i n1, community.cassandra.import_cluster -e import_cluster_force=true"]
 
 

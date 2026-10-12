@@ -7,6 +7,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_failure import (
     cassandra_failure_cause, cassandra_failure_repos, cassandra_failure_report)
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
 
 # what the dnf module says when a repository's mirror can't be reached (EL 8)
 EPEL = {"msg": "Failed to download metadata for repo 'epel': Cannot download repomd.xml: Cannot download "
@@ -49,11 +50,11 @@ def test_the_same_cause_once_with_its_nodes_then_what_to_do():
         "TO DO",
         "  1. check the repositories of node5..node7 (a mirror down or unreachable from them):",
         '     ansible -i inventories node5,node6,node7 -b -m ansible.builtin.command -a "dnf -q makecache"',
-        "  2. fix the repository or mirror on the node (or its proxy)",
-        "  3. or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage: false in the inventory:"
+        P, "  2. fix the repository or mirror on the node (or its proxy)",
+        P, "  3. or, when cqlsh gets its Python another way, set cassandra_cqlsh_python_manage: false in the inventory:"
         " python3.11 only runs cqlsh on the new nodes (the reset check reads the keyspaces with cqlsh on a node of the"
         " cluster)",
-        "  4. run it again once fixed (nothing was started):",
+        P, "  4. run it again once fixed (nothing was started):",
         "     " + RERUN]
     assert all("s3cret" not in line for line in lines)
 

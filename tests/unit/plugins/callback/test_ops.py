@@ -136,10 +136,13 @@ def test_only_the_marked_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK)
     assert rc == 0, output
     lines = shown(output)
-    assert lines[:8] == [
-        "====",  # a plan: a heavy rule above, a light one under its first line
+    assert lines[:11] == [
+        "====",  # a plan: a heavy rule above, a light one under its first line, a blank line each side of a rule
+        "",
         "PLAN  op  my_cluster  2 steps",
+        "",
         "----",
+        "",
         u"  1. node1  dc1/rack_a  \u2190 here",
         "line one",
         "line two",
@@ -147,13 +150,13 @@ def test_only_the_marked_messages(tmp_path):
         "item b",
     ]
     # the handlers: in whatever order the hosts end
-    assert sorted(lines[8:]) == ["handler on node1", "handler on node2"]
+    assert sorted(lines[11:]) == ["handler on node1", "handler on node2"]
 
 
 def test_check_mode_prints_the_same_messages(tmp_path):
     rc, output = run(tmp_path, PLAYBOOK, "--check")
     assert rc == 0, output
-    assert shown(output)[:4] == ["====", "PLAN  op  my_cluster  2 steps", "----", u"  1. node1  dc1/rack_a  \u2190 here"]
+    assert shown(output)[:7] == ["====", "", "PLAN  op  my_cluster  2 steps", "", "----", "", u"  1. node1  dc1/rack_a  \u2190 here"]
     assert "TASK [" not in output and "PLAY RECAP" not in output
 
 
@@ -166,7 +169,8 @@ def test_failures_in_full_and_the_verdict_as_is(tmp_path):
     # a failed loop item: the item and its task
     assert "TASK [Item breaks]" in output and "failed: [node1] (item=/bin/false)" in output
     # the verdict: its own lines, nothing else of that task
-    assert shown(output.rstrip())[-4:] == ["====", "NOT HEALTHY  my_cluster  1 problem", "  ring: 3 members, inventory 2", "===="]
+    assert shown(output.rstrip())[-6:] == ["====", "", "NOT HEALTHY  my_cluster  1 problem", "  ring: 3 members, inventory 2", "",
+                                           "===="]
     assert "TASK [Verdict]" not in output and "PLAY RECAP" not in output and "NO MORE HOSTS LEFT" not in output
 
 
@@ -503,8 +507,10 @@ def test_colours_by_line_start():
     assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
     assert colour("NOT HEALTHY  my_cluster") == colour("REFUSED  topology") == C.COLOR_ERROR
     assert colour("[1/2] node5 bootstrap  JOINING  STALLED 2/12 checks  35s") == C.COLOR_ERROR
-    assert colour("[1/2] node5 bootstrap  JOINING  52%") == colour("Checking the cluster (5 nodes)...") == C.COLOR_VERBOSE
-    assert colour("NOTE  cassandra_foo is not read") == C.COLOR_VERBOSE
+    # the progress, phase and NOTE lines: cyan (Ansible's dark blue is hard to read on a dark background)
+    assert colour("[1/2] node5 bootstrap  JOINING  52%") == colour("Checking the cluster (5 nodes)...") == "cyan"
+    assert colour("NOTE  cassandra_foo is not read") == "cyan"
+    assert colour("NOTE  x", progress="bright blue") == "bright blue"
     assert colour(u"READY \u2014 nothing to change") == C.COLOR_OK
     assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
 
@@ -525,6 +531,31 @@ def test_colours_on_a_terminal_only(tmp_path):
     assert re.search("\x1b\\[[0-9;]+mWARNING  w\x1b\\[0m", output) and "\nplain" in output, repr(output)
     rc, output = run(tmp_path, playbook)  # ANSIBLE_NOCOLOR
     assert rc == 0 and "\x1b" not in output, repr(output)
+
+
+@pytest.mark.parametrize("env, code", [
+    ({}, "0;36"),  # cyan
+    ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR": "bright green"}, "1;32"),
+    ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR": "no such colour"}, "0;36"),
+    ({"ANSIBLE_COLOR_VERBOSE": "blue"}, "0;34"),  # set in the configuration: kept
+    ({"ANSIBLE_COLOR_VERBOSE": "blue", "ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR": "magenta"}, "0;35"),
+])
+def test_the_progress_colour(tmp_path, env, code):
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Phase
+      ansible.builtin.debug:
+        msg: Checking the cluster (3 nodes)...
+      vars:
+        cassandra_output: true
+"""
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")  # read first (the run's dir): no user's COLOR_VERBOSE
+    rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1", **env)
+    assert rc == 0, output
+    assert "\x1b[%smChecking the cluster (3 nodes)...\x1b[0m" % code in output, repr(output)
+    assert ("is not a colour Ansible knows" in output) == ("no such colour" in str(env)), output
 
 
 def test_verbose_task_headers_keep_their_blank_line(tmp_path):
@@ -639,5 +670,88 @@ def test_the_import_screen_is_ruled(tmp_path):
 """
     rc, output = run(tmp_path, playbook, "--check")
     assert rc == 0, output
-    assert shown(output) == ["====", "IMPORT my_cluster (--check, nothing written) - 3 nodes read / 3", "----",
-                             "READY - nothing to change", "----", "full report: written by the run without --check"]
+    assert shown(output) == ["====", "", "IMPORT my_cluster (--check, nothing written) - 3 nodes read / 3", "", "----", "",
+                             "READY - nothing to change", "", "----", "", "full report: written by the run without --check"]
+
+
+def test_air_around_rules_phases_and_paragraphs(tmp_path):
+    # a blank line each side of a rule, never two in a row; a phase line a block of its own; a paragraph
+    # break (" ", PARAGRAPH) blank inside a screen where "" is a rule
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: A phase
+      ansible.builtin.debug:
+        msg: Checking the cluster (3 nodes)...
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+    - name: Another phase
+      ansible.builtin.debug:
+        msg: Checking the new nodes (node4)...
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+    - name: A screen
+      ansible.builtin.debug:
+        msg: ["add_node on cluster 'c': add node4", "", "one", " ", "two", "", "  node4", "    its line"]
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+    - name: Right under it
+      ansible.builtin.debug:
+        msg: after
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    assert shown(output) == ["Checking the cluster (3 nodes)...", "", "Checking the new nodes (node4)...", "", "====", "",
+                             "add_node on cluster 'c': add node4", "", "----", "", "one", "", "two", "", "----", "",
+                             "  node4", "    its line", "after"]
+
+
+def test_a_phase_line_is_a_block_of_its_own_without_a_gap(tmp_path):
+    # no cassandra_output_gap anywhere: the phase line still gets a blank line above and under it
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Plain
+      ansible.builtin.debug:
+        msg: ["a message", " ", "its second paragraph"]
+      vars:
+        cassandra_output: true
+    - name: A phase
+      ansible.builtin.debug:
+        msg: Waiting for every node to be UN...
+      vars:
+        cassandra_output: true
+    - name: Plain again
+      ansible.builtin.debug:
+        msg: ["two lines, the first ending...", "so not a phase line"]
+      vars:
+        cassandra_output: true
+    - name: Right under it
+      ansible.builtin.debug:
+        msg: under
+      vars:
+        cassandra_output: true
+    - name: Another phase
+      ansible.builtin.debug:
+        msg: Starting node5 and waiting for its bootstrap...
+      vars:
+        cassandra_output: true
+    - name: Its progress
+      ansible.builtin.debug:
+        msg: "[1/2] node5 bootstrap  JOINING"
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    assert shown(output) == ["a message", "", "its second paragraph", "", "Waiting for every node to be UN...", "",
+                             "two lines, the first ending...", "so not a phase line", "under", "",
+                             "Starting node5 and waiting for its bootstrap...", "", "---- [1/2] node5 bootstrap ----",
+                             "", "[1/2] node5 bootstrap  JOINING"]

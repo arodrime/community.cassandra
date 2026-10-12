@@ -1,0 +1,2 @@
+minor_changes:
+  - "ops callback, operation screens, plans, TO DO lists - more air: a blank line above and under each rule, between the paragraphs of a block (the intro's sentences, each fact, each warning, the items of a TO DO that span several lines) and under each phase line, never two in a row."

@@ -132,12 +132,15 @@ def test_health_check_a_node_down(tmp_path, port):
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc != 0, output  # for scheduling
     assert ruled(output) == [
-        "====",  # a recap: heavy rules around it
+        "====",  # a recap: heavy rules around it, a blank line each side of a rule
+        "",
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  ring:  node2 10.100.100.4 (rack_b) DN   seen from node1..node3",
         "TO DO",
         "  1. start Cassandra on node2 (its server first if it is down); a node that can't be recovered: replace_node",
+        "",
         "====",
+        "",
     ]
 
 
@@ -145,4 +148,5 @@ def test_health_check_healthy(tmp_path, port):
     rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc == 0, output
-    assert ruled(output) == ["====", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open", "===="]
+    assert ruled(output) == ["====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open", "", "====",
+                             ""]
