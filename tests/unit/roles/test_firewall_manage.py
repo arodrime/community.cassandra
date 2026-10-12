@@ -19,6 +19,8 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 
@@ -39,21 +41,9 @@ def test_role_does_nothing_when_not_managed():
 
 
 def test_import_keeps_the_firewall_of_every_node():
-    with open(os.path.join(ROOT, "playbooks", "import_cluster.yml")) as f:
-        plays = yaml.safe_load(f)
-    todo = [t for p in plays for t in p.get("tasks", [])]
-    match = None
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == "Match the ring with the hosts":
-            match = t["vars"]
-        todo += t.get("block", [])
-    keep = match["_node"]["keep"]
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
-    assert render(keep, _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={}, _repo={"manage": True},
-                  _installed={}) == {
-        "cassandra_firewall_manage": False}
-    assert render(keep, _hv={}, _read=False)["cassandra_firewall_manage"] is False
+    assert node(hv)["keep"] == {"cassandra_firewall_manage": False, "cassandra_dsbulk_install": False}
+    assert node({}, read=False)["keep"]["cassandra_firewall_manage"] is False
     base = {"dc": "dc1", "rack": "r1", "read": True, "vars": {"cassandra_cluster_name": "c"}, "hand_edits": [],
             "normalized": [], "notes": []}
     layout = cassandra_inventory_layout([dict(base, name="n1", address="10.0.0.1",

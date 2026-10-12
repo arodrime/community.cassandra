@@ -19,6 +19,8 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
@@ -35,7 +37,8 @@ def task(name):
     raise KeyError(name)
 
 
-MATCH = task("Match the ring with the hosts")["vars"]
+INSTALLED = ("cassandra_install_tools", "cassandra_install_jemalloc", "cassandra_package_hold", "cassandra_dsbulk_version",
+             "cassandra_dsbulk_install")
 
 
 def render(template, **variables):
@@ -45,9 +48,10 @@ def render(template, **variables):
 def installed(packages, os_family="RedHat", held=None, read=True, package="5.0.7", dsbulk="/usr/share/dsbulk-1.11.2/bin/dsbulk"):
     hv = {"ansible_facts": {"packages": {p: [{"version": "1"}] for p in packages}, "os_family": os_family},
           "import_cluster_package": package, "import_cluster_held": held or [], "import_cluster_dsbulk": dsbulk}
-    out = render(MATCH["_installed"], _hv=hv, _read=read)
-    if dsbulk == "/usr/share/dsbulk-1.11.2/bin/dsbulk":
-        assert out.pop("cassandra_dsbulk_version", None) == ("1.11.2" if read else None)
+    keep = node(hv, read=read)["keep"]
+    out = dict((k, v) for k, v in keep.items() if k in INSTALLED)
+    if dsbulk == "/usr/share/dsbulk-1.11.2/bin/dsbulk" and read:
+        assert out.pop("cassandra_dsbulk_version", None) == "1.11.2"
     return out
 
 
@@ -93,17 +97,19 @@ def test_held_without_tools():
 
 
 def test_not_read_or_not_a_package():
-    assert installed(["cassandra"], read=False) == {}
+    # not read: none of it is taken over (the fixed keep of a node not read)
+    assert installed(["cassandra"], read=False) == {"cassandra_install_tools": False, "cassandra_install_jemalloc": False,
+                                                    "cassandra_package_hold": False, "cassandra_dsbulk_install": False}
     assert installed([], package="") == {}  # a tarball install: no package to keep company
 
 
 def test_written_in_the_host_vars():
     # this node's: nodes added later get cassandra-tools, jemalloc and the hold
-    hv = {"import_cluster_keep": {}, "import_cluster_medusa": {}}
-    keep = render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={},
-                  _repo={"manage": True}, _installed={"cassandra_install_tools": False})
-    assert keep == {"cassandra_firewall_manage": False, "cassandra_install_tools": False}
-    assert "_installed" not in MATCH["_pkg"]
+    out = node({"ansible_facts": {"packages": {"cassandra": [{}], "jemalloc": [{}]}}, "import_cluster_package": "4.1.5",
+                "import_cluster_dsbulk": "/usr/share/dsbulk-1.11.2/bin/dsbulk"})
+    assert out["keep"] == {"cassandra_firewall_manage": False, "cassandra_install_tools": False,
+                           "cassandra_dsbulk_version": "1.11.2"}
+    assert not set(INSTALLED) & set(out["vars"])
 
 
 def test_role_installs_the_inventory_packages():

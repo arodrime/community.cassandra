@@ -1,0 +1,2 @@
+bugfixes:
+  - "import_cluster - laying out the inventory of a large cluster no longer takes hours: each node's variables are read once (``hostvars`` worked them out anew at each use, per node and per setting), and the self-check reads the inventory files once for all the nodes."

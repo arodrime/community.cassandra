@@ -13,6 +13,8 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import cassandra_import_nodes
+
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
 except ImportError:
@@ -25,9 +27,6 @@ with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 
 FIND = next(play for play in PLAYS if play["name"] == "Find the cluster from the given nodes")
-
-MATCH = next(t for play in PLAYS for t in play.get("tasks", []) for t in t.get("block", [t])
-             if t.get("name") == "Match the ring with the hosts")
 
 # node1 given by name, 10.0.0.2 given by IP, 10.0.0.3 found in the ring (add_host names it by its address)
 HOSTVARS = {
@@ -42,12 +41,14 @@ HOSTVARS = {
 GIVEN = ["node1", "10.0.0.2"]
 
 
+def nodes(address, hostvars=None, **options):
+    ring = [{"address": address, "dc": "dc1", "rack": "r1"}]
+    return cassandra_import_nodes(ring, hostvars or HOSTVARS, GIVEN, ["10.0.0.3", "10.0.0.4"], **options)[0]
+
+
 def entry(address, **options):
-    variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in MATCH["vars"].items()}
-    variables.update(hostvars=HOSTVARS, _given=GIVEN, item={"address": address}, **options)
-    templar = Templar(loader=DataLoader(), variables=variables)
-    name = templar.template(trust_as_template(MATCH["vars"]["_node"]["name"]))
-    return name, templar.template(trust_as_template(MATCH["vars"]["_node"]["ansible_host"]))
+    out = nodes(address, **options)
+    return out["name"], out["ansible_host"]
 
 
 @pytest.mark.parametrize("address, expected", [
@@ -61,22 +62,19 @@ def test_hostname_by_default(address, expected):
 
 
 def test_fqdn_and_ip():
-    assert [entry(a, import_cluster_host_names="fqdn")[0] for a in ("10.0.0.1", "10.0.0.2", "10.0.0.3")] == [
+    assert [entry(a, host_names="fqdn")[0] for a in ("10.0.0.1", "10.0.0.2", "10.0.0.3")] == [
         "node1.example.com", "node2.example.com", "node3.example.com"]
-    assert [entry(a, import_cluster_host_names="ip")[0] for a in ("10.0.0.1", "10.0.0.2", "10.0.0.3")] == [
+    assert [entry(a, host_names="ip")[0] for a in ("10.0.0.1", "10.0.0.2", "10.0.0.3")] == [
         "10.0.0.1", "10.0.0.2", "10.0.0.3"]
 
 
 def test_given_node_without_facts_keeps_its_name():
     hostvars = dict(HOSTVARS, node1={"ansible_host": "10.0.0.1"})  # matched by its connection address
-    variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in MATCH["vars"].items()}
-    variables.update(hostvars=hostvars, _given=GIVEN, item={"address": "10.0.0.1"})
-    templar = Templar(loader=DataLoader(), variables=variables)
-    assert templar.template(trust_as_template(MATCH["vars"]["_node"]["name"])) == "node1"
+    assert nodes("10.0.0.1", hostvars)["name"] == "node1"
 
 
 def test_ansible_host_can_be_left_out():
-    assert entry("10.0.0.1", import_cluster_set_ansible_host=False) == ("node1", "")
+    assert entry("10.0.0.1", set_ansible_host=False) == ("node1", "")
 
 
 def test_host_names_option_checked():
@@ -90,10 +88,7 @@ def test_host_names_option_checked():
 
 def test_hostname_given_to_the_layout():
     # for the Medusa fqdn rule: <short hostname>.<domain>
-    variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in MATCH["vars"].items()}
-    variables.update(hostvars=HOSTVARS, _given=GIVEN, item={"address": "10.0.0.2"}, import_cluster_host_names="ip")
-    templar = Templar(loader=DataLoader(), variables=variables)
-    assert templar.template(trust_as_template(MATCH["vars"]["_node"]["hostname"])) == "node2"
+    assert nodes("10.0.0.2", host_names="ip")["hostname"] == "node2"
 
 
 def test_host_names_message_renders_unset():
@@ -103,13 +98,7 @@ def test_host_names_message_renders_unset():
 
 
 def test_other_connection_address_noted():
-    variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in MATCH["vars"].items()}
-    variables.update(hostvars=HOSTVARS, _given=GIVEN, item={"address": "10.0.0.1"})
-    for k in ("_versions", "_install", "_started"):
-        variables[k] = ""
-    templar = Templar(loader=DataLoader(), variables=variables)
-    notes = templar.template(trust_as_template(MATCH["vars"]["_node"]["notes"]))
+    notes = nodes("10.0.0.1")["notes"]
     assert "reached at node1.mgmt, its hosts file has its ring address 10.0.0.1" in notes[-1]
-    variables["item"] = {"address": "10.0.0.2"}
-    notes = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(MATCH["vars"]["_node"]["notes"]))
+    notes = nodes("10.0.0.2")["notes"]
     assert not any("reached at" in n for n in notes)

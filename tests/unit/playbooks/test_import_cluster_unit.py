@@ -25,6 +25,8 @@ with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()  # the file lookup, under plain pytest too
 
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
 with open(PLAYBOOK, encoding="utf-8") as f:
@@ -41,16 +43,13 @@ def task(name):
     raise KeyError(name)
 
 
-MATCH = task("Match the ring with the hosts")["vars"]
-
-
 def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
 def unit_env(env, log_dir="/var/log/cassandra", read=True):
     hv = {"import_cluster_unit": {"env": env}, "import_cluster_log_dir": log_dir}
-    return render(MATCH["_unit_env"], _hv=hv, _read=read)
+    return node(hv, read=read)["vars"].get("cassandra_service_environment", {})
 
 
 def test_unit_environment_kept():
@@ -104,11 +103,14 @@ def test_where_the_config_really_is():
 KEEP_UNIT = {"cassandra_service_unit_manage": False}
 
 
+CONF = ("cassandra_conf_dir", "cassandra_log_dir", "cassandra_service_restart", "cassandra_service_enabled",
+        "cassandra_service_environment")
+
+
 def conf(boot, read=True, conf_dir="/etc/cassandra/conf", os_family="RedHat"):
     hv = {"import_cluster_conf_dir": conf_dir, "import_cluster_log_dir": "",
           "import_cluster_unit": {"restart": "", "boot": boot}, "ansible_facts": {"os_family": os_family}}
-    defaults = render(MATCH["_default_conf_dirs"], _hv=hv)
-    return render(MATCH["_conf"], _hv=hv, _read=read, _unit_env={}, _default_conf_dirs=defaults)
+    return dict((k, v) for k, v in node(hv, read=read)["vars"].items() if k in CONF)
 
 
 def test_boot_setting_imported():
@@ -129,7 +131,7 @@ def test_conf_dir_imported_when_not_the_role_default(conf_dir, os_family, import
 
 
 def test_node_not_read_is_left_as_it_is():
-    keep = render(MATCH["_node"]["keep"], _hv={}, _read=False)
+    keep = node({}, read=False)["keep"]
     assert keep == {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                     "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
                     "cassandra_java_set_default": False, "cassandra_firewall_manage": False,
@@ -146,8 +148,10 @@ def test_node_not_read_is_left_as_it_is():
     (KEEP_UNIT, {}, {}, {}),
 ])
 def test_log_dir_of_a_kept_unit(keep, env, config_vars, expected):
-    hv = {"import_cluster_keep": keep, "import_cluster_unit": {"env": env}, "import_cluster_config": {"vars": config_vars}}
-    assert render(MATCH["_env_log_dir"], _hv=hv, _read=True, _conf={"cassandra_log_dir": "/data/log"}) == expected
+    hv = {"import_cluster_keep": keep, "import_cluster_unit": {"env": env}, "import_cluster_config": {"vars": config_vars},
+          "import_cluster_log_dir": "/data/log"}
+    kept = dict((k, v) for k, v in node(hv)["keep"].items() if k == "cassandra_log_dir")
+    assert kept == expected
 
 
 @pytest.mark.parametrize("kv, boot", [
@@ -162,8 +166,8 @@ def test_boot_setting_read(kv, boot):
 
 def test_medusa_kept_on_the_node():
     hv = {"import_cluster_keep": {}, "import_cluster_medusa": {"keep": {"cassandra_medusa_link_dir": ""}}}
-    assert render(MATCH["_node"]["keep"], _hv=hv, _read=True, _env_log_dir={}, _java_link={}, _hand_kept={},
-                  _repo={"manage": True}, _installed={}) == {"cassandra_medusa_link_dir": "", "cassandra_firewall_manage": False}
+    assert node(hv)["keep"] == {"cassandra_firewall_manage": False, "cassandra_medusa_link_dir": "",
+                                "cassandra_dsbulk_install": False}
 
 
 def test_os_baseline_is_the_roles_defaults_not_the_inventory():
@@ -205,4 +209,5 @@ def test_package_installed_from_a_file(installed, kv, from_file):
 ])
 def test_install_method_of_a_package_installed_from_a_file(from_file, read, pkg):
     hv = {"import_cluster_package": "5.0.7-1", "import_cluster_package_from_file": from_file}
-    assert render(MATCH["_pkg"], _hv=hv, _read=read, _repo={"vars": {}}) == pkg
+    out = node(hv, read=read)["vars"]
+    assert dict((k, v) for k, v in out.items() if k in ("cassandra_package_version", "cassandra_install_method")) == pkg

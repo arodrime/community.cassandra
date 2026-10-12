@@ -23,21 +23,14 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 STOCK = os.path.join(ROOT, "roles", "cassandra_config", "molecule", "default", "files", "stock-5.0.9")
 FACTS = {"os_family": "Debian", "default_ipv4": {"address": "10.0.0.1"}, "hostname": "n1"}
 
 with open(os.path.join(ROOT, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
-
-
-def match():
-    todo = [t for p in PLAYS for t in p.get("tasks", [])]
-    while todo:
-        t = todo.pop(0)
-        if t.get("name") == "Match the ring with the hosts":
-            return t["vars"]
-        todo += t.get("block", [])
 
 
 def render(template, **variables):
@@ -48,11 +41,9 @@ HAND = ["logback.xml, line 12:", "  - <x/>", "  + <y/>", "cassandra-env.sh: JMX_
 
 
 def test_files_with_hand_edits_kept_on_request():
-    hand_kept = match()["_hand_kept"]
-    hv = {"import_cluster_config": {"hand_edits": HAND}}
-    assert render(hand_kept, _hv=hv, _read=True) == {}  # by default: the self-check fails on them
-    assert render(hand_kept, _hv=hv, _read=True, import_cluster_keep_hand_edits=True) == {
-        "cassandra_config_keep_files": ["logback.xml", "cassandra-env.sh"]}
+    hv = {"import_cluster_config": {"vars": {}, "hand_edits": HAND}}
+    assert "cassandra_config_keep_files" not in node(hv)["keep"]  # by default: the self-check fails on them
+    assert node(hv, keep_hand_edits=True)["keep"]["cassandra_config_keep_files"] == ["logback.xml", "cassandra-env.sh"]
 
 
 def stock():
