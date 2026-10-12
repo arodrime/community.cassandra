@@ -466,7 +466,7 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
 # callback's phase colour). {nodes}: the node list (nodes()), {count}: "5
 # nodes", {node}, {what}: as given.
 PHASES = {
-    "check": "Checking the cluster ({count})...",
+    "check": "Checking the cluster ({what})...",  # what: check_what()
     "check_new": "Checking the new nodes ({nodes})...",
     "check_leaving": "Checking the nodes to remove ({nodes})...",
     "ring": "Reading the ring and seeds...",
@@ -505,6 +505,51 @@ def phase(name, names=None, node="", what="", count=None):
     names = [names] if isinstance(names, str) else list(names or [])
     number = len(names) if count is None else int(count)
     return PHASES[name].format(nodes=nodes(names, keep_order=True), node=node, what=what, count=plural(number, "node"))
+
+
+def check_what(present, kind="", targets=None, replacing="", run=None, absent=None):
+    """What preflight's check line says of the cluster: its members and the
+    change the run makes, "3 nodes; adding node4, node5". present: the
+    cluster's hosts not marked absent (lookup cassandra_nodes, the whole
+    group, inventory order); kind: what the playbook does with targets
+    (_cassandra_preflight_target: add, leave, reset, dead, canary or none;
+    topology: plan); targets: the hosts cassandra_target_nodes names (dead: the
+    dead node as given); replacing: cassandra_replace_address (replace_node);
+    run: the run's hosts, said when --limit leaves some out; absent: the hosts
+    marked absent (topology). A host being added or reset is not a member yet,
+    one being removed (absent or not) still is; a dead node, out of the
+    inventory (or marked absent), is not counted. topology's plan comes from the
+    ring, read later: the inventory then."""
+    present, targets, absent = list(present or []), list(targets or []), list(absent or [])
+    if kind == "plan":
+        text = plural(len(present), "node") + " in the inventory"
+        if absent:
+            text += ", %s marked absent" % nodes(absent, keep_order=True)
+        whole = present
+    else:
+        named = [] if kind == "dead" else targets
+        if kind in ("add", "reset"):
+            members = [h for h in present if h not in named]
+        elif kind == "leave":
+            members = present + [h for h in named if h not in present]
+        else:
+            members = present
+        whole = members + [h for h in named if h not in members]
+        text = plural(len(members), "node")
+        listed = nodes(named, keep_order=True)
+        if kind == "add" and named and replacing:
+            text += "; replacing %s with %s" % (replacing, listed)
+        elif kind == "add" and named:
+            text += "; adding " + listed
+        elif kind == "leave" and named:
+            text += "; removing " + listed
+        elif kind == "reset" and named:
+            text += "; resetting " + listed
+        elif kind == "dead" and targets:
+            text += "; removing the dead node %s" % targets[0]
+    if run is not None and set(run) != set(whole):
+        text += "; --limit: " + nodes(run, keep_order=True)
+    return text
 
 
 # --- progress ------------------------------------------------------------------------------

@@ -57,7 +57,7 @@ def render(template, **variables):
 
 
 def test_the_words():
-    assert out.phase("check", count=5) == "Checking the cluster (5 nodes)..."
+    assert out.phase("check", what="5 nodes") == "Checking the cluster (5 nodes)..."
     assert out.phase("ring") == "Reading the ring and seeds..."
     assert out.phase("prepare", ["node5", "node6"]) == "Preparing the new nodes (node5, node6)..."
     assert out.phase("join", node="node5") == "Starting node5 and waiting for its bootstrap..."
@@ -111,3 +111,85 @@ def test_each_node_says_what_is_done_to_it(action, extra, line):
     variables["_phase"] = render(say["vars"]["_phase"], **variables)
     assert render(say["ansible.builtin.debug"]["msg"], **variables).strip() == line
     assert "not ansible_check_mode" in say["when"]  # --check does none of it
+
+
+# preflight's check line: the cluster's members (a 3-node ring adding 2 used to print "5 nodes"), and the change
+CLUSTER = ["node1", "node2", "node3", "node4", "node5"]
+
+
+def check_line(present=None, absent=(), run=None, **extra):
+    """The check line preflight prints, for a group of CLUSTER + absent hosts (present: those not marked absent)."""
+    say = next(t for t in phases("playbooks", "preflight.yml") if t["name"] == "Say what the run does")
+    present = CLUSTER if present is None else present
+    hosts = list(present) + list(absent)
+    hostvars = dict((h, {"cassandra_node_state": "absent" if h in absent else "present"}) for h in hosts)
+    groups = {"all": hosts + ["other"], "cassandra": hosts, "dc2": ["node4", "node5"], "ungrouped": ["other"]}
+    variables = dict(say["vars"], groups=groups, hostvars=hostvars,
+                     cassandra_hosts="cassandra", ansible_play_hosts_all=present if run is None else run, **extra)
+    return render(say["ansible.builtin.debug"]["msg"], **variables).strip()
+
+
+@pytest.mark.parametrize("extra, absent, run, line", [
+    # rolling_restart, apply_config, cleanup...: every node of the group
+    ({}, (), None, "Checking the cluster (5 nodes)..."),
+    # a host marked absent is not counted
+    ({}, ("node6",), None, "Checking the cluster (5 nodes)..."),
+    # add_node: 3 in the ring, adding 2
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": "node4,node5"}, (), None,
+     "Checking the cluster (3 nodes; adding node4, node5)..."),
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": "node5"}, ("node6",), None,
+     "Checking the cluster (4 nodes; adding node5)..."),
+    # replace_node: the new host is not a member yet
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": "node5", "cassandra_replace_address": "10.0.0.9"},
+     (), None, "Checking the cluster (4 nodes; replacing 10.0.0.9 with node5)..."),
+    # decommission_node: still a member
+    ({"_cassandra_preflight_target": "leave", "cassandra_target_nodes": "node3"}, (), CLUSTER,
+     "Checking the cluster (5 nodes; removing node3)..."),
+    # one marked absent once topology removed it from the plan, still in the ring
+    ({"_cassandra_preflight_target": "leave", "cassandra_target_nodes": "node6"}, ("node6",), CLUSTER + ["node6"],
+     "Checking the cluster (6 nodes; removing node6)..."),
+    # reset_node: not a member (marked absent, or not)
+    ({"_cassandra_preflight_target": "reset", "cassandra_target_nodes": "node6"}, ("node6",), CLUSTER + ["node6"],
+     "Checking the cluster (5 nodes; resetting node6)..."),
+    ({"_cassandra_preflight_target": "reset", "cassandra_target_nodes": "node5"}, (), None,
+     "Checking the cluster (4 nodes; resetting node5)..."),
+    # remove_dead_node: out of the inventory (or marked absent), given by its address
+    ({"_cassandra_preflight_target": "dead", "cassandra_target_nodes": "10.0.0.14"}, (), None,
+     "Checking the cluster (5 nodes; removing the dead node 10.0.0.14)..."),
+    # upgrade's canary: no change to the ring
+    ({"_cassandra_preflight_target": "canary", "cassandra_target_nodes": "node2"}, (), None,
+     "Checking the cluster (5 nodes)..."),
+    # topology: its plan comes from the ring, read later
+    ({"_cassandra_preflight_adding": CLUSTER}, ("node6",), None,
+     "Checking the cluster (5 nodes in the inventory, node6 marked absent)..."),
+    ({"_cassandra_preflight_adding": CLUSTER}, (), None, "Checking the cluster (5 nodes in the inventory)..."),
+    # a list, a group (add_datacenter)
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": ["node4", "node5"]}, (), None,
+     "Checking the cluster (3 nodes; adding node4, node5)..."),
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": "dc2"}, (), None,
+     "Checking the cluster (3 nodes; adding node4, node5)..."),
+    # a host out of the group is not the cluster's
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": "node4,other"}, (), None,
+     "Checking the cluster (4 nodes; adding node4)..."),
+    # remove_dead_node by the name of a host marked absent
+    ({"_cassandra_preflight_target": "dead", "cassandra_target_nodes": "node6"}, ("node6",), None,
+     "Checking the cluster (5 nodes; removing the dead node node6)..."),
+    # --limit: the cluster, then the hosts of the run
+    ({}, (), ["node2"], "Checking the cluster (5 nodes; --limit: node2)..."),
+    ({"_cassandra_preflight_target": "add", "cassandra_target_nodes": "node4,node5"}, (), ["node1", "node4", "node5"],
+     "Checking the cluster (3 nodes; adding node4, node5; --limit: node1, node4, node5)..."),
+])
+def test_the_check_line_counts_the_members(extra, absent, run, line):
+    assert check_line(absent=absent, run=run, **extra) == line
+
+
+@pytest.mark.parametrize("kwargs, text", [
+    ({"present": ["n1", "n2", "n3", "n4", "n5"], "kind": "add", "targets": ["n4", "n5"]}, "3 nodes; adding n4, n5"),
+    ({"present": ["n1", "n2"], "kind": "leave", "targets": ["n2"]}, "2 nodes; removing n2"),
+    ({"present": ["n1", "n2"], "kind": "plan", "absent": ["n3", "n4"]}, "2 nodes in the inventory, n3, n4 marked absent"),
+    ({"present": ["n%d" % i for i in range(1, 10)], "kind": "add", "targets": ["n%d" % i for i in range(4, 10)]},
+     "3 nodes; adding 6 nodes: n4..n9"),
+    ({"present": ["n1", "n2"], "run": ["n2", "n1"]}, "2 nodes"),  # the run's order is no limit
+])
+def test_check_what(kwargs, text):
+    assert out.check_what(**kwargs) == text
