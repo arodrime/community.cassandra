@@ -461,8 +461,23 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
                                             " made its seed")
     apply = task(step["tasks"], "Apply cassandra_seeds on every node")
     assert render(apply["vars"]["cassandra_seeds"], _cassandra_add_seeds=change) == change["new"]
-    assert render(apply["vars"]["cassandra_seeds"], _cassandra_add_seeds=dict(change, problems=["x"])) == "10.0.0.1,10.0.0.2"
+    hold = task(step["tasks"], "Note whether the seed list is held back")["ansible.builtin.set_fact"]["_cassandra_add_seeds_hold"]
+    assert "not _cassandra_add_seeds_hold | bool" in apply["when"]
+    # n6 made a seed: no question covered it, the seed lists left as they are (change_seeds' job)
+    assert render(hold, _cassandra_add_seeds=change) is True
+    # every seed picked already live: applied
+    live = "10.0.0.1,10.0.0.6,10.0.0.7"
+    kept = render(work["ansible.builtin.set_fact"]["_cassandra_add_seeds"],
+                  **dict(variables, hostvars=dict(hostvars, n1=node(1, live=live, seed_entry="10.0.0.1"),
+                                                  n6=node(6, live=live, dc="dc2"), n7=node(7, live=live, dc="dc2"))))
+    assert kept["new"] == "10.0.0.1,10.0.0.2,10.0.0.6,10.0.0.7" and "made" not in kept["warnings"][0]
+    assert render(hold, _cassandra_add_seeds=kept) is False
+    # a datacenter left with no seed and none of its nodes up: never the inventory's list, held back
+    assert render(hold, _cassandra_add_seeds=dict(kept, problems=["dc2 x"])) is True
     say = task(step["tasks"], "Say the seeds kept for a datacenter")
-    # a problem: the inventory's list applied, the seeds picked elsewhere not said (not applied)
-    text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=dict(change, problems=["dc2 x"]), _nl="\n")
-    assert text == "WARNING  cassandra_seeds applied as it is: dc2 x"
+    text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=dict(kept, problems=["dc2 x"], warnings=[]),
+                  _cassandra_add_seeds_hold=True, _nl="\n")
+    assert text == ("WARNING  seed lists left as they are: dc2 x\nWARNING  seed lists left as they are: change_seeds"
+                    " applies cassandra_seeds, its change shown before its question")
+    assert render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=kept, _cassandra_add_seeds_hold=False,
+                  _nl="\n") == "WARNING  " + kept["warnings"][0]
