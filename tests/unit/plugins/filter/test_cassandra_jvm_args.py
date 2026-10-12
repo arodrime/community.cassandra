@@ -387,3 +387,16 @@ def test_a_line_repeating_what_cassandra_env_adds_is_not_moved(tmp_path, series,
     assert node["moved"] == []
     assert not jvm.cassandra_jvm_args_same(cmdline, files, node_files(series), series, java, environment,
                                            environment)[0]
+
+
+@pytest.mark.parametrize("line, extra", [
+    ("-verbose:gc", "-Xlog:gc=off"), ("-Xnoclassgc", "-XX:+ClassUnloading"), ("-Xint", "-Xmixed"),
+    ("-Xrs", "-XX:-ReduceSignalUsage"),
+])
+def test_not_moved_before_what_the_unit_adds(tmp_path, line, extra):
+    """Moved to the options files, the line would go before JVM_EXTRA_OPTS: another spelling of the same setting
+    there would win."""
+    files = node_files("50x", add_to("cassandra-env.sh", 'JVM_OPTS="$JVM_OPTS %s"' % line))
+    environment = {"JVM_EXTRA_OPTS": extra}
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path, environment), environment=environment)[2]
+    assert node["moved"] == []
