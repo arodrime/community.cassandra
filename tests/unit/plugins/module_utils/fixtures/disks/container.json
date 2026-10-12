@@ -1,0 +1,46 @@
+{
+   "blockdevices": [
+      {
+         "name": "loop0",
+         "kname": "loop0",
+         "maj:min": "7:0",
+         "type": "loop",
+         "mountpoint": "/snap/core22/2437",
+         "fstype": "squashfs"
+      },
+      {
+         "name": "vda",
+         "kname": "vda",
+         "maj:min": "252:0",
+         "type": "disk",
+         "mountpoint": null,
+         "fstype": null,
+         "children": [
+            {
+               "name": "vda1",
+               "kname": "vda1",
+               "maj:min": "252:1",
+               "type": "part",
+               "mountpoint": "/",
+               "fstype": "ext4"
+            },
+            {
+               "name": "vda14",
+               "kname": "vda14",
+               "maj:min": "252:14",
+               "type": "part",
+               "mountpoint": null,
+               "fstype": null
+            },
+            {
+               "name": "vda15",
+               "kname": "vda15",
+               "maj:min": "252:15",
+               "type": "part",
+               "mountpoint": "/boot/efi",
+               "fstype": "vfat"
+            }
+         ]
+      }
+   ]
+}

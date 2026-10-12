@@ -1,6 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import json
 import os
 import re
 
@@ -55,6 +56,31 @@ SYSCTL_CONF = file_records("sysctl", "/etc/sysctl.conf", "sysctl.conf")
 SITE_LIMITS = file_records("limits", "/etc/security/limits.d/95-cassandra-limits.conf", "95-cassandra-limits.conf")
 NPROC = file_records("limits", "/etc/security/limits.d/20-nproc.conf", "20-nproc.conf")
 UDEV = file_records("udev", "/etc/udev/rules.d/99-readahead.rules", "99-readahead.rules")
+
+
+def disk_records(devices, mounts, lvs=()):
+    """What import_cluster's script prints for the data devices: the lsblk
+    tree, the LVM volumes, each directory's filesystem."""
+    out = "lsblk|%s\n" % json.dumps({"blockdevices": devices})
+    out += "".join("lvs|  %s\n" % line for line in lvs)
+    for d, majmin, target, fstype in mounts:
+        fs = json.dumps({"filesystems": [{"maj:min": majmin, "source": "/dev/x", "fstype": fstype, "target": target}]})
+        out += "mnt|data|%s|%s\n" % (d, fs if majmin else "")
+    return out
+
+
+def blk(name, kname, majmin, typ, ra, rota, sched, mount=None, children=None):
+    d = {"name": name, "kname": kname, "maj:min": majmin, "type": typ, "mountpoint": mount, "fstype": None,
+         "ra": ra, "rota": rota, "sched": sched}
+    if children:
+        d["children"] = children
+    return d
+
+
+SDB1_SSD = disk_records([blk("sdb", "sdb", "8:16", "disk", 8, False, "none",
+                             children=[blk("sdb1", "sdb1", "8:17", "part", 8, False, "none", "/data")])],
+                        [("/data/c", "8:17", "/data", "xfs")])
+SDB_HDD = disk_records([blk("sdb", "sdb", "8:16", "disk", 128, True, "mq-deadline", "/data")], [("/data/c", "8:16", "/data", "xfs")])
 
 
 def found(text, **changes):
@@ -227,7 +253,7 @@ def test_unit_limits_last_wins_and_carried():
 # --- disks ---
 
 def test_udev_readahead_carried():
-    r = found(UDEV.splitlines()[0] + "\n" + "disk|/data/c|/dev/sdb1|part|sdb|8|none|0\n")
+    r = found(UDEV.splitlines()[0] + "\n" + SDB1_SSD)
     assert r["vars"] == {"cassandra_data_readahead_kb": 8}
     assert any(line.startswith("udev /etc/udev/rules.d/99-readahead.rules: read_ahead_kb 8 (cassandra_linux: 4),"
                                " scheduler none") for line in r["lines"])
@@ -243,7 +269,7 @@ def test_udev_several_readaheads_not_carried():
 
 
 def test_udev_rule_not_the_live_value_not_carried():
-    r = found(UDEV.splitlines()[0] + "\ndisk|/data/c|/dev/sdb|disk|sdb|128|mq-deadline|1\n")
+    r = found(UDEV.splitlines()[0] + "\n" + SDB_HDD)
     assert r["vars"] == {}
     assert any("NOT carried: read_ahead_kb 8" in c and "128" in c for c in r["carried"])
     assert "disk sdb (/data/c, rotational): read_ahead_kb 128 (cassandra_linux: 4), scheduler mq-deadline" in r["lines"]
@@ -260,9 +286,37 @@ def test_udev_vendor_rule_not_carried():
     assert any("scheduler bfq" in line for line in r["lines"])
 
 
-def test_disk_not_plain():
-    r = found("disk|/var/lib/cassandra/data|overlay||||||\n")
-    assert "disk of /var/lib/cassandra/data: overlay (?), not a plain disk: its read-ahead is not read" in r["lines"]
+def test_old_rule_on_the_disk_under_a_volume_carried():
+    # the earlier role tuned the disk of an LVM volume set by hand: its value is carried
+    lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4096, True, "", "/data")
+    rule = 'udev|/etc/udev/rules.d/61-cassandra-data-disk.rules|KERNEL=="sdb", ATTR{queue/read_ahead_kb}="8"\n'
+    r = found(rule + disk_records([blk("sdb", "sdb", "8:16", "disk", 8, True, "mq-deadline", children=[lv])],
+                                  [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|auto"]), own=True)
+    assert r["vars"].get("cassandra_data_readahead_kb") == 8
+
+
+def test_dir_not_created_yet():
+    root = json.dumps({"filesystems": [{"maj:min": "253:0", "source": "/dev/x", "fstype": "xfs", "target": "/"}]})
+    r = found(disk_records([], []) + "mnt|data|/data/x|#missing " + root + "\n" + "mnt|data|/data/y|#missing \n")
+    assert "disks: /data/x: not tuned, not created yet (it would be on the root filesystem)" in r["lines"]
+    assert "disks: /data/y: not tuned, not found (not created yet?)" in r["lines"]
+
+
+def test_disk_not_a_block_device():
+    r = found(disk_records([], [("/var/lib/cassandra/data", "0:52", "/", "overlay")]))
+    assert "disks: /var/lib/cassandra/data: not tuned, overlay on /dev/x, not a block device" in r["lines"]
+
+
+def test_disks_lvm_stack():
+    # RHEL's tuned sets 4 MB on the disk, LVM's auto read-ahead takes it for the volume
+    lv = blk("vg1-cassandra", "dm-2", "253:2", "lvm", 4096, True, "", "/data")
+    r = found(disk_records([blk("sdb", "sdb", "8:16", "disk", 4096, True, "mq-deadline", children=[lv])],
+                           [("/data/c/data", "253:2", "/data", "xfs")], lvs=["253|2|vg1|cassandra|auto"]))
+    assert u"disks: /data/c/data \u2192 vg1-cassandra (dm-2) \u2192 sdb" in r["lines"]
+    assert ("device vg1-cassandra (dm-2) (/data/c/data, rotational): read_ahead_kb 4096 (cassandra_linux: 4),"
+            " scheduler none, LVM read-ahead auto (cassandra_linux: 8)") in r["lines"]
+    assert ("disk sdb (under vg1-cassandra (dm-2), rotational): read_ahead_kb 4096 (cassandra_linux: 4),"
+            " scheduler mq-deadline") in r["lines"]
 
 
 # --- THP, tuned, swap ---
@@ -533,7 +587,7 @@ def test_running_limits_compared_with_the_unit():
 
 
 def test_data_dir_not_found():
-    assert "disk of /data/x: not found (no such directory yet?)" in found("disk|/data/x||||||\n")["lines"]
+    assert "disks: /data/x: not tuned, not found (not created yet?)" in found(disk_records([], [("/data/x", "", "", "")]))["lines"]
 
 
 def test_limits_order_differs_between_nodes():
@@ -595,7 +649,8 @@ def test_own_node_file_overridden_is_a_change_to_decide():
 
 
 def test_own_node_readahead_from_its_own_rule():
-    rules = ('udev|/etc/udev/rules.d/61-cassandra-data-disk.rules|KERNEL=="sdb", ATTR{queue/read_ahead_kb}="8"\n'
-             'udev|/etc/udev/rules.d/70-other.rules|KERNEL=="sdc", ATTR{queue/read_ahead_kb}="128"\n')
-    assert found(rules, own=True)["vars"].get("cassandra_data_readahead_kb") == 8
-    assert "cassandra_data_readahead_kb" not in found(rules)["vars"]  # not the role's node: several values
+    for own in ("64-cassandra-data-disk.rules", "61-cassandra-data-disk.rules"):  # 61-: written by earlier versions
+        rules = ('udev|/etc/udev/rules.d/%s|KERNEL=="sdb", ATTR{queue/read_ahead_kb}="8"\n'
+                 'udev|/etc/udev/rules.d/70-other.rules|KERNEL=="sdc", ATTR{queue/read_ahead_kb}="128"\n' % own)
+        assert found(rules, own=True)["vars"].get("cassandra_data_readahead_kb") == 8
+        assert "cassandra_data_readahead_kb" not in found(rules)["vars"]  # not the role's node: several values

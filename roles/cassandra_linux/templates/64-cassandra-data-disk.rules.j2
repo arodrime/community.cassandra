@@ -1,0 +1,7 @@
+# Managed by Ansible (community.cassandra.cassandra_linux): change the role variables, not this file.
+# The read-ahead (and scheduler) of the devices under the Cassandra directories,
+# matched by stable ids, not by their kernel names. After 60-persistent-storage
+# (ID_*) and 63-md-raid-arrays (MD_UUID). LVM volumes keep theirs in their metadata.
+{% for line in _cassandra_disk_udev_lines %}
+{{ line }}
+{% endfor %}

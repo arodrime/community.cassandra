@@ -20,18 +20,24 @@ Role Variables
   host's time sync alone. Default `true`.
 * `cassandra_offline`: `true` on air-gapped hosts: the time sync package is
   not installed, only started when present. Default `false`.
-* `cassandra_data_block_device`: the disk of the Cassandra data, to tune
-  its read-ahead and IO scheduler, e.g. `/dev/sdb` or `/dev/nvme0n1` (a
-  partition is taken as its disk). Defaults to `""`.
-* `cassandra_data_block_devices`: several disks to tune (JBOD data
-  directories, a commitlog disk). Defaults to `[]`. With neither variable
-  set, the disks are found from the data directories (`cassandra_data_dir`,
-  `cassandra_data_file_directories`) and `cassandra_commitlog_dir` with
-  `findmnt` and `lsblk`; without those either, nothing is tuned. LVM, md
-  RAID and dm-crypt devices are not guessed: the role says so, set the
-  disks. A disk set here that can't be tuned fails the role (not in
-  containers, where the disks are left alone).
-* `cassandra_data_readahead_kb`: read-ahead in KB for those disks
+* `cassandra_data_disk_tuning`: tune the read-ahead and IO scheduler of the
+  devices under the Cassandra directories (see below). Default `true`.
+  `false` leaves them as they are: the role then touches neither the devices
+  nor what an earlier run set to keep them (its udev rule, the read-ahead in
+  the LVM metadata; `lvchange --readahead auto` and removing
+  `/etc/udev/rules.d/64-cassandra-data-disk.rules` undo them).
+* `cassandra_data_block_device`, `cassandra_data_block_devices`: devices to
+  tune instead of finding them from the directories, e.g. `/dev/sdb`,
+  `/dev/nvme0n1`, `/dev/vg/lv`, `/dev/md0` (a partition is taken as its
+  disk); the devices under them are tuned too, unless they also hold
+  something else (see `cassandra_data_tune_shared_devices`). Defaults to `""`
+  and `[]`. A
+  device set here that can't be tuned fails the role (not in containers,
+  where the disks are left alone).
+* `cassandra_data_tune_shared_devices`: also tune the devices under the top
+  one that hold something else, e.g. the disk of a volume group shared with
+  the OS root. Default `false`: they are left alone, and the role says so.
+* `cassandra_data_readahead_kb`: read-ahead in KB for those devices
   (`queue/read_ahead_kb`, not `blockdev --setra` sectors). Defaults to `4`,
   the practical minimum: read-ahead brings nothing to Cassandra's random
   reads and fills the page cache with data it doesn't need. The kernel
@@ -61,13 +67,86 @@ Role Variables
   writes. Defaults to `/sys/block`; only meant to be overridden by tests,
   to point at a fake tree instead of the host's real disks.
 
-The read-ahead is set on the disks, and the IO scheduler set to `none` on
-SSD/NVMe disks only (`queue/rotational` 0): spinning disks keep theirs. Both
-are applied immediately through sysfs, then kept across reboots with a udev
-rule (`/etc/udev/rules.d/61-cassandra-data-disk.rules`) matching each disk by
-the first stable id udev knows for it (`ID_WWN_WITH_EXTENSION`, `ID_WWN`,
-`ID_SERIAL`, `ID_PATH`), or else by its name. In containers, the disks are
-not tuned (they are the host's).
+Disk tuning
+-----------
+
+The devices are found from the filesystems of `cassandra_data_dir`,
+`cassandra_data_file_directories` and `cassandra_commitlog_dir` (`findmnt`;
+a directory not created yet through its nearest parent, unless that is the
+root filesystem: then it is left alone until it exists, the next run of the
+role tunes it), then followed down
+to the disks (`lsblk`): partitions, LVM volumes (also thin ones), md RAID,
+dm-crypt, multipath, NVMe, virtio, and any stack of them. Filesystems not on
+a block device (overlay, tmpfs, NFS, ZFS), btrfs (it reads ahead through a
+bdi of its own), loop devices, and a commitlog alone on the root filesystem
+(read only at a restart, whole) are left alone; the role says so. When
+something changes or is left alone, the role shows each filesystem and its
+devices, e.g.
+`/var/lib/cassandra/data → vg_data-lv_cass (dm-2) → md0 → sdb1, sdc1 → sdb, sdc`.
+
+What read-ahead is used: the kernel reads ahead for a file (`read()`, and the
+read-around of `mmap` faults) with the read-ahead of the device its
+filesystem is mounted from: the top one (the LVM volume, the md array, the
+dm-crypt device), not the disks under it, which only get the I/O mapped down
+to them. That device is always tuned, whatever else the filesystem holds
+(the root filesystem too, when the data is on it; a partition has no
+read-ahead of its own: its disk is tuned). A file takes it when it is
+opened: the files Cassandra has open keep the one they had until it
+restarts.
+
+The devices under the top one get the same value, so that what is set up
+again above them takes no larger one from them: LVM's `auto` read-ahead and
+cryptsetup take the device under them as a minimum when they activate a
+volume. A device under it that also holds something else (the disk of a
+volume group shared with the OS root or swap, a disk with other partitions
+in use) is left alone, unless `cassandra_data_tune_shared_devices` is
+`true`. md arrays get the same value too: md sets twice a stripe (megabytes
+on RAID 0/5/10), for sequential reads Cassandra doesn't do.
+
+The IO scheduler is set to `none` on the devices that have one to choose and
+are not rotational (`queue/rotational` 0: SSD, NVMe): the disks, and a
+multipath device (its paths' schedulers are bypassed). Rotational devices
+keep theirs (`mq-deadline` by default), as do virtual disks that report
+themselves rotational: Red Hat recommends `mq-deadline` in virtual guests,
+and nothing tells which storage is behind a virtual disk.
+
+Both are applied immediately through sysfs, and kept across reboots:
+
+* LVM volumes: in their metadata (`lvchange --readahead`, see
+  `lvs -o +lv_read_ahead`). LVM sets it again whenever it activates or
+  reloads the volume (at boot, after `lvextend`...), after the kernel, which
+  may set it back then. `lvchange` reloads the volume, a brief suspend of its
+  I/O, only when its read-ahead changes: once. When LVM refuses (a missing
+  PV, a shared VG), when the role does not apply settings live, or with
+  `activation/readahead = "none"` in `lvm.conf`, the volume is kept by the
+  udev rule instead, and LVM may set it back when it activates the volume.
+* the other devices: a udev rule
+  (`/etc/udev/rules.d/64-cassandra-data-disk.rules`) on `add` and `change`
+  events, matching each device by a stable id, never by its kernel name:
+  disks by `ID_WWN_WITH_EXTENSION`, `ID_WWN`, `ID_SERIAL` or `ID_PATH`;
+  device-mapper devices (dm-crypt, multipath) by their uuid
+  (`ATTR{dm/uuid}`, else their name; a dm-crypt uuid ends with its name in
+  `/etc/crypttab`); md arrays by `MD_UUID` (else `ATTR{md/uuid}`). A device
+  with no stable id is set now but not kept. The rule file comes after
+  `63-md-raid-arrays.rules`, which sets `MD_UUID`, and replaces the
+  `61-cassandra-data-disk.rules` of earlier versions.
+
+The kernel raises a read-ahead back (to at least 128 KB, or twice the
+device's optimal I/O size) whenever a device's queue limits are updated: a
+device-mapper reload, an NVMe controller reset, a SCSI rescan. LVM and the
+`change` event of a reload set it again; the others stay so until the next
+run of the role or the next boot.
+
+tuned: RHEL's default profiles (`throughput-performance`, and
+`virtual-guest` which includes it) set `readahead=>4096` (4 MB at least) on
+every disk, device-mapper and md device when tuned starts and when it sees a
+new device: over what the role sets, at each boot. The role warns when the
+active profile sets another read-ahead for all devices. Use a profile of
+your own that includes yours and keeps its `[disk]` section off the
+Cassandra devices (`devices=`, `devices_udev_regex=`), or sets the same
+read-ahead.
+
+In containers, the devices are not tuned (they are the host's).
 
 Dependencies
 ------------

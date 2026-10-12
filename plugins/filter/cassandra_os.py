@@ -19,6 +19,8 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disks import plan
+
 # Read in this order by sysctl --system (and systemd-sysctl): a file name
 # found in several dirs is read from the first one, all of them sorted by file
 # name, then /etc/sysctl.conf, last
@@ -26,7 +28,8 @@ SYSCTL_DIRS = ["/etc/sysctl.d", "/run/sysctl.d", "/usr/local/lib/sysctl.d", "/us
 SYSCTL_CONF = "/etc/sysctl.conf"
 LIMITS_CONF = "/etc/security/limits.conf"
 LIMITS_OWN = "/etc/security/limits.d/cassandra.conf"  # cassandra_linux's
-OWN_UDEV_RULE = "/etc/udev/rules.d/61-cassandra-data-disk.rules"  # cassandra_linux's
+# cassandra_linux's (61-: before it also tuned md arrays)
+OWN_UDEV_RULES = ("/etc/udev/rules.d/64-cassandra-data-disk.rules", "/etc/udev/rules.d/61-cassandra-data-disk.rules")
 # systemd unit setting -> cassandra_service variable
 UNIT_LIMITS = [("LimitNOFILE", "nofile"), ("LimitNPROC", "nproc"), ("LimitMEMLOCK", "memlock"), ("LimitAS", "as")]
 UNIT_ITEM = dict(UNIT_LIMITS)
@@ -425,23 +428,34 @@ def _swap(recs):
 
 
 def _disks(recs, wanted):
+    """The devices under the data and commitlog dirs, as cassandra_linux finds
+    them (records: lsblk|<lsblk -J>, lvs|<lvs line>, mnt|<dir>|<findmnt -J>),
+    with their read-ahead and scheduler now."""
     role_ra = wanted.get("readahead_kb")
     lines, live = [], []
+    text = next((rest for kind, rest in recs if kind == "lsblk"), "")
+    mounts = []
     for kind, rest in recs:
-        if kind != "disk":
-            continue
-        d, source, dtype, disk, ra, sched, rot = _fields(rest, 7)
-        if not source:
-            lines.append("disk of %s: not found (no such directory yet?)" % d)
-            continue
-        if not disk or dtype not in ("disk", "part"):
-            lines.append("disk of %s: %s (%s), not a plain disk: its read-ahead is not read" % (d, source or "?", dtype or "?"))
-            continue
+        if kind == "mnt":
+            what, d, out = _fields(rest, 3)
+            mounts.append({"item": {"dir": d, "tune": what != "other", "commitlog": what == "commitlog"},
+                           "rc": 0 if out.strip() else 1, "stdout": out})
+    lvs = [rest for kind, rest in recs if kind == "lvs"]
+    found = plan(text, mounts, lvs=lvs)
+    lines += ["disks: %s" % s for s in found["stacks"]] + ["disks: %s" % n for n in found["notes"]]
+    for d in found["devices"]:
+        ra, rot, sched = d["ra"], d["rota"], d["sched"]
         live.append(ra)
         role_sched = "none" if rot == "0" else None
-        lines.append("disk %s (%s, %s): read_ahead_kb %s%s, scheduler %s%s" % (
-            disk, d, "SSD" if rot == "0" else "rotational", ra, _vs(ra, role_ra, "cassandra_linux"),
-            sched, _vs(sched, role_sched, "cassandra_linux") if role_sched else ""))
+        line = "%s %s (%s, %s): read_ahead_kb %s%s, scheduler %s%s" % (
+            "disk" if d["kind"] == "disk" else "device", d["label"], d["where"], "SSD" if rot == "0" else "rotational",
+            ra or "?", _vs(ra, role_ra, "cassandra_linux"),
+            sched or "none", _vs(sched, role_sched, "cassandra_linux") if role_sched else "")
+        if d["kind"] == "lvm":
+            want = int(role_ra) * 2 if role_ra is not None else None
+            line += ", LVM read-ahead %s%s" % (
+                d["lv_read_ahead"], _vs(d["lv_read_ahead"], want, "cassandra_linux") if want is not None else "")
+        lines.append(line)
     rules, owners = {}, _owners(recs)
     masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/udev/" in rest}
     for kind, rest in recs:
@@ -460,18 +474,19 @@ def _disks(recs, wanted):
                 rules.setdefault(path, set()).update(values)
     out, notes = {}, []
     values = set().union(*rules.values()) if rules else set()
-    own_rule = rules.get(OWN_UDEV_RULE) if boolean(wanted.get("own", False), strict=False) else None
+    own_rule = next((rules[r] for r in OWN_UDEV_RULES if r in rules), None) \
+        if boolean(wanted.get("own", False), strict=False) else None
     if own_rule is not None:
         values = set(own_rule)  # a node the role set up: its own rule (the others are left as they are)
     if len(values) == 1:
         value = values.pop()
-        if live and any(ra != str(value) for ra in live):
+        if live and str(value) not in live:
             notes.append("NOT carried: read_ahead_kb %d of the udev rules, the data disks have %s now"
                          % (value, ", ".join(sorted(set(live)))))
         elif role_ra is None or str(value) != str(role_ra):
             out["cassandra_data_readahead_kb"] = value
             notes.append("cassandra_data_readahead_kb: %d, as the udev rules of these nodes set it (the role writes"
-                         " its own rule, 61-cassandra-data-disk.rules, for the data disks only)" % value)
+                         " its own rule, 64-cassandra-data-disk.rules, for the data devices only)" % value)
     elif len(values) > 1:
         notes.append("NOT carried: the udev rules set several read-aheads (%s), set cassandra_data_readahead_kb"
                      % ", ".join(str(v) for v in sorted(values)))

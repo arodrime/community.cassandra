@@ -96,7 +96,7 @@ def test_data_disk_scheduler(host):
 
 
 def test_data_disk_udev_rule(host):
-    f = host.file("/etc/udev/rules.d/61-cassandra-data-disk.rules")
+    f = host.file("/etc/udev/rules.d/64-cassandra-data-disk.rules")
 
     assert f.exists
     assert f.mode == 0o644
@@ -107,7 +107,7 @@ def test_data_disk_udev_rule(host):
 
 def test_jbod_disks_tuned(host):
     assert host.file("/tmp/fake-sys/block/sdy/queue/read_ahead_kb").content_string.strip() == "4"
-    rules = host.file("/etc/udev/rules.d/61-cassandra-data-disk.rules").content_string
+    rules = host.file("/etc/udev/rules.d/64-cassandra-data-disk.rules").content_string
     assert 'KERNEL=="sdz"' in rules and 'KERNEL=="sdy"' in rules
 
 
