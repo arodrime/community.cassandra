@@ -795,7 +795,8 @@ something else, is not restarted by ``apply_config``, which names those files: r
 changed a setting.
 
 To change the configuration of a running cluster, use ``apply_config`` instead of running the role: it shows the
-settings that differ, asks once, then goes node by node, writing the files and restarting the node, with the cluster
+settings that differ, asks once, then writes at once the nodes it does not restart (the cluster checked before and
+after them), and goes node by node for the others, writing the files and restarting the node, with the cluster
 checked before and after each one. Nodes whose configuration does not change are not touched, except a node still
 running with an older configuration than the one on disk (written by the role, or by a run that stopped before the
 restart), or with an older systemd unit (e.g. a new ``cassandra_group`` written by ``cassandra_service``): it is

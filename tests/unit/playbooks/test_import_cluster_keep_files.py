@@ -107,7 +107,7 @@ def test_role_leaves_them():
     results = [{"item": "logback.xml", "stat": {"exists": True}}, {"item": "cassandra-env.sh", "stat": {"exists": False}}]
     for initialized, kept in [(True, ["logback.xml"]),  # a node without the file gets the role's
                               (False, [])]:  # a new node (e.g. rebuilt under that name): its files are the package's
-        variables = {"cassandra_config_compared": {"results": []}, "cassandra_conf_dir": "/c", "cassandra_config_tmp": {"path": "/t"},
+        variables = {"cassandra_config_preview": {"results": []}, "_cassandra_config_compared": {}, "cassandra_conf_dir": "/c",
                      "cassandra_config_keep_stat": {"results": results},
                      "_cassandra_config_initialized": initialized}
         variables["_keep"] = trust_as_template(note["vars"]["_keep"])

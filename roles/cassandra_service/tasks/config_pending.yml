@@ -10,24 +10,60 @@
 # written after its JVM started is only listed in
 # cassandra_config_unknown_files, as what Cassandra read then is unknown.
 # Sets cassandra_config_restart_pending.
-- name: Checksum the config files
-  ansible.builtin.find:
-    paths: "{{ _cassandra_service_conf_dir }}"
-    patterns: "{{ _cassandra_service_config_files }}"
-    file_type: file
-    get_checksum: true
-  register: cassandra_pending_files
+# In one go (a task each would cost a round trip each), as ansible.builtin.find
+# (the files of the patterns, not hidden, not links), stat (the unit, not
+# followed) and slurp (the record) register them
+- name: Checksum the config files and the unit, read the checksums recorded at the last start
+  ansible.builtin.command:
+    argv: >-
+      {{ [_cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')), '-c', _read,
+          _cassandra_service_conf_dir, '/etc/systemd/system/cassandra.service', _cassandra_service_config_snapshot]
+         + _cassandra_service_config_files }}
+  register: cassandra_pending_read
+  changed_when: false
+  check_mode: false  # reads only
+  vars:
+    _read: |
+      import base64, fnmatch, hashlib, json, os, stat, sys
+      conf, unit, record = [os.path.expanduser(os.path.expandvars(p)) for p in sys.argv[1:4]]
+      def sha1(path):
+          digest = hashlib.sha1()
+          with open(path, "rb") as f:
+              for block in iter(lambda: f.read(65536), b""):
+                  digest.update(block)
+          return digest.hexdigest()
+      files = []
+      for name in (sorted(os.listdir(conf)) if os.path.isdir(conf) else []):
+          path = os.path.normpath(os.path.join(conf, name))
+          if name.startswith(".") or not any(fnmatch.fnmatch(name, p) for p in sys.argv[4:]):
+              continue
+          try:
+              st = os.lstat(path)
+          except OSError:
+              continue
+          if stat.S_ISREG(st.st_mode):
+              files.append({"path": path, "ctime": st.st_ctime, "mtime": st.st_mtime, "checksum": sha1(path)})
+      try:
+          st = os.lstat(unit)
+          unit_stat = {"exists": True, "path": unit, "ctime": st.st_ctime, "mtime": st.st_mtime}
+          if stat.S_ISREG(st.st_mode) and os.access(unit, os.R_OK):
+              unit_stat["checksum"] = sha1(unit)
+      except OSError:
+          unit_stat = {"exists": False}
+      try:
+          with open(record, "rb") as f:
+              content = base64.b64encode(f.read()).decode("ascii")
+      except (IOError, OSError):
+          content = None
+      print(json.dumps({"files": files, "unit": unit_stat, "record": content}))
 
-- name: Checksum the unit
-  ansible.builtin.stat:
-    path: /etc/systemd/system/cassandra.service
-  register: cassandra_pending_unit_file
-
-- name: Read the checksums recorded at the last start
-  ansible.builtin.slurp:
-    path: "{{ _cassandra_service_config_snapshot }}"
-  register: cassandra_pending_snapshot
-  failed_when: false
+- name: Note the checksums read
+  ansible.builtin.set_fact:
+    cassandra_pending_files: {files: "{{ _read.files }}"}
+    cassandra_pending_unit_file: {stat: "{{ _read.unit }}"}
+    cassandra_pending_snapshot: "{{ {'content': _read.record} if _read.record is not none else {'failed': true} }}"
+  vars:
+    _read: "{{ cassandra_pending_read.stdout | from_json }}"
 
 # (or none for the unit)
 - name: Read when the running Cassandra started (no checksums recorded)

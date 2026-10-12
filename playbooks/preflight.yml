@@ -167,6 +167,18 @@
           no_log: "{{ cassandra_jmx_password | length > 0 }}"
           when: _cassandra_preflight_running_nodes | length > 0
 
+        # read while the checks below go on (a nodetool run, seconds), collected by "Check the running cluster"
+        - name: Start reading the ring from a running node
+          community.cassandra.cassandra_status:
+          module_defaults:
+            community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+          register: cassandra_preflight_status_job
+          delegate_to: "{{ _cassandra_preflight_from }}"
+          async: 600
+          poll: 0
+          check_mode: false  # read-only (async cannot run in check mode); --check needs it too
+          when: _cassandra_preflight_running_nodes | length > 0
+
     # --limit may leave out every running node (e.g. only a node that could
     # not start): then read on another node of the group
     - name: Check the running node belongs to this cluster
@@ -275,16 +287,28 @@
     - name: Check the running cluster
       run_once: true
       when: _cassandra_preflight_running_nodes | length > 0
-      module_defaults:
-        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
       vars:
         _from: "{{ _cassandra_preflight_from }}"
       block:
         - name: Read the ring from a running node
-          community.cassandra.cassandra_status:
+          ansible.builtin.async_status:
+            jid: "{{ cassandra_preflight_status_job.ansible_job_id | default('') }}"
           register: cassandra_preflight_status
+          until: cassandra_preflight_status.finished | default(1) | bool
+          retries: 600
+          delay: 1
           delegate_to: "{{ _from }}"
           failed_when: not cassandra_preflight_status.cluster_status
+          check_mode: false  # the read ran under --check too
+
+        - name: Remove the file of that read
+          ansible.builtin.file:
+            path: "{{ cassandra_preflight_status_job.results_file }}"
+            state: absent
+          delegate_to: "{{ _from }}"
+          changed_when: false
+          check_mode: false
+          when: cassandra_preflight_status_job.results_file is defined
 
         - name: Every seed is up
           ansible.builtin.assert:

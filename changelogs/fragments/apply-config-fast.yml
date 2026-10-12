@@ -1,0 +1,7 @@
+minor_changes:
+  - cassandra_config role - reads a node in a few commands instead of a task per file or directory (the live files and directories, the comparison with the files rendered on the controller, the system keyspace, the directories tried as Cassandra's account), and writes only the files that change.
+  - apply_config playbook - the nodes not restarted (an owner, group or mode alone, or Cassandra stopped on purpose) are written at once, their cluster checks reading the ring and schema once; only the restarts and starts go one node at a time. ``--check`` checks every node at once and no longer renders the config a second time. The restart pending is read in one command per node.
+  - cassandra_service role - the cluster health checks run their nodetool reads on the node at once (async) instead of one after the other, and wait for nothing under ``--check``.
+  - preflight playbook (run first by the operation playbooks) - reads the ring while its other checks run.
+bugfixes:
+  - cassandra_status module - no longer waits ``interval`` after the last read when a node is down (``poll`` reads, ``poll - 1`` waits).

@@ -56,6 +56,18 @@
     # shown before the run was confirmed, and in its recap at the end
     _cassandra_config_quiet: true
     _cassandra_change_report_quiet: true
+  when: not ansible_check_mode
+
+# --check writes nothing: what the plan found on this node (the same role run in check mode, just before),
+# reported as a real run reports what it writes
+- name: Report what would be written
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_config
+    cassandra_change_report_items: "{{ _cassandra_config_items | default([]) }}"
+    _cassandra_change_report_quiet: true
+  when: ansible_check_mode
 
 - name: Say the restart of {{ inventory_hostname }}
   ansible.builtin.debug:

@@ -113,8 +113,8 @@ def test_the_health_check_lets_that_node_only_be_down():
     assert down_ok == ["10.0.0.2"]
     # one read: no waiting for the node left down to come back
     # (a string before ansible-core 2.19)
-    assert int(render(block["vars"]["_poll"], cassandra_service_health_resumed_down=["10.0.0.2"])) == 1
-    assert int(render(block["vars"]["_poll"], cassandra_service_health_timeout=600)) == 60
+    assert int(render(block["vars"]["_poll"], cassandra_service_health_resumed_down=["10.0.0.2"], ansible_check_mode=False)) == 1
+    assert int(render(block["vars"]["_poll"], cassandra_service_health_timeout=600, ansible_check_mode=False)) == 60
     ring = {"dc1": {"nodes": [{"address": "10.0.0.%d" % i, "rack": "r1", "status": "U", "state": "N"} for i in (1, 2, 3)]}}
     ring["dc1"]["nodes"][1]["status"] = "D"
     view = [{"from": "n1", "result": {"cluster_status": ring}}]

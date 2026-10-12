@@ -181,12 +181,17 @@ def test_the_action_restarts_starts_or_only_writes():
     tasks = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
-    assert names == ["Clear the unit's failed starts", "Write the config", "Say the restart of {{ inventory_hostname }}",
-                     "Drain and restart the node", "Start the node and wait until it has joined"]
-    phase = tasks.pop(2)  # a phase line, only before a restart
+    assert names == ["Clear the unit's failed starts", "Write the config", "Report what would be written",
+                     "Say the restart of {{ inventory_hostname }}", "Drain and restart the node", "Start the node and wait until it has joined"]
+    phase = tasks.pop(3)  # a phase line, only before a restart
     assert "cassandra_apply_config_then | default('restart') == 'restart'" in phase["when"]
-    clear, write, restart, start = tasks
-    assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config" and "when" not in write
+    clear, write, report, restart, start = tasks
+    # --check: the plan's comparison (the same role run in check mode, just before) reported, nothing rendered again
+    assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"
+    assert report["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_change_report"
+    assert report["vars"]["cassandra_change_report_items"] == "{{ _cassandra_config_items | default([]) }}"
+    for check in (True, False):
+        assert [render("{{ %s }}" % t["when"], {"ansible_check_mode": check}) for t in (write, report)] == [not check, check]
     for then, expected in (("restart", [False, True, False]), ("start", [True, False, True]), ("none", [False, False, False]),
                            ("write", [False, False, False])):
         assert [render("{{ %s }}" % t["when"], {"cassandra_apply_config_then": then}) for t in (clear, restart, start)] == expected
@@ -217,7 +222,7 @@ def test_the_action_restarts_starts_or_only_writes():
 
 def test_the_role_reports_them_and_records_what_cassandra_started_with():
     names = [t.get("name") for t in walk(ROLE)]
-    assert names.index("Read the owner and mode of the live files") < names.index("List the owner, group and mode changes") \
+    assert names.index("Read the node's config files and directories") < names.index("List the owner, group and mode changes") \
         < names.index("Show the owner, group and mode changes") < names.index("Record the changes for the report")
     record = find(ROLE, "Record the changes for the report")["ansible.builtin.set_fact"]["_cassandra_config_items"]
     assert "_cassandra_config_perm_changes" in record
@@ -259,7 +264,12 @@ def test_apply_config_passes_a_member_seed_down(resume, down_ok, expected):
 
 def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
     play = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Apply the config, one node at a time"][0]
-    include = play["tasks"][1]["vars"]  # (after the facts task)
+    names = [t["name"] for t in play["tasks"]]
+    assert names == ["Give each node its own facts", "Note the other nodes that may stay down", "Apply the config on this node"]
+    # computed once per node, read by the health checks
+    include = dict(play["tasks"][2]["vars"], cassandra_service_health_down_ok=play["tasks"][1]["ansible.builtin.set_fact"][
+        "_cassandra_apply_config_down_ok"])
+    assert play["tasks"][2]["vars"]["cassandra_service_health_down_ok"] == "{{ _cassandra_apply_config_down_ok }}"
     # n5: stopped with nothing to do (not in this play); n6: outside --limit (no fact)
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
@@ -280,8 +290,37 @@ def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
         assert no_wait in (bool(expected), str(bool(expected)))
     block = [t for t in load("roles", "cassandra_service", "tasks", "cluster_health.yml") if "block" in t][0]
     poll = block["vars"]["_poll"]
-    assert int(render(poll, {"_cassandra_health_no_wait": True, "cassandra_service_health_timeout": 600})) == 1
-    assert int(render(poll, {"_cassandra_health_no_wait": False, "cassandra_service_health_timeout": 600})) == 60
+    for no_wait, check, polls in ((True, False, 1), (False, False, 60), (False, True, 1)):  # --check waits for nothing
+        assert int(render(poll, {"_cassandra_health_no_wait": no_wait, "cassandra_service_health_timeout": 600,
+                                 "ansible_check_mode": check})) == polls
+
+
+def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
+    plays = load("playbooks", "apply_config.yml")
+    batch = [p for p in plays if p.get("name") == "Apply the config where nothing is restarted, on these nodes at once"][0]
+    assert [t["name"] for t in batch["tasks"]] == ["Give each node its own facts", "Note the other nodes that may stay down",
+                                                   "Apply the config on these nodes"]
+    include = dict(batch["tasks"][2]["vars"], cassandra_service_health_down_ok=batch["tasks"][1]["ansible.builtin.set_fact"][
+        "_cassandra_apply_config_down_ok"])
+    assert include["cassandra_service_node_batch"] is True and batch["any_errors_fatal"] is True and "serial" not in batch
+    then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
+    hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
+    for h, t in then.items():
+        hostvars[h].update(cassandra_apply_config_then=t, cassandra_apply_config_todo=h != "n5")
+    variables = {"groups": {"all": list(hostvars), "cassandra": list(hostvars)}, "hostvars": hostvars}
+    # written before any start or restart: every start node is still down; --check also checks the restart node, which
+    # needs every other node up but the ones it starts
+    for host, expected in (("n1", ["10.100.100.2", "10.100.100.3", "10.100.100.5"]), ("n3", ["10.100.100.2", "10.100.100.5"]),
+                           ("n4", ["10.100.100.2"])):
+        values = dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host])
+        assert render(include["cassandra_service_health_down_ok"], values) == expected
+    # done at once: the ones no restart or start takes down, every one under --check; the others one at a time
+    group = [t for t in plays[1]["tasks"] if t.get("name") == "Group the nodes to do at once"][0]
+    key = group["ansible.builtin.group_by"]["key"]
+    for todo, t, check, at_once in ((True, "none", False, True), (True, "write", False, True), (True, "restart", False, False),
+                                    (True, "start", False, False), (True, "restart", True, True), (False, "none", True, False)):
+        values = dict(cassandra_apply_config_todo=todo, cassandra_apply_config_then=t, ansible_check_mode=check)
+        assert render(key, with_task_vars(group, values)) == "cassandra_apply_config_batch_%s" % at_once
 
 
 def plan(nodes):
@@ -332,3 +371,108 @@ def test_the_second_node_checked_from_is_not_one_expected_down():
     variables["cassandra_service_health_down_ok"] = ["10.100.100.1"]
     assert with_task_vars(work, variables)["_down_hosts"] == ["n1"]
     assert render(peer, with_task_vars(work, variables)) == "n3"
+
+
+def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
+    work = load("roles", "cassandra_service", "tasks", "cluster_health.yml")[0]
+    hosts = ["n1", "n2", "n3"]
+    hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in hosts)
+    peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer"]
+    for batch, play, me, expected in ((True, ["n1", "n2"], "n1", "n3"), (True, ["n1", "n2"], "n2", "n3"),
+                                      (True, hosts, "n2", "n1"),  # all in the batch: the same node for all
+                                      (False, ["n1", "n2"], "n1", "n2")):  # one node at a time: another node
+        variables = {"groups": {"all": hosts, "cassandra": hosts}, "hostvars": hostvars, "inventory_hostname": me,
+                     "ansible_play_hosts": play, "cassandra_service_health_batch": batch}
+        assert render(peer, with_task_vars(work, variables)) == expected
+    block = [t for t in load("roles", "cassandra_service", "tasks", "cluster_health.yml") if "block" in t][0]
+    shared = [t for t in block["block"] if t.get("delegate_to") == "{{ _cassandra_health_peer }}" and "async" in t]
+    assert [t["name"] for t in shared] == ["Read the ring from {{ _cassandra_health_peer }}",
+                                           "Check schema agreement (same answer from any node)"]
+    for t in shared:  # a batch: once, both at once; else one after the other there (every node of a parallel play reads there)
+        assert t["run_once"] == "{{ _batch }}" and t["async"] == "{{ _async if _batch else 0 }}" and t["poll"] == 0
+    note = [t for t in block["block"] if str(t.get("name", "")).startswith("Note what was read from")][0]["ansible.builtin.set_fact"]
+    jobs = {"cassandra_health_peer_job": {"finished": 1, "cluster_status": {"a": 1}}, "cassandra_health_peer_read": {"ansible_job_id": "1"},
+            "cassandra_health_schema_job": {"finished": 1}, "cassandra_health_schema_read": {"ansible_job_id": "2"}}
+    assert render(note["cassandra_health_peer"], dict(jobs, _batch=True)) == jobs["cassandra_health_peer_job"]
+    assert render(note["cassandra_health_peer"], dict(jobs, _batch=False)) == jobs["cassandra_health_peer_read"]
+    # this node's reads run at once: each launched, then collected, then their files removed
+    launched = [t["register"] for t in block["block"] if "async" in t and t not in shared]
+    collected = [t["ansible.builtin.async_status"]["jid"] for t in block["block"]
+                 if "ansible.builtin.async_status" in t and "delegate_to" not in t]
+    assert collected == ["{{ %s.ansible_job_id | default('') }}" % r for r in launched] and len(launched) == 4
+
+
+def test_a_batch_says_its_nodes_once_and_writes_the_progress_file_a_line_at_a_time():
+    tasks = load("roles", "cassandra_service", "tasks", "node_operation.yml")
+    block = [t for t in tasks if "block" in t][0]["block"]
+    say = [t for t in block if str(t.get("name", "")).startswith("Say what is done to")][0]
+    assert say["run_once"] == "{{ cassandra_service_node_batch | default(false) | bool }}"
+    names = say["vars"]["_names"]
+    assert render(names, {"cassandra_service_node_batch": True, "ansible_play_hosts": ["n3", "n4"],
+                          "cassandra_progress_done": ["n4"], "inventory_hostname": "n3"}) == ["n3"]
+    assert render(names, {"ansible_play_hosts": ["n3", "n4"], "inventory_hostname": "n4"}) == "n4"
+    progress = [t for t in block if t.get("name") == "Add the node to the progress file"][0]
+    assert progress["throttle"] == 1
+
+
+def written(preview, live, links=(), target=None, alternative=""):
+    """The files the role's template task writes."""
+    t = find(ROLE, "List the owner, group and mode changes")
+    settings = load("roles", "cassandra_config", "vars", "main.yml")["_cassandra_config_perm_settings"]
+    variables = {"cassandra_config_user": "root", "cassandra_config_group": "cassandra", "cassandra_config_mode": "0640",
+                 "cassandra_config_public_mode": "0644", "cassandra_config_file_permissions": {}, "cassandra_user": "cassandra",
+                 "cassandra_group": "cassandra", "cassandra_rpm_conf_alternative": alternative, "_cassandra_config_links": list(links),
+                 "cassandra_config_preview": {"results": [{"cassandra_config_file": f, "rc": rc} for f, rc in preview]},
+                 "cassandra_config_live_stat": {"results": live},
+                 "cassandra_config_conf_target": {"skipped": True} if target is None else {"stat": {"exists": True, "lnk_source": target}}}
+    variables["_cassandra_config_perm_settings"] = dict((k, render(v, variables)) for k, v in settings.items())
+    return render(t["ansible.builtin.set_fact"]["_cassandra_config_write"], variables)
+
+
+def test_the_files_the_same_on_the_node_are_not_written_again():
+    live = [stat("cassandra.yaml", "root", "cassandra", "0640"), stat("cassandra-env.sh", "root", "cassandra", "0644"),
+            stat("logback.xml", "root", "cassandra", "0600")]
+    preview = [("cassandra.yaml", 0), ("cassandra-env.sh", 1), ("logback.xml", 0)]
+    # a content change (or a live file the diff could not read, rc 1 too), an owner or mode change
+    assert written(preview, live) == ["cassandra-env.sh", "logback.xml"]
+    # a link: the template task replaces it with a file
+    assert written(preview, live, links=["cassandra.yaml"]) == ["cassandra.yaml", "cassandra-env.sh", "logback.xml"]
+    # RHEL: /etc/cassandra/conf about to point to the role's dir: every file written there, as before
+    assert written(preview, live, target="/etc/cassandra/conf.default", alternative="/etc/cassandra/ansible.conf") == [
+        "cassandra.yaml", "cassandra-env.sh", "logback.xml"]
+    assert written(preview, live, target="/etc/cassandra/ansible.conf", alternative="/etc/cassandra/ansible.conf/") == [
+        "cassandra-env.sh", "logback.xml"]
+
+
+def test_a_batch_node_stopped_by_another_says_so():
+    # any_errors_fatal stops the nodes of the batch with the one that failed (ansible-core 2.17+ rescues them too):
+    # only that one is said FAILED; the others are not finished (2.16 lets them finish first: done)
+    tasks = load("roles", "cassandra_service", "tasks", "node_operation.yml")
+    op = [t for t in tasks if "block" in t][0]
+    note = [t for t in op["block"] if t.get("name") == "Note a node of a batch as not finished"][0]
+    record, dummy, stop = op["rescue"]
+    base = {"cassandra_service_node_action": "apply_config", "cassandra_service_node_batch": True, "inventory_hostname": "n4"}
+    assert render("{{ %s }}" % note["when"], base) is True
+    assert render(note["ansible.builtin.set_fact"]["cassandra_op_result"], base) == (
+        "apply_config not finished: the run stopped at another node done at the same time")
+    assert render("{{ %s }}" % record["when"], base) is False
+    assert render(stop["ansible.builtin.fail"]["msg"], base) == "Stopped with the node that failed."
+    failed = dict(base, ansible_failed_task={"name": "Check gossip on this node"}, cassandra_progress_file="/p")
+    assert render("{{ %s }}" % record["when"], failed) is True
+    # (ansible-core 2.16 finishes the others first: they say done)
+    assert render(stop["ansible.builtin.fail"]["msg"], failed).startswith(
+        "Stopped at n4 (Check gossip on this node): no node was restarted; the nodes done at the same time: as said above.")
+    # one node at a time: as before
+    alone = dict(base, cassandra_service_node_batch=False, ansible_failed_task={"name": "x"})
+    assert render("{{ %s }}" % note["when"], alone) is False and render("{{ %s }}" % record["when"], alone) is True
+    assert render(stop["ansible.builtin.fail"]["msg"], alone).startswith("Stopped at n4 (x): no other node was touched after it.")
+
+
+def test_the_nodes_to_do_are_not_reached_until_their_play():
+    # a run stopped in the play of the nodes written at once: the summary says the others not reached (not --limit)
+    plays = load("playbooks", "apply_config.yml")
+    progress = [p for p in plays if p.get("name") == "Set up the progress file"][0]
+    note = [t for t in progress["tasks"] if t.get("name") == "Note the nodes not reached yet"][0]
+    assert note["ansible.builtin.set_fact"] == {"cassandra_op_result": "not reached"}
+    names = [p.get("name") for p in plays]
+    assert names.index("Set up the progress file") < names.index("Apply the config where nothing is restarted, on these nodes at once")

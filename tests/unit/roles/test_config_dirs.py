@@ -19,7 +19,12 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import config_read
+
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
+READ = "Read the node's config files and directories"
+LOOK = "Look for the system keyspace of an initialized node, and into Cassandra's directories"
+NOTE = "Note what was found in the directories"
 
 
 def task(name):
@@ -66,13 +71,21 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def test_dirs_whose_owner_and_mode_are_checked():
+def test_dirs_whose_owner_and_mode_are_checked(tmp_path):
     # data, commit log, saved caches, hints (each path once, the first kind wins); not the log dir
-    stat = task("Read the owner and mode of Cassandra's directories")
-    assert stat["ansible.builtin.stat"]["follow"] is True
-    assert render(stat["vars"]["_dirs"], cassandra_data_file_directories=["/d1", "/d2"], cassandra_commitlog_dir="/cl",
+    read = task(READ)
+    assert render(read["vars"]["_request"]["dir_stats"], cassandra_data_file_directories=["/d1", "/d2"], cassandra_commitlog_dir="/cl",
                   cassandra_saved_caches_dir="/d1", cassandra_hints_dir="", cassandra_log_dir="/log") == [
         ["data dir", "/d1"], ["data dir", "/d2"], ["commitlog dir", "/cl"]]
+    # read as the stat module does with follow (a link to a disk: the disk's directory)
+    (tmp_path / "disk").mkdir(mode=0o750)
+    (tmp_path / "data").symlink_to(tmp_path / "disk")
+    request = {"step": "node", "dirs": [], "yaml": str(tmp_path / "none.yaml"), "conf_target": "", "keep": [], "files": [],
+               "dir_stats": [["data dir", str(tmp_path / "data")], ["hints dir", str(tmp_path / "gone")]]}
+    found = config_read(request)["dir_stats"]
+    assert [r["item"] for r in found] == request["dir_stats"]
+    assert found[0]["stat"]["isdir"] is True and found[0]["stat"]["mode"] == "0750" and found[0]["stat"]["islnk"] is False
+    assert found[1]["stat"] == {"exists": False}
 
 
 def test_dir_owner_and_mode_set_on_the_top_level_only():
@@ -84,15 +97,21 @@ def test_dir_owner_and_mode_set_on_the_top_level_only():
     assert "_cassandra_config_dir_changes" in task("Show the owner, group and mode changes")["ansible.builtin.debug"]["msg"]
 
 
-def test_dirs_another_account_owns_in_a_data_dir_sampled():
-    look = task("Look for keyspace and table dirs another account owns")
-    argv = look["ansible.builtin.command"]["argv"]
-    assert "-maxdepth 2" in argv[2] and "head -n 4" in argv[2]  # no walk of the sstables
-    assert "find -H " in argv[2] and "-name lost+found -prune" in argv[2]  # a link to a disk; a mount point's lost+found
+def test_dirs_another_account_owns_in_a_data_dir_sampled(tmp_path):
+    look = task(LOOK)
     assert look["check_mode"] is False and look["changed_when"] is False
     results = [{"item": ["data dir", "/d1"], "stat": {"isdir": True}}, {"item": ["commitlog dir", "/cl"], "stat": {"isdir": True}},
                {"item": ["data dir", "/d2"], "stat": {"exists": False}}]
-    assert render(look["loop"], cassandra_config_dir_stat={"results": results}) == [results[0]]
+    assert render(look["vars"]["_foreign"], cassandra_config_dir_stat={"results": results}) == ["/d1"]
+    assert render(task(NOTE)["vars"]["_stats"], cassandra_config_dir_stat={"results": results}) == [results[0]]
+    # keyspace and table dirs only, a sample (no walk of the sstables), through a link to a disk; a mount point's lost+found
+    for d in ("ks1/t1", "ks1/t2", "ks2/t3/snapshots/s", "lost+found/x", "ks3", "ks4"):
+        (tmp_path / "disk" / d).mkdir(parents=True)
+    (tmp_path / "data").symlink_to(tmp_path / "disk")
+    sample = config_read({"step": "dirs", "system": [], "tries": [], "foreign": [str(tmp_path / "data")], "user": "root"})["foreign"]
+    assert len(sample) == 1 and len(sample[0]) == 4 and not [p for p in sample[0] if "lost+found" in p or "snapshots" in p]
+    assert config_read({"step": "dirs", "system": [], "tries": [], "foreign": [str(tmp_path / "data")],
+                        "user": str(os.getuid())})["foreign"] == [[]]  # all the account's
     notes = task("Note the dirs another account owns")["ansible.builtin.set_fact"]["_cassandra_config_dir_notes"]
     found = {"results": [{"item": {"item": ["data dir", "/d1"]}, "stdout_lines": ["/d1/ks1", "/d1/ks1/t1-1", "/d1/ks2", "/d1/ks3"]},
                          {"item": {"item": ["data dir", "/d3"]}, "stdout_lines": ["/d3/a", "/d3/b", "/d3/c"]},
@@ -106,10 +125,10 @@ def test_dirs_another_account_owns_in_a_data_dir_sampled():
 
 def test_dirs_the_account_can_use_through_its_other_groups_are_left():
     # the filter's candidates tried as the account: rc 0 (another group, an ACL) left as is; no runuser: kept
-    try_task = task("Try the directories as the account Cassandra runs as")
-    assert try_task["ansible.builtin.command"]["argv"][:2] == ["runuser", "-u"]
-    assert try_task["check_mode"] is False and try_task["failed_when"] is False
+    note = task(NOTE)["ansible.builtin.set_fact"]["cassandra_config_dir_try"]["results"]
     a, b, c = ({"path": p} for p in ("/a", "/b", "/c"))
+    tried = [{"item": a, "rc": 0}, {"item": b, "rc": 1}, {"item": c, "rc": 2}]
+    assert render(note, _tries=[a, b, c], _read={"tries": [0, 1, 2]}) == tried
     results = [{"item": a, "rc": 0}, {"item": b, "rc": 1}, {"item": c, "failed": True, "msg": "no runuser"}]
     changes = task("List the owner, group and mode changes of the directories")["ansible.builtin.set_fact"]["_cassandra_config_dir_changes"]
     assert render(changes, cassandra_config_dir_try={"results": results}) == [b, c]
