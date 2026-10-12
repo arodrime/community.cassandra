@@ -1755,3 +1755,66 @@ def test_layout_over_settles_without_the_users_files_it_writes():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_files
     written = set(f["path"] for f in cassandra_inventory_files(layout))
     assert "group_vars/all/x.yml" in layout["user_paths"] and not written & set(layout["user_paths"])
+
+
+# --- a value that follows the node's name: one template ------------------------
+
+def _named(name, **extra):
+    return dict({"name": name, "ansible_host": "10.100.0.%s" % name[-1]}, **extra)
+
+
+@pytest.mark.parametrize("values, template", [
+    ({"db11": "db11.example.net", "db12": "db12.example.net"}, "{{ inventory_hostname }}.example.net"),
+    ({"db11": "db11", "db12": "db12"}, "{{ inventory_hostname }}"),
+    ({"db11": "https://db11:8443/x", "db12": "https://db12:8443/x"}, "https://{{ inventory_hostname }}:8443/x"),
+    ({"db11.example.net": "db11", "db12.example.net": "db12"}, "{{ inventory_hostname_short }}"),
+    # not: ansible_host (another inventory source may set it), one node off the rule, one value for all, a { around
+    # it, not a string, a name Ansible < 2.19 would make a number of
+    ({"db11": "10.100.0.1", "db12": "10.100.0.2"}, None),
+    ({"db11": "db11.example.net", "db12": "other.example.net"}, None),
+    ({"db11": "db.example.net", "db12": "db.example.net"}, None),
+    ({"db11": "db11.example.net"}, None),
+    ({"db11": "{db11}", "db12": "{db12}"}, None),
+    ({"db11": 11, "db12": 12}, None),
+    ({"1": "1", "2": "2"}, None),
+    ({"db11": "['db11']", "db12": "['db12']"}, None),
+])
+def test_value_following_the_node_name(values, template):
+    nodes = [(_named(name), value) for name, value in values.items()]
+    assert cassandra_import._name_template("cassandra_medusa_nodetool_host", nodes) == template
+
+
+def test_value_following_the_name_not_for_a_secret_or_a_token():
+    nodes = [(_named("db11"), "db11-pw"), (_named("db12"), "db12-pw")]
+    assert cassandra_import._name_template("cassandra_jmx_password", nodes) is None
+    # its identity, where its data and backups are
+    for key in ("cassandra_initial_token", "cassandra_listen_address", "cassandra_medusa_fqdn", "cassandra_hints_dir",
+                "cassandra_data_file_directories", "cassandra_medusa_prefix", "cassandra_conf_dir",
+                "cassandra_server_keystore", "cassandra_client_truststore", "cassandra_java_home",
+                "cassandra_medusa_bucket_name", "cassandra_medusa_profile_d"):
+        assert cassandra_import._name_template(key, [(_named("n1"), "n1.x"), (_named("n2"), "n2.x")]) is None
+    # inventory_hostname_short alike on two nodes: not that one
+    same_short = [(_named("db1.a.net"), "db1"), (_named("db1.b.net"), "db1")]
+    assert cassandra_import._name_template("cassandra_x", same_short) is None
+
+
+def test_layout_writes_the_template_once_not_unsafe():
+    nodes = [dict(node("db1%d" % i, "dc1", "r1", cassandra_medusa_nodetool_host="db1%d.example.net" % i,
+                       cassandra_jmx_password="{{ not a template %d }}" % i), address="10.0.0.%d" % i)
+             for i in range(1, 4)]
+    layout = cassandra_inventory_layout(nodes, "c")
+    assert layout["templates"] == {"cassandra_medusa_nodetool_host": "{{ inventory_hostname }}.example.net"}
+    assert layout["group_vars"]["c"]["cassandra_medusa_nodetool_host"] == "{{ inventory_hostname }}.example.net"
+    files = dict((f["path"], f["content"]) for f in cassandra_inventory_files(layout))
+    assert "cassandra_medusa_nodetool_host: '{{ inventory_hostname }}.example.net'" in files["group_vars/c/main.yml"]
+    assert "!unsafe" not in files["group_vars/c/main.yml"]
+    assert "!unsafe" in files["host_vars/db11/secrets.yml"]  # a node's value that looks like one: as it is
+    assert "Per node, from its name: cassandra_medusa_nodetool_host" in layout["report"]
+
+
+def test_a_secret_in_a_properties_hand_edit_is_masked():
+    files = node_files("50x", cassandra_dc="dc1", cassandra_rack="r1")
+    files["cassandra-rackdc.properties"] = "dc=dc1\nrack=r1\nks_password=s3cret #tail\n"  # (# is the value's)
+    out = cassandra_config_import(files, "50x", FACTS)
+    assert "  + ks_password=****" in out["hand_edits"] and "s3cret" not in "\n".join(out["hand_edits"])
+    assert "tail" not in "\n".join(out["hand_edits"])

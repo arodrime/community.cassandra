@@ -358,7 +358,9 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions):
-    variables = _host_vars(files_data, hosts, name)
+    # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
+    variables = dict(_host_vars(files_data, hosts, name), inventory_hostname=name,
+                     inventory_hostname_short=name.split(".")[0])
     rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment

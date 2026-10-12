@@ -255,7 +255,7 @@ def _rows(records, shown_of, all_nodes):
         on_it = [n for n in order if not records[n][2] and shown_of(records[n][0]) == target]
         if target != ABSENT:  # with none on it: whose value it is (a node's own, e.g. listen_address)
             mine = [n for n in changing if shown_of(records[n][1]) == target]
-            rows.append((target, out.nodes(on_it), "(inventory)" if on_it else "(inventory, %s)" % out.nodes(mine)))
+            rows.append((target, on_it, "(inventory)" if on_it else ("(inventory, %s)", mine)))
         lives = []
         for n in changing:
             if shown_of(records[n][1]) != target:
@@ -269,7 +269,7 @@ def _rows(records, shown_of, all_nodes):
         for live, names in lives:
             why = "not in the inventory" if target == ABSENT else "masked" if live == target else ""
             note = out.ARROW + " differs" + (" (%s)" % why if why else "")
-            rows.append((live, out.nodes(names), note))
+            rows.append((live, names, note))
     return rows
 
 
@@ -338,9 +338,9 @@ def _file_entries(name, nodes, all_nodes):
                 return _one_line(out.shown(key, value)) if value != "" else "(empty)"
         entries.append((label.replace("\r", "\\r"), _rows(records, shown_of, all_nodes)))
     if layout_only:
-        entries.append(("comments or layout", [("differ", out.nodes(layout_only), "(no setting changes)")]))
+        entries.append(("comments or layout", [("differ", layout_only, "(no setting changes)")]))
     if new_file:
-        entries.append(("file", [(ABSENT, out.nodes([n for n, d in new_file]), out.ARROW + " differs (written whole)")]))
+        entries.append(("file", [(ABSENT, [n for n, d in new_file], out.ARROW + " differs (written whole)")]))
     # not its diff: a secret's block value (a PEM key) is in clear there
     names = out.nodes([n for n, d in unread])
     lines = ["  %s: not read, or changed since it was compared: run apply_config again" % names] if unread else []
@@ -380,7 +380,7 @@ def _prepare(node):
             "dir_stats": _stats(node.get("dir_stats"), _dir_key)}
 
 
-def cassandra_apply_config_diff(nodes):
+def cassandra_apply_config_diff(nodes, width=None):
     """nodes: [{name, items, live, stats, dir_stats}] in inventory order, the
     nodes compared: items, cassandra_config's _cassandra_config_items (diffs
     masked, owner/mode changes, directory changes); live, the slurp results
@@ -390,7 +390,9 @@ def cassandra_apply_config_diff(nodes):
     that differs on a node, the inventory's value and the nodes already on
     it ("(inventory)"), then each other live value with its nodes ("<-
     differs"); the owner, group and mode as one setting; the directories
-    after the files. [] when nothing differs."""
+    after the files. [] when nothing differs. From GROUPS_FROM nodes on
+    (cassandra_output), the node lists by NODE GROUPS defined first. width:
+    the lines fit in it (None: as long as they are)."""
     prepared = [_prepare(n) for n in nodes or []]
     all_nodes = [n["name"] for n in prepared]
     files = set()
@@ -420,7 +422,24 @@ def cassandra_apply_config_diff(nodes):
         records = dict((o[3], (o[1], o[2], True)) for o in others if o[0] == name)
         entries.append(name)
         entries.append(("points to" if name.startswith("/") else "state", _rows(records, str, all_nodes)))
-    return out.settings_lines(entries)
+    return _named(entries, all_nodes, width)
+
+
+def _named(entries, all_nodes, width=None):
+    """The entries' node lists as text: on a large cluster by node groups (defined first, "NODE GROUPS"), "all"
+    for every node; else as cassandra_output's nodes() names them. -> the lines."""
+    rows = [row for e in entries if not isinstance(e, str) for row in e[1]]
+    groups = out.node_groups([r[1] for r in rows] + [r[2][1] for r in rows if isinstance(r[2], tuple)], all_nodes)
+
+    def named(names):
+        return out.who(names, all_nodes, groups) if groups else out.nodes(names)
+
+    def note(text):
+        return text[0] % named(text[1]) if isinstance(text, tuple) else text
+
+    entries = [e if isinstance(e, str) else (e[0], [(v, named(n), note(t)) for v, n, t in e[1]]) for e in entries]
+    lines = out.settings_lines(entries, width=width)
+    return (out.group_lines(groups, width=width) + [""] + lines) if groups and lines else lines
 
 
 def _outcome(node, check, plan):

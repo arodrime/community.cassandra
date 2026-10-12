@@ -1392,7 +1392,7 @@ compaction_large_partition_warning_threshold_mb: {{ cassandra_compaction_large_p
 audit_logging_options:
     enabled: {{ cassandra_audit_logging_enabled | lower }}
     logger:
-      - class_name: {{ cassandra_audit_logger_class_name }}
+      - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(4, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
     # audit_logs_dir:
     # included_keyspaces:
     # excluded_keyspaces: system, system_schema, system_virtual_schema
@@ -1478,7 +1478,11 @@ enable_transient_replication: {{ cassandra_enable_transient_replication | lower 
 # Enables the used of 'ALTER ... DROP COMPACT STORAGE' statements on this node.
 # 'ALTER ... DROP COMPACT STORAGE' is considered experimental and is not recommended for production use.
 enable_drop_compact_storage: {{ cassandra_enable_drop_compact_storage | lower }}
-{% if cassandra_extra_settings %}
+{% set _extra = {} %}
+{% for key, value in cassandra_extra_settings.items() if key not in _cassandra_config_extra_sections %}
+{% set _ = _extra.update({key: value}) %}
+{% endfor %}
+{% if _extra %}
 
 # Settings no variable covers (cassandra_extra_settings)
-{{ cassandra_extra_settings | to_nice_yaml(indent=2) }}{% endif %}
+{{ _extra | to_nice_yaml(indent=2) }}{% endif %}

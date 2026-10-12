@@ -125,6 +125,7 @@ def _load_role(series, facts):
     ctx["cassandra_version"] = series
     ctx["ansible_facts"] = facts
     ctx["_cassandra_config_quote"] = role_vars["_cassandra_config_quote"]
+    ctx["_cassandra_config_extra_sections"] = role_vars["_cassandra_config_extra_sections"]
     env = jinja2.Environment(keep_trailing_newline=True, trim_blocks=True)
     env.filters["regex_replace"] = regex_replace
     env.filters["to_nice_yaml"] = lambda data, indent=2: yaml.safe_dump(data, default_flow_style=False, indent=indent)
@@ -465,30 +466,138 @@ def _same_setting(name, role, node):
     return False
 
 
-def _extra_settings(tpl, live):
-    """Active top-level cassandra.yaml keys the template does not have
-    (uncommented or added by hand): they belong in cassandra_extra_settings."""
-    taken = {m.group(1) for m in map(TOP_KEY.match, tpl) if m}
-    extras = {}
-    for line in live:
+def _extra_sections():
+    """{section: the sub-keys of its variables}: the cassandra.yaml sections the template writes whose other
+    sub-keys cassandra_extra_settings adds (the role's _cassandra_config_extra_sections)."""
+    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
+        return yaml.safe_load(f)["_cassandra_config_extra_sections"]
+
+
+_BLOCK_SCALAR = re.compile(r":\s+[|>][-+0-9]*\s*$")  # "key: |": the lines under it are its text
+
+
+def _top_blocks(lines):
+    """[(key, [line indexes])] of cassandra.yaml's active top-level keys: the key's line and the lines under it
+    (indented, or a list's "- " at the start of a line), the blank and comment lines among them."""
+    blocks, current, pending, scalar = [], None, [], None
+    for i, line in enumerate(lines):
         m = re.match(r"^([a-z0-9_]+):", line)
-        if m and m.group(1) not in taken:
-            try:
-                extras.update(yaml.safe_load(line) or {})
-            except yaml.YAMLError:
-                pass
+        indent = len(line) - len(line.lstrip())
+        if m:
+            current, pending = (m.group(1), [i]), []
+            blocks.append(current)
+        elif current is None:
+            continue
+        elif scalar is not None and line.strip() and indent > scalar:
+            current[1].extend(pending + [i])  # a block scalar's text, a "# ..." line too
+            pending = []
+            continue
+        elif not line.strip() or line.lstrip().startswith("#"):
+            pending.append(i)  # the block's if more of it follows
+            continue
+        elif line[:1] in (" ", "\t") or line.startswith("- ") or line.rstrip() == "-":
+            current[1].extend(pending + [i])
+            pending = []
+        else:
+            current, pending = None, []
+        scalar = indent if current is not None and _BLOCK_SCALAR.search(line) else None
+    return blocks
+
+
+def _sub_key_lines(lines, indexes, keys, commented=False):
+    """The indexes, among a section's (indexes: its key's line first), of the lines that set one of keys right
+    under the key, with the lines under them; commented: their commented-out lines too ("  # key:")."""
+    content = [i for i in indexes[1:] if lines[i].strip() and not lines[i].lstrip().startswith("#")]
+    if not keys or not content:
+        return []
+    child = len(lines[content[0]]) - len(lines[content[0]].lstrip())
+    pattern = re.compile(r"^ {%d}(#\s?)?(%s):" % (child, "|".join(re.escape(k) for k in keys)))
+    found, inside, scalar = [], False, False
+    for i in indexes[1:]:
+        line = lines[i]
+        indent = len(line) - len(line.lstrip())
+        if inside and scalar and line.strip() and indent > child:
+            found.append(i)  # its block scalar's text, a "# ..." line too
+            continue
+        m = pattern.match(line)
+        if m and (commented or not m.group(1)):
+            found.append(i)
+            inside = not m.group(1)
+            scalar = inside and bool(_BLOCK_SCALAR.search(line))
+            continue
+        if inside and (not line.strip() or line.lstrip().startswith("#")):
+            continue  # a blank or comment line among its lines: still under it
+        if inside and (indent > child or indent == child and line.lstrip().startswith("- ")):
+            found.append(i)
+            continue
+        inside = scalar = False
+    return found
+
+
+def _commented_under(lines, at):
+    """The indexes of the commented-out lines right under line at, the stock sub-keys of a section ("#  selected_format:
+    big", "  # log_dir:"), up to the first other line (a blank one too)."""
+    found = []
+    for i in range(at + 1, len(lines)):
+        if not re.match(r"^(\s+#|#(\s{2,}\S|\s*- ))", lines[i]):
+            break
+        found.append(i)
+    return found
+
+
+def _extra_settings(tpl, live):
+    """Active top-level cassandra.yaml keys the template does not have (uncommented or added by hand), each with
+    the whole YAML block under it (a section, a list), and the sub-keys of a section of _extra_sections no
+    variable covers: they belong in cassandra_extra_settings."""
+    taken = {m.group(1) for m in map(TOP_KEY.match, tpl) if m}
+    sections = _extra_sections()
+    extras = {}
+    for key, indexes in _top_blocks(live):
+        if key in taken and key not in sections:
+            continue
+        try:  # (its last line ends with a newline: a block scalar "key: |" keeps its own)
+            data = yaml.safe_load("\n".join(live[i] for i in indexes) + "\n")
+        except yaml.YAMLError:
+            continue  # left to the hand edits
+        if not isinstance(data, dict) or key not in data:
+            continue
+        if key not in taken:
+            extras.pop(key, None)  # set twice: the last one counts
+            extras[key] = data[key]
+        elif isinstance(data[key], dict):
+            other = dict((k, v) for k, v in data[key].items() if k not in sections[key])
+            extras.pop(key, None)
+            if other:
+                extras[key] = other
     return extras
 
 
 def _without_extras(rendered, live, extras):
-    """Both sides minus the extra settings: the role's block at the end, the
-    commented stock lines of those keys, and the node's own lines for them."""
+    """Both sides minus the extra settings: the role's block at the end, the commented stock lines of those keys
+    (with their commented lines under them), and the node's own lines for them (their blocks); in a section of
+    _extra_sections, the sub-keys' lines on both sides (the role's written after the logger, the node's), and their
+    commented stock lines on both sides."""
     if EXTRA_HEADER in rendered:
         rendered = rendered[:rendered.index(EXTRA_HEADER) - 1] + [""]
-    keys = tuple(extras)
-    rendered = [r for r in rendered if not re.match(r"^#\s?(%s):" % "|".join(keys), r)]
-    live = [n for n in live if not re.match(r"^(%s):" % "|".join(keys), n)]
-    return rendered, live
+    sections = _extra_sections()
+    top = [k for k in extras if k not in sections]
+    drop_rendered, drop_live = set(), set()
+    if top:
+        stock = re.compile(r"^#\s?(%s):" % "|".join(re.escape(k) for k in top))
+        for i, line in enumerate(rendered):
+            if stock.match(line):
+                drop_rendered.update([i] + _commented_under(rendered, i))
+    for key, indexes in _top_blocks(live):
+        if key in top:
+            drop_live.update(indexes + _commented_under(live, indexes[-1]))
+    for key in [k for k in extras if k in sections and isinstance(extras[k], dict)]:
+        for lines, drop in ((rendered, drop_rendered), (live, drop_live)):  # their commented stock lines too
+            for name, indexes in _top_blocks(lines):
+                if name == key:
+                    drop.update(_sub_key_lines(lines, indexes + _commented_under(lines, indexes[-1]),
+                                               list(extras[key]), True))
+    return ([r for i, r in enumerate(rendered) if i not in drop_rendered],
+            [n for i, n in enumerate(live) if i not in drop_live])
 
 
 def _snitch_reads_rackdc(snitch):
@@ -551,16 +660,19 @@ def _leftovers(env, series, files, ctx, live_files):
             for key in sorted(set(role_kv) | set(node_kv)):
                 if role_kv.get(key) != node_kv.get(key):
                     hand.append("%s: %s" % (name, key))
-                    hand += ["  - %s=%s" % (key, _mask(role_kv[key]))] if key in role_kv else []
-                    hand += ["  + %s=%s" % (key, _mask(node_kv[key]))] if key in node_kv else []
+                    hand += ["  - %s=%s" % (key, out.MASK if _secret(key, role_kv[key]) else _mask(role_kv[key]))] \
+                        if key in role_kv else []
+                    hand += ["  + %s=%s" % (key, out.MASK if _secret(key, node_kv[key]) else _mask(node_kv[key]))] \
+                        if key in node_kv else []
             if role_kv == node_kv and rendered != live_files[name].split("\n"):
                 normalized.append("%s: same settings, comments and layout rewritten" % name)
             continue
         live = _align(rendered, live_files[name].split("\n"))
         if name == "cassandra.yaml" and extras:
             rendered, live = _without_extras(rendered, live, extras)
-            normalized += ["cassandra.yaml: %s kept with cassandra_extra_settings (written at the end of the file)" % k
-                           for k in sorted(extras)]
+            sections = _extra_sections()
+            normalized += ["cassandra.yaml: %s kept with cassandra_extra_settings (written %s)" % (
+                k, "in its section" if k in sections else "at the end of the file") for k in sorted(extras)]
         ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
         for op, i1, i2, j1, j2 in ops:
             if op == "equal":
@@ -1009,6 +1121,51 @@ def _medusa_fqdn_domain(read):
     return domains.pop() if len(domains) == 1 else None
 
 
+# A value that follows each node's name, the same before and after it on every node (Medusa's nodetool_host
+# "<node>.example.net"): one template for all, Ansible gives each node its own. The names it may follow, as
+# Ansible names them, and how the layout knows them. Not ansible_host: another inventory source may set it (a
+# bastion's address), the self-check could not see it. Not the node's identity (its addresses, token, Medusa's
+# fqdn) nor where its data is: a renamed host must not move them
+NAME_VARS = (("inventory_hostname", lambda n: n["name"]),
+             ("inventory_hostname_short", lambda n: n["name"].split(".")[0]))
+NOT_FROM_NAMES = tuple(PER_NODE) + ("cassandra_cluster_name", "cassandra_dc", "cassandra_rack")
+# nor where its data, config, keys and backups are (a directory, a path, a keystore, Medusa's prefix or bucket)
+NOT_FROM_NAMES_PATTERN = re.compile(r"_(dir|dirs|directory|directories|path|paths|file|files|prefix|home|profile_d"
+                                    r"|bucket|bucket_name)$|keystore|truststore|cert")
+
+
+def _literal(text):
+    """True when Ansible before 2.19 would make something else of text, rendered (a number, a list, True)."""
+    try:
+        return not isinstance(ast.literal_eval(text.strip()), str)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return False
+
+
+def _name_template(key, values):
+    """values: [(node, value)] of the nodes that have key -> a template "<before>{{ <name> }}<after>" that gives
+    each node exactly its value, None when there is none: fewer than 2 nodes or a single value, a value that is not
+    a string (or that Ansible would read as another type), a secret, one node that does not follow the rule, two
+    nodes with the same name, a { or } around it."""
+    texts = [v for dummy, v in values]
+    if key in NOT_FROM_NAMES or NOT_FROM_NAMES_PATTERN.search(key) or len(values) < 2 or not all(isinstance(v, str) for v in texts) \
+            or len(set(texts)) < 2 or any(_secret(key, v) or TEMPLATE_MARK.search(v) or _literal(v) for v in texts):
+        return None
+    for var, name_of in NAME_VARS:
+        names = [str(name_of(n)) for n, dummy in values]
+        if not all(names) or len(set(names)) < len(names):
+            continue
+        first, name = texts[0], names[0]
+        at = first.find(name)
+        while at >= 0:
+            before, after = first[:at], first[at + len(name):]
+            if not re.search(r"[{}]", before + after) and all(
+                    v == before + n + after for v, n in zip(texts, names)):
+                return "%s{{ %s }}%s" % (before, var, after)
+            at = first.find(name, at + 1)
+    return None
+
+
 def _sort_key(key):
     """Keys in the order of the vars files: by block, then as listed there."""
     titles = [title for title, dummy in BLOCKS]
@@ -1105,6 +1262,14 @@ def cassandra_inventory_layout(nodes, cluster_name):
                                   + [("cassandra_medusa_fqdn_domain", domain)])) for n in read]
         nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
     keys = sorted({k for n in read for k in n["vars"]} - {"cassandra_dc", "cassandra_rack"})
+    templates = {}
+    for key in keys:
+        template = _name_template(key, [(n, n["vars"][key]) for n in read if key in n["vars"]])
+        if template is not None:
+            templates[key] = template
+            for n in read:
+                if key in n["vars"]:
+                    n["vars"][key] = template
     drift = [k for k in keys if not _place(k, read, levels, group_vars, host_vars) and k not in PER_NODE]
     differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
@@ -1127,6 +1292,9 @@ def cassandra_inventory_layout(nodes, cluster_name):
     elif medusa:
         report += ["Medusa fqdn (each node's folder in the backups): no <short hostname>.<domain> rule gives every"
                    " node's value, kept as found (cassandra_medusa_fqdn)", ""]
+    for key, template in sorted(templates.items()):
+        report += ["Per node, from its name: %s = %s on every node that has it, one value in the inventory"
+                   " (Ansible gives each node its own)" % (key, template), ""]
     if shared:
         report.append("SAME NAME for several nodes, named by their address instead: %s" % ", ".join(shared))
         report.append("")
@@ -1175,7 +1343,8 @@ def cassandra_inventory_layout(nodes, cluster_name):
     report += _os_section(read)
     return {"cluster_group": cluster, "cluster_name": cluster_name, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
-            "names": dict((n["address"], n["name"]) for n in nodes if n.get("address")), "nodes": nodes}
+            "names": dict((n["address"], n["name"]) for n in nodes if n.get("address")), "nodes": nodes,
+            "templates": templates}
 
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
@@ -1628,11 +1797,15 @@ def _unsafe(value):
     return value
 
 
-def _vars_yaml(variables):
+def _vars_yaml(variables, templates=None):
     """variables as YAML, grouped by subject (BLOCKS): a comment line per block,
     a blank line between blocks. Each key is dumped on its own, the same way
-    a whole dict would be (same values and quoting)."""
+    a whole dict would be (same values and quoting). templates: {key: the
+    import's template of the nodes' names} written as a template."""
     data = _unsafe(json.loads(json.dumps(variables, default=str)))
+    for key, template in (templates or {}).items():
+        if variables.get(key) == template:
+            data[key] = str(template)
     grouped = {}
     for key in data:
         grouped.setdefault(_block(key), []).append(key)
@@ -1677,7 +1850,7 @@ def cassandra_inventory_files(layout):
             for base, data, secret in (("main.yml", public, False), ("secrets.yml", secrets, True)):
                 if data:
                     files.append({"path": "%s/%s/%s" % (kind, name, base), "secret": secret,
-                                  "content": _vars_yaml(data)})
+                                  "content": _vars_yaml(data, layout.get("templates"))})
     return files
 
 

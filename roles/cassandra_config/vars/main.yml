@@ -46,6 +46,10 @@ _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_fac
 _cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
 # Installed Cassandra release ('' if not from a package)
 _cassandra_config_installed: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') | regex_replace('^([0-9.]+).*$', '\\1') }}"
+# cassandra.yaml sections the template writes that cassandra_extra_settings may
+# add sub-keys to (written in the section), and the sub-keys of their variables
+_cassandra_config_extra_sections:
+  audit_logging_options: [enabled, logger]
 # A value (a password) that YAML would not read back as the same plain string:
 # single-quoted in cassandra.yaml
 _cassandra_config_quote: '(?s)^(?!(?!(?i:y|n|yes|no|true|false|on|off|null)$)[A-Za-z][A-Za-z0-9_./+=@-]*$)(.*)$'

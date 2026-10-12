@@ -1,0 +1,155 @@
+IMPORT big_cluster — 88 nodes read / 88 — SELF-CHECK PASSED
+Written: inventories/big.yml, group_vars/big_cluster*/, host_vars/<node>/ of 88 nodes
+Report:  reports/big/report.txt
+
+NODE GROUPS
+  G1 = db11, db12, db13, db14, db15, db16, db21, db22, db23, db24, db25, db26, db31, db32, db33, db34, db35, db36, db41, db42, db43, db44, db45, db46, db51,
+       db52, db53, db54, db55, db56, db61, db62, db63, db64, db65, db66 (36 nodes)
+  G2 = db071, db072, db073, db075, db076, db081, db082, db083, db084, db085, db086, db091, db092, db093, db094, db095, db096, db201, db202, db203, db204, db205,
+       db206, db211, db212, db213, db214, db215, db216 (29 nodes)
+  G3 = db101, db102, db103, db112, db113, db114, db115, db116, db117, db118, db119, db121, db122, db123, db124, db125, db126, db127, db128, db129,
+       db130 (21 nodes)
+
+TO DO (2)
+  1. Hand edits the roles would revert: logback.xml, jvm11-server.options, concurrent_writes (see below)
+  2. Review then commit:  git diff && git commit
+
+SETTINGS — not the collection's default
+  cassandra_seeds:                                         db11, db071, db101          all
+  cassandra_num_tokens:                                    16                          all
+  cassandra_version:                                       41x                         all
+  cassandra_config_file_permissions.cassandra.yaml:        0640                        G2 + G3 + db111
+                                                           0644                        G1 + db074        ← differs (group_vars/big_cluster_dc1, host_vars)
+  cassandra_config_file_permissions.jmxremote.password:    (in secrets.yml)            all
+  cassandra_listen_address:                                {{ ansible_facts['default_ipv4']['address'] }}  all
+  cassandra_broadcast_rpc_address:                         10.100.1.11                 db11
+                                                           10.100.1.12                 db12              ← differs (host_vars)
+                                                           10.100.1.13                 db13              ← differs (host_vars)
+                                                           10.100.1.14                 db14              ← differs (host_vars)
+                                                           10.100.1.15                 db15              ← differs (host_vars)
+                                                           10.100.1.16                 db16              ← differs (host_vars)
+                                                           10.100.1.21                 db21              ← differs (host_vars)
+                                                           10.100.1.22                 db22              ← differs (host_vars)
+                                                           10.100.1.23                 db23              ← differs (host_vars)
+                                                           10.100.1.24                 db24              ← differs (host_vars)
+                                                           10.100.1.25                 db25              ← differs (host_vars)
+                                                           10.100.1.26                 db26              ← differs (host_vars)
+                                                           10.100.1.31                 db31              ← differs (host_vars)
+                                                           10.100.1.32                 db32              ← differs (host_vars)
+                                                           10.100.1.33                 db33              ← differs (host_vars)
+                                                           10.100.1.34                 db34              ← differs (host_vars)
+                                                           10.100.1.35                 db35              ← differs (host_vars)
+                                                           10.100.1.36                 db36              ← differs (host_vars)
+                                                           10.100.1.41                 db41              ← differs (host_vars)
+                                                           10.100.1.42                 db42              ← differs (host_vars)
+                                                           10.100.1.43                 db43              ← differs (host_vars)
+                                                           10.100.1.44                 db44              ← differs (host_vars)
+                                                           10.100.1.45                 db45              ← differs (host_vars)
+                                                           10.100.1.46                 db46              ← differs (host_vars)
+                                                           10.100.1.51                 db51              ← differs (host_vars)
+                                                           10.100.1.52                 db52              ← differs (host_vars)
+                                                           10.100.1.53                 db53              ← differs (host_vars)
+                                                           10.100.1.54                 db54              ← differs (host_vars)
+                                                           10.100.1.55                 db55              ← differs (host_vars)
+                                                           10.100.1.56                 db56              ← differs (host_vars)
+                                                           10.100.1.61                 db61              ← differs (host_vars)
+                                                           10.100.1.62                 db62              ← differs (host_vars)
+                                                           10.100.1.63                 db63              ← differs (host_vars)
+                                                           10.100.1.64                 db64              ← differs (host_vars)
+                                                           10.100.1.65                 db65              ← differs (host_vars)
+                                                           10.100.1.66                 db66              ← differs (host_vars)
+                                                           10.100.2.201                db201             ← differs (host_vars)
+                                                           10.100.2.202                db202             ← differs (host_vars)
+                                                           10.100.2.203                db203             ← differs (host_vars)
+                                                           10.100.2.204                db204             ← differs (host_vars)
+                                                           10.100.2.205                db205             ← differs (host_vars)
+                                                           10.100.2.206                db206             ← differs (host_vars)
+                                                           10.100.2.211                db211             ← differs (host_vars)
+                                                           10.100.2.212                db212             ← differs (host_vars)
+                                                           10.100.2.213                db213             ← differs (host_vars)
+                                                           10.100.2.214                db214             ← differs (host_vars)
+                                                           10.100.2.215                db215             ← differs (host_vars)
+                                                           10.100.2.216                db216             ← differs (host_vars)
+                                                           10.100.2.71                 db071             ← differs (host_vars)
+                                                           10.100.2.72                 db072             ← differs (host_vars)
+                                                           10.100.2.73                 db073             ← differs (host_vars)
+                                                           10.100.2.74                 db074             ← differs (host_vars)
+                                                           10.100.2.75                 db075             ← differs (host_vars)
+                                                           10.100.2.76                 db076             ← differs (host_vars)
+                                                           10.100.2.81                 db081             ← differs (host_vars)
+                                                           10.100.2.82                 db082             ← differs (host_vars)
+                                                           10.100.2.83                 db083             ← differs (host_vars)
+                                                           10.100.2.84                 db084             ← differs (host_vars)
+                                                           10.100.2.85                 db085             ← differs (host_vars)
+                                                           10.100.2.86                 db086             ← differs (host_vars)
+                                                           10.100.2.91                 db091             ← differs (host_vars)
+                                                           10.100.2.92                 db092             ← differs (host_vars)
+                                                           10.100.2.93                 db093             ← differs (host_vars)
+                                                           10.100.2.94                 db094             ← differs (host_vars)
+                                                           10.100.2.95                 db095             ← differs (host_vars)
+                                                           10.100.2.96                 db096             ← differs (host_vars)
+                                                           10.100.3.101                db101             ← differs (host_vars)
+                                                           10.100.3.102                db102             ← differs (host_vars)
+                                                           10.100.3.103                db103             ← differs (host_vars)
+                                                           10.100.3.111                db111             ← differs (host_vars)
+                                                           10.100.3.112                db112             ← differs (host_vars)
+                                                           10.100.3.113                db113             ← differs (host_vars)
+                                                           10.100.3.114                db114             ← differs (host_vars)
+                                                           10.100.3.115                db115             ← differs (host_vars)
+                                                           10.100.3.116                db116             ← differs (host_vars)
+                                                           10.100.3.117                db117             ← differs (host_vars)
+                                                           10.100.3.118                db118             ← differs (host_vars)
+                                                           10.100.3.119                db119             ← differs (host_vars)
+                                                           10.100.3.121                db121             ← differs (host_vars)
+                                                           10.100.3.122                db122             ← differs (host_vars)
+                                                           10.100.3.123                db123             ← differs (host_vars)
+                                                           10.100.3.124                db124             ← differs (host_vars)
+                                                           10.100.3.125                db125             ← differs (host_vars)
+                                                           10.100.3.126                db126             ← differs (host_vars)
+                                                           10.100.3.127                db127             ← differs (host_vars)
+                                                           10.100.3.128                db128             ← differs (host_vars)
+                                                           10.100.3.129                db129             ← differs (host_vars)
+                                                           10.100.3.130                db130             ← differs (group_vars/big_cluster_dc3_r13)
+  cassandra_jmx_password:                                  (in secrets.yml)            G1
+                                                           (in secrets.yml, value 2)   G2 + db074        ← differs (group_vars/big_cluster_dc2)
+                                                           (in secrets.yml, value 3)   G3 + db111        ← differs (group_vars/big_cluster_dc3)
+  cassandra_extra_settings.streaming_connections_per_host: 1                           G2 + G3 + db074
+                                                           2                           G1                ← differs (group_vars/big_cluster_dc1)
+                                                           6                           db111             ← differs (host_vars)
+  cassandra_extra_settings.sstable_preemptive_open_interval:
+                                                           50MiB                       all
+  cassandra_extra_settings.audit_logging_options.included_categories:
+                                                           DDL,DCL                     all
+  cassandra_extra_settings.audit_logging_options.audit_logs_dir:
+                                                           /var/log/audit              all
+  cassandra_linux_limits.nofile:                           100000                      all
+  cassandra_linux_limits.memlock:                          unlimited                   all
+  cassandra_linux_limits.nproc:                            32768                       all
+  cassandra_medusa_extra_settings.storage.bucket_name:     backups-b                   all except G1
+                                                           backups-a                   G1                ← differs (group_vars/big_cluster_dc1)
+  cassandra_medusa_extra_settings.storage.secret_access_key:
+                                                           (in secrets.yml)            G1
+                                                           (in secrets.yml, value 2)   G2 + db074        ← differs (group_vars/big_cluster_dc2)
+                                                           (in secrets.yml, value 3)   G3 + db111        ← differs (group_vars/big_cluster_dc3)
+  cassandra_medusa_extra_settings.cassandra.nodetool_ssl:  false                       all
+  cassandra_medusa_nodetool_host:                          {{ inventory_hostname }}.example.net  all
+  cassandra_max_heap_size:                                 31G                         G1
+                                                           24G                         G2 + db074        ← differs (group_vars/big_cluster_dc2)
+                                                           16G                         G3                ← differs (group_vars of 3 groups, host_vars)
+                                                           8G                          db111             ← differs (host_vars)
+
+HAND EDITS — no variable covers them; cassandra_config would revert
+  cassandra.yaml concurrent_writes: 48         db111
+  logback.xml:                      10 edits   all
+  jvm11-server.options:             5 edits    G2 + db074
+
+LEFT AS IT IS (*_manage: false)
+  OS settings:  G3 + db111
+
+NOT READ — set in group_vars/all if they apply
+  cassandra_install_url, cassandra_install_username, cassandra_java_tarballs, cassandra_java_package, cassandra_offline
+
+NEXT
+  ansible-playbook community.cassandra.apply_config --check --diff   → expect: nothing to apply
+  ansible-playbook community.cassandra.topology --check              → expect: nothing to do
+

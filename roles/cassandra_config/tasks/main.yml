@@ -58,7 +58,16 @@
     _keys: >-
       {{ lookup('ansible.builtin.file', role_path ~ '/templates/' ~ _cassandra_config_series ~ '/cassandra.yaml.j2')
          | regex_findall('(?m)^(?:\{\{[^}]*\}\})?([a-z0-9_]+):') }}
-    _taken: "{{ cassandra_extra_settings | list | intersect(_keys) }}"
+    # a section of _cassandra_config_extra_sections: a dict of other sub-keys than its variables'
+    _taken: >-
+      {%- set out = cassandra_extra_settings | list | intersect(_keys)
+                    | difference(_cassandra_config_extra_sections | list) -%}
+      {%- for section, own in _cassandra_config_extra_sections.items() if section in cassandra_extra_settings -%}
+      {%- set value = cassandra_extra_settings[section] -%}
+      {%- set _ = out.extend([section] if value is not mapping
+                             else value | list | intersect(own) | map('regex_replace', '^', section ~ '.')) -%}
+      {%- endfor -%}
+      {{ out }}
   when: cassandra_extra_settings | length > 0
 
 # GossipingPropertyFileSnitch takes the node's dc and rack from the file: other lines would

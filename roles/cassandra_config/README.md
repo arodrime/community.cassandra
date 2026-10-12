@@ -178,7 +178,9 @@ Role Variables
   each file the role replaces, next to it, to roll back.
 * `cassandra_extra_settings`: settings no variable covers, as a dict written
   as-is at the end of `cassandra.yaml` (e.g. `{commitlog_total_space: 8192MiB}`).
-  Keys the template already has are refused: set them with their variable.
+  Keys the template already has are refused: set them with their variable;
+  but `audit_logging_options` takes the sub-keys no variable covers (e.g.
+  `{audit_logging_options: {included_categories: DDL}}`), written in that section.
   Cassandra refuses unknown keys at startup.
 * `cassandra-env.sh`: `cassandra_log_dir` (defaults to `/var/log/cassandra`,
   as the deb/rpm packages patch it; the tarball's stock value is

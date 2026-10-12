@@ -849,3 +849,85 @@ def test_list_items_swapped_are_a_hand_edit():
     assert _same_settings("cassandra.yaml", ["    - /a", "    - /b"], ["    - /b", "    - /a"]) is None
     assert _same_settings("cassandra.yaml", ["    - /a", "# x", "    - /b"], ["# y", "    - /a", "    - /b"]) == [
         ("    - /a", "    - /a"), ("    - /b", "    - /b")]
+
+
+# --- sections no variable covers: imported whole into cassandra_extra_settings ----
+
+NESTED = [  # (id, pattern, replacement, what cassandra_extra_settings gets)
+    ("sstable", r"(?m)^#sstable:\n#  selected_format: big$", "sstable:\n  selected_format: bti",
+     {"sstable": {"selected_format": "bti"}}),
+    ("audit sub-keys", r"(?m)^(\s*)# included_categories:$", r"\1included_categories: DDL,DCL\n\1included_users: [a, b]",
+     {"audit_logging_options": {"included_categories": "DDL,DCL", "included_users": ["a", "b"]}}),
+    ("full query logging", r"(?m)^# ?full_query_logging_options:\n(\s*)# log_dir:\n(\s*)# roll_cycle: HOURLY$",
+     r"full_query_logging_options:\n\1log_dir: /var/log/fql\n\2roll_cycle: DAILY",
+     {"full_query_logging_options": {"log_dir": "/var/log/fql", "roll_cycle": "DAILY"}}),
+    ("block scalar last, comment in a list", r"(?m)^(\s*)# included_users:$",
+     r"\1included_users:\n\1- a\n\1# not b\n\1- c\n\1archive_command: |\n\1  /bin/x %path\n\1  y",
+     {"audit_logging_options": {"included_users": ["a", "c"], "archive_command": "/bin/x %path\ny\n"}}),
+    ("block scalars with # lines", r"\Z",
+     "\nzz_script: |\n  /bin/x\n  # still its text\nzz_section:\n  cmd: |\n    /bin/y\n    # its text too\n",
+     {"zz_script": "/bin/x\n# still its text\n", "zz_section": {"cmd": "/bin/y\n# its text too\n"}}),
+    ("added with a nested list", r"\Z", "\nrequest_policies:\n  max: 3\n  rules:\n  - name: a\n    args: [x, 1]\n  - b\n",
+     {"request_policies": {"max": 3, "rules": [{"name": "a", "args": ["x", 1]}, "b"]}}),
+]
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+@pytest.mark.parametrize("case, pattern, replace, extra", NESTED, ids=[c[0] for c in NESTED])
+def test_nested_sections_imported_whole(series, case, pattern, replace, extra):
+    """A section the template leaves commented (or does not have) set on the node: its whole YAML block in
+    cassandra_extra_settings, its types kept, no hand edit; the roles write it back the same (no-op)."""
+    files = seeded(stock(series))
+    files["cassandra.yaml"], found = re.subn(pattern, replace, files["cassandra.yaml"], count=1)
+    if not found:
+        pytest.skip("not in the %s stock cassandra.yaml" % series)
+    imported = cassandra_config_import(files, series, FACTS, "", "/var/lib/cassandra")
+    assert imported["vars"]["cassandra_extra_settings"] == extra
+    assert imported["hand_edits"] == []
+    if case in ("sstable", "audit sub-keys", "full query logging"):  # no layout-only edit either (a comment of
+        assert imported["comments"] == []  # the node's among its lines, a blank line before its block: one)
+    assert check(files, series)["differences"] == []
+    # a value changed under the section after the import: the self-check catches it
+    key = list(extra)[0]
+    changed = dict(extra, **{key: dict(extra[key], zzz_other=1) if isinstance(extra[key], dict) else "other"})
+    assert check(files, series, tamper={"cassandra_extra_settings": changed})["differences"]
+
+
+def test_audit_extra_sub_keys_written_in_the_section():
+    env, ctx, dummy = _load_role("50x", FACTS)
+    ctx["cassandra_extra_settings"] = {"audit_logging_options": {"included_categories": "DDL"}, "x": 1}
+    text = "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
+    assert "    - class_name: BinAuditLogger\n  included_categories: DDL\n" in text
+    assert text.endswith("# Settings no variable covers (cassandra_extra_settings)\nx: 1\n")
+    ctx["cassandra_extra_settings"] = {"audit_logging_options": {"included_categories": "DDL"}}
+    assert "Settings no variable covers" not in "\n".join(_render(env, "50x", "cassandra.yaml", ctx)[1])
+
+
+def test_a_value_following_the_node_names_renders_each_nodes_own():
+    """A group value made of the node's name (as the import writes one): the self-check renders it per node, so it
+    catches a node whose value is not its own."""
+    nodes, live = [], {}
+    for name in ("n1", "n2"):
+        files = seeded(stock("50x"))
+        files["cassandra.yaml"] = enable(files["cassandra.yaml"], "hints_directory", "/data/%s/hints" % name)
+        live[name] = files
+        imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+        nodes.append({"name": name, "address": "10.0.0.%s" % name[1], "hostname": name, "dc": "dc1", "rack": "r1",
+                      "read": True, "vars": dict(imported["vars"], cassandra_version="50x"),
+                      "hand_edits": imported["hand_edits"], "normalized": [], "comments": [], "notes": [],
+                      "keep": {"cassandra_service_unit_manage": False}})
+    layout = cassandra_inventory_layout(nodes, "c")
+    # a directory is never made a template of the names (a renamed host must not move its data): set by hand here
+    assert "cassandra_hints_dir" not in layout["templates"] and "cassandra_hints_dir" in layout["host_vars"]["n1"]
+    for name in ("n1", "n2"):
+        del layout["host_vars"][name]["cassandra_hints_dir"]
+    layout["group_vars"]["c"]["cassandra_hints_dir"] = "/data/{{ inventory_hostname }}/hints"
+    layout["templates"] = {"cassandra_hints_dir": "/data/{{ inventory_hostname }}/hints"}
+    inventory = cassandra_inventory_files(layout)
+    for name in ("n1", "n2"):
+        assert cassandra_import_self_check(inventory, layout["hosts"], name, dict(FACTS, hostname=name), live[name],
+                                           {}, "/var/lib/cassandra", "17", "", {})["differences"] == []
+    # n2's files checked as n1: its hints_directory is caught
+    assert cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, live["n2"], {}, "/var/lib/cassandra",
+                                       "17", "", {})["differences"] == [
+        "cassandra.yaml: hints_directory: node has '/data/n2/hints', import would write '/data/n1/hints'"]

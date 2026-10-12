@@ -1894,7 +1894,7 @@ unlogged_batch_across_partitions_warn_threshold: {{ cassandra_unlogged_batch_acr
 audit_logging_options:
   enabled: {{ cassandra_audit_logging_enabled | lower }}
   logger:
-    - class_name: {{ cassandra_audit_logger_class_name }}
+    - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(2, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
   # audit_logs_dir:
   # included_keyspaces:
   # excluded_keyspaces: system, system_schema, system_virtual_schema
@@ -2484,7 +2484,11 @@ storage_compatibility_mode: {{ cassandra_storage_compatibility_mode }}
 #         # especially in keyspaces with many tables. The splitter avoids batching tables together if they
 #         # exceed other configuration parameters like bytes_per_assignment or partitions_per_assignment.
 #         max_tables_per_assignment: 64
-{% if cassandra_extra_settings %}
+{% set _extra = {} %}
+{% for key, value in cassandra_extra_settings.items() if key not in _cassandra_config_extra_sections %}
+{% set _ = _extra.update({key: value}) %}
+{% endfor %}
+{% if _extra %}
 
 # Settings no variable covers (cassandra_extra_settings)
-{{ cassandra_extra_settings | to_nice_yaml(indent=2) }}{% endif %}
+{{ _extra | to_nice_yaml(indent=2) }}{% endif %}
