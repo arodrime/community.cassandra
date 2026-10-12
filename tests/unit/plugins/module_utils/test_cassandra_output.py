@@ -483,3 +483,16 @@ def test_removed_todo_reimport_reads_the_inventory():
     assert "jmx" not in text and "-i node1," not in text
     # the run's -e cassandra_hosts, when no other is said
     assert "import_cluster -e cassandra_hosts=orders" in "\n".join(out.removed_todo(["node3"], "node1", hosts="orders"))
+
+
+def test_seeds_todo_first_in_the_removed_todo():
+    change = {"auto": [{"dc": "dc2"}], "new": "10.0.0.1, 10.0.0.7"}
+    item = out.seeds_todo(change, "prod")
+    assert item["command"] == 'cassandra_seeds: ["10.0.0.1", "10.0.0.7"]'
+    assert out.seeds_todo({"auto": [], "new": "x"}) is None
+    lines = out.removed_todo(["node3"], "node1", in_git=False, first=[item], imported=False)
+    assert lines[1].startswith("  1. put the seeds the nodes now run with in the inventory (group_vars/prod/")
+    assert lines[3].startswith("  2. empty node3")
+    # nothing removed: the seeds alone
+    assert out.removed_todo([], "node1", first=[item])[0] == "TO DO"
+    assert out.removed_todo([], "node1", first=[None]) == []

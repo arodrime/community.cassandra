@@ -164,13 +164,13 @@ def test_add_node_applies_the_seeds_after_the_adds():
     names = [p["name"] for p in ADD_PLAYS]
     assert names.index("Add the new nodes, one at a time") < names.index("Apply cassandra_seeds now that the new seeds are up") < names.index("Summary")
     step = play("add_node.yml", "Apply cassandra_seeds now that the new seeds are up")
-    apply = step["tasks"][0]
+    apply = task(step["tasks"], "Apply cassandra_seeds on every node")
     assert apply["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
     hostvars = {"n1": node(1, seed_entry="10.0.0.1"), "n2": node(2), "n3": node(3),
                 "n5": node(5, seed_entry="10.0.0.5")}
-    variables = dict(apply["vars"], hostvars=hostvars, groups={"all": GROUP, "prod": GROUP}, cassandra_hosts="prod")
-    assert render(apply["vars"]["_new_seeds"], cassandra_target_nodes="n5", **variables) == ["n5"]
-    assert render(apply["vars"]["_new_seeds"], cassandra_target_nodes="n3", **variables) == []
+    variables = dict(step["vars"], hostvars=hostvars, groups={"all": GROUP, "prod": GROUP}, cassandra_hosts="prod")
+    assert render(step["vars"]["_new_seeds"], cassandra_target_nodes="n5", **variables) == ["n5"]
+    assert render(step["vars"]["_new_seeds"], cassandra_target_nodes="n3", **variables) == []
     # every node of the cluster, standalone; topology runs its own seed step
     variables = {"groups": {"all": GROUP, "prod": GROUP}, "cassandra_hosts": "prod", "hostvars": hostvars,
                  "cassandra_target_nodes": "n5"}
@@ -257,16 +257,62 @@ def test_decommission_of_a_whole_datacenter_needs_no_seed_there():
     hostvars = {"n1": node(1, live=lives, seed_entry="10.0.0.1"), "n2": node(2, live=lives),
                 "n6": node(6, live=lives, dc="dc2"), "n7": node(7, live=lives, dc="dc2")}
     group = ["n1", "n2", "n6", "n7"]
+    status = {"cluster_status": {"dc1": {"nodes": [{"address": "10.0.0.%d" % i, "status": "U", "state": "N"} for i in (1, 2)]},
+                                 "dc2": {"nodes": [{"address": "10.0.0.%d" % i, "status": "U", "state": "N"} for i in (6, 7)]}}}
 
-    def check(leaving):
+    def check(leaving, preflight_status=None):
         variables = dict(DECO["vars"], ansible_play_hosts_all=leaving, hostvars=hostvars, cassandra_seeds=["10.0.0.1"],
-                         groups={"all": group, "prod": group}, cassandra_hosts="prod")
-        return render("{{ [_dn_seed_step, _dn_seeds.problems] }}", **variables)
+                         groups={"all": group, "prod": group}, cassandra_hosts="prod",
+                         cassandra_preflight_status=preflight_status or status)
+        return render("{{ [_dn_seed_step, _dn_seeds.problems, _dn_seeds.new, _dn_seeds.warnings] }}", **variables)
 
-    assert check(["n6", "n7"]) == [["n6"], []]  # dc2 gone for good
-    step, problems = check(["n6"])  # n7 stays in dc2 with no seed: refused
-    assert step == ["n6"] and problems == ["dc2 would be left with no seed (n6 leaves the seed list): put a node of"
-                                           " dc2 in cassandra_seeds."]
+    assert check(["n6", "n7"])[:3] == [["n6"], [], "10.0.0.1"]  # dc2 gone for good
+    # n7 stays in dc2 with no seed in cassandra_seeds: made its seed, live, with a warning
+    step, problems, new, warnings = check(["n6"])
+    assert step == ["n6"] and problems == [] and new == "10.0.0.1,10.0.0.7"
+    assert warnings == ["dc2 would be left with no seed (n6 leaves the seed list): n7 (dc2/r1) made its seed, live only:"
+                        " put it in cassandra_seeds (apply_config would put the inventory's list back)"]
+    # n7 down: refused
+    status["cluster_status"]["dc2"]["nodes"][1]["status"] = "D"
+    step, problems, new, warnings = check(["n6"])
+    assert problems == ["dc2 would be left with no seed (n6 leaves the seed list) and none of its nodes is up to be"
+                        " one: put a node of dc2 in cassandra_seeds."]
+
+
+def test_decommission_shows_applies_and_says_the_seeds_picked():
+    lives = "10.0.0.1,10.0.0.6"
+    hostvars = {"n1": node(1, live=lives, seed_entry="10.0.0.1"), "n2": node(2, live=lives),
+                "n6": node(6, live=lives, dc="dc2"), "n7": node(7, live=lives, dc="dc2")}
+    group = ["n1", "n2", "n6", "n7"]
+    status = {"cluster_status": {"dc1": {"nodes": [{"address": "10.0.0.%d" % i, "status": "U", "state": "N"} for i in (1, 2)]},
+                                 "dc2": {"nodes": [{"address": "10.0.0.%d" % i, "status": "U", "state": "N"} for i in (6, 7)]}}}
+    show = task(DECO["tasks"], "Show the plan and confirm the removal")
+    variables = dict(DECO["vars"], **show["vars"])
+    variables.update(ansible_play_hosts_all=["n6"], hostvars=hostvars, cassandra_seeds=["10.0.0.1"],
+                     groups={"all": group, "prod": group}, cassandra_hosts="prod", cassandra_preflight_status=status)
+    assert render(show["vars"]["_dn_auto"], **variables) == " Change seeds: dc2 gets n7 (dc2/r1)."
+    assert "_dn_auto" in show["vars"]["cassandra_screen"]
+    assert "'each': _dn_seeds.warnings\n" in show["vars"]["cassandra_screen"]
+    assert "if _dn_seed_step or not _dn_seeds.step else []}]" in show["vars"]["cassandra_screen"]
+    assert render("{{ _dn_seeds.warnings }}", **variables)[0].startswith(
+        "dc2 would be left with no seed (n6 leaves the seed list): n7 (dc2/r1) made its seed")
+    # the list applied on the nodes that stay: the one with the seed picked (not cassandra_seeds alone)
+    note = task(DECO["tasks"], "Note whether the seeds are applied first")["ansible.builtin.set_fact"]
+    assert note["_cassandra_decommission_seeds"] == "{{ _dn_seeds }}"
+    step = play("decommission_node.yml", "Take the nodes to remove out of the seed lists")
+    applied = step["tasks"][0]["vars"]["cassandra_seeds"]
+    assert render(applied, hostvars={"n6": {"_cassandra_decommission_seeds": {"new": "10.0.0.1,10.0.0.7"}}},
+                  cassandra_target_nodes="n6", groups={"all": ["n6"]}) == "10.0.0.1,10.0.0.7"
+    # the end: the cassandra_seeds line to put in the inventory
+    summary = play("decommission_node.yml", "Summary")
+    msg = task(summary["tasks"], "Say what is left to do")["ansible.builtin.debug"]["msg"]
+    assert "_cassandra_decommission_seeds_todo | default({})" in msg and "cassandra_seeds_todo" in msg
+    # said only when that list is applied: not when the seeds are left to change_seeds (no leaving seed, a change)
+    todo = note["_cassandra_decommission_seeds_todo"]
+    seeds = {"step": True, "auto": [{"dc": "dc2"}]}
+    assert render(todo, _dn_seed_step=["n6"], _dn_seeds=seeds) == seeds
+    assert render(todo, _dn_seed_step=[], _dn_seeds=seeds) == {}
+    assert render(todo, _dn_seed_step=[], _dn_seeds=dict(seeds, step=False)) == dict(seeds, step=False)
 
 
 # change_seeds and the steps share seeds_apply.yml
@@ -331,3 +377,92 @@ def test_the_seed_line_read_with_any_quotes():
     for line in ('- seeds: "10.0.0.1,10.0.0.2"', "- seeds: '10.0.0.1,10.0.0.2'", "- seeds: 10.0.0.1,10.0.0.2"):
         content = base64.b64encode(("seed_provider:\n  - class_name: x\n    parameters:\n      %s\n" % line).encode()).decode()
         assert render(template, cassandra_node_facts_yaml={"content": content}) == "10.0.0.1,10.0.0.2", line
+
+
+# change_seeds: a list that leaves a datacenter with no seed gets seeds of its own there (as topology and
+# decommission_node), shown, confirmed, applied, and the line to put in the inventory said at the end
+
+CHANGE = play("change_seeds.yml", "Update the seed list")
+
+
+def change_seeds(seeds, down=()):
+    lives = "10.0.0.1,10.0.0.6"
+    hostvars = {"n1": node(1, live=lives, seed_entry="10.0.0.1"), "n2": node(2, live=lives),
+                "n6": node(6, live=lives, dc="dc2", seed_entry="10.0.0.6"), "n7": node(7, live=lives, dc="dc2")}
+    status = {"cluster_status": {dc: {"nodes": [{"address": "10.0.0.%d" % i, "status": "D" if i in down else "U", "state": "N"}
+                                                for i in ids]} for dc, ids in (("dc1", (1, 2)), ("dc2", (6, 7)))}}
+    work = task(CHANGE["tasks"], "Work out the seed list")
+    variables = dict(work["vars"], ansible_play_hosts_all=["n1", "n2", "n6", "n7"], hostvars=hostvars,
+                     cassandra_seeds=seeds, cassandra_preflight_status=status)
+    return render(work["ansible.builtin.set_fact"]["_cassandra_change_seeds"], **variables)
+
+
+def test_change_seeds_gives_a_datacenter_left_with_no_seed_its_own():
+    change = change_seeds(["10.0.0.1"])  # n6, dc2's only seed, taken out: kept (it runs as one), with n7
+    assert change["problems"] == [] and change["new"] == "10.0.0.1,10.0.0.6,10.0.0.7"
+    assert change["auto"][0]["labels"] == ["n6 (dc2/r1)", "n7 (dc2/r1)"]
+    assert change["warnings"] == ["cassandra_seeds has no node of dc2: n6 (dc2/r1) kept as its seed; n7 (dc2/r1) made its"
+                                  " seed, live only: put them in cassandra_seeds (apply_config would put the inventory's"
+                                  " list back)"]
+    assert change_seeds(["10.0.0.1", "10.0.0.7"])["auto"] == []  # another node of dc2 instead: as asked
+    assert change_seeds(["10.0.0.1"], down=(6,))["auto"][0]["labels"] == ["n7 (dc2/r1)"]  # up nodes only
+    refused = change_seeds(["10.0.0.1"], down=(6, 7))
+    assert refused["problems"] == ["dc2 would be left with no seed (n6 leaves the seed list) and none of its nodes is up"
+                                   " to be one: put a node of dc2 in cassandra_seeds."]
+    assert change_seeds([])["problems"][0].startswith("cassandra_seeds is empty")
+    names = [t["name"] for t in CHANGE["tasks"]]
+    assert names.index("Work out the seed list") < names.index("Refuse a seed list that can't be applied") \
+        < names.index("Show the new seed list and confirm") < names.index("Apply the new seed list") \
+        < names.index("Say what is left to do")
+    refuse = task(CHANGE["tasks"], "Refuse a seed list that can't be applied")
+    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], _cassandra_change_seeds=refused, _nl="\n",
+                 _cluster="prod cluster")
+    assert msg.splitlines()[0] == "REFUSED  change_seeds  prod cluster  nothing was changed"
+    # the list applied, and the one the config check compares with: the seeds picked too
+    assert CHANGE["vars"]["_new"] == "{{ _cassandra_change_seeds.new }}"
+    assert task(CHANGE["tasks"], "Apply the new seed list")["vars"]["cassandra_seeds"] == "{{ _new }}"
+    assert task(CHANGE["tasks"], "Look for other config differences")["vars"]["cassandra_seeds"] == "{{ _new }}"
+    say = task(CHANGE["tasks"], "Say what is left to do")
+    change = change_seeds(["10.0.0.1"])
+    text = render(say["ansible.builtin.debug"]["msg"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'"),
+                  _cassandra_change_seeds=change, _nl="\n")
+    assert text.splitlines() == [
+        "TO DO",
+        "  1. put the seeds the nodes now run with in the inventory (group_vars/prod/, or a re-import writes them),"
+        " else apply_config puts cassandra_seeds back:",
+        '     cassandra_seeds: ["10.0.0.1", "10.0.0.6", "10.0.0.7"]']
+
+
+def test_topology_applies_and_says_the_seeds_picked():
+    seeds = play("topology.yml", "Change the seeds")
+    apply = task(seeds["tasks"], "Apply cassandra_seeds on this node")
+    assert apply["vars"]["cassandra_seeds"] == "{{ cassandra_topology_plan.seeds.new }}"
+    say = task(play("topology.yml", "Say what is left to do")["tasks"], "Say what is left to do")
+    assert "first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(" in say["ansible.builtin.debug"]["msg"]
+    assert "_done | length > 0 or _plan.seeds.auto | default([])" in say["ansible.builtin.debug"]["msg"]
+
+
+def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
+    # dc2's seed n7 was picked by an earlier run (live, not in cassandra_seeds): an add of a seed in dc1 keeps it
+    step = play("add_node.yml", "Apply cassandra_seeds now that the new seeds are up")
+    work = task(step["tasks"], "Work out the seed list")
+    lives = "10.0.0.1,10.0.0.7"
+    hostvars = {"n1": node(1, live=lives, seed_entry="10.0.0.1"), "n2": node(2, live="", seed_entry="10.0.0.2"),
+                "n6": node(6, live=lives, dc="dc2"), "n7": node(7, live=lives, dc="dc2")}
+    status = {"cluster_status": {"dc1": {"nodes": [{"address": "10.0.0.1", "status": "U", "state": "N"}]},
+                                 "dc2": {"nodes": [{"address": "10.0.0.%d" % i, "status": "U", "state": "N"} for i in (6, 7)]}}}
+    group = ["n1", "n2", "n6", "n7"]
+    variables = dict(work["vars"], ansible_play_hosts_all=group, hostvars=hostvars, cassandra_target_nodes="n2",
+                     groups={"all": group, "prod": group}, cassandra_seeds=["10.0.0.1", "10.0.0.2"],
+                     cassandra_preflight_status=status)
+    change = render(work["ansible.builtin.set_fact"]["_cassandra_add_seeds"], **variables)
+    assert change["new"] == "10.0.0.1,10.0.0.2,10.0.0.6,10.0.0.7" and change["problems"] == []
+    assert change["warnings"][0].startswith("cassandra_seeds has no node of dc2: n7 (dc2/r1) kept as its seed; n6 (dc2/r1)"
+                                            " made its seed")
+    apply = task(step["tasks"], "Apply cassandra_seeds on every node")
+    assert render(apply["vars"]["cassandra_seeds"], _cassandra_add_seeds=change) == change["new"]
+    assert render(apply["vars"]["cassandra_seeds"], _cassandra_add_seeds=dict(change, problems=["x"])) == "10.0.0.1,10.0.0.2"
+    say = task(step["tasks"], "Say the seeds kept for a datacenter")
+    # a problem: the inventory's list applied, the seeds picked elsewhere not said (not applied)
+    text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=dict(change, problems=["dc2 x"]), _nl="\n")
+    assert text == "WARNING  cassandra_seeds applied as it is: dc2 x"

@@ -828,8 +828,21 @@ def inventory_steps(inventory_file, in_git=None, message="", cwd=None):
     return steps
 
 
+def seeds_todo(change, group=""):
+    """The TO DO item once seeds were picked for a datacenter its
+    cassandra_seeds left with none (cassandra_seed_change's auto): the line
+    to put in the inventory, else apply_config would write the inventory's
+    list back. None when nothing was picked."""
+    if not (change or {}).get("auto"):
+        return None
+    entries = [e.strip() for e in str(change["new"]).split(",") if e.strip()]
+    return {"text": "put the seeds the nodes now run with in the inventory (group_vars/%s/, or a re-import writes"
+                    " them), else apply_config puts cassandra_seeds back" % (group or "<cluster group>"),
+            "command": "cassandra_seeds: [%s]" % ", ".join('"%s"' % e for e in entries)}
+
+
 def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
-                 unreachable=None, imported=True, reimport_hosts=None):
+                 unreachable=None, imported=True, reimport_hosts=None, first=None):
     """The TO DO once nodes left the ring (decommission_node, topology):
     empty them (reset_node), then drop them from the inventory by a
     re-import of the cluster from the inventory itself (its connection
@@ -843,18 +856,20 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
     (import_cluster_dir, given when it is not the default inventories);
     unreachable: the ones not answering, left out of the reset (the
     re-import drops them too); imported: the inventory is import_cluster's
-    (else: remove them from it by hand, no re-import)."""
+    (else: remove them from it by hand, no re-import); first: items said
+    before (the seeds to put in the inventory)."""
     removed = list(removed or [])
+    first = [i for i in first or [] if i]
     if not removed:
-        return []
+        return todo(first)
     if reimport_hosts is None:
         reimport_hosts = hosts
     names = nodes(removed, keep_order=True)
     reset = [n for n in removed if n not in (unreachable or [])]
-    items = [{"text": "empty %s before reusing %s (%s data is left in place)" % (
+    items = first + [{"text": "empty %s before reusing %s (%s data is left in place)" % (
         nodes(reset, keep_order=True), "the host" if len(reset) == 1 else "the hosts", "its" if len(reset) == 1 else "their"),
         "command": command("reset_node", inventory=inventory, hosts=hosts, cwd=cwd,
-                           extra={"cassandra_target_nodes": ",".join(reset)})}] if reset else []
+                           extra={"cassandra_target_nodes": ",".join(reset)})}] if reset else first
     shown_dir = path_from(str(inventory_dir), cwd) if inventory_dir else ""
     reimport = [extra_var("import_cluster_force", "true")]
     if shown_dir and os.path.normpath(shown_dir) != "inventories":

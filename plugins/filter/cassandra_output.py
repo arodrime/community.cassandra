@@ -129,7 +129,8 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
 
 
 def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None, inventory_dir=None, cwd=None,
-                           default_inventory=None, in_git=None, unreachable=None, imported=True, reimport_hosts=""):
+                           default_inventory=None, in_git=None, unreachable=None, imported=True, reimport_hosts="",
+                           first=None):
     """default_inventory: ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')):
     no -i when the run's inventory is that one. reimport_hosts: see
     cassandra_reimport_hosts."""
@@ -137,7 +138,13 @@ def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None
         inventory = None
     return out.removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
                             inventory_dir=inventory_dir or None, cwd=cwd, in_git=in_git, unreachable=unreachable,
-                            imported=imported, reimport_hosts=reimport_hosts)
+                            imported=imported, reimport_hosts=reimport_hosts, first=first)
+
+
+def cassandra_seeds_todo(change, group=""):
+    """cassandra_seed_change's -> the TO DO item when it picked seeds the
+    inventory does not have (None otherwise)."""
+    return out.seeds_todo(change, group=group)
 
 
 def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others=0):
@@ -204,6 +211,7 @@ class FilterModule(object):
             "cassandra_path_from": cassandra_path_from,
             "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_reimport_hosts": cassandra_reimport_hosts,
+            "cassandra_seeds_todo": cassandra_seeds_todo,
             "cassandra_inventory_steps": cassandra_inventory_steps,
             "cassandra_in_git_work_tree": cassandra_in_git_work_tree,
             "cassandra_mask": cassandra_mask,

@@ -455,8 +455,11 @@ Removing a node
 ``decommission_node`` removes the nodes in ``cassandra_target_nodes``, one at a time: each one streams its data to the
 others, then Cassandra is stopped and disabled on it. To remove a seed, take it out of ``cassandra_seeds`` in the
 inventory: the other nodes, which still list it, then get the new list first, live, as ``change_seeds`` applies it (a
-node still in ``cassandra_seeds`` is refused). Refused too: a datacenter that still has nodes afterwards left with no
-seed (one removed whole needs none), and a removal that would
+node still in ``cassandra_seeds`` is refused). A datacenter that still has nodes afterwards but none of them in ``cassandra_seeds`` gets seeds of its own: 2 or 3
+of its nodes up in the ring, on different racks (the ones it already runs with as seeds first), shown in the plan
+with a ``WARNING``, applied live with the seed change and covered by its question; the end gives the
+``cassandra_seeds`` line to put in the inventory (else ``apply_config`` puts the inventory's list back), and the
+next runs say so while the two differ. None of its nodes up: refused (a datacenter removed whole needs none). Refused too: a removal that would
 leave a datacenter with fewer nodes than a keyspace has replicas there (it reads the replication with CQL: set ``cassandra_cql_username`` and ``cassandra_cql_password`` when
 authentication is on). The end says what is left, each with its command ready to paste: empty the hosts with
 ``reset_node`` (their data is left in place), drop them from the inventory with a re-import of the cluster read from
@@ -522,7 +525,8 @@ nodes added or removed), more than half of a datacenter removed (``WARNING  3 of
 of different sizes once done, ring nodes no host has, a node down, the data a reset deletes. No cap on the number
 of removals: the guards are the replicas and the seeds. Refused before anything changes: a ``--limit`` that leaves
 out a host of the group (the plan needs them all), a datacenter that still has nodes after the run left with no seed
-(a datacenter removed whole needs none), a removal that would leave a datacenter with fewer nodes than a keyspace
+and none of its nodes up to be one (a datacenter that has some gets seeds of its own, as with ``decommission_node``;
+one removed whole needs none), a removal that would leave a datacenter with fewer nodes than a keyspace
 has replicas there (unless ``cassandra_decommission_force``), an add while a decommission is still running, two hosts
 with one address, a host marked absent still in the ring that does not answer or is down (``remove_dead_node``
 then), a node of the group that does not answer, one token per node with adds and removals in one run (add first,

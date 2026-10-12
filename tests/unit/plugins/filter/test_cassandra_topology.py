@@ -328,15 +328,59 @@ def test_seed_change_nothing_to_do_and_a_rewrite():
     assert change["removed"] == [] and change["added"] == [] and change["differ"] == ["node3"] and change["step"]
 
 
-def test_seed_change_refusals():
-    # dc2's only seed leaves the list: dc2 keeps nodes but no seed
-    hosts = [seeded(1, live="10.0.0.1,10.0.0.4"), seeded(2, live="10.0.0.1,10.0.0.4"),
-             seeded(4, dc="dc2", live="10.0.0.1,10.0.0.4"), seeded(5, dc="dc2", live="10.0.0.1,10.0.0.4")]
+def test_seed_change_gives_a_datacenter_left_with_no_seed_its_own():
+    # dc2's only seed leaves the list: dc2 keeps nodes, so a seed of its own is picked there (up nodes only,
+    # 2 or 3 a datacenter), applied live, said in a warning; none up there: refused
+    lives = "10.0.0.1,10.0.0.4"
+    hosts = [seeded(1, live=lives, up=True), seeded(2, live=lives, up=True),
+             seeded(4, dc="dc2", live=lives, absent=True), seeded(5, dc="dc2", live=lives, up=True),
+             seeded(6, dc="dc2", live=lives, up=True, rack="r2"), seeded(7, dc="dc2", live=lives)]
+    change = cassandra_seed_change(hosts, ["10.0.0.1"])
+    assert change["problems"] == []
+    assert change["auto"] == [{"dc": "dc2", "hosts": ["node5", "node6"], "labels": ["node5 (dc2/r1)", "node6 (dc2/r2)"],
+                               "entries": ["10.0.0.5", "10.0.0.6"]}]
+    assert change["new"] == "10.0.0.1,10.0.0.5,10.0.0.6" and change["wanted"] == "10.0.0.1"
+    assert change["step"] and change["added"] == ["node5 (dc2/r1)", "node6 (dc2/r2)"]
+    assert change["warnings"] == [
+        "dc2 would be left with no seed (node4 leaves the seed list): node5 (dc2/r1), node6 (dc2/r2) made its seeds,"
+        " live only: put them in cassandra_seeds (apply_config would put the inventory's list back)"]
+    # the next run, the same inventory: the same seeds kept, nothing to apply, still said
+    for h in hosts:
+        h["live"] = change["new"]
+    again = cassandra_seed_change(hosts, ["10.0.0.1"])
+    assert again["new"] == change["new"] and not again["step"]
+    assert again["warnings"] == [
+        "cassandra_seeds has no node of dc2: node5 (dc2/r1), node6 (dc2/r2) kept as its seeds, live only: put them in"
+        " cassandra_seeds (apply_config would put the inventory's list back)"]
+    # a rerun with node5 (picked before) down: replaced by node7, node6 kept; only node5 said to leave
+    hosts[5]["up"] = True
+    hosts[3]["up"] = False
+    swap = cassandra_seed_change(hosts, ["10.0.0.1"])
+    assert swap["new"] == "10.0.0.1,10.0.0.6,10.0.0.7"
+    assert swap["warnings"] == [
+        "dc2 would be left with no seed (node5 leaves the seed list): node6 (dc2/r2) kept as its seed; node7 (dc2/r1)"
+        " made its seed, live only: put them in cassandra_seeds (apply_config would put the inventory's list back)"]
+    hosts[5]["up"] = False
+    hosts[3]["up"] = True
+    # by name when cassandra_seeds names them, its port kept
+    assert cassandra_seed_change(hosts, ["node1:7000"])["new"] == "node1:7000,node5:7000,node6:7000"
+    # names the inventory does not have (FQDNs the nodes resolve): the address, never an inventory alias
+    for h in hosts:
+        h["names"].append("%s.example.net" % h["name"])
+    assert cassandra_seed_change(hosts, ["node1.example.net"])["new"] == "node1.example.net,10.0.0.5,10.0.0.6"
+    # a node of dc2 in the list: nothing picked
+    assert cassandra_seed_change(hosts, ["10.0.0.1", "10.0.0.7"])["auto"] == []
+    # none up in dc2: refused
+    for h in hosts[3:]:
+        h["up"] = False
+    for h in hosts:
+        h["live"] = lives
     assert cassandra_seed_change(hosts, ["10.0.0.1"])["problems"] == [
-        "dc2 would be left with no seed (node4 leaves the seed list): put a node of dc2 in cassandra_seeds."]
-    assert cassandra_seed_change(hosts, ["10.0.0.1", "10.0.0.5"])["problems"] == []
+        "dc2 would be left with no seed (node4 leaves the seed list) and none of its nodes is up to be one: put a node"
+        " of dc2 in cassandra_seeds."]
     # dc2 removed for good: no node left there, nothing to seed
-    hosts[2]["absent"] = hosts[3]["absent"] = True
+    for h in hosts[3:]:
+        h["absent"] = True
     assert cassandra_seed_change(hosts, ["10.0.0.1"])["problems"] == []
     assert cassandra_seed_change(hosts, [])["problems"][0].startswith("cassandra_seeds is empty")
 
@@ -387,10 +431,16 @@ def test_plan_seed_change_alone_and_its_refusal():
         assert lines[0] == "PLAN  topology  1 step, one node at a time"
         assert warnings_of(lines) == ["WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2,10.0.0.3 ->"
                                       " 10.0.0.1,10.0.0.2,10.0.0.4 (from cassandra_seeds in the inventory)"]
-    # dc2 left with no seed: refused
+    # dc2 left with no seed: its nodes up in the ring made its seeds, in the seed step, with a warning
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2"])
-    assert plan["problems"] == ["dc2 would be left with no seed (node3 leaves the seed list): put a node of dc2 in"
-                                " cassandra_seeds."]
+    assert plan["problems"] == []
+    assert plan["seeds"]["new"] == "10.0.0.1,10.0.0.2,10.0.0.3,10.0.0.4"
+    assert cassandra_topology_steps(plan, hosts) == [
+        {"node": "seeds", "text": "10.0.0.1,10.0.0.2,10.0.0.3 -> 10.0.0.1,10.0.0.2,10.0.0.3,10.0.0.4; dc2 gets"
+                                  " node3 (dc2/r1), node4 (dc2/r1)"}]
+    assert "WARNING  cassandra_seeds has no node of dc2: node3 (dc2/r1) kept as its seed; node4 (dc2/r1) made its seed," \
+        " live only: put them in cassandra_seeds (apply_config would put the inventory's list back)" \
+        in warnings_of(cassandra_topology_screen(plan, hosts, ring=r))
     # nothing given (an old caller): no seed step
     assert cassandra_topology_plan(hosts, r)["seeds"]["step"] is False
 
@@ -435,11 +485,16 @@ def test_a_datacenter_removed_whole_needs_no_seed():
     assert "dc2 after:  no node left" in lines
     assert lines[3].endswith("decommission node4  dc2/r1  load 40.1 GiB, owns 25.0% -> none (no node left in dc2)")
     assert "WARNING  dc2 removed whole (node3, node4): no node left there" in lines
-    # node4 stays in dc2: dc2 still in use, a seed needed there
+    # node4 stays in dc2: dc2 still in use, node4 made its seed (live)
     hosts[3]["absent"] = False
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1"])
-    assert plan["problems"] == ["dc2 would be left with no seed (node3 leaves the seed list): put a node of dc2 in"
-                                " cassandra_seeds."]
+    assert plan["problems"] == [] and plan["seeds"]["auto"][0]["hosts"] == ["node4"]
+    assert plan["seeds"]["new"] == "10.0.0.1,10.0.0.4"
+    # node4 down: no node of dc2 to make its seed, refused
+    r["dc2"]["nodes"][1]["status"] = "D"
+    plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1"])
+    assert plan["problems"] == ["dc2 would be left with no seed (node3 leaves the seed list) and none of its nodes is"
+                                " up to be one: put a node of dc2 in cassandra_seeds."]
 
 
 def test_screen_big_datacenter_counted_once_and_one_node_left():
