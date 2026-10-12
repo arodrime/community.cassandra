@@ -934,9 +934,11 @@ NESTED = [  # (id, pattern, replacement, what cassandra_extra_settings gets)
 
 @pytest.mark.parametrize("series", sorted(VERSIONS))
 @pytest.mark.parametrize("case, pattern, replace, extra", NESTED, ids=[c[0] for c in NESTED])
-def test_nested_sections_imported_whole(series, case, pattern, replace, extra):
+def test_nested_sections_imported_whole(series, case, pattern, replace, extra, monkeypatch):
     """A section the template leaves commented (or does not have) set on the node: its whole YAML block in
     cassandra_extra_settings, its types kept, no hand edit; the roles write it back the same (no-op)."""
+    # (zz_*, request_policies: keys made up for the layout, not ones Cassandra rejects here)
+    monkeypatch.setattr(cassandra_import, "yaml_rejected", lambda keys, release: [])
     files = seeded(stock(series))
     files["cassandra.yaml"], found = re.subn(pattern, replace, files["cassandra.yaml"], count=1)
     if not found:
