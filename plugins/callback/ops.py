@@ -284,6 +284,7 @@ class CallbackModule(DefaultCallback):
         last = next((t for t in reversed(texts) if t.strip()), "")
         ring = _RING_VERDICT.match(last) is not None  # the status report: a screen, its verdict last
         if ring:
+            headed = recap = step = phase = None  # its first line is the cluster's name, whatever that name is
             texts = texts[:max(i for i, t in enumerate(texts) if t.strip())]  # the verdict printed last, between rules
             while texts and not texts[-1].strip():
                 texts.pop()

@@ -533,6 +533,8 @@ def test_status_verdict_and_table_rows_coloured():
     # the header row and the summary table: indented, as the line above (a blank one: plain)
     assert colour(" --  Address  Load") is None and colour("  dc1   5 nodes   4 up, 1 down   load 23.2 GiB") is None
     assert colour("  UN rows") is None and colour("UN  not a row") is None
+    # two spaces: not a row, the line above's colour kept
+    assert colour("  UN  10.0.0.1  1 GiB", above=C.COLOR_ERROR) == C.COLOR_ERROR
 
 
 def test_colours_on_a_terminal_only(tmp_path):
@@ -812,3 +814,21 @@ def test_a_phase_line_is_a_block_of_its_own_without_a_gap(tmp_path):
                              "two lines, the first ending...", "so not a phase line", "under", "",
                              "Starting node5 and waiting for its bootstrap...", "", "---- [1/2] node5 bootstrap ----",
                              "", "[1/2] node5 bootstrap  JOINING"]
+
+
+def test_the_status_report_of_a_cluster_named_like_a_recap(tmp_path):
+    playbook = u"""
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Show the ring
+      ansible.builtin.debug:
+        msg: ["DONE  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "", "ALL 3 NODES UP"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    # the status report's framing, not a recap's (its blank lines stay blank, no light rules)
+    assert shown(output) == ["====", "", "DONE  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "",
+                             "====", "", "ALL 3 NODES UP", "", "====", ""]
