@@ -7,7 +7,8 @@
 # A new node listed in cassandra_seeds too joins as a regular node (a seed does
 # not bootstrap: its cassandra.yaml lists the other seeds while it joins), then,
 # once the adds are done, cassandra_seeds is applied live on every node
-# (change_seeds' way, no restart).
+# (change_seeds' way, no restart); left to change_seeds when a datacenter would
+# need seeds picked, or has none of its nodes up to be one.
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
 # cassandra, else the inventory's cluster group (lookup
@@ -323,7 +324,8 @@
           {%-   endfor -%}
           {%-   if m._cassandra_service_is_seed | default(false) | bool -%}
           {%-     set _ = lines.append('in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed'
-                                       ~ ' once it is up (cassandra_seeds applied live on every node)') -%}
+                                       ~ ' once it is up (cassandra_seeds applied live on every node, unless a datacenter would'
+                                       ~ ' need seeds picked: then change_seeds)') -%}
           {%-   endif -%}
           {%-   if m.cassandra_medusa_enabled | default(false) | bool -%}
           {%-     set _ = lines.append('Medusa fqdn ' ~ ((m.cassandra_medusa_fqdn if m.cassandra_medusa_fqdn is defined
@@ -365,7 +367,8 @@
           after:
             - >-
               {{ ('Once the adds are done, cassandra_seeds (' ~ (cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(','))
-                  ~ ') is applied live on every node (no restart): ' ~ _seeds_added | join(', ') ~ ' then a seed.')
+                  ~ ') is applied live on every node (no restart): ' ~ _seeds_added | join(', ') ~ ' then a seed'
+                  ~ ' (unless a datacenter would need seeds picked: then change_seeds).')
                  if _seeds_added and not _cassandra_screen_asked_by | default('') else '' }}
             - >-
               Cleanup afterwards (cassandra_add_node_cleanup={{ _cleanup }}): {{ {'none': 'none, the commands are printed at the end',
@@ -601,8 +604,9 @@
         cassandra_service_joining_after: "{{ _joining | reject('equalto', cassandra_new_node_address) | list }}"
 
 # A new node in cassandra_seeds joined as a regular node (join_seeds.yml): now
-# that it is up, cassandra_seeds goes live on every node. In topology, its own
-# step does it (between the adds and the removals).
+# that it is up, cassandra_seeds goes live on every node (held back for
+# change_seeds when a datacenter would need seeds picked, or has none of its
+# nodes up). In topology, its own step does it (between the adds and the removals).
 - name: Apply cassandra_seeds now that the new seeds are up
   hosts: >-
     {{ query('community.cassandra.cassandra_nodes')
@@ -676,8 +680,9 @@
                 + _cassandra_add_seeds.auto | map(attribute='dc') | map('regex_replace', '$',
                     ' has no node in cassandra_seeds: change_seeds would pick its seeds') | list)
                | map('regex_replace', '^', 'seed lists left as they are: ') | list
-               + [_new_seeds | join(', ') ~ ' not in the seed lists of the other nodes yet: run change_seeds, its plan'
-                  ~ ' (the seeds it picks too) comes before its question:'])
+               + [_new_seeds | join(', ') ~ ' not in the seed lists of the other nodes yet: '
+                  ~ ('fix cassandra_seeds, then run change_seeds:' if _cassandra_add_seeds.problems
+                     else 'run change_seeds, its plan (the seeds it picks too) comes before its question:')])
               if _cassandra_add_seeds_hold | bool else _cassandra_add_seeds.warnings)
              | map('regex_replace', '^', 'WARNING  ') | list
              + (['     ' ~ 'change_seeds' | community.cassandra.cassandra_command(

@@ -495,6 +495,13 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
     text = render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=dict(kept, problems=["dc2 x"], auto=[]),
                   _cassandra_add_seeds_hold=True, _new_seeds=["n2"], ansible_inventory_sources=["/work/inventories"],
                   cassandra_hosts="prod", _nl="\n")
-    assert text.splitlines()[0] == "WARNING  seed lists left as they are: dc2 x"
+    lines = text.splitlines()
+    assert lines[0] == "WARNING  seed lists left as they are: dc2 x"
+    assert lines[1] == "WARNING  n2 not in the seed lists of the other nodes yet: fix cassandra_seeds, then run change_seeds:"
+    assert lines[2].startswith("     ansible-playbook ") and len(lines) == 3
+    # said when held back, or with the filter's warnings (seeds kept, applied); else skipped
+    for held, warnings, said in ((True, [], True), (False, ["w"], True), (False, [], False)):
+        assert render("{{ %s }}" % say["when"], _new_seeds=["n2"], ansible_check_mode=False, _cassandra_add_seeds_hold=held,
+                      _cassandra_add_seeds=dict(kept, warnings=warnings)) is said
     assert render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=kept, _cassandra_add_seeds_hold=False,
                   _nl="\n") == "WARNING  " + kept["warnings"][0]
