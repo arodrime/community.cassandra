@@ -515,6 +515,26 @@ def test_colours_by_line_start():
     assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
 
 
+def test_status_verdict_and_table_rows_coloured():
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour
+    assert colour("ALL 5 NODES UP") == colour("ALL 1 NODE UP") == C.COLOR_OK
+    assert colour(u"ALL 6 NODES UP \u2014 1 JOINING: node6") == C.COLOR_CHANGED
+    assert colour("1 NODE DOWN: node1 (dc1/rack1)") == colour("2 NODES DOWN: node1 (dc1/r1), node4 (dc1/r2)") \
+        == colour(u"1 NODE DOWN: node1 (dc1/r1) \u2014 1 LEAVING: node3") == C.COLOR_ERROR
+    assert colour(u"ALL 5 NODES UP \u2014 RING AND INVENTORY DIFFER") == C.COLOR_ERROR
+    assert colour(u"ALL 5 NODES UP \u2014 1 JOINING: node6 \u2014 RING AND INVENTORY DIFFER") == C.COLOR_ERROR
+    # the table rows by their state, never by the line above (a UN row under a DN one stays plain)
+    assert colour(u" DN  10.0.0.5  5.25 GiB  16  22.5%  1e96  r1  node1  \u2190 down") == C.COLOR_ERROR
+    assert colour(" DL  10.0.0.5  ?  16  22.5%  1e96  r1  node1") == C.COLOR_ERROR
+    for state in "JLM":
+        assert colour(" U%s  10.0.0.6  1 GiB  16  20.0%%  1e97  r1  node6" % state, above=C.COLOR_ERROR) == C.COLOR_CHANGED
+    assert colour(" UN  10.0.0.9  6.88 GiB  16  28.0%  1c7a  r1  node5", above=C.COLOR_ERROR) is None
+    # the header row and the summary table: indented, as the line above (a blank one: plain)
+    assert colour(" --  Address  Load") is None and colour("  dc1   5 nodes   4 up, 1 down   load 23.2 GiB") is None
+    assert colour("  UN rows") is None and colour("UN  not a row") is None
+
+
 def test_colours_on_a_terminal_only(tmp_path):
     playbook = """
 - hosts: node1
@@ -654,6 +674,43 @@ def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
     assert typed == 2, text
     assert "done" in text
     assert "LEFT=[]" in text, text
+
+
+def test_the_status_report_is_a_screen_its_verdict_between_rules(tmp_path):
+    playbook = u"""
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Show the ring
+      ansible.builtin.debug:
+        msg: ["my_cluster  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "",
+              " --  Address   Rack", " DN  10.0.0.2  r1", "", "  dc1   3 nodes   2 up, 1 down", "",
+              "1 NODE DOWN: node2 (dc1/r1)"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    # blank lines kept (no light rules); a blank line above and under each rule, as everywhere
+    assert shown(output) == ["====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "",
+                             " --  Address   Rack", " DN  10.0.0.2  r1", "", "  dc1   3 nodes   2 up, 1 down", "",
+                             "====", "", "1 NODE DOWN: node2 (dc1/r1)", "", "====", ""]
+
+
+def test_no_status_screen_without_a_verdict_last(tmp_path):
+    playbook = u"""
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Say it
+      ansible.builtin.debug:
+        msg: ["checked: ALL 3 NODES UP", "", "1 NODE DOWN: node2 (dc1/r1)", "", "then something else"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0, output
+    assert shown(output) == ["checked: ALL 3 NODES UP", "", "1 NODE DOWN: node2 (dc1/r1)", "", "then something else"]
 
 
 def test_the_import_screen_is_ruled(tmp_path):

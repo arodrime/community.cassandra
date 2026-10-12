@@ -1,12 +1,13 @@
 ---
 # Read-only view of the ring as nodetool status shows it from one node (the
-# first of the group that answers): a verdict line first (the nodes not up
-# and normal, the node it is seen from, whether the ring and the group
-# match), then per datacenter the nodetool table (a node not UN marked
-# "<- down", "<- joining"...), a summary line per rack and per datacenter
-# (nodes up, down, joining, leaving, moving, total load) and where the
-# group and the ring differ (a ring node that is another host of the inventory
-# is named). A down node is shown, not an error (the check
+# first of the group that answers): a header line (the node it is seen from,
+# whether the ring and the group match), then per datacenter the nodetool
+# table (a node not UN marked "<- down", "<- joining"...) and a summary table
+# per rack and datacenter (nodes up, down, joining, leaving, moving, total
+# load), where the group and the ring differ (a ring node that is another
+# host of the inventory is named), and last the verdict (ALL 5 NODES UP,
+# 1 NODE DOWN: node1 (dc1/rack1), the nodes joining, leaving or moving, a
+# ring that differs). A down node is shown, not an error (the check
 # is health_check): fails only when no node answers (of cassandra_target_nodes,
 # when given).
 #   ansible-playbook -i inventory community.cassandra.status

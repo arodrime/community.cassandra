@@ -27,14 +27,18 @@ description:
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
     C(NOTHING TO DO), C(READY) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
     stalled or failed as an error; C(NOTE), the progress lines (C([1/2] node5 ...)) and the phase lines (ending
-    with C(...)) in O(progress_color). The lines indented under a coloured one keep its colour. The messages
-    themselves stay plain text.
+    with C(...)) in O(progress_color). The lines indented under a coloured one keep its colour. The C(status)
+    playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
+    as a change, C(1 NODE DOWN) and a ring that differs from the inventory as an error; the
+    rows of its table (C( DN  10.0.0.5 ...)) by the node's state, down as an error, joining, leaving or moving as
+    a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
     C(REFUSED  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
-    C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)). A light one (C(-----)) for each empty line inside
-    them, under a plan's first line and above a question, and one naming the node above the first progress
-    line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a blank
-    line above and under each one. A line with only a space inside them separates two paragraphs of a block,
+    C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
+    verdict, its last line. A light one (C(-----)) for each empty line inside them (the blank lines of the status
+    report stay blank), under a plan's first line and above a question, and one naming the node above the first
+    progress line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a
+    blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
     printed blank (not as a rule).
   - The output goes by blocks, one blank line between two, never two in a row. A phase line (one line ending with
     C(...)) is a block of its own. A blank line comes before the
@@ -106,7 +110,9 @@ _PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
-    (re.compile(r"WARNING\b"), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
+    (re.compile(r"\d+ NODES? DOWN: |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
+    (re.compile(r"WARNING\b|ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
+    (re.compile(r"ALL \d+ NODES? UP$"), "COLOR_OK"),
     (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s" % _PHASE.pattern), "PROGRESS"),
 )
@@ -119,12 +125,21 @@ _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_nod
                      r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
+# the status playbook's verdict, its last line: heavy rules around it
+_RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
+# a row of the status playbook's nodetool table: its colour by the node's state
+_RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
 
 
 def colour(line, above=None, progress=PROGRESS_COLOR):
     """The display colour of a message line (None: the default), above:
     the colour of the line before, kept by an indented line; progress: the
     colour of the progress, phase and NOTE lines."""
+    row = _RING_ROW.match(line)
+    if row:  # a node down as an error, joining, leaving or moving as a change, up and normal plain
+        if row.group(1) == "D":
+            return C.COLOR_ERROR
+        return None if row.group(2) == "N" else C.COLOR_CHANGED
     if line[:1] in (" ", "\t") and line.strip():
         return above
     for pattern, name in _COLOURS:
@@ -266,7 +281,13 @@ class CallbackModule(DefaultCallback):
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
-        if headed or recap:
+        last = next((t for t in reversed(texts) if t.strip()), "")
+        ring = _RING_VERDICT.match(last) is not None  # the status report: a screen, its verdict last
+        if ring:
+            texts = texts[:max(i for i, t in enumerate(texts) if t.strip())]  # the verdict printed last, between rules
+            while texts and not texts[-1].strip():
+                texts.pop()
+        if headed or recap or ring:
             self._rule(heavy=True)
         elif self._gap and step:
             self._rule(text=step.group(1))
@@ -283,7 +304,10 @@ class CallbackModule(DefaultCallback):
             self._line(line, color=above)
             if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
-        if recap:
+        if ring:
+            self._rule(heavy=True)
+            self._line(last, color=color or colour(last, None, self._progress))
+        if recap or ring:
             self._rule(heavy=True)
         elif phase:
             self._gap = True
