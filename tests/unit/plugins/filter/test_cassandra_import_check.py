@@ -71,7 +71,7 @@ def import_node(files, series, facts=None, tamper=None, storage_dir="/var/lib/ca
             "vars": dict(imported["vars"], cassandra_version=series, **(tamper or {})),
             "hand_edits": imported["hand_edits"], "normalized": imported["normalized"],
             "comments": imported["comments"], "notes": [], "moved": imported["moved"],
-            "rewritten": imported["rewritten"], "cleanup": imported["cleanup"],
+            "rewritten": imported["rewritten"], "cleanup": imported["cleanup"], "not_moved": imported["not_moved"],
             # a unit set up another way
             "keep": {"cassandra_service_unit_manage": False} if keep is None else keep}
     layout = cassandra_inventory_layout([node], imported["vars"].get("cassandra_cluster_name", "c"))

@@ -893,7 +893,8 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     'release' (the version they were judged by), 'moved' (hand edits of
     cassandra-env.sh moved to variables), 'rewritten' (the files the role
     then writes in its own layout, the JVM getting the same arguments),
-    'cleanup' (options the running JVM does not use)}.
+    'cleanup' (options the running JVM does not use), 'not_moved' (why
+    cassandra-env.sh's JVM_OPTS lines or heap were not moved, '' if moved or none)}.
     conf_target: the resolved dir the node reads its config from; storage_dir:
     the JVM's -Dcassandra.storagedir; jmx_files: cassandra_jmx_files' (the
     remote JMX files the JVM reads, under the names jmxremote.password and
@@ -1057,7 +1058,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             out[key] = HOSTNAME
     return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
             "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release,
-            "moved": moved["moved"], "rewritten": moved["rewritten"], "cleanup": moved["cleanup"]}
+            "moved": moved["moved"], "rewritten": moved["rewritten"], "cleanup": moved["cleanup"],
+            "not_moved": moved["not_moved"]}
 
 
 def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
@@ -1065,6 +1067,8 @@ def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
     (cassandra_jvm_args), and the options it does not use -> {vars, moved, rewritten: the JVM's files the role
     rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits)}."""
     dep = jvm_args.options_file(series, jvm.get("java"))
+    if dep is None:  # the running Java not known (Cassandra not running): nothing worked out
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
     jvm_files = [f for f in (jvm_args.ENV, jvm_args.COMMON, dep) if f in files]
 
     def rendered(variables):
@@ -1076,6 +1080,8 @@ def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
     if cmdline and dep in files:
         adopted = jvm_args.cassandra_jvm_args_adopt(
             cmdline, live_files, rendered, render, series, jvm.get("java"), jvm.get("environment") or {})
+    why = (adopted or {}).get("why", "")
+    adopted = adopted if adopted and "vars" in adopted else None
     found = adopted["vars"] if adopted else {}
     role = rendered(dict(render, **found))
     rewritten = [f for f in jvm_files if f in live_files and not same_settings(f, live_files[f], role[f])] \
@@ -1088,7 +1094,7 @@ def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
         live_files, others, role, series, jvm.get("java"), cmdline, moved=bool(adopted))
         if ": ".join(line.split(": ", 2)[:2]) not in said]
     return {"vars": found, "moved": adopted["moved"] if adopted else [], "rewritten": rewritten, "cleanup": cleanup,
-            "shown": jvm_files if adopted else []}
+            "shown": jvm_files if adopted else [], "not_moved": why}
 
 
 def _logback(text):

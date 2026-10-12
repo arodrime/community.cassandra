@@ -65,6 +65,41 @@ def launch(files, java, where, environment=None):
     return re.sub(r"pid\d+", "pid0", run.stdout.decode().replace(str(where), "/run"))
 
 
+# the HotSpot flags an option sets (the -X forms set more than one)
+X_FLAGS = {"-Xmx": ("MaxHeapSize",), "-Xms": ("InitialHeapSize", "MinHeapSize"), "-Xmn": ("NewSize", "MaxNewSize"),
+           "-Xss": ("ThreadStackSize",)}
+ADD_UP = ("OnError", "OnOutOfMemoryError", "CompileCommand", "CompileOnly")
+
+
+def settings(cmdline):
+    """What the JVM is set to from its arguments, worked out here apart from the code under test: each HotSpot
+    flag's last value (-Xmn sets NewSize and MaxNewSize...), each -D's, the flags that add up in order, the other
+    options as a whole."""
+    args = cmdline.split("\0")
+    args = args[1:args.index("org.apache.cassandra.service.CassandraDaemon")]
+    flags, others, i = {}, [], 0
+    while i < len(args):
+        arg = args[i]
+        x = re.match(r"^(-X(?:mx|ms|mn|ss))(.+)$", arg)
+        xx = re.match(r"^-XX:(?:([+-])(\w+)|(\w+)=(.*))$", arg)
+        if arg == "-cp":
+            i += 1
+        elif x:
+            flags.update((flag, x.group(2)) for flag in X_FLAGS[x.group(1)])
+        elif xx and xx.group(2):
+            flags[xx.group(2)] = xx.group(1)
+        elif xx and xx.group(3) in ADD_UP:
+            flags.setdefault(xx.group(3), []).append(xx.group(4))
+        elif xx:
+            flags[xx.group(3)] = xx.group(4)
+        elif arg.startswith("-D"):
+            flags[arg.split("=", 1)[0]] = arg.split("=", 1)[1] if "=" in arg else ""
+        else:
+            others.append(arg)
+        i += 1
+    return flags, sorted(others)
+
+
 def node_files(series, edit=None):
     files = seeded(stock(series))
     if edit:
@@ -159,8 +194,10 @@ def test_hand_edits_moved_give_the_jvm_the_same_arguments(tmp_path, case, series
     assert node["moved"] and node["hand_edits"] == []
     rendered, variables = role_files(inventory, layout, files)
     assert dict((k, variables.get(k)) for k in wanted) == wanted
-    # bash, on the files the role writes: the JVM gets the same
-    assert jvm.differences(cmdline.split("\0")[1:], launch(rendered, java, tmp_path).split("\0")[1:]) == []
+    # bash, on the files the role writes: the JVM gets the same, worked out here and by the code under test
+    after = launch(rendered, java, tmp_path)
+    assert settings(after) == settings(cmdline)
+    assert jvm.differences(cmdline.split("\0")[1:], after.split("\0")[1:]) == []
     out = check(files, series, java=java, cmdline=cmdline)
     assert out["differences"] == []
     assert [n for n in out["notes"] if "the JVM gets the same arguments" in n]
@@ -187,6 +224,14 @@ NOT_MOVED = [  # bash would give the JVM other arguments from the role's files, 
     ("an agent: agents load in order", "50x", "17", before_extra('JVM_OPTS="$JVM_OPTS -agentpath:/opt/p/lib.so"')),
     ("-XX:MaxNewSize before cassandra-env.sh's -Xmn, which sets it too", "41x", "11",
      before_extra('JVM_OPTS="$JVM_OPTS -XX:MaxNewSize=2G"')),
+    ("-XX:MaxNewSize, Java 8", "40x", "8", before_extra('JVM_OPTS="$JVM_OPTS -XX:MaxNewSize=1G -Dz=1"')),
+    ("-XX:MinHeapSize before cassandra-env.sh's -Xms, which sets it too", "50x", "17",
+     before_extra('JVM_OPTS="$JVM_OPTS -XX:MinHeapSize=1G"')),
+    ("a line in a block of cassandra-env.sh's own", "50x", "17",
+     after_line('if [ "$LOCAL_JMX" = "yes" ]; then', '  JVM_OPTS="$JVM_OPTS -Dfoo=1"')),
+    ("a \\r in an options file", "50x", "17",
+     both(add_to("jvm-server.options", "-Dx=1\r"), before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))),
+    ("the heap from what only the shell knows", "41x", "11", on_top('MAX_HEAP_SIZE="${HEAP:-6G}"\nHEAP_NEWSIZE=600M')),
     ("the heap set between two of its uses", "50x", "17",
      after_line("    export MALLOC_ARENA_MAX=4\nfi", "MAX_HEAP_SIZE=2G")),
     ("another hand edit in cassandra-env.sh", "50x", "17",
@@ -202,6 +247,10 @@ def test_hand_edits_not_moved_stay_hand_edits(tmp_path, case, series, java, edit
     assert node["moved"] == [] and node["rewritten"] == []
     assert [line for line in node["hand_edits"] if line.startswith("cassandra-env.sh")]
     assert check(files, series, java=java, cmdline=cmdline)["differences"] != []
+    if not re.search(r"in a block|another hand edit|with a variable", case):  # (no line of plain options alone)
+        assert node["not_moved"]
+    if "only the shell knows" in case:
+        assert node["not_moved"] == "cassandra-env.sh sets MAX_HEAP_SIZE from what only the shell knows"
 
 
 def test_not_moved_when_the_files_changed_since_the_jvm_started(tmp_path):
@@ -400,3 +449,40 @@ def test_not_moved_before_what_the_unit_adds(tmp_path, line, extra):
     environment = {"JVM_EXTRA_OPTS": extra}
     node = imported(files, "50x", "17", launch(files, "17", tmp_path, environment), environment=environment)[2]
     assert node["moved"] == []
+
+
+def test_options_files_found_once_only():
+    with pytest.raises(jvm.NotSame):
+        jvm._find(["java", "-a", "-b", "-a", "-b"], ["-a", "-b"])
+    assert jvm._find(["java", "-a", "-b", "-c"], ["-a", "-b"]) == 1
+
+
+def test_the_role_s_cassandra_env_differing_otherwise_is_not_the_same(tmp_path):
+    files = node_files("50x")
+    cmdline = launch(files, "17", tmp_path)
+    role = dict(files, **{"cassandra-env.sh": files["cassandra-env.sh"] + "\nulimit -n 100000\n"})
+    assert jvm.cassandra_jvm_args_same(cmdline, files, role, "50x", "17") == (
+        False, "cassandra-env.sh differs from the role's otherwise than by JVM_OPTS lines and the heap")
+
+
+def test_a_heap_set_on_the_node_is_not_the_same_as_one_worked_out(tmp_path):
+    files = node_files("50x", on_top("MAX_HEAP_SIZE=6G"))
+    cmdline = launch(files, "17", tmp_path)
+    assert jvm.cassandra_jvm_args_same(cmdline, files, node_files("50x"), "50x", "17") == (
+        False, "the heap would be worked out on the node instead of set")
+
+
+def test_an_empty_jvm_opts_line_is_left_out(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS "\nJVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert len(node["moved"]) == 1 and node["moved"][0].endswith("-Dfoo=1 -> cassandra_jvm17_extra_options")
+    assert node["hand_edits"] == []
+
+
+def test_why_not_moved_said_in_the_report(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -XX:ParallelGCThreads=4"'))
+    inventory, layout, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
+    assert node["not_moved"] == "the JVM would get other values of ConcGCThreads"
+    lines = cassandra_import_report(layout, ["/p/c.yml", "/p"], "/p/r.txt", {}, False, cwd="/p", in_git=True)
+    assert ("  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, the JVM would get other values of"
+            " ConcGCThreads (all)") in lines

@@ -155,6 +155,11 @@ def _find(args, words, start=1):
     return found[0]
 
 
+def _found(args, options, at, end):
+    """Where options are in a row in args[at:end]: every index."""
+    return [i for i in range(at, end - len(options) + 1) if args[i:i + len(options)] == options]
+
+
 def _command_word(words, i):
     return i == 0 or words[i - 1].endswith(";") or words[i - 1] in ("then", "do", "else", "&&", "||", "|", "{")
 
@@ -206,8 +211,10 @@ def env_differences(live, role):
                 raise NotSame("cassandra-env.sh differs from the role's otherwise than by JVM_OPTS lines and the heap")
         for line in live[j1:j2]:
             append = APPEND.match(line["text"]) if not line["depth"] else None
-            if append:
+            if append and append.group(1).split():
                 added.append(dict(line, options=append.group(1).split()))
+            elif append:
+                continue  # JVM_OPTS="$JVM_OPTS ": adds nothing
             elif not line["depth"] and SET.match(line["text"]):
                 heap.append(line)
             else:
@@ -367,7 +374,7 @@ def _analyse(args, live, role, series, java, node_env):
     # the node's JVM_OPTS lines in the arguments, in the order cassandra-env.sh adds them
     at = after_files
     for line in added:
-        found = [i for i in range(at, end - len(line["options"]) + 1) if args[i:i + len(line["options"])] == line["options"]]
+        found = _found(args, line["options"], at, end)
         if not found:
             raise NotSame("a JVM_OPTS line of cassandra-env.sh is not in the running JVM's arguments (changed since it"
                           " started?)")
@@ -402,9 +409,7 @@ def _launch(cmdline, live, role, series, java, node_env, role_env):
     end, start, after_files, before = info["end"], info["start"], info["after_files"], info["greps"]
     role_words = [w for w, dummy, dummy2 in _files_words(role, series, java)]
     hand = set(i for line in info["added"] for i in range(line["at"], line["at"] + len(line["options"])))
-    role_greps = _greps(info["role_lines"])
-    if sorted(before) != sorted(set(p for dummy, p in role_greps)):
-        raise NotSame("cassandra-env.sh looks for other options in JVM_OPTS than the role's")
+    role_greps = _greps(info["role_lines"])  # the node's (env_differences: no grep line differs)
     now = dict((p, p in " ".join(args[1:start] + role_words)) for dummy, p in role_greps)
     if any(before[p] != now[p] for p in GC_GREPS if p in before):
         raise NotSame("cassandra-env.sh would find another GC in the options")
@@ -486,17 +491,18 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     """The variables that move the node's hand edits of cassandra-env.sh (its JVM_OPTS lines, its heap set
     elsewhere) to where the role writes them, when the JVM gets the same arguments from the role's files.
     render(variables): {file: text} the role writes; variables: the ones imported so far; node_env: the
-    environment the unit gives Cassandra. -> {vars, moved, dropped: report lines}, None when there is nothing to
-    move or the same arguments cannot be shown."""
+    environment the unit gives Cassandra. -> {vars, moved, dropped: report lines}; {why: the reason, names only}
+    when there are such edits but the same arguments cannot be shown; None when there are none."""
     dep = options_file(series, java)
     if not cmdline or dep is None or ENV not in live:
         return None
+    role = render(variables)
     try:
         args = _arguments(cmdline)
-        info = _analyse(args, live, render(variables), series, java, node_env)
+        info = _analyse(args, live, role, series, java, node_env)
         role_heap, dummy = heap_values(info["role_lines"], node_env)
-    except NotSame:
-        return None
+    except NotSame as exc:
+        return {"why": str(exc)} if _candidates(live[ENV], role[ENV]) else None
     if not info["added"] and not info["heap_lines"]:
         return None
     end, dropped, keep = info["end"], [], []
@@ -505,7 +511,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     for name, value in info["live_heap"].items():
         if value != role_heap.get(name) and HEAP_VARS[name].get(series):
             if value is not None and _plain_value(value) is None:
-                return None
+                return {"why": "cassandra-env.sh sets %s from what only the shell knows" % name}
             heap_vars[HEAP_VARS[name][series]] = value or ""
     dropped += ["%s line %d: %s: set after the last use of %s (no effect), left out" % (
         ENV, line["n"], out.mask(line["text"]), SET.match(line["text"]).group(1)) for line in info["dead"]]
@@ -541,6 +547,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
             by_vars["cassandra_heap_newsize"] = xmn[-1][4:]
     tries = [(by_vars, [o for o in keep if o not in to_vars])] if to_vars else []
     tries.append((heap_vars, keep))
+    why = "an option would not go to an options file"
     for found, options in tries:
         found = dict(found)
         if options:
@@ -548,8 +555,8 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
             if lines is None:
                 continue
             found[extras_var] = list(variables.get(extras_var) or []) + lines
-        same, dummy = cassandra_jvm_args_same(cmdline, live, render(dict(variables, **found)), series, java,
-                                              node_env, node_env)
+        same, why = cassandra_jvm_args_same(cmdline, live, render(dict(variables, **found)), series, java,
+                                            node_env, node_env)
         if same:
             moved = _moved(info, found, options, extras_var)
             # the files are rewritten: their own extra options set again later are left out too
@@ -559,7 +566,18 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
                 found.update(tidy)
                 dropped += gone
             return {"vars": found, "moved": moved, "dropped": dropped}
-    return None
+    return {"why": why}
+
+
+def _candidates(live, role):
+    """Whether the node's cassandra-env.sh has JVM_OPTS lines of plain options or heap assignments the role's has
+    not (wherever they are)."""
+    try:
+        theirs = set(line["text"] for line in env_lines(role))
+        return any((APPEND.match(line["text"]) or SET.match(line["text"])) and line["text"] not in theirs
+                   for line in env_lines(live))
+    except NotSame:
+        return False
 
 
 def _without_dead(args, info, variables, found, live, series, java):
@@ -622,8 +640,8 @@ def _moved(info, found, options, extras_var):
 def _own_lines(text, stock):
     """[(word, line number)] of an options file's lines starting with '-' not in stock (a text)."""
     lines = set(line.strip() for line in str(stock or "").split("\n"))
-    return [(word, n + 1) for n, line in enumerate(text.split("\n")) if line.startswith("-") and line.strip() not in lines
-            for word in re.split(r"[ \t]+", line) if word]
+    return [(word, n + 1) for n, line in enumerate(text.split("\n"))
+            if line.startswith("-") and line.strip() not in lines for word in re.split(r"[ \t]+", line) if word]
 
 
 def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", moved=False):
@@ -669,7 +687,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
     source = dict((start + i, "%s line %d" % (f, n)) for i, (dummy, f, n) in enumerate(words))
     at = start + len(words)
     for line in added:
-        found = [i for i in range(at, end - len(line["options"]) + 1) if args[i:i + len(line["options"])] == line["options"]]
+        found = _found(args, line["options"], at, end)
         if len(found) != 1:
             break
         source.update((found[0] + k, "%s line %d" % (ENV, line["n"])) for k in range(len(line["options"])))
@@ -680,7 +698,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
         if source[i] in ours and later is not None:
             lines.append("%s: %s: %s by %s (%s)" % (
                 source[i], out.mask(args[i]), "set again" if args[later] == args[i] else "overridden",
-                out.mask(args[later]), source.get(later, "%s's own options" % ENV)))
+                out.mask(args[later]), source.get(later, "added by cassandra-env.sh or bin/cassandra")))
     return lines
 
 
