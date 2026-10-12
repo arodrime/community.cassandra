@@ -147,4 +147,4 @@ def test_self_check_of_every_node_names_the_one_that_failed():
     with pytest.raises(AnsibleFilterError) as err:
         cassandra_import_self_check_nodes([], {}, nodes, {"10.0.0.7": "n7"}, {"h7": {"import_cluster_slurp": {"results": [
             {"item": "cassandra.yaml", "content": "hunter2 is not base64"}]}}})
-    assert str(err.value).startswith("cassandra_import_self_check_nodes: 10.0.0.7: ") and "hunter2" not in str(err.value)
+    assert str(err.value).startswith("cassandra_import_self_check_nodes: 10.0.0.7, ") and "hunter2" not in str(err.value)
