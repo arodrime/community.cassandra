@@ -38,6 +38,11 @@ cassandra_data_readahead_kb: 4
 # the role's cassandra-disks profile after them, which leaves those devices
 # alone (see the README). false: the role only warns.
 cassandra_linux_tuned_manage: true
+# Switching tuned to that profile applies the profiles again, live (sysctls,
+# CPU, disks, their scripts): done at a run with Cassandra stopped (a new
+# node, before it starts); under a running Cassandra the profile is only
+# written, and the role says how to switch. true: also under a running one.
+cassandra_linux_tuned_switch_running: false
 
 # sysfs block root the disk tuning reads and writes. Only meant to be
 # overridden by tests, to point at a fake tree instead of the real disks.

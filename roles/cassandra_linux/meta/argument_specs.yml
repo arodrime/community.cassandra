@@ -74,6 +74,16 @@ argument_specs:
             (RHEL's default profiles set C(readahead=>4096)), have it run the role's C(cassandra-disks)
             profile after them, which leaves those devices alone (it applies the profiles again, live, once).
           - V(false) only warns.
+      cassandra_linux_tuned_switch_running:
+        type: bool
+        default: false
+        description:
+          - Switching tuned to the C(cassandra-disks) profile applies the active profiles again, live (kernel
+            settings, CPU, disks, their scripts). By default it is done at a run with Cassandra stopped (a new node,
+            before it starts); under a running Cassandra the profile is only written and the role says how to switch
+            (C(tuned-adm profile ...)). Until then tuned sets its read-ahead on the Cassandra devices again when it
+            starts.
+          - V(true) also switches under a running Cassandra.
       cassandra_sysfs_block_root:
         type: path
         default: /sys/block

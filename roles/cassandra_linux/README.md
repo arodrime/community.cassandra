@@ -52,6 +52,11 @@ Role Variables
   read-ahead or IO scheduler of the Cassandra devices (RHEL's default ones
   do), have it run a profile of the role's after them that leaves those
   devices alone (see below). `false`: the role only warns. Default `true`.
+* `cassandra_linux_tuned_switch_running`: switching tuned to that profile
+  applies the profiles again, live. Default `false`: done at a run with
+  Cassandra stopped (a new node, before it starts); under a running
+  Cassandra the profile is only written, and the role says how to switch.
+  `true`: switched under a running Cassandra too.
 * `cassandra_linux_apply_live`: apply the kernel settings (sysctl, swapoff,
   THP, disk tuning) live, not only persist them. Defaults to `auto`: live
   everywhere except in containers (Ansible's virtualization facts, and
@@ -182,7 +187,13 @@ Adding the profile applies the profiles again, live: tuned takes back what
 they set and applies them again (their scripts run again, services they
 manage are restarted), and its profile mode becomes manual (no automatic
 recommendation). The role then sets its kernel settings and THP again. It
-is done once, and again only when the Cassandra devices change. A disk
+is done once, and again only when the Cassandra devices change, and only at
+a run with Cassandra stopped (a new node, before it starts): under a
+running Cassandra, the profile is written but not switched to (the role
+says so, with the `tuned-adm profile` command), unless
+`cassandra_linux_tuned_switch_running: true`. Until it is switched to,
+tuned sets its read-ahead on the Cassandra devices again when it starts
+(at boot). A disk
 matched by its `ID_WWN` alone (no extension) shares it with the other LUNs
 of its array: they leave tuned's `[disk]` too. `tuned-ppd` (power profiles
 daemon) switching profiles takes it off. `cassandra_linux_tuned_manage:
