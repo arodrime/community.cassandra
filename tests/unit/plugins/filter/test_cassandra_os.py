@@ -342,6 +342,14 @@ def test_own_node_with_the_old_rule_and_data_on_the_os_filesystem():
     assert any("its rule of earlier versions, /etc/udev/rules.d/61-cassandra-data-disk.rules" in n for n in r["carried"])
 
 
+def test_own_node_os_volume_needs_the_udev_rule():
+    # an LVM volume of the OS: never reloaded, kept by the udev rule, which is missing here
+    root = blk("rhel-root", "dm-0", "253:0", "lvm", 4, True, "", "/")
+    r = found(disk_records([blk("sda", "sda", "8:0", "disk", 128, True, "mq-deadline", children=[root])],
+                           [("/var/lib/cassandra/data", "253:0", "/", "xfs")], lvs=["253|0|rhel|root|8"]), own=True)
+    assert r["keep"] == {"cassandra_data_disk_tuning": False}
+
+
 def test_disk_not_a_block_device():
     r = found(disk_records([], [("/var/lib/cassandra/data", "0:52", "/", "overlay")]))
     assert "disks: /var/lib/cassandra/data: not tuned, overlay on /dev/x, not a block device" in r["lines"]

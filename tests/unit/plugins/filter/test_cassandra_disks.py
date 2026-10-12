@@ -204,6 +204,10 @@ def test_changes():
     assert cassandra_disk_changes([dict(devices[0], lv_read_ahead="8")] + devices[1:], done, 4) == []
     assert [c["what"] for c in cassandra_disk_changes(devices[:1], done, 4, lvm=False)] == []
     assert cassandra_disk_changes(devices[:1], done, 0)[0]["after"] == "none"
+    # an OS volume: set through sysfs, never reloaded by lvchange
+    root = dict(devices[0], os=True)
+    assert [c["what"] for c in cassandra_disk_changes([root], state, 4)] == ["ra"]
+    assert cassandra_disk_changes([root], state, 4)[0]["report"] is True
     multipath = {"kname": "dm-5", "kind": "dm", "label": "mpatha1 (dm-5)", "lv": "", "lv_read_ahead": ""}
     assert [c["what"] for c in cassandra_disk_changes([multipath], state, 4)] == ["ra", "scheduler"]
 

@@ -30,8 +30,8 @@ FIELDS = ("name", "type", "maj:min", "mountpoint", "fstype", "ra", "rota", "sche
 # (only for a volume lvs doesn't list; a volume named "real" itself would be taken as one: left alone)
 LVM_INTERNAL = re.compile(r"((?<!-)-(tpool|real|cow|vpool)$|_(tdata|tmeta|tierdata|rimage_\d+|rmeta_\d+|mimage_\d+|mlog|"
                           r"corig|cdata|cmeta|cpool|cvol|vdata|vorigin|wcorig|iorig|imeta|pmspare)(-|$))")
-# the filesystems of the OS: their volumes and disks are never tuned (the data
-# gets tuned on a filesystem of its own)
+# the filesystems of the OS: tuned too when Cassandra's data is on them (unless
+# tune_os is false), with a note; their LVM volumes are not reloaded (lvchange)
 OS_MOUNTS = ("/", "/usr", "/var", "/var/log", "/var/lib", "/var/tmp", "/home", "/opt", "/tmp", "/boot", "/boot/efi")
 # characters udev reads as a pattern in a match: no rule matches such an id
 UDEV_UNSAFE = set('*?[]|"\\')
@@ -230,7 +230,7 @@ def mount_targets(mounts):
     return out
 
 
-def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=None):
+def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=None, tune_os=True):
     """Which devices to tune, and why.
 
     lsblk: lsblk -J -o NAME,KNAME,MAJ:MIN,TYPE,MOUNTPOINT,FSTYPE (the whole
@@ -241,13 +241,15 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
     directories' devices). lvs: the lines of lvs -a --noheadings
     --separator '|' -o lv_kernel_major,lv_kernel_minor,vg_name,lv_name,
     lv_read_ahead. tune_shared: also tune the devices under them that hold
-    other things. contents: the results of ls -A looped over mount_targets(),
+    other things. tune_os: also tune a filesystem of the OS (/, /var...)
+    Cassandra's directories are on. contents: the results of ls -A looped over mount_targets(),
     to say when a tuned filesystem holds more than Cassandra's directories.
 
-    -> {devices: [{kname, label, kind, lv, lv_read_ahead, top, where}] to tune, top
+    -> {devices: [{kname, label, kind, lv, lv_read_ahead, top, where, os}] to tune, top
     devices first; stacks: [a line per filesystem: its directories, then its
     devices level by level]; notes: [what is not tuned, and why]; unusable:
-    [devices set by hand that can't be tuned]}."""
+    [devices set by hand that can't be tuned]; os_skipped: [directories or
+    devices left alone as the OS's, tune_os false]}."""
     nodes, notes = parse_lsblk(lsblk), []
     if not _is_json(lsblk) and loop_results(mounts) and not loop_results(explicit):
         return {"devices": [], "stacks": [], "unusable": [],
@@ -256,19 +258,19 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
     explicit = loop_results(explicit)
     contents = dict((r.get("item"), r.get("stdout_lines") or []) for r in loop_results(contents))
     by_majmin = dict((n.get("maj:min"), k) for k, n in nodes.items() if n.get("maj:min"))
-    devices, stacks, unusable, index = [], [], [], {}
+    devices, stacks, unusable, os_skipped, index = [], [], [], [], {}
 
     def kind(k):
         return _kind(nodes[k], lvs)
 
-    def add(k, top, where):
+    def add(k, top, where, os_fs=False):
         if k in index:
             return
         n = nodes.get(k) or {"kname": k}
         k_kind = kind(k) if k in nodes else ("dm" if k.startswith("dm-") else "md" if k.startswith("md") else "disk")
         lv = lvs.get(n.get("maj:min", ""), {}) if k_kind == "lvm" else {}
         index[k] = len(devices)
-        devices.append({"kname": k, "label": _label(n), "kind": k_kind, "top": top, "where": where,
+        devices.append({"kname": k, "label": _label(n), "kind": k_kind, "top": top, "where": where, "os": os_fs,
                         "lv": "%s/%s" % (lv["vg"], lv["lv"]) if lv else "", "lv_read_ahead": lv.get("read_ahead", ""),
                         # what lsblk says now (import_cluster's report; the role reads sysfs)
                         "ra": n.get("ra", ""), "rota": n.get("rota", ""), "sched": n.get("sched", "")})
@@ -322,39 +324,34 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
             add(k, True, given)   # lsblk doesn't see it (no udev, a test tree): taken as a disk, if sysfs has it
             stacks.append("%s%s%s" % (given, ARROW, k))
             continue
-        ours.add(nodes[k].get("maj:min"))   # a device set by hand is Cassandra's
+        if not [u for u in _other_uses(nodes, k, set()) if u in OS_MOUNTS]:
+            ours.add(nodes[k].get("maj:min"))   # a device set by hand is Cassandra's, but the OS's
         tops.setdefault(k, []).append(given)
 
     # what the Cassandra filesystems sit on, before telling a device under them shared
+    # (an OS filesystem is not: the disks under it stay the OS's)
     ours.update(nodes[k].get("maj:min") for k in tops if targets.get(k) not in OS_MOUNTS
                 and not [u for u in _other_uses(nodes, k, set()) if u in OS_MOUNTS])
     for kname, dirs in tops.items():
         top = disk_of(kname)
         target = targets.get(kname)
-        # where the device is mounted (also when the directory is a bind mount of it)
-        os_uses = [u for u in _other_uses(nodes, kname, set()) if u in OS_MOUNTS]
-        if target in OS_MOUNTS or os_uses:
-            # never the OS's volume or disk
-            notes.append("%s: not tuned, on %s, an OS filesystem: on a filesystem of its own, it gets tuned"
-                         % (", ".join(dirs), ", ".join(os_uses) or target))
-            if explicit:
-                unusable.extend(dirs)
+        # an OS filesystem: where it is mounted (also through a bind mount), or
+        # what else its disk holds for a partition
+        os_fs = sorted(set(([target] if target in OS_MOUNTS else [])
+                           + [u for u in _other_uses(nodes, kname, set()) if u in OS_MOUNTS]))
+        os_disk = sorted(set(u for u in _other_uses(nodes, top, ours) if u in OS_MOUNTS)) if kname != top else []
+        if (os_fs or os_disk) and not tune_os:
+            notes.append("%s: not tuned, on %s, an OS filesystem (cassandra_data_tune_os_volumes: false)"
+                         % (", ".join(dirs), ", ".join(os_fs + os_disk)))
+            os_skipped.extend(dirs)
             continue
-        if kname != top:
-            os_uses = [u for u in _other_uses(nodes, top, ours) if u in OS_MOUNTS]
-            if os_uses:
-                notes.append("%s: not tuned, %s is read through its disk %s, which also holds %s (the OS's)"
-                             % (", ".join(dirs), kname, top, ", ".join(os_uses)))
-                if explicit:
-                    unusable.extend(dirs)
-                continue
         if kind(top) in ("loop", "lvm-internal"):
             if explicit:
                 unusable.extend(dirs)
             else:
                 notes.append("%s: not tuned, on %s (%s)" % (", ".join(dirs), _label(nodes[top]), nodes[top].get("type")))
             continue
-        add(top, True, ", ".join(dirs))
+        add(top, True, ", ".join(dirs), bool(os_fs or os_disk))
         shown = []
         for level in _levels(nodes, kname):
             names = []
@@ -376,6 +373,11 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
             uses = _other_uses(nodes, top, ours)
             if uses:
                 line += " (%s is read through its disk %s, which also holds %s)" % (kname, top, ", ".join(uses))
+        if os_fs:
+            line += (" (%s: of the OS, its read-ahead set for Cassandra; its other files read with the same)"
+                     % ", ".join(os_fs))
+        elif os_disk:
+            line += " (%s: of the OS, on that disk too: read with the same read-ahead)" % ", ".join(os_disk)
         if kind(top) == "dm" and any(disk_of(p) not in index for p in nodes[top]["parents"]):
             line += (" (%s may get back the read-ahead of the device under it when it is activated again)"
                      % _label(nodes[top]))
@@ -399,7 +401,7 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
                 notes.append("%s: not tuned, though the Cassandra files on it are read with its read-ahead, not with the"
                              " one of %s under it: set it in cassandra_data_block_devices, or leave them empty"
                              % (_label(nodes[u]), k))
-    return {"devices": devices, "stacks": stacks, "notes": _dedupe(notes), "unusable": unusable}
+    return {"devices": devices, "stacks": stacks, "notes": _dedupe(notes), "unusable": unusable, "os_skipped": os_skipped}
 
 
 def _udev_value(value):

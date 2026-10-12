@@ -93,7 +93,8 @@ def test_lvm_on_one_disk_with_a_shared_mount():
              contents=ls("/data", ["cluster_a", "other_app", "lost+found"]))
     assert tuned(p) == ["dm-2", "sdb"]
     assert by(p, "dm-2") == {"kname": "dm-2", "label": "vg1-cassandra (dm-2)", "kind": "lvm", "top": True,
-                             "where": d, "lv": "vg1/cassandra", "lv_read_ahead": "auto", "ra": "", "rota": "", "sched": ""}
+                             "where": d, "os": False, "lv": "vg1/cassandra", "lv_read_ahead": "auto", "ra": "", "rota": "",
+                             "sched": ""}
     assert by(p, "sdb")["where"] == "under vg1-cassandra (dm-2)"
     assert by(p, "sdb")["kind"] == "disk" and not by(p, "sdb")["top"]
     assert p["stacks"] == [d + ARROW + "vg1-cassandra (dm-2)" + ARROW + "sdb"
@@ -149,9 +150,14 @@ def test_multipath():
 
 def test_nvme_partitions_and_a_commitlog_namespace():
     p = plan(lsblk("nvme"), [mount(DATA, "259:2", "/var/lib/cassandra"), mount(COMMITLOG, "259:3", COMMITLOG)])
-    assert tuned(p) == ["nvme1n1"]   # the data partition's disk also holds /boot: the OS's
-    assert p["notes"] == [DATA + ": not tuned, nvme0n1p2 is read through its disk nvme0n1, which also holds /boot (the OS's)"]
-    assert p["stacks"] == [COMMITLOG + ARROW + "nvme1n1"]
+    assert tuned(p) == ["nvme0n1", "nvme1n1"]   # the data partition's disk also holds /boot: tuned, said
+    assert p["stacks"] == [
+        DATA + ARROW + "nvme0n1p2" + ARROW + "nvme0n1 (nvme0n1p2 is read through its disk nvme0n1, which also holds /boot)"
+        " (/boot: of the OS, on that disk too: read with the same read-ahead)",
+        COMMITLOG + ARROW + "nvme1n1"]
+    p = plan(lsblk("nvme"), [mount(DATA, "259:2", "/var/lib/cassandra"), mount(COMMITLOG, "259:3", COMMITLOG)], tune_os=False)
+    assert tuned(p) == ["nvme1n1"] and p["notes"] == [
+        DATA + ": not tuned, on /boot, an OS filesystem (cassandra_data_tune_os_volumes: false)"]
 
 
 def test_shared_vg_with_root_tunes_the_cassandra_volume_only():
@@ -167,19 +173,24 @@ def test_shared_vg_with_root_tunes_the_cassandra_volume_only():
 
 
 def test_data_on_the_root_volume():
+    # tuned all the same (Cassandra suffers from a large read-ahead, the OS hardly), said; its PV disk is shared
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto"]
-    p = plan(lsblk("shared_vg"), [mount(DATA, "253:0", "/"), mount("/var/x", "253:9", "/var")], lvs=lvs)
-    assert p["devices"] == []
-    assert DATA + ": not tuned, on /, an OS filesystem: on a filesystem of its own, it gets tuned" in p["notes"]
+    p = plan(lsblk("shared_vg"), [mount(DATA, "253:0", "/")], lvs=lvs)
+    assert tuned(p) == ["dm-0"] and by(p, "dm-0")["os"] is True
+    assert p["stacks"][0].endswith("(/: of the OS, its read-ahead set for Cassandra; its other files read with the same)")
+    assert p["notes"] == ["sda: not tuned, it also holds /, /boot, /var/lib/cassandra, [SWAP] (the devices above it are; "
+                          "cassandra_data_tune_shared_devices: true tunes it too)"]
+    p = plan(lsblk("shared_vg"), [mount(DATA, "253:0", "/")], lvs=lvs, tune_os=False)
+    assert p["devices"] == [] and p["notes"] == [
+        DATA + ": not tuned, on /, an OS filesystem (cassandra_data_tune_os_volumes: false)"]
 
 
-def test_commitlog_alone_on_the_root_volume_is_left_alone():
-    # data on its own volume, the commitlog left at its default on /
+def test_commitlog_on_the_root_volume_is_tuned():
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto", "253|2|rhel|cassandra|auto"]
     p = plan(lsblk("shared_vg"), [mount("/data/c/data", "253:2", "/data"), mount(COMMITLOG, "253:0", "/", commitlog=True)],
              lvs=lvs)
-    assert tuned(p) == ["dm-2"]
-    assert COMMITLOG + ": not tuned, on /, an OS filesystem: on a filesystem of its own, it gets tuned" in p["notes"]
+    assert tuned(p) == ["dm-2", "dm-0"]
+    assert p["stacks"][1].startswith(COMMITLOG + ARROW + "rhel-root (dm-0)")
 
 
 def test_volume_lvs_does_not_list_is_tuned_as_a_dm_device():
@@ -227,15 +238,18 @@ def test_cassandra_dirs_on_the_os_filesystem_do_not_make_its_disks_cassandra_s()
     data = mount("/data/c/data", "253:1", "/data")
     p = plan(root_spanning_two_disks(), [data], lvs=lvs)
     assert tuned(p) == ["dm-1"] and "sdb: not tuned, it also holds /" in p["notes"][0]
-    for other in (mount(HINTS, "253:0", "/", tune=False), mount(COMMITLOG, "253:0", "/", commitlog=True)):
-        assert tuned(plan(root_spanning_two_disks(), [data, other], lvs=lvs)) == ["dm-1"]
-    p = plan(root_spanning_two_disks(), [mount(HINTS, "253:0", "/", tune=False)],
-             explicit=[readlink("/dev/vg/data", "/dev/dm-1")], lvs=lvs)
-    assert tuned(p) == ["dm-1"]
+    # hints on /: not tuned (read whole), nor making the root disks Cassandra's
+    assert tuned(plan(root_spanning_two_disks(), [data, mount(HINTS, "253:0", "/", tune=False)], lvs=lvs)) == ["dm-1"]
+    # the commitlog on /: the root volume tuned, not the disks it shares
+    p = plan(root_spanning_two_disks(), [data, mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs)
+    assert tuned(p) == ["dm-1", "dm-0"] and "sda" not in tuned(p) and "sdb" not in tuned(p)
+    assert tuned(plan(root_spanning_two_disks(), [data, mount(COMMITLOG, "253:0", "/", commitlog=True)], lvs=lvs,
+                      tune_os=False)) == ["dm-1"]
 
 
-def test_a_dir_not_created_yet_never_tunes_the_root_filesystem():
+def test_a_dir_not_created_yet_on_the_os_filesystem():
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto"]
+    # its own filesystem may not be mounted yet: never the OS's by mistake, whatever tune_os
     p = plan(lsblk("shared_vg"), [missing(mount("/data/d", "253:0", "/"))], lvs=lvs)
     assert p["devices"] == [] and p["notes"] == ["/data/d: not tuned, not created yet (it would be on /, an OS filesystem)"]
     # through a parent on its own mount: that one
@@ -314,7 +328,8 @@ def test_loop_device():
 
 def test_data_on_the_root_partition_of_a_vm():
     p = plan(lsblk("container"), [mount(DATA, "252:1", "/", fstype="ext4")])
-    assert p["devices"] == [] and "on /, an OS filesystem" in p["notes"][0]
+    assert tuned(p) == ["vda"] and by(p, "vda")["os"] is True
+    assert plan(lsblk("container"), [mount(DATA, "252:1", "/", fstype="ext4")], tune_os=False)["devices"] == []
 
 
 def test_mount_targets():
@@ -347,7 +362,7 @@ def test_explicit_mapper_name_and_partition():
 def test_explicit_device_lsblk_does_not_see_is_taken_as_a_disk():
     p = plan("", [not_found(DATA)], explicit=[readlink("/dev/sdz", "/dev/sdz")])
     assert p["devices"] == [{"kname": "sdz", "label": "sdz", "kind": "disk", "top": True, "where": "/dev/sdz",
-                             "lv": "", "lv_read_ahead": "", "ra": "", "rota": "", "sched": ""}]
+                             "os": False, "lv": "", "lv_read_ahead": "", "ra": "", "rota": "", "sched": ""}]
     assert p["notes"] == []  # the directories are not looked at
 
 
@@ -366,19 +381,22 @@ def test_explicit_dm_device_lsblk_does_not_see_is_never_matched_by_name():
     assert udev_match(by(p, "dm-3"), {}, {}) == ""
 
 
-def test_a_bind_mount_of_an_os_filesystem_is_not_tuned():
+def test_a_bind_mount_of_an_os_filesystem_is_said():
     # /var/lib/cassandra bind-mounted from /srv/cass on the root volume: findmnt says /var/lib/cassandra
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto"]
-    p = plan(lsblk("shared_vg"), [mount(DATA, "253:0", "/var/lib/cassandra", source="/dev/mapper/rhel-root[/srv/cass]")],
-             lvs=lvs)
-    assert p["devices"] == [] and p["notes"][0].startswith(DATA + ": not tuned, on /, an OS filesystem")
+    bound = [mount(DATA, "253:0", "/var/lib/cassandra", source="/dev/mapper/rhel-root[/srv/cass]")]
+    p = plan(lsblk("shared_vg"), bound, lvs=lvs)
+    assert tuned(p) == ["dm-0"] and p["stacks"][0].endswith(
+        "(/: of the OS, its read-ahead set for Cassandra; its other files read with the same)")
+    assert plan(lsblk("shared_vg"), bound, lvs=lvs, tune_os=False)["devices"] == []
 
 
-def test_explicit_partition_on_the_os_disk_is_refused():
-    p = plan(lsblk("nvme"), [mount(DATA, "259:2", "/var/lib/cassandra")],
-             explicit=[readlink("/dev/nvme0n1p2", "/dev/nvme0n1p2"), readlink("/dev/nvme1n1", "/dev/nvme1n1")])
-    assert tuned(p) == ["nvme1n1"] and p["unusable"] == ["/dev/nvme0n1p2"]
-    assert not [n for n in p["notes"] if "set it in cassandra_data_block_devices" in n]
+def test_explicit_partition_on_the_os_disk():
+    explicit = [readlink("/dev/nvme0n1p2", "/dev/nvme0n1p2"), readlink("/dev/nvme1n1", "/dev/nvme1n1")]
+    p = plan(lsblk("nvme"), [mount(DATA, "259:2", "/var/lib/cassandra")], explicit=explicit)
+    assert tuned(p) == ["nvme0n1", "nvme1n1"] and p["unusable"] == []
+    p = plan(lsblk("nvme"), [mount(DATA, "259:2", "/var/lib/cassandra")], explicit=explicit, tune_os=False)
+    assert tuned(p) == ["nvme1n1"] and p["unusable"] == []
 
 
 def test_hints_bound_from_the_root_volume_do_not_make_its_disk_cassandra_s():
@@ -389,12 +407,23 @@ def test_hints_bound_from_the_root_volume_do_not_make_its_disk_cassandra_s():
     assert tuned(p) == ["dm-1"] and "sdb: not tuned, it also holds /" in p["notes"][0]
 
 
-def test_explicit_os_disk_is_not_tuned():
+def test_explicit_root_volume_leaves_its_disk_alone():
+    root = {"name": "vg-root", "kname": "dm-0", "maj:min": "253:0", "type": "lvm", "mountpoint": "/", "fstype": "xfs"}
+    text = json.dumps({"blockdevices": [{"name": "sdb", "kname": "sdb", "maj:min": "8:16", "type": "disk",
+                                         "fstype": "LVM2_member", "children": [root]}]})
+    p = plan(text, [], explicit=[readlink("/dev/vg/root", "/dev/dm-0")], lvs=["253|0|vg|root|auto"])
+    assert tuned(p) == ["dm-0"] and "sdb: not tuned, it also holds /" in p["notes"][0]
+
+
+def test_explicit_os_disk_is_tuned_and_said():
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto", "253|2|rhel|cassandra|auto"]
     p = plan(lsblk("shared_vg"), [mount(DATA, "253:2", "/var/lib/cassandra")],
              explicit=[readlink("/dev/sda", "/dev/sda")], lvs=lvs)
-    assert p["devices"] == [] and p["notes"][0].startswith("/dev/sda: not tuned, on /, /boot, an OS filesystem")
-    assert p["unusable"] == ["/dev/sda"]  # set by hand: refused
+    assert tuned(p) == ["sda"] and p["unusable"] == []  # no longer refused
+    p = plan(lsblk("shared_vg"), [mount(DATA, "253:2", "/var/lib/cassandra")],
+             explicit=[readlink("/dev/sda", "/dev/sda")], lvs=lvs, tune_os=False)
+    assert p["devices"] == [] and p["unusable"] == [] and "cassandra_data_tune_os_volumes: false" in p["notes"][0]
+    assert p["os_skipped"] == ["/dev/sda"]  # the role doesn't fail on it
 
 
 def test_explicit_unusable():

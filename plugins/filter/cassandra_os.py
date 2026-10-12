@@ -519,7 +519,8 @@ def _disk_changes(recs, devices, kb):
     for old in OWN_UDEV_RULES[1:] + ("/etc/udev/rules.d/60-cassandra-data-disk.rules",):
         if old in rules:
             out.append("its rule of earlier versions, %s" % old)
-    if OWN_UDEV_RULES[0] not in rules and any(d["kind"] != "lvm" or d["lv_read_ahead"] != str(kb * 2) for d in devices):
+    if OWN_UDEV_RULES[0] not in rules and any(
+            d["kind"] != "lvm" or d.get("os") or d["lv_read_ahead"] != str(kb * 2) for d in devices):
         out.append("its udev rule, %s" % OWN_UDEV_RULES[0])
     # tuned: the records of its profiles, as cassandra_linux reads them
     lines, profiles = [], {}

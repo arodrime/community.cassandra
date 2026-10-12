@@ -29,8 +29,7 @@ argument_specs:
           - Device to tune instead of finding it from the directories, for example C(/dev/sdb),
             C(/dev/nvme0n1), C(/dev/vg/lv) or C(/dev/md0); a partition is taken as its disk, the
             devices under it are tuned too, unless shared (O(cassandra_data_tune_shared_devices)).
-            A device that can't be tuned (also one holding an OS filesystem, or a partition of a disk holding one)
-            fails the role.
+            A device that can't be tuned fails the role.
           - When empty (and O(cassandra_data_block_devices) too), the devices are found
             from the data and commitlog directories, from the filesystem's device (LVM volume,
             md array, dm-crypt, multipath) down to the disks.
@@ -53,6 +52,14 @@ argument_specs:
             volume (its I/O suspended a moment). By default it is done at a run with Cassandra stopped (a new node,
             before it starts); meanwhile the read-ahead is set live and kept by the udev rule.
           - V(true) also runs it under a running Cassandra.
+      cassandra_data_tune_os_volumes:
+        type: bool
+        default: true
+        description:
+          - Tune the filesystem Cassandra's directories are on also when it is one of the OS (C(/), C(/var)...),
+            with a note (its other files read with the same read-ahead). An LVM volume of the OS is kept by the
+            udev rule, not reloaded with C(lvchange).
+          - V(false) leaves it alone, with a note.
       cassandra_data_readahead_kb:
         type: int
         default: 4

@@ -32,12 +32,14 @@ Role Variables
   disk); the devices under them are tuned too, unless they also hold
   something else (see `cassandra_data_tune_shared_devices`). Defaults to `""`
   and `[]`. A
-  device set here that can't be tuned (also one holding an OS filesystem, or a
-  partition of a disk holding one) fails the role (not in containers,
+  device set here that can't be tuned fails the role (not in containers,
   where the disks are left alone).
 * `cassandra_data_lvchange_running`: run `lvchange --readahead`, which
   reloads the volume, also under a running Cassandra. Default `false`: at a
   run with Cassandra stopped (see below).
+* `cassandra_data_tune_os_volumes`: tune the filesystem Cassandra's
+  directories are on also when it is one of the OS (see below). Default
+  `true`; `false` leaves it alone, with a note.
 * `cassandra_data_tune_shared_devices`: also tune the devices under the top
   one that hold something else, e.g. the disk of a volume group shared with
   the OS root. Default `false`: they are left alone, and the role says so.
@@ -82,14 +84,16 @@ The devices are found from the filesystems of `cassandra_data_dir`,
 `cassandra_data_file_directories` and `cassandra_commitlog_dir` (`findmnt`;
 a directory not created yet through its nearest parent), then followed down
 to the disks (`lsblk`): partitions, LVM volumes (also thin ones), md RAID,
-dm-crypt, multipath, NVMe, virtio, and any stack of them. Only filesystems of
-their own are tuned: one of the OS (`/`, `/usr`, `/var`, `/var/lib`,
-`/var/log`, `/var/tmp`, `/home`, `/opt`, `/tmp`, `/boot`, `/boot/efi`; also
-through a bind mount), or a partition of a disk holding one, is left alone,
-its volume and disks too, whatever Cassandra puts there (a data volume
-mounted at `/opt` or `/home` itself too: mount it further down, e.g.
-`/opt/cassandra/data`). So are filesystems not on a block device (overlay, tmpfs, NFS,
-ZFS), btrfs (it reads ahead through a bdi of its own) and loop devices. The
+dm-crypt, multipath, NVMe, virtio, and any stack of them. A filesystem of
+the OS (`/`, `/usr`, `/var`, `/var/lib`, `/var/log`, `/var/tmp`, `/home`,
+`/opt`, `/tmp`, `/boot`, `/boot/efi`, also through a bind mount, or a
+partition of a disk holding one) Cassandra's directories are on is tuned all
+the same, with a note: its other files read with the same read-ahead (at
+worst slower sequential reads for the OS, where Cassandra suffers from a
+large one); an LVM volume of the OS is kept by the udev rule, never reloaded
+with `lvchange`. `cassandra_data_tune_os_volumes: false` leaves it alone.
+Filesystems not on a block device (overlay, tmpfs, NFS, ZFS), btrfs (it
+reads ahead through a bdi of its own) and loop devices are left alone. The
 role says so. When something changes or is left alone, the role shows each
 filesystem and its devices, e.g.
 `/var/lib/cassandra/data → vg_data-lv_cass (dm-2) → md0 → sdb1, sdc1 → sdb, sdc`.
@@ -109,7 +113,7 @@ cryptsetup take the device under them as a minimum when they activate a
 volume. A device under it that also holds something else (the disk of a
 volume group shared with the OS root or swap, a disk with other partitions
 in use) is left alone, unless `cassandra_data_tune_shared_devices` is
-`true` (never the disk of a partition next to one of the OS's). md arrays
+`true`. md arrays
 get the same value too: md sets twice a stripe (megabytes
 on RAID 0/5/10), for sequential reads Cassandra doesn't do.
 

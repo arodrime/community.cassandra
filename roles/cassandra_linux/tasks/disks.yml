@@ -136,7 +136,7 @@
       {{ cassandra_data_lsblk.stdout | default('') | community.cassandra.cassandra_disk_plan(
            cassandra_data_findmnt, cassandra_data_explicit if _cassandra_disks_explicit else none,
            cassandra_data_lvs.stdout_lines | default([]) | reject('match', '^config') | list, cassandra_data_tune_shared_devices,
-           cassandra_data_mount_contents)
+           cassandra_data_mount_contents, cassandra_data_tune_os_volumes)
          if cassandra_data_disk_tuning | bool
          else {'devices': [], 'stacks': [], 'notes': [], 'unusable': []} }}
 
@@ -154,8 +154,7 @@
   ansible.builtin.fail:
     msg: >-
       {{ (_missing or _cassandra_disks_explicit) | join(', ') }} (from cassandra_data_block_device(s)) can't be tuned
-      ({{ cassandra_sysfs_block_root }}/<device>/queue not found, a loop device, a part of an LVM volume, or an OS
-      filesystem on it): set the
+      ({{ cassandra_sysfs_block_root }}/<device>/queue not found, a loop device or a part of an LVM volume): set the
       devices the Cassandra filesystems are on (e.g. /dev/sdb, /dev/nvme0n1, /dev/vg/lv, /dev/md0), or leave the
       variables empty to find them from the Cassandra directories.{{ (' ' ~ _cassandra_disk_plan.notes | join('; '))
       if _cassandra_disk_plan.notes | default([]) else '' }}
@@ -166,7 +165,7 @@
   when:
     - _cassandra_disks_explicit | length > 0
     - _cassandra_data_tuned_here | bool
-    - _missing | length > 0 or _cassandra_disks | length == 0
+    - _missing | length > 0 or (_cassandra_disks | length == 0 and _cassandra_disk_plan.os_skipped | default([]) | length == 0)
 
 # RHEL's default profiles (throughput-performance, virtual-guest) set
 # readahead=>4096 on every disk, device-mapper and md device when tuned starts
@@ -366,11 +365,12 @@
           {{ cassandra_data_lvchange.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0)
              | map(attribute='item') | list }}
         # by LVM: set now by lvchange (but where it failed), or before
+        # (an OS volume: not reloaded, the udev rule keeps it)
         _by_lvm: >-
-          {{ (_cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | map(attribute='kname')
+          {{ (_cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | rejectattr('os') | map(attribute='kname')
               | reject('in', _lvm_failed | map(attribute='kname') | list) | list
               if _cassandra_data_lvchange_now | bool else
-              _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
+              _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | rejectattr('os')
               | selectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string)
               | map(attribute='kname') | list)
              if _cassandra_data_lvm_here | bool else [] }}
@@ -447,9 +447,13 @@
              if _cassandra_data_lvm_here | bool and 'running' in cassandra_data_running.stdout | default('') else
              ['LVM volumes kept by the udev rule, not by LVM (not applied live, or lvm.conf activation/readahead'
               ' "none"): LVM may set them back when it activates them'])
-            if not _cassandra_data_lvchange_now | bool and _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
+            if not _cassandra_data_lvchange_now | bool and _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | rejectattr('os')
                | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string) | list | length > 0
             else [])
+         + (['LVM volumes of the OS kept by the udev rule (never reloaded with lvchange): LVM may set them back'
+             ' when it activates them'] if _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | selectattr('os')
+             | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string) | list
+             | length > 0 and _cassandra_disk_changes | length > 0 else [])
          + (['the files Cassandra has open keep the read-ahead they were opened with: restart it to read them with'
              ' the new one'] if _cassandra_disk_changes_seen | selectattr('what', 'in', ['ra', 'lvm']) | list | length > 0
              and not ansible_check_mode else [])

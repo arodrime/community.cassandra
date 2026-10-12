@@ -23,6 +23,10 @@ cassandra_data_tune_shared_devices: false
 # (a new node, before it starts), else the udev rule keeps it meanwhile.
 # true: also under a running Cassandra.
 cassandra_data_lvchange_running: false
+# Cassandra's directories on a filesystem of the OS (/, /var...): tuned all
+# the same (its other files read with the same read-ahead; an LVM volume of
+# the OS kept by the udev rule, not reloaded). false: left alone, a note.
+cassandra_data_tune_os_volumes: true
 
 # Read-ahead in KB for those devices (queue/read_ahead_kb, not blockdev --setra
 # sectors). 4, the practical minimum: read-ahead brings nothing to

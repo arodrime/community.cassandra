@@ -27,10 +27,10 @@ from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disk
 )
 
 
-def cassandra_disk_plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=None):
+def cassandra_disk_plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=None, tune_os=True):
     # "false" from -e is a string: it must not tune the OS disk
     return plan(lsblk, mounts, explicit=explicit, lvs=lvs, tune_shared=boolean(tune_shared, strict=False),
-                contents=contents)
+                contents=contents, tune_os=boolean(tune_os, strict=False))
 
 
 def cassandra_disk_state(results):
@@ -69,7 +69,9 @@ def cassandra_disk_changes(devices, state, read_back, lvm=True):
     read_back = int(read_back)
     for d in devices or []:
         s = state.get(d["kname"]) or {}
-        by_lvm = d.get("kind") == "lvm" and boolean(lvm, strict=False) and d.get("lv_read_ahead") != str(read_back * 2)
+        # an OS volume is not reloaded: kept by the udev rule
+        by_lvm = d.get("kind") == "lvm" and not d.get("os") and boolean(lvm, strict=False) \
+            and d.get("lv_read_ahead") != str(read_back * 2)
         if by_lvm:
             out.append({"kname": d["kname"], "what": "lvm", "lv": d["lv"], "item": "LVM read-ahead %s (sectors)" % d["lv"],
                         "before": d.get("lv_read_ahead"), "after": cassandra_disk_lv_read_ahead(read_back)})
