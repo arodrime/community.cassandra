@@ -345,10 +345,11 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
         error = None
         try:
             checked = _self_check_node(files_data, hosts, node, names, data)
-        except AnsibleFilterError:
-            raise
         except Exception as exc:  # pylint: disable=broad-except
-            if _undefined(exc):
+            # ours (their message shows no value) or a missing variable; not another filter's
+            # error (2.19+: Ansible's wrapper is an AnsibleFilterError too)
+            if _undefined(exc) or (type(exc) is AnsibleFilterError and exc.__cause__ is None
+                                   and str(exc).startswith("cassandra_")):
                 raise
             # which node, not the message (it may show a value read from it)
             error = _hidden("cassandra_import_self_check_nodes", str(node.get("address")))

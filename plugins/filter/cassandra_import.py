@@ -2055,7 +2055,7 @@ def cassandra_config_ignored_vars(names, cassandra_version):
 # Parts of an error message that show no value: this filter's own messages,
 # and the name of a missing field or variable
 SAFE_REASONS = [
-    (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files|import_self_check_nodes): [^\n]*?"
+    (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files|import_nodes|import_self_check(?:_nodes)?): [^\n]*?"
                 r"\(message hidden: "
                 r"it may show a value read from the nodes\))"), r"\1"),
     (re.compile(r"(cassandra_import_nodes: [0-9A-Fa-f.:]+: \w+)"), r"\1"),
