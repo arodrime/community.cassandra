@@ -61,10 +61,16 @@ def test_failure_shows_each_node_error():
 def test_given_nodes_found_when_a_discovered_node_comes_first():
     # add_host puts the nodes found in the ring in groups['all'], maybe first;
     # only the given ones have import_cluster_given
-    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    read = next(play for play in PLAYS if play["name"] == "Read every node")
     hostvars = {"10.0.0.2": {}, "node1": {"import_cluster_given": ["node1"]}}
-    templar = Templar(loader=DataLoader(), variables={"groups": {"all": ["10.0.0.2", "node1"]}, "hostvars": hostvars})
-    assert templar.template(trust_as_template(write["vars"]["_given"])) == ["node1"]
+    templar = Templar(loader=DataLoader(), variables={"groups": {"all": ["10.0.0.2", "node1"], "import_cluster_found": ["10.0.0.2"]},
+                                                      "hostvars": hostvars})
+    assert templar.template(trust_as_template(read["hosts"])) == ["node1", "10.0.0.2"]
+    # the play writing the inventory reads them on the controller, kept there once (not the variables of every host)
+    keep = task("Keep the given nodes and the ring on the controller")
+    assert keep["delegate_to"] == "localhost" and keep["delegate_facts"] is True and keep["run_once"] is True
+    write = next(play for play in PLAYS if play["name"] == "Write the inventory")
+    assert write["vars"]["_given"] == "{{ import_cluster_given }}" and write["vars"]["_ring"] == "{{ import_cluster_ring_nodes }}"
 
 
 def test_inventory_written_without_become():

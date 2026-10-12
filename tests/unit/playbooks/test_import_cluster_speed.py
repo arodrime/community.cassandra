@@ -87,3 +87,21 @@ def test_one_line_per_phase():
     variables["_forks"] = "50"
     text = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(phase["ansible.builtin.debug"]["msg"]))
     assert text == "Reading 30 nodes: facts, packages, the running Cassandra, its config..."
+
+
+@pytest.mark.parametrize("family, expected", [
+    ("RedHat", ["installed_cassandra=4.1.5"]),
+    # dpkg: an installed one (not a removed one whose config files are left)
+    ("Debian", ["installed_cassandra=4.1.5-1", "installed_libjemalloc2=5.3.0-2"]),
+])
+def test_packages_read_without_package_facts(tmp_path, family, expected):
+    (tmp_path / "rpm").write_text('#!/bin/sh\n[ "$4" = cassandra ] && { printf "4.1.5\\n4.1.4\\n"; exit 0; }\n'
+                                  'echo "package $4 is not installed"; exit 1\n')
+    (tmp_path / "dpkg-query").write_text(
+        '#!/bin/sh\ncase $4 in cassandra) echo "installed 4.1.5-1" ;; libjemalloc2) echo "installed 5.3.0-2" ;;\n'
+        'jemalloc) echo "config-files 3.6.0" ;; *) echo "dpkg-query: no packages found matching $4" >&2; exit 1 ;; esac\n')
+    for name in ("rpm", "dpkg-query"):
+        (tmp_path / name).chmod(0o755)
+    script = "PATH=%s:$PATH IMPORT_CLUSTER_PACKAGES='cassandra jemalloc libjemalloc2 curl' IMPORT_CLUSTER_OS_FAMILY=%s\n" % (
+        tmp_path, family) + snippet("for p in $IMPORT_CLUSTER_PACKAGES", "done")
+    assert run(script, tmp_path).split("\n") == expected

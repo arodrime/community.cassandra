@@ -1755,3 +1755,12 @@ def test_layout_over_settles_without_the_users_files_it_writes():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_files
     written = set(f["path"] for f in cassandra_inventory_files(layout))
     assert "group_vars/all/x.yml" in layout["user_paths"] and not written & set(layout["user_paths"])
+
+
+def test_import_error_names_the_node_of_the_nodes_filters():
+    # one call for every node: the node it failed on, the error's type only
+    for msg in ("cassandra_import_nodes: 10.0.0.5: KeyError",
+                "cassandra_import_self_check_nodes: 10.0.0.5: KeyError (message hidden: it may show a value read from"
+                " the nodes)"):
+        reason = cassandra_import_error({"failed": True, "msg": "templating failed: " + msg})
+        assert reason == msg.split(" (", maxsplit=1)[0]

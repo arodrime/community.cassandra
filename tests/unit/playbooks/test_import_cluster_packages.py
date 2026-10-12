@@ -46,7 +46,7 @@ def render(template, **variables):
 
 
 def installed(packages, os_family="RedHat", held=None, read=True, package="5.0.7", dsbulk="/usr/share/dsbulk-1.11.2/bin/dsbulk"):
-    hv = {"ansible_facts": {"packages": {p: [{"version": "1"}] for p in packages}, "os_family": os_family},
+    hv = {"ansible_facts": {"os_family": os_family}, "import_cluster_packages": dict((p, "1") for p in packages),
           "import_cluster_package": package, "import_cluster_held": held or [], "import_cluster_dsbulk": dsbulk}
     keep = node(hv, read=read)["keep"]
     out = dict((k, v) for k, v in keep.items() if k in INSTALLED)
@@ -105,7 +105,7 @@ def test_not_read_or_not_a_package():
 
 def test_written_in_the_host_vars():
     # this node's: nodes added later get cassandra-tools, jemalloc and the hold
-    out = node({"ansible_facts": {"packages": {"cassandra": [{}], "jemalloc": [{}]}}, "import_cluster_package": "4.1.5",
+    out = node({"import_cluster_packages": {"cassandra": "4.1.5", "jemalloc": "3.6.0"}, "import_cluster_package": "4.1.5",
                 "import_cluster_dsbulk": "/usr/share/dsbulk-1.11.2/bin/dsbulk"})
     assert out["keep"] == {"cassandra_firewall_manage": False, "cassandra_install_tools": False,
                            "cassandra_dsbulk_version": "1.11.2"}

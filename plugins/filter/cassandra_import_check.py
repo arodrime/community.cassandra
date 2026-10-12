@@ -12,6 +12,8 @@ cassandra_import_self_check: the files import_cluster writes (group_vars,
     JVM options, shell words, XML elements, unit keys), not as text: the
     settings that differ, values of secrets masked; and the owner, group and
     mode cassandra_config would give its files, against the node's.
+cassandra_import_self_check_nodes: the same for each node read, the
+    inventory files read once for all of them.
 
 Their unexpected errors do not quote the error message, which may show a
 value read from the nodes (a password).
@@ -22,6 +24,7 @@ __metaclass__ = type
 
 import configparser
 import difflib
+import functools
 import json
 import os
 import re
@@ -31,7 +34,6 @@ import xml.etree.ElementTree as ET
 import yaml
 
 from ansible.errors import AnsibleFilterError
-from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.filter.core import b64decode
 from ansible.plugins.loader import lookup_loader
@@ -235,16 +237,8 @@ def _compare(name, node, role, storage_dir=""):
     return out
 
 
+@functools.lru_cache(maxsize=None)
 def _defaults():
-    if not _DEFAULTS:
-        _DEFAULTS.append(_read_defaults())
-    return _DEFAULTS[0]
-
-
-_DEFAULTS = []
-
-
-def _read_defaults():
     ctx = {}
     for role in ("cassandra_config", "cassandra_service", "cassandra_medusa"):
         with open(os.path.join(ROLES, role, "defaults", "main.yml")) as f:
@@ -341,20 +335,28 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
     files_data = _read_files(files)
     out = {}
     for node in nodes:
-        if not boolean(node["read"], strict=False):
+        if not node["read"]:
             continue
-        hv = data[node["host"]]
-        slurped = list(hv["import_cluster_slurp"]["results"]) + list(hv.get("import_cluster_jmx_slurp", {}).get("results", []))
-        for key, item in (("import_cluster_unit_slurp", "cassandra.service"), ("import_cluster_medusa_ini", "medusa.ini")):
-            if "content" in (hv.get(key) or {}):
-                slurped.append(dict(hv[key], item=item))
-        live = dict((r["item"], b64decode(r["content"])) for r in slurped if "content" in r)
-        unit = hv.get("import_cluster_unit") or {}
-        out[names[node["address"]]] = _self_check(
-            files_data, hosts, names[node["address"]], hv["ansible_facts"], live, unit.get("env", {}),
-            hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
-            (hv.get("import_cluster_perms") or {}).get("files"))
+        try:
+            out[names[node["address"]]] = _node_self_check(files_data, hosts, names[node["address"]], data[node["host"]])
+        except AnsibleFilterError as exc:  # (their messages show no value)
+            raise AnsibleFilterError("cassandra_import_self_check_nodes: %s: %s" % (node["address"], exc))
+        except Exception as exc:  # pylint: disable=broad-except
+            raise AnsibleFilterError("cassandra_import_self_check_nodes: %s: %s (message hidden: it may show a value read"
+                                     " from the nodes)" % (node["address"], type(exc).__name__))
     return out
+
+
+def _node_self_check(files_data, hosts, name, hv):
+    slurped = list(hv["import_cluster_slurp"]["results"]) + list(hv.get("import_cluster_jmx_slurp", {}).get("results", []))
+    for key, item in (("import_cluster_unit_slurp", "cassandra.service"), ("import_cluster_medusa_ini", "medusa.ini")):
+        if "content" in (hv.get(key) or {}):
+            slurped.append(dict(hv[key], item=item))
+    live = dict((r["item"], b64decode(r["content"])) for r in slurped if "content" in r)
+    unit = hv.get("import_cluster_unit") or {}
+    return _self_check(files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
+                       hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""),
+                       hv["import_cluster_conf_dir"], (hv.get("import_cluster_perms") or {}).get("files"))
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions):

@@ -2048,6 +2048,7 @@ SAFE_REASONS = [
     (re.compile(r"(cassandra_(?:config_import|inventory_layout|inventory_files): [^\n]*?\(message hidden: "
                 r"it may show a value read from the nodes\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
+    (re.compile(r"(cassandra_import_(?:nodes|self_check_nodes): [\w.:-]+: \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),

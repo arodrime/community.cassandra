@@ -222,8 +222,8 @@ def test_import_lists_the_config_files_written_since_the_start():
         plays = yaml.safe_load(f)
     found = dict((t.get("name"), t) for p in plays for t in p.get("tasks", []))
     assert found["Find when the running Cassandra started"]["ansible.builtin.include_role"]["tasks_from"] == "jvm_started.yml"
-    assert found["Read when its config files were written"]["ansible.builtin.find"]["patterns"] == \
-        "{{ _cassandra_service_config_files }}"
+    read = found["Read the config files, when they were written, the JVM's arguments, the repository files and the unit"]
+    assert "[['newer', 'find', [[import_cluster_conf_dir, _cassandra_service_config_files]]]]" in read["vars"]["_wanted"]
     note = found["Note the ones written since it started"]["ansible.builtin.set_fact"]["import_cluster_newer_files"]
     files = [{"path": "/etc/cassandra/conf/%s" % n, "ctime": m}
              for n, m in [("cassandra.yaml", 90.0), ("jvm17-server.options", 100.6), ("cassandra-env.sh", 100.4)]]

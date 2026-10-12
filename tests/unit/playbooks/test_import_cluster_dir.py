@@ -21,6 +21,7 @@ except ImportError:
         return template
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import GENERATED
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
 
@@ -280,7 +281,7 @@ def test_files_read_and_written():
     task = TASKS["Read the group_vars and host_vars files already there"]
     variables = write_vars(_found=found)
     variables["_top"] = render(task["vars"]["_top"], **variables)
-    assert render(task["loop"], **variables) == [
+    assert render(task["vars"]["_read"], **variables) == [
         "cluster_a.yml", "cluster_b.yml", "hosts.yml", "notes.yml", "group_vars/all/main.yml",
         "group_vars/cluster_b/main.yml", "host_vars/n1/secrets.yml", "sub/x.yml", "hosts", "mine.yaml",
         "group_vars/all/local.yml"]
@@ -315,7 +316,8 @@ def test_stop_on_another_clusters_files():
 def test_invalid_hosts_file_points_to_the_report(report_dir, line):
     variables = write_vars(_report_dir=report_dir, _self_check_ok=False)
     variables["_layout"]["hosts"] = {"all": {}}
-    content = render(TASKS["Write the hosts file"]["ansible.builtin.copy"]["content"], **variables)
+    assert TASKS["Write the hosts file"]["ansible.builtin.copy"]["content"] == "{{ _content }}"
+    content = render(TASKS["Write the hosts file"]["vars"]["_content"], **variables)
     assert content.split("\n")[1] == line
 
 
@@ -385,3 +387,40 @@ def test_the_files_that_change():
     # both the report and the screen get them
     show = next(t for t in write["tasks"] if t.get("name") == "Show the summary")
     assert "changes=_changes" in show["ansible.builtin.debug"]["msg"] and "changes=_changes" in write["vars"]["_report"]
+
+
+@pytest.mark.parametrize("secret, mode, same, written", [
+    (False, "0644", True, False),  # there as it would be written: left alone (as copy would leave it)
+    (False, "0640", True, True),  # another mode: written (copy sets it)
+    (False, "0644", False, True),  # another text
+    (True, "0600", True, False),  # a secret in clear: 0600
+    (True, "0644", True, True),
+    (False, "", False, True),  # not there
+])
+def test_files_that_would_not_change_left_alone(secret, mode, same, written):
+    load_collection_filters()
+    task = TASKS["Write group_vars and host_vars"]
+    path = "group_vars/cluster_a/main.yml"
+    variables = write_vars(item={"path": path, "content": "a: 1\n", "secret": secret}, _vault=False)
+    text = render(task["vars"]["_text"], **variables)
+    assert text.startswith("# Written by community.cassandra.import_cluster for cluster_a")
+    variables.update(_text=text, import_cluster_existing_text={path: text} if same else {},
+                     import_cluster_existing_modes={path: mode} if mode else {})
+    assert render("{{ %s }}" % task["when"], **variables) is written
+    hosts = TASKS["Write the hosts file"]
+    variables.update(_content=text, import_cluster_existing_text={"cluster_a.yml": text} if same else {},
+                     import_cluster_existing_modes={"cluster_a.yml": mode} if mode else {})
+    assert render("{{ %s }}" % hosts["when"], **variables) is not (mode == "0644" and same)  # (always 0644)
+
+
+@pytest.mark.parametrize("stat, created", [
+    ({"exists": True, "isdir": True, "mode": "0755"}, False),
+    ({"exists": True, "isdir": True, "mode": "0700"}, True),  # file sets the mode
+    ({"exists": False}, True),
+    ({"exists": True, "isdir": False, "mode": "0644"}, True),  # a file there: file says so
+    (None, True),  # not read
+])
+def test_dirs_there_left_alone(stat, created):
+    task = TASKS["Create the dirs"]
+    item = {"item": "host_vars/n1"} if stat is None else {"item": "host_vars/n1", "stat": stat}
+    assert render("{{ %s }}" % task["when"], item=item) is created
