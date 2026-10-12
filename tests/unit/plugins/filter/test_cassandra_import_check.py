@@ -849,3 +849,35 @@ def test_list_items_swapped_are_a_hand_edit():
     assert _same_settings("cassandra.yaml", ["    - /a", "    - /b"], ["    - /b", "    - /a"]) is None
     assert _same_settings("cassandra.yaml", ["    - /a", "# x", "    - /b"], ["# y", "    - /a", "    - /b"]) == [
         ("    - /a", "    - /a"), ("    - /b", "    - /b")]
+
+
+def test_keys_cassandra_rejects_are_a_note():
+    # imported without them: the roles leave them out, as they must (the node would not restart with them)
+    files = seeded(stock("41x"))
+    files["cassandra.yaml"] += "fake_option: 42\nauto_bootstrap: false\n"
+    imported = cassandra_config_import(files, "41x", FACTS, "", "/var/lib/cassandra", release="4.1.5")
+    assert imported["not_settings"]["keys"] == ["fake_option"]
+    node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
+            "vars": dict(imported["vars"], cassandra_version="41x"), "hand_edits": imported["hand_edits"],
+            "normalized": imported["normalized"], "comments": imported["comments"], "notes": [],
+            "keep": {"cassandra_service_unit_manage": False}}
+    layout = cassandra_inventory_layout([node], imported["vars"]["cassandra_cluster_name"])
+    inventory = cassandra_inventory_files(layout)
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11",
+                                      "", {}, release="4.1.5")
+    assert out["differences"] == []
+    assert out["notes"] == ["cassandra.yaml: fake_option, which Cassandra 4.1.5 rejects: left out by the import (the"
+                            " node would not restart with it)"]
+    # without the release: the series'
+    out = cassandra_import_self_check(inventory, layout["hosts"], "n1", FACTS, files, {}, "/var/lib/cassandra", "11",
+                                      "", {})
+    assert out["differences"] == [] and "Cassandra 4.1 rejects" in out["notes"][0]
+
+
+def test_a_rejected_key_leaves_the_other_differences():
+    # the key left out, a setting the inventory changes still differs
+    files = seeded(stock("41x"))
+    files["cassandra.yaml"] += "fake_option: 42\n"
+    out = check(files, "41x", tamper={"cassandra_concurrent_writes": 64})
+    assert any(d.startswith("cassandra.yaml: concurrent_writes") for d in out["differences"])
+    assert [n for n in out["notes"] if "fake_option" in n]

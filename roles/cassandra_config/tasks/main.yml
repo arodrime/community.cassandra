@@ -131,6 +131,23 @@
         - not ansible_check_mode
         - not _cassandra_config_target_preview | default(false) | bool
 
+    # Cassandra refuses to start on a cassandra.yaml key it does not know ("Invalid yaml"): checked against the
+    # installed release, else (another series installed, or none) what no release of the series accepts
+    - name: Refuse extra settings Cassandra rejects
+      ansible.builtin.assert:
+        that: _rejected | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: cassandra_extra_settings has {{ _rejected | join(', ') }}, which Cassandra
+          {{ _version }} rejects: it would not restart. Remove {{ 'it' if _rejected | length == 1 else 'them' }}
+          from the inventory; nothing is changed.
+        quiet: true
+      vars:
+        _version: >-
+          {{ _cassandra_config_installed if (_cassandra_config_installed ~ '.').startswith(_cassandra_config_series ~ '.')
+             else _cassandra_config_series }}
+        _rejected: "{{ cassandra_extra_settings | community.cassandra.cassandra_yaml_rejected(_version) }}"
+      when: cassandra_extra_settings | length > 0
+
     - name: Say when Cassandra is newer than the templates
       ansible.builtin.debug:
         msg: >-

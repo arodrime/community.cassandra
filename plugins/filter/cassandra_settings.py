@@ -11,6 +11,8 @@ cassandra_same_settings: the text of a live file, the role's, the file name
     -Dcassandra.storagedir (where the directories cassandra.yaml leaves out
     are) -> true when Cassandra, bash, the JVM and logback get the same
     settings from both.
+cassandra_yaml_rejected: top-level cassandra.yaml keys, a Cassandra version
+    -> the ones it refuses to start with (not one of its properties).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -20,6 +22,8 @@ import re
 import xml.etree.ElementTree as ET
 
 import yaml
+
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_yaml_properties as known
 
 NULLS = ("", "~", "null", "Null", "NULL")
 BOOLS = {"true": "true", "yes": "true", "on": "true", "false": "false", "no": "false", "off": "false"}
@@ -312,6 +316,32 @@ def cassandra_same_settings(live, new, name, storage_dir=""):
     return same_settings(str(name), str(live), str(new), str(storage_dir or ""))
 
 
+def yaml_rejected(keys, version):
+    """The keys among `keys` (top-level cassandra.yaml keys) Cassandra `version` refuses to start with ("Invalid
+    yaml. Please remove properties [...]"), sorted. version: a release (4.1.5), else a series (4.1, 41x: the keys
+    no release of it accepts). Nothing for a series not known, nor for a release newer than the lists (the
+    properties it added are not known). A dotted key (sstable.selected_format: 4.1+ sets a nested property that
+    way) is judged by its first part."""
+    m = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", str(version)) or re.match(r"^(\d)(\d)x$", str(version))
+    series = "%s.%s" % m.group(1, 2) if m else None
+    if series not in known.LATEST:
+        return []
+    # a pre-release (5.0.0-rc1): the series'
+    patch = int(m.group(3)) if m.lastindex == 3 and not re.search(r"(?i)-(alpha|beta|rc)", str(version)) else None
+    if patch is not None and patch > known.LATEST[series]:
+        return []
+    some = known.SOME.get(series, {})
+    accepted = set(known.ALL[series]) | set(
+        k for k, ranges in some.items() if patch is None or any(a <= patch <= b for a, b in ranges))
+    return sorted(k for k in set(str(k) for k in keys) if k.split(".")[0] not in accepted)
+
+
+def cassandra_yaml_rejected(keys, version):
+    """Filter: see yaml_rejected; keys: a list, or a dict (its keys)."""
+    return yaml_rejected(list(keys or []), version)
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_same_settings": cassandra_same_settings}
+        return {"cassandra_same_settings": cassandra_same_settings,
+                "cassandra_yaml_rejected": cassandra_yaml_rejected}

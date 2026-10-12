@@ -755,8 +755,18 @@
               {{ _live | community.cassandra.cassandra_config_import(import_cluster_series, ansible_facts,
                                                                      import_cluster_conf_target | default(''),
                                                                      import_cluster_storage_dir | default(''),
-                                                                     import_cluster_jmx_files | default({})) }}
+                                                                     import_cluster_jmx_files | default({}),
+                                                                     _release) }}
           vars:
+            # the cassandra.yaml keys are judged by the release the next start runs: the package installed
+            # since Cassandra started (a restart pending), else the running one
+            _package: >-
+              {{ import_cluster_package | default('') | regex_replace('^([0-9]+[.][0-9]+[.][0-9]+).*$', '\1') }}
+            _release: >-
+              {{ _package if _package is match('[0-9]+[.][0-9]+[.][0-9]+$')
+                            and _package.split('.')[:2] == (import_cluster_version | default('') | string).split('.')[:2]
+                            and _package is version(import_cluster_version, '>')
+                 else import_cluster_version | default('') }}
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
               {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')
@@ -1537,6 +1547,8 @@
               hand_edits: "{{ _hv.import_cluster_config.hand_edits | default([]) }}"
               normalized: "{{ _hv.import_cluster_config.normalized | default([]) }}"
               comments: "{{ _hv.import_cluster_config.comments | default([]) }}"
+              # cassandra.yaml keys its Cassandra rejects: not imported, the node would not restart with them
+              not_settings: "{{ _hv.import_cluster_config.not_settings | default({}) }}"
               notes: >-
                 {{ [_versions ~ ', ' ~ _install ~ ', config in ' ~ _hv.import_cluster_conf_dir | default('?'), _started]
                    + _hv.import_cluster_perms.notes | default([])
@@ -1812,7 +1824,8 @@
                                                                           _hv.import_cluster_storage_dir | default(''),
                                                                           _hv.import_cluster_java | default(''),
                                                                           _hv.import_cluster_conf_dir,
-                                                                          _hv.import_cluster_perms.files | default(none)) }}
+                                                                          _hv.import_cluster_perms.files | default(none),
+                                                                          _hv.import_cluster_config.release | default('')) }}
       rescue:
         - name: Keep why for the report
           ansible.builtin.set_fact:

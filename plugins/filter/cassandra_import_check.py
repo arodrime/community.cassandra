@@ -49,7 +49,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings)
+    jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
+    yaml_rejected)
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -187,9 +188,16 @@ def _heap(text, environment):
     return {k: v for k, v in out.items() if v is not None}
 
 
-def _compare(name, node, role, storage_dir=""):
+def _top(path):
+    """A cassandra.yaml setting's top-level key (seed_provider[0].class_name: seed_provider)."""
+    return re.split(r"[.\[]", path, maxsplit=1)[0]
+
+
+def _compare(name, node, role, storage_dir="", left_out=()):
+    """The settings that differ; left_out: cassandra.yaml keys left out of the node's (its Cassandra rejects them)."""
     if name.endswith(".yaml"):
         a, b = yaml_settings(node, storage_dir), yaml_settings(role, storage_dir)
+        a = dict((k, v) for k, v in a.items() if _top(k) not in left_out)
         same = [k for k in set(a) & set(b) if same_yaml_value(a[k], b[k], k)]
         return _dict_diff(name, dict((k, v) for k, v in a.items() if k not in same),
                           dict((k, v) for k, v in b.items() if k not in same))
@@ -296,7 +304,7 @@ def _render(variables, facts, live, conf_dir=""):
 
 @_values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
-                                conf_dir="", permissions=None):
+                                conf_dir="", permissions=None, release=""):
     """files, hosts, name: the inventory files, the hosts file's data and the node's
     name there (the variables it gets: cassandra_inventory_host_vars); facts: its ansible_facts;
     live: {file: text the node has}; node_environment: what the node's unit
@@ -305,13 +313,16 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     directories cassandra.yaml leaves out are; java: the running Java's major
     version (the jvm<N>-server.options it reads); conf_dir: where the node
     reads its config; permissions: {file: {owner, group, mode, uid, gid}} the
-    node's files have (cassandra_permissions_import's files), None: not read.
+    node's files have (cassandra_permissions_import's files), None: not read;
+    release: its Cassandra version (4.1.5; '': its series'), the cassandra.yaml
+    keys it rejects are notes, not differences (the import leaves them out).
     -> {'differences', 'notes'}."""
     variables = cassandra_inventory_host_vars(files, hosts, name)
     rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
-    out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java)
+    out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java,
+                         release or SERIES.get(str(variables.get("cassandra_version")), ""))
     if permissions is None:
         out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
     else:
@@ -319,7 +330,17 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     return {"differences": errors + out["differences"], "notes": out["notes"]}
 
 
-def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java=""):
+def _rejected(live, rendered, release):
+    """The top-level keys of the node's cassandra.yaml its Cassandra rejects, the roles' leaves out."""
+    try:
+        node = set(_top(k) for k in yaml_settings(live))
+        role = set(_top(k) for k in yaml_settings(rendered))
+    except yaml.YAMLError:
+        return []
+    return yaml_rejected(node - role, release)
+
+
+def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java="", release=""):
     differences, notes, heap = [], [], []
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
@@ -333,12 +354,17 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
             else:
                 differences.append("%s: not on the node, the roles would create it" % name)
             continue
+        left_out = _rejected(live[name], rendered[name], release) if name == "cassandra.yaml" and release else []
+        if left_out:
+            notes.append("cassandra.yaml: %s, which Cassandra %s rejects: left out by the import (the node would not"
+                         " restart with %s)" % (", ".join(left_out), release, "it" if len(left_out) == 1 else "them"))
         try:
-            found = _compare(name, live[name], rendered[name], storage_dir)
+            found = _compare(name, live[name], rendered[name], storage_dir, left_out)
         except (yaml.YAMLError, ET.ParseError, configparser.Error):
             found = ["%s: cannot be read as its program reads it (node's or the roles' version)" % name]
         # cassandra_config keeps a file only with the same settings by its own test: else it rewrites it
-        if not (found or heap and name == "cassandra-env.sh") and name in CONFIG_FILES \
+        # (a key left out: it rewrites it, as it should)
+        if not (found or left_out or heap and name == "cassandra-env.sh") and name in CONFIG_FILES \
                 and not same_settings(name, live[name], rendered[name], storage_dir):
             found = ["%s: the same settings, written in a way cassandra_config does not keep (it would rewrite the file,"
                      " e.g. the heap moved between the unit and cassandra-env.sh, or a line going on to the next)" % name]

@@ -179,7 +179,9 @@ Role Variables
 * `cassandra_extra_settings`: settings no variable covers, as a dict written
   as-is at the end of `cassandra.yaml` (e.g. `{commitlog_total_space: 8192MiB}`).
   Keys the template already has are refused: set them with their variable.
-  Cassandra refuses unknown keys at startup.
+  Cassandra refuses unknown keys at startup: so does the role, before
+  writing anything, for a key the installed release (else the series) does
+  not accept.
 * `cassandra-env.sh`: `cassandra_log_dir` (defaults to `/var/log/cassandra`,
   as the deb/rpm packages patch it; the tarball's stock value is
   `$CASSANDRA_HOME/logs`), `cassandra_heap_newsize` (4.x only: without G1

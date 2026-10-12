@@ -181,6 +181,42 @@ def test_settings_without_a_variable_become_extra_settings():
     assert sum("kept with cassandra_extra_settings" in line for line in out["normalized"]) == 2
 
 
+def test_keys_cassandra_rejects_are_not_imported():
+    # added by hand since Cassandra started: the node would not restart with it
+    files = node_files("41x")
+    files["cassandra.yaml"] += "auto_bootstrap: false\nfake_option: 42\nother_fake:\n  - a\n  - b\n"
+    out = cassandra_config_import(files, "41x", FACTS, release="4.1.5")
+    assert out["vars"]["cassandra_extra_settings"] == {"auto_bootstrap": False}
+    assert out["not_settings"] == {"keys": ["fake_option", "other_fake"], "release": "4.1.5"}
+    assert out["hand_edits"] == []  # left out by the role, reported apart
+    # none: nothing to report
+    assert cassandra_config_import(node_files("41x"), "41x", FACTS, release="4.1.5")["not_settings"] == {}
+
+
+def test_keys_rejected_by_the_node_release():
+    files = node_files("40x")
+    files["cassandra.yaml"] += "batchlog_endpoint_strategy: dynamic_remote\n"  # 4.0.15 on
+    out = cassandra_config_import(files, "40x", FACTS, release="4.0.14")
+    assert "cassandra_extra_settings" not in out["vars"]
+    assert out["not_settings"] == {"keys": ["batchlog_endpoint_strategy"], "release": "4.0.14"}
+    assert out["hand_edits"] == []
+    out = cassandra_config_import(files, "40x", FACTS, release="4.0.15")
+    assert out["vars"]["cassandra_extra_settings"] == {"batchlog_endpoint_strategy": "dynamic_remote"}
+    assert out["not_settings"] == {}
+    # no release: the series' (some 4.0 release accepts it)
+    assert cassandra_config_import(files, "40x", FACTS)["not_settings"] == {}
+
+
+@pytest.mark.parametrize("series, release", [("41x", "4.1.12"), ("50x", "5.0.9")])
+def test_renamed_key_is_imported(series, release):
+    # the former name of a setting 4.1 renamed (commitlog_total_space): still accepted
+    files = node_files(series)
+    files["cassandra.yaml"] += "commitlog_total_space_in_mb: 8192\n"
+    out = cassandra_config_import(files, series, FACTS, release=release)
+    assert out["vars"]["cassandra_extra_settings"] == {"commitlog_total_space_in_mb": 8192}
+    assert out["not_settings"] == {}
+
+
 def test_unsupported_series():
     with pytest.raises(Exception):
         cassandra_config_import({}, "311x", FACTS)
