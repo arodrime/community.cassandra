@@ -13,8 +13,11 @@
 #    cassandra_cql_username, a variable close to one the collection reads,
 #    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,
 #    mixed versions.
-# -e help_topic=<operation>: one operation in detail (its command, its options
-# with their defaults, an example where one helps, its documentation).
+# Each operation with its command, its options one per line with their
+# defaults, and an example where one helps; under the community.cassandra.ops
+# callback, laid out at the terminal's width and coloured.
+# -e help_topic=<operation>: one operation in detail (the same, and its
+# documentation).
 # Shown as plain text with callback_result_format = yaml in ansible.cfg
 # ([defaults]) or ANSIBLE_CALLBACK_RESULT_FORMAT=yaml; else as a list of quoted lines.
 # -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir
@@ -63,6 +66,12 @@
         msg: "{{ _text if _yaml | bool else ([_plain, ''] if _default | bool else []) + _text.split('\n') }}"
       vars:
         cassandra_output: true
+        cassandra_output_help: true  # the ops callback lays it out at the terminal's width, coloured
+        # its lines for the ops callback, with their layout marks (with -v it prints the results as the default
+        # callback); other callbacks enabled next to it record the marks
+        _flow: >-
+          {{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') == 'community.cassandra.ops'
+             and ansible_verbosity | int == 0 }}
         _default: "{{ lookup('ansible.builtin.config', 'DEFAULT_STDOUT_CALLBACK') in ['default', 'ansible.builtin.default'] }}"
         _yaml: >-
           {{ _default | bool and lookup('ansible.builtin.config', 'result_format', plugin_type='callback',
@@ -70,7 +79,7 @@
         _plain: "Plain text, without the quotes: callback_result_format = yaml in ansible.cfg ([defaults])"
         _text: >-
           {{ _cassandra_help_model | community.cassandra.cassandra_help(
-               _playbooks, topic=help_topic | default(''),
+               _playbooks, topic=help_topic | default(''), flow=_flow | bool,
                header=lookup('ansible.builtin.file', playbook_dir ~ '/' ~ help_topic ~ '.yml')
                       if help_topic | default('') in _playbooks else '') }}
 

@@ -9,8 +9,10 @@ OPERATIONS: every playbook of the collection, by theme, with what it does,
     but absent, or when a default is not the playbook's or the role's.
 cassandra_help: model (lookup community.cassandra.cassandra_inventory) ->
     the clusters as the inventory describes them, every operation with its
-    command for this inventory, and advice; with topic, the detail of one
-    operation; markdown true: the same as RUNBOOK.md.
+    command for this inventory, its options and an example, and advice; with
+    topic, the detail of one operation; markdown true: the same as RUNBOOK.md;
+    flow true: its lines for the ops callback, which lays them out at the
+    terminal's width and colours them (module_utils cassandra_output.flow).
 cassandra_help_runbook: model -> where RUNBOOK.md goes (the inventory's dir, or runbook_dir).
 """
 
@@ -28,9 +30,9 @@ import yaml
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
-from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import _wrap
+from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import WIDTH
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
-    command as _full_command, extra_var as _e, path_from as _path, seed_layout)
+    BULLET, NBSP, command as _full_command, extra_var as _e, flow as _flow, laid_out, path_from as _path, seed_layout)
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -144,7 +146,10 @@ OPERATIONS = [
                 " Starts nothing on a running cluster.",
      "options": [("-e cassandra_accept_default_identity=true", "goes on with identity settings left to the defaults",
                   "false"),
-                 ("-e cassandra_create_cluster_reset=true", "rebuilds a running cluster, ALL ITS DATA LOST", "false")],
+                 ("-e cassandra_create_cluster_reset=true", "rebuilds a running cluster, ALL ITS DATA LOST", "false"),
+                 ("-e '{\"cassandra_create_cluster_reset_confirm\": \"<cluster name>\"}'",
+                  "the reset without a terminal (with cassandra_operation_confirm=false): the cluster's name, the answer"
+                  " to its question", "")],
      "example": ("the plan only", ["--check"])},
     {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode", "confirm": False,
      "summary": "Drains and restarts the nodes one at a time, the cluster checked before and after each one.",
@@ -162,7 +167,8 @@ OPERATIONS = [
      "options": [("-e cassandra_target_dc=<dc>", "the rack's datacenter", None),
                  ("-e cassandra_target_rack=<rack>", "the rack to stop", None),
                  ("-e cassandra_rack_force=true", "goes on although keyspaces would lose more than one replica",
-                  "false")]},
+                  "false")],
+     "example": CHECK},
     {"name": "start_rack", "theme": "cluster", "confirm": False,
      "summary": "Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.",
      "options": [("-e cassandra_target_dc=<dc>", "the rack's datacenter", None),
@@ -214,7 +220,8 @@ OPERATIONS = [
     {"name": "remove_datacenter", "theme": "cluster", "cql": True,
      "summary": "Removes a datacenter: the keyspaces stop keeping replicas there, then its nodes leave one at a"
                 " time. Move its clients first.",
-     "options": [("-e cassandra_target_dc=DC_TO_REMOVE", "the datacenter to remove", None)]},
+     "options": [("-e cassandra_target_dc=DC_TO_REMOVE", "the datacenter to remove", None)],
+     "example": CHECK},
     {"name": "import_cluster", "theme": "takeover",
      "summary": "Reads a running cluster into an inventory, changing nothing on the nodes. A new cluster: give"
                 " one of its nodes (-i <node>,), the others are found in the ring. A re-import reads the cluster from"
@@ -607,32 +614,68 @@ def _clusters(model):
             for c in model.get("clusters") or []]
 
 
+_KEY = 36  # the widest option on the line of its text (from column indent + _KEY + 2): a longer one has its own
+
+
+def _paragraph(text, indent="", hang=None):
+    """A paragraph, its next lines indented by hang (a string like indent; indent and 2 more by default), laid out by
+    _lines."""
+    return [_flow(len(indent) + 2 if hang is None else len(hang), indent + str(text).strip())]
+
+
+def _pair(indent, key, width, text):
+    """A key (an operation, an option) then its text from the column indent + width + 2, laid out by _lines."""
+    return _flow(len(indent) + width + 2, text, indent + key)
+
+
+def _rule(title, heavy=True):
+    """A rule naming a section (the ops callback draws it as wide as the terminal)."""
+    line = ("==== " if heavy else "---- ") + title + " "
+    return ["", line + ("=" if heavy else "-") * max(4, WIDTH - len(line)), ""]
+
+
+def _lines(lines, flow=False):
+    """The text: its lines laid out at WIDTH, or as they are for the ops callback (flow), which lays them out at
+    the terminal's width; one blank line at most between two lines, none first or last."""
+    out = []
+    for line in lines:
+        for item in [line] if flow else laid_out(line, WIDTH)[0]:
+            if item.strip():
+                out.append(item)
+            elif out and out[-1]:
+                out.append("")
+    while out and not out[-1]:
+        out.pop()
+    return "\n".join(out)
+
+
 def _cluster_lines(cluster):
     lines = []
     present = cluster.present or cluster.hosts
-    lines += _wrap("Cluster '%s' (inventory group %s): %d node%s%s"
-                   % (cluster.show("cassandra_cluster_name", cluster.defaults["cassandra_cluster_name"]),
-                      cluster.name, len(present), "s" if len(present) != 1 else "",
-                      ", %d more marked absent" % (len(cluster.hosts) - len(present))
-                      if len(present) < len(cluster.hosts) else ""), "", "  ")
+    lines += _paragraph("Cluster '%s' (inventory group %s): %d node%s%s"
+                        % (cluster.show("cassandra_cluster_name", cluster.defaults["cassandra_cluster_name"]),
+                           cluster.name, len(present), "s" if len(present) != 1 else "",
+                           ", %d more marked absent" % (len(cluster.hosts) - len(present))
+                           if len(present) < len(cluster.hosts) else ""), "", "  ")
     package = cluster.show("cassandra_package_version")
-    lines += _wrap("Cassandra: series %s, package %s, installed from %s"
-                   % (cluster.show("cassandra_version", cluster.defaults["cassandra_version"]),
-                      "latest of the series" if package == "not set" else package,
-                      cluster.show("cassandra_install_method", cluster.defaults["cassandra_install_method"])),
-                   "  ", "    ")
-    lines += _wrap("Java: %s" % cluster.java(), "  ", "    ")
-    lines += _wrap("Snitch: %s, num_tokens: %s, authenticator: %s"
-                   % (cluster.show("cassandra_endpoint_snitch", cluster.defaults["cassandra_endpoint_snitch"]),
-                      cluster.show("cassandra_num_tokens", cluster.defaults["cassandra_num_tokens"]),
-                      cluster.show("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])),
-                   "  ", "    ")
+    lines += _paragraph("Cassandra: series %s, package %s, installed from %s"
+                        % (cluster.show("cassandra_version", cluster.defaults["cassandra_version"]),
+                           "latest of the series" if package == "not set" else package,
+                           cluster.show("cassandra_install_method", cluster.defaults["cassandra_install_method"])),
+                        "  ", "    ")
+    lines += _paragraph("Java: %s" % cluster.java(), "  ", "    ")
+    lines += _paragraph("Snitch: %s, num_tokens: %s, authenticator: %s"
+                        % (cluster.show("cassandra_endpoint_snitch", cluster.defaults["cassandra_endpoint_snitch"]),
+                           cluster.show("cassandra_num_tokens", cluster.defaults["cassandra_num_tokens"]),
+                           cluster.show("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])),
+                        "  ", "    ")
     if cluster.seeds and not cluster.seeds_unread:  # the seed rule of preflight, one line per datacenter
         for line in cluster.seed_layout()["lines"]:
-            lines += _wrap(line, "  ", "    ")
+            lines += _paragraph(line, "  ", "    ")
     else:
-        lines += _wrap("Seeds: %s" % ("not readable from the inventory alone" if cluster.seeds_unread and not cluster.seeds
-                                      else ", ".join(cluster.seeds) or "none"), "  ", "    ")
+        lines += _paragraph("Seeds: %s" % ("not readable from the inventory alone"
+                                           if cluster.seeds_unread and not cluster.seeds
+                                           else ", ".join(cluster.seeds) or "none"), "  ", "    ")
     for dc in sorted(cluster.dcs):
         racks = cluster.dcs[dc]
         count = sum(len(h) for h in racks.values())
@@ -647,7 +690,7 @@ def _cluster_lines(cluster):
                 marks = [m for m, on in (("seed", host["seed"]), ("absent", host["absent"])) if on]
                 text = host["name"] if host["address"] == host["name"] else "%s %s" % (host["name"], host["address"])
                 nodes.append(text + (" (%s)" % ", ".join(marks) if marks else ""))
-            lines += _wrap("%s: %s" % (rack, ", ".join(nodes)), "    ", "      ")
+            lines += _paragraph("%s: %s" % (rack, ", ".join(nodes)), "    ", "      ")
     return lines
 
 
@@ -656,11 +699,12 @@ def _header(model, cwd):
     return "Cassandra help for the inventory %s (read from the inventory only: no node contacted)" % sources
 
 
-def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None, runbook_dir=""):
+def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None, runbook_dir="", flow=False):
     """model: lookup community.cassandra.cassandra_inventory; playbooks: the
     names of the playbooks there are; topic: one operation in detail, with
     header the comment that starts its playbook; markdown: RUNBOOK.md, in
-    runbook_dir (default the inventory's dir)."""
+    runbook_dir (default the inventory's dir); flow: the lines for the ops
+    callback (laid out at the terminal's width there), else laid out at WIDTH."""
     model = model or {}
     cwd = os.getcwd() if cwd is None else cwd
     playbooks = list(playbooks or [op["name"] for op in OPERATIONS])
@@ -668,7 +712,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
     if not clusters:
         raise AnsibleFilterError("no cluster group in the inventory %s" % ", ".join(model.get("sources") or []))
     if topic:
-        return _topic(topic, header, model, clusters, cwd)
+        return _topic(topic, header, model, clusters, cwd, flow)
 
     sections = []  # (title, items): the cluster lines, (kind, title or operation), (advice, its command or "")
     lines = []
@@ -683,7 +727,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
     ops = []
     for cluster in clusters:
         if len(clusters) > 1:
-            ops.append(("cluster", "Cluster %s" % cluster.name))
+            ops.append(("cluster", cluster.name))
         for theme, title in THEMES:
             ops.append(("theme", title))
             ops += [("op", _op(op, model, cluster, cwd, markdown)) for op in OPERATIONS
@@ -705,7 +749,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
 
     if markdown:
         return _markdown(_header(model, cwd), sections, model, cwd, runbook_dir or _inventory_dir(model))
-    return _text(_header(model, cwd), sections)
+    return _text(_header(model, cwd), sections, _common(model, clusters), flow)
 
 
 _INTRO = ("Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each"
@@ -740,38 +784,46 @@ def _option_text(text, default, glue=" "):
     return text + (" (required)" if default is None else " (default:%s%s)" % (glue, default) if default else "")
 
 
-def _option_lines(options):
-    """One line per option: its argument, what it does and its default, the texts aligned."""
-    width = min(max(len(o[0]) for o in options), 40)
-    hang = "    " + " " * (width + 2)
-    out = []
-    for arg, text, default in options:
-        # "(default:" and its value's first word, a <placeholder> on one line
-        text = re.sub(r"<[^>]*>", lambda m: m.group(0).replace(" ", "\0"), _option_text(text, default, "\0"))
-        if len(arg) > width:  # on a line of its own
-            out += ["    " + arg] + _wrap(text, hang, hang)
-        else:
-            out += _wrap("%s  %s" % (arg.ljust(width), text), "    ", hang)
-    return [line.replace("\0", " ") for line in out]
+def _option_lines(options, indent):
+    """One line per option: its argument, then what it does and its default, the texts of every operation in one
+    column."""
+    # "(default:" and its value's first word, a <placeholder>, on one line
+    return [_pair(indent, arg, _KEY, re.sub(r"<[^>]*>", lambda m: m.group(0).replace(" ", NBSP),
+                                            _option_text(text, default, NBSP)))
+            for arg, text, default in options]
 
 
-def _text(header, sections):
-    blocks = [_wrap(header, "", "  "), _wrap(_INTRO, "", "")]
+def _op_lines(op, width, commands, examples):
+    """An operation: its name and what it does, its commands, its options, its example."""
+    out = [_pair("  ", BULLET + " " + op["name"], len(BULLET) + 1 + width, op["summary"])] + commands
+    out += _option_lines(op["options"], "        ")
+    if examples:
+        out += _paragraph("Example (%s):" % op["example"][0], "      ", "        ") + examples
+    return out
+
+
+def _text(header, sections, common, flow=False):
+    lines = _paragraph(header, "", "  ") + [""] + _paragraph(_INTRO, "", "") + [""]
+    lines += _paragraph("Options of every operation that changes something:", "", "  ") + _option_lines(common, "        ")
     for title, items in sections:
-        out = [title, "-" * len(title)]
-        for item in items:
-            if title.startswith("1."):
-                out.append(item)
-            elif title.startswith("3."):
-                out += ([""] if len(out) > 2 else []) + _wrap(item[0], "- ", "  ") + (
-                    ["    $ " + item[1]] if item[1] else [])
-            elif item[0] == "op":
-                out += [""] + _wrap("%s - %s" % (item[1]["name"], item[1]["summary"]), "  ", "    ")
-                out.append("    $ " + item[1]["command"])
-            else:  # a cluster, a theme
-                out += ["", item[1] + (":" if item[0] == "theme" else "")]
-        blocks.append(out)
-    return "\n\n".join("\n".join(b) for b in blocks)
+        if title.startswith("1."):
+            lines += _rule(title.split(" ", 1)[1]) + items
+        elif title.startswith("3."):
+            lines += _rule(title.split(" ", 1)[1])
+            for text, command in items:
+                lines += [""] + _paragraph(text, "- ", "  ") + (["    $ " + command] if command else [])
+        else:
+            width = max([len(item["name"]) for kind, item in items if kind == "op"] or [0])
+            cluster = ""
+            for kind, item in items:
+                if kind == "cluster":  # several clusters: their names in the rules
+                    cluster = item + ": "
+                elif kind == "theme":
+                    lines += _rule(cluster + item)
+                else:
+                    examples = ["      $ " + item["example"][1]] if item["example"] else []
+                    lines += [""] + _op_lines(item, width, ["      $ " + item["command"]], examples)
+    return _lines(lines, flow)
 
 
 def _markdown_options(options):
@@ -792,7 +844,7 @@ def _markdown(header, sections, model, cwd, runbook_dir):
     for title, items in sections:
         out += ["## %s" % title, ""]
         if title.startswith("1."):
-            out += ["```text"] + list(items) + ["```", ""]
+            out += ["```text"] + _lines(items).split("\n") + ["```", ""]
             continue
         for item in items:
             if title.startswith("3."):
@@ -804,43 +856,37 @@ def _markdown(header, sections, model, cwd, runbook_dir):
                 if op["example"]:
                     out += ["Example (%s):" % op["example"][0], "", "```sh", op["example"][1], "```", ""]
             elif item[0] == "cluster":
-                out += ["### %s" % item[1], ""]
+                out += ["### Cluster %s" % item[1], ""]
             else:
                 out += ["%s %s" % ("####" if len(model.get("clusters") or []) > 1 else "###", item[1]), ""]
     return "\n".join(out).rstrip("\n") + "\n"
 
 
-def _topic(topic, header, model, clusters, cwd):
+def _topic(topic, header, model, clusters, cwd, flow=False):
     if topic not in BY_NAME:
         raise AnsibleFilterError("help_topic: no operation %s (operations: %s)"
                                  % (topic, ", ".join(op["name"] for op in OPERATIONS)))
     op = BY_NAME[topic]
-    title = dict(THEMES)[op["theme"]].split(" (")[0]
-    blocks = [_wrap("%s (%s): %s" % (op["name"], title.lower(), op["summary"]), "", "  ")]
     cmds, examples = [], []
     for cluster in clusters:
         item = _op(op, model, cluster, cwd)
-        named = ["Cluster %s:" % cluster.name] if len(clusters) > 1 else []
-        cmds += named + ["    $ " + item["command"]]
+        named = _paragraph("Cluster %s:" % cluster.name, "      ") if len(clusters) > 1 else []
+        cmds += named + ["      $ " + item["command"]]
         if op.get("single_token") and cluster.num_tokens() != 1:
-            cmds.append("    (not for this cluster: num_tokens %s)" % (cluster.num_tokens() or "mixed"))
+            cmds.append("      (not for this cluster: num_tokens %s)" % (cluster.num_tokens() or "mixed"))
         if item["example"]:
-            examples += named + ["    $ " + item["example"][1]]
-    blocks.append(["Command for this inventory:"] + cmds)
+            examples += named + ["      $ " + item["example"][1]]
     options = list(op.get("options") or [])
     options += _common(model, clusters, op) if op["theme"] in ("nodes", "cluster") else []
-    if options:
-        blocks.append(["Options:"] + _option_lines(options))
-    if examples:
-        blocks.append(["Example (%s):" % op["example"][0]] + examples)
+    lines = _rule(dict(THEMES)[op["theme"]]) + _op_lines(dict(op, options=options), len(op["name"]), cmds, examples)
     shown = " ".join(c.split("community.cassandra.", 1)[-1] for c in cmds + examples)
     placeholders = sorted(set(_PLACEHOLDER.findall(shown)))
     if placeholders:
         plural = "s" if len(placeholders) > 1 else ""
-        blocks.append(_wrap("Replace %s with your own value%s." % (", ".join(placeholders), plural), "", "  "))
+        lines += [""] + _paragraph("Replace %s with your own value%s." % (", ".join(placeholders), plural), "      ", "      ")
     if op.get("cql"):
-        blocks.append(_wrap("With authentication on: cassandra_cql_username and cassandra_cql_password (in a vaulted"
-                            " file of the cluster's group_vars).", "", "  "))
+        lines += [""] + _paragraph("With authentication on: cassandra_cql_username and cassandra_cql_password (in a"
+                                   " vaulted file of the cluster's group_vars).", "      ", "      ")
     doc = []
     for line in str(header or "").splitlines():
         if line.startswith("#"):
@@ -850,8 +896,8 @@ def _topic(topic, header, model, clusters, cwd):
         else:
             break
     if doc:
-        blocks.append(["What it does and checks (playbooks/%s.yml):" % op["name"]] + doc)
-    return "\n\n".join("\n".join(b) for b in blocks)
+        lines += _rule("What it does and checks (playbooks/%s.yml)" % op["name"], heavy=False) + doc
+    return _lines(lines, flow)
 
 
 def cassandra_help_runbook(model, runbook_dir=""):

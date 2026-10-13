@@ -13,7 +13,8 @@ docs/docsite/rst/guide_output.rst.
 - secrets: secret, mask, shown;
 - a setting and its value per node: setting_lines, settings_lines (several,
   aligned, wrapped in a width: wrap_value, wrap_list), setting_rows, by_nodes;
-  lines fit in a terminal's width: fit;
+  lines fit in a terminal's width: fit; laid out at the width where they are
+  printed: flow, laid_out (the help text);
 - before a change: plan; during it: progress_line; at the end: recap,
   perm_lines, diff_lines, changed_lines;
 - what is left to do: command, extra_var, todo, inventory_steps,
@@ -490,6 +491,57 @@ def fit(lines, width):
         out += textwrap.wrap(line.lstrip(), width, initial_indent=lead.group(1), subsequent_indent=hang,
                              break_long_words=False, break_on_hyphens=False) or [line]
     return out
+
+
+# A line laid out where it is printed, at that width: "\x1f<hang>\x1f<text>" a
+# paragraph, its next lines from column hang; "\x1f<hang>\x1f<key>\x1f<text>"
+# a key (an option, an operation) and its text from column hang. NBSP: a space
+# never broken ("(default: false)"), printed as a space.
+FLOW = u"\x1f"
+NBSP = u"\xa0"
+BULLET = u"\u25cf"  # before an operation's name (its key)
+_FLOWED = re.compile(u"\x1f(\\d+)\x1f([^\x1f]*)(?:\x1f(.*))?$", re.S)
+NARROW = 30  # less room than this right of the key's column: its text under it
+
+
+def flow(hang, text, key=None):
+    """A line that laid_out lays out at the width of the screen: text, its
+    next lines from column hang; with key (its indent included): the key,
+    then text from column hang. A newline in them (an inventory's value) as a
+    space: one line."""
+    def one(value):
+        return re.sub(u"[\x1f\r\n]", " ", value)
+    if key is None:
+        return u"%s%d%s%s" % (FLOW, hang, FLOW, one(text))
+    return u"%s%d%s%s%s%s" % (FLOW, hang, FLOW, one(key), FLOW, one(text))
+
+
+def laid_out(line, width):
+    """(lines, key): a line of flow wrapped at width, between words only (a
+    word longer than the room stays whole); key: the key starting its first
+    line ("" for none). A key longer than its column has a line of its own;
+    with less than NARROW columns right of the column (or than a word of the
+    text), the text goes under the key, 4 columns in. Any other line as it
+    is."""
+    found = _FLOWED.match(line)
+    if not found:
+        return [line], ""
+    hang, head, text = int(found.group(1)), found.group(2), found.group(3)
+    indent = head[:len(head) - len(head.lstrip())]
+    key = ""
+    if text is None:  # a paragraph
+        first, text = indent, head.lstrip()
+    else:
+        key = head.strip()
+        if width - hang < max([NARROW] + [len(word) for word in text.split(" ")]):  # a word: never cut
+            hang = len(indent) + 4
+        first = head.ljust(hang) if len(head) + 2 <= hang else None  # None: the key on a line of its own
+    rest = " " * hang
+    lines = textwrap.wrap(text, width, initial_indent=rest if first is None else first, subsequent_indent=rest,
+                          break_long_words=False, break_on_hyphens=False) if text.strip() else []
+    if first is None:
+        lines = [head] + lines
+    return [out.replace(NBSP, " ").rstrip() for out in lines or [head]], key
 
 
 def setting_lines(setting, values, all_nodes=None, expected=None, notes=None, where=None, full=False, indent=""):

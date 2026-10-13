@@ -156,15 +156,15 @@ def test_help_topic_under_the_yaml_result_format(tmp_path):
     # one block, not a list of lines the yaml dumper would wrap (and quote)
     inventory(tmp_path)
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml", "-e", "help_topic=stop_rack", result_format="yaml")
-    assert "    msg: |-\n        stop_rack (cluster): Stops every node" in out
+    assert "    msg: |-\n        ==== Cluster ====" in out
+    assert "\n          \u25cf stop_rack  Stops every node of one rack at once (maintenance), when the replication" in out
     assert rc == 0, out
     assert ("$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack"
             " -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3") in out
-    assert "What it does and checks (playbooks/stop_rack.yml):" in out
+    assert "---- What it does and checks (playbooks/stop_rack.yml) ----" in out
     assert "  Stops every node of one rack at once (maintenance of the rack's hosts,\n" in out
     # plain text: the options one per line, unquoted
-    assert ("\n        Options:\n            -e cassandra_target_dc=<dc>           the rack's datacenter (required)\n"
-            in out)
+    assert "\n                -e cassandra_target_dc=<dc>           the rack's datacenter (required)\n" in out
     assert "Plain text, without the quotes" not in out
     assert SECRET not in out
 
@@ -175,7 +175,7 @@ def test_help_under_another_callback(tmp_path):
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml", "-e", "help_topic=stop_rack",
                   callback="ansible.builtin.minimal")
     assert rc == 0, out
-    assert '"stop_rack (cluster): Stops every node of one rack at once (maintenance), when the replication' in out
+    assert '"  \u25cf stop_rack  Stops every node of one rack at once (maintenance), when the replication allows",' in out
     assert "Plain text, without the quotes" not in out
 
 
