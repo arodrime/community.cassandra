@@ -8,6 +8,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_disks impo
     cassandra_disk_lv_read_ahead,
     cassandra_disk_plan,
     cassandra_disk_state,
+    cassandra_disk_summary,
     cassandra_disk_tuned_conflict,
     cassandra_disk_tuned_profile,
     cassandra_disk_udev_rules,
@@ -175,15 +176,15 @@ def test_tuned_warning_says_why_the_role_does_not_keep_them_off():
     assert "udevadm could not read" in warn(RHEL_TUNED, udev=failed, managed=True)  # no profile from half the ids
 
 
-def test_plan_shared_flag_from_extra_vars():
-    # -e cassandra_data_tune_shared_devices=false is the string "false": the OS disk stays alone
+def test_plan_os_flag_from_extra_vars():
+    # -e cassandra_data_tune_os_volumes=false is the string "false": the OS disk under the data stays alone
     with open(os.path.join(FIXTURES, "shared_vg.json")) as f:
         text = f.read()
     mounts = [{"item": {"dir": "/var/lib/cassandra/data", "tune": True}, "rc": 0,
                "stdout": '{"filesystems": [{"maj:min": "253:2", "source": "/dev/x", "fstype": "xfs", "target": "/var/lib/cassandra"}]}'}]
     lvs = ["253|0|rhel|root|auto", "253|1|rhel|swap|auto", "253|2|rhel|cassandra|auto"]
-    for flag, knames in (("false", ["dm-2"]), ("no", ["dm-2"]), (False, ["dm-2"]), ("true", ["dm-2", "sda"])):
-        assert [d["kname"] for d in cassandra_disk_plan(text, {"results": mounts}, lvs=lvs, tune_shared=flag)["devices"]] == knames
+    for flag, knames in (("false", ["dm-2"]), ("no", ["dm-2"]), (False, ["dm-2"]), ("true", ["dm-2", "sda"]), (True, ["dm-2", "sda"])):
+        assert [d["kname"] for d in cassandra_disk_plan(text, {"results": mounts}, lvs=lvs, tune_os=flag)["devices"]] == knames
 
 
 def test_changes():
@@ -286,3 +287,87 @@ def test_tuned_profile_devices_without_a_usable_id():
     p = cassandra_disk_tuned_profile(RHEL_TUNED, [LV, SDB, md], TUNED_STATE, udev, 4)
     assert p["unmatched"] == ["sdb", "md0"] and p["lines"][-1] == r"devices_udev_regex=^(DM_UUID=LVM-AbC\.d)$"
     assert cassandra_disk_tuned_profile(RHEL_TUNED, [SDB], TUNED_STATE, udev, 4) == {}
+
+
+# --- the summary of the run ---
+
+ARROW = u" \u2192 "
+STACK = "/data/c/dev/{data,commitlog}" + ARROW + "datavg-lv_data" + ARROW + "sdb"
+
+
+def node(name, changed=False, kb=4, brief=None, warnings=(), info=(), notes=(), stacks=None):
+    """What a node keeps for the summary (_cassandra_disk_summary)."""
+    brief = [STACK] if brief is None else brief
+    return {"name": name, "kb": kb, "changed": changed, "brief": brief, "warnings": list(warnings), "info": list(info),
+            "notes": list(notes), "stacks": stacks if stacks is not None else [b.replace("lv_data", "lv_data (dm-4)") for b in brief]}
+
+
+def test_summary_nothing_changed_two_identical_nodes():
+    assert cassandra_disk_summary([node("node1"), node("node2")]) == [
+        "Data disks: read-ahead 4 KB, already set (nothing changed)",
+        "  node1, node2:",
+        "    " + STACK]
+
+
+def test_summary_headline():
+    def head(nodes, check=False):
+        return cassandra_disk_summary(nodes, check=check)[0]
+    assert head([node("node1", True), node("node2", True)]) == "Data disks: read-ahead 4 KB, set now on 2 nodes"
+    assert head([node("node1", True), node("node2")]) == "Data disks: read-ahead 4 KB, set now on 1 node (already set on 1)"
+    assert head([node("node1", True), node("node2")], check=True) == \
+        "Data disks: read-ahead 4 KB, would be set on 1 node (already set on 1)"
+    assert head([node("node1")], check=True) == "Data disks: read-ahead 4 KB, already set (nothing changed)"
+    # several read-aheads (a host variable, 64 KB pages): said per group
+    lines = cassandra_disk_summary([node("node1"), node("node2", kb=0)])
+    assert lines == ["Data disks: already set (nothing changed)", "  node1 (read-ahead 4 KB):", "    " + STACK,
+                     "  node2 (read-ahead 0 KB):", "    " + STACK]
+
+
+def test_summary_groups_the_nodes_with_the_same_lines():
+    other = "/data/c/dev/{data,commitlog}" + ARROW + "datavg-lv_data" + ARROW + "sdc"
+    nodes = [node("node%d" % i) for i in range(1, 91)]
+    nodes[41] = node("node42", brief=[other])
+    lines = cassandra_disk_summary(nodes)
+    assert lines == ["Data disks: read-ahead 4 KB, already set (nothing changed)",
+                     "  89 nodes: node1..node41, node43..node90:", "    " + STACK,
+                     "  node42:", "    " + other]
+    # a node with nothing to tune (its filesystems not on a block device): said, -v says why
+    assert cassandra_disk_summary([node("node1"), node("node2", brief=[], notes=["x"])])[3:] == ["  node2: nothing to tune"]
+
+
+def test_summary_problems_and_what_to_do_once_with_their_nodes():
+    lvm = "lvchange failed on datavg/lv_data: its read-ahead is set now, kept by the udev rule"
+    restart = "restart Cassandra to read the files it has open with the new read-ahead"
+    lines = cassandra_disk_summary([node("node1", True, warnings=[lvm], info=[restart]),
+                                    node("node2", True, warnings=[lvm], info=[restart]), node("node3", True, info=[restart])])
+    assert lines == ["Data disks: read-ahead 4 KB, set now on 3 nodes",
+                     "  node1..node3:", "    " + STACK,
+                     "  " + restart + " (node1..node3)",
+                     "WARNING - " + lvm + " (node1, node2)"]
+
+
+def test_summary_explanations_and_device_names_with_v_only():
+    shared = "/data is shared: its other files get the same read-ahead"
+    full = "/data/c/dev/data, /data/c/dev/commitlog" + ARROW + "datavg-lv_data (dm-4)" + ARROW + "sdb (" + shared + ")"
+    nodes = [node("node1", notes=["the commitlog alone on /"], stacks=[full]), node("node2", stacks=[full])]
+    lines = cassandra_disk_summary(nodes)
+    assert "dm-4" not in "".join(lines) and "shared" not in "".join(lines) and "commitlog alone" not in "".join(lines)
+    assert cassandra_disk_summary(nodes, verbose=True) == [
+        "Data disks: read-ahead 4 KB, already set (nothing changed)",
+        "  node1:", "    " + full, "    note: the commitlog alone on /",
+        "  node2:", "    " + full]
+
+
+def test_summary_of_no_node():
+    assert cassandra_disk_summary([]) == cassandra_disk_summary([{}]) == []
+
+
+def test_summary_of_nodes_with_nothing_to_tune():
+    nfs = "/data: not tuned, nfs4 on filer:/vol/cass, not a block device"
+    assert cassandra_disk_summary([node("node1", brief=[], warnings=[nfs])]) == [
+        "Data disks: nothing to tune", "  node1: nothing to tune", "WARNING - " + nfs + " (node1)"]
+    # not counted as already set
+    assert cassandra_disk_summary([node("node1", True), node("node2", brief=[])])[0] == \
+        "Data disks: read-ahead 4 KB, set now on 1 node"
+    assert cassandra_disk_summary([node("node1"), node("node2", brief=[])])[0] == \
+        "Data disks: read-ahead 4 KB, already set (nothing changed)"

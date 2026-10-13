@@ -445,7 +445,7 @@ def _disks(recs, wanted):
                            "rc": 0 if out.strip() else 1, "stdout": out})
     lvs = [rest for kind, rest in recs if kind == "lvs"]
     found = plan(text, mounts, lvs=lvs)
-    lines += ["disks: %s" % s for s in found["stacks"]] + ["disks: %s" % n for n in found["notes"]]
+    lines += ["disks: %s" % s for s in found["stacks"] + found["warnings"] + found["info"] + found["notes"]]
     for d in found["devices"]:
         ra, rot, sched = d["ra"], d["rota"], d["sched"]
         live.append(ra)

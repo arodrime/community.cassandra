@@ -9,16 +9,19 @@ cassandra_disk_changes: what is to change on them.
 cassandra_disk_udev_rules: the lines of the role's udev rule.
 cassandra_disk_lv_read_ahead: the LVM read-ahead (lvchange --readahead) of a read-ahead in KB.
 cassandra_disk_tuned_conflict: a warning when the active tuned profile sets another read-ahead.
-cassandra_disk_tuned_profile: the tuned profile that keeps the active one off the Cassandra devices."""
+cassandra_disk_tuned_profile: the tuned profile that keeps the active one off the Cassandra devices.
+cassandra_disk_summary: how the data disks of the nodes are tuned, one summary for the run."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import fnmatch
 import re
+from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disks import (
     loop_results,
     mount_targets,
@@ -27,10 +30,9 @@ from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disk
 )
 
 
-def cassandra_disk_plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=None, tune_os=True):
+def cassandra_disk_plan(lsblk, mounts, explicit=None, lvs=None, contents=None, tune_os=True):
     # "false" from -e is a string: it must not tune the OS disk
-    return plan(lsblk, mounts, explicit=explicit, lvs=lvs, tune_shared=boolean(tune_shared, strict=False),
-                contents=contents, tune_os=boolean(tune_os, strict=False))
+    return plan(lsblk, mounts, explicit=explicit, lvs=lvs, contents=contents, tune_os=boolean(tune_os, strict=False))
 
 
 def cassandra_disk_state(results):
@@ -362,6 +364,58 @@ def cassandra_disk_tuned_conflict(lines, kb, devices=None, state=None, udev_info
             % (" ".join(t["active"]), section, value, device, section, what, instead, hint))
 
 
+def cassandra_disk_summary(nodes, check=False, verbose=False):
+    """How the data disks are tuned, one summary for the run (a run_once
+    task, from what each node kept: _cassandra_disk_summary). nodes: [{name,
+    kb (the read-ahead set), changed (something set, or to set under
+    --check), brief, stacks (plan()'s), info, warnings, notes}]. The nodes
+    with the same lines are grouped; verbose (-v): the stacks in full (dm-N,
+    what is worth knowing about each) and the notes. Then the lines to act
+    on, each once with its nodes: what is not tuned yet (indented), and the
+    problems (WARNING - ...)."""
+    nodes = [n for n in nodes or [] if isinstance(n, dict) and n.get("name")]
+    if not nodes:
+        return []
+    verbose = boolean(verbose, strict=False)
+    kbs = list(OrderedDict.fromkeys(str(n.get("kb", "")) for n in nodes))
+    changed = [n["name"] for n in nodes if boolean(n.get("changed", False), strict=False)]
+    # a node with nothing to tune (NFS, not created yet...) is not one already set
+    tuned = [n["name"] for n in nodes if n.get("brief") and n["name"] not in changed]
+    if changed:
+        head = "%s on %s" % ("would be set" if boolean(check, strict=False) else "set now", out.plural(len(changed), "node"))
+        if tuned:
+            head += " (already set on %d)" % len(tuned)
+    elif tuned:
+        head = "already set (nothing changed)"
+    else:
+        head = "nothing to tune"
+    lines = ["Data disks: %s%s" % ("read-ahead %s KB, " % kbs[0] if len(kbs) == 1 and (changed or tuned) else "", head)]
+    groups = []   # [(key, [names])], in the order of the nodes
+    for n in nodes:
+        shown = list(n.get("stacks") or []) + ["note: " + x for x in n.get("notes") or []] if verbose \
+            else list(n.get("brief") or [])
+        key = (str(n.get("kb", "")) if len(kbs) > 1 else "", tuple(shown))
+        group = next((g for g in groups if g[0] == key), None)
+        if group is None:
+            groups.append((key, [n["name"]]))
+        else:
+            group[1].append(n["name"])
+    for (kb, shown), names in groups:
+        who = out.nodes(names) + (" (read-ahead %s KB)" % kb if kb else "")
+        if shown:
+            lines.append("  %s:" % who)
+            lines += ["    " + x for x in shown]
+        else:
+            lines.append("  %s: nothing to tune" % who)
+    for key, prefix in (("info", "  "), ("warnings", "WARNING - ")):
+        said = OrderedDict()
+        for n in nodes:
+            for text in n.get(key) or []:
+                said.setdefault(text, []).append(n["name"])
+        lines += ["%s%s (%s)" % (prefix, text, out.nodes(names)) for text, names in said.items()]
+    return lines
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -373,4 +427,5 @@ class FilterModule(object):
             "cassandra_disk_lv_read_ahead": cassandra_disk_lv_read_ahead,
             "cassandra_disk_tuned_conflict": cassandra_disk_tuned_conflict,
             "cassandra_disk_tuned_profile": cassandra_disk_tuned_profile,
+            "cassandra_disk_summary": cassandra_disk_summary,
         }

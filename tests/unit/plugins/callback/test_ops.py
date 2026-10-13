@@ -556,6 +556,32 @@ def test_colours_on_a_terminal_only(tmp_path):
     assert rc == 0 and "\x1b" not in output, repr(output)
 
 
+def test_an_informative_summary_in_the_progress_colour(tmp_path):
+    playbook = """
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Summary
+      ansible.builtin.debug:
+        msg: ["Data disks: set now on 1 node", "  node1:", "    /data -> sdb", "WARNING - lvchange failed (node1)"]
+      vars:
+        cassandra_output: true
+        cassandra_output_info: true
+
+    - name: Not a summary
+      ansible.builtin.debug:
+        msg: plain
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
+    assert rc == 0, output
+    for line in ("Data disks: set now on 1 node", "  node1:", "    /data -> sdb"):
+        assert "\x1b[0;36m%s\x1b[0m" % line in output, repr(output)
+    assert re.search("\x1b\\[38;5;208mWARNING - lvchange failed \\(node1\\)\x1b\\[0m", output), repr(output)
+    assert "\nplain" in output, repr(output)
+
+
 @pytest.mark.parametrize("env, code", [
     ({}, "0;36"),  # cyan
     ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR": "bright green"}, "1;32"),

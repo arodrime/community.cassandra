@@ -9,15 +9,11 @@ cassandra_linux_manage: true
 cassandra_data_disk_tuning: true
 # Devices to tune instead of finding them from the directories, e.g.
 # "/dev/sdb", "/dev/nvme0n1", "/dev/vg/lv", "/dev/md0" (a partition is taken
-# as its disk); the devices under them are tuned too, unless shared (below).
-# With neither set: the
+# as its disk); the devices under them are tuned too. With neither set: the
 # devices of the data and commitlog filesystems, from the top one (LVM
 # volume, md array, dm-crypt, multipath) down to the disks.
 cassandra_data_block_device: ""
 cassandra_data_block_devices: []
-# Also tune the devices under the top one that hold something else (a disk
-# of a volume group shared with the OS): they are left alone by default.
-cassandra_data_tune_shared_devices: false
 # lvchange --readahead (LVM keeping the read-ahead of a volume) reloads the
 # volume, its I/O suspended a moment: done at a run with Cassandra stopped
 # (a new node, before it starts), else the udev rule keeps it meanwhile.
@@ -26,7 +22,9 @@ cassandra_data_lvchange_running: false
 # Cassandra's data directories on a filesystem of the OS (/, /var...): tuned
 # all the same (its other files read with the same read-ahead; an LVM volume
 # of the OS kept by the udev rule, not reloaded), not for the commitlog,
-# hints or saved caches alone there. false: left alone, a note.
+# hints or saved caches alone there. A disk under the Cassandra data devices
+# that also holds one is tuned too. false: both left alone, a note (shown
+# with -v).
 cassandra_data_tune_os_volumes: true
 
 # Read-ahead in KB for those devices (queue/read_ahead_kb, not blockdev --setra

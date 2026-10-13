@@ -31,8 +31,10 @@ description:
     says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
     progress lines (C([1/2] node5 ...)), the phase lines (ending with C(...)) and the first line of a plan or a
-    screen (C(PLAN  ...), C(add_node on cluster ...)) in O(progress_color). The lines indented under a coloured
-    one keep its colour, but for an indented line with a mark of its own, which colours that line only (a node down
+    screen (C(PLAN  ...), C(add_node on cluster ...)) in O(progress_color). The lines of an informative summary
+    (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
+    in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
+    indented under a coloured one keep its colour, but for an indented line with a mark of its own, which colours that line only (a node down
     (C(← down)) and a recap's failed node (C(node5  FAILED)) as an error, a setting that differs
     (C(← differs)), a reset (C(will be reset)) and what it
     deletes (C(DELETED)) as a change, wherever they are; what a node would get or got as a change too, on a line
@@ -118,6 +120,7 @@ MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
 RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
 HELP = "cassandra_output_help"  # the help playbook's text: laid out at the terminal's width, its keys coloured
+INFO = "cassandra_output_info"  # an informative summary: in the progress colour, except its WARNING lines
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
@@ -417,7 +420,7 @@ class CallbackModule(DefaultCallback):
             for i, line in enumerate(laid):
                 self._line(help_line(line, key if i == 0 else "", self._progress, text.startswith(FLOW)), plain=line)
 
-    def _print(self, msg, color=None):
+    def _print(self, msg, color=None, info=False):
         texts = lines(msg)
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
@@ -445,6 +448,8 @@ class CallbackModule(DefaultCallback):
             shades = _under(shades, line)
             above = shades[-1][1] if shades else None
             hue = color or colour(line, above, self._progress, self._warning)
+            if hue is None and info:  # an informative summary: its plain lines in the progress colour
+                hue = self._progress
             if hue is None and headed and not recap and i == texts.index(first):  # a plan's or a screen's first line
                 hue = shade(PLAN_COLOUR, self._progress, self._warning)
             # an indented line's own mark: that line only; a FAILED recap: its rows by their own marks
@@ -507,7 +512,7 @@ class CallbackModule(DefaultCallback):
         if marked(task) and not looped and self._says(task):
             if _flag(task, HELP):
                 return self._print_help(_result(result).get("msg"))
-            self._print(_result(result).get("msg"))
+            self._print(_result(result).get("msg"), info=_flag(task, INFO))
 
     def _answered(self, res):
         """pause clears the answer's line once it is read: shown again (not
@@ -537,7 +542,7 @@ class CallbackModule(DefaultCallback):
         if _flag(_task(result), GAP) and not self._looping:
             self._gap = self._looping = True
         if marked(_task(result)) and self._says(_task(result)):
-            self._print(_result(result).get("msg"))
+            self._print(_result(result).get("msg"), info=_flag(_task(result), INFO))
 
     def _own_failure(self, result):
         """A marked assert or fail with something to say: its msg is the
