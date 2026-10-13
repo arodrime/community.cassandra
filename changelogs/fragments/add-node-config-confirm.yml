@@ -1,0 +1,5 @@
+---
+bugfixes:
+  - cassandra_config - the answer to its confirmation now holds for every node of the batch; only the node the question ran on got it, the others failed with "Config changes not confirmed".
+  - add_node, replace_node, topology - a new node the operation checked gets its config without a second question (the operation's own question covers it), and a system keyspace left outside its data directories (the package's default dir after reset_node), a missing or hand-edited cassandra.yaml no longer make it "already initialized"; the same for create_cluster's nodes after its reset.
+  - ops callback - a run_once verdict a rescue gives again (ansible-core 2.15 and 2.16, any_errors_fatal) is printed once.

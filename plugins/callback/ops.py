@@ -15,7 +15,8 @@ description:
     C(changed) or C(skipping) lines, no retries, no play recap).
   - An operator message is a task with the task variable C(cassandra_output) set to C(true) (a literal, in the
     task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
-    M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way.
+    M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way,
+    once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later).
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
@@ -243,6 +244,7 @@ class CallbackModule(DefaultCallback):
         self._blank = True  # the last line printed was blank (or none yet): no blank line next
         self._gap = False  # a blank line before the next message
         self._looping = False  # the items of a loop with a gap: one blank line, before the first
+        self._verdicts = set()  # the run_once verdicts printed: (task, lines)
         self._ruled = ""  # the rule just printed, if any
         self._progress = PROGRESS_COLOR
 
@@ -397,9 +399,16 @@ class CallbackModule(DefaultCallback):
         return marked(task) and task.action in _VERDICTS and bool(said) and not said[0].startswith("Task failed: ")
 
     def _verdict(self, result):
-        """The verdict lines; the host first when the task runs on each host."""
+        """The verdict lines; the host first when the task runs on each host. A run_once
+        verdict the same task gave already is not printed again (ansible-core 2.15 and 2.16
+        run a run_once task of a rescue again for the hosts any_errors_fatal sends there later)."""
         msg = lines(_result(result)["msg"])
-        if not _task(result).run_once:
+        if _task(result).run_once:
+            key = (_task(result).get_path() or _task(result).get_name(), tuple(msg))
+            if key in self._verdicts:
+                return None
+            self._verdicts.add(key)
+        else:
             host = getattr(result, "host", None) or result._host
             first = next(i for i, line in enumerate(msg) if line.strip())
             msg[first] = "%s: %s" % (host.get_name(), msg[first])
@@ -489,13 +498,18 @@ class CallbackModule(DefaultCallback):
     v2_runner_on_async_poll = _quiet("v2_runner_on_async_poll")
     v2_runner_on_async_ok = _quiet("v2_runner_on_async_ok")
     v2_playbook_on_start = _quiet("v2_playbook_on_start")
-    v2_playbook_on_play_start = _quiet("v2_playbook_on_play_start")
     v2_playbook_on_handler_task_start = _quiet("v2_playbook_on_handler_task_start")
     v2_playbook_on_include = _quiet("v2_playbook_on_include")
     v2_playbook_on_notify = _quiet("v2_playbook_on_notify")
     v2_playbook_on_no_hosts_remaining = _quiet("v2_playbook_on_no_hosts_remaining")  # after the failures shown
     v2_playbook_on_no_hosts_matched = _quiet("v2_playbook_on_no_hosts_matched")  # a step with nothing to do
     del _quiet
+
+    def v2_playbook_on_play_start(self, play):
+        self._verdicts = set()  # a verdict said again by another play is its own
+        if self._verbose():
+            return super(CallbackModule, self).v2_playbook_on_play_start(play)
+        return None
 
     def v2_playbook_on_stats(self, stats):
         drop_typeahead()  # the run is over: the shell reads the terminal next

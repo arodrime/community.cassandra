@@ -364,37 +364,61 @@
       when: _cassandra_config_unit_state == 'unread'
 
     # Where it was found and, for a node started once by mistake (another
-    # config) that never joined the real cluster, the dirs to empty to start it over
+    # config) that never joined the real cluster, the dirs to empty to start it over.
+    # _cassandra_config_new_node (add_node, replace_node, topology; create_cluster after its
+    # reset): the operation checked the node is new (in no ring, Cassandra down, its data
+    # directories empty or emptied first) and asked its own question: only a system keyspace
+    # in the data directories its config uses, or a running Cassandra, still count. One left
+    # elsewhere (the package's default dir, a former cassandra.yaml's) is no longer this
+    # node's: left as it is, said below; a missing or hand-edited cassandra.yaml is rewritten.
     - name: Tell whether this node was already initialized
       ansible.builtin.set_fact:
         _cassandra_config_initialized: "{{ _why | length > 0 }}"
         _cassandra_config_initialized_why: "{{ _why | join(', ') }}"
+        _cassandra_config_left: "{{ _found | reject('in', _counted) | list }}"
         _cassandra_config_reset: >-
-          {{ '' if not _found else "ONLY if this node never joined the real cluster (e.g. started once with the stock config),
+          {{ '' if not _counted else "ONLY if this node never joined the real cluster (e.g. started once with the stock config),
           it can start over, which DELETES its data: stop Cassandra, check these are this node's dirs (not another
-          instance's) and empty them: " ~ (_found + cassandra_data_file_directories
+          instance's) and empty them: " ~ (_counted + cassandra_data_file_directories
           + [cassandra_commitlog_dir, cassandra_saved_caches_dir, cassandra_hints_dir]) | select
           | map('regex_replace', '(?<=.)/+$', '') | unique | join(', ')
           ~ ", then run again." }}
       vars:
+        _new: "{{ _cassandra_config_new_node | default(false) | bool }}"
+        # the data directories its config uses
+        _own: >-
+          {{ ([cassandra_data_file_directories] | flatten
+              + [cassandra_extra_settings.local_system_data_file_directory | default('', true) | string])
+             | select | map('regex_replace', '(?<=.)/+$', '') | unique | list }}
         _found: >-
           {{ cassandra_config_system.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
              | map(attribute='item') | list }}
+        _counted: "{{ _found | select('in', _own) | list if _new | bool else _found }}"
         _running: >-
           {{ _cassandra_config_unit_state == 'running' if _cassandra_config_unit_state | default('unread') != 'unread'
              else (ansible_facts.services['cassandra.service'] | default(ansible_facts.services['cassandra'] | default({}))).state
                   | default('') == 'running' }}
         # a stat that failed for another reason than "a file, not a dir" or "cannot exist": not checked
         _unchecked: >-
-          {{ cassandra_config_system.results | rejectattr('stat', 'defined') | map(attribute='msg', default='')
-             | reject('search', 'Not a directory|too long') | list | length > 0 }}
+          {{ cassandra_config_system.results | rejectattr('stat', 'defined')
+             | selectattr('item', 'in', _own if _new | bool else cassandra_config_system.results | map(attribute='item') | list)
+             | map(attribute='msg', default='') | reject('search', 'Not a directory|too long') | list | length > 0 }}
         _why: >-
-          {{ _found | map('regex_replace', '$', '/system') | list
+          {{ _counted | map('regex_replace', '$', '/system') | list
              + (['a data dir that could not be checked'] if _unchecked | bool else [])
              + (['the live cassandra.yaml not readable'] if cassandra_config_live_yaml_stat.stat.exists
-                and cassandra_config_live.content is not defined else [])
-             + (['a path with "{" in the live cassandra.yaml'] if '{' in _cassandra_config_live_paths else [])
+                and cassandra_config_live.content is not defined and not _new | bool else [])
+             + (['a path with "{" in the live cassandra.yaml'] if '{' in _cassandra_config_live_paths and not _new | bool else [])
              + (['Cassandra is running'] if _running | bool else []) }}
+
+    - name: Say what a new node leaves as it is
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: an old system keyspace in {{ _cassandra_config_left | join(', ') }} (not one of its
+          data directories) is left as it is; the node starts empty in {{ [cassandra_data_file_directories] | flatten | join(', ') }}.
+      when: _cassandra_config_left | length > 0
+      vars:
+        cassandra_output: true
 
     # Cassandra reads initial_token at a node's first start only: a joined node
     # with none in the inventory keeps the one its cassandra.yaml has
@@ -639,7 +663,8 @@
             'after': '%d line(s) changed' % (r.stdout_lines | select('match', '^[-+](?![-+]{2} )') | list | length),
             'diff': r.stdout}) %}{% endfor %}{{ out }}
 
-    # One prompt per batch (pause runs once; with serial, once per batch)
+    # One prompt per batch (with serial, once per batch). run_once: its answer registered on every
+    # host of the batch (pause runs once anyway, but without run_once only its own host gets the answer)
     - name: Confirm config changes
       ansible.builtin.pause:
         prompt: |-
@@ -649,6 +674,7 @@
           {% endfor %}
           Nodes are NOT restarted by this role. Type 'yes' to apply
       register: cassandra_config_answer
+      run_once: true
       when:
         - not ansible_check_mode
         - ansible_play_batch | map('extract', hostvars) | map(attribute='_cassandra_config_ask', default=false) | map('bool') | select | list | length > 0

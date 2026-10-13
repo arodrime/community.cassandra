@@ -832,3 +832,104 @@ def test_the_status_report_of_a_cluster_named_like_a_recap(tmp_path):
     # the status report's framing, not a recap's (its blank lines stay blank, no light rules)
     assert shown(output) == ["====", "", "DONE  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "",
                              "====", "", "ALL 3 NODES UP", "", "====", ""]
+
+
+PREPARE = """
+- hosts: all
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Prepare this node
+      vars:
+        cassandra_output_rescued: true
+      block:
+        - name: Inner
+          ansible.builtin.include_tasks: inner.yml
+        - name: More
+          ansible.builtin.include_tasks: more.yml
+        - name: After
+          ansible.builtin.command: "true"
+          changed_when: false
+      rescue:
+        - name: Record
+          ansible.builtin.set_fact:
+            failed_here: true
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: ["FAILED  add_node  my_cluster  node2 could not be prepared: nothing was started", "  node2  Breaks"]
+          run_once: true
+          vars:
+            cassandra_output: true
+"""
+
+
+def test_a_rescue_verdict_reached_at_two_times_is_said_once(tmp_path):
+    """add_node's prepare: node2 fails, node1 goes on and comes to the rescue later (any_errors_fatal):
+    ansible-core 2.15 and 2.16 run the run_once verdict again for it, the same lines."""
+    (tmp_path / "inner.yml").write_text("- name: Breaks\n  ansible.builtin.fail:\n    msg: no\n"
+                                        "  when: inventory_hostname == 'node2'\n")
+    (tmp_path / "more.yml").write_text("- name: M1\n  ansible.builtin.debug:\n    msg: m1\n"
+                                       "- name: M2\n  ansible.builtin.debug:\n    msg: m2\n")
+    rc, output = run(tmp_path, PREPARE)
+    assert rc != 0
+    assert output.count("could not be prepared") == 1, output
+
+
+class _Task(object):
+    def __init__(self, run_once, path="add_node.yml:530", msg_name="Stop here"):
+        self.vars = {"cassandra_output": True}
+        self.action = "ansible.builtin.fail"
+        self.run_once = run_once
+        self.loop = None
+        self._parent = None
+        self._uuid = path
+        self._path, self._name = path, msg_name
+
+    def get_path(self):
+        return self._path
+
+    def get_name(self):
+        return self._name
+
+
+class _Host(object):
+    def __init__(self, name):
+        self.name = name
+
+    def get_name(self):
+        return self.name
+
+
+class _Result(object):
+    def __init__(self, task, host, msg):
+        self._task, self._host, self._result = task, _Host(host), {"failed": True, "msg": msg}
+
+
+def verdicts(*results):
+    """The lines printed for these failed results (None: a new play starts)."""
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule()
+    said = []
+    callback._display = type("D", (), {"verbosity": 0, "columns": 80,
+                                       "display": lambda self, line, color=None, **kw: said.append(line)})()
+    for result in results:
+        if result is None:
+            callback.v2_playbook_on_play_start(None)
+        else:
+            callback.v2_runner_on_failed(result)
+    return [line for line in said if line.strip() and not re.match(r"^[-=]{4,}$", line)]
+
+
+def test_the_same_run_once_verdict_is_printed_once():
+    stop = _Task(run_once=True)
+    msg = ["FAILED  add_node  my_cluster  node2 could not be prepared: nothing was started", "  node2  Breaks"]
+    assert verdicts(_Result(stop, "node2", msg), _Result(stop, "node1", msg)) == msg
+    # another text, or another task: said
+    assert verdicts(_Result(stop, "node2", msg), _Result(stop, "node1", ["FAILED  other"])) == msg + ["FAILED  other"]
+    assert verdicts(_Result(stop, "node2", msg), _Result(_Task(True, path="topology.yml:9"), "node1", msg)) == msg + msg
+    # in another play: said again
+    assert verdicts(_Result(stop, "node2", msg), None, _Result(stop, "node1", msg)) == msg + msg
+    # a verdict per host (no run_once): each host's own
+    each = _Task(run_once=False)
+    assert verdicts(_Result(each, "node1", ["REFUSED  x"]), _Result(each, "node2", ["REFUSED  x"])) == [
+        "node1: REFUSED  x", "node2: REFUSED  x"]

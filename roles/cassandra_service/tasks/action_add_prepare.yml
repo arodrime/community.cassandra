@@ -32,6 +32,23 @@
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_linux
 
+# A new node the operation checked (add_node and topology: not in the ring, empty or reset
+# first, new_node_state.yml and reset_node_plan.yml, not with cassandra_add_node_reset=false
+# that skips the latter; replace_node: blank or reset first,
+# _cassandra_add_checked_new) and whose question covered the add, config included:
+# cassandra_config asks nothing more, and a system keyspace left outside its data
+# directories, a missing or hand-edited cassandra.yaml do not make it a joined node.
+# Any other node (already in the ring, add_datacenter's): as for any node.
+- name: Tell cassandra_config whether the node is new
+  ansible.builtin.set_fact:
+    _cassandra_add_config_new: "{{ _new }}"
+    _cassandra_add_config_confirm: "{{ false if _new | bool else cassandra_config_confirm | default('auto') }}"
+  vars:
+    # add_node, topology: with its reset plan (cassandra_add_node_reset not false: the live cassandra.yaml's dirs looked at too)
+    _new: >-
+      {{ (cassandra_new_node_state | default('') == 'new' and _cassandra_node_reset_plan is defined)
+         or _cassandra_add_checked_new | default(false) | bool }}
+
 # --check: the reset add_node plans (reset_node_plan.yml) did not run, the node still holds the data a real
 # run deletes first: its identity (cluster name...) is not kept, as a real run finds the node empty
 - name: Preview the config of a node the real run resets first
@@ -46,6 +63,8 @@
     name: community.cassandra.cassandra_config
   vars:
     cassandra_seeds: "{{ _cassandra_join_seeds }}"
+    cassandra_config_confirm: "{{ _cassandra_add_config_confirm }}"
+    _cassandra_config_new_node: "{{ _cassandra_add_config_new }}"
 
 - name: Open the firewall
   ansible.builtin.include_role:

@@ -353,6 +353,8 @@
             cassandra_preflight_status: {}
             # its new snitch, datacenters and racks (a stale system dir left outside the emptied ones)
             cassandra_config_force_identity_change: true
+            # emptied: a new node for cassandra_config below (a system dir left outside its data dirs is not its own)
+            _cassandra_create_cluster_emptied: true
           when: not ansible_check_mode
 
 - name: Prepare the nodes
@@ -373,7 +375,9 @@
     - community.cassandra.cassandra_repository
     - community.cassandra.cassandra_install
     - community.cassandra.cassandra_linux
-    - community.cassandra.cassandra_config
+    - role: community.cassandra.cassandra_config
+      vars:
+        _cassandra_config_new_node: "{{ _cassandra_create_cluster_emptied | default(false) }}"
     - role: community.cassandra.cassandra_firewall
       when: cassandra_manage_firewall | default(false) | bool
     - role: community.cassandra.cassandra_medusa
