@@ -48,13 +48,17 @@ cassandra_cleanup:
   description: The return state of the executed command.
   returned: success
   type: str
+error:
+  description: What nodetool said went wrong (its error line, else its first line of output).
+  returned: failure
+  type: str
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandKeyspaceTableNumJobs
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandKeyspaceTableNumJobs, nodetool_error
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -93,10 +97,8 @@ def main():
         result['msg'] = "nodetool cleanup executed successfully"
         module.exit_json(**result)
     else:
-        # nodetool's error line, else its first line of output (not a JVM banner)
-        lines = [line.strip() for line in (err + "\n" + out).splitlines()
-                 if line.strip() and not line.startswith("Picked up ") and "VM warning:" not in line]
-        lines = [line for line in lines if line.startswith("error:")] or lines
+        error = nodetool_error(out, err)
+        result['error'] = error
         result['rc'] = rc
         result['changed'] = False
         result['stdout'] = out
@@ -104,7 +106,7 @@ def main():
         result['msg'] = ("nodetool cleanup did not execute successfully (rc {0}){1}. "
                          "Check the node's system.log (disk space, nodetool compactionstats; no cleanup while a node "
                          "joins or leaves), then run it again"
-                         .format(rc, ": " + lines[0].rstrip(".") if lines else ""))
+                         .format(rc, ": " + error if error else ""))
         module.fail_json(**result)
 
 

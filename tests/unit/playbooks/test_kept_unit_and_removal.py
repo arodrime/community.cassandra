@@ -76,13 +76,25 @@ def drain_failure(err):
     return exc.value.args[0]
 
 
+STOP_WARN = next(t for t in STOP_PLAY["tasks"] if t.get("name") == "Say the drain did not work")
+
+
 def test_stop_rack_warning_keeps_the_error_only():
-    """The node is stopped all the same: the warning drops the drain message's advice."""
-    warn = next(t for t in STOP_PLAY["tasks"] if t.get("name") == "Say the drain did not work")
-    result = drain_failure("error: Some failure\n-- StackTrace --\n")
-    assert render(warn["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_rack_drain=result) == (
-        "WARNING: n1 was not drained (nodetool drain did not execute successfully (rc 2): error: Some failure):"
-        " stopped all the same.")
+    """The node is stopped all the same: the warning gives nodetool's error, not the drain message's advice."""
+    result = dict(drain_failure("error: Some failure\n-- StackTrace --\n"), failed=False)  # (failed_when: false)
+    assert true(STOP_WARN["when"], cassandra_rack_drain=result)
+    assert render(STOP_WARN["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_rack_drain=result) == (
+        "WARNING: n1 was not drained (error: Some failure): stopped all the same.")
+    assert STOP_WARN["vars"]["cassandra_output"] is True  # shown under the ops callback
+
+
+def test_stop_rack_warns_a_drain_without_answer():
+    # JMX not answering: no rc, failed_when false makes it ok; still not drained
+    result = {"failed": False, "changed": False, "msg": "Unable to reach JMX at 127.0.0.1:7199"}
+    assert true(STOP_WARN["when"], cassandra_rack_drain=result)
+    assert "(Unable to reach JMX at 127.0.0.1:7199): stopped" in render(
+        STOP_WARN["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_rack_drain=result)
+    assert not true(STOP_WARN["when"], cassandra_rack_drain={"changed": True, "msg": "nodetool drain executed successfully"})
 
 
 @pytest.mark.parametrize("operation_drain, unit_manage, drained", [
@@ -114,33 +126,118 @@ def test_rack_restart_drains_a_kept_unit(host_vars, drained):
     assert true(task["when"], cassandra_operation_drain=False, item="node1", hostvars={"node1": host_vars}) is drained
 
 
-RACK_RESCUE = load("roles", "cassandra_service", "tasks", "restart_batch.yml")[0]["rescue"]
-# the drain loop of a rack: n1 drained, n2 failed, n3 skipped (left to its unit)
-DRAIN_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
+RACK = load("roles", "cassandra_service", "tasks", "restart_batch.yml")[0]
+RACK_DRAIN = next(t for t in RACK["block"] if t["name"] == "Drain the rack's nodes")
+RACK_WARN = next(t for t in RACK["block"] if t["name"] == "Say the drains that did not work")
+# the drain loop of a rack: n1 drained, n2 failed (nodetool's rc), n3 skipped (left to its unit), n4 no answer
+DRAIN_LOOP = {"changed": True, "msg": "All items completed", "results": [
     {"item": "n1", "changed": True, "failed": False, "msg": "nodetool drain executed successfully"},
-    {"item": "n2", "changed": False, "failed": True, "msg": "nodetool drain did not execute successfully (rc 2): error: x"},
-    {"item": "n3", "changed": False, "skipped": True}]}
+    {"item": "n2", "changed": False, "failed": False, "rc": 2, "error": "error: x",
+     "msg": "nodetool drain did not execute successfully (rc 2): error: x. If its Mode..."},
+    {"item": "n3", "changed": False, "skipped": True},
+    {"item": "n4", "changed": False, "failed": False, "msg": "Unable to reach JMX at 10.0.0.4:7199"},
+    # the timeout: Ansible's own result, no changed key, failed_when not applied
+    {"item": "n5", "failed": True, "msg": "The cassandra_drain action failed to execute in the expected time frame (120)"
+                                          " and was terminated"}]}
+TIMEOUT_221 = {"item": "n6", "changed": False, "failed": True, "msg": "Task failed: Timed out after 120 second(s).",
+               "timedout": {"frame": None, "period": 120}}  # ansible-core 2.18+
 
 
-def test_rack_drain_failure_names_each_node():
-    record = next(t for t in RACK_RESCUE if t["name"] == "Record the failure")
-    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], ansible_failed_result=DRAIN_LOOP) == (
-        "restart FAILED: One or more items failed; n2: nodetool drain did not execute successfully (rc 2): error: x")
+def test_rack_drain_never_stops_the_restart():
+    # a node not drained is restarted all the same, never left drained and running
+    assert RACK_DRAIN["failed_when"] is False and RACK_DRAIN["ignore_errors"] is True
+    assert RACK_DRAIN["timeout"] == "{{ cassandra_service_drain_timeout | int }}"
+    names = [t["name"] for t in RACK["block"]]
+    assert names.index("Drain the rack's nodes") < names.index("Say the drains that did not work") < names.index("Restart them")
 
 
-@pytest.mark.parametrize("drain, note", [
-    (DRAIN_LOOP, "n1, n2 drained or partly drained, not restarted: restart Cassandra on them before resuming. "),
-    (dict(DRAIN_LOOP, failed=False), ""),  # the drain went well (an earlier rack's, or the restart failed): no note
-    (None, ""),
+def test_rack_drain_failures_are_warned_each():
+    variables = dict(RACK_WARN["vars"], cassandra_restart_drain=DRAIN_LOOP)
+    items = render(RACK_WARN["loop"], **variables)
+    assert items == ["n2", "n4", "n5"]
+    assert [render(RACK_WARN["ansible.builtin.debug"]["msg"], item=i, **variables) for i in items] == [
+        "WARNING: n2 was not drained (error: x): restarted all the same.",
+        "WARNING: n4 was not drained (Unable to reach JMX at 10.0.0.4:7199): restarted all the same.",
+        "WARNING: n5 was not drained (The cassandra_drain action failed to execute in the expected time frame (120)"
+        " and was terminated): restarted all the same."]
+    assert RACK_WARN["vars"]["cassandra_output"] is True
+
+
+RACK_STOP = next(t for t in RACK["block"] if t["name"] == "Stop when no node of the rack answered")
+JMX_DOWN = {"item": "n1", "failed": False, "msg": "Unable to reach JMX at 10.0.0.1:7199"}
+
+
+@pytest.mark.parametrize("results, stops", [
+    ([JMX_DOWN, dict(JMX_DOWN, item="n2")], True),  # none answered (a wrong JMX login): nothing drained, none restarted
+    (DRAIN_LOOP["results"], False),  # some drained: all restarted
+    ([JMX_DOWN, DRAIN_LOOP["results"][4]], False),  # a timeout: maybe drained in part, restarted
+    ([TIMEOUT_221, dict(TIMEOUT_221, item="n7")], False),  # every drain timed out (2.18+): restarted
+    ([{"item": "n8", "failed": True, "msg": "Task failed: Timed out after 120 second(s)."}], False),  # (its message only)
+    ([JMX_DOWN, DRAIN_LOOP["results"][1]], False),  # nodetool answered with an error on n2
+    ([DRAIN_LOOP["results"][2]], False),  # all left to their unit
 ])
-def test_rack_drain_failure_says_what_to_restart(drain, note):
-    stop = next(t for t in RACK_RESCUE if t["name"] == "Stop here")
-    variables = dict(stop["vars"], _todo=["n1", "n2", "n3"], cassandra_progress_file="p")
-    if drain is not None:
-        variables["cassandra_restart_drain"] = drain
-    assert render(stop["ansible.builtin.fail"]["msg"], **variables) == (
-        "Stopped at the rack n1, n2, n3: no later rack was restarted. " + note
-        + "Once fixed, resume with the same command plus -e cassandra_rolling_resume=true (progress: p)")
+def test_rack_stops_when_no_node_answered(results, stops):
+    variables = dict(RACK_STOP["vars"], cassandra_restart_drain={"results": results})
+    assert true(RACK_STOP["when"], **variables) is stops
+    names = [t["name"] for t in RACK["block"]]
+    # (no WARNING "restarted all the same" when it stops: the stop first)
+    assert names.index(RACK_STOP["name"]) < names.index("Say the drains that did not work") < names.index("Restart them")
+
+
+# the restart loop of a rack failing on n2
+RESTART_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
+    {"item": "n1", "changed": True, "failed": False},
+    {"item": "n2", "changed": False, "failed": True, "msg": "Unable to restart service cassandra"},
+    {"item": "n3", "changed": True, "failed": False}]}
+
+
+@pytest.mark.parametrize("node, failure, said", [
+    ("n2", RESTART_LOOP, "restart FAILED: Unable to restart service cassandra"),
+    ("n1", RESTART_LOOP, "restart not finished: the rack stopped at n2"),  # not counted as failed by the recap
+    ("n1", {"failed": True, "msg": "cluster not healthy"}, "restart FAILED: cluster not healthy"),
+    # the wait for Mode NORMAL out of retries: netstats' own result, no msg
+    ("n3", {"failed": True, "msg": "One or more items failed",
+            "results": [{"item": "n3", "failed": True, "attempts": 30, "mode": "JOINING"}]},
+     "restart FAILED: not back in Mode NORMAL in time"),
+])
+def test_rack_failure_names_the_node_that_failed(node, failure, said):
+    record = next(t for t in RACK["rescue"] if t["name"] == "Record the failure")
+    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure) == said
+
+
+@pytest.mark.parametrize("file", ["action_restart.yml", "action_reboot.yml", "action_upgrade.yml"])
+@pytest.mark.parametrize("result, resumed, stops, warns", [
+    ({"failed": False, "rc": 2, "error": "error: x", "msg": "nodetool drain did not execute successfully (rc 2)"}, False,
+     False, "error: x"),  # nodetool answered with an error: warned, the node goes on
+    ({"failed": False, "msg": "Unable to reach JMX at 127.0.0.1:7199"}, False, True, None),  # no answer: stops
+    ({"failed": False, "msg": "Connection refused", "stderr": ""}, True, None, None),  # a resumed node, stopped already
+    ({"failed": True, "msg": "The cassandra_drain action failed to execute in the expected time frame (120) and was"
+                             " terminated"}, False, False, "The cassandra_drain action"),  # the timeout (2.16, 2.17)
+    ({"failed": True, "changed": False, "msg": "Task failed: Timed out after 120 second(s).",
+      "timedout": {"period": 120}}, False, False, "Task failed: Timed out"),  # the timeout (2.18+)
+    ({"failed": False, "changed": True, "msg": "ok"}, False, False, None),
+    ({"skipped": True, "changed": False}, False, False, None),  # --check, or left to the unit
+])
+def test_node_drain_failure(file, result, resumed, stops, warns):
+    tasks = load("roles", "cassandra_service", "tasks", file)
+    drain = next(t for t in tasks if t["name"] == "Drain the node")
+    stop = next(t for t in tasks if t["name"] == "Stop when the node did not answer")
+    warn = next(t for t in tasks if t["name"] == "Say the drain did not work")
+    assert drain["failed_when"] is False and drain["ignore_errors"] is True
+    assert drain["timeout"] == "{{ cassandra_service_drain_timeout | int }}"
+    if stops is None:  # (upgrade does not resume at a stopped node)
+        stops = file == "action_upgrade.yml"
+    skipped = "skipped" in result
+    variables = dict(cassandra_service_drain=result, _cassandra_resumed_node=resumed, inventory_hostname="n1")
+    if skipped:
+        variables["cassandra_service_drain"] = dict(result, skipped=True)
+    assert true(stop["when"], **variables) is stops
+    if not skipped:
+        assert true(warn["when"], **variables) is (warns is not None or stops or resumed)
+    if warns:
+        assert warns in render(warn["ansible.builtin.debug"]["msg"], **variables)
+    assert tasks.index(drain) + 1 == tasks.index(stop) and tasks.index(stop) + 1 == tasks.index(warn)
+    assert warn["vars"]["cassandra_output"] is True
 
 
 def test_service_stops_before_the_boot_setting():

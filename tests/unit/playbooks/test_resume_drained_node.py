@@ -125,14 +125,17 @@ def test_the_health_check_lets_that_node_only_be_down():
 
 @pytest.mark.parametrize("action", ["restart", "reboot"])
 def test_its_drain_may_fail_on_a_stopped_node_only(action):
-    drain = [t for t in load("roles", "cassandra_service", "tasks", "action_%s.yml" % action) if t["name"] == "Drain the node"][0]
-    refused = {"failed": True, "msg": "", "stderr": "ConnectException: 'Connection refused (Connection refused)'"}
-    other = {"failed": True, "msg": "Authentication failed"}
-    condition = "{{ %s }}" % drain["failed_when"]
-    assert render(condition, cassandra_service_drain=refused, _cassandra_resumed_node=True) is False
-    assert render(condition, cassandra_service_drain=refused, _cassandra_resumed_node=False) is True
-    assert render(condition, cassandra_service_drain=other, _cassandra_resumed_node=True) is True
-    assert render(condition, cassandra_service_drain={"changed": True}) is False
+    tasks = load("roles", "cassandra_service", "tasks", "action_%s.yml" % action)
+    stop = [t for t in tasks if t["name"] == "Stop when the node did not answer"][0]
+    refused = {"failed": False, "msg": "", "stderr": "ConnectException: 'Connection refused (Connection refused)'"}
+    other = {"failed": False, "msg": "Authentication failed"}
+
+    def stops(**variables):
+        return all(render("{{ %s }}" % c, **variables) for c in stop["when"])
+    assert stops(cassandra_service_drain=refused, _cassandra_resumed_node=True) is False
+    assert stops(cassandra_service_drain=refused, _cassandra_resumed_node=False) is True
+    assert stops(cassandra_service_drain=other, _cassandra_resumed_node=True) is True
+    assert stops(cassandra_service_drain={"changed": True}) is False
 
 
 def test_preflight_lets_a_resumed_run_pass_a_member_seed_down():
