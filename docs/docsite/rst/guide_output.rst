@@ -140,6 +140,9 @@ each progress wait, the recaps, the TO DO lists and the questions set it. A blan
 shown again (``pause`` clears it), and each phase line. A rule has a blank line above and under it, so text never
 touches it.
 
+A summary that only informs (``cassandra_linux``'s data disks) also sets ``cassandra_output_info: true`` (a literal
+too): its lines print in the progress colour, except its ``WARNING - ...`` lines (yellow).
+
 Inside a plan, a screen or a recap, an empty line ``""`` between two blocks is printed as a light rule; the
 paragraphs of one block (the intro's sentences, each fact, each warning, the items of a TO DO that span several
 lines) are separated by ``PARAGRAPH`` (``plugins/module_utils/cassandra_output.py``, a line with only a space),

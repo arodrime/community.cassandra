@@ -73,24 +73,71 @@ def test_lvchange_waits_for_a_stopped_cassandra_unless_asked(asked, running, now
 
 
 def test_deferred_switch_said_with_its_command():
-    say = task("Say how the data disks are tuned")
+    keep = task("Keep how the data disks are tuned")
     variables = dict(_cassandra_disk_tuned={"name": "cassandra-disks", "active": ["virtual-guest"],
                                             "profiles": ["virtual-guest", "cassandra-disks"]},
                      _cassandra_disk_tuned_deferred=True, cassandra_data_tuned_file={"changed": True},
                      cassandra_data_tuned_switch={"skipped": True})
-    assert render(say["vars"]["_tuned_deferred"], **variables) is True
-    assert render(say["vars"]["_tuned_failed"], **variables) is False
-    assert "_tuned_deferred | bool" in say["when"][1]
-    msg = " ".join(say["ansible.builtin.debug"]["msg"].split())
-    assert "by hand:' ~ ' tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')" in msg
-    assert "cassandra_linux_tuned_switch_running: true" in msg
+    assert render(keep["vars"]["_tuned_deferred"], **variables) is True
+    assert render(keep["vars"]["_tuned_failed"], **variables) is False
+    warnings = " ".join(keep["ansible.builtin.set_fact"]["_cassandra_disk_summary"]["warnings"].split())
+    assert "': tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')" in warnings
+    assert "cassandra_linux_tuned_switch_running: true" in warnings
+    assert "if _tuned_deferred | bool" in warnings
 
 
 def test_switch_timed_out_is_a_failure():
-    say = task("Say how the data disks are tuned")
+    keep = task("Keep how the data disks are tuned")
     variables = dict(_cassandra_disk_tuned={"name": "cassandra-disks"},
                      cassandra_data_tuned_switch={"failed": True, "msg": "timed out"})
-    assert render(say["vars"]["_tuned_failed"], **variables) is True
+    assert render(keep["vars"]["_tuned_failed"], **variables) is True
+
+
+SUMMED = dict(
+    inventory_hostname="node1", _cassandra_readahead_read_back=4, _cassandra_disk_items=[],
+    _cassandra_disk_plan={"brief": ["/data/c/{data,commitlog} \u2192 vg-data \u2192 sdb"], "stacks": ["full"],
+                          "warnings": [], "info": [], "notes": []},
+    _cassandra_disk_lvm_failed=[], _cassandra_disk_tuned={}, _cassandra_disk_tuned_deferred=False,
+    _cassandra_disk_changes_seen=[], _cassandra_disk_devices=[], _cassandra_data_lvchange_now=True,
+    _cassandra_data_lvm_here=True, ansible_check_mode=False, cassandra_data_running={"stdout": ""},
+    _tuned_warn="")  # (the collection's filter: not loaded here)
+
+
+def summed(**changes):
+    keep = task("Keep how the data disks are tuned")
+    variables = dict(SUMMED, **changes)
+    variables.update((k, render(v, **variables)) for k, v in keep["vars"].items() if k not in variables)
+    return dict((k, render(v, **variables) if isinstance(v, str) else v)
+                for k, v in keep["ansible.builtin.set_fact"]["_cassandra_disk_summary"].items())
+
+
+def test_summary_of_a_node_with_nothing_to_say():
+    s = summed()
+    assert s["name"] == "node1" and s["kb"] == 4 and s["changed"] is False
+    assert s["warnings"] == s["info"] == s["notes"] == []
+
+
+def test_summary_of_a_node_says_the_problems_and_the_restart():
+    failed = [{"kname": "dm-2", "lv": "vg/data"}]
+    changes = [{"kname": "dm-2", "what": "ra"}]
+    s = summed(_cassandra_disk_lvm_failed=failed, _cassandra_disk_changes_seen=changes, _cassandra_disk_items=[{"item": "x"}],
+               cassandra_data_running={"stdout": "running"})
+    assert s["changed"] is True
+    assert s["warnings"] == ["lvchange failed on vg/data: its read-ahead is set now, kept by the udev rule"]
+    assert s["info"] == ["restart Cassandra to read the files it has open with the new read-ahead"]
+    # not running (a new node), or under --check: no restart to ask for
+    assert summed(_cassandra_disk_changes_seen=changes)["info"] == []
+    assert summed(_cassandra_disk_changes_seen=changes, ansible_check_mode=True,
+                  cassandra_data_running={"stdout": "running"})["info"] == []
+
+
+def test_summary_of_a_node_with_lvm_kept_by_udev_under_a_running_cassandra():
+    lv = [{"kname": "dm-2", "kind": "lvm", "os": False, "lv_read_ahead": "auto"}]
+    s = summed(_cassandra_disk_devices=lv, _cassandra_data_lvchange_now=False)
+    assert s["info"] == ["LVM keeps the read-ahead of its volumes from a run with Cassandra stopped (or"
+                         " cassandra_data_lvchange_running: true), the udev rule meanwhile"]
+    s = summed(_cassandra_disk_devices=lv, _cassandra_data_lvchange_now=False, _cassandra_data_lvm_here=False)
+    assert s["info"] == [] and "LVM may set them back" in s["notes"][0]
 
 
 @pytest.mark.parametrize("variables, dirs", [
@@ -129,3 +176,39 @@ def test_profile_change_listed_only_when_done(deferred, check_mode, switch, list
                  _cassandra_disk_tuned_deferred=deferred, ansible_check_mode=check_mode,
                  cassandra_data_tuned_switch=switch, cassandra_data_disk_udev={"changed": False})
     assert ("tuned profiles" in [i["item"] for i in out]) is listed
+
+
+TUNED = {"name": "cassandra-disks", "active": ["virtual-guest"], "profiles": ["virtual-guest", "cassandra-disks"],
+         "unmatched": []}
+
+
+def test_summary_of_a_node_says_the_tuned_problems():
+    deferred = summed(_cassandra_disk_tuned=TUNED, _cassandra_disk_tuned_deferred=True,
+                      cassandra_data_tuned_file={"changed": True}, cassandra_data_tuned_switch={"skipped": True})
+    assert deferred["warnings"] == [
+        "tuned: not switched to virtual-guest cassandra-disks under a running Cassandra (the switch applies the profiles"
+        " again, live); until then they set the read-ahead of the Cassandra devices again at boot: tuned-adm profile"
+        " virtual-guest cassandra-disks, or a run with Cassandra stopped (or cassandra_linux_tuned_switch_running: true)"]
+    failed = summed(_cassandra_disk_tuned=TUNED, cassandra_data_tuned_switch={"rc": 1, "stderr": "no such profile\nmore"})
+    assert failed["warnings"] == ["tuned-adm profile virtual-guest cassandra-disks failed: no such profile"]
+    ok = summed(_cassandra_disk_tuned=dict(TUNED, unmatched=["sdb"]), cassandra_data_tuned_switch={"rc": 0})
+    assert ok["warnings"] == ["tuned: no stable id for sdb: its profile still sets them"]
+    assert ok["notes"] == ["tuned: runs virtual-guest cassandra-disks (cassandra-disks: nothing set on the Cassandra devices)"]
+    # the conflict warning of the filter: one WARNING prefix, the summary's
+    conflict = summed(_tuned_warn="WARNING: the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb")
+    assert conflict["warnings"] == ["the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb"]
+
+
+MAIN = os.path.join(os.path.dirname(DISKS), "main.yml")
+
+
+def test_the_summary_reads_the_nodes_that_tuned_their_disks():
+    with open(MAIN) as f:
+        say = next(t for t in yaml.safe_load(f) if t.get("name") == "Say how the data disks are tuned")
+    assert say["run_once"] is True and "when" not in [k for k in say if k == "when" and "manage" in str(say[k])]
+    hostvars = {"node1": {"_cassandra_disk_summary": {"name": "node1"}}, "node2": {"_cassandra_disk_summary": {}},
+                "node3": {}}
+    nodes = render(say["vars"]["_nodes"], ansible_play_batch=["node1", "node2", "node3"], hostvars=hostvars)
+    assert nodes == [{"name": "node1"}]
+    assert render("{{ %s }}" % say["when"], _nodes=nodes) is True
+    assert render("{{ %s }}" % say["when"], _nodes=[]) is False

@@ -10,8 +10,10 @@ is the top device (dm-N, mdN), not the disks under it: the bios are only
 mapped down, nothing is read ahead again there. The devices under it still
 matter: LVM's "auto" read-ahead and cryptsetup take theirs as a minimum when
 they activate the device above, and they serve the reads issued to them
-directly. So the top device is always tuned, and the devices under it too
-when nothing else sits on them (a disk shared with the OS keeps its own).
+directly. So the whole stack is tuned, the top device and every device under
+it, whatever else they hold: Cassandra is taken as alone on its storage
+(a disk under it that also holds an OS filesystem is left alone only when
+the OS volumes are, tune_os false).
 
 A partition has no read-ahead of its own: its disk's is used.
 """
@@ -27,7 +29,7 @@ ARROW = u" \u2192 "
 # lsblk's columns read (ra, rota, sched: by import_cluster only, the role reads sysfs)
 FIELDS = ("name", "type", "maj:min", "mountpoint", "fstype", "ra", "rota", "sched")
 # the dm names of LVM's own layers: pools, snapshots, raid, mirror, cache, vdo, integrity, writecache
-# (only for a volume lvs doesn't list; a volume named "real" itself would be taken as one: left alone)
+# (a -layer one also for what lvs lists, with its volume's name before it: vg-pool-tpool, not a volume vg-real)
 LVM_INTERNAL = re.compile(r"((?<!-)-(tpool|real|cow|vpool)$|_(tdata|tmeta|tierdata|rimage_\d+|rmeta_\d+|mimage_\d+|mlog|"
                           r"corig|cdata|cmeta|cpool|cvol|vdata|vorigin|wcorig|iorig|imeta|pmspare)(-|$))")
 # the filesystems of the OS: tuned too when Cassandra's data is on them (unless
@@ -113,14 +115,17 @@ def _kind(node, lvs):
     parts, never read through their page cache)."""
     kname = node["kname"]
     if kname.startswith("dm-"):
+        # LVM's own layers (a pool's -tpool, a snapshot's -real...), also when
+        # lvs gives a volume their numbers (a thin pool's): never reloaded
+        name = node.get("name", "")
+        internal = node.get("type") == "lvm" and LVM_INTERNAL.search(name)
+        if internal and len(re.split(r"(?<!-)-(?!-)", name)) >= 3:
+            return "lvm-internal"
         lv = lvs.get(node.get("maj:min", ""))
         if lv:
             return "lvm-internal" if lv["hidden"] else "lvm"
-        # LVM's own layers lvs doesn't list as volumes (a pool's -tpool, a
-        # snapshot's -real...); any other device lvs misses is tuned as a dm device
-        if node.get("type") == "lvm" and LVM_INTERNAL.search(node.get("name", "")):
-            return "lvm-internal"
-        return "dm"
+        # the other layers lvs doesn't list; any other device it misses: tuned as a dm device
+        return "lvm-internal" if internal else "dm"
     if node.get("type") == "part":
         return "part"
     if kname.startswith("md"):
@@ -231,7 +236,32 @@ def mount_targets(mounts):
     return out
 
 
-def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=None, tune_os=True):
+def _name(node):
+    """A device as the default view names it: a device-mapper one by its name
+    (vg-lv, the mapper name: chosen by the admin), not dm-N."""
+    if node["kname"].startswith("dm-") and node.get("name"):
+        return node["name"]
+    return node["kname"]
+
+
+def _dirs(dirs):
+    """Directories, short: the ones of one parent as parent/{a,b}."""
+    groups = OrderedDict()   # {(parent, True): [names]}, {(directory, False): []} for one with no parent to share
+    for d in dirs:
+        parent, sep, base = d.rpartition("/")
+        if sep and parent and base:
+            groups.setdefault((parent, True), []).append(base)
+        else:
+            groups.setdefault((d, False), [])
+    return ", ".join("%s/%s" % (p, bases[0] if len(bases) == 1 else "{%s}" % ",".join(bases)) if grouped else p
+                     for (p, grouped), bases in groups.items())
+
+
+# filesystems with no block device that no one means to tune (a container, a test): said with -v only
+QUIET_FSTYPES = ("overlay", "tmpfs", "squashfs")
+
+
+def plan(lsblk, mounts, explicit=None, lvs=None, contents=None, tune_os=True):
     """Which devices to tune, and why.
 
     lsblk: lsblk -J -o NAME,KNAME,MAJ:MIN,TYPE,MOUNTPOINT,FSTYPE (the whole
@@ -241,25 +271,29 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
     readlink -f looped over the devices set by hand (they replace the
     directories' devices). lvs: the lines of lvs -a --noheadings
     --separator '|' -o lv_kernel_major,lv_kernel_minor,vg_name,lv_name,
-    lv_read_ahead. tune_shared: also tune the devices under them that hold
-    other things. tune_os: also tune a filesystem of the OS (/, /var...)
-    Cassandra's directories are on. contents: the results of ls -A looped over mount_targets(),
-    to say when a tuned filesystem holds more than Cassandra's directories.
+    lv_read_ahead. tune_os: also tune a filesystem of the OS (/, /var...)
+    Cassandra's directories are on, and a disk under the Cassandra devices
+    that also holds one. contents: the results of ls -A looped over
+    mount_targets(), to say when a tuned filesystem holds more than
+    Cassandra's directories.
 
-    -> {devices: [{kname, label, kind, lv, lv_read_ahead, top, where, os}] to tune, top
-    devices first; stacks: [a line per filesystem: its directories, then its
-    devices level by level]; notes: [what is not tuned, and why]; unusable:
-    [devices set by hand that can't be tuned]; os_skipped: [directories or
-    devices left alone as the OS's, tune_os false]}."""
-    nodes, notes = parse_lsblk(lsblk), []
+    -> {devices: [{kname, label, kind, lv, lv_read_ahead, top, where, os}] to
+    tune, top devices first; brief: [a line per filesystem, short: its
+    directories, then its devices level by level, by name]; stacks: [the
+    same in full: dm-N, and what is worth knowing about it]; warnings: [what
+    is not tuned and should be looked at]; info: [what is not tuned yet, and
+    when it will be]; notes: [what is left alone on purpose, and why];
+    unusable: [devices set by hand that can't be tuned]; os_skipped:
+    [directories or devices left alone as the OS's, tune_os false]}."""
+    nodes, notes, warnings, info = parse_lsblk(lsblk), [], [], []
     if not _is_json(lsblk) and loop_results(mounts) and not loop_results(explicit):
-        return {"devices": [], "stacks": [], "unusable": [],
-                "notes": ["not tuned: lsblk -J printed no devices (util-linux older than 2.27?)"]}
+        return {"devices": [], "stacks": [], "brief": [], "unusable": [], "os_skipped": [], "notes": [], "info": [],
+                "warnings": ["not tuned: lsblk -J printed no devices (util-linux older than 2.27?)"]}
     lvs = parse_lvs(lvs)
     explicit = loop_results(explicit)
     contents = dict((r.get("item"), r.get("stdout_lines") or []) for r in loop_results(contents))
     by_majmin = dict((n.get("maj:min"), k) for k, n in nodes.items() if n.get("maj:min"))
-    devices, stacks, unusable, os_skipped, index = [], [], [], [], {}
+    devices, stacks, brief, unusable, os_skipped, index = [], [], [], [], [], {}
 
     def kind(k):
         return _kind(nodes[k], lvs)
@@ -292,13 +326,14 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
         fs, missing = _lookup(r)
         if not fs:
             if tune and not explicit:
-                notes.append("%s: not tuned, not found (not created yet?)" % d)
+                warnings.append("%s: not tuned, not found (not created yet?)" % d)
             continue
         majmin, target = _str(fs.get("maj:min")), _str(fs.get("target"))
         if missing and target in OS_MOUNTS:
             # its own filesystem may not be mounted yet: never an OS one by mistake
             if tune and not explicit:
-                notes.append("%s: not tuned, not created yet (it would be on %s, an OS filesystem)" % (d, target))
+                info.append("%s: not created yet (it would be on %s, an OS filesystem): tuned by a run after it is"
+                            % (d, target))
             continue
         mounted.add(majmin)
         if not tune or explicit:
@@ -311,7 +346,7 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
         if majmin.startswith("0:") or not kname:
             fstype, source = _str(fs.get("fstype")), _str(fs.get("source"))
             why = NOT_BLOCK.get(fstype) or "%s on %s, not a block device" % (fstype or "?", source or "?")
-            notes.append("%s: not tuned, %s" % (d, why))
+            (notes if fstype in QUIET_FSTYPES else warnings).append("%s: not tuned, %s" % (d, why))
             continue
         targets[kname] = target
         tops.setdefault(kname, []).append(d)
@@ -326,18 +361,19 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
         if k not in nodes:
             add(k, True, given)   # lsblk doesn't see it (no udev, a test tree): taken as a disk, if sysfs has it
             stacks.append("%s%s%s" % (given, ARROW, k))
+            brief.append("%s%s%s" % (given, ARROW, k))
             continue
         if not [u for u in _other_uses(nodes, k, set()) if u in OS_MOUNTS]:
             ours.add(nodes[k].get("maj:min"))   # a device set by hand is Cassandra's, but the OS's
         tops.setdefault(k, []).append(given)
 
-    # what the Cassandra filesystems sit on, before telling a device under them shared
-    # (an OS filesystem is not: the disks under it stay the OS's)
+    # what the Cassandra filesystems sit on (an OS filesystem is not: the disks under it stay the OS's)
     ours.update(nodes[k].get("maj:min") for k in tops if targets.get(k) not in OS_MOUNTS
                 and not [u for u in _other_uses(nodes, k, set()) if u in OS_MOUNTS])
     # the devices the data is read through (a commitlog partition on such a disk reads with it too)
     data_disks = set(disk_of(k) for k, dirs in tops.items() if not set(dirs) <= commitlog)
-    for kname, dirs in tops.items():
+    # the data's stacks first: a disk under the data and under the commitlog alone is the data's
+    for kname, dirs in sorted(tops.items(), key=lambda t: set(t[1]) <= commitlog):
         top = disk_of(kname)
         target = targets.get(kname)
         # an OS filesystem: where it is mounted (also through a bind mount), or
@@ -359,30 +395,48 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
             if explicit:
                 unusable.extend(dirs)
             else:
-                notes.append("%s: not tuned, on %s (%s)" % (", ".join(dirs), _label(nodes[top]), nodes[top].get("type")))
+                (notes if kind(top) == "loop" else warnings).append(
+                    "%s: not tuned, on %s (%s)" % (", ".join(dirs), _label(nodes[top]), nodes[top].get("type")))
             continue
-        add(top, True, ", ".join(dirs), bool(os_fs or os_disk))
-        shown = []
+        on_os = bool(os_fs or os_disk)
+        add(top, True, ", ".join(dirs), on_os)
+        shown, short, also = [], [], []
+        mine = ours | set([nodes[kname].get("maj:min")])   # an OS filesystem the data is on: not another use here
         for level in _levels(nodes, kname):
-            names = []
+            names, short_names = [], []
             for k in level:
-                label = _label(nodes[k])
+                label, short_label = _label(nodes[k]), _name(nodes[k])
                 if k != top and kind(k) not in ("part", "loop", "lvm-internal") and k not in index:
                     # loop, lvm-internal: their read-ahead is not the one files are read with
-                    uses = _other_uses(nodes, k, ours)
-                    if uses and not tune_shared:
-                        label += " (not tuned: also %s)" % ", ".join(uses)
-                        notes.append("%s: not tuned, it also holds %s (the devices above it are; "
-                                     "cassandra_data_tune_shared_devices: true tunes it too)" % (_label(nodes[k]), ", ".join(uses)))
+                    uses = _other_uses(nodes, k, mine)
+                    os_uses = [u for u in uses if u in OS_MOUNTS]
+                    if os_uses and not tune_os:
+                        label += " (not tuned: also %s)" % ", ".join(os_uses)
+                        short_label = _name(nodes[k]) + " (not tuned)"
+                        notes.append("%s: not tuned, it also holds %s, an OS filesystem"
+                                     " (cassandra_data_tune_os_volumes: false)" % (_label(nodes[k]), ", ".join(os_uses)))
+                    elif os_uses and set(dirs) <= commitlog:
+                        label += " (not tuned: also %s)" % ", ".join(os_uses)
+                        short_label = _name(nodes[k]) + " (not tuned)"
+                        notes.append("%s: not tuned, under the commitlog alone, it also holds %s, an OS filesystem"
+                                     % (_label(nodes[k]), ", ".join(os_uses)))
                     else:
-                        add(k, False, "under " + _label(nodes[top]))
+                        if os_uses:   # the OS reads with it too: said in the default view
+                            short_label += " (also %s)" % ", ".join(os_uses)
+                        # under an OS filesystem: of the OS too (an LVM volume never reloaded)
+                        add(k, False, "under " + _label(nodes[top]), on_os or bool(os_uses))
+                        if uses:
+                            also.append("%s also holds %s: tuned all the same" % (_label(nodes[k]), ", ".join(uses)))
                 names.append(label)
+                short_names.append(short_label)
             shown.append(", ".join(names))
+            short.append(", ".join(short_names))
         line = ", ".join(dirs) + ARROW + ARROW.join(shown)
         if kname != top:
             uses = _other_uses(nodes, top, ours)
             if uses:
                 line += " (%s is read through its disk %s, which also holds %s)" % (kname, top, ", ".join(uses))
+        line += "".join(" (%s)" % a for a in also)
         if os_fs:
             line += (" (%s: of the OS, its read-ahead set for Cassandra; its other files read with the same)"
                      % ", ".join(os_fs))
@@ -398,9 +452,10 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
             if others and "" not in mine:   # "": a directory is the mount point itself
                 line += " (%s is shared: its other files get the same read-ahead)" % target
         stacks.append(line)
+        brief.append(_dirs(dirs) + ARROW + ARROW.join(short))
     if not lvs and any(nodes.get(d["kname"], {}).get("type") == "lvm" for d in devices):
-        notes.append("lvs listed no LVM volume: they are tuned as device-mapper devices, kept by the udev rule"
-                     " (LVM may set them back when it activates them)")
+        warnings.append("lvs listed no LVM volume: they are tuned as device-mapper devices, kept by the udev rule"
+                        " (LVM may set them back when it activates them)")
     # a device set by hand under a Cassandra filesystem: the device above it is the one read with
     for r in explicit:
         if r.get("item") in unusable:
@@ -408,10 +463,11 @@ def plan(lsblk, mounts, explicit=None, lvs=None, tune_shared=False, contents=Non
         k = (_str(r.get("stdout")) if r.get("rc", 1) == 0 else r.get("item") or "").rsplit("/", 1)[-1]
         for u in _uppermost(nodes, k) if k in nodes else []:
             if u not in index and nodes[u].get("maj:min") in mounted:
-                notes.append("%s: not tuned, though the Cassandra files on it are read with its read-ahead, not with the"
-                             " one of %s under it: set it in cassandra_data_block_devices, or leave them empty"
-                             % (_label(nodes[u]), k))
-    return {"devices": devices, "stacks": stacks, "notes": _dedupe(notes), "unusable": unusable, "os_skipped": os_skipped}
+                warnings.append("%s: not tuned, though the Cassandra files on it are read with its read-ahead, not with"
+                                " the one of %s under it: set it in cassandra_data_block_devices, or leave them empty"
+                                % (_label(nodes[u]), k))
+    return {"devices": devices, "stacks": stacks, "brief": brief, "warnings": _dedupe(warnings),
+            "info": _dedupe(info), "notes": _dedupe(notes), "unusable": unusable, "os_skipped": os_skipped}
 
 
 def _udev_value(value):

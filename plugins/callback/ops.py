@@ -29,11 +29,12 @@ description:
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
     C(NOTHING TO DO), C(READY) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
     stalled or failed as an error; C(NOTE), the progress lines (C([1/2] node5 ...)) and the phase lines (ending
-    with C(...)) in O(progress_color). The lines indented under a coloured one keep its colour. The C(status)
-    playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
-    as a change, C(1 NODE DOWN) and a ring that differs from the inventory as an error; the
-    rows of its table (C( DN  10.0.0.5 ...)) by the node's state, down as an error, joining, leaving or moving as
-    a change. The messages themselves stay plain text.
+    with C(...)) in O(progress_color). The lines of an informative summary (a task that also sets the task variable
+    C(cassandra_output_info) to C(true), a literal like C(cassandra_output)) too, except its C(WARNING) lines. The
+    lines indented under a coloured one keep its colour. The C(status) playbook's verdict, C(ALL 5 NODES UP), as
+    ok, followed by nodes joining, leaving or moving (C(1 JOINING)) as a change, C(1 NODE DOWN) and a ring that
+    differs from the inventory as an error; the rows of its table (C( DN  10.0.0.5 ...)) by the node's state,
+    down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
     C(REFUSED  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
     C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
@@ -89,6 +90,7 @@ from ansible.utils.color import parsecolor
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
 RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
+INFO = "cassandra_output_info"  # an informative summary: in the progress colour, except its WARNING lines
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
@@ -279,7 +281,7 @@ class CallbackModule(DefaultCallback):
             self._display.display("")
         self._ruled, self._blank = line, True
 
-    def _print(self, msg, color=None):
+    def _print(self, msg, color=None, info=False):
         texts = lines(msg)
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
@@ -304,7 +306,7 @@ class CallbackModule(DefaultCallback):
                 self._rule()  # the blocks inside
                 above = None
                 continue
-            above = color or colour(line, above, self._progress)
+            above = color or colour(line, above, self._progress) or (self._progress if info else None)
             self._line(line, color=above)
             if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
@@ -359,7 +361,7 @@ class CallbackModule(DefaultCallback):
         self._gap = self._gap or (_flag(task, GAP) and not looped)  # a loop's: before its first item
         self._looping = False
         if marked(task) and not looped and self._says(task):
-            self._print(_result(result).get("msg"))
+            self._print(_result(result).get("msg"), info=_flag(task, INFO))
 
     def _answered(self, res):
         """pause clears the answer's line once it is read: shown again (not
@@ -389,7 +391,7 @@ class CallbackModule(DefaultCallback):
         if _flag(_task(result), GAP) and not self._looping:
             self._gap = self._looping = True
         if marked(_task(result)) and self._says(_task(result)):
-            self._print(_result(result).get("msg"))
+            self._print(_result(result).get("msg"), info=_flag(_task(result), INFO))
 
     def _own_failure(self, result):
         """A marked assert or fail with something to say: its msg is the
