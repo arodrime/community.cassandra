@@ -1,5 +1,6 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
+import re
 import socket
 
 
@@ -17,6 +18,24 @@ def cassandra_version_at_least(version_string, minimum_version):
     def parts(v):
         return tuple(int(p) for p in v.split(".")[:2])
     return parts(version_string) >= parts(minimum_version)
+
+
+# a JMX login refused, as nodetool reports it (JMX file login or Cassandra's own)
+JMX_LOGIN_REFUSED_RE = re.compile(r"Invalid username or password|Authentication failed|Credentials required|"
+                                  r"FailedLoginException")
+
+
+def version_error(out, err):
+    """The message when nodetool version fails: a refused JMX login said as
+    such, with the options to check, else nodetool's first error line."""
+    text = "{0}\n{1}".format(out or "", err or "")
+    said = [line.strip()[len("error:"):].strip() for line in text.splitlines() if line.strip().startswith("error:")]
+    if JMX_LOGIN_REFUSED_RE.search(text):
+        return ("JMX login refused ({0}): check username and password or password_file"
+                .format(said[0] if said else "authentication failed"))
+    errors = (err or "").strip().splitlines()
+    return "Unable to determine Cassandra version: {0}".format(
+        said[0] if said else (out or "").strip() or (errors[0] if errors else ""))
 
 
 class NodeToolCmd(object):
@@ -37,13 +56,17 @@ class NodeToolCmd(object):
         self.cassandra_version = module.params['cassandra_version']
         if self.host is None:
             self.host = socket.getfqdn()
+        # the password is only passed along with a username: without one, nodetool runs without
+        # credentials ("Credentials required" where JMX authentication is on)
+        if self.username is None and (self.password is not None or self.password_file is not None):
+            module.fail_json(msg="password or password_file is set without username")
         if self.cassandra_version is None:
             (rc, out, err) = self.nodetool_cmd("version")
             if rc == 0:
                 what_is_the_version = ".".join(out.split(': ')[1].split(".")[:2]).strip()
                 module.params['cassandra_version'] = what_is_the_version
             else:
-                module.fail_json(msg="Unable to determine Cassandra version: {0}".format(out), stderr=err)
+                module.fail_json(msg=version_error(out, err), stderr=err)
 
     def execute_command(self, cmd):
         return self.module.run_command(cmd)

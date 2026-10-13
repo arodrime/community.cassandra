@@ -1,0 +1,4 @@
+breaking_changes:
+  - nodetool modules - fail without running nodetool when ``password`` or ``password_file`` is set without ``username``. The password was only passed along with a username, so it was silently ignored; where JMX authentication is off such a task used to succeed, and now fails.
+bugfixes:
+  - nodetool modules - when Cassandra's version cannot be read because the JMX login is refused, say so and name the options to check, instead of ``Unable to determine Cassandra version:`` followed by nodetool's empty standard output; other failures now give nodetool's error line.
