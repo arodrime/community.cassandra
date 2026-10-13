@@ -9,7 +9,8 @@ name: cassandra_hosts
 short_description: The inventory group of the cluster the operation playbooks run on
 version_added: 2.1.0
 description:
-  - Returns the variable C(cassandra_hosts) when it is set (C(-e cassandra_hosts=<group>)).
+  - Returns the variable C(cassandra_hosts) when it is set (C(-e cassandra_hosts=<group>)). It must name a
+    group of the inventory with hosts, else the lookup fails.
   - Else the cluster named by the environment variable C(CASSANDRA_CLUSTER) when it is set
     (C(CASSANDRA_CLUSTER=<group> ansible-playbook ...)), the group of that name with hosts, else the group
     whose hosts are the hosts with that C(cassandra_cluster_name) (exact, case-sensitive), laid out as a
@@ -82,6 +83,12 @@ def cluster_group(given, groups, env=None, cluster_name=None):
 def picked(given, groups, env=None, cluster_name=None):
     """cluster_group, and how it was picked."""
     if given:
+        # a typo matches no host: under --limit (no localhost play to check it), every play would be
+        # skipped and the run end ok
+        if groups and not groups.get(given):
+            raise ValueError("cassandra_hosts: group '%s' %s (groups: %s)."
+                             % (given, "has no host" if given in groups else "not found in the inventory",
+                                ", ".join(sorted(g for g in groups if g not in ("all", "ungrouped")))))
         return given, "cassandra_hosts"
     if env:
         return _named(env, groups, cluster_name), "%s=%s" % (ENV, env)
