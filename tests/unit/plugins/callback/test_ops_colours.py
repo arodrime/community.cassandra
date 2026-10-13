@@ -59,8 +59,8 @@ def test_an_indented_line_takes_the_colour_of_the_line_it_is_under():
 
 
 @pytest.mark.parametrize("given, expected", [
-    (None, "color208"), ("", "color208"), ("bright yellow", "bright yellow"), ("rgb520", "rgb520"),
-    ("color99", "color99"), ("no such colour", "color208")])
+    (None, C.COLOR_WARN), ("", C.COLOR_WARN), ("bright yellow", "bright yellow"), ("rgb520", "rgb520"),
+    ("color99", "color99"), ("no such colour", C.COLOR_WARN)])
 def test_warning_color(given, expected):
     assert warning_color(given) == expected
 
@@ -102,9 +102,10 @@ def _codes(output):
 
 
 @pytest.mark.parametrize("env, warning", [
-    ({}, "38;5;208"),  # orange
+    ({}, "1;35"),  # Ansible's COLOR_WARN: bright purple
     ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR": "bright yellow"}, "1;33"),
-    ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR": "no such colour"}, "38;5;208"),
+    ({"ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR": "no such colour"}, "1;35"),
+    ({"ANSIBLE_COLOR_WARN": "bright cyan"}, "1;36"),  # [colors] warn followed
 ])
 def test_the_screen_colours(tmp_path, env, warning):
     (tmp_path / "ansible.cfg").write_text("[defaults]\n")
@@ -193,6 +194,6 @@ def test_nothing_to_do_is_a_recap_between_rules(tmp_path):
 def test_an_indented_warning_is_a_warning():
     # under a plan, a red row or an informative summary: still the WARNING colour, the configured one
     for above in (None, C.COLOR_ERROR, "cyan"):
-        assert colour("  WARNING: x", above=above) == "color208"
+        assert colour("  WARNING: x", above=above) == C.COLOR_WARN
     assert colour("    WARNING - lvchange failed", above="cyan", warning="bright yellow") == "bright yellow"
     assert colour("  not a WARNING", above=C.COLOR_ERROR) == C.COLOR_ERROR  # only at the start of the line

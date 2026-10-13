@@ -82,11 +82,10 @@ options:
     version_added: 2.1.0
   warning_color:
     description:
-      - The colour of the C(WARNING) lines, an Ansible colour name (C(bright yellow), C(bright purple)...) or a
-        256-colour one (C(color208), C(rgb520)...).
-      - Not set, C(color208) (orange), apart from the yellow of the changes and the purple of Ansible's own warnings. A
-        terminal without 256 colours shows it wrong, set C(bright yellow) or C(bright purple) there. A name Ansible
-        does not know is left for that default.
+      - The colour of the C(WARNING) lines, an Ansible colour name (C(bright purple), C(bright yellow)...).
+      - Not set, Ansible's own warning colour (C(COLOR_WARN), set by C(warn) in the C([colors]) section of
+        C(ansible.cfg), C(bright purple) by default), as Ansible's own C([WARNING]) lines; apart from the yellow of
+        the changes. A name Ansible does not know is left for that default.
     type: str
     ini:
       - section: callback_cassandra_ops
@@ -165,7 +164,6 @@ _MARKS = (
                 r"|^\S.*?\S  (would apply|applied)\b"), "COLOR_CHANGED"),  # (apply_config's outcomes)
 )
 PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_color)
-WARNING_COLOR = "color208"  # orange, the WARNING lines (option warning_color)
 
 
 # a plan or a screen (its first line), a recap, a progress line
@@ -183,16 +181,17 @@ _HELP_RULE = re.compile(r"(====|----) (\S.*?) [=-]{4,}$")
 _HELP_COMMAND = re.compile(r"\s*\$ ")
 
 
-def shade(name, progress=PROGRESS_COLOR, warning=WARNING_COLOR):
-    """A colour of _COLOURS, _MARKS or PLAN_COLOUR as Ansible's colour name."""
+def shade(name, progress=PROGRESS_COLOR, warning=None):
+    """A colour of _COLOURS, _MARKS or PLAN_COLOUR as Ansible's colour name
+    (warning: the WARNING lines', Ansible's COLOR_WARN when None)."""
     if name == "PROGRESS":
         return progress
     if name == "WARNING":
-        return warning
+        return warning or C.COLOR_WARN
     return getattr(C, name, None) if name else None
 
 
-def colour(line, above=None, progress=PROGRESS_COLOR, warning=WARNING_COLOR):
+def colour(line, above=None, progress=PROGRESS_COLOR, warning=None):
     """The display colour of a message line (None: the default), above:
     the colour of the line it is indented under, kept by an indented line
     without a mark of its own; progress: the colour of the progress, phase
@@ -204,7 +203,7 @@ def colour(line, above=None, progress=PROGRESS_COLOR, warning=WARNING_COLOR):
         return None if row.group(2) == "N" else C.COLOR_CHANGED
     mark = next((name for pattern, name in _MARKS if pattern.search(line)), None)
     if line[:1] in (" ", "\t") and line.strip():  # its own mark, a WARNING, else the colour it is under
-        return shade(mark, progress, warning) if mark else warning if _WARNING.match(line.lstrip()) else above
+        return shade(mark or ("WARNING" if _WARNING.match(line.lstrip()) else None), progress, warning) or above
     for pattern, name in _COLOURS:
         if pattern.match(line):
             return shade(name, progress, warning)
@@ -236,8 +235,9 @@ def _known(given):
 
 def warning_color(given=None):
     """The colour of the WARNING lines: given (option warning_color) when it
-    is a colour Ansible knows, else WARNING_COLOR."""
-    return _known(given) or WARNING_COLOR
+    is a colour Ansible knows, else Ansible's own warning colour (COLOR_WARN,
+    [colors] warn in ansible.cfg)."""
+    return _known(given) or C.COLOR_WARN
 
 
 def help_line(line, key, progress=PROGRESS_COLOR, laid=False):
@@ -355,7 +355,7 @@ class CallbackModule(DefaultCallback):
         self._verdicts = set()  # the run_once verdicts printed: (task, lines)
         self._ruled = ""  # the rule just printed, if any
         self._progress = PROGRESS_COLOR
-        self._warning = WARNING_COLOR
+        self._warning = C.COLOR_WARN
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)

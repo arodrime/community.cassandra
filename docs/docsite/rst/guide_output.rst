@@ -173,8 +173,9 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
   or failed, ``← down``, a recap's failed node, ``RING AND INVENTORY DIFFER``;
 - **cyan** (option ``progress_color``): ``NOTE``, the progress and phase lines, the first line of a plan or a
   screen, an informative summary (``cassandra_output_info``), the help's commands and options;
-- **orange** (option ``warning_color``, ``color208`` by default): every ``WARNING`` line, indented or not, an
-  informative summary's too; apart from the yellow of the changes and the purple of Ansible's own warnings.
+- **purple**, Ansible's own warning colour (``[colors] warn`` in ``ansible.cfg``, bright purple by default; the
+  option ``warning_color`` sets another one): every ``WARNING`` line, indented or not, an informative summary's
+  too, as Ansible's own ``[WARNING]`` lines; apart from the yellow of the changes.
 
 The lines indented under a coloured one keep its colour, unless they carry a mark of their own or a ``WARNING``.
 

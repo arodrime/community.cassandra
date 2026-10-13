@@ -502,7 +502,7 @@ def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
 def test_colours_by_line_start():
     from ansible import constants as C
     from ansible_collections.community.cassandra.plugins.callback.ops import colour
-    assert colour("WARNING  seeds: dc1 has one seed") == "color208"  # orange (option warning_color)
+    assert colour("WARNING  seeds: dc1 has one seed") == C.COLOR_WARN  # Ansible's own (option warning_color)
     assert colour("WARNING  x", warning="bright yellow") == "bright yellow"
     assert colour("         its next line", above=C.COLOR_CHANGED) == C.COLOR_CHANGED  # indented: as the line above
     assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
@@ -578,7 +578,7 @@ def test_an_informative_summary_in_the_progress_colour(tmp_path):
     assert rc == 0, output
     for line in ("Data disks: set now on 1 node", "  node1:", "    /data -> sdb"):
         assert "\x1b[0;36m%s\x1b[0m" % line in output, repr(output)
-    assert re.search("\x1b\\[38;5;208mWARNING - lvchange failed \\(node1\\)\x1b\\[0m", output), repr(output)
+    assert re.search("\x1b\\[1;35mWARNING - lvchange failed \\(node1\\)\x1b\\[0m", output), repr(output)
     assert "\nplain" in output, repr(output)
 
 
