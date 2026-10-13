@@ -22,7 +22,10 @@
 # sync, the read-ahead and scheduler of the data devices) too, except on a node
 # with cassandra_linux_manage false: the ones that differ are shown with the
 # config's, and applied first, on their nodes at once, live (no restart for
-# them: the files Cassandra has open keep their read-ahead until it restarts).
+# them: the files Cassandra has open keep their read-ahead until it restarts),
+# but the time sync of a running Cassandra: installed or started in its restart
+# window (Cassandra stopped, its clock let sync, started again), said with its
+# clock's offset to its time source when it can be read.
 # Stops at the first problem.
 #   ansible-playbook -i inventory community.cassandra.apply_config
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
@@ -154,9 +157,51 @@
       failed_when: false  # no unit: not started by it
       when: not _cassandra_preflight_running | default(true) | bool
 
+    # (one command per node) a node an interrupted run stopped to start its time sync; for a node whose time sync
+    # is to start: whether its unit can run here (its condition, e.g. no container for timesyncd), and its clock
+    # against its time source when chrony tells it (chronyd -Q: installed, not running; nothing that would start
+    # a daemon), "ahead" its offset in seconds, positive when its clock is ahead
+    - name: Read the clock and the mark of a restart in progress
+      ansible.builtin.shell: |
+        [ -e /run/cassandra-apply-config.restart ] && echo "mark=yes"
+        [ -n "$CASSANDRA_TIMESYNC" ] || exit 0
+        # (a unit not found, or never started since boot, says "no" too: no start tried, its timestamp 0)
+        systemctl show -p LoadState,ConditionResult,ConditionTimestampMonotonic "$CASSANDRA_TIMESYNC" 2>/dev/null \
+          | awk -F= '{v[$1] = $2} END {if (v["LoadState"] == "loaded" && v["ConditionResult"] == "no" &&
+                                            v["ConditionTimestampMonotonic"] != "0") print "condition=no"}'
+        if chronyc -n tracking >/dev/null 2>&1; then
+          chronyc -n tracking | awk -F': *' '/^Leap status/ && /Not synchronised/ {unsynced = 1}
+            /^System time/ {split($2, a, " "); ahead = (a[3] == "fast" ? "" : "-") a[1]}
+            END {if (ahead != "" && !unsynced) {print "ahead=" ahead; print "source=chrony"}}'
+        elif command -v chronyd >/dev/null 2>&1; then
+          o=$(timeout 30 chronyd -Q -t 20 2>&1 | sed -n 's/.*System clock wrong by \([-+0-9.e]*\) seconds.*/\1/p' | tail -1)
+          [ -n "$o" ] && awk -v o="$o" 'BEGIN {print "ahead=" (-o); print "source=chronyd -Q"}'
+        fi
+        exit 0
+      environment:
+        # the time sync service to start, if any (its item: the one not a package)
+        CASSANDRA_TIMESYNC: >-
+          {{ _cassandra_linux_items | default([]) | selectattr('timesync', 'defined') | map(attribute='item')
+             | reject('match', 'package ') | first | default('') }}
+      register: cassandra_apply_config_clock
+      changed_when: false
+      failed_when: false
+      check_mode: false  # reads only
+
+    # (not under --check) a mark left by a run stopped after the start
+    - name: Forget a mark of a restart done
+      ansible.builtin.file:
+        path: /run/cassandra-apply-config.restart
+        state: absent
+      when:
+        - "'mark=yes' in cassandra_apply_config_clock.stdout_lines | default([])"
+        - _cassandra_preflight_running | default(true) | bool
+        - not ansible_check_mode
+
     - name: Note what this node needs
       ansible.builtin.set_fact:
-        cassandra_apply_config_todo: "{{ _files | length > 0 or (_perms + _dirs) | length > 0 or _pending | bool }}"
+        cassandra_apply_config_todo: >-
+          {{ _files | length > 0 or (_perms + _dirs) | length > 0 or _pending | bool or _timesync | bool or _stopped | bool }}
         cassandra_apply_config_then: "{{ _then }}"
         cassandra_apply_config_pending: "{{ _pending }}"
         # checked again before the write (action_apply_config.yml): that JVM still runs
@@ -164,8 +209,19 @@
           {{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start,
               'sha1': dict(_as_started | zip(_as_started | map('extract', _cassandra_config_new) | map('hash', 'sha1')))}
              if _as_started else {} }}
-        # the OS settings that differ (applied live, on their own: no restart for them)
-        cassandra_apply_config_os: "{{ _os }}"
+        # the OS settings that differ (applied live, on their own: no restart for them), and those applied live
+        # (not the time sync of a running Cassandra: in its restart window)
+        cassandra_apply_config_os: "{{ _os | reject('in', _no_unit) | list }}"
+        cassandra_apply_config_os_live: >-
+          {{ _os | reject('in', _no_unit) | rejectattr('timesync', 'defined') | list if _timesync | bool
+             else _os | reject('in', _no_unit) | list }}
+        cassandra_apply_config_timesync: "{{ _timesync }}"
+        cassandra_apply_config_timesync_later: "{{ _timesync | bool or _no_unit | length > 0 }}"
+        cassandra_apply_config_timesync_only: >-
+          {{ _timesync | bool and not ((_files + _perms + _dirs) | length > 0 or _pending | bool or _stopped | bool) }}
+        # stopped by an interrupted run in its window: its clock let sync before the start
+        cassandra_apply_config_resumed_stop: "{{ _stopped }}"
+        cassandra_apply_config_timesync_items: "{{ _os | selectattr('timesync', 'defined') | list }}"
         # said under the node's outcome, in the plan and the recap (whatever the outcome)
         cassandra_apply_config_notes: >-
           {{ (['restart pending (' ~ _newer | join(', ') ~ ' changed since the running Cassandra started)']
@@ -173,6 +229,16 @@
              + ([_as_started | join(', ') ~ ' written back as the running Cassandra started with '
                  ~ ('it' if _as_started | length == 1 else 'them') ~ ': no restart for ' ~ ('it' if _as_started | length == 1 else 'them')]
                 if _as_started and _running | bool else [])
+             + (['stopped by the interrupted run (time sync): started once written'] if _stopped | bool else [])
+             + (_no_unit | map(attribute='item') | reject('match', 'package ') | map('regex_replace', '$',
+                ' cannot run here (the condition of its unit): left as it is') | list)
+             + ((['clock ' ~ ('%.3f' | format(_ahead | float | abs)) ~ ' s '
+                  ~ ('ahead of' if _ahead | float > 0 else 'behind' if _ahead | float < 0 else 'in step with')
+                  ~ ' its time source (' ~ _clock.source ~ ')'] if _clock.ahead is defined
+                 else ['clock offset to its time source not readable'])
+                + (['WARNING clock ahead of its time source: writes made with future timestamps can mask later writes'
+                    ' until real time passes them'] if _ahead | float > 0.01 else [])
+                if _timesync | bool else [])
              + (['read-ahead set live: the files Cassandra has open keep the old one until it restarts']
                 if _running | bool and _then != 'restart'
                    and _os | map(attribute='item') | select('match', '(read_ahead_kb|LVM read-ahead) ') | list | length > 0
@@ -208,12 +274,30 @@
         _unit_failed: >-
           {{ _unit.ActiveState | default('') in ['failed', 'activating']
              and _unit.Result | default('') != 'timeout' and _unit.ExecMainStatus | default('') | string != '143' }}
+        _clock: "{{ dict(cassandra_apply_config_clock.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
+        # time sync to install or start (not one only to enable, nor a unit that cannot run here: it would not start),
+        # on a node Cassandra runs on or is to be started: in its restart window, Cassandra stopped
+        _ts_items: >-
+          {{ [] if _clock.condition | default('') == 'no'
+             else _os | selectattr('timesync', 'defined') | rejectattr('before', 'equalto', 'active') | list }}
+        # stopped by an interrupted run to start its time sync: started by the resumed run (as a restart pending)
+        _stopped: >-
+          {{ not _running | bool and _clock.mark is defined and cassandra_rolling_resume | default(false) | bool }}
+        # not running, started by this run anyway (its config written: see _then)
+        _starts: >-
+          {{ not _running | bool and (_pending | bool or _stopped | bool
+                                      or (_unit_failed | bool and (_files + _perms + _dirs) | length > 0)) }}
+        _timesync: "{{ _ts_items | length > 0 and (_running | bool or _starts | bool) }}"
+        _ahead: "{{ _clock.ahead | default(0) }}"
+        # a time sync unit that cannot run here (its condition): left out, said
+        _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         # Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone: read at
         # start); not running: start (its unit failed: it could not start, e.g. its config unreadable; or the node
         # a resumed run stopped), write (stopped on purpose: left stopped)
         _then: >-
-          {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _pending | bool else 'none') if _running | bool
-             else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
+          {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _pending | bool or _timesync | bool
+              else 'none') if _running | bool
+             else 'start' if _unit_failed | bool or _pending | bool or _stopped | bool else 'write' }}
 
     # a restart waits for every other node up (cluster health): a node not running that this run leaves
     # down, or starts after the restart (nodes go in inventory order), would stop it halfway. A real run refuses
@@ -328,9 +412,20 @@
         key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"
       changed_when: false
 
+    # (what the question names)
+    - name: Group the nodes whose time sync is started in their restart window
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_tsany_{{ cassandra_apply_config_timesync | bool }}"
+      changed_when: false
+
+    - name: Group the nodes restarted for their time sync alone
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_ts_{{ cassandra_apply_config_timesync_only | bool }}"
+      changed_when: false
+
     - name: Group the nodes whose OS settings differ
       ansible.builtin.group_by:
-        key: "cassandra_apply_config_os_{{ cassandra_apply_config_os | length > 0 }}"
+        key: "cassandra_apply_config_os_{{ cassandra_apply_config_os_live | length > 0 }}"
       changed_when: false
 
     # the ones no restart or start takes down, and every one under --check (nothing is restarted): done at once
@@ -343,7 +438,7 @@
 
     - name: Nothing to do on this node
       ansible.builtin.set_fact:
-        cassandra_op_result: "{{ 'not reached' if cassandra_apply_config_os | length > 0 else 'nothing to apply' }}"
+        cassandra_op_result: "{{ 'not reached' if cassandra_apply_config_os_live | length > 0 else 'nothing to apply' }}"
       when: not cassandra_apply_config_todo | bool
 
     - name: Show the plan and confirm the run
@@ -358,6 +453,7 @@
           {%-   set v = hostvars[h] -%}
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
+                                    'why': 'time sync' if v.cassandra_apply_config_timesync | default(false) | bool else '',
                                     'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('nothing to apply'),
                                     'notes': v.cassandra_apply_config_notes | default([])}) -%}
@@ -395,7 +491,11 @@
     _os_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_True'] | default([])) | list }}"
     _config_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
     _todo: "{{ ansible_play_hosts | select('in', _config_nodes + _os_nodes) | list }}"
-    _what: "{{ 'config' if _os_nodes | length == 0 else 'OS settings' if _config_nodes | length == 0 else 'config and OS settings' }}"
+    _what: >-
+      {{ 'config' if (_os_nodes + _ts_any) | length == 0
+         else 'OS settings' if _config_nodes | reject('in', _ts_nodes) | list | length == 0 else 'config and OS settings' }}
+    _ts_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_ts_True'] | default([])) | list }}"
+    _ts_any: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_tsany_True'] | default([])) | list }}"
 
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
@@ -454,6 +554,8 @@
           vars:
             _cassandra_change_report_quiet: true  # shown before the question
             _cassandra_linux_swap_said: true  # under the node
+            # in its restart window, or not at all (a unit that cannot run here)
+            _cassandra_linux_timesync_later: "{{ cassandra_apply_config_timesync_later }}"
             _cassandra_linux_restart_follows: >-
               {{ cassandra_apply_config_todo | bool and cassandra_apply_config_then == 'restart' }}
       rescue:
@@ -620,6 +722,7 @@
           {%-   set v = hostvars[h] -%}
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
+                                    'why': 'time sync' if v.cassandra_apply_config_timesync | default(false) | bool else '',
                                     'os_done': v.cassandra_apply_config_os_done | default(false),
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all

@@ -1,0 +1,77 @@
+---
+# Time sync: chrony, or systemd-timesyncd on Debian/Ubuntu when chrony is not
+# installed (os.yml; apply_config also runs it alone, in a node's restart
+# window, Cassandra stopped)
+- name: Look for chrony (kept rather than replaced)
+  ansible.builtin.stat:
+    path: /usr/sbin/chronyd
+  register: cassandra_linux_chrony
+  when: _cassandra_chrony_present is not defined
+
+- name: Keep what was found
+  ansible.builtin.set_fact:
+    _cassandra_chrony_present: "{{ cassandra_linux_chrony.stat.exists }}"
+  when: _cassandra_chrony_present is not defined
+
+# installed already: no package manager call (it reads every repository's
+# metadata, and fails when a mirror is down though nothing is to install)
+- name: Read the installed packages (time sync)
+  ansible.builtin.package_facts:
+  check_mode: false
+  when:
+    - cassandra_linux_timesync | bool
+    - not cassandra_offline | bool
+
+- name: Install time sync package
+  ansible.builtin.package:
+    name: "{{ _cassandra_timesync_pkg }}"
+    state: present
+  retries: 3
+  register: cassandra_timesync_install
+  # --check: without the repositories cassandra_repository removes (no_repository.yml)
+  module_defaults:
+    ansible.builtin.dnf:
+      disablerepo: "{{ _cassandra_repository_check_removed | default([]) }}"
+    ansible.legacy.dnf:
+      disablerepo: "{{ _cassandra_repository_check_removed | default([]) }}"
+  when:
+    - cassandra_linux_timesync | bool
+    - not cassandra_offline | bool
+    - _cassandra_timesync_pkg not in ansible_facts['packages'] | default({})
+
+- name: Look for the time sync service (offline)
+  ansible.builtin.command:
+    argv: [systemctl, cat, "{{ _cassandra_timesync_service }}"]
+  register: cassandra_timesync_unit
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - cassandra_linux_timesync | bool
+    - cassandra_offline | bool
+
+- name: Say the time sync service is missing (offline)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ _cassandra_timesync_pkg }} is not installed on {{ inventory_hostname }} and cassandra_offline
+      downloads nothing: install it from your image or mirror (Cassandra needs synchronized clocks), or set
+      cassandra_linux_timesync to false if the host's time sync is managed another way.
+  when:
+    - cassandra_linux_timesync | bool
+    - cassandra_offline | bool
+    - cassandra_timesync_unit.rc != 0
+  vars:
+    cassandra_output: true
+
+- name: Ensure timesync service starts
+  ansible.builtin.service:
+    name: "{{ _cassandra_timesync_service }}"
+    enabled: yes
+    state: started
+  when:
+    - cassandra_linux_timesync | bool
+    - not (cassandra_offline | bool and cassandra_timesync_unit.rc != 0)
+    - not (_cassandra_linux_check and cassandra_timesync_install is changed)  # not installed yet under --check
+  register: cassandra_timesync_service_result
+  tags:
+  - molecule-idempotence-notest # Ubuntu 2404 timesyncd issue

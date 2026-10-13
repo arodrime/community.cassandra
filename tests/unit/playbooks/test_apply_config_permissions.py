@@ -183,9 +183,12 @@ def test_the_action_restarts_starts_or_only_writes():
     # a restart loop is stopped before the write: it would not come up on the former config
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs", "Write the config",
                      "Check the files written back", "Report what would be written",
-                     "Say the restart of {{ inventory_hostname }}", "Drain and restart the node", "Start the node and wait until it has joined"]
+                     "Say the restart of {{ inventory_hostname }}", "Drain and restart the node", "Start the time sync before Cassandra starts",
+                     "Start the node and wait until it has joined", "Forget the restart in progress"]
     # (a file written back with no restart: test_apply_config_written_back.py)
     tasks = [t for t in tasks if t["name"] not in ("Check the JVM a file is written back for still runs", "Check the files written back")]
+    tasks.pop()  # the mark of a stop for its time sync (timesync_window.yml), removed once up again
+    tasks.pop(5)  # its time sync before a start (test_apply_config_os.py)
     phase = tasks.pop(3)  # a phase line, only before a restart
     assert "cassandra_apply_config_then | default('restart') == 'restart'" in phase["when"]
     clear, write, report, restart, start = tasks

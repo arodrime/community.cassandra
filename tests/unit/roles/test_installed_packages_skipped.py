@@ -88,8 +88,8 @@ def test_the_other_install_tasks():
         assert runs(role, file, name, _cassandra_install_before={}, **dict(INSTALL, **extra)), name
         assert not runs(role, file, name, _cassandra_install_before=EL8, **dict(INSTALL, **extra)), name
     linux = {"cassandra_linux_timesync": True, "cassandra_offline": False, "_cassandra_timesync_pkg": "chrony"}
-    assert runs("cassandra_linux", "os.yml", "Install time sync package", ansible_facts={"packages": {}}, **linux)
-    assert not runs("cassandra_linux", "os.yml", "Install time sync package", ansible_facts={"packages": {"chrony": []}},
+    assert runs("cassandra_linux", "timesync.yml", "Install time sync package", ansible_facts={"packages": {}}, **linux)
+    assert not runs("cassandra_linux", "timesync.yml", "Install time sync package", ansible_facts={"packages": {"chrony": []}},
                     **linux)
     firewall = {"cassandra_offline": False, "firewall_packages": ["python-firewall", "firewalld"]}
     assert runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed", ansible_facts={"packages": {}},

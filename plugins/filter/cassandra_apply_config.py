@@ -482,6 +482,8 @@ def _outcome(node, check, plan):
         text = ("would apply" if check or plan else "applied")
         said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
+        if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
+            text += " (%s)" % node["why"]
         # a file written back as the running Cassandra started with it: its note says why, not "an owner... only"
         written_back = any(_WRITTEN_BACK in str(n) for n in node.get("notes") or [])
         if plan and then in _WHY and not (then == "none" and written_back):
