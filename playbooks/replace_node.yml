@@ -138,6 +138,7 @@
             tasks_from: summary.yml
           vars:
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+            cassandra_service_summary_operation: replace_node
 
         - name: Stop here
           vars:
@@ -240,3 +241,4 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_operation: replace_node

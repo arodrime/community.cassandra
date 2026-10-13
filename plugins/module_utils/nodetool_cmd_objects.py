@@ -37,9 +37,27 @@ _JMX_REFUSED = re.compile(r"Invalid username or password|Authentication failed|C
                           r"FailedLoginException|Authentication error")
 
 
-def version_error(out, err):
-    """The message when nodetool version fails: a JMX login refused said as
-    such (the options to check), else nodetool's own error line."""
+# nodetool not reaching JMX: "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'."
+_JMX_UNREACHED = re.compile(r"Failed to connect to '(?P<where>[^']*)'(?: - (?P<kind>\w+): '?(?P<why>[^'\n]*?)'?\.?)?\s*$", re.M)
+_JMX_CAUSES = (
+    (re.compile(r"Connection refused", re.I), "Connection refused",
+     "Cassandra is not running there, or its JMX listens on another port (cassandra_jmx_port). "
+     "Check: systemctl status cassandra, and its system.log"),
+    (re.compile(r"timed out|SocketTimeout", re.I), "no answer in time",
+     "a firewall, or JMX listening on another address (LOCAL_JMX in cassandra-env.sh)"),
+    (re.compile(r"NoRouteToHost|No route to host", re.I), "no route to host",
+     "the host is down or out of reach, or a firewall rejects it"),
+    (re.compile(r"UnknownHost|Name or service not known", re.I), "unknown host",
+     "that host name does not resolve"),
+)
+
+
+def version_error(out, err, host=None, port=None):
+    """The message when nodetool version fails, the first nodetool call of a
+    module: a JMX login refused said as such (the options to check), JMX not
+    reached said with its address, its cause and what to look at, else
+    nodetool's own error line. host, port: the JMX address asked (else the
+    one nodetool names)."""
     text = "{0}\n{1}".format(out or "", err or "")
     said = [line.strip() for line in text.splitlines() if line.strip().startswith("error:")]
     first = said[0][len("error:"):].strip() if said else ""
@@ -47,8 +65,19 @@ def version_error(out, err):
         return ("JMX login refused ({0}): check the JMX user and its password or password file "
                 "(cassandra_jmx_username, cassandra_jmx_password_file or cassandra_jmx_password)").format(
                     first or "authentication failed")
-    errors = (err or "").strip().splitlines()
-    return "Unable to determine Cassandra version: {0}".format(first or (out or "").strip() or (errors[0] if errors else ""))
+    unreached = _JMX_UNREACHED.search(text)
+    if unreached:
+        where = unreached.group("where") or ("{0}:{1}".format(host, port) if host else "")
+        why = (unreached.group("why") or unreached.group("kind") or "").strip()
+        for pattern, cause, hint in _JMX_CAUSES:
+            if pattern.search(why or text):
+                return "nodetool gets no answer from JMX on {0} ({1}): {2}".format(where, cause, hint)
+        return ("nodetool can't reach JMX on {0}{1}: is Cassandra running there (systemctl status cassandra), "
+                "on that JMX port (cassandra_jmx_port)?").format(where, " ({0})".format(why) if why else "")
+    errors = [line.strip() for line in (err or "").strip().splitlines() if line.strip()]
+    found = first or (out or "").strip() or (errors[0] if errors else "")
+    return "nodetool version failed{0}: is Cassandra installed and running?{1}".format(
+        " on {0}:{1}".format(host, port) if host else "", " ({0})".format(found) if found else " (no error printed)")
 
 
 def parse_nodetool_get(out, cast=float):
@@ -99,7 +128,7 @@ class NodeToolCmd(object):
                 what_is_the_version = ".".join(line[0].split(': ')[1].split(".")[:2]).strip()
                 module.params['cassandra_version'] = what_is_the_version
             else:
-                module.fail_json(msg=version_error(out, err), stderr=err)
+                module.fail_json(msg=version_error(out, err, self.host, self.port), stderr=err)
 
     def execute_command(self, cmd):
         rc, out, err = self.module.run_command(cmd)

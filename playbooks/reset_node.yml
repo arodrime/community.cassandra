@@ -41,3 +41,28 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: reset_node.yml
+
+    # DONE (CHECK under --check), then the add_node command for the nodes emptied
+    - name: Say what was done
+      ansible.builtin.debug:
+        msg: >-
+          {{ _nodes | community.cassandra.cassandra_reset_recap(
+               check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
+               add_command='add_node' | community.cassandra.cassandra_command(
+                 inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                 hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'),
+                 extra={'cassandra_target_nodes': _nodes | selectattr('todo') | map(attribute='node') | join(',')})) }}
+      run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h]._cassandra_node_reset_plan is defined -%}
+          {%-   set p = hostvars[h]._cassandra_node_reset_plan -%}
+          {%-   set _ = out.append({'node': h, 'delete': p.delete | default([]), 'stop': p.stop | default(false) | bool,
+                                    'disable': p.disable | default(false) | bool,
+                                    'todo': (p.delete | default([]) | length > 0) or p.stop | default(false) | bool
+                                            or p.disable | default(false) | bool}) -%}
+          {%- endfor -%}
+          {{ out }}

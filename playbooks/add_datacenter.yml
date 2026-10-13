@@ -195,6 +195,7 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: add
+        cassandra_service_summary_operation: add_datacenter  # its recap's name (summary.yml)
         cassandra_service_node_checks_before: false
         cassandra_extra_settings: "{{ _cassandra_new_dc_settings }}"
         # no bootstrap (auto_bootstrap false): the node joins in minutes

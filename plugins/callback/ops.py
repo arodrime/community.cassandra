@@ -26,17 +26,25 @@ description:
     C(cassandra_output_rescued) to C(true) (its rescue says what failed). Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
-    C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
-    C(NOTHING TO DO), C(READY) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
-    stalled or failed as an error; C(NOTE), the progress lines (C([1/2] node5 ...)) and the phase lines (ending
-    with C(...)) in O(progress_color). The lines indented under a coloured one keep its colour. The C(status)
+    C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color); C(DONE), C(HEALTHY),
+    C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
+    says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED), a
+    C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
+    progress lines (C([1/2] node5 ...)), the phase lines (ending with C(...)) and the first line of a plan or a
+    screen (C(PLAN  ...), C(add_node on cluster ...)) in O(progress_color). The lines indented under a coloured
+    one keep its colour, but for an indented line with a mark of its own, which colours that line only (a node down
+    (C(← down)) and a recap's failed node (C(node5  FAILED)) as an error, a setting that differs
+    (C(← differs)), a reset (C(will be reset)) and what it
+    deletes (C(DELETED)) as a change, wherever they are; what a node would get or got as a change too, on a line
+    of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  applied))). The rows of
+    a C(FAILED) recap do not keep its colour (the nodes done stay plain). The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
     as a change, C(1 NODE DOWN) and a ring that differs from the inventory as an error; the
     rows of its table (C( DN  10.0.0.5 ...)) by the node's state, down as an error, joining, leaving or moving as
     a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
-    C(REFUSED  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...), C(FAILED  ...),
-    C(CHECK  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
+    C(REFUSED  ...), C(READY  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...),
+    C(FAILED  ...), C(CHECK  ...), C(NOTHING TO DO  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
     verdict, its last line. A light one (C(-----)) for each empty line inside them (the blank lines of the status
     report stay blank), under a plan's first line and above a question, and one naming the node above the first
     progress line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a
@@ -64,6 +72,20 @@ options:
         key: progress_color
     env:
       - name: ANSIBLE_CALLBACK_CASSANDRA_OPS_PROGRESS_COLOR
+    version_added: 2.1.0
+  warning_color:
+    description:
+      - The colour of the C(WARNING) lines, an Ansible colour name (C(bright yellow), C(bright purple)...) or a
+        256-colour one (C(color208), C(rgb520)...).
+      - Not set, C(color208) (orange), apart from the changes (yellow) and Ansible's own warnings (purple). A
+        terminal without 256 colours shows it wrong, set C(bright yellow) or C(bright purple) there. A name Ansible
+        does not know is left for that default.
+    type: str
+    ini:
+      - section: callback_cassandra_ops
+        key: warning_color
+    env:
+      - name: ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR
     version_added: 2.1.0
 extends_documentation_fragment:
   - default_callback
@@ -108,24 +130,37 @@ def _result(result):
 
 # a phase line: what the run does now, a block of its own
 _PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
+# the first line of a plan or a screen ("PLAN  ...", "add_node on cluster ..."): as the progress lines
+PLAN_COLOUR = "PROGRESS"
 # the colour of a message line by its start, the lines indented under it the same
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"\d+ NODES? DOWN: |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
-    (re.compile(r"WARNING\b|ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),  # yellow: COLOR_WARN is purple
+    (re.compile(r"IMPORT \S+ .*\bFAILED\b|CHECK\b.*\bfailed\b"), "COLOR_ERROR"),
+    (re.compile(r"WARNING\b"), "WARNING"),
+    (re.compile(r"ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),
     (re.compile(r"ALL \d+ NODES? UP$"), "COLOR_OK"),
-    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b"), "COLOR_OK"),
+    (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
+    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\bPASSED\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s" % _PHASE.pattern), "PROGRESS"),
 )
+# a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
+# a node down, a setting that differs, what a node would get or got, what a reset deletes
+_MARKS = (
+    (re.compile(r"\u2190 down\b|^\s*\S.*?\S  (\w+ )?FAILED\b"), "COLOR_ERROR"),  # (a recap's failed node)
+    (re.compile(r"\u2190 differs\b|\bwill be reset\b|\u2014 will be$|\bDELETED\b"
+                r"|^\S.*?\S  (would apply|applied)\b"), "COLOR_CHANGED"),  # (apply_config's outcomes)
+)
 PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_color)
+WARNING_COLOR = "color208"  # orange, the WARNING lines (option warning_color)
 
 
 # a plan or a screen (its first line), a recap, a progress line
 _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_node|replace_node|decommission_node|remove_dead_node|"
                      r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|add_datacenter|"
                      r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
-_RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY)  ")
+_RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
 # the status playbook's verdict, its last line: heavy rules around it
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
@@ -133,33 +168,69 @@ _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
 _RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
 
 
-def colour(line, above=None, progress=PROGRESS_COLOR):
+def shade(name, progress=PROGRESS_COLOR, warning=WARNING_COLOR):
+    """A colour of _COLOURS, _MARKS or PLAN_COLOUR as Ansible's colour name."""
+    if name == "PROGRESS":
+        return progress
+    if name == "WARNING":
+        return warning
+    return getattr(C, name, None) if name else None
+
+
+def colour(line, above=None, progress=PROGRESS_COLOR, warning=WARNING_COLOR):
     """The display colour of a message line (None: the default), above:
-    the colour of the line before, kept by an indented line; progress: the
-    colour of the progress, phase and NOTE lines."""
+    the colour of the line it is indented under, kept by an indented line
+    without a mark of its own; progress: the colour of the progress, phase
+    and NOTE lines; warning: the colour of the WARNING lines."""
     row = _RING_ROW.match(line)
     if row:  # a node down as an error, joining, leaving or moving as a change, up and normal plain
         if row.group(1) == "D":
             return C.COLOR_ERROR
         return None if row.group(2) == "N" else C.COLOR_CHANGED
+    mark = next((name for pattern, name in _MARKS if pattern.search(line)), None)
     if line[:1] in (" ", "\t") and line.strip():
-        return above
+        return shade(mark) if mark else above
     for pattern, name in _COLOURS:
         if pattern.match(line):
-            return progress if name == "PROGRESS" else getattr(C, name, None)
+            return shade(name, progress, warning)
+    return shade(mark)
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip(" \t")) if line.strip() else 0
+
+
+def _under(shades, line):
+    """shades: (indent, colour) of the lines printed above; those the line
+    is not indented under left out (an indented line takes the colour of the
+    last line less indented than it)."""
+    indent = _indent(line)
+    return [s for s in shades if s[0] < indent] if line[:1] in (" ", "\t") and line.strip() else []
+
+
+def _known(given):
+    """given when it is a colour Ansible knows (a name, colorN, rgbRGB, grayN), else None."""
+    if given:
+        try:
+            parsecolor(str(given))
+            return str(given)
+        except (KeyError, ValueError, AttributeError, TypeError):
+            pass  # not a colour
     return None
+
+
+def warning_color(given=None):
+    """The colour of the WARNING lines: given (option warning_color) when it
+    is a colour Ansible knows, else WARNING_COLOR."""
+    return _known(given) or WARNING_COLOR
 
 
 def progress_color(given=None):
     """The colour of the progress lines: given (option progress_color) when it
     is a colour Ansible knows, else COLOR_VERBOSE when the configuration sets
     it, else PROGRESS_COLOR."""
-    if given:
-        try:
-            parsecolor(str(given))
-            return str(given)
-        except (KeyError, ValueError, AttributeError):
-            pass  # not a colour: the default
+    if _known(given):
+        return str(given)
     try:
         value, origin = C.config.get_config_value_and_origin("COLOR_VERBOSE")
     except Exception:  # pylint: disable=broad-except  # a config API this ansible-core does not have
@@ -248,6 +319,7 @@ class CallbackModule(DefaultCallback):
         self._verdicts = set()  # the run_once verdicts printed: (task, lines)
         self._ruled = ""  # the rule just printed, if any
         self._progress = PROGRESS_COLOR
+        self._warning = WARNING_COLOR
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -255,6 +327,10 @@ class CallbackModule(DefaultCallback):
         self._progress = progress_color(given)
         if given and self._progress != str(given):
             self._display.warning("progress_color: %s is not a colour Ansible knows, %s instead" % (given, self._progress))
+        given = self.get_option("warning_color")
+        self._warning = warning_color(given)
+        if given and self._warning != str(given):
+            self._display.warning("warning_color: %s is not a colour Ansible knows, %s instead" % (given, self._warning))
 
     def _verbose(self):
         return self._display.verbosity > 0
@@ -298,19 +374,27 @@ class CallbackModule(DefaultCallback):
         elif self._gap or phase:
             self._line("")
         self._gap = False
-        above = None
+        shades = []  # (indent, colour) of the lines above, each less indented than the next
         for i, line in enumerate(texts):
             if (headed or recap) and not line:  # a blank line between paragraphs (not "") stays blank
                 self._rule()  # the blocks inside
-                above = None
+                shades = []
                 continue
-            above = color or colour(line, above, self._progress)
-            self._line(line, color=above)
+            shades = _under(shades, line)
+            above = shades[-1][1] if shades else None
+            hue = color or colour(line, above, self._progress, self._warning)
+            if hue is None and headed and not recap and i == texts.index(first):  # a plan's or a screen's first line
+                hue = shade(PLAN_COLOUR, self._progress, self._warning)
+            # an indented line's own mark: that line only; a FAILED recap: its rows by their own marks
+            failed = recap and i == texts.index(first) and first.startswith("FAILED")
+            shades.append((_indent(line), None if failed else (above if _indent(line) and not color else hue)))
+            self._line(line, color=hue)
             if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
+                shades = []
         if ring:
             self._rule(heavy=True)
-            self._line(last, color=color or colour(last, None, self._progress))
+            self._line(last, color=color or colour(last, None, self._progress, self._warning))
         if recap or ring:
             self._rule(heavy=True)
         elif phase:

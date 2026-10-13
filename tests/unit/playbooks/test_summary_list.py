@@ -5,10 +5,12 @@ __metaclass__ = type
 # template must be only the list, without the whitespace around the tags.
 
 import os
+import warnings
 
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -16,6 +18,10 @@ try:  # ansible-core 2.19+ renders trusted templates only
 except ImportError:
     def trust_as_template(template):
         return template
+
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # the collection's filters, under plain pytest too
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -29,14 +35,22 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def test_operation_summary_is_one_line_per_node():
+def test_operation_summary_is_a_recap():
     task = load("roles", "cassandra_service", "tasks", "summary.yml")[0]
-    msg = task["ansible.builtin.debug"]["msg"]
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
-    # one string, a line per node (plain text under any callback)
-    assert render(msg, cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]},
-                  ansible_play_hosts_all=["n1", "n2"], _nl=task["vars"]["_nl"]) == \
-        "n1: add done in 5s\nn2: not reached\nn3: not in this run (--limit)"
+    variables = dict(cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]},
+                     ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster")
+    variables["_results"] = render(task["vars"]["_results"], **variables)
+    assert variables["_results"] == [{"node": "n1", "result": "add done in 5s"}, {"node": "n2", "result": "not reached"},
+                                     {"node": "n3", "result": "not in this run (--limit)"}]
+    # a verdict, the nodes grouped (a list: a line each under any callback)
+    lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]
+    assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added 5s", "n2 not touched (not reached)",
+                     "n3 not touched (left out by --limit)"]
+    variables.update(cassandra_service_summary_operation="remove_datacenter")
+    assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("DONE  remove_datacenter  my_cluster")
+    variables.update(ansible_check_mode=True)
+    assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("CHECK  remove_datacenter  my_cluster")
 
 
 def test_health_check_report_inputs_are_a_list_and_a_dict():

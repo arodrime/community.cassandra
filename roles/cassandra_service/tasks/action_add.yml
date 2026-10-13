@@ -28,6 +28,7 @@
 - name: Start it
   ansible.builtin.include_tasks: main.yml
   vars:
+    _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_wait_for_normal: false  # the bootstrap is waited for below
     cassandra_service_allow_new_seed: true  # in cassandra_seeds or not, it joins with _cassandra_join_seeds
 

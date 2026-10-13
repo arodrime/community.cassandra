@@ -154,6 +154,7 @@
             tasks_from: summary.yml
           vars:
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+            cassandra_service_summary_operation: add_node
 
         - name: Stop here
           vars:
@@ -805,6 +806,7 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_operation: add_node
 
     - name: Say which nodes to move (one token per node, balanced)
       ansible.builtin.debug:
@@ -847,6 +849,7 @@
       {{ ansible_play_hosts | select('in', _plan.cleanup | default({}) | dict2items | map(attribute='value') | flatten) | list }}
     _mode: "{{ {'one': 'sequential'}.get(cassandra_add_node_cleanup | default('none'), cassandra_add_node_cleanup | default('none')) }}"
     cassandra_service_node_action: cleanup
+    cassandra_service_summary_operation: add_node  # its recap's name (summary.yml)
     cassandra_cleanup_jobs: 2
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
