@@ -32,4 +32,5 @@
 - name: Take the replace flag out of the unit (no restart)
   ansible.builtin.include_tasks: main.yml
   vars:
+    _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_restart_on_change: false

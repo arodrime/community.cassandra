@@ -346,7 +346,9 @@ def test_check_diff_writes_nothing():
     report_tasks = ("Write report.txt", "Create the report dir")
     for task in write:
         if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")) and task["name"] not in report_tasks:
-            assert "check_mode" not in task and "diff" not in task, task["name"]
+            assert "check_mode" not in task, task["name"]
+            # --diff: the changes to the files there, not a new file whole (test_output_polish.py)
+            assert task.get("diff", "{{ ansible_diff_mode | bool and ").startswith("{{ ansible_diff_mode | bool and "), task["name"]
     assert [TASKS[name]["check_mode"] for name in report_tasks] == [False, False]
     assert TASKS["Write report.txt"]["diff"] is False
     assert TASKS["Write report.txt"]["ansible.builtin.copy"]["dest"] == "{{ _report_args.report_file }}"

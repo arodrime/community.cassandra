@@ -875,10 +875,11 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     """The end of a run (Q4). outcomes: [{node, outcome ('restarted',
     'applied, restarted'...), status ('ok', 'failed', 'skipped'; default
     ok), seconds (how long its part took), reason (failed or skipped),
-    dc, rack}] in the order of the run. Line 1, the verdict: "DONE  op
-    cluster  6 restarted (11m30s)", "FAILED  op  cluster  ..." when a node
-    failed, "CHECK  op  cluster  would restart 6 nodes  nothing was changed"
-    under check. Then the nodes grouped by identical outcome ("node1..node6
+    said (the outcome as shown, when would() can't say it), dc, rack}] in
+    the order of the run. Line 1, the verdict: "DONE  op cluster  6
+    restarted (11m30s)", "FAILED  op  cluster  ..." when a node failed
+    (under check too), "CHECK  op  cluster  would restart 6 nodes  nothing
+    was changed" under check, "NOTHING TO DO" when no node did anything. Then the nodes grouped by identical outcome ("node1..node6
     restarted  (1m49s..1m58s each)"), and a line of its own for a node more
     than slow_factor times the median of its group (slow), a failed node and
     the skipped ones, with the reason. extra: lines added after (the ring
@@ -890,19 +891,20 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     failed = [o for o in outcomes if o["status"] == "failed"]
     skipped = [o for o in outcomes if o["status"] == "skipped"]
 
-    def said(outcome):
-        return would(outcome) if check else str(outcome)
+    def said(o):
+        return o.get("said") or (would(o.get("outcome", "")) if check else str(o.get("outcome", "")))
 
     tally = {}
     for o in done:
-        tally.setdefault(said(o.get("outcome", "")), []).append(o["node"])
+        tally.setdefault(said(o), []).append(o["node"])
     if check:
-        counts = ["%s %s" % (word, plural(len(names), "node")) for word, names in tally.items()]
+        counts = [("%s on %s" if len(word.split()) > 2 and word != "would clean up" else "%s %s") % (word, plural(len(names), "node"))
+                  for word, names in tally.items()]
     else:
         counts = ["%d %s" % (len(names), word) for word, names in tally.items()]
     counts += ["%d failed" % len(failed)] if failed else []
     counts += ["%d not touched" % len(skipped)] if skipped else []
-    verdict = "CHECK" if check else ("FAILED" if failed else "DONE")
+    verdict = "FAILED" if failed else ("CHECK" if check else ("DONE" if done else "NOTHING TO DO"))
     head = "  ".join(x for x in [verdict, operation, cluster, ", ".join(counts) or "nothing to do"] if x)
     if seconds is not None and not check:
         head += " (%s)" % duration(seconds)
@@ -913,7 +915,7 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     rows = []
     groups = {}
     for o in done:
-        groups.setdefault(said(o.get("outcome", "")), []).append(o)
+        groups.setdefault(said(o), []).append(o)
     for word, members in groups.items():
         times = [o["seconds"] for o in members if o.get("seconds") is not None]
         middle = _median(times) if times else None

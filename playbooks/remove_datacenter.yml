@@ -127,6 +127,7 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: decommission
+        cassandra_service_summary_operation: remove_datacenter  # its recap's name (summary.yml)
         cassandra_service_node_checks_after: false
         _gone: "{{ ansible_play_hosts_all.index(inventory_hostname) }}"
         cassandra_service_expected_before: "{{ query('community.cassandra.cassandra_nodes') | length - _gone | int }}"
@@ -150,6 +151,7 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_operation: remove_datacenter
 
     - name: Say what is left to do
       ansible.builtin.debug:

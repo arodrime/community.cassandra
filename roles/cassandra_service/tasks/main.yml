@@ -191,13 +191,14 @@
   vars:
     cassandra_change_report_role: cassandra_service
     _want_active: "{{ 'inactive' if cassandra_service_state == 'stopped' else 'active' }}"
+    _would: "{{ 'would be ' if ansible_check_mode else '' }}"  # --check changed nothing
     cassandra_change_report_items: >-
       {{ ([{'item': '/etc/systemd/system/cassandra.service',
             'before': (_cassandra_service_before.unit or 'absent') if '/etc/systemd/system/' not in _cassandra_service_before.unit else 'different',
-            'after': 'native unit'}]
+            'after': 'would be a native unit' if ansible_check_mode else 'native unit'}]
           if cassandra_service_unit is changed else [])
          + ([{'item': 'cassandra', 'before': _cassandra_service_before.active or 'unknown',
-              'after': ('would restart' if ansible_check_mode else 'restarted') if cassandra_service_state == 'restarted' else _want_active}]
+              'after': ('would restart' if ansible_check_mode else 'restarted') if cassandra_service_state == 'restarted' else _would ~ _want_active}]
             if cassandra_service_state == 'restarted' or _cassandra_service_before.active != _want_active else [])
-         + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': 'enabled' if cassandra_service_enabled else 'disabled'}]
+         + ([{'item': 'cassandra at boot', 'before': _cassandra_service_before.enabled or 'unknown', 'after': _would ~ ('enabled' if cassandra_service_enabled else 'disabled')}]
             if (_cassandra_service_before.enabled == 'enabled') != (cassandra_service_enabled | bool) else []) }}

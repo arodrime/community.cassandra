@@ -19,5 +19,6 @@
 - name: Restart it and wait until it has joined
   ansible.builtin.include_tasks: main.yml
   vars:
+    _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_state: restarted
     _cassandra_service_unit_written: true

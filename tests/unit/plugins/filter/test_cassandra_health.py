@@ -433,3 +433,11 @@ def test_report_same_error_on_several_nodes_once():
 def test_report_error_that_is_not_text():
     per_host = {"n1": [{"kind": "netstats", "on": "n1", "error": None, "text": "x"}]}
     assert cassandra_health_report(per_host, "c", ["n1"])["lines"][1] == "  netstats:  failed on n1: None"
+
+
+def test_the_jmx_message_is_not_followed_by_nodetool_line():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_health import _error
+    msg = ("nodetool gets no answer from JMX on 127.0.0.1:7199 (Connection refused): Cassandra is not running there, or"
+           " its JMX listens on another port (cassandra_jmx_port). Check: systemctl status cassandra, and its system.log")
+    err = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.\n"
+    assert _error({"failed": True, "msg": msg, "stderr": err}) == msg

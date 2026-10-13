@@ -319,6 +319,7 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_operation: move_node
 
     # initial_token is read at the first start only: a stale one does no harm, but is a wrong record
     - name: Say which inventory tokens to update
@@ -357,6 +358,7 @@
     _mode: "{{ {'one': 'sequential'}.get(cassandra_move_cleanup | default('none'), cassandra_move_cleanup | default('none')) }}"
     # not "move-...": a resume of the moves must not pick this file
     cassandra_service_node_action: cleanup_after_move
+    cassandra_service_summary_operation: move_node  # its recap's name (summary.yml)
     cassandra_service_resume_hint: >-
       Once fixed, clean up this batch and the ones after it with the cleanup playbook (--limit those nodes), then
       remove them from the record; or run move_node again with cassandra_move_cleanup (it cleans every recorded node).

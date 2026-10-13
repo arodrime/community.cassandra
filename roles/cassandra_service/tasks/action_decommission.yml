@@ -50,5 +50,6 @@
 - name: Stop and disable Cassandra
   ansible.builtin.include_tasks: main.yml
   vars:
+    _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_state: stopped
     cassandra_service_enabled: false

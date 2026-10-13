@@ -163,6 +163,7 @@
             tasks_from: summary.yml
           vars:
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+            cassandra_service_summary_operation: decommission_node
 
         - name: Stop here
           vars:
@@ -334,6 +335,7 @@
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_operation: decommission_node
     # paste-ready: empty the nodes, drop them from the inventory (a re-import of the cluster from the inventory), commit
     - name: Say what is left to do
       ansible.builtin.debug:
