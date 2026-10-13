@@ -174,9 +174,7 @@
           - cassandra_timesync_install is skipped
           - cassandra_timesync_unit.rc == 0 or ansible_check_mode  # not installed yet under molecule's check step
 
-    # The role's own swap-removal task never runs in this test scenario
-    # (always skipped), so it never actually proved ansible.posix.mount
-    # resolves. This does, directly.
+    # ansible.posix (firewalld in cassandra_firewall) resolves
     - name: Regression check - ansible.posix.mount must resolve
       ansible.posix.mount:
         path: /mnt/community-cassandra-molecule-regression-check

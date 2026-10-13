@@ -8,8 +8,10 @@
       file=$(sed -n "s/^[[:space:]]*$k[[:space:]]*=[[:space:]]*//p" {{ cassandra_linux_sysctl_file | quote }} 2>/dev/null | tail -1)
       echo "sysctl|$k|${live:-unset}|${file:-unset}"
     done
-    echo "swap|active|$(swapon --noheadings --show=NAME 2>/dev/null | wc -l)|"
-    echo "swap|fstab|$(grep -Ec '^[^#].*[[:space:]]swap[[:space:]]' /etc/fstab 2>/dev/null)|"
+    echo "swap|active|$(tail -n +2 /proc/swaps 2>/dev/null | wc -l)|"
+    echo "swap|fstab|$(awk '$1 !~ /^#/ && $3 == "swap"' /etc/fstab 2>/dev/null | wc -l)|"
+    awk '/^SwapTotal:/ {t = $2} /^SwapFree:/ {f = $2} /^MemAvailable:/ {a = $2}
+         END {print "swap|used|" t - f "|"; print "mem|available|" a "|"}' /proc/meminfo
     echo "thp|enabled|$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null)|"
     unit=$(systemctl is-enabled disable-thp 2>/dev/null)
     echo "thp|unit|${unit:-absent}|"
@@ -29,3 +31,10 @@
     _cassandra_linux_before_file: >-
       {{ dict(cassandra_linux_snapshot.stdout_lines | select('match', '^sysctl') | map('split', '|') | map(attribute=1)
               | zip(cassandra_linux_snapshot.stdout_lines | select('match', '^sysctl') | map('split', '|') | map(attribute=3))) }}
+
+# swap on, and what it holds fits twice in the memory available
+- name: Decide whether swap can be turned off now
+  ansible.builtin.set_fact:
+    _cassandra_linux_swapoff: >-
+      {{ _cassandra_linux_before['swap|active'] | int > 0
+         and _cassandra_linux_before['swap|used'] | int * 2 <= _cassandra_linux_before['mem|available'] | int }}

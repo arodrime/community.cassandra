@@ -3,3 +3,6 @@
 _cassandra_timesync_pkg: "{{ 'chrony' if ansible_facts['os_family'] != 'Debian' or _cassandra_chrony_present else 'systemd-timesyncd' }}"
 _cassandra_timesync_service: >-
   {{ 'chronyd' if ansible_facts['os_family'] != 'Debian' else 'chrony' if _cassandra_chrony_present else 'systemd-timesyncd' }}
+# check mode: --check, or the role run with check_mode applied to it (apply_config's compare,
+# _cassandra_linux_compare true), which ansible_check_mode does not tell
+_cassandra_linux_check: "{{ ansible_check_mode or _cassandra_linux_compare | default(false) | bool }}"

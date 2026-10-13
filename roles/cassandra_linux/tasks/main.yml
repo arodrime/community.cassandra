@@ -1,8 +1,10 @@
 ---
-# (set either way: a fact left by an earlier run of the role in the play would be summed up again)
-- name: Forget how the data disks were tuned
+# (set either way: what an earlier run of the role in the run found would be
+# summed up or reported again, e.g. apply_config's compare in check mode)
+- name: Forget what an earlier run of the role found
   ansible.builtin.set_fact:
     _cassandra_disk_summary: {}
+    _cassandra_linux_items: []
 
 # cassandra_linux_manage: false (e.g. set by import_cluster on a node set up
 # by other means): this node's OS settings are left as they are
@@ -15,16 +17,20 @@
     msg: >-
       {{ inventory_hostname }}: cassandra_linux_manage is false, its OS settings (kernel, limits, THP, swap, time
       sync, disks) are left as they are.
-  when: not cassandra_linux_manage | bool
+  when:
+    - not cassandra_linux_manage | bool
+    - not _cassandra_linux_quiet | default(false) | bool  # (apply_config: said its own way)
 
 # One summary for the nodes of the run, the ones with the same disks grouped
 # (not under the conditions above: run_once would skip it for every node when
 # the first one has its OS settings left alone)
 - name: Say how the data disks are tuned
   ansible.builtin.debug:
-    msg: "{{ _nodes | community.cassandra.cassandra_disk_summary(check=ansible_check_mode, verbose=ansible_verbosity | int > 0) }}"
+    msg: "{{ _nodes | community.cassandra.cassandra_disk_summary(check=_cassandra_linux_check, verbose=ansible_verbosity | int > 0) }}"
   run_once: true
-  when: _nodes | length > 0
+  when:
+    - _nodes | length > 0
+    - not _cassandra_linux_quiet | default(false) | bool
   vars:
     cassandra_output: true
     cassandra_output_info: true  # in the progress colour, except the WARNING lines (ops callback)

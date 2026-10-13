@@ -113,3 +113,7 @@ def test_jbod_disks_tuned(host):
 
 def test_spinning_disk_keeps_its_scheduler(host):
     assert host.file("/tmp/fake-sys/block/sdy/queue/scheduler").content_string.strip() == "[mq-deadline] none"
+
+
+def test_swap_lines_removed_mount_point_none_too(host):
+    assert "0000-0000" not in host.file("/etc/fstab").content_string

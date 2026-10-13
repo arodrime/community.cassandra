@@ -824,6 +824,14 @@ owner, group and mode of a file or a directory as one setting; passwords as ``**
 nodes with the same outcome on one line (``node2, node4  would apply, then restart``). A real run shows them before
 its question and ends with what each node got; ``--check`` shows them in the recap at the end.
 
+``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
+swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:
+false`` (its OS settings kept as they are, e.g. set by ``import_cluster``). The ones that differ come after the config's,
+under ``OS settings``, each value with the nodes that differ; a real run applies them first, on their nodes at once, live: no restart for them.
+The files a running Cassandra has open keep their read-ahead until it restarts (said under the node); ``lvchange`` and
+a ``tuned`` profile switch wait for a run with Cassandra stopped (see the role), the udev rule keeping the read-ahead
+meanwhile.
+
 Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
 ``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``
 creates. Set them once for both roles. ``cassandra_service`` refuses an account that could not read the config files.
@@ -1110,7 +1118,7 @@ inventory, so that nodes added later get the same tuning as the existing ones (w
   systemd-timesyncd (ntpd): the role would install chrony, whose unit stops it.
 
 THP, swap, ``tuned``, the time servers and the firewall are only reported: the role disables THP and swap the same
-way whatever the nodes use, does not write time servers, and only opens the firewall with
+way whatever the nodes use (swap only when what it holds fits easily in the memory available), does not write time servers, and only opens the firewall with
 ``cassandra_manage_firewall: true``; the imported nodes get ``cassandra_firewall_manage: false`` (their firewall, or
 none, is left as it is; nodes added later get the role's). A node the role set up keeps the values of the role's own files (its sysctl
 file, ``limits.d/cassandra.conf``, the unit it wrote, not its drop-ins), so that running the roles again changes

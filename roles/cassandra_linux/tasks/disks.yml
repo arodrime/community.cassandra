@@ -308,7 +308,7 @@
           ansible.builtin.command:
             argv: [sysctl, -p, "{{ cassandra_linux_sysctl_file }}"]
           failed_when: false  # no file without settings
-          when: cassandra_data_tuned_switch is not skipped and not ansible_check_mode
+          when: cassandra_data_tuned_switch is not skipped and not _cassandra_linux_check
           changed_when: false
 
         - name: Disable THP again
@@ -317,7 +317,7 @@
             state: restarted
           when:
             - cassandra_data_tuned_switch is not skipped
-            - not ansible_check_mode
+            - not _cassandra_linux_check
             - thp is defined  # the unit os.yml installs
             - _cassandra_linux_boot | bool
           changed_when: false
@@ -327,7 +327,7 @@
           ansible.builtin.include_tasks: disk_state.yml
           vars:
             _cassandra_disk_reread: true
-          when: cassandra_data_tuned_switch is not skipped and not ansible_check_mode
+          when: cassandra_data_tuned_switch is not skipped and not _cassandra_linux_check
 
     # LVM sets it again whenever it activates or reloads the volume (at boot,
     # lvextend...); left to "auto", it takes the read-ahead of the disk under it
@@ -438,7 +438,7 @@
       {%- endif -%}
       {%- if _cassandra_disk_tuned.name is defined and _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles
              and not _cassandra_disk_tuned_deferred | bool
-             and (ansible_check_mode or cassandra_data_tuned_switch.rc | default(1) == 0) -%}
+             and (_cassandra_linux_check or cassandra_data_tuned_switch.rc | default(1) == 0) -%}
       {%-   set _ = out.append({'item': 'tuned profiles', 'before': _cassandra_disk_tuned.active | join(' '),
                                'after': _cassandra_disk_tuned.profiles | join(' ')}) -%}
       {%- endif -%}
@@ -481,7 +481,8 @@
               if _tuned_deferred | bool else [])
            + ([_tuned_warn | regex_replace('^WARNING: ', '')] if _tuned_warn and not _tuned_ok | bool and not _tuned_deferred | bool
               else []) }}
-      # (Cassandra not looked for, both *_running true: taken as running, the restart said)
+      # (Cassandra not looked for, both *_running true: taken as running, the restart said; not when
+      # apply_config restarts it next: _cassandra_linux_restart_follows)
       info: >-
         {{ _cassandra_disk_plan.info | default([])
            + (['LVM keeps the read-ahead of its volumes from a run with Cassandra stopped (or'
@@ -489,7 +490,8 @@
               if _lvm_by_udev | length > 0 and _cassandra_data_lvm_here | bool else [])
            + (['restart Cassandra to read the files it has open with the new read-ahead']
               if _cassandra_disk_changes_seen | selectattr('what', 'in', ['ra', 'lvm']) | list | length > 0
-                 and not ansible_check_mode and 'running' in cassandra_data_running.stdout | default('running')
+                 and not _cassandra_linux_check and 'running' in cassandra_data_running.stdout | default('running')
+                 and not _cassandra_linux_restart_follows | default(false) | bool
               else []) }}
       notes: >-
         {{ _cassandra_disk_plan.notes | default([])
@@ -500,7 +502,7 @@
                ' when it activates them'] if _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | selectattr('os')
                | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string) | list
                | length > 0 else [])
-           + (['tuned: ' ~ ('would run' if ansible_check_mode else 'runs') ~ ' ' ~ _cassandra_disk_tuned.profiles | join(' ')
+           + (['tuned: ' ~ ('would run' if _cassandra_linux_check else 'runs') ~ ' ' ~ _cassandra_disk_tuned.profiles | join(' ')
                ~ ' (' ~ _cassandra_disk_tuned.name ~ ': nothing set on the Cassandra devices)'] if _tuned_ok | bool else []) }}
   vars:
     # LVM volumes (not the OS's) whose read-ahead LVM doesn't keep yet: the udev rule does

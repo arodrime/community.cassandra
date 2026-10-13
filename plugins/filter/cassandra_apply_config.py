@@ -7,6 +7,7 @@ cassandra_apply_config_diff: the nodes' compare data -> the settings that
     already on it, then the live value of each node to change, with its nodes ("<- differs").
     The JVM options and cassandra-env.sh lines are settings too, the owner,
     group and mode of a file or of a directory one setting. Secrets masked.
+    Then the OS settings (cassandra_linux's) the same way.
 cassandra_apply_config_outcomes: the nodes -> what each one gets, grouped
     ("node2, node4  would apply, then restart").
 cassandra_apply_config_recap: the end of apply_config: a verdict line, then
@@ -20,6 +21,7 @@ __metaclass__ = type
 import base64
 import hashlib
 import re
+from collections import OrderedDict
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import _stat
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
@@ -41,11 +43,13 @@ ABSENT = "absent"
 
 # what follows the write, by cassandra_apply_config_then: (--check or the plan, real run)
 _THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
-         "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart")}
+         "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart"),
+         "os": ("no restart", "no restart")}
 # said in the plan only, before the question
 _WHY = {"start": "its Cassandra is not running: started once written (down over max_hint_window? repair it)",
         "write": "its Cassandra is stopped: left stopped, reads its config when it starts",
-        "none": "an owner, group or mode only: Cassandra reads them when it starts"}
+        "none": "an owner, group or mode only: Cassandra reads them when it starts",
+        "os": "OS settings only: applied live"}
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 
 
@@ -348,6 +352,21 @@ def _file_entries(name, nodes, all_nodes):
     return entries, lines
 
 
+def _os_rows(changes):
+    """[(node, before, after)] of one OS setting -> its rows: each value the
+    role sets ("(inventory)": only the nodes that differ are known), then the
+    values of the nodes it changes ("<- differs")."""
+    rows = []
+    for after in OrderedDict.fromkeys(c[2] for c in changes):
+        rows.append((after, [], "(inventory)"))
+        befores = OrderedDict()
+        for node, before, value in changes:
+            if value == after:
+                befores.setdefault(before, []).append(node)
+        rows.extend((before, nodes, out.ARROW + " differs") for before, nodes in befores.items())
+    return rows
+
+
 def _perm_entry(key, nodes, all_nodes, field):
     """The owner, group and mode of a file or directory: what the role sets
     on the nodes it changes, the nodes already so, the ones to change."""
@@ -378,7 +397,9 @@ def _prepare(node):
             other.append((name, str(item.get("before") or "(none)"), str(item.get("after") or "")))
     return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other,
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
-            "dir_stats": _stats(node.get("dir_stats"), _dir_key)}
+            "dir_stats": _stats(node.get("dir_stats"), _dir_key),
+            "os": [(str(i.get("item") or ""), "(none)" if i.get("before") is None else str(i.get("before")),
+                    str(i.get("after"))) for i in node.get("os") or []]}
 
 
 def cassandra_apply_config_diff(nodes, width=None):
@@ -387,11 +408,12 @@ def cassandra_apply_config_diff(nodes, width=None):
     masked, owner/mode changes, directory changes); live, the slurp results
     of the live files that differ on some node ({item: file name, content});
     stats, its cassandra_config_live_stat results; dir_stats, its
-    cassandra_config_dir_stat results. -> the lines: per file, each setting
+    cassandra_config_dir_stat results; os, cassandra_linux's items (the OS
+    settings that differ: {item, before, after}). -> the lines: per file, each setting
     that differs on a node, the inventory's value and the nodes already on
     it ("(inventory)"), then each other live value with its nodes ("<-
     differs"); the owner, group and mode as one setting; the directories
-    after the files. [] when nothing differs. From GROUPS_FROM nodes on
+    after the files, then the OS settings. [] when nothing differs. From GROUPS_FROM nodes on
     (cassandra_output), the node lists by NODE GROUPS defined first. width:
     the lines fit in it (None: as long as they are)."""
     prepared = [_prepare(n) for n in nodes or []]
@@ -423,6 +445,13 @@ def cassandra_apply_config_diff(nodes, width=None):
         records = dict((o[3], (o[1], o[2], True)) for o in others if o[0] == name)
         entries.append(name)
         entries.append(("points to" if name.startswith("/") else "state", _rows(records, str, all_nodes)))
+    os_items = []
+    for node in prepared:
+        os_items.extend(i[0] for i in node["os"] if i[0] not in os_items)
+    if os_items:
+        entries.append("OS settings")
+    for name in os_items:
+        entries.append((name, _os_rows([(n["name"], i[1], i[2]) for n in prepared for i in n["os"] if i[0] == name])))
     return _named(entries, all_nodes, width)
 
 
@@ -445,9 +474,11 @@ def _named(entries, all_nodes, width=None):
 
 def _outcome(node, check, plan):
     """(what a node gets, its tally word)"""
-    todo_done = bool(node.get("todo") and (plan or node.get("done")))
+    os_only = bool(node.get("os") and not node.get("todo"))  # the OS settings alone, applied live
+    done_key = "os_done" if os_only else "done"
+    todo_done = bool(node.get("todo") or os_only) and bool(plan or node.get(done_key))
     if todo_done:
-        then = node.get("then")
+        then = "os" if os_only else node.get("then")
         text = ("would apply" if check or plan else "applied")
         said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
@@ -457,6 +488,8 @@ def _outcome(node, check, plan):
             text += " (%s)" % _WHY[then]
         return text, ("would apply" if check or plan else "applied")
     result = str(node.get("result") or "nothing to apply")
+    if node.get("os_done") and not check and "OS settings" not in result:  # its config not done: its OS settings were
+        result += ", its OS settings applied"
     if "FAILED" in result:
         return result, "failed"
     for word in ("nothing to apply", "not reached", "not in this run", "skipped"):
@@ -489,7 +522,7 @@ def _grouped(nodes, check=False, plan=False):
 
 
 def cassandra_apply_config_outcomes(nodes, check=False, plan=False):
-    """nodes: [{name, todo, done, then, result, notes}] in inventory order ->
+    """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order ->
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
     before the run (every node to do would apply, with why it is not
@@ -498,8 +531,9 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False):
 
 
 def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None):
-    """nodes: [{name, todo, done, then, result, notes}] in inventory order:
-    todo, whether the node had something to apply; done, whether its turn
+    """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order:
+    todo, whether the node had config to apply; os, whether its OS settings
+    differ; os_done, whether the OS play ran on it; done, whether its turn
     ended well (node_operation's cassandra_op_done); then, its
     cassandra_apply_config_then; result, its cassandra_op_result (said as is
     when not done: skipped, not reached, ...); notes, more lines (a restart

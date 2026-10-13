@@ -55,7 +55,8 @@ Role Variables
   Cassandra the profile is only written, and the role says how to switch.
   `true`: switched under a running Cassandra too.
 * `cassandra_linux_apply_live`: apply the kernel settings (sysctl, swapoff,
-  THP, disk tuning) live, not only persist them. Defaults to `auto`: live
+  THP, disk tuning) live, not only persist them (swapoff only when what swap
+  holds fits twice in the memory available, else a warning). Defaults to `auto`: live
   everywhere except in containers (Ansible's virtualization facts, and
   `cassandra_linux_container_types`), where `/proc/sys` and `/sys` belong to
   the host; what runs at boot (the THP unit, the disks' udev rule) is
