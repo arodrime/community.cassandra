@@ -74,6 +74,8 @@ def stat_result(path, follow=False):
                       ("st_gen", "generation"), ("st_birthtime", "birthtime")):
         if hasattr(st, attr):  # platform dependent, as the module adds them
             out[key] = getattr(st, attr)
+    if hasattr(st, "st_blocks"):  # as ansible-core 2.21+'s stat
+        out["disk_usage_bytes"] = st.st_blocks * 512
     if out["islnk"]:
         out["lnk_source"] = text(os.path.realpath(b_path))
         out["lnk_target"] = text(os.readlink(b_path))
