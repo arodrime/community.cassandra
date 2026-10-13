@@ -779,7 +779,7 @@ def test_decommission_of_a_few_hundred_mib_golden_lines():
     s = cassandra_stream_progress(views(190 * MIB, int(115.1 * MIB)), s, now=60, operations=["Unbootstrap"])
     assert cassandra_progress_line(s, 2, 3, "node4", "decommission", "LEAVING", names=names) == [
         "[2/3] node4 decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  2.6 MiB/s  ETA 00:01 (9s)  1m",
-        "      to node1 190.0/200.0 MiB ok   to node2 115.1/129.8 MiB ok"]
+        "      to node1  190.0/200.0 MiB  95%   to node2  115.1/129.8 MiB  88%"]
     assert report(s, node="node4", what="decommission", names=names, clocks=False) == """\
 node4  decommission  [##################--]  92%   2.6 MiB/s
 

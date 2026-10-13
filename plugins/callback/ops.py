@@ -39,7 +39,8 @@ description:
     (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
     in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
     indented under a coloured one keep its colour, but for an indented line with a mark of its own, which colours that line only (a node down
-    (C(← down)) and a recap's failed node (C(node5  FAILED)) as an error, a setting that differs
+    (C(← down)), a recap's failed node (C(node5  FAILED)) and a line of the other ends of a stream
+    with a C(STALLED) one (C(from node3   4.2/17.0 GiB   24% STALLED)) as an error, a setting that differs
     (C(← differs)), a reset (C(will be reset)) and what it
     deletes (C(DELETED)) as a change, wherever they are; what a node would get or got as a change too, on a line
     of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  will apply), C(node1  applied))). The rows of
@@ -169,9 +170,11 @@ _COLOURS = (
     (re.compile(r"\S.*  (waiting for .*  \d+[smhd]\S*/\d+[smhd]\S*|(all back|NORMAL) after \d\S*)$"), "PROGRESS"),
 )
 # a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
-# a node down, a setting that differs, what a node would get or got, what a reset deletes
+# a node down, a stalled peer, a setting that differs, what a node would get or got, what a reset deletes
 _MARKS = (
     (re.compile(r"\u2190 down\b|^\s*\S.*?\S  (\w+ )?FAILED\b"), "COLOR_ERROR"),  # (a recap's failed node)
+    # a line of the other ends under a progress line (cassandra_output.peer_lines, indented 6) with a stalled one
+    (re.compile(r"^ {6}(?:(?:to|from|with) +\S+ +[\d.]+(?: \w+)?/|\d+ peers? ok\b).*\bSTALLED\b"), "COLOR_ERROR"),
     (re.compile(r"\u2190 differs\b|\bwill be reset\b|\u2014 will be$|\bDELETED\b"
                 r"|^\S.*?\S  (would apply|will apply|applied)\b"), "COLOR_CHANGED"),  # (apply_config's outcomes)
 )

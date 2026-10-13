@@ -59,10 +59,19 @@ Conventions
   ``would ...`` under ``--check`` (``prepare_lines``, filter ``community.cassandra.cassandra_prepare_lines``,
   from each role's change report: the lists per role and node with ``-v`` or in ``cassandra_change_report_dir``).
   The data disks' summary follows only when something was set, a line to act on (not tuned yet, a restart to take it), a warning, or with ``-v``.
-- **Progress**: one line per check, then always a compact line of the nodes at the other end::
+- **Progress**: one line per check, then always the nodes at the other end, in aligned columns (as many as fit
+  in the terminal, 4 at most), by name, a stalled one in place and in red::
 
     [1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m
-          from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled
+          from node1  18.0/34.0 GiB   52%           from node2    3.0/3.0 GiB  100%
+          from node3   4.2/17.0 GiB   24% STALLED
+
+  Above 30 of them, one line for the ones keeping up and only the stalled ones and those below half the average
+  detailed under it::
+
+          87 peers ok (avg 44%), slowest: node5 0% STALLED, node31 12%, node44 12%
+          to node5   0.0/7.2 GiB   0% STALLED   to node31  0.9/7.2 GiB  12%
+          to node44  0.9/7.2 GiB  12%
 
   A check every 10 s for the first 5 minutes, then every 30 s; after a minute without progress the line says it,
   as progress (``no progress for 3m``), and after ``cassandra_stream_stall_warn_time`` (5 min) as an error

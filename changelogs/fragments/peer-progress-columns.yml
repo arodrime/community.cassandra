@@ -1,0 +1,2 @@
+minor_changes:
+  - add_node, replace_node, decommission_node, remove_dead_node, move_node, topology - the nodes at the other end of a stream are shown under each progress line in aligned columns (as many as fit in the terminal), a stalled one marked ``STALLED`` in red; above 30 of them, one line sums up the ones keeping up and only the stalled or lagging ones are detailed.
