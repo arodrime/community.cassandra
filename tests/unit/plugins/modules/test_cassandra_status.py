@@ -5,9 +5,11 @@ import os
 
 import pytest
 
+from ansible_collections.community.cassandra.plugins.modules import cassandra_status
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import (
     cluster_up_down,
     node_status_column_offsets,
+    nodetool_status_poll,
 )
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -146,3 +148,29 @@ class TestClusterUpDown:
         stdout = "Datacenter: datacenter1\n===\nUN  looks like a node line but no header yet\n"
         result = cluster_up_down(stdout)
         assert result["datacenter1"]["nodes"] == []
+
+
+class TestPoll:
+    """Read again after interval while nodes are down, poll times at most; no wait after the last read."""
+
+    def poll(self, monkeypatch, stdout, poll):
+        monkeypatch.setattr(cassandra_status.NodeToolStatusCommand, "__init__", lambda self, module: None)
+        monkeypatch.setattr(cassandra_status.NodeToolStatusCommand, "status_command", lambda self: (0, stdout, ""))
+        slept = []
+        monkeypatch.setattr(cassandra_status.time, "sleep", slept.append)
+
+        class Module(object):
+            params = {"poll": poll, "interval": 10}
+        status, dummy, iterations = nodetool_status_poll(Module())[:3]
+        return status, iterations, slept
+
+    @pytest.mark.parametrize("poll, sleeps", [(1, []), (3, [10, 10])])
+    def test_no_wait_after_the_last_read(self, monkeypatch, vnodes_status, poll, sleeps):
+        status, iterations, slept = self.poll(monkeypatch, vnodes_status, poll)  # a node DN
+        assert iterations == poll and slept == sleeps
+        assert sum(len(dc["down"]) for dc in status.values()) == 1
+
+    def test_all_up_one_read(self, monkeypatch, vnodes_freshly_joined_status):
+        status, iterations, slept = self.poll(monkeypatch, vnodes_freshly_joined_status, 3)
+        assert iterations == 1 and slept == []
+        assert sum(len(dc["down"]) for dc in status.values()) == 0

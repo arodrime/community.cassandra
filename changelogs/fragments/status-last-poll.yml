@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_status - no longer waits ``interval`` seconds after the last ``nodetool status`` read when nodes are down; with the defaults (``poll=1``, ``interval=30``), a check that found a node down took 30 seconds more than needed.
