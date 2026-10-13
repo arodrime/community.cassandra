@@ -41,12 +41,13 @@ def _unasked(result):
 
 
 def cassandra_health_findings(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
-                              down_ok=None, joining_ok=None, leaving_ok=None):
+                              down_ok=None, joining_ok=None, leaving_ok=None, names=None):
     """The problems of cassandra_health_problems (same arguments) as
     [{kind, text (its sentence), ...}]: kind state (address, rack, state,
     seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
     schema (msg)."""
+    names = names or {}
     found = []
     for view in views:
         result = view["result"]
@@ -63,10 +64,13 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
             if n["status"] + n["state"] == "UL" and n["address"] in (leaving_ok or []):
                 continue
             if n["status"] != "U" or n["state"] != "N":
+                # by its inventory name when it has one: "node4 (10.0.0.4, rack1) is DN"
+                name = names.get(n["address"])
+                where = ("%s, %s" % (n["address"], n["rack"])) if name else n["rack"]
                 found.append({"kind": "state", "address": n["address"], "rack": n["rack"],
                               "state": n["status"] + n["state"], "seen_from": view["from"],
                               "text": "%s (%s) is %s%s, seen from %s" % (
-                                  n["address"], n["rack"], n["status"], n["state"], view["from"])})
+                                  name or n["address"], where, n["status"], n["state"], view["from"])})
         if len(nodes) != int(expected):
             found.append({"kind": "count", "ring": len(nodes), "expected": int(expected), "seen_from": view["from"],
                           "text": "the ring has %d nodes, the inventory %d (seen from %s): a node is missing from the ring, "
@@ -160,16 +164,18 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
 
 
 def cassandra_health_problems(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
-                              down_ok=None, joining_ok=None, leaving_ok=None):
+                              down_ok=None, joining_ok=None, leaving_ok=None, names=None):
     """views: [{'from': host, 'result': cassandra_status result}]; the others
     are this node's registered results (ports: a wait_for loop over
     {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
     node being replaced). joining_ok: addresses expected up and joining (a
     bootstrap still running). leaving_ok: addresses expected up and leaving (a
-    decommission still running). Returns a list of problems."""
+    decommission still running). names: {address: inventory name}
+    (cassandra_host_addresses), a node of the ring named by it. Returns a
+    list of problems."""
     return [f["text"] for f in cassandra_health_findings(
         views, expected, node, gossip=gossip, binary=binary, netstats=netstats, schema=schema, ports=ports,
-        down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok)]
+        down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok, names=names)]
 
 
 def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=None, names=None, members=None,

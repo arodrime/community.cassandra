@@ -1,0 +1,2 @@
+minor_changes:
+  - cluster health checks - a node of the ring that is not up and normal is named by its inventory host, then its address and rack (``node4 (10.0.0.4, rack1) is DN, seen from node2``), not by its address only.
