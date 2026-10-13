@@ -7,11 +7,12 @@ import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    _compress, cassandra_import_report)
+    _compress, cassandra_import_report, cassandra_import_self_check_advice)
 
 ARROW = u"\u2190"
 WRITTEN = ["/p/inventories/my_cluster.yml", "/p/inventories"]
 REPORT = "/p/reports/my_cluster/report.txt"
+STRICT_OFF = "-e import_cluster_strict=false only writes the inventory anyway, for inspection (not safe to apply)"
 
 
 def node(i, heap="8G", hand=None, read=True, **extra):
@@ -95,7 +96,9 @@ def test_things_to_do_and_hand_edits():
         "  1. Not read: node4 (unreachable): start Cassandra or fix the access, then import again"
         " (or -e import_cluster_allow_unread=true)",
         "  2. Hand edits the roles would revert: concurrent_writes, -Dcassandra.weird (see below)",
-        "  3. Self-check: the roles would change settings on node1 (see DETAILS)",
+        "  3. Self-check: only hand edits no variable covers, in cassandra.yaml (node1): -e"
+        " import_cluster_keep_hand_edits=true leaves those files as they are on their nodes (apply_config leaves"
+        " them) and the self-check passes; " + STRICT_OFF + " (see DETAILS)",
         "  4. Passwords written in clear: cd inventories && ansible-vault encrypt group_vars/my_cluster/secrets.yml",
         "  5. Files of an earlier import whose cluster is not known, kept: host_vars/old/main.yml (remove them if they"
         " are this cluster's, or import again with -e import_cluster_adopt=true)"]
@@ -146,7 +149,9 @@ def test_self_check_named_with_hand_edits_elsewhere_and_a_note():
     checks = {"node3": {"differences": ["owner, group and mode: x"], "notes": []},
               "node1": {"differences": ["cassandra.yaml: y"], "notes": []}}
     lines = report(nodes, ok=False, self_check=checks)
-    assert "  2. Self-check: the roles would change settings on node1, node3 (see DETAILS)" in lines
+    assert ("  2. Self-check: the roles would change these settings: owner, group and mode: x (node3); fix them first"
+            " (-e import_cluster_keep_hand_edits=true covers only the hand edits, in cassandra.yaml (node1)); "
+            + STRICT_OFF + " (see DETAILS)") in lines
     assert not [line for line in lines if "Review then commit" in line]  # not a valid inventory
     assert [line for line in lines if line.startswith("  jmxremote.password:")][0].split()[1:4] == [
         "its", "users", "NOT"]
@@ -375,3 +380,50 @@ def test_keys_cassandra_rejects_leave_the_report_width():
     assert plain[0].endswith("(1048575)   all") and plain[1] == ""
     nodes[0]["not_settings"] = {"keys": ["x"], "release": "4.1.5"}
     assert tuning(report(nodes)) == plain
+
+
+LOGBACK = ["logback.xml, line 5:", "  + <logger name=\"x\" level=\"DEBUG\"/>"]
+
+
+def test_self_check_advice_hand_edits_only():
+    # every difference in a file with hand edits: import_cluster_keep_hand_edits, not import_cluster_strict
+    nodes = [node(1, hand=LOGBACK), node(2, hand=LOGBACK), node(3)]
+    checks = {"node1": {"differences": ["logback.xml: logger x: node has DEBUG, import would write nothing"]},
+              "node2": {"differences": ["logback.xml: logger x: node has DEBUG, import would write nothing"]}}
+    advice = cassandra_import_self_check_advice(cassandra_inventory_layout(nodes, "My Cluster"), checks)
+    assert advice == ("Only hand edits no variable covers, in logback.xml (node1, node2): -e"
+                      " import_cluster_keep_hand_edits=true leaves those files as they are on their nodes (apply_config"
+                      " leaves them) and the self-check passes; " + STRICT_OFF)
+    todo = [line for line in report(nodes, ok=False, self_check=checks) if "Self-check:" in line][0]
+    assert "import_cluster_keep_hand_edits=true leaves those files" in todo and "logback.xml (node1, node2)" in todo
+
+
+def test_self_check_advice_settings_and_hand_edits():
+    # settings differ too: listed first, with their nodes; keep_hand_edits covers the hand-edit files only
+    nodes = [node(1, hand=LOGBACK), node(2), node(3)]
+    checks = {"node1": {"differences": ["logback.xml: logger x: node has DEBUG, import would write nothing",
+                                        "logback.xml: owner:group mode: node has root:root 0644, import would write"
+                                        " cassandra:cassandra 0644"]},
+              "node2": {"differences": ["cassandra.yaml: concurrent_writes: node has 32, import would write 64",
+                                        "heap (cassandra-env.sh, else the unit's Environment): MAX_HEAP_SIZE: node"
+                                        " has 8G, import would write 16G"]},
+              "node3": {"differences": ["cassandra.yaml: concurrent_writes: node has 32, import would write 64"]}}
+    advice = cassandra_import_self_check_advice(cassandra_inventory_layout(nodes, "My Cluster"), checks)
+    assert advice == ("The roles would change these settings: logback.xml owner:group mode (node1), cassandra.yaml"
+                      " concurrent_writes (node2, node3), heap (cassandra-env.sh, else the unit's Environment):"
+                      " MAX_HEAP_SIZE (node2); fix them first (-e import_cluster_keep_hand_edits=true covers only the"
+                      " hand edits, in logback.xml (node1)); " + STRICT_OFF)
+
+
+def test_self_check_advice_settings_only():
+    # no hand edits: no keep_hand_edits; a difference in a file the inventory already keeps is a setting
+    kept = {"cassandra_config_keep_files": ["logback.xml"]}
+    nodes = [node(1, hand=LOGBACK, keep=kept), node(2)]
+    checks = {"node1": {"differences": ["logback.xml: x: node has 1, import would write 2"]},
+              "node2": {"differences": ["cassandra.yaml: concurrent_writes: node has 32, import would write 64"]}}
+    advice = cassandra_import_self_check_advice(cassandra_inventory_layout(nodes, "My Cluster"), checks)
+    assert advice == ("The roles would change these settings: logback.xml x (node1), cassandra.yaml concurrent_writes"
+                      " (node2); fix them first; " + STRICT_OFF)
+    # none (the self-check could not run): import_cluster_strict alone
+    assert cassandra_import_self_check_advice(cassandra_inventory_layout(nodes, "My Cluster"), {}) == \
+        STRICT_OFF[0].upper() + STRICT_OFF[1:]

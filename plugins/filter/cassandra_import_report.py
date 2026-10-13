@@ -7,6 +7,8 @@ cassandra_import_report: the import's outcome -> the lines of report.txt, or
     One setting per line, then the nodes that have its value ("all" when every
     node read does); a line per other value, "<- differs" on the values fewer
     nodes have, with where the inventory keeps them. Secrets never shown.
+cassandra_import_self_check_advice: what to do about a failed self-check
+    (the end of the run's failure).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -21,6 +23,7 @@ from ansible.utils.display import Display
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     KEEP, NOT_READ, _chains, _hand_edits_kept, _secret, _sort_key, _values_hidden)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 # shown in the header, or the ring's (dc and rack): not among the settings
@@ -31,6 +34,9 @@ KEEP_SHORT = {"cassandra_repository_manage": "repositories", "cassandra_cqlsh_py
               "cassandra_java_set_default": "system java", "cassandra_firewall_manage": "firewall"}
 DASH = u"\u2014"
 ARROW_RIGHT = u"\u2192"
+# a self-check difference's file: "<file>: ...", the heap's "heap (cassandra-env.sh, ...): ..."
+_DIFF_FILE = re.compile(r"^(?:heap \((cassandra-env\.sh)|([^:\s]+):)")
+STRICT_OFF = "-e import_cluster_strict=false only writes the inventory anyway, for inspection (not safe to apply)"
 
 
 def _compress(names):
@@ -314,6 +320,62 @@ def _host_dirs(with_vars, full):
 
 
 @_values_hidden
+def _self_check_split(read, self_check):
+    """The self-check differences -> (hand, settings): hand {file: [nodes]}, the ones in a config file with hand
+    edits import_cluster_keep_hand_edits would keep as the node has it (its owner, group and mode aside);
+    settings [(name, [nodes])], the others ("cassandra.yaml concurrent_writes")."""
+    files_of = {}
+    for n in read:
+        kept = (n.get("keep") or {}).get("cassandra_config_keep_files") or []
+        heads = [re.split(r"[:,]", line, maxsplit=1)[0] for line in n.get("hand_edits") or []
+                 if not line.startswith(" ")]
+        files_of[n["name"]] = set(f for f in heads if CONFIG_FILE.match(f) and f not in kept)
+    hand, settings, order = {}, {}, []
+    for name, c in sorted((self_check or {}).items()):
+        for d in c.get("differences") or []:
+            m = _DIFF_FILE.match(d)
+            f = m and (m.group(1) or m.group(2))
+            if f and f in files_of.get(name, ()) and not d.startswith(f + ": owner"):
+                members = hand.setdefault(f, [])
+            else:
+                key = d.split(": node has ", 1)[0]
+                key = re.sub(r"^([^:\s]+): ", r"\1 ", key)  # "cassandra.yaml: x" -> "cassandra.yaml x"
+                if key not in settings:
+                    order.append(key)
+                members = settings.setdefault(key, [])
+            if name not in members:
+                members.append(name)
+    return hand, [(k, settings[k]) for k in order]
+
+
+def _self_check_advice(read, self_check, who):
+    """What to do about the self-check differences (who: a list of nodes -> its text), '' without any."""
+    hand, settings = _self_check_split(read, self_check)
+    files = ", ".join("%s (%s)" % (f, who(m)) for f, m in sorted(hand.items()))
+    if not hand and not settings:
+        return ""
+    if not settings:
+        return ("only hand edits no variable covers, in %s: -e import_cluster_keep_hand_edits=true leaves those files"
+                " as they are on their nodes (apply_config leaves them) and the self-check passes; %s" % (files, STRICT_OFF))
+    shown = ["%s (%s)" % (k, who(m)) for k, m in settings[:5]]
+    if len(settings) > 5:
+        shown.append("%d more" % (len(settings) - 5))
+    return "the roles would change these settings: %s; fix them first%s; %s" % (
+        ", ".join(shown),
+        " (-e import_cluster_keep_hand_edits=true covers only the hand edits, in %s)" % files if hand else "",
+        STRICT_OFF)
+
+
+@_values_hidden
+def cassandra_import_self_check_advice(layout, self_check):
+    """layout: cassandra_inventory_layout's; self_check: {node: {differences, notes}} -> what to do about a failed
+    self-check: import_cluster_keep_hand_edits when hand edits alone fail it, else the settings that differ first;
+    import_cluster_strict false only to inspect the inventory."""
+    read = [n for n in layout.get("nodes") or [] if boolean(n.get("read", False), strict=False)]
+    advice = _self_check_advice(read, self_check, _compress)
+    return (advice[0].upper() + advice[1:]) if advice else STRICT_OFF[0].upper() + STRICT_OFF[1:]
+
+
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None):
@@ -387,8 +449,10 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     tuning = _by_value([(n["name"],) + _os_pair(line) for n in read
                         for line in (n.get("os") or {}).get("lines") or []])
     others = sorted(name for name, c in (self_check or {}).items() if c.get("differences"))
+    check_hand, check_settings = _self_check_split(read, self_check)
     sets = [names, others] + [m for section in (settings, edits, tuning, _by_value(kept)) for dummy, values in section
                               for dummy2, m in values]
+    sets += list(check_hand.values()) + [m for dummy, m in check_settings]
     found = {}  # the nodes of each value of yours found on them
     for y in yours:
         found.setdefault((y["key"], json.dumps(y["value"], sort_keys=True, default=str)), []).append(y["node"])
@@ -439,7 +503,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
     if not self_check_ok and (self_check_error or others):
         todo.append("Self-check: %s (see DETAILS%s)" % (
-            self_check_error or "the roles would change settings on " + _who(others, None, groups, False),
+            self_check_error or _self_check_advice(read, self_check, lambda m: _who(m, None, groups, False)),
             " in the report" if screen else ""))
     if yours:
         todo.append("%s, kept as found: %s (see %s%s)" % (
@@ -595,4 +659,5 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
 
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_import_report": cassandra_import_report}
+        return {"cassandra_import_report": cassandra_import_report,
+                "cassandra_import_self_check_advice": cassandra_import_self_check_advice}

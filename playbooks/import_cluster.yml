@@ -36,7 +36,7 @@
 #     and no hosts file there naming their group or host) as this cluster's:
 #     replaced or removed, each replaced one kept as <file>.<date>~.
 #   import_cluster_strict: true; false writes an inventory that fails the
-#     self-check without failing the run.
+#     self-check without failing the run (to inspect it: not safe to apply).
 #   import_cluster_debug: false; true shows an error while writing the
 #     inventory, hidden otherwise (the variables hold passwords).
 # A re-import reads the cluster from the inventory (its connection variables,
@@ -1878,7 +1878,7 @@
           roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
           if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See TO DO above{{ ''
           if ansible_check_mode else ', and DETAILS in ' ~ _report_dir ~ '/report.txt' }}.
-          (-e import_cluster_strict=false: the same inventory and report, without this failure)
+          {{ _layout | community.cassandra.cassandra_import_self_check_advice(_self_check | default({})) }}.
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool
