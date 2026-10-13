@@ -36,6 +36,31 @@ def test_down_and_joining_nodes_named_with_the_view():
     assert "10.0.0.3 (r1) is UJ, seen from n1" in out
 
 
+def test_a_node_of_the_inventory_named_by_its_host_and_address():
+    # the operator does not map the address by hand (the ring knows addresses only)
+    ring = [node("10.0.0.1"), node("10.0.0.5", status="D"), node("10.0.0.9", status="D")]
+    names = {"10.0.0.1": "n1", "10.0.0.5": "n4", "n4": "n4"}
+    out = problems([view("n2", *ring)], names=names)
+    assert out == ["n4 (10.0.0.5, r1) is DN, seen from n2", "10.0.0.9 (r1) is DN, seen from n2"]
+    # the playbooks' "a node is down" hint still finds it
+    assert all(" is DN," in line for line in out)
+    findings = cassandra_health_findings([view("n2", *ring)], 3, "n1", names=names)
+    assert [f["address"] for f in findings if f["kind"] == "state"] == ["10.0.0.5", "10.0.0.9"]
+
+
+def test_the_health_checks_pass_the_inventory_names():
+    import os
+    import yaml
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_service", "tasks",
+                        "cluster_health.yml")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    tasks = [t for b in yaml.safe_load(text) for t in [b] + b.get("block", [])]
+    listed = next(t for t in tasks if t.get("name") == "List the problems")
+    assert "names=query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)" \
+        in listed["ansible.builtin.set_fact"]["cassandra_health_findings"]
+
+
 def test_node_missing_from_the_ring():
     out = problems([view("n2", node("10.0.0.1"), node("10.0.0.2"))])
     assert len(out) == 1
