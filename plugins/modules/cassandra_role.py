@@ -817,10 +817,8 @@ def main():
                     if state == "present":
                         result['changed'] = False
                     elif state == "absent":
-                        cql = drop_role(role)
-                        session_w.execute(cql)
                         result['changed'] = True
-                        result['cql'] = cql
+                        result['cql'] = drop_role(role)
                 else:
                     if state == "present":
                         result['changed'] = False
@@ -832,17 +830,8 @@ def main():
             else:
                 if module.check_mode:
                     if state == "present":
-                        cql = create_alter_role(module,
-                                                role,
-                                                super_user,
-                                                login,
-                                                password,
-                                                options,
-                                                data_centres,
-                                                has_role_changed)
-                        session_w.execute(cql)
                         result['changed'] = True
-                        result['cql'] = cql
+                        result['cql'] = create_role(role)
                     elif state == "absent":
                         result['changed'] = False
                 else:

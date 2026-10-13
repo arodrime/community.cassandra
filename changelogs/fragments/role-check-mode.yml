@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_role - in check mode, a role with ``login=false`` was really created (``state=present``) or dropped (``state=absent``); check mode now only reports the change and the CQL statement the real run would execute.

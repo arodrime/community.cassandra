@@ -164,3 +164,23 @@ def test_missing_role_without_login_is_created(driver):
     result, session_r, session_w = run([], login=False)
     assert result['changed'] is True
     assert session_w.executed == ["CREATE ROLE 'app_user'"]
+
+
+def test_role_without_login_check_mode_creates_nothing(driver):
+    result, session_r, session_w = run([], login=False, _check_mode=True)
+    assert result['changed'] is True
+    assert result['cql'] == "CREATE ROLE 'app_user'"
+    assert session_w.executed == []
+
+
+def test_role_without_login_check_mode_drops_nothing(driver):
+    result, session_r, session_w = run([ROLE_ROW], login=False, state='absent', _check_mode=True)
+    assert result['changed'] is True
+    assert result['cql'] == "DROP ROLE 'app_user'"
+    assert session_w.executed == []
+
+
+def test_role_without_login_is_dropped(driver):
+    result, session_r, session_w = run([ROLE_ROW], login=False, state='absent')
+    assert result['changed'] is True
+    assert session_w.executed == ["DROP ROLE 'app_user'"]

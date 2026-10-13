@@ -18,40 +18,40 @@
 
 # ===========================================================
 - name: Include vars for os family
-  include_vars:
+  ansible.builtin.include_vars:
     file: "{{ ansible_os_family }}.yml"
 
 # This should go into a cassandra_driver dependency
 - name: Ensure epel is available
-  yum:
+  ansible.builtin.yum:
     name: epel-release
   when: ansible_os_family == "RedHat"
 
 - name: Install cassandra-driver
-  pip:
+  ansible.builtin.pip:
     name: "cassandra-driver{{ ansible_python_version.startswith('2.7') | ternary('==3.26.*', '') }}"
   environment:
     CASS_DRIVER_NO_CYTHON: 1
 
 # Check that python is able to import ssl lib as an internal library
 - name: Check for ssl library import
-  shell: /usr/bin/python -c "import ssl" || /usr/bin/python3 -c "import ssl"
+  ansible.builtin.shell: /usr/bin/python -c "import ssl" || /usr/bin/python3 -c "import ssl"
   register: ssl_lib_check  
 
-- assert: 
+- ansible.builtin.assert: 
     that:
       - "'ModuleNotFoundError' not in ssl_lib_check.stdout"
 
 # Creating a keyspace with ssl=True on a non-SSL enabled cluster should fail
 - name: Check keyspace creation on a non-SSL cluster
-  cassandra_keyspace:
+  community.cassandra.cassandra_keyspace:
     name: nonsslapp
     state: present
     ssl: True
   register: nonssl_keyspace
   ignore_errors: yes  
 
-- assert: 
+- ansible.builtin.assert: 
     that:
       - "'SSL: WRONG_VERSION_NUMBER' in nonssl_keyspace.msg"
   when: "'This module requires the SSL python library' not in nonssl_keyspace.msg"    
@@ -66,13 +66,13 @@
   ignore_errors: yes
 
 - name: Check for expected error message
-  assert:
+  ansible.builtin.assert:
     that:
       - 'auth_not_enabled.changed == False'
       - '"CassandraRoleManager doesn''t support PASSWORD" in auth_not_enabled.msg'
 
 # We need to have auth enable for this module to do anything useful
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Ensure handling of no credentials
@@ -85,7 +85,7 @@
   ignore_errors: yes
 
 - name: Check for expected error message
-  assert:
+  ansible.builtin.assert:
     that:
       - 'no_credentials.changed == False'
       - "'Remote end requires authentication' in no_credentials.msg"
@@ -102,7 +102,7 @@
   ignore_errors: yes
 
 - name: Check for expected error message
-  assert:
+  ansible.builtin.assert:
     that:
       - 'dodgy_credentials.changed == False'
       - "'or password are incorrect' in dodgy_credentials.msg"
@@ -117,7 +117,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: create_role
 
-- assert:
+- ansible.builtin.assert:
     that:
       - 'create_role.changed == True'
 
@@ -136,7 +136,7 @@
   register: myrole
 
 - name: Assert app_user exists in output
-  assert:
+  ansible.builtin.assert:
     that:
       - "'app_user' in myrole.stdout"
 
@@ -155,7 +155,7 @@
   register: nonssl_myrole
 
 - name: Assert non_ssl_role exists in output
-  assert:
+  ansible.builtin.assert:
     that:
       - "'non_ssl_role' in nonssl_myrole.stdout"      
 
@@ -180,7 +180,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: myrole
 
-- assert:
+- ansible.builtin.assert:
     that:
       - 'myrole.changed == False'
 
@@ -203,7 +203,7 @@
   retries: 3
   delay: 3
 
-- assert:
+- ansible.builtin.assert:
     that:
       - 'myrole.changed == True'
 
@@ -228,7 +228,7 @@
   register: absent
 
 - name: Asser role changed
-  assert:
+  ansible.builtin.assert:
     that:
       - "absent.changed == True"
 
@@ -237,7 +237,7 @@
   register: myrole
 
 - name: Assert app_user does not exist
-  assert:
+  ansible.builtin.assert:
     that:
       - "'app_user' not in myrole.stdout"
 
@@ -253,7 +253,7 @@
   register: myrole
 
 - name: Ensure expected error is in output
-  assert:
+  ansible.builtin.assert:
     that:
       - "myrole.changed == True"
       - "myrole.role == 'app_user'"
@@ -263,7 +263,7 @@
   register: myrole
 
 - name: Assert app_user does not exist
-  assert:
+  ansible.builtin.assert:
     that:
       - "'app_user' not in myrole.stdout"
 
@@ -282,12 +282,12 @@
   ignore_errors: yes
 
 - name: Check for expected error msg
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Invalid permission provided in the keyspace_permission parameter.' == invalid_perms.msg"
 
 - name: Create keyspaces for tests
-  cassandra_keyspace:
+  community.cassandra.cassandra_keyspace:
     name: "{{ item }}"
     state: present
     login_user: "{{ cassandra_admin_user }}"
@@ -298,7 +298,7 @@
     - mykeyspace3
 
 - name: Create keyspaces for 4.0
-  cassandra_keyspace:
+  community.cassandra.cassandra_keyspace:
     name: "{{ item }}"
     state: present
     login_user: "{{ cassandra_admin_user }}"
@@ -313,7 +313,7 @@
   register: keyspaces
 
 - name: Ensure that keyspaces exist
-  assert:
+  ansible.builtin.assert:
     that:
       - "'mykeyspace1' in keyspaces.stdout"
       - "'mykeyspace2' in keyspaces.stdout"
@@ -350,7 +350,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: app_user_multi_keyspace
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "app_user_multi_keyspace.changed == True"
       - "app_user_multi_keyspace.cql == \"CREATE ROLE 'app_user_multi_keyspace' WITH SUPERUSER = False AND LOGIN = True AND PASSWORD = '********' \""
@@ -361,7 +361,7 @@
   register: myrole
 
 - name: Assert app_user_multi_keyspace exists
-  assert:
+  ansible.builtin.assert:
     that:
       - "'app_user_multi_keyspace' in myrole.stdout"
 
@@ -400,7 +400,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: read_only_user
 
-- assert:
+- ansible.builtin.assert:
     that: "read_only_user.changed == True"
 
 - name: Get output of list permissions for read_only user
@@ -408,7 +408,7 @@
   register: read_only_user_perms
 
 - name: Assert that all keyspaces select permissions exists
-  assert:
+  ansible.builtin.assert:
     that:
       - "'<all keyspaces> |     SELECT' in read_only_user_perms.stdout"
       - "'(1 rows)' in read_only_user_perms.stdout"
@@ -426,7 +426,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: read_only_user
 
-- assert:
+- ansible.builtin.assert:
     that: "read_only_user.changed == True"
 
 - name: Get output of list permissions for read_only user
@@ -434,7 +434,7 @@
   register: read_only_user_perms
 
 - name: Assert that all keyspaces select permissions does not exist
-  assert:
+  ansible.builtin.assert:
     that:
       - "'<all keyspaces> |     SELECT' not in read_only_user_perms.stdout"
       - "'<keyspace mykeyspace1> |     SELECT' in read_only_user_perms.stdout"
@@ -455,7 +455,7 @@
   register: read_only_user_perms
 
 - name: read_only role should now have no permissions
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(0 rows)' in read_only_user_perms.stdout"
 
@@ -465,6 +465,26 @@
     state: absent
     login_user: "{{ cassandra_admin_user }}"
     login_password: "{{ cassandra_admin_pwd }}"
+
+- name: Create a role without login in check mode
+  community.cassandra.cassandra_role:
+    name: rw_role
+    state: present
+    login: false
+    login_user: "{{ cassandra_admin_user }}"
+    login_password: "{{ cassandra_admin_pwd }}"
+  check_mode: true
+  register: rw_role_check
+
+- name: Get output of list roles after the check mode run
+  ansible.builtin.shell: cqlsh --username "{{ cassandra_admin_user }}" --password "{{ cassandra_admin_pwd }}" --execute "LIST ROLES"
+  register: roles_after_check
+
+- name: Check mode reported the change and created nothing
+  ansible.builtin.assert:
+    that:
+      - rw_role_check.changed
+      - "'rw_role' not in roles_after_check.stdout"
 
 - name: Create a role to assign to users
   community.cassandra.cassandra_role:
@@ -483,11 +503,31 @@
   register: rw_role_perms
 
 - name: rw_role role permissions test
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(2 rows)' in rw_role_perms.stdout"
       - "'<all keyspaces> |     SELECT' in rw_role_perms.stdout"
       - "'<all keyspaces> |     MODIFY' in rw_role_perms.stdout"
+
+- name: Drop the role without login in check mode
+  community.cassandra.cassandra_role:
+    name: rw_role
+    state: absent
+    login: false
+    login_user: "{{ cassandra_admin_user }}"
+    login_password: "{{ cassandra_admin_pwd }}"
+  check_mode: true
+  register: rw_role_check
+
+- name: Get output of list roles after the check mode drop
+  ansible.builtin.shell: cqlsh --username "{{ cassandra_admin_user }}" --password "{{ cassandra_admin_pwd }}" --execute "LIST ROLES"
+  register: roles_after_check
+
+- name: Check mode reported the change and dropped nothing
+  ansible.builtin.assert:
+    that:
+      - rw_role_check.changed
+      - "'rw_role' in roles_after_check.stdout"
 
 - name: Create a user and assign rw_role
   community.cassandra.cassandra_role:
@@ -504,7 +544,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: myapp
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "myapp.changed == True"
       - "\"CREATE ROLE 'myapp' WITH SUPERUSER = False AND LOGIN = True AND PASSWORD\" in myapp.cql"
@@ -515,7 +555,7 @@
   register: rw_role_user_perms
 
 - name: rw_role role permissions test
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(3 rows)' in rw_role_user_perms.stdout"
       - "'<all keyspaces> |     SELECT' in rw_role_user_perms.stdout"
@@ -538,7 +578,7 @@
   register: myapp
   check_mode: yes # Temp to see output
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "myapp.changed == False"
       - "'permissions' not in myapp.keys()"
@@ -549,7 +589,7 @@
   register: rw_role_user_perms
 
 - name: rw_role role permissions test
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(3 rows)' in rw_role_user_perms.stdout"
       - "'<all keyspaces> |     SELECT' in rw_role_user_perms.stdout"
@@ -572,7 +612,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: myapp
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "myapp.changed == True"
       - "myapp.permissions['grant'] == [\"GRANT SELECT ON KEYSPACE mykeyspace1 TO 'myapp'\"]"
@@ -583,7 +623,7 @@
   register: rw_role_user_perms
 
 - name: rw_role role permissions test BLAH
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(4 rows)' in rw_role_user_perms.stdout"
       - "'<all keyspaces> |     SELECT' in rw_role_user_perms.stdout"
@@ -606,7 +646,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: myapp
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "myapp.changed == True"
       - "myapp.permissions['revoke'] == [\"REVOKE ALTER ON KEYSPACE mykeyspace1 FROM 'myapp'\"]"
@@ -617,7 +657,7 @@
   register: rw_role_user_perms
 
 - name: rw_role role permissions test
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(3 rows)' in rw_role_user_perms.stdout"
       - "'<all keyspaces> |     SELECT' in rw_role_user_perms.stdout"
@@ -650,7 +690,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: complex
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "complex.changed == True"
       - "complex.permissions['revoke'] | length == 0"
@@ -669,12 +709,12 @@
 # mykeyspace4's - collapse that padding to a single space before matching
 # so the assertions below don't have to hardcode column width at all.
 - name: "Set expected row count for complex role permissions"
-  set_fact:
+  ansible.builtin.set_fact:
     expected_complex_permission_rows: "{{ '14' if cassandra_version in ['40x', '41x'] else '16' }}"
     complex_perms: "{{ complex.stdout | regex_replace('[ \t]+', ' ') }}"
 
 - name: complex role permissions test
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(' + expected_complex_permission_rows + ' rows)' in complex.stdout"
       - "'<keyspace mykeyspace1> | SELECT' in complex_perms"
@@ -722,7 +762,7 @@
 # 8 on 40x/41x: mykeyspace2's MODIFY + mykeyspace3's ALTER + mykeyspace4's
 # ALL PERMISSIONS (6 constituent perms there). 5.0+ expands ALL PERMISSIONS to
 # 8 constituent perms (adds UNMASK, SELECT_MASKED), so 1 + 1 + 8 = 10 there.
-- assert:
+- ansible.builtin.assert:
     that:
       - "complex.changed == True"
       - "complex.permissions['revoke'] | length == (8 if cassandra_version in ['40x', '41x'] else 10)"
@@ -738,7 +778,7 @@
 
 # Dropped permissions checked with not in
 - name: complex role permissions test
-  assert:
+  ansible.builtin.assert:
     that:
       - "'(8 rows)' in complex.stdout"
       - "'<keyspace mykeyspace1> |     SELECT' in complex.stdout"
@@ -768,7 +808,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: create_role
 
-- assert:
+- ansible.builtin.assert:
     that:
       - 'create_role.changed == True'
 
@@ -777,7 +817,7 @@
   register: myrole
 
 - name: Assert app-user exists in output
-  assert:
+  ansible.builtin.assert:
     that:
       - "'app-user' in myrole.stdout"
 
@@ -790,7 +830,7 @@
   register: absent
 
 - name: Assert role changed
-  assert:
+  ansible.builtin.assert:
     that:
       - "absent.changed == True"
 
@@ -799,7 +839,7 @@
   register: myrole
 
 - name: Assert app-user does not exist
-  assert:
+  ansible.builtin.assert:
     that:
       - "'app-user' not in myrole.stdout"
 
@@ -816,7 +856,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: user_with_perms
 
-- assert:
+- ansible.builtin.assert:
     that: "user_with_perms.changed == True"
 
 - name: Get output of list permissions for user-with-perms user
@@ -824,7 +864,7 @@
   register: user_with_perms_perms
 
 - name: Assert that all keyspaces select permissions exists
-  assert:
+  ansible.builtin.assert:
     that:
       - "'<all keyspaces> |     SELECT' in user_with_perms_perms.stdout"
       - "'(1 rows)' in user_with_perms_perms.stdout"
@@ -842,7 +882,7 @@
     login_password: "{{ cassandra_admin_pwd }}"
   register: user_with_perms
 
-- assert:
+- ansible.builtin.assert:
     that: "user_with_perms.changed == True"
 
 - name: Get output of list permissions for user-with-perms user
@@ -850,14 +890,14 @@
   register: user_with_perms_perms
 
 - name: Assert that all keyspaces select permissions does not exist
-  assert:
+  ansible.builtin.assert:
     that:
       - "'<all keyspaces> |     SELECT' not in user_with_perms_perms.stdout"
       - "'<keyspace mykeyspace1> |     SELECT' in user_with_perms_perms.stdout"
       - "'(1 rows)' in user_with_perms_perms.stdout"
 
 - name: Import tasks for issue 204
-  import_tasks: 204.yml
+  ansible.builtin.import_tasks: 204.yml
 
 - name: Import testa for issue 284
-  import_tasks: 284.yml
+  ansible.builtin.import_tasks: 284.yml
