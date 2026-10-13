@@ -46,6 +46,13 @@ MARKED += [("playbooks/import_cluster.yml", name) for name in (
     "Stop on an empty vault password", "Stop rather than write over another cluster's files",
     "Stop rather than write in clear over a vaulted file", "Show the summary", "Stop on a failed self-check")]
 
+# refusals before any change: their message as is, not the assert's dump (its expression, evaluated_to)
+MARKED += [
+    ("playbooks/preflight.yml", "Every node answers"),
+    ("playbooks/apply_config.yml", "Refuse restarts while a node is not running"),
+    ("roles/cassandra_service/tasks/target_nodes_check.yml", "Only where the playbook takes it"),
+]
+
 
 def tasks(path):
     with open(os.path.join(TOP, path), encoding="utf-8") as f:

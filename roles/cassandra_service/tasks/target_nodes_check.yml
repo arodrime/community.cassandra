@@ -31,6 +31,7 @@
       Nothing was changed.
     quiet: true
   vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
     # topology's steps: its own list, checked by its plan
     _given: "{{ cassandra_target_nodes | default('', true) | string | length > 0 and not _cassandra_preflight_skip | default(false) | bool }}"
     _kind: "{{ _cassandra_preflight_target | default('') }}"

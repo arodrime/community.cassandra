@@ -1,0 +1,2 @@
+bugfixes:
+  - ops callback - three refusals made before any change print their message alone, no longer the assert's dump (its expression, ``evaluated_to``) - a node that does not answer (the playbooks that run preflight), a ``cassandra_target_nodes`` the playbook refuses (none given, none matched, one where the playbook takes none...), and apply_config's restarts refused while a node is not running.

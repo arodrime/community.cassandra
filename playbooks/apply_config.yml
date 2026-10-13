@@ -143,6 +143,7 @@
         quiet: true
       run_once: true
       vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
         _restart: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | bool
