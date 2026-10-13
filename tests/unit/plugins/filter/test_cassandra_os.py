@@ -298,7 +298,7 @@ def test_old_rule_on_the_disk_under_a_volume_carried():
 def test_dir_not_created_yet():
     root = json.dumps({"filesystems": [{"maj:min": "253:0", "source": "/dev/x", "fstype": "xfs", "target": "/"}]})
     r = found(disk_records([], []) + "mnt|data|/data/x|#missing " + root + "\n" + "mnt|data|/data/y|#missing \n")
-    assert "disks: /data/x: not tuned, not created yet (it would be on /, an OS filesystem)" in r["lines"]
+    assert "disks: /data/x: not created yet (it would be on /, an OS filesystem): tuned by a run after it is" in r["lines"]
     assert "disks: /data/y: not tuned, not found (not created yet?)" in r["lines"]
 
 

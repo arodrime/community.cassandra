@@ -29,8 +29,7 @@ Role Variables
 * `cassandra_data_block_device`, `cassandra_data_block_devices`: devices to
   tune instead of finding them from the directories, e.g. `/dev/sdb`,
   `/dev/nvme0n1`, `/dev/vg/lv`, `/dev/md0` (a partition is taken as its
-  disk); the devices under them are tuned too, unless they also hold
-  something else (see `cassandra_data_tune_shared_devices`). Defaults to `""`
+  disk); the devices under them are tuned too. Defaults to `""`
   and `[]`. A
   device set here that can't be tuned fails the role (not in containers,
   where the disks are left alone).
@@ -38,11 +37,9 @@ Role Variables
   reloads the volume, also under a running Cassandra. Default `false`: at a
   run with Cassandra stopped (see below).
 * `cassandra_data_tune_os_volumes`: tune the filesystem Cassandra's data
-  directories are on also when it is one of the OS (see below). Default
-  `true`; `false` leaves it alone, with a note.
-* `cassandra_data_tune_shared_devices`: also tune the devices under the top
-  one that hold something else, e.g. the disk of a volume group shared with
-  the OS root. Default `false`: they are left alone, and the role says so.
+  directories are on also when it is one of the OS, and a disk under them
+  that also holds one (see below). Default `true`; `false` leaves them
+  alone, with a note (shown with `-v`).
 * `cassandra_data_readahead_kb`: read-ahead in KB for those devices
   (`queue/read_ahead_kb`, not `blockdev --setra` sectors). Defaults to `4`,
   the practical minimum: read-ahead brings nothing to Cassandra's random
@@ -100,10 +97,23 @@ read-ahead (at worst slower sequential reads for the OS, where Cassandra
 suffers from a large one); an LVM volume of the OS is kept by the udev rule,
 never reloaded with `lvchange`. `cassandra_data_tune_os_volumes: false` leaves it alone.
 Filesystems not on a block device (overlay, tmpfs, NFS, ZFS), btrfs (it
-reads ahead through a bdi of its own) and loop devices are left alone. The
-role says so. When something changes or is left alone, the role shows each
-filesystem and its devices, e.g.
-`/var/lib/cassandra/data → vg_data-lv_cass (dm-2) → md0 → sdb1, sdc1 → sdb, sdc`.
+reads ahead through a bdi of its own) and loop devices are left alone.
+
+The role ends with one summary for the nodes of the run, the nodes with the
+same filesystems and devices grouped, e.g.
+
+```
+Data disks: read-ahead 4 KB, set now on 2 nodes
+  node1, node2:
+    /data/c/{data,commitlog} → vg_data-lv_cass → md0 → sdb1, sdc1 → sdb, sdc
+  restart Cassandra to read the files it has open with the new read-ahead (node1, node2)
+```
+
+then a `WARNING - ...` line for what should be looked at (a filesystem on
+NFS, ZFS or btrfs, `lvchange` or `tuned-adm` failing, a tuned profile setting
+another read-ahead). Under `--check` it says `would be set`. With `-v`: the
+kernel names (`dm-2`), and why something is left alone or how a device is
+shared. What changes on each node is listed in its change report.
 
 What read-ahead is used: the kernel reads ahead for a file (`read()`, and the
 read-around of `mmap` faults) with the read-ahead of the device its
@@ -117,10 +127,15 @@ restarts.
 The devices under the top one get the same value, so that what is set up
 again above them takes no larger one from them: LVM's `auto` read-ahead and
 cryptsetup take the device under them as a minimum when they activate a
-volume. A device under it that also holds something else (the disk of a
-volume group shared with the OS root or swap, a disk with other partitions
-in use) is left alone, unless `cassandra_data_tune_shared_devices` is
-`true`. md arrays
+volume. Cassandra is taken as alone on its storage: a device under it that
+also holds something else (another volume of the volume group, a disk with
+other partitions in use) is tuned all the same; the other volumes keep
+their own read-ahead (LVM's `auto` takes the disk's only as a minimum,
+never lower). A disk that also holds a filesystem of the OS (a partition
+with `/` next to the volume group) is tuned too, said as `sda (also /)`:
+`/` on a partition reads with it; it is left alone with
+`cassandra_data_tune_os_volumes: false`, or when only the commitlog is
+above it. md arrays
 get the same value too: md sets twice a stripe (megabytes
 on RAID 0/5/10), for sequential reads Cassandra doesn't do.
 

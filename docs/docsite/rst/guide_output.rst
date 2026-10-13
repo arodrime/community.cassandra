@@ -152,6 +152,31 @@ sections drawn as rules, each operation's name in the ok colour, its commands an
 colour (coloured on the screen only, plain in a ``log_path`` file). Other callbacks enabled next to it (``tree``,
 ``junit``...) record that message with its layout marks.
 
+Task variables the callback reads, each a literal ``true`` in the task's own ``vars``:
+
+- ``cassandra_output``: the task is an operator message;
+- ``cassandra_output_gap``: a blank line before the next message;
+- ``cassandra_output_rescued``: on a block, its rescue says what failed (the failure inside is not printed);
+- ``cassandra_output_info``: a summary that only informs (``cassandra_linux``'s data disks), its plain lines in
+  the progress colour;
+- ``cassandra_output_help``: the help playbook's text, laid out as above.
+
+Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an output that is not a terminal apply):
+
+- **green** (ok): ``DONE``, ``HEALTHY``, ``NOTHING TO DO``, ``READY``, ``IMPORT ... PASSED``, a ``CHECK`` with
+  nothing left to do, ``ALL 5 NODES UP``, the help's operation names;
+- **yellow** (change): a ``CHECK`` that says what a real run would do, ``← differs``, ``will be reset``,
+  ``DELETED``, what a node would get or got (``node1  would apply, then restart``, ``node1  applied``), the nodes
+  joining, leaving or moving;
+- **red** (error): ``REFUSED``, ``FAILED``, ``NOT HEALTHY``, ``IMPORT ... FAILED``, a progress line that stalled
+  or failed, ``← down``, a recap's failed node, ``RING AND INVENTORY DIFFER``;
+- **cyan** (option ``progress_color``): ``NOTE``, the progress and phase lines, the first line of a plan or a
+  screen, an informative summary (``cassandra_output_info``), the help's commands and options;
+- **orange** (option ``warning_color``, ``color208`` by default): every ``WARNING`` line, an informative
+  summary's too, apart from the changes (yellow) and Ansible's own warnings (purple).
+
+The lines indented under a coloured one keep its colour, unless they carry a mark of their own.
+
 With ``-v`` or more, it is the default callback. Under the default callback, the same messages show as the
 ``msg`` of their task (as plain text with ``callback_result_format = yaml``).
 
