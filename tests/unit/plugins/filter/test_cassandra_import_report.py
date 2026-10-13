@@ -326,7 +326,7 @@ def test_a_secret_setting_of_a_hand_edit_is_never_shown():
 
 
 def test_the_screen_width_is_ansibles(monkeypatch):
-    from ansible_collections.community.cassandra.plugins.filter import cassandra_import_report as module
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_output as module
 
     class Narrow(object):
         columns = 70

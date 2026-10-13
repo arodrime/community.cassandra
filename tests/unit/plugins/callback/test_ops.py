@@ -515,6 +515,36 @@ def test_colours_by_line_start():
     assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
 
 
+def test_a_stalled_peer_line_red_the_others_as_the_progress_line():
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule, colour
+
+    assert colour("      to node2  0.0/7.2 GiB   0% STALLED", above="cyan") == C.COLOR_ERROR
+    assert colour("      87 peers ok (avg 44%), slowest: node5 0% STALLED, node31 12%", above="cyan") == C.COLOR_ERROR
+    assert colour("      to node1  2.7/7.2 GiB  37%", above="cyan") == "cyan"
+    assert colour("      a STALLED word in another indented line", above="cyan") == "cyan"
+    assert colour("      to do: something STALLED", above="cyan") == "cyan"
+    assert colour("      31 peers ok (avg 44%), slowest: node30 30%, node13 31%", above="cyan") == "cyan"
+
+    class Display(object):
+        columns = 100
+
+        def __init__(self):
+            self.shown = []
+
+        def display(self, line, color=None):
+            self.shown.append((line, color))
+
+    callback = CallbackModule.__new__(CallbackModule)
+    callback._display, callback._progress = Display(), "cyan"
+    callback._gap, callback._blank, callback._ruled = False, True, ""
+    callback._print("\n".join([
+        "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m",
+        "      from node1  18.0/34.0 GiB  52%           from node3  4.2/17.0 GiB  24% STALLED",
+        "      from node4   3.0/3.0 GiB  100%"]))
+    assert [color for line, color in callback._display.shown if line.strip()] == ["cyan", C.COLOR_ERROR, "cyan"]
+
+
 def test_status_verdict_and_table_rows_coloured():
     from ansible import constants as C
     from ansible_collections.community.cassandra.plugins.callback.ops import colour

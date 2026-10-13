@@ -27,7 +27,8 @@ description:
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) as a change (yellow); C(DONE), C(HEALTHY),
     C(NOTHING TO DO), C(READY) and C(CHECK) as ok; C(REFUSED), C(FAILED), C(NOT HEALTHY) and a progress line that
     stalled or failed as an error; C(NOTE), the progress lines (C([1/2] node5 ...)) and the phase lines (ending
-    with C(...)) in O(progress_color). The lines indented under a coloured one keep its colour. The C(status)
+    with C(...)) in O(progress_color). The lines indented under a coloured one keep its colour; a line of the other ends
+    of a stream with a C(STALLED) one is an error, the lines after it keep the progress line's colour. The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
     as a change, C(1 NODE DOWN) and a ring that differs from the inventory as an error; the
     rows of its table (C( DN  10.0.0.5 ...)) by the node's state, down as an error, joining, leaving or moving as
@@ -127,6 +128,9 @@ _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
 # the status playbook's verdict, its last line: heavy rules around it
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
+# a line of the other ends under a progress line (cassandra_output.peer_lines, indented 6) with a stalled
+# one: red, the lines under it not
+_STALLED_PEERS = re.compile(r" {6}(?:(?:to|from|with) +\S+ +[\d.]+(?: \w+)?/|\d+ peers? ok\b).*\bSTALLED\b")
 # a row of the status playbook's nodetool table: its colour by the node's state
 _RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
 
@@ -140,6 +144,8 @@ def colour(line, above=None, progress=PROGRESS_COLOR):
         if row.group(1) == "D":
             return C.COLOR_ERROR
         return None if row.group(2) == "N" else C.COLOR_CHANGED
+    if _STALLED_PEERS.match(line):
+        return C.COLOR_ERROR
     if line[:1] in (" ", "\t") and line.strip():
         return above
     for pattern, name in _COLOURS:
@@ -301,8 +307,10 @@ class CallbackModule(DefaultCallback):
                 self._rule()  # the blocks inside
                 above = None
                 continue
-            above = color or colour(line, above, self._progress)
-            self._line(line, color=above)
+            shade = color or colour(line, above, self._progress)
+            self._line(line, color=shade)
+            if not _STALLED_PEERS.match(line):  # the peers after a stalled one: as the progress line
+                above = shade
             if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
         if ring:

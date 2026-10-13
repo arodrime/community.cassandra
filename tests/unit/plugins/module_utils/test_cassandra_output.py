@@ -25,6 +25,8 @@ ARROW = u"←"
     (0, 100 * GIB, "0.0 GiB"),
     (0.3 * GIB, 100 * GIB, "0.3 GiB"),  # the unit of the scale
     (52 * 1024, 100 * GIB, "52.0 KiB"),  # never 0.0 GiB for bytes there
+    (155 * MIB, 164.9 * MIB, "155.0 MiB"),  # the unit the scale reads in alone, not 0.2 GiB
+    (0.1 * GIB, 1.5 * GIB, "0.1 GiB"),
 ])
 def test_size(count, scale, text):
     assert out.size(count, scale) == text
@@ -34,6 +36,9 @@ def test_amount_and_parse_size():
     assert out.amount(52.2 * GIB, 100 * GIB) == "52.2/100.0 GiB"
     assert out.amount(52 * 1024, 100 * GIB) == "52.0 KiB/100.0 GiB"
     assert out.amount(1 * GIB, 2 * GIB, " / ") == "1.0 / 2.0 GiB"
+    # both in total's unit, one decimal: never "0.2 GiB/164.9 MiB"
+    assert out.amount(155 * MIB, 164.9 * MIB) == "155.0/164.9 MiB"
+    assert out.amount(0, 5 * GIB) == "0.0/5.0 GiB"
     assert out.parse_size("94.39 MiB") == 94.39 * MIB
     assert out.parse_size("1,5 GiB") == 1.5 * GIB
     assert out.parse_size("100 bytes") == 100
@@ -237,7 +242,70 @@ def test_progress_line_going_with_peers_always():
     eta = time.strftime("%H:%M", time.localtime(NOW + 47.8 * GIB / (89 * MIB)))
     assert lines == [
         "[1/2] node5 bootstrap  JOINING  [#####-----]  52%%  52.2/100.0 GiB  89 MiB/s  ETA %s (9m)  10m" % eta,
-        "      from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled   from node2 3.0/3.0 GiB done"]
+        "      from node1  18.0/34.0 GiB   52%           from node2    3.0/3.0 GiB  100%",
+        "      from node3   4.2/17.0 GiB   24% STALLED"]
+
+
+def _peers(count, way="to", stalled=(), slow=()):
+    """count peers of 7.2 GiB each, 30% to 59% done, the stalled ones at 0, the slow ones at 12%."""
+    peers = []
+    for i in range(1, count + 1):
+        part = 0.0 if i in stalled else 0.12 if i in slow else 0.30 + (i * 7 % 30) / 100.0
+        peers.append({"name": "node%d" % i, "way": way, "done": 7.2 * GIB * part, "total": 7.2 * GIB,
+                      "stalled": i in stalled})
+    return peers
+
+
+def test_peer_lines_always_columns_aligned():
+    assert out.peer_lines([]) == out.peer_lines(None) == []
+    assert out.peer_lines(_peers(1)) == ["      to node1  2.7/7.2 GiB  37%"]
+    assert out.peer_lines(_peers(3), width=100) == [
+        "      to node1  2.7/7.2 GiB  37%   to node2  3.2/7.2 GiB  44%   to node3  3.7/7.2 GiB  51%"]
+    # by name (node10 after node9), the names, amounts and percents in columns across the block
+    lines = out.peer_lines(_peers(14), width=100)
+    assert lines[:2] == [
+        "      to node1   2.7/7.2 GiB  37%   to node2   3.2/7.2 GiB  44%   to node3   3.7/7.2 GiB  51%",
+        "      to node4   4.2/7.2 GiB  58%   to node5   2.5/7.2 GiB  35%   to node6   3.0/7.2 GiB  41%"]
+    assert lines[3] == "      to node10  2.9/7.2 GiB  40%   to node11  3.4/7.2 GiB  46%   to node12  3.9/7.2 GiB  54%"
+    assert len(lines) == 5 and all(len(line) <= 100 for line in lines)
+
+
+def test_peer_lines_fit_the_width():
+    wide, narrow = out.peer_lines(_peers(14), width=200), out.peer_lines(_peers(14), width=60)
+    assert len(wide) == 4 and wide[0].count(" to ") == 4  # 4 columns at most
+    assert len(narrow) == 14 and all(len(line) <= 60 for line in narrow)  # one when two do not fit
+    assert len(out.peer_lines(_peers(14), width=80)) == 7  # two
+    assert max(len(line) for line in out.peer_lines(_peers(14))) <= out.PEER_WIDTH  # no width: PEER_WIDTH
+
+
+def test_peer_lines_stalled_in_place_and_ways():
+    lines = out.peer_lines(_peers(3, stalled=(2,)), width=100)
+    assert lines == ["      to node1  2.7/7.2 GiB  37%           to node2  0.0/7.2 GiB   0% STALLED",
+                     "      to node3  3.7/7.2 GiB  51%"]
+    # receiving: from; both ways in one block (a move), the way column as wide as "from"
+    assert out.peer_lines(_peers(2, way="from"), width=100) == [
+        "      from node1  2.7/7.2 GiB  37%   from node2  3.2/7.2 GiB  44%"]
+    both = out.peer_lines([dict(p, way="to") for p in _peers(1)] + [dict(p, way="from") for p in _peers(1)])
+    assert both == ["      from node1  2.7/7.2 GiB  37%   to   node1  2.7/7.2 GiB  37%"]
+
+
+def test_peer_lines_above_30_summed_up():
+    # 30: every one detailed; 31: the ok ones on one line
+    assert len(out.peer_lines(_peers(30), width=100)) == 10
+    assert out.peer_lines(_peers(31), width=100) == [
+        "      31 peers ok (avg 44%), slowest: node30 30%, node13 31%, node26 32%"]
+    lines = out.peer_lines(_peers(90, stalled=(5,), slow=(31, 44)), width=100)
+    assert lines == [
+        "      87 peers ok (avg 44%), slowest: node5 0% STALLED, node31 12%, node44 12%",
+        "      to node5   0.0/7.2 GiB   0% STALLED   to node31  0.9/7.2 GiB  12%",
+        "      to node44  0.9/7.2 GiB  12%"]
+    done = [dict(p, done=p["total"]) for p in _peers(40)]
+    assert out.peer_lines(done) == ["      40 peers ok (avg 100%)"]
+    done[0]["done"] = 0  # the slowest: the ones not done only
+    assert out.peer_lines(done) == ["      39 peers ok (avg 100%), slowest: node1 0%", "      to node1  0.0/7.2 GiB  0%"]
+    stuck = [dict(p, stalled=True, done=0) for p in _peers(31)]
+    assert out.peer_lines(stuck, width=100)[0] == \
+        "      0 peers ok, slowest: node1 0% STALLED, node2 0% STALLED, node3 0% STALLED"
 
 
 def test_progress_line_waiting_stalled_done():

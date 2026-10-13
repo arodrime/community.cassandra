@@ -1,0 +1,4 @@
+minor_changes:
+  - add_node, replace_node, decommission_node, remove_dead_node, move_node, topology - the nodes at the other end of a stream are shown under each progress line in aligned columns (as many as fit in the terminal), a stalled one marked ``STALLED`` in red; above 30 of them, one line sums up the ones keeping up and only the stalled or lagging ones are detailed.
+bugfixes:
+  - add_node, replace_node, decommission_node, remove_dead_node, move_node, topology, cleanup - a progress amount between 100 MiB and 1 GiB reads in one unit (``155.0/164.9 MiB``), no longer ``0.2 GiB/164.9 MiB``.

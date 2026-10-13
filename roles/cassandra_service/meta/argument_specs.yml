@@ -287,7 +287,7 @@ argument_specs:
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
             C(move_node), C(topology)) and of a cleanup, after the first
             C(cassandra_stream_early_time) seconds. Each check reads C(nodetool netstats) and prints
-            one progress line (bar, percentage, rate, expected end) and one line for the other nodes.
+            one progress line (bar, percentage, rate, expected end) and the other nodes in columns under it.
       cassandra_stream_early_check_interval:
         type: int
         default: 10

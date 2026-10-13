@@ -25,7 +25,33 @@ __metaclass__ = type
 
 import os
 
+from ansible.utils.display import Display
+
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+
+SCREEN_WIDTH = 160  # the screen's width when no width is known (Ansible's display gives one: 79 in a log)
+
+
+def terminal_width():
+    """The width of the terminal the run shows in: Ansible's (its display's, as the ops callback; a worker has no
+    terminal of its own from ansible-core 2.19 on), else the terminal's (a column spared), else COLUMNS, else
+    SCREEN_WIDTH."""
+    try:
+        columns = int(getattr(Display(), "columns", 0) or 0)
+    except Exception:  # pylint: disable=broad-except
+        columns = 0
+    if columns:
+        return max(60, columns)
+    for fd in (1, 2):
+        try:
+            return max(60, os.get_terminal_size(fd).columns - 1)
+        except (OSError, ValueError):
+            continue
+    try:
+        return max(60, int(os.environ.get("COLUMNS", "")) - 1)
+    except ValueError:
+        return SCREEN_WIDTH
+
 
 # a peer with data left is called stalled once it has moved nothing for this long, seconds
 _PEER_STALL = 60
@@ -72,7 +98,8 @@ def cassandra_plan(spec, check=False):
 def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode="", names=None, status="going"):
     """state: a cassandra_stream_progress state; names: {address: inventory
     name} for the other ends. The other ends: their progress summed per node,
-    stalled when they have bytes left and moved nothing at this check."""
+    stalled when they have bytes left and moved nothing at this check, in
+    columns as many as fit in the terminal."""
     state = state or {}
     peers = {}
     for stream in (state.get("streams") or {}).values():
@@ -91,7 +118,7 @@ def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode
                              total=state.get("bytes_total", 0), speed=state.get("rate"), now=state.get("now", 0),
                              start=state.get("start"), idle=state.get("idle", 0) if state.get("idle_checks") else 0,
                              limit=state.get("limit", 0), peers=[p for p in peers.values() if p["total"]],
-                             status=status)
+                             status=status, width=terminal_width())
 
 
 def cassandra_recap(outcomes, operation="", cluster="", check=False, seconds=None, extra=None, full=False):
