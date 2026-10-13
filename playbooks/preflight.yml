@@ -105,6 +105,7 @@
           cassandra_service_health_force too).
         quiet: true
       vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
         _unreachable: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
       run_once: true
 
