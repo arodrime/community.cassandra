@@ -908,7 +908,8 @@ def test_self_check_of_the_nodes_hides_another_filters_error(monkeypatch):
         cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1", "read": True}],
                                           {"10.0.0.1": "n1"}, {"h1": hv})
     assert "hunter2" not in str(err.value) and err.value.__context__ is None and err.value.__cause__ is None
-    assert str(err.value).startswith("cassandra_import_self_check_nodes: 10.0.0.1, AnsibleFilterError")
+    # (the wrapper's class by its name: AnsibleTemplatePluginError from ansible-core 2.21, AnsibleFilterError an alias)
+    assert str(err.value).startswith("cassandra_import_self_check_nodes: 10.0.0.1, %s in " % AnsibleFilterError.__name__)
 
 
 # --- sections no variable covers: imported whole into cassandra_extra_settings ----

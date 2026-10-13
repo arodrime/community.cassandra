@@ -98,10 +98,21 @@ FIRST = next(t for t in READ["tasks"] if t["name"].startswith("Read the config f
 USERS = next(t for t in READ["tasks"] if t["name"] == "Read the JMX users, the repository files' mode and their signing keys")
 
 
+def trusted(value):
+    """value with its strings trusted, nested ones too, as the playbook's YAML loader gives them."""
+    if isinstance(value, str):
+        return trust_as_template(value)
+    if isinstance(value, list):
+        return [trusted(v) for v in value]
+    if isinstance(value, dict):
+        return dict((k, trusted(v)) for k, v in value.items())
+    return value
+
+
 def wanted(task, **variables):
     variables = dict(task["vars"], _files=READ["vars"]["_files"], _cassandra_service_config_files=["cassandra.yaml"],
                      **variables)
-    variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
+    variables = dict((k, trusted(v) if k in task["vars"] or k == "_files" else v) for k, v in variables.items())
     out = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(task["vars"]["_wanted"]))
     return dict((w, (how, items)) for w, how, items in json.loads(json.dumps(out)))  # (as the command gets it)
 
