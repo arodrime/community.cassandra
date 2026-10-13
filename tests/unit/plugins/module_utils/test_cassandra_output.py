@@ -595,3 +595,49 @@ def test_leaves():
     assert out.leaves("x", {"a": 1, "b": {"c": [1, 2], "d": {}}}) == [("x.a", 1), ("x.b.c", [1, 2]), ("x.b.d", {})]
     assert out.leaves("x", {}) == [("x", {})]
     assert out.leaves("x", "v") == [("x", "v")]
+
+
+# --- laid out where printed (the help text) ---
+
+def test_laid_out_paragraph():
+    line = out.flow(4, "  Cassandra: series 41x, package 4.1.10, installed from repository (role default)")
+    assert out.laid_out(line, 100) == (["  Cassandra: series 41x, package 4.1.10, installed from repository (role default)"], "")
+    assert out.laid_out(line, 40) == (["  Cassandra: series 41x, package 4.1.10,", "    installed from repository (role",
+                                       "    default)"], "")
+
+
+def test_laid_out_key_and_its_column():
+    line = out.flow(12, u"the hosts to add (comma-separated) (default:\xa0false)", "  -e x=y")
+    assert out.laid_out(line, 100) == (["  -e x=y    the hosts to add (comma-separated) (default: false)"], "-e x=y")
+    # wrapped under the column, "(default: false)" never broken
+    assert out.laid_out(line, 48) == (["  -e x=y    the hosts to add (comma-separated)",
+                                       "            (default: false)"], "-e x=y")
+
+
+def test_laid_out_key_longer_than_its_column():
+    line = out.flow(12, "what it does", "  -e cassandra_long_name=value")
+    assert out.laid_out(line, 100) == (["  -e cassandra_long_name=value", "            what it does"],
+                                       "-e cassandra_long_name=value")
+    assert out.laid_out(out.flow(12, "", "  -e cassandra_long_name=value"), 100)[0] == ["  -e cassandra_long_name=value"]
+    assert out.laid_out(out.flow(12, "", "  -e x"), 100)[0] == ["  -e x"]  # no trailing space
+
+
+def test_laid_out_narrow_text_under_its_key():
+    # less than NARROW columns right of the column: the text under the key, 4 columns in
+    line = out.flow(50, "the cluster to run on (default: the one in the commands)", "    -e cassandra_hosts=<group>")
+    assert out.laid_out(line, 60) == (["    -e cassandra_hosts=<group>",
+                                       "        the cluster to run on (default: the one in the",
+                                       "        commands)"], "-e cassandra_hosts=<group>")
+
+
+def test_laid_out_leaves_other_lines_as_they_are():
+    command = "      $ ansible-playbook -i inventories community.cassandra.add_node " + "-e x=y " * 20
+    assert out.laid_out(command, 60) == ([command], "")
+    assert out.laid_out("", 60) == ([""], "")
+
+
+def test_flow_keeps_one_line():
+    # a newline in a value of the inventory: a space, the line laid out as one
+    line = out.flow(4, "  Cluster 'Multi\nline' (inventory group a)")
+    assert "\n" not in line and out.laid_out(line, 100) == (["  Cluster 'Multi line' (inventory group a)"], "")
+    assert "\n" not in out.flow(4, "x\r\ny", "  key\nz")

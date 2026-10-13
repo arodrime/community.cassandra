@@ -1,0 +1,4 @@
+minor_changes:
+  - "help - each operation shows its options one per line with their defaults and an example under its command, a blank line between two operations, the sections between rules; ``cassandra_create_cluster_reset_confirm`` listed with ``create_cluster``. Under the ``community.cassandra.ops`` callback, the text is laid out at the terminal's width and the operation names, commands and options are coloured (no colour with ``ANSIBLE_NOCOLOR`` or when the output is not a terminal); under the default callback, plain text at 100 columns."
+bugfixes:
+  - "ops callback - the rules are as wide as a terminal narrower than 80 columns (they were 78 columns wide there)."
