@@ -115,3 +115,13 @@ def test_the_import_shows_no_whole_new_file_under_diff():
         assert render(hosts["diff"], _hosts_file="prod.yml", **v) is False
         assert render(files["diff"], item={"path": "group_vars/prod/main.yml"}, **v) is on
         assert render(files["diff"], item={"path": "host_vars/node1.yml"}, **v) is False
+
+
+def test_add_node_cleanup_recap_is_the_cleanup_s():
+    """A cleanup that fails after the add's own DONE recap: a recap named cleanup, of the cleanup's nodes only
+    (not a second add_node one, with the nodes added in it)."""
+    with open(os.path.join(TOP, "playbooks", "add_node.yml"), encoding="utf-8") as f:
+        play = next(p for p in yaml.safe_load(f) if p.get("name") == "Clean up the nodes that handed data over")
+    assert play["vars"]["cassandra_service_summary_operation"] == "cleanup"
+    hosts = play["vars"]["cassandra_service_summary_hosts"]
+    assert hosts.startswith("{{ ansible_play_hosts_all | select('in', _plan.cleanup")  # a node failed earlier too

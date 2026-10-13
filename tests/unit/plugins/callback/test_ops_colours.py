@@ -188,3 +188,11 @@ def test_nothing_to_do_is_a_recap_between_rules(tmp_path):
     assert rc == 0, output
     lines = [line for line in output.splitlines() if line.strip()]
     assert lines[0].startswith("====") and lines[-1].startswith("===="), output
+
+
+def test_an_indented_warning_is_a_warning():
+    # under a plan, a red row or an informative summary: still the WARNING colour, the configured one
+    for above in (None, C.COLOR_ERROR, "cyan"):
+        assert colour("  WARNING: x", above=above) == "color208"
+    assert colour("    WARNING - lvchange failed", above="cyan", warning="bright yellow") == "bright yellow"
+    assert colour("  not a WARNING", above=C.COLOR_ERROR) == C.COLOR_ERROR  # only at the start of the line
