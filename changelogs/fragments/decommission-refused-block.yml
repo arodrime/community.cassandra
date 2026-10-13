@@ -1,0 +1,2 @@
+bugfixes:
+  - decommission_node - a refusal before any change (a seed, too few nodes left for the replicas, a CQL login refused, a node outside the group...) is one ``REFUSED  decommission_node  <cluster>  nothing was changed`` block, under ``--check`` or not, instead of a ``FAILED`` recap; the replica problems each on their line, not run into one another; a refused CQL login said by its cause and the variables to check, without cqlsh's driver error; no "(the playbook handles it)" line before it.
