@@ -17,10 +17,12 @@
     _cassandra_linux_items: >-
       {{ _cassandra_linux_items | default([])
          + ([{'item': 'swap', 'before': 'on', 'after': 'off'}]
-            if _cassandra_linux_live and _cassandra_linux_before['swap|active'] | int > 0 else [])
+            if _cassandra_linux_live and _cassandra_linux_swapoff | bool else [])
          + ([{'item': 'swap entries in /etc/fstab', 'before': _cassandra_linux_before['swap|fstab'] | int, 'after': 0}]
             if _cassandra_linux_before['swap|fstab'] | int > 0 else [])
-         + ([{'item': 'disable-thp.service', 'before': _cassandra_linux_before['thp|unit'], 'after': 'enabled' if _cassandra_linux_boot else 'installed'}]
+         + ([{'item': 'disable-thp.service', 'before': _cassandra_linux_before['thp|unit']
+                                                       ~ (', another unit file' if thp is changed and _cassandra_linux_before['thp|unit'] != 'absent' else ''),
+              'after': 'enabled' if _cassandra_linux_boot else 'installed'}]
             if thp is changed or (_cassandra_linux_boot and _cassandra_linux_before['thp|unit'] != 'enabled') else [])
          + ([{'item': 'transparent_hugepage', 'before': _cassandra_linux_before['thp|enabled'], 'after': 'never'}]
             if _cassandra_linux_live and _cassandra_linux_before['thp|enabled'] not in ['never', ''] else [])
@@ -28,12 +30,14 @@
             if cassandra_timesync_install is changed else [])
          + ([{'item': _cassandra_timesync_service, 'before': _cassandra_linux_before['timesync|service'] or 'inactive', 'after': 'active'}]
             if (cassandra_timesync_service_result | default({})) is changed
-               or (ansible_check_mode and (cassandra_timesync_service_result | default({})) is skipped
+               or (_cassandra_linux_check and (cassandra_timesync_service_result | default({})) is skipped
                    and _cassandra_linux_before['timesync|service'] != 'active'
                    and cassandra_linux_timesync | bool
                    and not (cassandra_offline | bool and cassandra_timesync_unit.rc | default(1) != 0)) else [])
          + ([{'item': '/etc/security/limits.d/90-nproc.conf', 'before': 'no "* - nproc 32768"', 'after': '* - nproc 32768'}]
-            if cassandra_linux_nproc is changed else []) }}
+            if cassandra_linux_nproc is changed else [])
+         + ([{'item': '/etc/security/limits.conf block of earlier versions', 'before': 'present', 'after': 'absent'}]
+            if cassandra_linux_limits_old is changed else []) }}
 
 - name: Compare the limits of the cassandra user
   ansible.builtin.set_fact:
@@ -44,6 +48,16 @@
   loop: "{{ cassandra_linux_limits | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
+
+# a line left there by an earlier version of the role (it would win at boot)
+- name: Compare the lines the role removes from /etc/sysctl.conf
+  ansible.builtin.set_fact:
+    _cassandra_linux_items: >-
+      {{ _cassandra_linux_items + [{'item': 'sysctl ' ~ item.item.key ~ ' (/etc/sysctl.conf)', 'before': 'present',
+                                    'after': 'absent'}] }}
+  loop: "{{ cassandra_linux_sysctl_conf.results | default([]) | select('changed') | list }}"
+  loop_control:
+    label: "{{ item.item.key }}"
 
 - name: Add the disk tuning (compared in disks.yml)
   ansible.builtin.set_fact:

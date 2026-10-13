@@ -13,14 +13,15 @@ import yaml
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 
-@pytest.mark.parametrize("playbook, group", [("apply_config.yml", "cassandra_apply_config_True"),
-                                             ("apply_config.yml", "cassandra_apply_config_batch_True"),
-                                             ("update_java.yml", "cassandra_update_java_True")])
-def test_the_step_plays_take_a_list_of_hosts(playbook, group):
+@pytest.mark.parametrize("playbook, group, count", [("apply_config.yml", "cassandra_apply_config_True", 2),
+                                                    ("apply_config.yml", "cassandra_apply_config_batch_True", 2),
+                                                    ("apply_config.yml", "cassandra_apply_config_os_True", 1),
+                                                    ("update_java.yml", "cassandra_update_java_True", 2)])
+def test_the_step_plays_take_a_list_of_hosts(playbook, group, count):
     with open(os.path.join(TOP, "playbooks", playbook), encoding="utf-8") as f:
         plays = yaml.safe_load(f)
     steps = [p for p in plays if group in str(p.get("hosts"))]
-    assert len(steps) == 2
+    assert len(steps) == count
     for play in steps:
         assert ":&" not in play["hosts"]
         assert "groups['%s'] | default([])" % group in play["hosts"]

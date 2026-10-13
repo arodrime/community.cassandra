@@ -99,7 +99,7 @@ SUMMED = dict(
                           "warnings": [], "info": [], "notes": []},
     _cassandra_disk_lvm_failed=[], _cassandra_disk_tuned={}, _cassandra_disk_tuned_deferred=False,
     _cassandra_disk_changes_seen=[], _cassandra_disk_devices=[], _cassandra_data_lvchange_now=True,
-    _cassandra_data_lvm_here=True, ansible_check_mode=False, cassandra_data_running={"stdout": ""},
+    _cassandra_data_lvm_here=True, _cassandra_linux_check=False, cassandra_data_running={"stdout": ""},
     _tuned_warn="")  # (the collection's filter: not loaded here)
 
 
@@ -127,7 +127,7 @@ def test_summary_of_a_node_says_the_problems_and_the_restart():
     assert s["info"] == ["restart Cassandra to read the files it has open with the new read-ahead"]
     # not running (a new node), or under --check: no restart to ask for
     assert summed(_cassandra_disk_changes_seen=changes)["info"] == []
-    assert summed(_cassandra_disk_changes_seen=changes, ansible_check_mode=True,
+    assert summed(_cassandra_disk_changes_seen=changes, _cassandra_linux_check=True,
                   cassandra_data_running={"stdout": "running"})["info"] == []
 
 
@@ -173,7 +173,7 @@ def test_profile_change_listed_only_when_done(deferred, check_mode, switch, list
     out = render(items, _cassandra_disk_changes_seen=[], _cassandra_disk_lvm_failed=[],
                  _cassandra_disk_tuned={"name": "cassandra-disks", "active": ["virtual-guest"],
                                         "profiles": ["virtual-guest", "cassandra-disks"]},
-                 _cassandra_disk_tuned_deferred=deferred, ansible_check_mode=check_mode,
+                 _cassandra_disk_tuned_deferred=deferred, _cassandra_linux_check=check_mode,
                  cassandra_data_tuned_switch=switch, cassandra_data_disk_udev={"changed": False})
     assert ("tuned profiles" in [i["item"] for i in out]) is listed
 
@@ -210,5 +210,8 @@ def test_the_summary_reads_the_nodes_that_tuned_their_disks():
                 "node3": {}}
     nodes = render(say["vars"]["_nodes"], ansible_play_batch=["node1", "node2", "node3"], hostvars=hostvars)
     assert nodes == [{"name": "node1"}]
-    assert render("{{ %s }}" % say["when"], _nodes=nodes) is True
-    assert render("{{ %s }}" % say["when"], _nodes=[]) is False
+    when = "{{ (%s) }}" % ") and (".join(say["when"])
+    assert render(when, _nodes=nodes) is True
+    assert render(when, _nodes=[]) is False
+    # apply_config's compare: in its view of the settings that differ instead
+    assert render(when, _nodes=nodes, _cassandra_linux_quiet=True) is False

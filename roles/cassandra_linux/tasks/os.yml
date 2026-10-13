@@ -47,15 +47,34 @@
 - name: Snapshot the current OS settings (change report)
   ansible.builtin.include_tasks: snapshot.yml
 
+# swapoff reads every swapped page back into memory: not when they would not
+# fit easily in what is available (the OOM killer would pick Cassandra), said
+# instead
 - name: Disable Swap
   ansible.builtin.command: swapoff -a
   when:
     - _cassandra_linux_live
-    - ansible_facts['swaptotal_mb'] > 0
+    - _cassandra_linux_swapoff | bool
 
+- name: Say swap is left on
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ inventory_hostname }}: swap left on, {{ _cassandra_linux_before['swap|used'] | int // 1024 }} MB in use
+      for {{ _cassandra_linux_before['mem|available'] | int // 1024 }} MB of memory available: swapoff would read it back
+      into memory. Free some memory, then run again (or swapoff -a by hand).
+  when:
+    - _cassandra_linux_live
+    - _cassandra_linux_before['swap|active'] | int > 0
+    - not _cassandra_linux_swapoff | bool
+    - not _cassandra_linux_swap_said | default(false) | bool  # (apply_config: under the node)
+  vars:
+    cassandra_output: true
+
+# (lines with mount point none too: not only "swap")
 - name: Remove swap partitions
-  ansible.posix.mount:
-    path: swap
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*[^#\s]\S*\s+\S+\s+swap(\s|$)'
     state: absent
 
 # Absent on minimal images
@@ -86,6 +105,9 @@
     sysctl_file: /etc/sysctl.conf
     reload: false
   loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: cassandra_linux_sysctl_conf
   when: cassandra_linux_sysctl_file != '/etc/sysctl.conf'
 
 # installed already: no package manager call (it reads every repository's
@@ -146,7 +168,7 @@
   when:
     - cassandra_linux_timesync | bool
     - not (cassandra_offline | bool and cassandra_timesync_unit.rc != 0)
-    - not (ansible_check_mode and cassandra_timesync_install is changed)  # not installed yet under --check
+    - not (_cassandra_linux_check and cassandra_timesync_install is changed)  # not installed yet under --check
   register: cassandra_timesync_service_result
   tags:
   - molecule-idempotence-notest # Ubuntu 2404 timesyncd issue
@@ -168,6 +190,7 @@
     path: /etc/security/limits.conf
     marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
     state: absent
+  register: cassandra_linux_limits_old
 
 - name: Extra Limit for RH Derived Distros
   ansible.builtin.lineinfile:
@@ -192,7 +215,7 @@
     enabled: true
   when:
     - _cassandra_linux_boot | bool
-    - not (ansible_check_mode and thp is changed)  # the unit file only exists once really copied
+    - not (_cassandra_linux_check and thp is changed)  # the unit file only exists once really copied
 
 # The unit exits once THP is off: started again only while THP is still on
 - name: Ensure service to disable THP is started
@@ -202,7 +225,7 @@
   when:
     - _cassandra_linux_live | bool
     - _cassandra_linux_before['thp|enabled'] not in ['never', '']
-    - not (ansible_check_mode and thp is changed)
+    - not (_cassandra_linux_check and thp is changed)
 
 - name: Disk tuning
   ansible.builtin.include_tasks: disks.yml

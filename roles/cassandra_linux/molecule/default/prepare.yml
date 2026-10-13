@@ -100,3 +100,11 @@
       marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
       create: true
       mode: "0644"
+
+  # An installer's swap line, its mount point none (the role removes it by type)
+  - name: Swap line in fstab
+    ansible.builtin.lineinfile:
+      path: /etc/fstab
+      line: UUID=0000-0000 none swap sw 0 0
+      create: true
+      mode: "0644"

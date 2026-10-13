@@ -362,3 +362,53 @@ def test_a_large_cluster_by_node_groups(tmp_path):
         "                    6h   G2 + db074   %s differs" % ARROW]
     # under 12 nodes: their names, as before
     assert "NODE GROUPS" not in view(*nodes[:11])
+
+
+# the OS settings (cassandra_linux's items): after the config's, the same rows
+
+def test_the_os_settings_that_differ_after_the_config(tmp_path):
+    node1 = Node(tmp_path, "node1", files={"cassandra.yaml": YAML.replace("3h", "6h")}).data()
+    node1["os"] = [{"item": "read_ahead_kb vg_data/cassandra", "before": "128", "after": "4"},
+                   {"item": "sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)", "before": "60", "after": "1"}]
+    node2 = Node(tmp_path, "node2").data()
+    node2["os"] = [{"item": "read_ahead_kb vg_data/cassandra", "before": "256", "after": "4"}]
+    node3 = Node(tmp_path, "node3").data()
+    assert cassandra_apply_config_diff([node1, node2, node3]) == [
+        "cassandra.yaml",
+        "  max_hint_window:                 3h    node2, node3   (inventory)",
+        "                                   6h    node1          %s differs" % ARROW,
+        "OS settings",
+        "  read_ahead_kb vg_data/cassandra: 4                    (inventory)",
+        "                                   128   node1          %s differs" % ARROW,
+        "                                   256   node2          %s differs" % ARROW,
+        "  sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf):",
+        "                                   1                    (inventory)",
+        "                                   60    node1          %s differs" % ARROW]
+
+
+def test_the_os_settings_alone_no_restart():
+    nodes = [{"name": "node1", "todo": False, "os": True, "result": "not reached",
+              "notes": ["read-ahead set live: the files Cassandra has open keep the old one until it restarts"]},
+             {"name": "node2", "todo": True, "os": True, "then": "restart", "done": True},
+             {"name": "node3", "todo": False, "result": "nothing to apply"}]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == [
+        "node1  would apply, no restart (OS settings only: applied live)",
+        "  read-ahead set live: the files Cassandra has open keep the old one until it restarts",
+        "node2  would apply, then restart",
+        "node3  nothing to apply"]
+    nodes[0]["os_done"] = True
+    assert cassandra_apply_config_recap(nodes, check=True)[0] == "CHECK  apply_config  2 would apply, 1 nothing to apply"
+    assert cassandra_apply_config_recap(nodes)[:2] == ["DONE  apply_config  2 applied, 1 nothing to apply",
+                                                       "node1  applied, no restart"]
+    # the run stopped before the OS settings: not said applied
+    del nodes[0]["os_done"]
+    assert "node1  not reached" in cassandra_apply_config_recap(nodes)
+    # its config not reached, its OS settings applied: said
+    nodes[1].update({"done": False, "os_done": True, "result": "not reached"})
+    assert "node2  not reached, its OS settings applied" in cassandra_apply_config_recap(nodes)
+
+
+def test_an_os_value_unknown_before():
+    change = {"item": "LVM read-ahead vg/lv (sectors)", "before": None, "after": "8"}
+    lines = cassandra_apply_config_diff([{"name": "node1", "os": [change]}])
+    assert lines[-1].split() == ["(none)", "node1", ARROW, "differs"]
