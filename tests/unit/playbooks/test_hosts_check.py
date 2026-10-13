@@ -10,6 +10,7 @@ import os
 import pytest
 import yaml
 
+from ansible.errors import AnsibleError
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
@@ -65,14 +66,22 @@ def test_default_is_the_cluster_group():
 
 
 def test_shows_the_group_and_where_it_comes_from(monkeypatch):
-    shown = CHECK["ansible.builtin.assert"]["success_msg"]
-    assert render(shown, groups=GROUPS) == "Cluster group prod (the inventory's cluster group)"
-    assert render(shown, groups=GROUPS, cassandra_hosts="prod") == "Cluster group prod (cassandra_hosts)"
+    def shown(**variables):
+        return render(CHECK["ansible.builtin.assert"]["success_msg"], **dict(CHECK["vars"], **variables))
+
+    assert shown(groups=GROUPS) == "Cluster group prod (the inventory's cluster group)"
+    assert shown(groups=GROUPS, cassandra_hosts="prod") == "Cluster group prod (cassandra_hosts)"
     monkeypatch.setenv("CASSANDRA_CLUSTER", "Prod")
     hostvars = {"n1": {"cassandra_cluster_name": "Prod"}, "n2": {"cassandra_cluster_name": "Prod"}}
     groups = dict(GROUPS, prod_dc1=["n1", "n2"])
-    assert render(shown, groups=groups, hostvars=hostvars) == "Cluster group prod (CASSANDRA_CLUSTER=Prod)"
-    assert render(shown, groups=groups, hostvars=hostvars, cassandra_hosts="empty") == "Cluster group empty (cassandra_hosts)"
+    assert shown(groups=groups, hostvars=hostvars) == "Cluster group prod (CASSANDRA_CLUSTER=Prod)"
+    assert shown(groups=groups, hostvars=hostvars, cassandra_hosts="empty") == "Cluster group empty"
+
+
+def test_typo_refused_by_the_lookup_too():
+    """Under --limit this play does not run: the lookup in the plays' hosts refuses the group."""
+    with pytest.raises(AnsibleError, match=r"cassandra_hosts: group 'prd' not found in the inventory \(groups: empty, prod\)\.$"):
+        render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=GROUPS, cassandra_hosts="prd")
 
 
 def test_empty_group():

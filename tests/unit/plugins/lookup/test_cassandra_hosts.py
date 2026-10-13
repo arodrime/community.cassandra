@@ -35,7 +35,17 @@ IMPORTED = {"all": ["n1", "n2", "n3"], "ungrouped": [], "prod": ["n1", "n2", "n3
 
 
 def test_given_wins():
-    assert cluster_group("other", IMPORTED) == "other"
+    assert cluster_group("prod_dc1", IMPORTED) == "prod_dc1"
+
+
+def test_given_unknown_fails():
+    """A typo matches no host: under --limit the localhost check is skipped, every play would be too."""
+    with pytest.raises(ValueError, match=r"cassandra_hosts: group 'prdo' not found in the inventory \(groups: prod, prod_dc1, prod_dc1_r1, prod_dc1_r2\)\.$"):
+        cluster_group("prdo", IMPORTED)
+    with pytest.raises(ValueError, match="cassandra_hosts: group 'ungrouped' has no host"):
+        cluster_group("ungrouped", IMPORTED)
+    with pytest.raises(ValueError, match="cassandra_hosts: group 'prdo' not found"):
+        picked("prdo", TWO, "cluster_b", NAMES.get)  # before CASSANDRA_CLUSTER, like a good one
 
 
 def test_the_cassandra_group_first():
@@ -198,6 +208,8 @@ def test_lookup_env(monkeypatch):
 def test_lookup_error():
     with pytest.raises(AnsibleError, match="not one cluster"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups={"a": ["n1"], "b": ["n2"]})
+    with pytest.raises(AnsibleError, match="cassandra_hosts: group 'prdo' not found in the inventory"):
+        render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED, cassandra_hosts="prdo")
 
 
 def test_runtime_groups_of_the_playbooks_are_known():

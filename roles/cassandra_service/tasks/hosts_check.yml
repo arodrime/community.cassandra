@@ -25,6 +25,8 @@
     fail_msg: >-
       cassandra_hosts: group '{{ _name }}' {{ 'has no host' if _name in groups else 'not found in the inventory' }}
       (groups: {{ groups | list | reject('in', ['all', 'ungrouped']) | sort | join(', ') }}).
-    success_msg: "Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) }}"
+    success_msg: >-
+      Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) if groups[_name] | default([]) | length > 0 else _name }}
   vars:
-    _name: "{{ lookup('community.cassandra.cassandra_hosts') }}"
+    # cassandra_hosts read as is: the lookup refuses a wrong one too (under --limit, where this play does not run)
+    _name: "{{ cassandra_hosts if cassandra_hosts | default('', true) else lookup('community.cassandra.cassandra_hosts') }}"

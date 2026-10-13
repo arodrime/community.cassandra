@@ -49,6 +49,42 @@ def test_stop_rack_drains_before_stopping():
     assert "drained by its unit" not in open(os.path.join(TOP, "playbooks", "stop_rack.yml"), encoding="utf-8").read()
 
 
+def drain_failure(err):
+    """The result cassandra_drain fails with, nodetool answering rc 2 and err."""
+    from ansible_collections.community.cassandra.plugins.modules import cassandra_drain
+
+    class Fail(Exception):
+        pass
+
+    class Module(object):
+        def __init__(self, **kwargs):
+            self.params = {"host": "127.0.0.1", "port": 7199, "password": None, "password_file": None, "username": None,
+                           "nodetool_path": None, "nodetool_flags": "", "debug": False, "cassandra_version": "4.1"}
+
+        def run_command(self, cmd):
+            return 2, "", err
+
+        def fail_json(self, **kwargs):
+            raise Fail(kwargs)
+
+    cassandra_drain.AnsibleModule, saved = Module, cassandra_drain.AnsibleModule
+    try:
+        with pytest.raises(Fail) as exc:
+            cassandra_drain.main()
+    finally:
+        cassandra_drain.AnsibleModule = saved
+    return exc.value.args[0]
+
+
+def test_stop_rack_warning_keeps_the_error_only():
+    """The node is stopped all the same: the warning drops the drain message's advice."""
+    warn = next(t for t in STOP_PLAY["tasks"] if t.get("name") == "Say the drain did not work")
+    result = drain_failure("error: Some failure\n-- StackTrace --\n")
+    assert render(warn["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_rack_drain=result) == (
+        "WARNING: n1 was not drained (nodetool drain did not execute successfully (rc 2): error: Some failure):"
+        " stopped all the same.")
+
+
 @pytest.mark.parametrize("operation_drain, unit_manage, drained", [
     (True, True, True),
     (False, False, True),   # a kept unit may not drain: drained anyway
@@ -76,6 +112,35 @@ def test_rack_restart_drains_a_kept_unit(host_vars, drained):
     block = load("roles", "cassandra_service", "tasks", "restart_batch.yml")[0]["block"]
     task = next(t for t in block if t["name"] == "Drain the rack's nodes")
     assert true(task["when"], cassandra_operation_drain=False, item="node1", hostvars={"node1": host_vars}) is drained
+
+
+RACK_RESCUE = load("roles", "cassandra_service", "tasks", "restart_batch.yml")[0]["rescue"]
+# the drain loop of a rack: n1 drained, n2 failed, n3 skipped (left to its unit)
+DRAIN_LOOP = {"failed": True, "msg": "One or more items failed", "results": [
+    {"item": "n1", "changed": True, "failed": False, "msg": "nodetool drain executed successfully"},
+    {"item": "n2", "changed": False, "failed": True, "msg": "nodetool drain did not execute successfully (rc 2): error: x"},
+    {"item": "n3", "changed": False, "skipped": True}]}
+
+
+def test_rack_drain_failure_names_each_node():
+    record = next(t for t in RACK_RESCUE if t["name"] == "Record the failure")
+    assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], ansible_failed_result=DRAIN_LOOP) == (
+        "restart FAILED: One or more items failed; n2: nodetool drain did not execute successfully (rc 2): error: x")
+
+
+@pytest.mark.parametrize("drain, note", [
+    (DRAIN_LOOP, "n1, n2 drained or partly drained, not restarted: restart Cassandra on them before resuming. "),
+    (dict(DRAIN_LOOP, failed=False), ""),  # the drain went well (an earlier rack's, or the restart failed): no note
+    (None, ""),
+])
+def test_rack_drain_failure_says_what_to_restart(drain, note):
+    stop = next(t for t in RACK_RESCUE if t["name"] == "Stop here")
+    variables = dict(stop["vars"], _todo=["n1", "n2", "n3"], cassandra_progress_file="p")
+    if drain is not None:
+        variables["cassandra_restart_drain"] = drain
+    assert render(stop["ansible.builtin.fail"]["msg"], **variables) == (
+        "Stopped at the rack n1, n2, n3: no later rack was restarted. " + note
+        + "Once fixed, resume with the same command plus -e cassandra_rolling_resume=true (progress: p)")
 
 
 def test_service_stops_before_the_boot_setting():
