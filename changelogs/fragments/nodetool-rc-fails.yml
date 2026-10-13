@@ -1,0 +1,5 @@
+bugfixes:
+  - "cassandra_drain, cassandra_reload, cassandra_cleanup, cassandra_flush, cassandra_garbagecollect, cassandra_truncatehints, cassandra_upgradesstables, cassandra_verify - a nodetool command that returns a non-zero code fails explicitly, with nodetool's error line and what to check in the message, and ``stdout`` and ``stderr`` in the result (before, a bare ``did not execute successfully``, with ``stdout`` and ``stderr`` only under ``debug``)."
+  - "cassandra_reload - ``reload: seeds`` fails when nodetool says ``Failed to reload the seed node list.`` (it then returns 0: the node kept its old seeds and the task was ok)."
+  - "rolling_restart playbook - in rack mode, a failed drain names the nodes of the rack left drained or partly drained and not restarted, and the failure message gives each failed node's error."
+  - "cassandra_hosts lookup - ``-e cassandra_hosts=<group>`` naming no group with hosts fails, instead of running no play at all under ``--limit``."

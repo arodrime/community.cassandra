@@ -181,7 +181,6 @@
     # same (SIGTERM runs Cassandra's own drain on shutdown), never left drained and running.
     - name: Drain the node
       community.cassandra.cassandra_drain:
-        debug: true  # nodetool's stderr in the result
       module_defaults:
         community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
       register: cassandra_rack_drain
@@ -193,8 +192,8 @@
     - name: Say the drain did not work
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.msg | default('') }}
-          {{- (': ' ~ cassandra_rack_drain.stderr | trim) if cassandra_rack_drain.stderr | default('') | trim else '' }}): stopped all the same.
+          WARNING: {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.msg | default('')
+                                                                 | regex_replace('[.] If its Mode .*$', '') }}): stopped all the same.
       when:
         - cassandra_rack_drain is not skipped
         - cassandra_rack_drain.failed | default(false) or cassandra_rack_drain.rc | default(0) != 0

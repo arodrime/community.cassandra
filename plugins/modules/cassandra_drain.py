@@ -73,10 +73,19 @@ def main():
         result['msg'] = "nodetool drain executed successfully"
         module.exit_json(**result)
     else:
+        # nodetool's error line, else its first line of output (not a JVM banner)
+        lines = [line.strip() for line in (err + "\n" + out).splitlines()
+                 if line.strip() and not line.startswith("Picked up ") and "VM warning:" not in line]
+        lines = [line for line in lines if line.startswith("error:")] or lines
         result['rc'] = rc
         result['changed'] = False
-        result['msg'] = "nodetool drain did not execute successfully"
-        module.exit_json(**result)
+        result['stdout'] = out
+        result['stderr'] = err
+        result['msg'] = ("nodetool drain did not execute successfully (rc {0}){1}. "
+                         "If its Mode (nodetool netstats) is DRAINING or DRAINED, the node is out of the cluster: "
+                         "restart Cassandra on it. Else check its system.log, then drain it again"
+                         .format(rc, ": " + lines[0].rstrip(".") if lines else ""))
+        module.fail_json(**result)
 
 
 if __name__ == '__main__':

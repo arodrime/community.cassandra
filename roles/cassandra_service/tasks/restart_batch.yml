@@ -32,6 +32,7 @@
         community.cassandra.cassandra_drain: "{{ _jmx }}"
       delegate_to: "{{ item }}"
       loop: "{{ _todo }}"
+      register: cassandra_restart_drain
       # a kept unit may not drain
       when: cassandra_operation_drain | bool or not hostvars[item].cassandra_service_unit_manage | default(true) | bool
 
@@ -84,7 +85,9 @@
   rescue:
     - name: Record the failure
       ansible.builtin.set_fact:
-        cassandra_op_result: "restart FAILED: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
+        cassandra_op_result: >-
+          restart FAILED: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+          {%- for r in ansible_failed_result.results | default([]) if r.failed | default(false) %}; {{ r.item }}: {{ r.msg | default('') }}{% endfor %}
       delegate_to: "{{ item }}"
       delegate_facts: true
       loop: "{{ _todo }}"
@@ -95,8 +98,16 @@
     - name: Stop here
       vars:
         cassandra_output: true  # a verdict: its msg as is
+        # a drain that failed on a node of the rack: all were tried, none restarted; each one drained, even in
+        # part, is out of the cluster and still running
+        _drained: >-
+          {{ cassandra_restart_drain.results | default([]) | rejectattr('skipped', 'defined') | map(attribute='item') | list
+             if cassandra_restart_drain is defined and cassandra_restart_drain is failed else [] }}
+        _drained_note: >-
+          {{ (_drained | join(', ') ~ ' drained or partly drained, not restarted: restart Cassandra on '
+              ~ ('it' if _drained | length == 1 else 'them') ~ ' before resuming. ') if _drained else '' }}
       ansible.builtin.fail:
         msg: >-
           Stopped at the rack {{ _todo | join(', ') }}: no later rack was restarted.
-          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
+          {{ _drained_note }}Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
           (progress: {{ cassandra_progress_file | default('none') }})

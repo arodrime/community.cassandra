@@ -98,15 +98,25 @@ def main():
         if err:
             result['stderr'] = err
 
-    if rc == 0:
+    # reloadseeds prints this and returns 0 when the seed provider fails (cassandra.yaml unreadable)
+    if rc == 0 and not (module.params['reload'] == 'seeds' and 'Failed to reload the seed node list' in out):
         result['changed'] = True
         result['msg'] = "nodetool {0} executed successfully".format(cmd)
         module.exit_json(**result)
     else:
+        # nodetool's error line, else its first line of output (not a JVM banner)
+        lines = [line.strip() for line in (err + "\n" + out).splitlines()
+                 if line.strip() and not line.startswith("Picked up ") and "VM warning:" not in line]
+        lines = [line for line in lines if line.startswith("error:")] or lines
         result['rc'] = rc
         result['changed'] = False
-        result['msg'] = "nodetool {0} did not execute successfully".format(cmd)
-        module.exit_json(**result)
+        result['stdout'] = out
+        result['stderr'] = err
+        result['msg'] = ("nodetool {0} did not execute successfully (rc {1}){2}. "
+                         "The node keeps what it had loaded before: check its system.log, fix the cause, then reload "
+                         "again"
+                         .format(cmd, rc, ": " + lines[0].rstrip(".") if lines else ""))
+        module.fail_json(**result)
 
 
 if __name__ == '__main__':
