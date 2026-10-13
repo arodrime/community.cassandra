@@ -81,10 +81,32 @@
 
 - name: Drain and restart the node
   ansible.builtin.include_tasks: action_restart.yml
+  vars:
+    _cassandra_restart_timesync: "{{ cassandra_apply_config_timesync | default(false) }}"
   when: cassandra_apply_config_then | default('restart') == 'restart'
+
+# its time sync before Cassandra starts (timesync_window.yml)
+# (a node an interrupted run stopped there, its time sync started already: its clock let sync)
+- name: Start the time sync before Cassandra starts
+  ansible.builtin.include_tasks: timesync_window.yml
+  vars:
+    _cassandra_timesync_wait_only: "{{ not cassandra_apply_config_timesync | default(false) | bool }}"
+  when:
+    - cassandra_apply_config_then | default('restart') == 'start'
+    - cassandra_apply_config_timesync | default(false) | bool or cassandra_apply_config_resumed_stop | default(false) | bool
+    - not ansible_check_mode
 
 - name: Start the node and wait until it has joined
   ansible.builtin.include_tasks: main.yml
   vars:
     cassandra_service_state: started
   when: cassandra_apply_config_then | default('restart') == 'start'
+
+# (once Cassandra is up again: the mark of a stop for its time sync)
+- name: Forget the restart in progress
+  ansible.builtin.file:
+    path: /run/cassandra-apply-config.restart
+    state: absent
+  when:
+    - not ansible_check_mode
+    - cassandra_apply_config_then | default('restart') in ['restart', 'start']

@@ -818,6 +818,13 @@ under ``OS settings``, each value with the nodes that differ; a real run applies
 The files a running Cassandra has open keep their read-ahead until it restarts (said under the node); ``lvchange`` and
 a ``tuned`` profile switch wait for a run with Cassandra stopped (see the role), the udev rule keeping the read-ahead
 meanwhile.
+A time sync (chrony, systemd-timesyncd) to install or start on a node where Cassandra runs is not done live: it is a
+restart of that node (``would apply, then restart (time sync)``), one node at a time with the config restarts: drained,
+Cassandra stopped, the time sync started and the clock let sync, Cassandra started. The plan says the node's clock
+offset to its time source when it can be read, and warns when the clock is ahead (writes made with future timestamps
+can mask later writes until real time passes them). A node the run starts (its unit failed and its config written, a resumed run)
+gets its time sync the same way before its start; a time sync that fails there starts Cassandra again without it and stops the
+run. Nodes being created or added are prepared as before.
 
 Cassandra runs as ``cassandra_user`` and ``cassandra_group`` (default ``cassandra``): the unit's ``User=`` and
 ``Group=``, the group of the config files and the owner of the directories and JMX users' files ``cassandra_config``

@@ -60,15 +60,18 @@ SYSCTL = {"item": "sysctl vm.swappiness (/etc/sysctl.d/60-cassandra.conf)", "bef
 NOTE_RA = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 
 
-def note(os_items=None, changes=(), running=True):
+def note(os_items=None, changes=(), running=True, clock=(), resume=False, full=False, unit="inactive"):
     variables = {"_cassandra_config_changes": list(changes), "cassandra_config_restart_pending": False,
+                 "cassandra_apply_config_clock": {"stdout_lines": list(clock)}, "cassandra_rolling_resume": resume,
                  "_cassandra_preflight_running": running, "cassandra_jvm": {}, "_cassandra_config_dir_notes": [],
-                 "cassandra_apply_config_unit": {"skipped": True} if running else {"status": {"ActiveState": "inactive"}}}
+                 "cassandra_apply_config_unit": {"skipped": True} if running else {"status": {"ActiveState": unit}}}
     if os_items is not None:
         variables["_cassandra_linux_items"] = os_items
     for name, value in NOTE["vars"].items():
         variables[name] = render(value, variables)
     facts = NOTE["ansible.builtin.set_fact"]
+    if full:
+        return dict((k, render(v, variables)) for k, v in facts.items())
     return (render(facts["cassandra_apply_config_todo"], variables) in (True, "True"),
             render(facts["cassandra_apply_config_then"], variables),
             render(facts["cassandra_apply_config_os"], variables),
@@ -167,8 +170,8 @@ def test_the_role_s_restart_hint_left_to_the_restart_that_follows():
 
 def test_a_node_with_os_settings_only_is_not_reached_until_they_are_applied():
     nothing = FIND["tasks"][TASKS.index("Nothing to do on this node")]["ansible.builtin.set_fact"]["cassandra_op_result"]
-    assert render(nothing, {"cassandra_apply_config_os": [SYSCTL]}) == "not reached"
-    assert render(nothing, {"cassandra_apply_config_os": []}) == "nothing to apply"
+    assert render(nothing, {"cassandra_apply_config_os_live": [SYSCTL]}) == "not reached"
+    assert render(nothing, {"cassandra_apply_config_os_live": []}) == "nothing to apply"
 
 
 def test_the_role_s_check_mode_also_when_applied_to_it():
@@ -183,7 +186,8 @@ def test_the_role_s_check_mode_also_when_applied_to_it():
 def test_the_disk_warnings_said_under_the_node():
     notes = NOTE["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
     variables = {"cassandra_config_newer_files": [], "_pending": False, "_running": True, "_then": "none", "_os": [],
-                 "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]}}
+                 "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]},
+                 "_stopped": False, "_timesync": False, "_no_unit": []}
     assert render(notes, variables) == ["WARNING data disks: tuned: not switched"]
 
 
@@ -222,17 +226,21 @@ def test_the_result_said_if_a_node_fails_later(todo, check, before, expected):
                                                 "cassandra_op_result": before}) == expected
 
 
-@pytest.mark.parametrize("config, os_nodes, what", [
-    (["n1"], [], "config"), ([], ["n1"], "OS settings"), (["n1"], ["n2"], "config and OS settings")])
-def test_the_question_names_what_is_applied(config, os_nodes, what):
-    assert render(FIND["vars"]["_what"], {"_config_nodes": config, "_os_nodes": os_nodes}) == what
+@pytest.mark.parametrize("config, os_nodes, ts_nodes, ts_any, what", [
+    (["n1"], [], [], [], "config"), ([], ["n1"], [], [], "OS settings"), (["n1"], ["n2"], [], [], "config and OS settings"),
+    (["n1"], [], ["n1"], ["n1"], "OS settings"), (["n1", "n2"], [], ["n1"], ["n1"], "config and OS settings"),
+    (["n1"], [], [], ["n1"], "config and OS settings")])
+def test_the_question_names_what_is_applied(config, os_nodes, ts_nodes, ts_any, what):
+    variables = {"_config_nodes": config, "_os_nodes": os_nodes, "_ts_nodes": ts_nodes, "_ts_any": ts_any}
+    assert render(FIND["vars"]["_what"], variables) == what
 
 
 @pytest.mark.parametrize("live, swapoff, said", [(True, False, True), (True, True, False), (None, None, False)])
 def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     notes = NOTE["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
     variables = {"cassandra_config_newer_files": [], "_pending": False, "_running": True, "_then": "none", "_os": [],
-                 "_cassandra_config_dir_notes": [], "_cassandra_linux_before": {"swap|active": "1"}}
+                 "_cassandra_config_dir_notes": [], "_cassandra_linux_before": {"swap|active": "1"},
+                 "_stopped": False, "_timesync": False, "_no_unit": []}
     if live is not None:  # (not set on a node with cassandra_linux_manage false)
         variables.update({"_cassandra_linux_live": live, "_cassandra_linux_swapoff": swapoff})
     warned = [n for n in render(notes, variables) if n.startswith("WARNING swap left on")]
@@ -256,3 +264,196 @@ def test_the_intro_says_what_is_done(config, os_nodes, check, first, second):
     one, two = [" ".join(render(i, variables).split()) for i in intro]
     assert one.startswith(first) if first else one == ""
     assert two == second
+
+
+# time sync (chrony, timesyncd) installed or started under a running Cassandra: a restart, its window
+
+TIMESYNC = {"item": "chronyd", "before": "inactive", "after": "active", "timesync": True}
+
+
+def test_time_sync_under_a_running_cassandra_is_a_restart():
+    facts = note([TIMESYNC, SYSCTL], clock=["ahead=-0.25", "source=chronyd -Q"], full=True)
+    assert facts["cassandra_apply_config_todo"] in (True, "True") and facts["cassandra_apply_config_then"] == "restart"
+    assert facts["cassandra_apply_config_timesync"] in (True, "True")
+    assert facts["cassandra_apply_config_timesync_only"] in (True, "True")
+    assert note([TIMESYNC], changes=["cassandra.yaml"], full=True)["cassandra_apply_config_timesync_only"] in (False, "False")
+    # shown with the others, applied live but the time sync
+    assert facts["cassandra_apply_config_os"] == [TIMESYNC, SYSCTL]
+    assert facts["cassandra_apply_config_os_live"] == [SYSCTL]
+    assert facts["cassandra_apply_config_notes"] == ["clock 0.250 s behind its time source (chronyd -Q)"]
+    # its clock ahead: writes with future timestamps
+    notes = note([TIMESYNC], clock=["ahead=1.5", "source=chrony"])[3]
+    assert notes[0] == "clock 1.500 s ahead of its time source (chrony)" and notes[1].startswith("WARNING clock ahead")
+    # a normal skew: no warning
+    assert note([TIMESYNC], clock=["ahead=0.004", "source=chrony"])[3] == ["clock 0.004 s ahead of its time source (chrony)"]
+    assert note([TIMESYNC])[3] == ["clock offset to its time source not readable"]
+    # Cassandra not running: applied with the others, nothing restarted
+    stopped = note([TIMESYNC], running=False, full=True)
+    assert stopped["cassandra_apply_config_then"] == "write" and stopped["cassandra_apply_config_os_live"] == [TIMESYNC]
+    assert stopped["cassandra_apply_config_todo"] in (False, "False")
+
+
+def test_a_node_stopped_for_its_time_sync_is_started_by_the_resumed_run():
+    facts = note([], running=False, clock=["mark=yes"], resume=True, full=True)
+    assert facts["cassandra_apply_config_then"] == "start" and facts["cassandra_apply_config_todo"] in (True, "True")
+    assert facts["cassandra_apply_config_notes"] == ["stopped by the interrupted run (time sync): started once written"]
+    # not resumed: as any node stopped (left stopped); running: the mark alone changes nothing
+    assert note([], running=False, clock=["mark=yes"])[:2] == (False, "write")
+    assert note([], clock=["mark=yes"], resume=True)[:2] == (False, "none")
+
+
+def test_the_restart_window_reuses_the_restart():
+    tasks = load("roles", "cassandra_service", "tasks", "action_restart.yml")
+    names = [t["name"] for t in tasks]
+    assert names.index("Drain the node") < names.index("Start the time sync with Cassandra stopped") \
+        < names.index("Restart it and wait until it has joined")
+    window = tasks[names.index("Start the time sync with Cassandra stopped")]
+    assert window["ansible.builtin.include_tasks"] == "timesync_window.yml"
+    # its own include var: not a fact another restart of the same run (rolling_restart...) would read
+    assert window["when"] == ["_cassandra_restart_timesync | default(false) | bool", "not ansible_check_mode"]
+    action = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
+    anames = [t["name"] for t in action]
+    restart = action[anames.index("Drain and restart the node")]
+    assert restart["vars"] == {"_cassandra_restart_timesync": "{{ cassandra_apply_config_timesync | default(false) }}"}
+    # a node started (not restarted): the same window before its start
+    before = action[anames.index("Start the time sync before Cassandra starts")]
+    assert before["ansible.builtin.include_tasks"] == "timesync_window.yml"
+    assert before["vars"] == {"_cassandra_timesync_wait_only": "{{ not cassandra_apply_config_timesync | default(false) | bool }}"}
+    assert "cassandra_apply_config_resumed_stop | default(false) | bool" in str(before["when"])
+    assert anames.index("Start the time sync before Cassandra starts") < anames.index("Start the node and wait until it has joined")
+    forget = action[-1]
+    assert forget["ansible.builtin.file"] == {"path": "/run/cassandra-apply-config.restart", "state": "absent"}
+    assert "cassandra_apply_config_then | default('restart') in ['restart', 'start']" in forget["when"]
+    window_tasks = load("roles", "cassandra_service", "tasks", "timesync_window.yml")
+    win, report_ts = window_tasks
+    steps = [t["name"] for t in win["block"]]
+    assert steps == ["Mark the node stopped by this run", "Stop Cassandra", "Check no Cassandra JVM still runs",
+                     "Install and start the time sync", "Let the clock sync", "Say the clock is not synced yet"]
+    assert win["block"][3]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_linux",
+                                                               "tasks_from": "timesync.yml"}
+    # the node an interrupted run stopped there: only its clock let sync
+    for i in (0, 1, 3):
+        assert win["block"][i]["when"] == "not _cassandra_timesync_wait_only | default(false) | bool"
+    # a failure: Cassandra started again (not left down, also drained when its stop failed), the mark removed, the
+    # run stopped; not a second JVM next to one the unit did not start
+    assert [t["name"] for t in win["rescue"]] == ["Look for a Cassandra JVM", "Start Cassandra again, without its time sync",
+                                                  "Forget the mark of the stop", "Stop the run"]
+    again = win["rescue"][1]
+    assert again["vars"] == {"cassandra_service_state": "restarted"}
+    for jvm, checked, expected in ((1, None, True), (0, None, True), (0, "failed", False), (1, "ok", True)):
+        variables = {"cassandra_service_timesync_jvm": {"rc": jvm}}
+        if checked:
+            variables["cassandra_service_timesync_no_jvm"] = {"failed": checked == "failed", "rc": 1 if checked == "failed" else 0}
+        assert render(win["vars"]["_restart"], variables) is expected, (jvm, checked)
+    assert again["when"] == "_restart | bool"
+    # its own report file (the OS settings applied at once have cassandra_linux's), written once it went well
+    assert report_ts["vars"]["cassandra_change_report_role"] == "cassandra_linux_timesync"
+    # the OS play leaves it to that window, its items not taken for this run's
+    apply_os = [t for t in OS_PLAY["tasks"] if "block" in t][0]["block"][1]
+    assert apply_os["vars"]["_cassandra_linux_timesync_later"] == "{{ cassandra_apply_config_timesync_later }}"
+    os_tasks = load("roles", "cassandra_linux", "tasks", "os.yml")
+    sync = [t for t in os_tasks if t.get("name") == "Time sync"][0]
+    assert sync["ansible.builtin.include_tasks"] == "timesync.yml"
+    assert sync["when"] == "not _cassandra_linux_timesync_later | default(false) | bool"
+    report = load("roles", "cassandra_linux", "tasks", "report.yml")
+    compare = [t for t in report if t.get("name") == "Compare swap, THP, time sync and limits"][0]
+    assert compare["vars"]["_timesync_later"] == "{{ _cassandra_linux_timesync_later | default(false) | bool }}"
+    assert compare["ansible.builtin.set_fact"]["_cassandra_linux_items"].count("not _timesync_later") == 2
+    # the change report without apply_config's mark
+    items = [t for t in report if t.get("name") == "Report"][0]["vars"]["cassandra_change_report_items"]
+    assert render(items, {"_cassandra_linux_items": [TIMESYNC]}) == [{"item": "chronyd", "before": "inactive", "after": "active"}]
+
+
+def test_a_time_sync_that_cannot_start_or_only_to_enable_is_no_restart():
+    # a unit whose condition fails here (timesyncd in a container): it would never start, left out and said
+    package = {"item": "package chrony", "before": "absent", "after": "present", "timesync": True}
+    facts = note([package, TIMESYNC, SYSCTL], clock=["condition=no"], full=True)
+    assert facts["cassandra_apply_config_then"] == "none" and facts["cassandra_apply_config_os"] == [SYSCTL]
+    assert facts["cassandra_apply_config_notes"] == ["chronyd cannot run here (the condition of its unit): left as it is"]
+    # nor touched live by the role
+    assert facts["cassandra_apply_config_timesync_later"] in (True, "True")
+    assert note([TIMESYNC, SYSCTL], full=True)["cassandra_apply_config_timesync_later"] in (True, "True")
+    assert note([SYSCTL], full=True)["cassandra_apply_config_timesync_later"] in (False, "False")
+    # running already, only to enable: live
+    enable = dict(TIMESYNC, before="active")
+    facts = note([enable], full=True)
+    assert facts["cassandra_apply_config_then"] == "none" and facts["cassandra_apply_config_os_live"] == [enable]
+
+
+def test_a_node_started_anyway_gets_its_time_sync_before_its_start():
+    variables = dict(running=False, full=True)
+    # its unit failed and its config changes: started once written, its time sync before
+    failed = note([TIMESYNC], changes=["cassandra.yaml"], unit="failed", **variables)
+    assert failed["cassandra_apply_config_then"] == "start" and failed["cassandra_apply_config_timesync"] in (True, "True")
+    # its unit failed, nothing else to apply: not started for it, its time sync applied live (Cassandra not running)
+    alone = note([TIMESYNC], unit="failed", **variables)
+    assert alone["cassandra_apply_config_todo"] in (False, "False") and alone["cassandra_apply_config_timesync"] in (False, "False")
+    # stopped on purpose: its time sync applied live (Cassandra not running), left stopped
+    assert note([TIMESYNC], changes=["cassandra.yaml"], **variables)["cassandra_apply_config_then"] == "write"
+    resumed = note([TIMESYNC], clock=["mark=yes"], resume=True, **variables)
+    assert resumed["cassandra_apply_config_then"] == "start" and resumed["cassandra_apply_config_timesync"] in (True, "True")
+    assert resumed["cassandra_apply_config_os_live"] == []
+
+
+def test_a_mark_left_by_a_run_stopped_after_the_start_is_removed():
+    forget = FIND["tasks"][TASKS.index("Forget a mark of a restart done")]
+    assert forget["ansible.builtin.file"] == {"path": "/run/cassandra-apply-config.restart", "state": "absent"}
+    assert "not ansible_check_mode" in forget["when"] and "_cassandra_preflight_running | default(true) | bool" in forget["when"]
+
+
+def test_the_clock_read(tmp_path):
+    import subprocess
+    script = FIND["tasks"][TASKS.index("Read the clock and the mark of a restart in progress")]["ansible.builtin.shell"]
+
+    def fake(name, body):
+        (tmp_path / name).write_text("#!/bin/sh\n%s\n" % body)
+        (tmp_path / name).chmod(0o755)
+
+    def run(service="chronyd"):
+        env = {"PATH": "%s:/usr/bin:/bin" % tmp_path, "CASSANDRA_TIMESYNC": service}
+        return subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=False).stdout.split()
+
+    def systemctl(load, result, stamp):
+        fake("systemctl", "printf 'LoadState=%s\\nConditionResult=%s\\nConditionTimestampMonotonic=%s\\n'" % (load, result, stamp))
+
+    # its condition failed at a start: said; not found, or never started since boot ("no", timestamp 0): not
+    systemctl("loaded", "no", "8459838")
+    fake("chronyc", "exit 1")
+    assert run() == ["condition=no"]
+    for unit in (("not-found", "no", "0"), ("loaded", "no", "0"), ("loaded", "yes", "123")):
+        systemctl(*unit)
+        assert run() == [], unit
+    # chronyc tracking: its Leap status after its System time, as chrony prints them
+    fake("chronyc", "echo 'Reference ID    : C0A80001'; echo 'System time     : 0.512000 seconds fast of NTP time';"
+                    " echo 'Leap status     : Normal'")
+    assert run() == ["ahead=0.512000", "source=chrony"]
+    # chrony not synced yet: its 0 is no offset
+    fake("chronyc", "echo 'Reference ID    : 00000000 ()'; echo 'System time     : 0.000000000 seconds slow of NTP time';"
+                    " echo 'Leap status     : Not synchronised'")
+    assert run() == []
+    fake("chronyc", "exit 1")
+    fake("chronyd", "echo 'System clock wrong by -0.300000 seconds (ignored)'")
+    assert run() == ["ahead=0.3", "source=chronyd", "-Q"]
+    # no time sync to start: nothing read (no timedatectl either: it would start timesyncd through D-Bus)
+    assert run("") == []
+    assert "timedatectl" not in script
+
+
+def test_the_reason_of_the_restart_is_said():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_outcomes
+    nodes = [{"name": "n1", "todo": True, "then": "restart", "why": "time sync"}, {"name": "n2", "todo": True, "then": "restart"}]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == [
+        "n1  would apply, then restart (time sync)", "n2  would apply, then restart"]
+
+
+def test_the_jvm_check_does_not_find_its_own_shell():
+    # pgrep -f reads the command line of a shell running it too: run with no shell
+    win = load("roles", "cassandra_service", "tasks", "timesync_window.yml")[0]
+    for task in (win["block"][2], win["rescue"][0]):
+        assert task["ansible.builtin.command"] == {"argv": ["pgrep", "-f", "org.apache.cassandra.service.CassandraDaemon"]}
+    assert win["block"][2]["failed_when"] == "cassandra_service_timesync_no_jvm.rc != 1"  # a pgrep error: not known, stop
+    # a node left down keeps its mark: the resume the message says starts it
+    forget = [t for t in win["rescue"] if t["name"] == "Forget the mark of the stop"][0]
+    assert forget["when"] == "_restart | bool"
+    assert "cassandra_rolling_resume=true" in win["rescue"][-1]["ansible.builtin.fail"]["msg"]
+    assert win["rescue"][0]["failed_when"] is False

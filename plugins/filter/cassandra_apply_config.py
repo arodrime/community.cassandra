@@ -481,6 +481,8 @@ def _outcome(node, check, plan):
         text = ("would apply" if check or plan else "applied")
         said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
+        if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
+            text += " (%s)" % node["why"]
         if plan and then in _WHY:
             text += " (%s)" % _WHY[then]
         return text, ("would apply" if check or plan else "applied")

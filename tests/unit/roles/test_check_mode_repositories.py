@@ -65,7 +65,7 @@ def test_every_install_task_is_under_the_disablerepo_defaults():
 
 
 def test_timesync_package_under_the_disablerepo_defaults():
-    t = task(load("cassandra_linux", "os.yml"), "Install time sync package")
+    t = task(load("cassandra_linux", "timesync.yml"), "Install time sync package")
     for module in ("ansible.builtin.dnf", "ansible.legacy.dnf"):
         assert t["module_defaults"][module]["disablerepo"] == "{{ _cassandra_repository_check_removed | default([]) }}"
 

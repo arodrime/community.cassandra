@@ -70,9 +70,10 @@ def test_the_root_check_comes_before_any_node_action():
 def test_a_restart_writes_the_unit_before_draining():
     tasks = load("roles", "cassandra_service", "tasks", "action_restart.yml")
     assert [t["name"] for t in tasks] == ["Install the cassandra systemd unit", "Drain the node",
+                                          "Start the time sync with Cassandra stopped",  # (apply_config's only)
                                           "Restart it and wait until it has joined"]
     assert tasks[0]["ansible.builtin.include_tasks"] == "unit.yml"
-    assert tasks[2]["vars"]["_cassandra_service_unit_written"] is True
+    assert tasks[3]["vars"]["_cassandra_service_unit_written"] is True
     main = load("roles", "cassandra_service", "tasks", "main.yml")
     unit = [t for t in main if t["name"] == "Install the cassandra systemd unit"][0]
     assert unit["ansible.builtin.include_tasks"] == "unit.yml"

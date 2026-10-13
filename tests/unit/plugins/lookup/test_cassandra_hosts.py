@@ -62,7 +62,8 @@ def test_runtime_groups_ignored():
     # group_by groups made by the playbooks hold every host at times
     groups = {"all": ["n1", "n2"], "orders": ["n1", "n2"],
               "cassandra_apply_config_True": ["n1", "n2"], "cassandra_update_java_True": ["n1", "n2"],
-              "cassandra_apply_config_os_True": ["n1", "n2"],
+              "cassandra_apply_config_os_True": ["n1", "n2"], "cassandra_apply_config_ts_True": ["n1", "n2"],
+              "cassandra_apply_config_tsany_True": ["n1", "n2"],
               "cassandra_upgrade_nodes": ["n1", "n2"], "cassandra_create_start_order": ["n1", "n2"],
               "cassandra_seed_True": ["n1", "n2"], "cassandra_target_rack_nodes": ["n1", "n2"],
               "cassandra_move_order": ["n1", "n2"], "cassandra_leaving_dc": ["n1", "n2"],
