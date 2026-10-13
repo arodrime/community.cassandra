@@ -17,12 +17,10 @@ __metaclass__ = type
 
 import ast
 import json
-import os
 import re
 import textwrap
 
 from ansible.module_utils.parsing.convert_bool import boolean
-from ansible.utils.display import Display
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     KEEP, NOT_READ, _chains, _hand_edits_kept, _secret, _sort_key, _values_hidden)
@@ -30,6 +28,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_che
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, how_to_keep, suspicious)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 # shown in the header, or the ring's (dc and rack): not among the settings
@@ -262,29 +261,7 @@ def _what_changes(changed, removed, changes):
     return " (%s)" % "; ".join(parts) if parts else ""
 
 
-SCREEN_WIDTH = 160  # the screen's width when no width is known (Ansible's display gives one: 79 in a log)
 REPORT_WIDTH = 160  # report.txt's
-
-
-def _terminal_width():
-    """The width of the terminal the run shows in: Ansible's (its display's, as the ops callback; a worker has no
-    terminal of its own from ansible-core 2.19 on), else the terminal's (a column spared), else COLUMNS, else
-    SCREEN_WIDTH."""
-    try:
-        columns = int(getattr(Display(), "columns", 0) or 0)
-    except Exception:  # pylint: disable=broad-except
-        columns = 0
-    if columns:
-        return max(60, columns)
-    for fd in (1, 2):
-        try:
-            return max(60, os.get_terminal_size(fd).columns - 1)
-        except (OSError, ValueError):
-            continue
-    try:
-        return max(60, int(os.environ.get("COLUMNS", "")) - 1)
-    except ValueError:
-        return SCREEN_WIDTH
 
 
 def _edit_name(name):
@@ -676,7 +653,7 @@ def cassandra_import_self_check_advice(layout, self_check, report_file="", error
     "SELF-CHECK FAILED  <cluster group>  ...", what differs grouped by what makes it pass, HOW TO MAKE IT PASS,
     where the details are; from GROUPS_FROM nodes on (cassandra_output), the node lists by the NODE GROUPS of the
     summary above it, defined again under the verdict. Blank lines between them. Secrets never shown."""
-    width = int(width) if width else min(_terminal_width(), SCREEN_MOST)
+    width = int(width) if width else min(terminal_width(), SCREEN_MOST)
     groups = _sections(layout, self_check)["groups"]  # (the summary's, just above)
     verdict, paragraphs = _self_check_lines(
         layout, self_check, lambda m: _who(m, None, groups, False), width, report_file=report_file, error=error,
@@ -760,7 +737,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     leftovers = leftovers or {}
     hosts_file, inventory_dir = written
     full = not screen  # report.txt names every node (Q3), the screen node1..node5
-    width = int(width) if width else (_terminal_width() if screen else REPORT_WIDTH)
+    width = int(width) if width else (terminal_width() if screen else REPORT_WIDTH)
 
     def shown(path):
         return out.path_from(path, cwd)

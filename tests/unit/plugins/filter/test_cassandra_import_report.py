@@ -358,7 +358,7 @@ def test_kept_files_said_kept_as_is():
 
 
 def test_the_screen_width_is_ansibles(monkeypatch):
-    from ansible_collections.community.cassandra.plugins.filter import cassandra_import_report as module
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_output as module
 
     class Narrow(object):
         columns = 70

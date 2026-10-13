@@ -78,12 +78,16 @@ Role Variables
   every `cassandra_stream_early_check_interval` seconds (default 10) during
   the first `cassandra_stream_early_time` seconds (default 300), then every
   `cassandra_stream_check_interval` seconds (default 30), and the progress
-  printed, one line per check and one line for the other nodes, e.g.
+  printed, one line per check and the other nodes in columns under it, e.g.
 
   ```
   [1/2] node5 bootstrap  JOINING  [####------]  40%  168.2/420.0 GiB  82 MiB/s  ETA 14:27 (52m)  35m
-        from node1 88.1/220.0 GiB ok   from node2 52.1/130.0 GiB ok   from node3 28.0/70.0 GiB stalled
+        from node1  88.1/220.0 GiB  40%           from node2  52.1/130.0 GiB  40%
+        from node3   28.0/70.0 GiB  40% STALLED
   ```
+
+  Above 30 other nodes, one line sums up the ones keeping up and only the
+  stalled or lagging ones are detailed.
 
   The times are the controller's. After a minute without progress the line
   says it, as progress (`no progress for 3m`); after

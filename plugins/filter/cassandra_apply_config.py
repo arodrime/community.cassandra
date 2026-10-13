@@ -30,7 +30,7 @@ import re
 import shlex
 from collections import OrderedDict
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import _terminal_width
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import _stat
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
@@ -590,7 +590,7 @@ _RANK = {"would apply": 0, "will apply": 0, "applied": 0, "failed": 1}
 
 def _width(width):
     if str(width) == "terminal":
-        return _terminal_width()
+        return terminal_width()
     return int(width) if width else None
 
 

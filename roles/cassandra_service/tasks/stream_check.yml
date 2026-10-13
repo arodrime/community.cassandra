@@ -181,7 +181,7 @@
           {{ cassandra_stream_seen.results | default([]) | community.cassandra.cassandra_ring_seen(
                _cassandra_preflight.ring_address | default(_cassandra_preflight.address | default(''), true)) }}
 
-    # One line per check, then always one line for the other ends (and why it waits, when this node can't tell)
+    # One line per check, then always the other ends in columns (and why it waits, when this node can't tell)
     - name: Write the progress
       ansible.builtin.set_fact:
         _cassandra_stream_report: >-

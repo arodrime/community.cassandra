@@ -16,7 +16,8 @@ docs/docsite/rst/guide_output.rst.
   lines fit in a terminal's width: fit; laid out at the width where they are
   printed: flow, laid_out (the help text);
 - before a change: plan; while new nodes are prepared: prepare_lines,
-  left_system_warning; during it: progress_line; at the end: recap,
+  left_system_warning; during it: progress_line,
+  peer_lines; at the end: recap,
   perm_lines, diff_lines, changed_lines;
 - what is left to do: command, extra_var, todo, inventory_steps,
   in_git_work_tree;
@@ -1280,10 +1281,11 @@ IDLE_SHOWN = 60
 
 
 def progress_line(index, total_steps, node, operation, mode="", done=0, total=0, speed=None, now=0, start=None,
-                  idle=0, limit=0, peers=None, status="going", warn=None, disk=0, frozen=0):
+                  idle=0, limit=0, peers=None, status="going", warn=None, disk=0, frozen=0, width=None):
     """One check of a long operation (Q2), as 2 lines:
     "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
-    then always the other ends: "      from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled".
+    then always the other ends, in columns (peer_lines, in width):
+    "      from node1  18.0/34.0 GiB  52%   from node3   4.2/17.0 GiB  24%".
     index/total_steps: the position in the run (no [i/n] when total_steps
     is 0); mode: netstats Mode; done/total: bytes; speed: bytes/s (None:
     not known yet); now/start: epoch seconds; idle/limit: the seconds
@@ -1296,8 +1298,8 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     progress): "receiving (disk +3.2 GiB in 5m)" once frozen for IDLE_SHOWN
     seconds; peers:
     [{name, way ('from'/'to'), done, total, stalled, idle (the seconds it
-    moved nothing)}]: "stalled", else "no progress for 1m" from IDLE_SHOWN
-    seconds; status: going, or stalled / failed / done (said in the line).
+    moved nothing)}]: in columns (peer_lines) fitting in width (the
+    terminal's); status: going, or stalled / failed / done (said in the line).
     Before any data flows: "waiting for streams" and the elapsed time."""
     start = now if start is None else start
     head = "  ".join(x for x in [("[%d/%d] %s %s" % (index, total_steps, node, operation)) if total_steps
@@ -1331,16 +1333,62 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
                    if disk > 0 and frozen >= IDLE_SHOWN and not idle_text and total > done else "")
         line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta,
                                      on_disk, quiet if total <= done else pause, elapsed] if x)
-    out = [line]
-    if peers:
-        parts = []
-        for peer in sorted(peers, key=lambda p: (-p.get("total", 0), str(p.get("name")))):
-            state = "done" if peer.get("total") and peer.get("done", 0) >= peer["total"] else (
-                "stalled" if peer.get("stalled") else
-                ("no progress for " + duration(peer["idle"], short=True)) if peer.get("idle", 0) >= IDLE_SHOWN else "ok")
-            parts.append("%s %s %s %s" % (peer.get("way") or "with", peer.get("name"),
-                                          amount(peer.get("done", 0), peer.get("total", 0)), state))
-        out.append("      " + "   ".join(parts))
+    return [line] + peer_lines(peers, width)
+
+
+# above this many other ends, the ok ones on one line, only the others detailed
+PEERS_SUMMED = 30
+PEER_WIDTH = 100  # the width peer_lines fits in when none is given: the ops callback's rules
+_PEER_INDENT = "      "  # the ops callback colours a peer line with STALLED by it
+_PEER_GAP = "   "
+
+
+def _percent(peer):
+    total = peer.get("total", 0)
+    return int(100 * min(peer.get("done", 0), total) / total) if total else 0
+
+
+def peer_lines(peers, width=None):
+    """The other ends of a stream, under its progress line, in aligned columns
+    (as many as fit in width, 4 at most), by name, a stalled one in place:
+    "      to node1  3.1/7.2 GiB  43%           to node2  0.0/7.2 GiB   0% STALLED".
+    peers: [{name, way ('from'/'to'), done, total, stalled}]. Above
+    PEERS_SUMMED of them, the ok ones on one line, "82 peers ok (avg 43%),
+    slowest: node5 0% STALLED, node31 12%, node44 15%" (the 3 lowest below
+    100%, stalled first), and only the stalled ones and those below half the average
+    detailed under it."""
+    peers = sorted(peers or [], key=lambda p: (_natural(p.get("name")), p.get("way") or "with"))
+    if not peers:
+        return []
+    out = []
+    if len(peers) > PEERS_SUMMED:
+        average = sum(_percent(p) for p in peers) / float(len(peers))
+        behind = [p for p in peers if p.get("stalled") or _percent(p) < average / 2]
+        fine = [p for p in peers if p not in behind]
+        summary = "%s ok" % plural(len(fine), "peer")
+        if fine:
+            summary += " (avg %d%%)" % (sum(_percent(p) for p in fine) / float(len(fine)))
+        slowest = sorted([p for p in peers if p.get("stalled") or _percent(p) < 100],
+                         key=lambda p: (not p.get("stalled"), _percent(p), _natural(p.get("name"))))[:3]
+        if slowest:
+            summary += ", slowest: " + ", ".join("%s %d%%%s" % (p.get("name"), _percent(p),
+                                                                " STALLED" if p.get("stalled") else "")
+                                                 for p in slowest)
+        out.append(_PEER_INDENT + summary)
+        peers = behind
+        if not peers:
+            return out
+    cells = [(p.get("way") or "with", str(p.get("name")), amount(p.get("done", 0), p.get("total", 0)),
+              "%d%%" % _percent(p), "STALLED" if p.get("stalled") else "") for p in peers]
+    widths = [max(len(c[i]) for c in cells) for i in range(4)]
+    texts = ["%s %s  %s  %s%s" % (way.ljust(widths[0]), name.ljust(widths[1]), size_text.rjust(widths[2]),
+                                  pct.rjust(widths[3]), " " + state if state else "")
+             for way, name, size_text, pct, state in cells]
+    cell = max(len(t) for t in texts)
+    room = (width or PEER_WIDTH) - len(_PEER_INDENT) + len(_PEER_GAP)
+    per_line = max(1, min(4, room // (cell + len(_PEER_GAP))))
+    for at in range(0, len(texts), per_line):
+        out.append((_PEER_INDENT + _PEER_GAP.join(t.ljust(cell) for t in texts[at:at + per_line])).rstrip())
     return out
 
 

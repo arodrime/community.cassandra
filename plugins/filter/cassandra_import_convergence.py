@@ -22,8 +22,9 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import FILES, _THEN
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     IDENTITY, KEEP, PER_NODE, ROLE, SERIES, _chains, _hand_edits_kept, _template_vars, _undefined)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    ARROW_RIGHT, DASH, REPORT_WIDTH, SCREEN_VALUE, _aligned, _column, _cut, _fill, _sections, _terminal_width, _who, _whole)
+    ARROW_RIGHT, DASH, REPORT_WIDTH, SCREEN_VALUE, _aligned, _column, _cut, _fill, _sections, _who, _whole)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 # the files cassandra_config writes from its series' templates: a change in one is a restart (apply_config's rule);
@@ -503,7 +504,7 @@ def cassandra_import_convergence(layout, self_check=None, screen=False, report_f
 def _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd, width, self_check_ok):
     screen = boolean(screen, strict=False)
     full = not screen
-    width = int(width) if width else (_terminal_width() if screen else REPORT_WIDTH)
+    width = int(width) if width else (terminal_width() if screen else REPORT_WIDTH)
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
     if not read:
