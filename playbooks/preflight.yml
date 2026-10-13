@@ -240,10 +240,11 @@
       ansible.builtin.assert:
         that: _values | unique | length == 1
         fail_msg: >-
-          {{ item }} differs across the cluster:
-          {{ dict(ansible_play_hosts | zip(_values)) }}
+          {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', item])))
+             | community.cassandra.cassandra_differs(item, lookup('community.cassandra.cassandra_hosts')) }}
         quiet: true
       vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
         _values: "{{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', item]) | map('string') | list }}"
       loop:
         - cassandra_cluster_name

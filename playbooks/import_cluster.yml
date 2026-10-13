@@ -1811,6 +1811,7 @@
         mode: "0644"
         backup: "{{ _hosts_file in _leftovers.replaced | default([]) }}"  # not an import's
       register: import_cluster_wrote_hosts
+      diff: "{{ ansible_diff_mode | bool and _hosts_file in import_cluster_existing_modes }}"  # (--diff) a new file: listed on the screen, not shown whole
       when: >-
         not (import_cluster_existing_modes[_hosts_file] | default('') == '0644'
              and import_cluster_existing_text[_hosts_file] | default(none) == _content)
@@ -1836,6 +1837,7 @@
         label: "{{ item.path }}"
       register: import_cluster_wrote_vars
       no_log: "{{ item.secret }}"
+      diff: "{{ ansible_diff_mode | bool and item.path in import_cluster_existing_modes }}"  # (--diff) a new file: listed on the screen, not shown whole
       # a vaulted file already there with the same content is left as it is (not encrypted again); one in clear
       # there as it would be written, its mode too, also (as copy would, without its module run)
       when: >-

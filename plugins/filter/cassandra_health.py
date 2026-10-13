@@ -29,6 +29,8 @@ def _error(result):
     said = [line for line in lines if line.startswith("error:")] or [
         line for line in lines if not line.startswith(("at ", "-- StackTrace --", "..."))][-1:]
     line = said[0] if said else ""
+    if msg.startswith(("nodetool gets no answer from JMX", "nodetool can't reach JMX")):
+        return msg  # (version_error: nodetool's line said already, in words)
     return "%s (%s)" % (msg, line) if line and line not in msg and line.replace("error:", "").strip() not in msg else msg
 
 

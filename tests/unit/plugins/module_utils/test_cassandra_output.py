@@ -302,12 +302,12 @@ def test_recap_check_mode_says_would_and_nothing_changed():
     lines = out.recap("apply_config", "my_cluster", [{"node": "node%d" % i, "outcome": "applied, restarted",
                                                       "seconds": 3} for i in range(1, 5)], check=True, seconds=20,
                       extra=["  cassandra.yaml"])
-    assert lines == ["CHECK  apply_config  my_cluster  would apply, restart 4 nodes   nothing was changed",
+    assert lines == ["CHECK  apply_config  my_cluster  would apply, restart on 4 nodes   nothing was changed",
                      "  node1..node4  would apply, restart",
                      "",
                      "  cassandra.yaml"]
     assert out.would("restarted") == "would restart" and out.would("frobbed") == "would be frobbed"
-    assert out.recap("x", "c", []) == ["DONE  x  c  nothing to do"]
+    assert out.recap("x", "c", []) == ["NOTHING TO DO  x  c  nothing to do"]
 
 
 # --- what changed ---

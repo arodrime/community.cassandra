@@ -502,7 +502,8 @@ def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
 def test_colours_by_line_start():
     from ansible import constants as C
     from ansible_collections.community.cassandra.plugins.callback.ops import colour
-    assert colour("WARNING  seeds: dc1 has one seed") == C.COLOR_CHANGED
+    assert colour("WARNING  seeds: dc1 has one seed") == "color208"  # orange (option warning_color)
+    assert colour("WARNING  x", warning="bright yellow") == "bright yellow"
     assert colour("         its next line", above=C.COLOR_CHANGED) == C.COLOR_CHANGED  # indented: as the line above
     assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
     assert colour("NOT HEALTHY  my_cluster") == colour("REFUSED  topology") == C.COLOR_ERROR
