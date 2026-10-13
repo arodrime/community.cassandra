@@ -211,3 +211,15 @@ def test_a_former_member_with_a_directory_problem_gets_no_reset_suggested(tmp_pa
     assert "reset refused: /data: can not be read (without root?)" in text
     assert "cassandra_add_node_reset=true" not in text and "reset_node" not in text
 
+
+def test_a_stopped_add_says_how_to_go_on():
+    """add_node keeps no progress file: the same command again finds where each node stands."""
+    add = [p for p in yaml.safe_load(open(os.path.join(TOP, "playbooks", "add_node.yml"), encoding="utf-8"))
+           if p.get("name") == "Add the new nodes, one at a time"][0]
+    hint = [t for t in add["tasks"] if t.get("name") == "Add this node"][0]["vars"]["cassandra_service_resume_hint"]
+    assert "rolling_resume" not in hint and "run {{ _cassandra_screen_asked_by | default('') or 'add_node' }} again" in hint
+    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "node_operation.yml"), encoding="utf-8") as f:
+        text = f.read()
+    # the progress file named only when there is one
+    assert "(progress: ' ~ cassandra_progress_file ~ ')') if cassandra_progress_file is defined else ''" in text
+    assert "cassandra_progress_file | default('none')" not in text

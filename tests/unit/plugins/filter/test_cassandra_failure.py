@@ -28,10 +28,16 @@ def test_a_repository_problem_is_named():
         "Install python3.11: repository 'epel' unreachable (a repository or mirror problem on the node)")
 
 
-def test_other_causes_short_and_masked():
-    long = {"msg": "x" * 300}
-    assert cassandra_failure_cause(long, "Task") == "Task: " + "x" * 91 + "..."
-    assert len(cassandra_failure_cause(long, "Task")) == 100
+def test_other_causes_in_full_and_masked():
+    # why and the way out, in full: e.g. cassandra_config's refusal of a change not confirmed
+    said = ("Config changes not confirmed on node5 (already initialized: /var/lib/cassandra/data/system). Run"
+            " interactively and answer 'yes', or set cassandra_config_confirm: false to apply without asking.")
+    assert cassandra_failure_cause({"msg": said}, "Stop unless the changes were confirmed") == (
+        "Stop unless the changes were confirmed: " + said)
+    # a raw dump only is cut
+    long = {"msg": "x" * 3000}
+    assert cassandra_failure_cause(long, "Task") == "Task: " + "x" * 991 + "..."
+    assert len(cassandra_failure_cause(long, "Task")) == 1000
     assert cassandra_failure_cause({"msg": "", "results": [{"failed": True, "msg": "item broke"}]}) == "item broke"
     assert "s3cret" not in cassandra_failure_cause({"msg": "mirror https://deploy:s3cret@mirror.example/x down"})
 

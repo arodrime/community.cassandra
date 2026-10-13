@@ -42,7 +42,10 @@
 - name: Tell cassandra_config whether the node is new
   ansible.builtin.set_fact:
     _cassandra_add_config_new: "{{ _new }}"
-    _cassandra_add_config_confirm: "{{ false if _new | bool else cassandra_config_confirm | default('auto') }}"
+    # -e cassandra_operation_confirm=false: no question at all, this one neither
+    _cassandra_add_config_confirm: >-
+      {{ false if _new | bool or not cassandra_operation_confirm | default(true) | bool
+         else cassandra_config_confirm | default('auto') }}
   vars:
     # add_node, topology: with its reset plan (cassandra_add_node_reset not false: the live cassandra.yaml's dirs looked at too)
     _new: >-

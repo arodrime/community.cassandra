@@ -173,7 +173,9 @@
           {{ ('Stopped at ' ~ inventory_hostname ~ ' (' ~ ansible_failed_task.name | default('') ~ '): '
               ~ ('no node was restarted; the nodes done at the same time: as said above. '
                  if cassandra_service_node_batch | default(false) | bool else 'no other node was touched after it. ')
-              ~ cassandra_service_resume_hint | default('Once fixed, resume with the same command plus -e cassandra_rolling_resume=true')
-              ~ ' (progress: ' ~ cassandra_progress_file | default('none') ~ ')')
+              ~ cassandra_service_resume_hint | default('Once fixed, resume with the same command plus -e cassandra_rolling_resume=true'
+                                                        if cassandra_progress_file is defined
+                                                        else 'Once fixed, check where the cluster stands (the status playbook) before running it again.')
+              ~ ((' (progress: ' ~ cassandra_progress_file ~ ')') if cassandra_progress_file is defined else ''))
              if ansible_failed_task is defined or not cassandra_service_node_batch | default(false) | bool
              else 'Stopped with the node that failed.' }}

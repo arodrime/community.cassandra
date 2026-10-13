@@ -1,0 +1,6 @@
+---
+bugfixes:
+  - add_node playbook - a node already in the ring (an earlier run) is no longer prepared again (repository, install, config...); its config is apply_config's.
+  - add_node playbook - with ``-e cassandra_operation_confirm=false``, cassandra_config asks nothing either while preparing the new nodes.
+  - add_node playbook - a stopped run says to run the same command again (it finds where each node stands), no longer ``-e cassandra_rolling_resume=true (progress none)``, an option it does not have; the other operations without a progress file (replace_node, add_datacenter...) say to check where the cluster stands first.
+  - add_node playbook - the prepare step's failures show each cause in full (why and the way out), no longer cut at 100 characters.

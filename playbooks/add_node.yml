@@ -558,10 +558,13 @@
             ansible_failed_result: {}
             ansible_failed_task: {}
 
+        # only a node not in the ring yet: one that joined (an earlier run) or is still bootstrapping is left
+        # as it is (its config is apply_config's, with its own question)
         - name: Prepare this node
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
             tasks_from: action_add_prepare.yml
+          when: cassandra_new_node_state == 'new'
           vars:
             # a new node: every setting goes from absent to set, a list per role and node says nothing (-v, or
             # cassandra_change_report_dir, still have them)
@@ -652,6 +655,10 @@
       vars:
         cassandra_service_node_action: add
         _cassandra_add_prepared: true
+        # no progress file: a run again finds where each node stands (new_node_state.yml)
+        cassandra_service_resume_hint: >-
+          Once fixed, run {{ _cassandra_screen_asked_by | default('') or 'add_node' }} again, the same command: the nodes
+          already in the ring are only checked, a bootstrap still running is waited for.
         # the progress lines' [i/n]
         _cassandra_stream_index: "{{ ansible_play_hosts_all.index(inventory_hostname) + 1 }}"
         _cassandra_stream_steps: "{{ ansible_play_hosts_all | length }}"

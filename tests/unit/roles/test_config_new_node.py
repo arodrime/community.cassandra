@@ -100,7 +100,7 @@ def test_a_stat_error_outside_its_data_dirs_does_not_count_for_a_new_node():
                              _cassandra_config_new_node=True)["_cassandra_config_initialized"] is True
 
 
-def prepare_vars(state, confirm=None, replace=False, planned=True):
+def prepare_vars(state, confirm=None, replace=False, planned=True, operation_confirm=None):
     """What action_add_prepare.yml passes to cassandra_config for a node in that state (planned: add_node worked
     out its reset, cassandra_add_node_reset not false)."""
     tasks = dict((t["name"], t) for t in load("roles", "cassandra_service", "tasks", "action_add_prepare.yml"))
@@ -108,6 +108,8 @@ def prepare_vars(state, confirm=None, replace=False, planned=True):
     v = {} if state is None else {"cassandra_new_node_state": state}
     if planned and state is not None:
         v["_cassandra_node_reset_plan"] = {"problems": [], "delete": []}
+    if operation_confirm is not None:
+        v["cassandra_operation_confirm"] = operation_confirm
     if replace:
         v["_cassandra_add_checked_new"] = True
     if confirm is not None:
@@ -265,3 +267,18 @@ def test_no_stops_every_node_of_the_batch(tmp_path):
     assert rc != 0
     assert sorted(set(re.findall(r"Config changes not confirmed on (node\d)", output))) == ["node1", "node2"], output
     assert "went on" not in output
+
+
+def test_no_question_at_all_with_cassandra_operation_confirm_false():
+    # a node add_node could not check new (-e cassandra_add_node_reset=false), add_datacenter's: no question either
+    assert prepare_vars("new", planned=False, operation_confirm=False)["cassandra_config_confirm"] is False
+    assert prepare_vars(None, operation_confirm="false")["cassandra_config_confirm"] is False
+    assert prepare_vars(None, operation_confirm=True)["cassandra_config_confirm"] == "auto"
+
+
+def test_add_node_prepares_only_the_nodes_not_in_the_ring_yet():
+    plays = load("playbooks", "add_node.yml")
+    play = [p for p in plays if p.get("name") == "Prepare the new nodes, all at once"][0]
+    block = [t for t in play["tasks"] if "block" in t][0]
+    prepare = [t for t in block["block"] if t.get("name") == "Prepare this node"][0]
+    assert prepare["when"] == "cassandra_new_node_state == 'new'"

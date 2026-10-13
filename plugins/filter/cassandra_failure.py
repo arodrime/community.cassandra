@@ -12,8 +12,9 @@ import re
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
-# the longest cause shown (the whole error with -v)
-_WIDTH = 100
+# the longest cause shown: an error's first line in full, its why and its way out (only a raw dump is cut;
+# the whole error with -v)
+_WIDTH = 1000
 # dnf, yum and apt saying a repository's metadata can't be downloaded
 _REPO = (
     re.compile(r"(?:metadata for repo(?:sitory)?|for repo(?:sitory)?|repo(?:sitory)?)\s+'([^']+)'", re.IGNORECASE),
