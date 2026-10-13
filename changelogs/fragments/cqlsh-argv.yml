@@ -1,0 +1,4 @@
+bugfixes:
+  - "cassandra_cqlsh - runs cqlsh with its arguments as they are, without a shell-like split in between, so a password or a statement holding quotes of both kinds, a backslash or ``$`` is passed unchanged; ``additional_args`` values are no longer split on spaces; ``file`` and ``cqlshrc`` are now of type ``path``; the ``cmd`` returned with ``debug`` shows the password as ``********``."
+breaking_changes:
+  - "cassandra_cqlsh - ``$VAR`` and ``~`` are no longer expanded in the values given to cqlsh (``username``, ``password``, ``execute``, ``keyspace``, ``additional_args``...), and backslashes in them are passed as they are. ``cqlsh_cmd`` still gets ``$VAR`` expanded but no longer ``~`` (use the full path or ``$HOME``); ``file`` and ``cqlshrc`` get both."
