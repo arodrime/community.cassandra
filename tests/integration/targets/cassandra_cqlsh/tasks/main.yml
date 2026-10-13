@@ -18,7 +18,7 @@
 
 # ===========================================================
 - name: Install cassandra-driver
-  pip:
+  ansible.builtin.pip:
     name: "cassandra-driver{{ ansible_python_version.startswith('2.7') | ternary('==3.26.*', '') }}"
   environment:
     CASS_DRIVER_NO_CYTHON: 1
@@ -29,7 +29,7 @@
     debug: yes
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
@@ -42,7 +42,7 @@
     execute: "SELECT * FROM system.local"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "'cql_version' in cqlsh.transformed_output"
@@ -53,7 +53,7 @@
     execute: "SELECT json * FROM system.local"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
@@ -67,13 +67,13 @@
     execute: "SELECT json * FROM system.sstable_activity"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
 
 - name: Ensure epel is available
-  yum:
+  ansible.builtin.yum:
     name: epel-release
   when: ansible_os_family == "RedHat"
 
@@ -98,7 +98,7 @@
       - username
 
 - name: Create an file with a bucnh of cql command
-  copy:
+  ansible.builtin.copy:
     content: |
       INSERT INTO test.test (id, username, first_name, last_name) VALUES (uuid(), 'rhysmeister', 'Rhys', 'Campbell');
       INSERT INTO test.test (id, username, first_name, last_name) VALUES (uuid(), 'rhysmeister1', 'Rhys', 'Campbell');
@@ -118,7 +118,7 @@
     file: /root/test.cql
   register: cql_file
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cql_file.file == '/root/test.cql'"
 
@@ -127,7 +127,7 @@
     execute: "SELECT json * FROM test.test"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
@@ -135,12 +135,12 @@
       - "cqlsh.transformed_output[0] | type_debug == 'dict'"
 
 - name: Check that we can iterate over the results
-  debug:
+  ansible.builtin.debug:
     var: item
   with_items:
     - "{{ cqlsh.transformed_output }}"
 
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Run the DESC KEYSPACES command (auth)
@@ -150,7 +150,7 @@
     execute: "DESC KEYSPACES"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
@@ -167,7 +167,7 @@
     execute: "DESC KEYSPACES"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
@@ -184,7 +184,7 @@
     debug: yes
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.transformed_output | type_debug == 'list'"
@@ -195,7 +195,7 @@
       - "cqlsh.rc is defined"
 
 - name: Check that we can iterate over the results
-  debug:
+  ansible.builtin.debug:
     var: item # No quotes or it causes an "is not a string and conversion is not allowed" error
   with_items:
     - "{{ cqlsh.transformed_output }}"
@@ -221,7 +221,7 @@
   register: cqlsh
   ignore_errors: true
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.failed"
       - "cqlsh.msg == 'module execution failed'"
@@ -256,7 +256,37 @@
     execute: "ALTER KEYSPACE system_auth WITH REPLICATION = {'class':'SimpleStrategy','replication_factor':1}"
   register: cqlsh
 
-- assert:
+- ansible.builtin.assert:
     that:
       - "cqlsh.changed"
       - "cqlsh.msg == 'transform type was auto'"
+
+- name: Password with a quote, a double quote, a space, a backslash, $ and ~
+  ansible.builtin.set_fact:
+    cqlsh_odd_password: "it's a \"pass\" $HOME ~ \\ #1 -x"
+
+- name: Create a role with that password
+  community.cassandra.cassandra_cqlsh:
+    username: "{{ cassandra_admin_user }}"
+    password: "{{ cassandra_admin_pwd }}"
+    execute: "CREATE ROLE IF NOT EXISTS cqlsh_odd WITH PASSWORD = '{{ cqlsh_odd_password | replace(\"'\", \"''\") }}' AND LOGIN = true"
+
+- name: Log in with that password
+  community.cassandra.cassandra_cqlsh:
+    username: cqlsh_odd
+    password: "{{ cqlsh_odd_password }}"
+    execute: "SELECT release_version FROM system.local"
+    debug: yes
+  register: cqlsh
+
+- ansible.builtin.assert:
+    that:
+      - "cqlsh.rc == 0"
+      - "cqlsh_odd_password not in cqlsh.cmd"
+      - "'--password=********' in cqlsh.cmd"
+
+- name: Drop the role
+  community.cassandra.cassandra_cqlsh:
+    username: "{{ cassandra_admin_user }}"
+    password: "{{ cassandra_admin_pwd }}"
+    execute: "DROP ROLE IF EXISTS cqlsh_odd"
