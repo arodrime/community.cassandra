@@ -1,0 +1,2 @@
+minor_changes:
+  - import_cluster playbook - under ``--check``, the full report is written too, as ``report.check.txt`` next to ``report.txt`` (left as it is); the inventory is still not written.

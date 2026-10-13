@@ -380,7 +380,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
-    report_file: where report.txt goes; self_check: {node: {differences, notes}}; self_check_ok;
+    report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}}; self_check_ok;
     secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers'; check:
     --check; inventory: the -i of the next commands ('' : ansible.cfg's); hosts: their -e cassandra_hosts (''
     when the inventory holds this cluster alone); allow_unread: import_cluster_allow_unread; screen: the end of
@@ -469,12 +469,12 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         changed, removed = list(changes.get("changed") or []), list(changes.get("removed") or [])
     same = changed == [] and removed == []
     lines = ["IMPORT %s%s %s %s read / %d %s SELF-CHECK %s" % (
-        cluster, " (--check, nothing written)" if check else "", DASH, out.plural(len(read), "node"), len(nodes),
+        cluster, " (--check, inventory not written)" if check else "", DASH, out.plural(len(read), "node"), len(nodes),
         DASH, "PASSED" if self_check_ok else "FAILED"),
         "%s %s" % ("Unchanged:" if same else "Would write:" if check else "Written:", ", ".join(
             [shown(hosts_file), "group_vars/%s*/" % cluster] + ([host_dirs] if host_dirs else [])))]
     if not screen:  # the screen ends with it
-        lines.append("Report:  %s" % ("not written under --check" if check else shown(report_file)))
+        lines.append("Report:  %s" % shown(report_file))
     lines.append("")
     if groups:
         lines += out.group_lines(groups, full=full, width=width) + [""]
@@ -579,8 +579,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if screen:
         while lines and not lines[-1]:
             lines.pop()
-        return lines + ["", "full report: %s" % ("written by the run without --check" if check
-                                                 else shown(report_file))]
+        return lines + ["", "full report%s: %s" % (" (--check)" if check else "", shown(report_file))]
 
     # HAND EDITS
     layout_only = sum(len(n.get("normalized") or []) + len(n.get("comments") or []) for n in read)

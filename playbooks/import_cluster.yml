@@ -43,7 +43,7 @@
 # its JMX and CQL logins, vaulted ones too), not from -i <node>, (which reads
 # none of them). Review it before it writes anything: --check --diff shows the
 # changes of each file it would write or remove (secrets.yml hidden), and
-# writes nothing:
+# writes nothing in the inventory (its report only: report.check.txt):
 #   ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=<cluster group> -e import_cluster_force=true --check --diff
 # then the same without --check --diff (-e cassandra_hosts left out when
 # CASSANDRA_CLUSTER names the cluster or the inventory holds it alone).
@@ -1375,10 +1375,11 @@
       {%- set out = [] -%}
       {%- for n in _nodes | default([]) if not n.read | bool -%}{%- set _ = out.append(_layout.names[n.address]) -%}{%- endfor -%}
       {{ out }}
-    # report.txt: setting by setting, each value with the nodes that have it (cassandra_import_report)
+    # report.txt: setting by setting, each value with the nodes that have it (cassandra_import_report);
+    # report.check.txt under --check (the real one left as it is)
     _report_args:
       written: ["{{ _dir ~ '/' ~ _hosts_file }}", "{{ _dir }}"]
-      report_file: "{{ _report_dir ~ '/report.txt' }}"
+      report_file: "{{ _report_dir ~ ('/report.check.txt' if ansible_check_mode else '/report.txt') }}"
       secrets_clear: "{{ [] if _vault | bool else _secrets }}"
       check: "{{ ansible_check_mode }}"
       inventory: "{{ _next_inventory }}"
@@ -1699,7 +1700,7 @@
         # (not the report, when import_cluster_report_dir puts it there: written again below)
         _found: "{{ import_cluster_existing.files | default([]) | map(attribute='path') | map('relpath', _dir)
                     | reject('match', '(.*/)?[.]') | reject('in', _report_files) | list }}"
-        _report_files: "{{ [(_report_dir ~ '/report.txt') | relpath(_dir)] }}"
+        _report_files: "{{ [(_report_dir ~ '/report.txt') | relpath(_dir), (_report_dir ~ '/report.check.txt') | relpath(_dir)] }}"
         # the first line is enough to tell (a vaulted file: decrypted to its first line; an inventory file,
         # and the cluster's main.yml for its cluster name: all of it), and a secret's value never leaves
         # this task
@@ -1799,6 +1800,7 @@
         path: "{{ _report_dir }}"
         state: directory
         mode: "0755"
+      check_mode: false  # the report is written under --check too (on the controller, not in the inventory)
       when: _report_dir != _dir
 
     # (one there as it would be written, its mode too, left alone: as copy would, without its module run)
@@ -1844,17 +1846,21 @@
       vars:
         _text: "{{ item.content | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
 
-    # a report.txt of the user's, or of another cluster's import: kept as <file>.<date>~
+    # a report.txt of the user's, or of another cluster's import: kept as <file>.<date>~; under --check,
+    # report.check.txt (on the controller only: the inventory is not written)
     - name: Write report.txt
       ansible.builtin.copy:
         content: "{{ (_report ~ '\n') | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
-        dest: "{{ _report_dir }}/report.txt"
+        dest: "{{ _report_args.report_file }}"
         mode: "0644"
         backup: >-
-          {{ (_report_dir ~ '/report.txt') is file
-             and not lookup('ansible.builtin.file', _report_dir ~ '/report.txt').startswith(
+          {{ _report_args.report_file is file
+             and not lookup('ansible.builtin.file', _report_args.report_file).startswith(
                        '# Written by community.cassandra.import_cluster for ' ~ _layout.cluster_group ~ ':') }}
-      when: not ansible_check_mode  # shown below
+      check_mode: false
+      diff: false
+      # (--check with the report in an inventory dir not there yet: not created)
+      when: not ansible_check_mode or _report_args.report_file | dirname is directory
 
     # the end of the run: its header, TO DO and SETTINGS; the rest is in report.txt
     - name: Show the summary
@@ -1876,8 +1882,8 @@
         msg: >-
           SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
           roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
-          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See TO DO above{{ ''
-          if ansible_check_mode else ', and DETAILS in ' ~ _report_dir ~ '/report.txt' }}.
+          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See TO DO above, and
+          DETAILS in {{ _report_args.report_file }}.
           {{ _layout | community.cassandra.cassandra_import_self_check_advice(_self_check | default({})) }}.
       when:
         - not _self_check_ok | bool

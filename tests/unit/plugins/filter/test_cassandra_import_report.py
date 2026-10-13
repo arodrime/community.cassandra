@@ -12,6 +12,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_rep
 ARROW = u"\u2190"
 WRITTEN = ["/p/inventories/my_cluster.yml", "/p/inventories"]
 REPORT = "/p/reports/my_cluster/report.txt"
+REPORT_CHECK = "/p/reports/my_cluster/report.check.txt"
 STRICT_OFF = "-e import_cluster_strict=false only writes the inventory anyway, for inspection (not safe to apply)"
 
 
@@ -27,7 +28,8 @@ def report(nodes, ok=True, **kwargs):
     kwargs.setdefault("cwd", "/p")
     kwargs.setdefault("in_git", True)
     kwargs.setdefault("width", 160)
-    return cassandra_import_report(layout, WRITTEN, REPORT, kwargs.pop("self_check", {}), ok, **kwargs)
+    return cassandra_import_report(layout, WRITTEN, kwargs.pop("report_file", REPORT), kwargs.pop("self_check", {}), ok,
+                                   **kwargs)
 
 
 def test_compress():
@@ -120,12 +122,12 @@ def test_left_as_it_is_grouped_by_nodes():
 
 
 def test_screen_and_check():
-    lines = report([node(i) for i in range(1, 4)], check=True, screen=True,
+    lines = report([node(i) for i in range(1, 4)], check=True, screen=True, report_file=REPORT_CHECK,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
-    assert lines[0] == u"IMPORT my_cluster (--check, nothing written) — 3 nodes read / 3 — SELF-CHECK PASSED"
+    assert lines[0] == u"IMPORT my_cluster (--check, inventory not written) — 3 nodes read / 3 — SELF-CHECK PASSED"
     assert lines[1].startswith("Would write: ") and lines[2] == ""  # the report's path: last
     assert "TO DO (1)" in lines and "  1. Write it: the same command without --check" in lines
-    assert lines[-1] == "full report: written by the run without --check"
+    assert lines[-1] == "full report (--check): reports/my_cluster/report.check.txt"  # written, report.txt left
     assert "HAND EDITS" not in "\n".join(lines) and "NEXT" not in lines and "DETAILS" not in lines
     full = report([node(i) for i in range(1, 4)], check=True, leftovers={"stale": ["host_vars/gone/main.yml"]})
     assert "Would be removed (an earlier import's, not written again): host_vars/gone/main.yml" in full
@@ -219,13 +221,13 @@ def test_reimport_check_with_nothing_to_change_is_ready():
     unchanged = {"changed": [], "removed": [], "existed": ["my_cluster.yml", "group_vars/my_cluster/main.yml"]}
     screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=unchanged)
     assert screen == [
-        u"IMPORT my_cluster (--check, nothing written) — 3 nodes read / 3 — SELF-CHECK PASSED",
+        u"IMPORT my_cluster (--check, inventory not written) — 3 nodes read / 3 — SELF-CHECK PASSED",
         "Unchanged: inventories/my_cluster.yml, group_vars/my_cluster*/",
         "",
         u"READY — nothing to change",
         ""] + SETTINGS_3 + [
         "",
-        "full report: written by the run without --check"]
+        "full report (--check): reports/my_cluster/report.txt"]
     # the same without --check: nothing to review either
     screen = report([node(i) for i in range(1, 4)], screen=True, changes=unchanged)
     assert screen[3] == u"READY — nothing to change" and screen[-1] == "full report: reports/my_cluster/report.txt"

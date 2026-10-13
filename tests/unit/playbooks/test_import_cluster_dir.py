@@ -321,10 +321,16 @@ def test_invalid_hosts_file_points_to_the_report(report_dir, line):
     assert content.split("\n")[1] == line
 
 
+def report_vars(check=False, **given):
+    variables = write_vars(ansible_check_mode=check, **given)
+    variables["_report_args"] = {"report_file": render(WRITE_VARS["_report_args"]["report_file"], **variables)}
+    return variables
+
+
 def test_report_of_another_kept(tmp_path):
     task = TASKS["Write report.txt"]
     report = tmp_path / "report.txt"
-    variables = write_vars(_report_dir=str(tmp_path))
+    variables = report_vars(_report_dir=str(tmp_path))
     assert render(task["ansible.builtin.copy"]["backup"], **variables) is False  # none there yet
     for text, backup in (("# Written by community.cassandra.import_cluster for cluster_a: x\n", False),
                          ("# Written by community.cassandra.import_cluster for cluster_ab: x\n", True),
@@ -335,12 +341,21 @@ def test_report_of_another_kept(tmp_path):
 
 def test_check_diff_writes_nothing():
     """--check --diff reviews a re-import: the tasks that write or remove run in check mode (their diff shown, the
-    secrets hidden), the report is not written."""
+    secrets hidden); only the report is written, as report.check.txt (on the controller, report.txt left)."""
     write = next(p for p in PLAYS if p.get("name") == "Write the inventory")["tasks"]
+    report_tasks = ("Write report.txt", "Create the report dir")
     for task in write:
-        if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")):
+        if any(k in task for k in ("ansible.builtin.copy", "ansible.builtin.file")) and task["name"] not in report_tasks:
             assert "check_mode" not in task and "diff" not in task, task["name"]
-    assert TASKS["Write report.txt"]["when"] == "not ansible_check_mode"
+    assert [TASKS[name]["check_mode"] for name in report_tasks] == [False, False]
+    assert TASKS["Write report.txt"]["diff"] is False
+    assert TASKS["Write report.txt"]["ansible.builtin.copy"]["dest"] == "{{ _report_args.report_file }}"
+    assert report_vars()["_report_args"]["report_file"] == "/reports/cluster_a/report.txt"
+    assert report_vars(check=True)["_report_args"]["report_file"] == "/reports/cluster_a/report.check.txt"
+    # a re-import does not take report.check.txt for one of its files (it would remove it)
+    assert render(WRITE_VARS["_report_args"]["report_file"], ansible_check_mode=True, _report_dir="/inv") in [
+        "/inv/" + f for f in render(TASKS["Sort out the files an earlier import wrote"]["vars"]["_report_files"],
+                                    _report_dir="/inv", _dir="/inv")]
     assert TASKS["Write group_vars and host_vars"]["no_log"] == "{{ item.secret }}"
     assert "check=_report_args.check | bool" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]
     assert "screen=true" in TASKS["Show the summary"]["ansible.builtin.debug"]["msg"]

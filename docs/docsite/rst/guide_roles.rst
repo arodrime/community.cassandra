@@ -1218,7 +1218,8 @@ A re-import reads the cluster from the inventory (``-e cassandra_hosts=<cluster 
 or nothing when the inventory holds this cluster alone): its connection variables and its JMX and CQL logins, vaulted
 ones too, come with it, which ``-i <node>,`` does not give. Review it before it writes anything: with ``--check --diff``
 it shows the changes of every file it would
-write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing (nor ``report.txt``). Its
+write or remove (the ``secrets.yml`` files hidden) and the summary, and writes nothing in the inventory: only its
+report, as ``report.check.txt`` next to ``report.txt`` (left as it is). Its
 ``TO DO`` says what the run without ``--check`` would write (``Write it: ... (2 new files; changed: ...; removed:
 ...)``); a re-import that would change no file says ``READY — nothing to change``:
 
