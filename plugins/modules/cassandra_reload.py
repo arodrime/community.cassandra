@@ -57,13 +57,17 @@ cassandra_reload:
   description: The return state of the executed command.
   returned: success
   type: str
+error:
+  description: What nodetool said went wrong (its error line, else its first line of output).
+  returned: failure
+  type: str
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple, nodetool_error
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -104,10 +108,8 @@ def main():
         result['msg'] = "nodetool {0} executed successfully".format(cmd)
         module.exit_json(**result)
     else:
-        # nodetool's error line, else its first line of output (not a JVM banner)
-        lines = [line.strip() for line in (err + "\n" + out).splitlines()
-                 if line.strip() and not line.startswith("Picked up ") and "VM warning:" not in line]
-        lines = [line for line in lines if line.startswith("error:")] or lines
+        error = nodetool_error(out, err)
+        result['error'] = error
         result['rc'] = rc
         result['changed'] = False
         result['stdout'] = out
@@ -115,7 +117,7 @@ def main():
         result['msg'] = ("nodetool {0} did not execute successfully (rc {1}){2}. "
                          "The node keeps what it had loaded before: check its system.log, fix the cause, then reload "
                          "again"
-                         .format(cmd, rc, ": " + lines[0].rstrip(".") if lines else ""))
+                         .format(cmd, rc, ": " + error if error else ""))
         module.fail_json(**result)
 
 

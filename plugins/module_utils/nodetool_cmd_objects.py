@@ -16,6 +16,14 @@ def strip_jvm_banner(text):
     return ''.join(line for line in text.splitlines(True) if not JVM_BANNER_RE.match(line))
 
 
+def nodetool_error(out, err):
+    """What nodetool said went wrong, for a failure's message: its error line
+    ("error: ..."), else the first line of its output (not a JVM banner),
+    without its final dot; "" when it said nothing."""
+    lines = [line.strip() for line in strip_jvm_banner((err or "") + "\n" + (out or "")).splitlines() if line.strip()]
+    return next((line for line in lines if line.startswith("error:")), lines[0] if lines else "").rstrip(".")
+
+
 def cassandra_version_at_least(version_string, minimum_version):
     """Compare two "MAJOR.MINOR"-style Cassandra version strings, e.g.
     cassandra_version_at_least("5.0", "4.1") -> True.

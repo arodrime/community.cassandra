@@ -192,11 +192,13 @@
     - name: Say the drain did not work
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.msg | default('')
-                                                                 | regex_replace('[.] If its Mode .*$', '') }}): stopped all the same.
+          WARNING: {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.error | default('', true)
+                                                                 or cassandra_rack_drain.msg | default('no answer', true) }}): stopped all the same.
+      vars:
+        cassandra_output: true
       when:
         - cassandra_rack_drain is not skipped
-        - cassandra_rack_drain.failed | default(false) or cassandra_rack_drain.rc | default(0) != 0
+        - not cassandra_rack_drain.changed | default(false)  # an error, no answer, the timeout
 
     - name: Stop Cassandra
       ansible.builtin.include_role:
@@ -212,3 +214,6 @@
           lookup('community.cassandra.cassandra_hosts') }} -e cassandra_target_dc={{ cassandra_target_dc | default('(not set)') }}
           -e cassandra_target_rack={{ cassandra_target_rack | default('(not set)') }}
       run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true  # a block of its own

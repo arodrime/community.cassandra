@@ -105,7 +105,7 @@ def test_failure_fails(module, extra, command):
     result = exc.args[0]
     assert result["changed"] is False
     assert result["rc"] == 1
-    assert result["stderr"] == (err if module is cassandra_drain else err.strip())  # drain keeps it as is
+    assert result["stderr"] == err.strip() and result["error"] == "error: Some failure"
     assert result["msg"].startswith(
         "nodetool {0} did not execute successfully (rc 1): error: Some failure. ".format(command))
     assert [c.split()[0] for c in commands] == [command]
@@ -129,7 +129,7 @@ def test_failure_error_line_from_stdout(module, extra, command):
 
 @pytest.mark.parametrize("module, extra, command", CASES, ids=IDS)
 def test_check_mode_not_supported(module, extra, command):
-    """They declare no check mode support: Ansible skips them under --check."""
+    """No check mode: Ansible skips them under --check, which the playbooks rely on (no drain, no WARNING)."""
     run_main(module, extra, 0)
     assert FakeModule.supports_check_mode is False
 
