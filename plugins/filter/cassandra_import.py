@@ -1817,6 +1817,26 @@ Dumper.add_representer(Unsafe, lambda dumper, value: dumper.represent_scalar("!u
 TEMPLATE_MARK = re.compile(r"\{\{|\{%|\{#")
 
 
+def _plain(value):
+    """value with plain types only: Ansible hands filters str subclasses
+    (AnsibleUnsafeText, whose str() is itself), which yaml.safe_dump rejects."""
+    if isinstance(value, dict):
+        return dict((_plain(k), _plain(v)) for k, v in value.items())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_plain(v) for v in value]
+    if isinstance(value, bytes):
+        return bytes.decode(value, "utf-8", "surrogateescape")
+    if isinstance(value, str):
+        return str.encode(value, "utf-8", "surrogateescape").decode("utf-8", "surrogateescape")
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    return value
+
+
 def _unsafe(value):
     if isinstance(value, dict):
         return dict((k, _unsafe(v)) for k, v in value.items())
@@ -1835,7 +1855,7 @@ def _vars_yaml(variables, templates=None):
     data = _unsafe(json.loads(json.dumps(variables, default=str)))
     for key, template in (templates or {}).items():
         if variables.get(key) == template:
-            data[key] = str(template)
+            data[key] = _plain(template)
     grouped = {}
     for key in data:
         grouped.setdefault(_block(key), []).append(key)
@@ -1873,6 +1893,7 @@ def cassandra_inventory_files(layout):
     """[{path, content, secret}] for group_vars/<group>/ and
     host_vars/<host>/: main.yml, and secrets.yml for variables named like
     passwords (and extra settings holding one)."""
+    layout = _plain(layout)
     files = []
     for kind in ("group_vars", "host_vars"):
         for name, variables in sorted(layout[kind].items()):

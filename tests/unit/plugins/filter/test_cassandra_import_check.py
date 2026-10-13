@@ -995,6 +995,54 @@ def test_a_value_following_the_node_names_renders_each_nodes_own():
         "cassandra.yaml: hints_directory: node has '/data/n2/hints', import would write '/data/n1/hints'"]
 
 
+class _Tagged(str):
+    """As ansible-core 2.16 hands a filter a value read from a variable (AnsibleUnsafeText): str() is itself."""
+
+    def __str__(self):  # pylint: disable=invalid-str-returned
+        return self
+
+
+def _tagged(value):
+    if isinstance(value, dict):
+        return dict((_tagged(k), _tagged(v)) for k, v in value.items())
+    if isinstance(value, list):
+        return [_tagged(v) for v in value]
+    return _Tagged(value) if isinstance(value, str) else value
+
+
+def test_layout_read_back_from_a_variable_writes_the_same_files():
+    """The playbook keeps the layout in a variable: the filters then get str subclasses, which yaml.safe_dump
+    rejects (a template of the names, a nested section, extra settings of mixed types, JVM options)."""
+    nodes, live = [], {}
+    for name in ("n1", "n2"):
+        files = seeded(stock("50x"))
+        files["cassandra.yaml"] = enable(files["cassandra.yaml"], "hints_directory", "/data/%s/hints" % name)
+        live[name] = files
+        imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+        nodes.append({"name": name, "address": "10.0.0.%s" % name[1], "hostname": name, "dc": "dc1", "rack": "r1",
+                      "read": True, "vars": dict(imported["vars"], cassandra_version="50x",
+                                                 cassandra_medusa_nodetool_host="%s.example.net" % name,
+                                                 cassandra_extra_settings={"x": 1, "y": "a", "z": [1, "b", None],
+                                                                           "w": {"k": True, "v": 2.5}},
+                                                 cassandra_jvm_extra_opts=["-Da=1", "-Db=%s" % name]),
+                      "hand_edits": imported["hand_edits"], "normalized": [], "comments": [], "notes": [],
+                      "keep": {"cassandra_service_unit_manage": False}})
+    layout = cassandra_inventory_layout(nodes, "c")
+    assert layout["templates"]["cassandra_medusa_nodetool_host"] == "{{ inventory_hostname }}.example.net"
+    inventory = cassandra_inventory_files(layout)
+    assert cassandra_inventory_files(_tagged(layout)) == inventory
+    assert all(type(f["content"]) is str for f in inventory)  # pylint: disable=unidiomatic-typecheck
+    assert "cassandra_medusa_nodetool_host: '{{ inventory_hostname }}.example.net'" in "".join(
+        f["content"] for f in inventory)
+    # the self-check reads them back the same (the extra settings and options are not in the nodes' files)
+    tagged = cassandra_inventory_files(_tagged(layout))
+    for name in ("n1", "n2"):
+        args = (layout["hosts"], name, dict(FACTS, hostname=name), live[name], {}, "/var/lib/cassandra", "17", "", {})
+        out = cassandra_import_self_check(tagged, *args)
+        assert out == cassandra_import_self_check(inventory, *args)
+        assert not [d for d in out["differences"] if "hints_directory" in d or "medusa" in d]
+
+
 def test_keys_cassandra_rejects_are_a_note():
     # imported without them: the roles leave them out, as they must (the node would not restart with them)
     files = seeded(stock("41x"))
