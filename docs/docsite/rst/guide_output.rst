@@ -127,7 +127,8 @@ The ``community.cassandra.ops`` stdout callback prints:
   prints its ``success_msg``, nothing without one;
 - the ``msg`` of a marked ``assert`` or ``fail`` that fails, as it is (no task header);
 - every other failure as the default callback does (the task name, the host, the message, stdout and stderr), a
-  failed loop item too; a failure the task ignores (``ignore_errors``) is not printed;
+  failed loop item too; a failure the task ignores (``ignore_errors``) is not printed, one the playbook handles (a
+  task of a block with a ``rescue``) is one line (nothing when the block sets ``cassandra_output_rescued``);
 - an unreachable host as the default callback does; one line when the play goes on without it
   (``ignore_unreachable``);
 - the questions (``pause``), and the diffs under ``--diff``;
@@ -155,7 +156,7 @@ colour (coloured on the screen only, plain in a ``log_path`` file). Other callba
 Task variables the callback reads, each a literal ``true`` in the task's own ``vars``:
 
 - ``cassandra_output``: the task is an operator message;
-- ``cassandra_output_gap``: a blank line before the next message;
+- ``cassandra_output_gap``: a block of its own (above);
 - ``cassandra_output_rescued``: on a block, its rescue says what failed (the failure inside is not printed);
 - ``cassandra_output_info``: a summary that only informs (``cassandra_linux``'s data disks), its plain lines in
   the progress colour;
@@ -172,10 +173,10 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
   or failed, ``← down``, a recap's failed node, ``RING AND INVENTORY DIFFER``;
 - **cyan** (option ``progress_color``): ``NOTE``, the progress and phase lines, the first line of a plan or a
   screen, an informative summary (``cassandra_output_info``), the help's commands and options;
-- **orange** (option ``warning_color``, ``color208`` by default): every ``WARNING`` line, an informative
-  summary's too, apart from the changes (yellow) and Ansible's own warnings (purple).
+- **orange** (option ``warning_color``, ``color208`` by default): every ``WARNING`` line, indented or not, an
+  informative summary's too; apart from the yellow of the changes and the purple of Ansible's own warnings.
 
-The lines indented under a coloured one keep its colour, unless they carry a mark of their own.
+The lines indented under a coloured one keep its colour, unless they carry a mark of their own or a ``WARNING``.
 
 With ``-v`` or more, it is the default callback. Under the default callback, the same messages show as the
 ``msg`` of their task (as plain text with ``callback_result_format = yaml``).

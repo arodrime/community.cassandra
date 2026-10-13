@@ -26,7 +26,7 @@ description:
     C(cassandra_output_rescued) to C(true) (its rescue says what failed). Diffs (C(--diff)) too.
   - The warnings of the tasks are printed too.
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
-    C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color); C(DONE), C(HEALTHY),
+    C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
     C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
     says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
@@ -67,8 +67,9 @@ description:
 options:
   progress_color:
     description:
-      - The colour of the progress lines, the phase lines and the C(NOTE) lines, an Ansible colour name (C(cyan),
-        C(bright cyan), C(blue), C(normal)...).
+      - The colour of the progress lines, the phase lines, the C(NOTE) lines, the first line of a plan or a screen,
+        the informative summaries (C(cassandra_output_info)) and the help's commands and options, an Ansible colour
+        name (C(cyan), C(bright cyan), C(blue), C(normal)...).
       - Not set, C(cyan), readable on a dark and on a light background; or Ansible's C(COLOR_VERBOSE) when the
         configuration sets that one (C(blue) by default, hard to read on a dark background). A name Ansible does
         not know is left for that default.
@@ -83,7 +84,7 @@ options:
     description:
       - The colour of the C(WARNING) lines, an Ansible colour name (C(bright yellow), C(bright purple)...) or a
         256-colour one (C(color208), C(rgb520)...).
-      - Not set, C(color208) (orange), apart from the changes (yellow) and Ansible's own warnings (purple). A
+      - Not set, C(color208) (orange), apart from the yellow of the changes and the purple of Ansible's own warnings. A
         terminal without 256 colours shows it wrong, set C(bright yellow) or C(bright purple) there. A name Ansible
         does not know is left for that default.
     type: str
@@ -142,13 +143,14 @@ def _result(result):
 _PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
 # the first line of a plan or a screen ("PLAN  ...", "add_node on cluster ..."): as the progress lines
 PLAN_COLOUR = "PROGRESS"
+_WARNING = re.compile(r"WARNING\b")  # wherever it is indented
 # the colour of a message line by its start, the lines indented under it the same
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"\d+ NODES? DOWN: |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
     (re.compile(r"IMPORT \S+ .*\bFAILED\b|CHECK\b.*\bfailed\b"), "COLOR_ERROR"),
-    (re.compile(r"WARNING\b"), "WARNING"),
+    (_WARNING, "WARNING"),
     (re.compile(r"ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),
     (re.compile(r"ALL \d+ NODES? UP$"), "COLOR_OK"),
     (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
@@ -201,12 +203,12 @@ def colour(line, above=None, progress=PROGRESS_COLOR, warning=WARNING_COLOR):
             return C.COLOR_ERROR
         return None if row.group(2) == "N" else C.COLOR_CHANGED
     mark = next((name for pattern, name in _MARKS if pattern.search(line)), None)
-    if line[:1] in (" ", "\t") and line.strip():
-        return shade(mark) if mark else above
+    if line[:1] in (" ", "\t") and line.strip():  # its own mark, a WARNING, else the colour it is under
+        return shade(mark, progress, warning) if mark else warning if _WARNING.match(line.lstrip()) else above
     for pattern, name in _COLOURS:
         if pattern.match(line):
             return shade(name, progress, warning)
-    return shade(mark)
+    return shade(mark, progress, warning)
 
 
 def _indent(line):
