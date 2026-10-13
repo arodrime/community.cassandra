@@ -278,7 +278,7 @@ as the inventory describes it (name, Cassandra series and package version, insta
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
 several clusters, ``CASSANDRA_CLUSTER`` names another group or the dir is shared with other clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
-user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know); and advice from the inventory (nodes
+user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know), its options one per line with their default, and an example where one helps; and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
 
@@ -288,10 +288,11 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
     $ ansible-playbook -i inventories/orders.yml community.cassandra.help -e help_topic=decommission_node
     $ ansible-playbook -i inventories/orders.yml community.cassandra.help -e help_write=true
 
-``-e help_topic=<operation>`` shows one operation in detail: its command, its options one per line with their
-default, an example for this inventory (where one helps), and its documentation (the comment that starts the
-playbook). The default callback shows the help as plain text under its yaml result format, as a list of quoted
-lines under its json one (the default): set it in ``ansible.cfg`` (or ``ANSIBLE_CALLBACK_RESULT_FORMAT=yaml``):
+``-e help_topic=<operation>`` shows one operation in detail: its command, options and example as in the overview,
+the options of every operation, and its documentation (the comment that starts the playbook). Under the ``community.cassandra.ops`` callback, the help is
+laid out at the terminal's width, the operation names, the commands and their options coloured. The default
+callback shows it as plain text under its yaml result format, as a list of quoted lines under its json one (the
+default): set it in ``ansible.cfg`` (or ``ANSIBLE_CALLBACK_RESULT_FORMAT=yaml``):
 
 .. code-block:: ini
 

@@ -42,6 +42,10 @@ description:
     progress line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
     printed blank (not as a rule).
+  - The text of the C(help) playbook (a message with the task variable C(cassandra_output_help) set to C(true) too)
+    is laid out at the terminal's width (100 columns at most), its sections between rules, each operation's
+    name as ok, its commands (C($ ansible-playbook ...)) and the options of its commands in O(progress_color), what
+    they do plain.
   - The output goes by blocks, one blank line between two, never two in a row. A phase line (one line ending with
     C(...)) is a block of its own. A blank line comes before the
     next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
@@ -84,11 +88,14 @@ except ImportError:  # not a POSIX controller
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 
 from ansible import constants as C
-from ansible.utils.color import parsecolor
+from ansible.utils.color import parsecolor, stringc
+
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import BULLET, FLOW, laid_out
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
 RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
+HELP = "cassandra_output_help"  # the help playbook's text: laid out at the terminal's width, its keys coloured
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
@@ -131,6 +138,9 @@ _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
 # a row of the status playbook's nodetool table: its colour by the node's state
 _RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
+# the help playbook's text: a rule naming a section, an operation (its key), a command
+_HELP_RULE = re.compile(r"(====|----) (\S.*?) [=-]{4,}$")
+_HELP_COMMAND = re.compile(r"\s*\$ ")
 
 
 def colour(line, above=None, progress=PROGRESS_COLOR):
@@ -148,6 +158,27 @@ def colour(line, above=None, progress=PROGRESS_COLOR):
         if pattern.match(line):
             return progress if name == "PROGRESS" else getattr(C, name, None)
     return None
+
+
+def help_line(line, key, progress=PROGRESS_COLOR, laid=False):
+    """A line of the help text as printed: key (an operation's name, an
+    option), the start of the line, coloured: an operation as ok, an option
+    in progress; a command ($ ...) in progress, unless the line is text laid
+    out (laid: a value of the inventory starting with "$ "); the rest plain."""
+    if key and line.lstrip().startswith(key):
+        at = line.index(key)
+        shade = C.COLOR_OK if key.startswith(BULLET) else progress
+        return line[:at] + stringc(key, shade) + line[at + len(key):]
+    if not laid and _HELP_COMMAND.match(line):
+        at = line.index("$")
+        return line[:at] + stringc(line[at:], progress)
+    return line
+
+
+def rule_width(columns):
+    """The width of the rules and the help text for Ansible's columns (one
+    less than the terminal's; 79 when unknown): one less, 40 to 100."""
+    return min(100, max(40, (columns if columns and columns > 0 else 79) - 1))
 
 
 def progress_color(given=None):
@@ -259,25 +290,56 @@ class CallbackModule(DefaultCallback):
     def _verbose(self):
         return self._display.verbosity > 0
 
-    def _line(self, line, color=None):
+    def _line(self, line, color=None, plain=None):
+        """plain: the line without the colours it has in it (for the log)."""
         if not line.strip():
             if self._blank:
                 return  # never two blank lines in a row (a rule counts as one)
             line = ""
-        self._display.display(line, color=color)
+        if plain is not None and plain != line:  # coloured here: the log (log_path) gets it plain
+            self._display.display(line, screen_only=True)
+            self._display.display(plain, log_only=True)
+        else:
+            self._display.display(line, color=color)
         self._blank, self._ruled = not line, ""
+
+    def _width(self):
+        """The width of the rules and the help text: rule_width of the
+        terminal's columns as Ansible counts them, without Ansible's floor of
+        79 (a narrower terminal too); Ansible's when the size is unknown (a
+        file, a pipe, a terminal that says 0)."""
+        try:
+            columns = os.get_terminal_size(1).columns - 1  # the descriptor Ansible reads its columns from
+        except (AttributeError, OSError, ValueError):  # not a terminal
+            columns = 0
+        return rule_width(columns if columns > 0 else getattr(self._display, "columns", 0))
 
     def _rule(self, heavy=False, text=""):
         """A rule as wide as the terminal (100 columns at most), never two in a row."""
-        width = min(100, max(40, (getattr(self._display, "columns", 0) or 79) - 1))
         line = (("==== " if heavy else "---- ") + text + " ") if text else ""
-        line += ("=" if heavy else "-") * max(4, width - len(line))
+        line += ("=" if heavy else "-") * max(4, self._width() - len(line))
         if not self._ruled or (heavy and line != self._ruled):  # a heavy one wins over a light one
             if not self._blank:
                 self._display.display("")  # text never touches a rule: a blank line above it, one under it
             self._display.display(line)
             self._display.display("")
         self._ruled, self._blank = line, True
+
+    def _print_help(self, msg):
+        """The help playbook's text: its rules drawn as the other rules, its
+        lines laid out at the terminal's width, coloured by help_line."""
+        if self._gap:
+            self._line("")
+        self._gap = False
+        room = self._width()
+        for text in lines(msg):
+            rule = _HELP_RULE.match(text)
+            if rule:
+                self._rule(heavy=rule.group(1) == "====", text=rule.group(2))
+                continue
+            laid, key = laid_out(text, room)
+            for i, line in enumerate(laid):
+                self._line(help_line(line, key if i == 0 else "", self._progress, text.startswith(FLOW)), plain=line)
 
     def _print(self, msg, color=None):
         texts = lines(msg)
@@ -359,6 +421,8 @@ class CallbackModule(DefaultCallback):
         self._gap = self._gap or (_flag(task, GAP) and not looped)  # a loop's: before its first item
         self._looping = False
         if marked(task) and not looped and self._says(task):
+            if _flag(task, HELP):
+                return self._print_help(_result(result).get("msg"))
             self._print(_result(result).get("msg"))
 
     def _answered(self, res):

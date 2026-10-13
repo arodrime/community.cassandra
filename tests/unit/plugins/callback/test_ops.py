@@ -951,3 +951,164 @@ def test_a_refusal_block_is_red_on_its_verdict_line_only():
     said[:] = []
     callback.v2_runner_on_failed(_Result(_Task(run_once=True, path="x.yml:1"), "node7", ["No node was added."]))
     assert said == [("No node was added.", C.COLOR_ERROR)]
+
+
+# --- the help playbook's text ---
+
+HELP_INVENTORY = """
+cassandra:
+  children:
+    rack1:
+      hosts:
+        node1: {ansible_host: 192.0.2.11}
+        node2: {ansible_host: 192.0.2.12}
+    rack2:
+      hosts:
+        node3: {ansible_host: 192.0.2.13}
+  vars:
+    cassandra_seeds: 192.0.2.11,192.0.2.13
+"""
+
+HELP_TEXT = u"""
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Help text
+      ansible.builtin.debug:
+        msg:
+          - "Options of every operation:"
+          - "\\x1f42\\x1f    -e cassandra_hosts=<group>\\x1fthe cluster to run on (default:\\xa0the one in the commands)"
+          - ""
+          - "==== Nodes ===="
+          - ""
+          - "\\x1f23\\x1f  \\u25cf add_node\\x1fAdds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in turn."
+          - "      $ ansible-playbook community.cassandra.add_node -e cassandra_target_nodes=NEW_NODE"
+          - "\\x1f50\\x1f        -e cassandra_a_long_option_name=value\\x1fwhat it does"
+          - "\\x1f4\\x1f    $ rack1: a laid out text, not a command"
+          - "---- What it does ----"
+          - "NOTE  not a note here, nor DONE"
+      vars:
+        cassandra_output: true
+        cassandra_output_help: true
+
+    - name: Another playbook's message, its $ line and NOTE as ever
+      ansible.builtin.debug:
+        msg: ["NOTE  a note", "  $ ansible-playbook x"]
+      vars:
+        cassandra_output: true
+"""
+
+
+def test_help_line_colours():
+    from ansible import constants as C
+    from ansible.utils import color
+    from ansible_collections.community.cassandra.plugins.callback.ops import PROGRESS_COLOR, help_line
+    saved = color.ANSIBLE_COLOR
+    try:
+        color.ANSIBLE_COLOR = True
+        ok, cyan = color.parsecolor(C.COLOR_OK), color.parsecolor(PROGRESS_COLOR)
+        # an operation's name as ok, an option in the progress colour, the text after it plain
+        assert help_line(u"  ● add_node  Adds", u"● add_node") == u"  \x1b[%sm● add_node\x1b[0m  Adds" % ok
+        assert help_line("    -e x=y  what", "-e x=y") == "    \x1b[%sm-e x=y\x1b[0m  what" % cyan
+        assert help_line("    --check  what", "--check", progress="magenta") == "    \x1b[0;35m--check\x1b[0m  what"
+        # a command whole, from its $; a continuation line (no key) and any other line plain
+        assert help_line("      $ ansible-playbook x -e y=z", "") == "      \x1b[%sm$ ansible-playbook x -e y=z\x1b[0m" % cyan
+        assert help_line("            what it does", "") == "            what it does"
+        assert help_line("    $ rack1: node1", "", laid=True) == "    $ rack1: node1"  # an inventory's value
+        assert help_line("DONE  not coloured here", "") == "DONE  not coloured here"
+        color.ANSIBLE_COLOR = False  # ANSIBLE_NOCOLOR, not a terminal: as it is
+        assert help_line(u"  ● add_node  Adds", u"● add_node") == u"  ● add_node  Adds"
+        assert help_line("      $ ansible-playbook x", "") == "      $ ansible-playbook x"
+    finally:
+        color.ANSIBLE_COLOR = saved
+
+
+def test_width_of_rules_and_help():
+    from ansible_collections.community.cassandra.plugins.callback.ops import rule_width
+    assert rule_width(79) == 78 and rule_width(119) == 100 and rule_width(59) == 58 and rule_width(10) == 40
+    assert rule_width(0) == rule_width(-1) == rule_width(None) == 78  # unknown: Ansible's 79
+
+
+@pytest.mark.parametrize("columns, width", [(120, 100), (81, 79), (80, 78), (60, 58), (0, 78)])  # 0: a terminal that says 0
+def test_width_of_the_terminal(monkeypatch, columns, width):
+    import collections
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    size = collections.namedtuple("size", "columns lines")
+    monkeypatch.setattr(os, "get_terminal_size", lambda fd=None: size(columns, 24))
+    callback = CallbackModule()
+    monkeypatch.setattr(callback._display, "columns", 79)  # Ansible's for any terminal under 80 columns
+    assert callback._width() == width
+
+
+def test_help_text_in_the_log_without_colours(tmp_path):
+    log = tmp_path / "ansible.log"
+    rc, output = run(tmp_path, HELP_TEXT, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1", ANSIBLE_LOG_PATH=str(log))
+    assert rc == 0 and "\x1b[0;36m-e cassandra_hosts=<group>\x1b[0m" in output, output
+    text = log.read_text()
+    assert "    -e cassandra_hosts=<group>            the cluster to run on" in text and "\x1b" not in text, text
+
+
+def test_help_text_laid_out_and_coloured(tmp_path):
+    # not a terminal: Ansible's 79 columns, so 78; the rules drawn as the others; the lines laid out there
+    rc, output = run(tmp_path, HELP_TEXT)
+    assert rc == 0, output
+    assert output.splitlines() == [
+        "Options of every operation:",
+        "    -e cassandra_hosts=<group>            the cluster to run on (default: the",
+        "                                          one in the commands)",
+        "",
+        "==== Nodes " + "=" * 67,
+        "",
+        u"  ● add_node".ljust(23) + "Adds new hosts to the running cluster: all prepared at",
+        " " * 23 + "once, then each started and bootstrapped in turn.",
+        "      $ ansible-playbook community.cassandra.add_node -e cassandra_target_nodes=NEW_NODE",
+        "        -e cassandra_a_long_option_name=value",
+        "            what it does",
+        "    $ rack1: a laid out text, not a command",
+        "",
+        "---- What it does " + "-" * 60,
+        "",
+        "NOTE  not a note here, nor DONE",
+        "NOTE  a note",
+        "  $ ansible-playbook x",
+    ], output
+    assert "\x1f" not in output and u"\xa0" not in output
+    rc, output = run(tmp_path, HELP_TEXT, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
+    assert rc == 0, output
+    assert u"  \x1b[0;32m● add_node\x1b[0m" + " " * 11 + "Adds" in output, repr(output)
+    assert "    \x1b[0;36m-e cassandra_hosts=<group>\x1b[0m            the cluster" in output, repr(output)
+    assert "      \x1b[0;36m$ ansible-playbook community.cassandra.add_node" in output, repr(output)
+    assert "        \x1b[0;36m-e cassandra_a_long_option_name=value\x1b[0m\n" in output, repr(output)  # on its own line
+    assert "\n    $ rack1: a laid out text, not a command\n" in output, repr(output)
+    assert "\nNOTE  not a note here, nor DONE\n" in output  # help lines: no colour by their start
+    # another playbook's message keeps its colours: NOTE in cyan, a $ line as the line above
+    assert "\x1b[0;36mNOTE  a note\x1b[0m\n\x1b[0;36m  $ ansible-playbook x\x1b[0m" in output, repr(output)
+
+
+def help_run(tmp_path, *args, **env):
+    (tmp_path / "hosts.yml").write_text(HELP_INVENTORY)
+    return run(tmp_path, "- import_playbook: community.cassandra.help\n", *args, INVENTORY=str(tmp_path / "hosts.yml"),
+               **env)
+
+
+def test_the_help_playbook_under_the_ops_callback(tmp_path):
+    rc, output = help_run(tmp_path, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
+    assert rc == 0, output
+    assert u"\x1b[0;32m● add_node\x1b[0m" in output and "\x1b[0;36m-e cassandra_target_nodes=NEW_NODE\x1b[0m" in output
+    assert "\x1f" not in output and u"\xa0" not in output
+    plain = re.sub("\x1b\\[[0-9;]*m", "", output)
+    assert "\n==== Nodes " + "=" * 67 + "\n" in plain
+    assert not [line for line in plain.splitlines() if len(line) > 78 and not line.lstrip().startswith("$ ")]
+    rc, output = help_run(tmp_path)  # ANSIBLE_NOCOLOR: the same text, plain
+    assert rc == 0 and output == plain, output
+
+
+def test_the_help_playbook_under_the_default_callback(tmp_path):
+    # laid out at 100 columns by the filter, no layout mark left (the ops callback's)
+    rc, output = help_run(tmp_path, ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_CALLBACK_RESULT_FORMAT="yaml")
+    assert rc == 0, output
+    assert u"\n          ● add_node           Adds new hosts to the running cluster" in output, output
+    assert "\x1f" not in output and "\\u001f" not in output and u"\xa0" not in output
+    # with -v under the ops callback: the default callback's output, no layout mark either
+    rc, output = help_run(tmp_path, "-v")
+    assert rc == 0 and "\\u001f" not in output and "\x1f" not in output, output

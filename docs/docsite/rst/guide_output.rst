@@ -146,6 +146,12 @@ lines) are separated by ``PARAGRAPH`` (``plugins/module_utils/cassandra_output.p
 printed as a blank line. Under the default callback (``callback_result_format = yaml``) both show as blank lines in
 a text message.
 
+The help playbook's message also sets ``cassandra_output_help: true``: its lines (``flow`` in
+``plugins/module_utils/cassandra_output.py``) are laid out at the terminal's width (100 columns at most), its
+sections drawn as rules, each operation's name in the ok colour, its commands and their options in the progress
+colour (coloured on the screen only, plain in a ``log_path`` file). Other callbacks enabled next to it (``tree``,
+``junit``...) record that message with its layout marks.
+
 With ``-v`` or more, it is the default callback. Under the default callback, the same messages show as the
 ``msg`` of their task (as plain text with ``callback_result_format = yaml``).
 

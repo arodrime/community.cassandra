@@ -25,8 +25,8 @@
 # a node holding data is not in that ring, when a Cassandra runs that its unit
 # did not start, or when a node's live cassandra.yaml names another cluster. The token plan (one token per node),
 # then each node's plan is shown, then the operator types the cluster name (no
-# terminal: -e cassandra_create_cluster_reset_confirm=<cluster name> with
-# cassandra_operation_confirm=false); every node is stopped and disabled, then
+# terminal: -e '{"cassandra_create_cluster_reset_confirm": "<cluster name>"}'
+# with cassandra_operation_confirm=false); every node is stopped and disabled, then
 # emptied (reset_node.yml), then the cluster is created with the inventory's
 # settings. --check shows the plan only. A create that fails after the wipe:
 # run create_cluster again without the option.
