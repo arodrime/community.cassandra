@@ -1139,3 +1139,60 @@ def test_the_help_playbook_under_the_default_callback(tmp_path):
     # with -v under the ops callback: the default callback's output, no layout mark either
     rc, output = help_run(tmp_path, "-v")
     assert rc == 0 and "\\u001f" not in output and "\x1f" not in output, output
+
+
+def test_a_marked_loop_says_its_failed_items_once(tmp_path):
+    """preflight's "Every seed is up" (a run_once loop over the seeds): the message of each item that
+    failed, one block, no assert dump; the items that pass say nothing."""
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Every seed is up
+      ansible.builtin.assert:
+        that: item == 'a'
+        fail_msg: "Seed {{ item }} is not up: bring it back up."
+        quiet: true
+      loop: [a, b, c]
+      run_once: true
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc != 0
+    assert shown(output) == ["Seed b is not up: bring it back up.", "Seed c is not up: bring it back up."], output
+
+
+def test_a_marked_verdict_whose_template_fails_is_the_default_output(tmp_path):
+    """The task's own template error (e.g. -e cassandra_target_nodes='a:&'): core's message with the task's
+    name (the default callback's), not printed bare as if it were the verdict."""
+    playbook = """
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Only where the playbook takes it
+      ansible.builtin.assert:
+        that: "1 in (x | regex_search('('))"
+        fail_msg: the verdict
+        quiet: true
+      vars:
+        cassandra_output: true
+        x: abc
+      run_once: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc != 0
+    assert "Only where the playbook takes it" in output and "the verdict" not in output, output
+    assert "FAILED!" in output, output
+
+
+@pytest.mark.parametrize("msg", ["The conditional check 'a in b' failed. The error was: ...",
+                                 "The task includes an option with an undefined variable.. 'x' is undefined",
+                                 "Task failed: Syntax error in expression"])
+def test_core_template_errors_are_not_verdicts(msg):
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule()
+    task = _Task(run_once=True)
+    task.action = "ansible.builtin.assert"
+    assert callback._own_failure(_Result(task, "node1", msg)) is False
+    assert callback._own_failure(_Result(task, "node1", "Seed n5 is not up")) is True

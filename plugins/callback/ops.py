@@ -17,7 +17,8 @@ description:
     task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
     M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way,
     once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later); in red,
-    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...)).
+    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...)). A marked task that
+    fails on its own template (the error core gives instead of its C(msg)) is printed as the default callback does.
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
@@ -126,6 +127,9 @@ _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
 _VERDICTS = _ASSERTS + ("fail", "ansible.builtin.fail", "ansible.legacy.fail")
+# a marked task that failed on its own template: core's message, not the verdict ("Task failed: ..." since
+# ansible-core 2.19, the other two before)
+_CORE_ERRORS = ("Task failed: ", "The conditional check ", "The task includes an option with an undefined variable")
 
 
 def _task(result):
@@ -551,8 +555,9 @@ class CallbackModule(DefaultCallback):
         verdict, printed as is (else the default callback's failure)."""
         task, res = _task(result), _result(result)
         said = [line for line in lines(res.get("msg")) if line.strip()]
-        # an empty msg: nothing (2.16), or core's own "Task failed: ..." (2.19+): the default output then
-        return marked(task) and task.action in _VERDICTS and bool(said) and not said[0].startswith("Task failed: ")
+        # an empty msg: nothing (2.16); the task's own template that failed (core's error, not the verdict): the
+        # default output then, task name included
+        return marked(task) and task.action in _VERDICTS and bool(said) and not said[0].startswith(_CORE_ERRORS)
 
     def _verdict(self, result):
         """The verdict lines; the host first when the task runs on each host. A run_once

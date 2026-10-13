@@ -35,6 +35,8 @@ def render(template, **variables):
 
 CHECK = next(t for t in load("roles", "cassandra_service", "tasks", "hosts_check.yml")
              if t["name"] == "The cluster's group is in the inventory")
+SAY = next(t for t in load("roles", "cassandra_service", "tasks", "hosts_check.yml")
+           if t["name"] == "Say which group is the cluster's")
 GROUPS = {"all": ["n1", "n2"], "ungrouped": [], "prod": ["n1", "n2"], "empty": []}
 
 
@@ -56,7 +58,16 @@ def test_existing_group_passes():
 def test_missing_group_named_with_the_groups():
     passed, msg = check(cassandra_hosts="prd")
     assert passed is False
-    assert msg == "cassandra_hosts: group 'prd' not found in the inventory (groups: empty, prod)."
+    assert msg == ("cassandra_hosts: group 'prd' not found in the inventory (groups: empty, prod)."
+                   " Name the cluster's group: -e cassandra_hosts=<group>. Nothing was changed.")
+
+
+def test_the_refusal_is_a_verdict_and_the_group_line_is_the_default_callbacks():
+    # ops callback: the refusal's message alone (marked), no "Cluster group ..." line on every run (not marked)
+    assert CHECK["vars"]["cassandra_output"] is True
+    assert "success_msg" not in CHECK["ansible.builtin.assert"]
+    assert "cassandra_output" not in SAY["vars"]
+    assert SAY["vars"]["_name"] == CHECK["vars"]["_name"]
 
 
 def test_default_is_the_cluster_group():
@@ -67,7 +78,7 @@ def test_default_is_the_cluster_group():
 
 def test_shows_the_group_and_where_it_comes_from(monkeypatch):
     def shown(**variables):
-        return render(CHECK["ansible.builtin.assert"]["success_msg"], **dict(CHECK["vars"], **variables))
+        return render(SAY["ansible.builtin.debug"]["msg"], **dict(SAY["vars"], **variables))
 
     assert shown(groups=GROUPS) == "Cluster group prod (the inventory's cluster group)"
     assert shown(groups=GROUPS, cassandra_hosts="prod") == "Cluster group prod (cassandra_hosts)"
