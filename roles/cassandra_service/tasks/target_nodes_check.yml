@@ -6,16 +6,8 @@
 # A string (an inventory pattern), required by add, leave, reset and dead.
 # Their own checks come later (a dead node is an address, a host ID or an
 # inventory name: remove_dead_node checks it once the ring is read).
-- name: No variable under a former name
-  ansible.builtin.assert:
-    that: _renamed | length == 0
-    fail_msg: >-
-      {{ _renamed.items() | map('join', ' is renamed ') | join('; ') }}: set cassandra_target_nodes instead.
-      Nothing was changed.
-    quiet: true
-  vars:
-    _renamed: "{{ query('ansible.builtin.varnames', '^cassandra_') | community.cassandra.cassandra_renamed_names }}"
-  run_once: true
+- name: No unknown variable, none under a former name
+  ansible.builtin.import_tasks: variables_check.yml
 
 - name: Only where the playbook takes it
   ansible.builtin.assert:

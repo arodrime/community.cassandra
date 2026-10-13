@@ -8,6 +8,7 @@
 # --limit skips localhost, so this check too.
 - name: Check cassandra_target_nodes
   ansible.builtin.include_tasks: target_nodes_check.yml
+  tags: [always]  # its variables check under --tags too
 
 - name: Variables close to the playbooks' own
   ansible.builtin.debug:

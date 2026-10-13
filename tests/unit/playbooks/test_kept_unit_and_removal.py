@@ -336,9 +336,11 @@ def test_dead_node_by_address_host_id_or_inventory_name(target, ring, address):
 
 
 def test_former_name_refused_with_its_name_now():
-    check = load("roles", "cassandra_service", "tasks", "target_nodes_check.yml")[0]["ansible.builtin.assert"]
-    msg = render(check["fail_msg"], _renamed={"cassandra_new_nodes": "cassandra_target_nodes"})
-    assert msg == "cassandra_new_nodes is renamed cassandra_target_nodes: set cassandra_target_nodes instead. Nothing was changed."
+    check = load("roles", "cassandra_service", "tasks", "variables_check.yml")[0]
+    msg = render(check["ansible.builtin.assert"]["fail_msg"], _renamed={"cassandra_new_nodes": "cassandra_target_nodes"},
+                 _unknown={}, _nl="\n")
+    assert msg == ("REFUSED  variable names  nothing was changed\n"
+                   "  cassandra_new_nodes is renamed cassandra_target_nodes: set cassandra_target_nodes instead.")
 
 
 DEAD_CHECK = next(t for t in REMOVE["tasks"] if t["name"] == "Check the dead node")["ansible.builtin.assert"]
