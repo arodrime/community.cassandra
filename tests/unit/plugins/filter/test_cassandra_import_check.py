@@ -1031,6 +1031,8 @@ def test_layout_read_back_from_a_variable_writes_the_same_files():
     assert layout["templates"]["cassandra_medusa_nodetool_host"] == "{{ inventory_hostname }}.example.net"
     inventory = cassandra_inventory_files(layout)
     assert cassandra_inventory_files(_tagged(layout)) == inventory
+    lone = cassandra_inventory_files(_tagged(dict(layout, host_vars={"n1": {"cassandra_x": "a\ud800b"}})))
+    assert 'cassandra_x: "a\\uD800b"' in lone[-1]["content"]  # (a lone surrogate, from an escape in a node's yaml)
     assert all(type(f["content"]) is str for f in inventory)  # pylint: disable=unidiomatic-typecheck
     assert "cassandra_medusa_nodetool_host: '{{ inventory_hostname }}.example.net'" in "".join(
         f["content"] for f in inventory)

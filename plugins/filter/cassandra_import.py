@@ -1827,7 +1827,7 @@ def _plain(value):
     if isinstance(value, bytes):
         return bytes.decode(value, "utf-8", "surrogateescape")
     if isinstance(value, str):
-        return str.encode(value, "utf-8", "surrogateescape").decode("utf-8", "surrogateescape")
+        return "".join([value])  # a copy as a str (str() of AnsibleUnsafeText is itself)
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, int):
