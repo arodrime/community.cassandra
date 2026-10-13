@@ -26,8 +26,17 @@
     fail_msg: >-
       cassandra_hosts: group '{{ _name }}' {{ 'has no host' if _name in groups else 'not found in the inventory' }}
       (groups: {{ groups | list | reject('in', ['all', 'ungrouped']) | sort | join(', ') }}).
-    success_msg: >-
+      Name the cluster's group: -e cassandra_hosts=<group>. Nothing was changed.
+    quiet: true
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    # cassandra_hosts read as is: the lookup refuses a wrong one too (under --limit, where this play does not run)
+    _name: &name "{{ cassandra_hosts if cassandra_hosts | default('', true) else lookup('community.cassandra.cassandra_hosts') }}"
+
+# the default callback's line (the ops callback prints only the failure above)
+- name: Say which group is the cluster's
+  ansible.builtin.debug:
+    msg: >-
       Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) if groups[_name] | default([]) | length > 0 else _name }}
   vars:
-    # cassandra_hosts read as is: the lookup refuses a wrong one too (under --limit, where this play does not run)
-    _name: "{{ cassandra_hosts if cassandra_hosts | default('', true) else lookup('community.cassandra.cassandra_hosts') }}"
+    _name: *name

@@ -51,6 +51,10 @@ MARKED += [
     ("playbooks/preflight.yml", "Every node answers"),
     ("playbooks/apply_config.yml", "Refuse restarts while a node is not running"),
     ("roles/cassandra_service/tasks/target_nodes_check.yml", "Only where the playbook takes it"),
+    ("playbooks/preflight.yml", "Every seed is up"),  # a loop: one verdict for its items (ops callback)
+    ("playbooks/preflight.yml", "One Cassandra version in the cluster"),
+    ("playbooks/preflight.yml", "Racks per datacenter"),  # a loop too
+    ("roles/cassandra_service/tasks/hosts_check.yml", "The cluster's group is in the inventory"),
 ]
 
 

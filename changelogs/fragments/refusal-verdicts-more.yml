@@ -1,0 +1,3 @@
+bugfixes:
+  - ops callback - four more refusals made before any change print their message alone, not the assert's dump - a seed that is not up, several Cassandra versions in the cluster, a rack layout the token allocator refuses (preflight), and a ``cassandra_hosts`` group not in the inventory (which now says how to name it). The group check's ``Cluster group ...`` line is printed by the default callback only.
+  - ops callback - a marked verdict that fails on its own template (core's ``The conditional check ...`` or ``The task includes an option with an undefined variable`` before ansible-core 2.19) is printed as the default callback prints it, with the task's name, not as if it were the verdict.

@@ -335,6 +335,7 @@
                  else 'It is not a node of this cluster: check cassandra_seeds.' }}
             quiet: true
           vars:
+            cassandra_output: true  # a verdict: its msg as is, the seeds not up together (ops callback)
             # the hosts this run adds: cassandra_target_nodes (add_node), _cassandra_preflight_adding (topology)
             _new_nodes: "{{ _nn if _nn is string else _nn | join(',') }}"
             _nn: "{{ cassandra_target_nodes | default('', true) if _cassandra_preflight_target | default('') == 'add' else '' }}"
@@ -383,6 +384,7 @@
               (bootstrap streaming between versions can fail or leave the new node incomplete).
             quiet: true
           vars:
+            cassandra_output: true  # a verdict: its msg as is (ops callback)
             _section: "{{ (cassandra_preflight_describe.stdout ~ '\\n').split('Database versions:')[1:] | first | default('') }}"
             _versions: "{{ _section.split('\\n\\n') | first | regex_findall('(?m)^\\s+(\\S+: \\[.*\\])$') }}"
 
@@ -422,6 +424,7 @@
              ~ ': use 1 rack or at least ' ~ _hint ~ ' (cassandra_allocate_tokens_for_local_replication_factor)' }}
         quiet: true
       vars:
+        cassandra_output: true  # a verdict: its msg as is, the datacenters refused together (ops callback)
         _hint: "{{ cassandra_allocate_tokens_for_local_replication_factor }}"
         # create_cluster's reset: the ring there now is wiped, the nodes start as a new cluster
         _ring_nodes: >-
