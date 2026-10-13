@@ -226,6 +226,14 @@ datacenter and a rack the same way. A former name (``cassandra_new_nodes``, ``ca
 stops the run before anything is done, as ``cassandra_target_nodes`` given to a playbook that takes none (``help`` and
 ``import_cluster`` excepted: they read the inventory alone).
 
+Every playbook, ``help`` and ``import_cluster`` included, also stops before anything is done when a ``-e`` variable
+is named like one of the collection's (``cassandra_``, ``import_cluster_``, ``help_``, in any case, ``casandra_``
+too) but none of its roles or playbooks uses that name: a typo (``-e import_cluster_keep_hand_edit=true``) would otherwise be silently ignored. The message
+names the known variable it is close to, if any. A variable of your own under these names goes through with
+``-e cassandra_allow_unknown_variables=<name>,<name>`` (``true`` for every name). Only the ``-e`` variables are
+checked this way: the ones set in the inventory get the ``preflight`` warning above. ``--start-at-task`` and
+``--skip-tags always`` skip this check, as the other first checks.
+
 .. code-block:: console
 
     $ ansible-playbook -i inventory community.cassandra.preflight
