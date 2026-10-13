@@ -23,8 +23,8 @@
 # instead). -e help_inventory=<path> reads that inventory instead of the run's.
 # help decrypts nothing, even with the vault password: vault-encrypted vars
 # files are skipped (named in the advice), inline vaulted values shown as
-# (vaulted), lookups not run, -e variables not read, so no secret reaches the
-# output or RUNBOOK.md. The commands carry the vault and connection options
+# (vaulted), lookups not run, -e variables not read (their names only, checked),
+# so no secret reaches the output or RUNBOOK.md. The commands carry the vault and connection options
 # help was run with (no -b: the playbooks ask for root on the nodes themselves;
 # --ask-vault-pass when the inventory has vaulted values and the run no vault
 # password). A vault-encrypted file in group_vars/all is read by Ansible for
@@ -51,6 +51,14 @@
     _runbook_dir: "{{ help_runbook_dir | expanduser | realpath if help_runbook_dir | default('', true) else '' }}"
     _playbooks: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/*.yml') | map('basename') | map('splitext') | map('first') | list }}"
   tasks:
+    - name: No unknown variable
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: variables_check.yml
+      vars:
+        _cassandra_variables_check_renamed: false  # it reads neither the former names nor their name now
+      tags: [always]  # under --tags too
+
     - name: Read the inventory
       ansible.builtin.set_fact:
         _cassandra_help_model: "{{ _model }}"

@@ -228,12 +228,20 @@ cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
 
 # The variables the playbooks are run with (-e): a name set close to one of them
-# is pointed out (hosts_check.yml), and preflight warns about cassandra_*
-# variables no role or playbook knows
+# is pointed out (hosts_check.yml), preflight warns about cassandra_*
+# variables no role or playbook knows, and a -e one under a prefix of the
+# collection that none knows stops the run (variables_check.yml; -e
+# cassandra_allow_unknown_variables=true lets it through)
 _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassandra_target_dc, cassandra_target_rack,
                                 cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_dead_node_method,
                                 cassandra_dead_node_new_removal, cassandra_replace_address,
                                 cassandra_rebuild_source_dc, cassandra_cleanup_mode, cassandra_status_raw,
                                 cassandra_allow_down_nodes, cassandra_accept_default_identity,
                                 cassandra_add_node_reset, cassandra_replace_node_reset, cassandra_create_cluster_reset,
-                                cassandra_create_cluster_reset_confirm]
+                                cassandra_create_cluster_reset_confirm, cassandra_allow_unknown_variables,
+                                # import_cluster's and help's options (their header)
+                                import_cluster_dir, import_cluster_report_dir, import_cluster_force, import_cluster_host_names,
+                                import_cluster_set_ansible_host, import_cluster_vault_password_file, import_cluster_vault_id,
+                                import_cluster_medusa_path, import_cluster_keep_hand_edits, import_cluster_allow_unread,
+                                import_cluster_adopt, import_cluster_strict, import_cluster_debug,
+                                help_topic, help_write, help_runbook_dir, help_inventory]

@@ -21,6 +21,7 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: hosts_check.yml
+      tags: [always]  # its variables check under --tags too
 
 # The nodes of the cluster (without the hosts marked cassandra_node_state:
 # absent), and the nodes decommission_node removes or reset_node empties
@@ -71,6 +72,7 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
         tasks_from: target_nodes_check.yml
+      tags: [always]  # its variables check under --tags too
 
     # the cluster's members (not the hosts being added or reset, nor those marked absent) and the change
     - name: Say what the run does
@@ -206,10 +208,11 @@
             _cassandra_account_must_exist: false  # a new node gets the package (and its user) later
 
     # a typo, or a name from another version of the collection, is otherwise silently ignored
+    # (the -e ones: checked first, variables_check.yml)
     - name: Find the cassandra_* variables no role or playbook knows
       ansible.builtin.set_fact:
         _cassandra_preflight_unknown: >-
-          {{ query('ansible.builtin.varnames', '^cas+andra_')
+          {{ query('ansible.builtin.varnames', '^cas+andra_') | reject('in', query('community.cassandra.cassandra_extra_vars'))
              | community.cassandra.cassandra_unknown_names(_cassandra_playbook_variables) }}
 
     - name: Warn about them
