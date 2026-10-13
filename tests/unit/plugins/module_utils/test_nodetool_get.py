@@ -61,3 +61,8 @@ def test_parse_skips_other_lines():
 ])
 def test_parse_no_value(out):
     assert parse_nodetool_get(out) == (None, None, None)
+
+
+def test_parse_unit_on_the_value_line_only():
+    # a word on the next line is not taken for the unit
+    assert parse_nodetool_get("Current trace probability: 0.1\nwarning\n") == (0.1, None, "Current trace probability: 0.1")

@@ -29,7 +29,7 @@ def parse_nodetool_get(out, cast=float):
     is returned as 0. Returns (None, None, None) when no value is found.
     The number is read as Java prints it, exponent included ("1.0E7").
     """
-    match = re.search(r'^[^:\n]+:\s*(unlimited|-?\d+(?:\.\d+)?(?:E-?\d+)?)(?:\s+(\S+))?\s*$',
+    match = re.search(r'^[^:\n]+:[ \t]*(unlimited|-?\d+(?:\.\d+)?(?:E-?\d+)?)(?:[ \t]+(\S+))?[ \t]*$',
                       out, re.MULTILINE)
     if match is None:
         return None, None, None
