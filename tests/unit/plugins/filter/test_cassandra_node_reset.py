@@ -6,7 +6,7 @@ import pytest
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
-    cassandra_add_node_reset_check, cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real,
+    cassandra_add_node_refusal, cassandra_add_node_reset_check, cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real,
     cassandra_node_reset_ring, cassandra_reset_choice, reset_path_problem)
 
 INVENTORY = [["data", "/var/lib/cassandra/data"], ["commitlog", "/var/lib/cassandra/commitlog"],
@@ -460,11 +460,14 @@ def test_auto_reset_of_a_stock_node_that_is_down():
     out = _auto()
     assert out == {"reset": True, "problems": [],
                    "line": "node7 (dc1/rack_b): has data (12.0 GiB, cluster 'Test Cluster', not in any ring, down)"
-                           " — will be reset"}
+                           " — will be reset",
+                   "holds": "holds 12.0 GiB of cluster 'Test Cluster', not in the ring, stopped", "why": "", "former": False,
+                   "way": ""}
 
 
 def test_auto_reset_nothing_to_do_without_data():
-    assert _auto(has_data=False, running=True, live_cluster="other") == {"reset": False, "problems": [], "line": ""}
+    assert _auto(has_data=False, running=True, live_cluster="other") == {"reset": False, "problems": [], "line": "",
+                                                                         "holds": "", "why": "", "former": False, "way": ""}
 
 
 def test_auto_reset_refused_on_a_running_node():
@@ -534,11 +537,19 @@ def test_a_former_member_of_this_cluster_only_with_the_reset_given():
         " directories first if in doubt, then -e cassandra_add_node_reset=true resets it"]
     assert out["line"].startswith("node7 (dc1/rack_b): has data (12.0 GiB, cluster 'my_cluster', user keyspaces shop,"
                                   " not in any ring, down): not reset automatically, it holds this cluster's keyspaces")
+    # in short, for add_node's refusal block
+    assert (out["holds"], out["why"], out["former"]) == (
+        "holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped",
+        "a former member of this cluster: the writes only it holds would be lost if wiped", True)
+    # refused for another reason too: not only a former member (the reset given would not do)
+    assert _auto(running=True, **former)["former"] is False
     out = _auto(explicit=True, **former)
     assert out == {"reset": True, "problems": [], "line": (
         "node7 (dc1/rack_b): has data (12.0 GiB, cluster 'my_cluster', user keyspaces shop (a former member of this"
         " cluster), not in any ring, down) — will be reset (-e cassandra_add_node_reset=true: the writes only it holds"
-        " are lost; snapshot or copy its data first if in doubt)")}
+        " are lost; snapshot or copy its data first if in doubt)"),
+        "holds": "holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped", "why": "",
+        "former": False, "way": ""}
     # the explicit reset changes nothing else: still refused when running, or in the ring
     assert not _auto(explicit=True, running=True, **former)["reset"]
     # stock or empty nodes: as before, given or not
@@ -595,3 +606,91 @@ def test_auto_reset_a_cluster_with_the_stock_name_does_not_own_stock_nodes():
     out = _auto(cluster_name="Test Cluster", keyspaces=["system", "app"], cluster_keyspaces=["app"])
     assert out["problems"] == ["it holds user keyspaces (app): only a failed bootstrap of this cluster may"]
     assert _auto(cluster_name="Test Cluster")["reset"]  # blank of user data, never met a node: reset
+
+
+def test_add_node_refusal_one_block_then_what_to_do():
+    reset = "ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7"
+    add = "ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes="
+    former = {"name": "node7", "title": "node7 (dc1/rack_b)", "former": True,
+              "holds": "holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped",
+              "why": "a former member of this cluster: the writes only it holds would be lost if wiped"}
+    other = {"name": "node8", "title": "node8 (dc1/rack_c)", "former": False,
+             "holds": "holds 3.0 GiB of cluster 'billing', not in the ring, stopped",
+             "why": "its data is of cluster 'billing', neither 'my_cluster' nor the package's stock 'Test Cluster'",
+             "way": "a node of another cluster: take it out of cassandra_target_nodes"}
+    lines = cassandra_add_node_refusal([former, other], cluster="my_cluster", targets="node7,node8,node9",
+                                       inventory=["inventory"])
+    assert lines == [
+        "REFUSED  add_node  my_cluster  nothing was changed",
+        "",
+        "node7 (dc1/rack_b): holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped"
+        " \u2014 a former member of this cluster: the writes only it holds would be lost if wiped",
+        "node8 (dc1/rack_c): holds 3.0 GiB of cluster 'billing', not in the ring, stopped"
+        " \u2014 its data is of cluster 'billing', neither 'my_cluster' nor the package's stock 'Test Cluster'",
+        "",
+        "TO DO",
+        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt), empty it:",
+        "     " + reset,
+        " ",
+        "  2. then run add_node again without node8:",
+        "     " + add + "node7,node9",
+        " ",
+        "  3. or both in one run (add_node empties it first):",
+        "     " + add + "node7,node9 -e cassandra_add_node_reset=true",
+        " ",
+        "  4. node8: a node of another cluster: take it out of cassandra_target_nodes; then run add_node again:",
+        "     " + add + "node7,node8,node9",
+    ]
+    # refused for another reason only: the run again, or the others now
+    lines = cassandra_add_node_refusal([other], cluster="my_cluster", targets=["node8", "node9"], inventory=["inventory"])
+    assert lines[lines.index("TO DO"):] == [
+        "TO DO",
+        "  1. node8: a node of another cluster: take it out of cassandra_target_nodes; then run add_node again:",
+        "     " + add + "node8,node9",
+        " ",
+        "  2. or add the other nodes now without node8:",
+        "     " + add + "node9",
+    ]
+    # topology runs add_node's plays: it is run again as is
+    lines = cassandra_add_node_refusal([former], targets=["node7"], inventory=["inventory"], asked_by="topology")
+    assert lines[0] == "REFUSED  topology  nothing was changed"
+    assert lines[lines.index("TO DO"):] == [
+        "TO DO",
+        "  1. if what node7 holds is not needed (snapshot or copy it first if in doubt), empty it:",
+        "     " + reset,
+        " ",
+        "  2. then run topology again:",
+        "     ansible-playbook -i inventory community.cassandra.topology",
+        " ",
+        "  3. or both in one run (topology empties it first):",
+        "     ansible-playbook -i inventory community.cassandra.topology -e cassandra_add_node_reset=true",
+    ]
+    assert cassandra_add_node_refusal([]) == []
+
+
+@pytest.mark.parametrize("kwargs, way", [
+    (dict(ring_problems=["node1 sees 10.0.0.7 in its ring (UN, host ID x): node7 is a member of the cluster, never reset"
+                         " it"]), "a member of this cluster: never reset it; take it out of cassandra_target_nodes"),
+    (dict(ring_problems=["no other node of the cluster answered"]),
+     "its ring could not be checked: wait until the cluster's nodes answer"),
+    (dict(live_cluster="billing"), "a node of another cluster: take it out of cassandra_target_nodes, or, if nothing it"
+     " holds is needed, empty its directories by hand (reset_node refuses another cluster's node)"),
+    (dict(running=True), "if it holds nothing you need, stop Cassandra on it (systemctl stop cassandra): add_node then"
+     " resets it"),
+    (dict(live_cluster="my_cluster", keyspaces=["shop"]),
+     "let add_node read the cluster's keyspaces (CQL login: cassandra_cql_username, cassandra_cql_password)"),
+    (dict(keyspaces=["shop"]), "check what it holds; if nothing is needed, empty it (reset_node), else take it out of"
+     " cassandra_target_nodes"),
+])
+def test_each_refusal_says_its_way_out(kwargs, way):
+    out = _auto(**kwargs)
+    assert not out["reset"] and not out["former"] and out["way"] == way
+
+
+def test_the_way_out_of_a_former_member_goes_through():
+    """add_node's TO DO for a former member: -e cassandra_add_node_reset=true (the plan then resets it), or reset_node
+    (its own reset: no add_node check, see test_add_node_reset.py)."""
+    former = dict(live_cluster="my_cluster", keyspaces=["system", "shop"], peers=True, cluster_keyspaces={"shop": {}})
+    assert _auto(**former)["former"] is True
+    given = cassandra_reset_choice("true")  # the value the command gives
+    assert _auto(explicit=given == "true", **former)["reset"] is True

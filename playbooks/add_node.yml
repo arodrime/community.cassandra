@@ -125,6 +125,8 @@
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
             tasks_from: new_node_state.yml
+          vars:
+            _cassandra_new_node_refused_by_caller: true  # below, one block for all the nodes
 
         # Cassandra starts no bootstrap while another one runs: this node would fail to start
         - name: A still bootstrapping node goes before the new ones
@@ -158,6 +160,37 @@
             cassandra_output: true  # a verdict: its msg as is
           ansible.builtin.fail:
             msg: No node was added.
+
+    # A controlled stop, before anything else: one block (ops callback) for the nodes that are
+    # not simply new (in the ring already, down, its address another node's...), then what to do
+    - name: Refuse the nodes that are not new
+      ansible.builtin.assert:
+        that: _refused | length == 0
+        fail_msg: >-
+          {{ _refused | community.cassandra.cassandra_add_node_refusal(cluster=_p0.cassandra_cluster_name | default(''), **_cmd)
+             | join(_nl) }}
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _refused: >-
+          {%- set l = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].cassandra_new_node_state | default('new') not in ['new', 'joining', 'joined'] -%}
+          {%-   set f = hostvars[h]._cassandra_preflight | default({}) -%}
+          {%-   set where = [hostvars[h].cassandra_new_node_address | default('')]
+                            + ([f.cassandra_dc ~ '/' ~ f.cassandra_rack | default('?')] if f.cassandra_dc | default('') else []) -%}
+          {%-   set _ = l.append({'name': h, 'title': h ~ ((' (' ~ where | select | join(', ') ~ ')') if where | select | list else ''),
+                                  'holds': '', 'why': hostvars[h]._cassandra_new_node_refusal | default(''), 'former': false}) -%}
+          {%- endfor -%}
+          {{ l }}
+        _cmd:
+          targets: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) }}"
+          asked_by: "{{ _cassandra_screen_asked_by | default('') }}"
+          inventory: "{{ ansible_inventory_sources }}"
+          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+          hosts: "{{ cassandra_hosts | default('') }}"
+          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
 
     # Without the replication (no CQL access), the plan assumes the whole datacenter hands over data.
     # On one host without run_once: a run_once task that fails in a rescued block drops the other
@@ -284,6 +317,44 @@
       vars:
         _cassandra_node_reset_auto: true
         _cassandra_node_reset_on_screen: true  # what it deletes: in the screen's warnings, once
+        _cassandra_node_reset_refused_by_caller: true  # below, one block for all the nodes
+
+    # A controlled stop, before any question or change: one block (ops callback), what each
+    # node holds and why it is refused, then what to do
+    - name: Refuse the new nodes add_node may not reset
+      ansible.builtin.assert:
+        that: _refused | length == 0
+        fail_msg: >-
+          {{ _refused | community.cassandra.cassandra_add_node_refusal(cluster=_p0.cassandra_cluster_name | default(''), **_cmd)
+             | join(_nl) }}
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _refused: >-
+          {%- set l = [] -%}
+          {%- for h in _new if hostvars[h]._cassandra_node_reset_plan.problems | default([]) -%}
+          {%-   set p = hostvars[h]._cassandra_node_reset_plan -%}
+          {%-   set c = hostvars[h]._cassandra_node_reset_check | default({}) -%}
+          {%-   set f = hostvars[h]._cassandra_preflight | default({}) -%}
+          {%-   set other = p.problems | reject('in', c.problems | default([])) | list -%}
+          {%-   set why = ([c.why] if c.problems | default([]) else []) + (['reset refused: ' ~ other | join('; ')] if other else []) -%}
+          {%-   set _ = l.append({'name': h, 'title': h ~ ((' (' ~ f.cassandra_dc ~ '/' ~ f.cassandra_rack | default('?') ~ ')')
+                                                         if f.cassandra_dc | default('') else ''),
+                                  'holds': c.holds | default(''), 'why': why | join('; '),
+                                  'way': c.way | default('') if c.problems | default([]) else
+                                         'the directories above could not all be checked: fix that (root, the live cassandra.yaml)',
+                                  'former': c.former | default(false) and not other}) -%}
+          {%- endfor -%}
+          {{ l }}
+        _cmd:
+          targets: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) }}"
+          asked_by: "{{ _cassandra_screen_asked_by | default('') }}"
+          inventory: "{{ ansible_inventory_sources }}"
+          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+          hosts: "{{ cassandra_hosts | default('') }}"
+          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
 
     - name: Check the cleanup choice
       ansible.builtin.assert:

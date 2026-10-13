@@ -14,6 +14,8 @@ cassandra_node_reset_ring: whether the node may be reset, from the rings
 cassandra_add_node_reset_check: add_node's reset, on by default: only a node
     that is down, in no ring, of this cluster or the stock 'Test Cluster',
     with no user keyspace but a failed bootstrap's of this cluster.
+cassandra_add_node_refusal: add_node's refusal of the new nodes it may not
+    add or reset, one block, then what to do.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -26,6 +28,7 @@ import yaml
 
 from ansible.errors import AnsibleFilterError
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command as _command
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
 
 # cassandra.yaml keys of the directories a reset empties, their kind, and the
@@ -385,12 +388,17 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
     with removenode, put back in the inventory), whose writes no other
     replica got would be lost: refused unless explicit
     (-e cassandra_add_node_reset=true given).
-    Returns {'reset': bool, 'problems': [...], 'line': str}: without data,
-    nothing to reset (no line); else the line for the plan ("... - will be
-    reset") or the refusal, which says what the node holds."""
+    Returns {'reset': bool, 'problems': [...], 'line': str, 'holds': str,
+    'why': str, 'former': bool, 'way': str}: without data, nothing to reset (no line);
+    else the line for the plan ("... - will be reset") or the refusal, which
+    says what the node holds. holds and why: the refusal in short for
+    cassandra_add_node_refusal ("holds 12.0 GiB of cluster 'x' (keyspaces
+    shop), not in the ring, stopped", why it is refused); former: refused
+    only as a former member (reset_node or -e cassandra_add_node_reset=true
+    empties it); way: what to do about the first reason it is refused for."""
     title = title or node
     if not _true_value(has_data):
-        return {"reset": False, "problems": [], "line": ""}
+        return {"reset": False, "problems": [], "line": "", "holds": "", "why": "", "former": False, "way": ""}
     running = _true_value(running)
     ring_problems = [ring_problems] if isinstance(ring_problems, str) else list(ring_problems or [])
     users = sorted(set(k for k in keyspaces or [] if _user_keyspace(k)))
@@ -436,19 +444,103 @@ def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_da
                        if ours and not problems else ""))
     held.extend([ring, "running" if running else "down"])
     holds = "%s: has data (%s)" % (title, ", ".join(held))
+    short = "holds %s of %s%s, %s, %s" % (
+        cassandra_output.size(float(size or 0)), ("cluster '%s'" % live_cluster) if live_cluster is not None
+        else "an unknown cluster", (" (keyspaces %s)" % _names(users)) if users else "",
+        {"not in any ring": "not in the ring"}.get(ring, ring), "running" if running else "stopped")
     if problems:
-        return {"reset": False, "problems": problems,
+        only_former = former and len(problems) == 1
+        # the way out that works for the first reason, what it is refused for
+        if seen:
+            way = "a member of this cluster: never reset it; take it out of cassandra_target_nodes"
+        elif ring_problems:
+            way = "its ring could not be checked: wait until the cluster's nodes answer"
+        elif live_cluster is not None and live_cluster not in (cluster_name, STOCK_CLUSTER):
+            way = ("a node of another cluster: take it out of cassandra_target_nodes, or, if nothing it holds is needed,"
+                   " empty its directories by hand (reset_node refuses another cluster's node)")
+        elif running:
+            way = "if it holds nothing you need, stop Cassandra on it (systemctl stop cassandra): add_node then resets it"
+        elif users and live_cluster is not None and ours and cluster_keyspaces is None:
+            way = "let add_node read the cluster's keyspaces (CQL login: cassandra_cql_username, cassandra_cql_password)"
+        else:
+            way = ("check what it holds; if nothing is needed, empty it (reset_node), else take it out of"
+                   " cassandra_target_nodes")
+        return {"reset": False, "problems": problems, "holds": short, "former": only_former, "way": way,
+                "why": ("a former member of this cluster: the writes only it holds would be lost if wiped" if only_former
+                        else "; ".join(problems)),
                 "line": "%s: not reset automatically, %s. Nothing was changed: check what it holds; if nothing is"
                         " needed, empty it (reset_node) or remove it from cassandra_target_nodes"
                         % (holds, "; ".join(problems))}
-    return {"reset": True, "problems": [], "line": "%s \u2014 will be reset%s" % (holds, (
-        " (-e cassandra_add_node_reset=true: the writes only it holds are lost; snapshot or copy its data first if in"
-        " doubt)") if former else "")}
+    given = (" (-e cassandra_add_node_reset=true: the writes only it holds are lost; snapshot or copy its data first"
+             " if in doubt)") if former else ""
+    return {"reset": True, "problems": [], "holds": short, "why": "", "former": False, "way": "",
+            "line": "%s \u2014 will be reset%s" % (holds, given)}
+
+
+def cassandra_add_node_refusal(refused, cluster="", operation="add_node", targets=None, inventory=None, hosts=None,
+                               cwd=None, default_inventory=None, asked_by=""):
+    """add_node's refusal of new nodes, one block for all of them (the ops
+    callback rules it as a screen, its verdict line red), then what to do
+    with the commands. refused: [{'name', 'title': "node7 (dc1/rack_b)",
+    'holds': what it holds (cassandra_add_node_reset_check's, '' when not
+    known), 'why': why it is refused, 'way': what to do about it ('': its
+    why says it), 'former': only a former member of this cluster (reset_node
+    or -e cassandra_add_node_reset=true empties it)}];
+    targets: cassandra_target_nodes (a list, or names with commas);
+    inventory, hosts, cwd, default_inventory: as cassandra_command takes
+    them; asked_by: the playbook that runs add_node's plays (topology: run
+    again as is, no target list). [] when nothing is refused."""
+    refused = [r for r in refused or [] if r]
+    if not refused:
+        return []
+    op = asked_by or operation
+    names = targets.split(",") if isinstance(targets, str) else list(targets or [])
+    names = [str(n).strip() for n in names if str(n).strip()]
+    former = [r["name"] for r in refused if r.get("former")]
+    others = [r["name"] for r in refused if not r.get("former")]
+    rest = [n for n in names if n not in others]  # the targets without the nodes refused for another reason
+
+    def command(playbook, extra):
+        return _command(playbook, inventory=inventory, hosts=hosts, cwd=cwd, default_inventory=default_inventory,
+                        extra=extra)
+
+    def add(nodes, reset=False):
+        extra = {} if asked_by else {"cassandra_target_nodes": ",".join(nodes)}
+        if reset:
+            extra["cassandra_add_node_reset"] = "true"
+        return command(op, extra)
+
+    def them(nodes):
+        return "it" if len(nodes) == 1 else "them"
+
+    lines = ["  ".join(x for x in ["REFUSED", op, cluster, "nothing was changed"] if x), ""]
+    lines += ["%s: %s" % (r["title"], " \u2014 ".join(x for x in (r.get("holds"), r.get("why")) if x)) for r in refused]
+    shown = cassandra_output.nodes
+    without = ((" without %s" % shown(others, keep_order=True)) if others and rest and not asked_by
+               else (", once %s %s dealt with" % (shown(others, keep_order=True), "is" if len(others) == 1 else "are"))
+               if others else "")
+    items = []
+    if former:
+        items.append({"text": "if what %s %s is not needed (snapshot or copy it first if in doubt), empty %s" % (
+            shown(former, keep_order=True), "holds" if len(former) == 1 else "hold", them(former)),
+            "command": command("reset_node", {"cassandra_target_nodes": ",".join(former)})})
+        items.append({"text": "then run %s again%s" % (op, without), "command": add(rest or names)})
+        items.append({"text": "or both in one run (%s empties %s first)" % (op, them(former)),
+                      "command": add(rest or names, reset=True)})
+    for r in refused:
+        if not r.get("former"):
+            items.append({"text": ("%s: %s; then run %s again" % (r["name"], r["way"], op)) if r.get("way")
+                          else "%s: do what its line above says, then run %s again if still needed" % (r["name"], op),
+                          "command": add(names)})
+    if others and not former and rest and not asked_by:
+        items.append({"text": "or add the other nodes now%s" % without, "command": add(rest)})
+    return lines + [""] + cassandra_output.todo(items)
 
 
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_add_node_refusal": cassandra_add_node_refusal,
             "cassandra_add_node_reset_check": cassandra_add_node_reset_check,
             "cassandra_reset_choice": cassandra_reset_choice,
             "cassandra_cluster_reset_check": cassandra_cluster_reset_check,

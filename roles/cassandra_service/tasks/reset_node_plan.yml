@@ -370,4 +370,6 @@
       {{ (_cassandra_node_reset_plan.refusal ~ ((' Also: ' ~ _other | join('; ') ~ '.') if _other else ''))
          if _cassandra_node_reset_plan.refusal
          else 'Reset of ' ~ inventory_hostname ~ ' refused, nothing was changed: ' ~ _cassandra_node_reset_plan.problems | join('; ') ~ '.' }}
-  when: _cassandra_node_reset_plan.problems | length > 0
+  when:
+    - _cassandra_node_reset_plan.problems | length > 0
+    - not _cassandra_node_reset_refused_by_caller | default(false) | bool  # add_node: one block for all its nodes

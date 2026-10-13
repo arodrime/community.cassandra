@@ -16,7 +16,8 @@ description:
   - An operator message is a task with the task variable C(cassandra_output) set to C(true) (a literal, in the
     task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
     M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way,
-    once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later).
+    once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later); in red,
+    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...)).
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
@@ -412,7 +413,9 @@ class CallbackModule(DefaultCallback):
             host = getattr(result, "host", None) or result._host
             first = next(i for i, line in enumerate(msg) if line.strip())
             msg[first] = "%s: %s" % (host.get_name(), msg[first])
-        self._print(msg, color=C.COLOR_ERROR)
+        # a block of its own (REFUSED  add_node ..., FAILED  ...): coloured by its lines, its verdict line red
+        head = next((line for line in msg if line.strip()), "")
+        self._print(msg, color=None if _HEADED.match(head) or _RECAP.match(head) else C.COLOR_ERROR)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         if self._verbose():

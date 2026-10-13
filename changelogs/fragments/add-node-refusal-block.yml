@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - add_node playbook - the nodes it refuses (a former member of this cluster, a node of another cluster, a node already in the ring...) are said in one block under the ops callback, before any question or change - ``REFUSED  add_node  <cluster>  nothing was changed``, a line per node with what it holds and why, then a TO DO with the commands (``reset_node``, ``-e cassandra_add_node_reset=true``, the run again).
+  - ops callback - a verdict that is a block of its own (``REFUSED  ...``, ``FAILED  ...``) is coloured by its lines, its verdict line red, no longer all red.

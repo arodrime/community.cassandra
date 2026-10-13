@@ -69,10 +69,12 @@
       delegate_to: "{{ _from }}"
       failed_when: not cassandra_new_node_ring.cluster_status
 
-    - name: Refuse a node that is not simply new or joined
-      ansible.builtin.fail:
-        msg: >-
-          {{ inventory_hostname }} ({{ _address }}):
+    # add_node (_cassandra_new_node_refused_by_caller): kept for its one refusal block of all the nodes
+    - name: Say why {{ inventory_hostname }} is refused
+      ansible.builtin.set_fact:
+        _cassandra_new_node_refusal: "{{ _why | trim }}"
+      vars:
+        _why: >-
           {%- if _state == 'orphan' %}
           has data ({{ _data | join(', ') }}) but is not in the ring: an interrupted bootstrap, or data of another cluster.
           It was not reset: -e cassandra_add_node_reset=false was given. Without it, add_node empties such a node
@@ -97,6 +99,13 @@
           {{ _in_ring }} in the ring (J joining, L leaving, M moving): wait until it is UN, then run add_node again.
           {%- endif %}
       when: _state not in ['new', 'joining', 'joined']
+
+    - name: Refuse a node that is not simply new or joined
+      ansible.builtin.fail:
+        msg: "{{ inventory_hostname }} ({{ _address }}): {{ _cassandra_new_node_refusal }}"
+      when:
+        - _state not in ['new', 'joining', 'joined']
+        - not _cassandra_new_node_refused_by_caller | default(false) | bool
 
     - name: Remember where it stands
       ansible.builtin.set_fact:

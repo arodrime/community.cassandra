@@ -207,3 +207,14 @@ def test_topology_reads_the_keyspaces_before_the_reset_of_the_hosts_to_add():
     names = [t.get("name") for p in plays for t in p.get("tasks", [])]
     assert names.index("Read the keyspaces for the hosts to add") < names.index("Check the hosts to add")
     assert names.index("Share the keyspaces with the hosts to add") < names.index("Check the hosts to add")
+
+
+def test_the_ways_out_add_node_gives_a_former_member_go_through():
+    """add_node refuses a former member of this cluster and offers reset_node, or -e cassandra_add_node_reset=true:
+    both reset it (reset_node's own plan has no add_node check; the given reset lifts that one only)."""
+    former = dict(found=STOCK + [DATA + "/shop"], cluster="my_cluster", keyspaces={"shop": {"rf": 3}}, peers=PEERS, mark=False)
+    assert facts(**former)["_cassandra_node_reset_check"]["former"] is True
+    plan = facts(auto=False, **former)["_cassandra_node_reset_plan"]  # reset_node
+    assert plan["problems"] == [] and len(plan["delete"]) == 4
+    plan = facts(given="true", **former)["_cassandra_node_reset_plan"]  # add_node -e cassandra_add_node_reset=true
+    assert plan["problems"] == [] and plan["line"].endswith("snapshot or copy its data first if in doubt)")

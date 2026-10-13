@@ -933,3 +933,21 @@ def test_the_same_run_once_verdict_is_printed_once():
     each = _Task(run_once=False)
     assert verdicts(_Result(each, "node1", ["REFUSED  x"]), _Result(each, "node2", ["REFUSED  x"])) == [
         "node1: REFUSED  x", "node2: REFUSED  x"]
+
+
+def test_a_refusal_block_is_red_on_its_verdict_line_only():
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule()
+    said = []
+    callback._display = type("D", (), {"verbosity": 0, "columns": 80,
+                                       "display": lambda self, line, color=None, **kw: said.append((line, color))})()
+    block = ["REFUSED  add_node  my_cluster  nothing was changed", "", "node7 (dc1/rack_b): holds 12.0 GiB", "",
+             "TO DO", "  1. empty it:", "     ansible-playbook community.cassandra.reset_node"]
+    callback.v2_runner_on_failed(_Result(_Task(run_once=True), "node7", block))
+    coloured = dict((line, color) for line, color in said if line.strip() and not re.match(r"^[-=]{4,}$", line))
+    assert coloured == {block[0]: C.COLOR_ERROR, block[2]: None, block[4]: None, block[5]: None, block[6]: None}
+    # a verdict that is not a block of its own: red
+    said[:] = []
+    callback.v2_runner_on_failed(_Result(_Task(run_once=True, path="x.yml:1"), "node7", ["No node was added."]))
+    assert said == [("No node was added.", C.COLOR_ERROR)]
