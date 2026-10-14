@@ -86,8 +86,9 @@ Role Variables
         from node3   28.0/70.0 GiB  40% STALLED
   ```
 
-  Above 30 other nodes, one line sums up the ones keeping up and only the
-  stalled or lagging ones are detailed.
+  Above 30 other ends (a node streaming both ways counts twice), one line
+  sums them up (done, ok and their average, stalled, behind, the 3 slowest)
+  and only the stalled ones and the ones behind are detailed, 12 at most.
 
   The times are the controller's. After a minute without progress the line
   says it, as progress (`no progress for 3m`); after

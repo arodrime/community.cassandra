@@ -446,6 +446,9 @@ def test_peer_lines_fit_the_width():
     assert len(wide) == 4 and wide[0].count(" to ") == 4  # 4 columns at most
     assert len(narrow) == 14 and all(len(line) <= 60 for line in narrow)  # one when two do not fit
     assert len(out.peer_lines(_peers(14), width=80)) == 7  # two
+    # cells of 27 and gaps of 3 after the indent of 6: 3 columns from 93 on, the line ending with its last cell
+    assert len(max(out.peer_lines(_peers(14)), key=len)) == 6 + 3 * 27 + 2 * 3
+    assert len(out.peer_lines(_peers(14), width=93)) == 5 and len(out.peer_lines(_peers(14), width=92)) == 7
     assert max(len(line) for line in out.peer_lines(_peers(14))) <= out.PEER_WIDTH  # no width: PEER_WIDTH
 
 
@@ -461,22 +464,87 @@ def test_peer_lines_stalled_in_place_and_ways():
 
 
 def test_peer_lines_above_30_summed_up():
-    # 30: every one detailed; 31: the ok ones on one line
+    # 30: every one detailed; 31: one line sums them up
     assert len(out.peer_lines(_peers(30), width=100)) == 10
     assert out.peer_lines(_peers(31), width=100) == [
-        "      31 peers ok (avg 44%), slowest: node30 30%, node13 31%, node26 32%"]
-    lines = out.peer_lines(_peers(90, stalled=(5,), slow=(31, 44)), width=100)
+        "      31 peers: 31 ok (avg 44%); slowest: node30 30%, node13 31%, node26 32%"]
+    lines = out.peer_lines(_peers(90, stalled=(5,), slow=(31, 44)), width=110)
     assert lines == [
-        "      87 peers ok (avg 44%), slowest: node5 0% STALLED, node31 12%, node44 12%",
+        "      90 peers: 87 ok (avg 44%), 1 STALLED, 2 behind; slowest: node5 0% STALLED, node31 12%, node44 12%",
         "      to node5   0.0/7.2 GiB   0% STALLED   to node31  0.9/7.2 GiB  12%",
         "      to node44  0.9/7.2 GiB  12%"]
     done = [dict(p, done=p["total"]) for p in _peers(40)]
-    assert out.peer_lines(done) == ["      40 peers ok (avg 100%)"]
+    assert out.peer_lines(done) == ["      40 peers: 40 done"]
     done[0]["done"] = 0  # the slowest: the ones not done only
-    assert out.peer_lines(done) == ["      39 peers ok (avg 100%), slowest: node1 0%", "      to node1  0.0/7.2 GiB  0%"]
+    assert out.peer_lines(done) == ["      40 peers: 39 done, 1 ok (avg 0%); slowest: node1 0%"]
     stuck = [dict(p, stalled=True, done=0) for p in _peers(31)]
     assert out.peer_lines(stuck, width=100)[0] == \
-        "      0 peers ok, slowest: node1 0% STALLED, node2 0% STALLED, node3 0% STALLED"
+        "      31 peers: 31 STALLED; slowest: node1 0% STALLED, node2 0% STALLED, node3 0% STALLED"
+
+
+def test_peer_lines_summed_up_done_apart_and_never_behind_at_the_start():
+    # the ones done are not in the average: 20 at 30% next to 40 done are ok, not behind
+    peers = [dict(p, done=p["total"] if i < 40 else 0.3 * p["total"]) for i, p in enumerate(_peers(60))]
+    assert out.peer_lines(peers, width=100) == [
+        "      60 peers: 40 done, 20 ok (avg 30%); slowest: node41 30%, node42 30%, node43 30%"]
+    # the start of a stream: most at 0%, none behind before the average means something
+    peers = [dict(p, done=0.5 * p["total"] if i < 2 else 0) for i, p in enumerate(_peers(100))]
+    assert out.peer_lines(peers, width=100) == [
+        "      100 peers: 100 ok (avg 1%); slowest: node3 0%, node4 0%, node5 0%"]
+    # once it does: below half of it, behind
+    peers = [dict(p, done=0.4 * p["total"] if i else 0.1 * p["total"]) for i, p in enumerate(_peers(40))]
+    assert out.peer_lines(peers, width=100) == [
+        "      40 peers: 39 ok (avg 40%), 1 behind; slowest: node1 10%, node2 40%, node3 40%",
+        "      to node1  0.7/7.2 GiB  10%"]
+
+
+def test_peer_lines_summed_up_stalled_first_and_details_capped():
+    # a peer stalled at 58% is the slowest, before one at 30%
+    peers = _peers(40)
+    peers[3]["stalled"] = True
+    lines = out.peer_lines(peers, width=100)
+    assert lines[0] == "      40 peers: 39 ok (avg 44%), 1 STALLED; slowest: node4 58% STALLED, node30 30%, node13 31%"
+    assert lines[1:] == ["      to node4  4.2/7.2 GiB  58% STALLED"]
+    # at most PEERS_DETAILED under it, the stalled first (here further on than the slow ones), then by name;
+    # the others counted
+    peers = _peers(60, stalled=range(41, 61), slow=range(1, 6))
+    for p in peers[40:]:
+        p["done"] = 0.2 * p["total"]
+    lines = out.peer_lines(peers, width=100)
+    assert lines[0].startswith("      60 peers: 35 ok (avg 44%), 20 STALLED, 5 behind; slowest: node41 20% STALLED")
+    detailed = [w for line in lines[1:-1] for w in line.split() if w.startswith("node")]
+    assert detailed == ["node%d" % i for i in range(41, 41 + out.PEERS_DETAILED)]
+    assert lines[-1] == "      +13 more: 8 STALLED, 5 behind"
+    assert out.peer_lines(_peers(60, stalled=range(1, 61)), width=100)[-1] == "      +48 more: 48 STALLED"
+
+
+def test_peer_lines_behind_its_bounds():
+    def behind(parts):  # [percent] -> the ones behind
+        peers = [dict(p, done=p["total"] * part / 100.0) for p, part in zip(_peers(len(parts)), parts)]
+        return [w for line in out.peer_lines(peers, width=100)[1:] for w in line.split() if w.startswith("node")]
+    # an average of 10: below 5 behind; of 9: none
+    assert behind([4] + [10] * 35 + [16]) == ["node1"]
+    assert behind([4] + [9] * 36) == []
+    # at half the average: not behind, below it: behind
+    assert behind([20] + [40] * 39 + [60]) == []
+    assert behind([19] + [40] * 39 + [61]) == ["node1"]
+
+
+def test_peer_lines_summary_in_the_width():
+    peers = [dict(p, name="cassandra-node-%d.dc1.example.com" % i, way=w)
+             for i, p in enumerate(_peers(20, stalled=(1, 2, 3))) for w in ("to", "from")]
+    for width in (60, 80, 100, 200):  # (a cell wider than the width stays whole)
+        assert len(out.peer_lines(peers, width=width)[0]) <= width, width
+    assert out.peer_lines(peers, width=80)[0] == "      40 peers: 34 ok (avg 45%), 6 STALLED"
+    assert "; slowest: from cassandra-node-0.dc1.example.com 0% STALLED, " in out.peer_lines(peers, width=200)[0]
+    assert out.peer_lines(_peers(90, stalled=(5,), slow=(31, 44)), width=100)[0] == \
+        "      90 peers: 87 ok (avg 44%), 1 STALLED, 2 behind; slowest: node5 0% STALLED, node31 12%"
+
+
+def test_peer_lines_summed_up_both_ways_named_with_their_way():
+    both = [dict(p, way=w) for p in _peers(20) for w in ("to", "from")]
+    assert out.peer_lines(both, width=100) == [
+        "      40 peers: 40 ok (avg 44%); slowest: from node13 31%, to node13 31%, from node9 33%"]
 
 
 def test_progress_line_stalled_only_from_the_warning_threshold():
@@ -487,12 +555,12 @@ def test_progress_line_stalled_only_from_the_warning_threshold():
         return out.progress_line(1, 1, "node4", "bootstrap", "JOINING", done=0.2 * GIB, total=2.3 * GIB, now=NOW,
                                  start=NOW - 120, idle=idle, limit=1800, warn=300, peers=kwargs.get("peers", peers))
     assert line(60) == ["[1/1] node4 bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  no progress for 1m  2m",
-                        "      from node1 0.2/2.3 GiB no progress for 1m"]
+                        "      from node1  0.2/2.3 GiB  8% no progress for 1m"]
     assert "no progress for 4m  " in line(299)[0] and "STALLED" not in line(299)[0]
     assert "STALLED 5m/30m" in line(300)[0]
     stalled = [dict(peers[0], idle=300, stalled=True)]
-    assert line(300, peers=stalled)[1] == "      from node1 0.2/2.3 GiB stalled"
-    assert line(0, peers=[dict(peers[0], idle=30)])[1] == "      from node1 0.2/2.3 GiB ok"
+    assert line(300, peers=stalled)[1] == "      from node1  0.2/2.3 GiB  8% STALLED"
+    assert line(0, peers=[dict(peers[0], idle=30)])[1] == "      from node1  0.2/2.3 GiB  8%"
 
 
 def test_progress_line_says_the_disk_growing_while_netstats_is_still():

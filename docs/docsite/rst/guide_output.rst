@@ -60,16 +60,19 @@ Conventions
   from each role's change report: the lists per role and node with ``-v`` or in ``cassandra_change_report_dir``).
   The data disks' summary follows only when something was set, a line to act on (not tuned yet, a restart to take it), a warning, or with ``-v``.
 - **Progress**: one line per check, then always the nodes at the other end, in aligned columns (as many as fit
-  in the terminal, 4 at most), by name, a stalled one in place and in red::
+  in the terminal, 4 at most; here 100 columns), by name, a stalled one in place, its line in red::
 
-    [1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m
+    [1/2] node5 bootstrap  JOINING  [####------]  46%  25.2/54.0 GiB  89 MiB/s  ETA 13:33 (5m)  10m
           from node1  18.0/34.0 GiB   52%           from node2    3.0/3.0 GiB  100%
           from node3   4.2/17.0 GiB   24% STALLED
 
-  Above 30 of them, one line for the ones keeping up and only the stalled ones and those below half the average
-  detailed under it::
+  Above 30 of them (a node streaming both ways counts twice), one line sums them up: the ones done, the ones
+  keeping up and their average, the stalled ones, the ones behind (below half the average of all the ones not
+  done, once that is 10%) and the 3 slowest (as many as fit); only the stalled ones and the ones behind are
+  detailed under it, 12 at most (the others counted, ``+13 more: 8 STALLED, 5 behind``)::
 
-          87 peers ok (avg 44%), slowest: node5 0% STALLED, node31 12%, node44 12%
+    [1/1] node3 decommission  LEAVING  [####------]  43%  282.2/648.0 GiB  410 MiB/s  ETA 16:01 (15m)  2h10m
+          90 peers: 87 ok (avg 44%), 1 STALLED, 2 behind; slowest: node5 0% STALLED, node31 12%
           to node5   0.0/7.2 GiB   0% STALLED   to node31  0.9/7.2 GiB  12%
           to node44  0.9/7.2 GiB  12%
 
@@ -318,7 +321,8 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
   ``node1  applied``), the nodes
   joining, leaving or moving;
 - **red** (error): ``REFUSED``, ``FAILED``, ``NOT HEALTHY``, ``IMPORT ... FAILED``, a progress line that stalled
-  or failed, ``← down``, a recap's failed node, ``1 NODE DOWN: ...``, ``1 NODE NOT REACHED: ...``;
+  or failed, a line of the other ends with a ``STALLED`` one, ``← down``, a recap's failed node,
+  ``1 NODE DOWN: ...``, ``1 NODE NOT REACHED: ...``;
 - **cyan** (option ``progress_color``): ``NOTE``, the progress and phase lines, the first line of a plan or a
   screen, an informative summary (``cassandra_output_info``), the help's commands and options;
 - **purple**, Ansible's own warning colour (``[colors] warn`` in ``ansible.cfg``, bright purple by default; the
