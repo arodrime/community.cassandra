@@ -95,9 +95,11 @@ def test_only_the_files_cassandra_config_writes(tmp_path):
     assert found["unit"]["exists"] is True and found["unit"]["path"] == str(tmp_path / "unit")
     assert found["unit"]["checksum"] == hashlib.sha1(b"[Unit]\n").hexdigest()
     assert base64.b64decode(found["record"]) == b"{}"
+    # when the record was written: apply_config trusts it for the running JVM only when written after its start
+    assert found["record_mtime"] == os.stat(str(tmp_path / "record.json")).st_mtime
     argv[4:6] = [str(tmp_path / "no-unit"), str(tmp_path / "no-record")]
     found = json.loads(subprocess.run(argv, stdout=subprocess.PIPE, check=True).stdout)
-    assert found["unit"] == {"exists": False} and found["record"] is None
+    assert found["unit"] == {"exists": False} and found["record"] is None and found["record_mtime"] is None
 
 
 @pytest.mark.parametrize("checksum, expected", [("y1", []), ("y2", ["cassandra.yaml"])])

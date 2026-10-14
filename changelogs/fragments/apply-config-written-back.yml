@@ -1,0 +1,2 @@
+minor_changes:
+  - apply_config - a config file deleted or edited by hand on a running node and written back with the content Cassandra started with (the checksums recorded at its start) no longer restarts it, Cassandra runs with exactly that content; the plan and the recap say so (``jvm17-server.options written back as the running Cassandra started with it: no restart for it``). Only when that record was written after the running JVM started; any other change, a restart pending for another file or its unit, an older record or none still restart the node.
