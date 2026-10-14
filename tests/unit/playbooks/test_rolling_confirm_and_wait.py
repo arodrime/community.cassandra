@@ -174,6 +174,11 @@ def test_a_nodetool_failure_is_waited_for_only_while_another_node_sees_that_node
         other = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.2"), node("10.0.0.4", "D"))],
                                           2, "node2")
         assert [f["kind"] for f in cassandra_health_waiting(other, NAMES)] == ["state"]
+        # node2 seen joining or leaving (not waited for): its nodetool is not either
+        for state in ("J", "L", "M"):
+            busy = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.1"), node("10.0.0.2", "U", state))],
+                                             2, "node2")
+            assert cassandra_health_waiting(busy, NAMES) == [], state
         # no view of node2 at all (the other read failed too): no wait
         assert cassandra_health_waiting(cassandra_health_findings([failed_on("node2", error), failed_on("node1", error)], 2,
                                                                   "node2"), NAMES) == []
@@ -185,7 +190,8 @@ def test_a_nodetool_failure_is_waited_for_only_while_another_node_sees_that_node
                         ("[Errno 2] No such file or directory: b'nodetool'", ""),
                         ("nodetool can't reach JMX on 10.0.0.2:7199 (non-JRMP server at remote endpoint): is Cassandra running", ""),
                         ("nodetool gets no answer from JMX on 10.0.0.2:7199 (no route to host): the host is down", ""),
-                        ("nodetool error: error: Connection refused", "")):
+                        ("nodetool error: error: Connection refused", ""),
+                        ("nodetool error: " + REFUSED_JMX, "")):
         waiting = cassandra_health_waiting(cassandra_health_findings([failed_on("node2", msg, stderr), seen_down], 2, "node2"),
                                            NAMES)
         assert [f["kind"] for f in waiting] == ["state"], msg
