@@ -1,0 +1,3 @@
+minor_changes:
+  - rolling_restart, rolling_reboot - the plan is shown and the run asked once before anything starts, like the other node operations (``-e cassandra_operation_confirm=false`` goes on without asking, ``--check`` asks nothing; a run without a terminal stops, saying so).
+  - cassandra_service - the cluster health check before and after a node no longer waits in silence for a node down (up to ``cassandra_service_health_timeout``, 10 minutes by default) - it reads the cluster again every ``cassandra_stream_check_interval`` seconds (sooner at first), with a progress line naming what it waits for (``[2/5] node2 restart  waiting for node4 (10.0.0.4) DN to come back  1m/10m``); a stop after the wait says how long it waited.

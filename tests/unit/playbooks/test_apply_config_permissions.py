@@ -289,10 +289,10 @@ def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
         no_wait = render(include["_cassandra_health_no_wait"], dict(values, cassandra_service_health_down_ok=down_ok))
         assert no_wait in (bool(expected), str(bool(expected)))
     block = [t for t in load("roles", "cassandra_service", "tasks", "cluster_health.yml") if "block" in t][0]
-    poll = block["vars"]["_poll"]
-    for no_wait, check, polls in ((True, False, 1), (False, False, 60), (False, True, 1)):  # --check waits for nothing
-        assert int(render(poll, {"_cassandra_health_no_wait": no_wait, "cassandra_service_health_timeout": 600,
-                                 "ansible_check_mode": check})) == polls
+    wait_on = block["vars"]["_cassandra_health_wait_on"]
+    for no_wait, check, waits in ((True, False, False), (False, False, True), (False, True, False)):  # --check waits for nothing
+        assert render(wait_on, {"_cassandra_health_no_wait": no_wait, "cassandra_service_health_timeout": 600,
+                                "ansible_check_mode": check}) in (waits, str(waits))
 
 
 def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
@@ -384,7 +384,7 @@ def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
         variables = {"groups": {"all": hosts, "cassandra": hosts}, "hostvars": hostvars, "inventory_hostname": me,
                      "ansible_play_hosts": play, "cassandra_service_health_batch": batch}
         assert render(peer, with_task_vars(work, variables)) == expected
-    block = [t for t in load("roles", "cassandra_service", "tasks", "cluster_health.yml") if "block" in t][0]
+    block = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]
     shared = [t for t in block["block"] if t.get("delegate_to") == "{{ _cassandra_health_peer }}" and "async" in t]
     assert [t["name"] for t in shared] == ["Read the ring from {{ _cassandra_health_peer }}",
                                            "Check schema agreement (same answer from any node)"]

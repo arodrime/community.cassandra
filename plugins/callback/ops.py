@@ -30,7 +30,7 @@ description:
     C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
     says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
-    progress lines (C([1/2] node5 ...)), the phase lines (ending with C(...)) and the first line of a plan or a
+    progress lines (C([1/2] node5 ...), and the health check's wait for nodes down, C(... waiting for ...  1m/10m)), the phase lines (ending with C(...)) and the first line of a plan or a
     screen (C(PLAN  ...), C(add_node on cluster ...)) in O(progress_color). The lines of an informative summary
     (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
     in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
@@ -155,6 +155,8 @@ _COLOURS = (
     (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
     (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\bPASSED\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s" % _PHASE.pattern), "PROGRESS"),
+    # the health check's wait for nodes down, outside a rolling operation (no [i/n])
+    (re.compile(r"\S.*  (waiting for .*  \d+[smhd]\S*/\d+[smhd]\S*|all back after \d\S*)$"), "PROGRESS"),
 )
 # a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
 # a node down, a setting that differs, what a node would get or got, what a reset deletes
@@ -169,7 +171,7 @@ PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_c
 # a plan or a screen (its first line), a recap, a progress line
 _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_node|replace_node|decommission_node|remove_dead_node|"
                      r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|add_datacenter|"
-                     r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
+                     r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart|rolling_reboot)( on cluster |: |$)")
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
 # the status playbook's verdict, its last line: heavy rules around it
