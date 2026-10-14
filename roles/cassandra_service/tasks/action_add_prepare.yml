@@ -67,6 +67,8 @@
   vars:
     cassandra_seeds: "{{ _cassandra_join_seeds }}"
     cassandra_config_confirm: "{{ _cassandra_add_config_confirm }}"
+    # what an -e cassandra_config_confirm=true can't override: the add's question covered it
+    _cassandra_config_no_question: "{{ _cassandra_add_config_confirm | string | lower == 'false' }}"
     _cassandra_config_new_node: "{{ _cassandra_add_config_new }}"
 
 - name: Open the firewall

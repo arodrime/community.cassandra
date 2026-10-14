@@ -548,9 +548,12 @@
         _cassandra_config_changes: >-
           {{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file')
              | reject('in', _kept) | list }}
+        # _cassandra_config_no_question: the caller's own question covered it (an -e cassandra_config_confirm
+        # beats the caller's cassandra_config_confirm: false, not this)
         _cassandra_config_ask: >-
           {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _kept)
              | list | length > 0
+             and not _cassandra_config_no_question | default(false) | bool
              and (_cassandra_config_initialized | bool if cassandra_config_confirm | string | lower == 'auto'
                   else cassandra_config_confirm | bool) }}
       vars:
@@ -577,6 +580,20 @@
       when:
         - _cassandra_config_changes | length > 0
         - not _cassandra_config_quiet | default(false)  # shown by the caller (apply_config: before its run)
+        - not (_cassandra_config_ask | bool and not ansible_check_mode)  # (next)
+
+    # the diffs the question below is about: printed by the ops callback too, each node's under its name
+    - name: Show the config changes to confirm
+      ansible.builtin.debug:
+        msg: >-
+          {{ [inventory_hostname ~ ':'] + cassandra_config_preview.results | selectattr('stdout')
+             | rejectattr('cassandra_config_file', 'in', _cassandra_config_kept) | map(attribute='stdout_lines') | flatten }}
+      when:
+        - _cassandra_config_changes | length > 0
+        - not _cassandra_config_quiet | default(false)
+        - _cassandra_config_ask | bool and not ansible_check_mode
+      vars:
+        cassandra_output: true
 
     - name: Say which files are left as they are
       ansible.builtin.debug:
