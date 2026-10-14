@@ -92,3 +92,13 @@
   vars:
     cassandra_change_report_role: cassandra_install
     cassandra_change_report_items: "{{ _cassandra_install_items | default([]) }}"
+    # what is installed (the step lines of a prepare), from the packages read above
+    cassandra_change_report_state:
+      cassandra: "{{ (ansible_facts['packages']['cassandra'] | default([{}]) | first).version | default('') }}"
+      java:
+        managed: "{{ cassandra_install_java | bool }}"
+        package: "{{ _java_package }}"
+        version: "{{ (ansible_facts['packages'][_java_package] | default([{}]) | first).version | default('') }}"
+        home: "{{ _cassandra_java_home }}"
+        series: "{{ cassandra_java_version | string }}"
+    _java_package: "{{ [cassandra_java_package] | flatten | map('regex_replace', '[=<>].*$', '') | first | default('') }}"  # without its version

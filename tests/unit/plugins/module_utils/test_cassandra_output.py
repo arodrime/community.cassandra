@@ -222,6 +222,142 @@ def test_plan_check_and_refused():
         ["PLAN  cleanup  c1", "", "f", "", "WARNING  w", "", "--check: nothing will be changed"]
 
 
+# --- the prepare of new nodes ---
+
+JAVA = {"managed": True, "package": "openjdk-17-jre-headless", "version": "17.0.12+7-1~deb12u1", "home": "",
+        "series": "17"}
+CONFIG = [{"item": "/etc/cassandra/%s" % f, "before": "current", "after": "%d line(s) changed" % n}
+          for f, n in (("cassandra.yaml", 40), ("jvm-server.options", 3), ("cassandra-rackdc.properties", 2))]
+
+
+def prepared(name, **kw):
+    """A node as prepare_lines.yml keeps it (_cassandra_prepare_done): new, Cassandra installed now."""
+    node = {"name": name, "ran": ["cassandra_install", "cassandra_linux", "cassandra_config"], "repository": "ok",
+            "packages": [{"item": "package cassandra", "before": "absent", "after": "5.0.9"}],
+            "cassandra": "5.0.9", "java": JAVA, "os": 2,
+            "disks": {"name": name, "kb": "4", "changed": False, "brief": ["sdb (ssd): read-ahead 4 KB"], "warnings": []},
+            "config": CONFIG, "firewall": "off", "medusa": "off", "seeds": "10.0.0.1,10.0.0.2"}
+    node.update(kw)
+    return node
+
+
+def test_prepare_lines_one_line_per_step_nodes_grouped():
+    assert out.prepare_lines([prepared("node4"), prepared("node5", packages=[], os=0)]) == [
+        "node4, node5  repository  ok (already set)",
+        "node4         install     cassandra 5.0.9 (installed now)",
+        "node5         install     cassandra 5.0.9 (already installed)",
+        "node4, node5  java        17.0.12 (already installed)",
+        "node4         os tuning   2 changes",
+        "node5         os tuning   ok (already set)",
+        "node4, node5  data disks  read-ahead 4 KB already set",
+        "node4, node5  config      3 files written",
+        "node4, node5  firewall    off (cassandra_manage_firewall: false)",
+        "node4, node5  medusa      off (cassandra_medusa_enabled: false)",
+        "node4, node5  seeds       joins with 10.0.0.1, 10.0.0.2"]
+
+
+def test_prepare_lines_check_mode_says_would():
+    lines = out.prepare_lines([prepared("node4", repository="set", java=dict(JAVA, version=""),
+                                        packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
+                                                  {"item": "package openjdk-17-jre-headless", "before": "absent",
+                                                   "after": "17.0.13+11-1~deb12u1"}],
+                                        disks=dict(prepared("node4")["disks"], changed=True),
+                                        firewall=[{"item": "port 7000", "before": "closed", "after": "open"}],
+                                        medusa=[{"item": "Medusa", "before": "absent", "after": "0.24.1"}])],
+                              check=True)
+    assert lines == [
+        "node4  repository  would be set",
+        "node4  install     cassandra 5.0.9 (would be installed)",
+        "node4  java        17.0.13 (would be installed)",
+        "node4  os tuning   would make 2 changes",
+        "node4  data disks  read-ahead 4 KB would be set",
+        "node4  config      would write 3 files",
+        "node4  firewall    would make 1 change",
+        "node4  medusa      would install Medusa 0.24.1",
+        "node4  seeds       would join with 10.0.0.1, 10.0.0.2"]
+    assert not [line for line in lines if "now" in line or "written" in line]
+
+
+def test_prepare_lines_steps_off_or_not_managed():
+    node = prepared("node7", repository="off", java={"managed": False}, disks={}, config=[], firewall="not managed",
+                    ran=["cassandra_install", "cassandra_config", "cassandra_medusa"],
+                    medusa=[{"item": "Medusa", "before": "absent", "after": "0.24.1"},
+                            {"item": "/etc/profile.d/cassandra-medusa.sh", "before": "absent", "after": "PATH"}],
+                    seeds="", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
+                                        {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
+    assert out.prepare_lines([node]) == [
+        "node7  repository  not managed (cassandra_repository_manage: false)",
+        "node7  install     cassandra 5.0.9 (installed now; also libjemalloc2)",
+        "node7  java        not managed (cassandra_install_java: false)",
+        "node7  os tuning   not managed (cassandra_linux_manage: false)",  # no data disks line then
+        "node7  config      ok (unchanged)",
+        "node7  firewall    not managed (cassandra_firewall_manage: false)",
+        "node7  medusa      Medusa 0.24.1 installed now (+1 change)"]  # no seeds: create_cluster's
+
+
+def test_prepare_lines_other_outcomes():
+    node = prepared("node8", repository="packages", java=dict(JAVA, home="/opt/java/jdk-17.0.12", version="17.0.12"),
+                    disks={"name": "node8", "kb": "", "changed": False, "brief": [], "warnings": ["sdb: no scheduler"]},
+                    config=[{"item": "config files", "before": "Cassandra not installed yet", "after": "8 files templated"}],
+                    cassandra="", packages=[{"item": "package cassandra", "before": "absent",
+                                             "after": "not in configured repos yet"},
+                                            {"item": "package libjemalloc2", "before": "absent", "after": "5.3.0-1"}])
+    assert out.prepare_lines([node], check=True)[:6] == [
+        "node8  repository  none (cassandra_install_method: packages)",
+        "node8  install     cassandra (would be installed: not in configured repos yet; also libjemalloc2)",
+        "node8  java        17.0.12 from /opt/java/jdk-17.0.12",
+        "node8  os tuning   would make 2 changes",
+        "node8  data disks  nothing to tune (1 warning below)",
+        "node8  config      would write the files (cassandra not installed yet)"]
+    perms = [{"item": "/etc/cassandra/cassandra.yaml owner", "before": "root", "after": "cassandra"}]
+    assert "node8  config      2 files written, 1 other change" in out.prepare_lines(
+        [prepared("node8", config=CONFIG[:2] + perms)])
+    assert "node8  config      1 other change" in out.prepare_lines([prepared("node8", config=perms)])
+
+
+def test_prepare_lines_a_pinned_java_installed_now():
+    node = prepared("node4", packages=[{"item": "package cassandra", "before": "absent", "after": "5.0.9"},
+                                       {"item": "package openjdk-17-jre-headless=17.0.12*", "before": "absent",
+                                        "after": "not in configured repos yet"}])  # what the role looks up as is
+    lines = out.prepare_lines([node])
+    assert "node4  install     cassandra 5.0.9 (installed now)" in lines  # not "also openjdk-..."
+    assert "node4  java        17.0.12 (installed now)" in lines
+
+
+def test_prepare_lines_disks_not_tuned_yet_point_below():
+    node = prepared("node4", disks=dict(prepared("node4")["disks"], info=["sdc: not tuned yet (LVM deferred)"]))
+    assert "node4  data disks  read-ahead 4 KB already set (see below)" in out.prepare_lines([node])
+    node = prepared("node4", disks=dict(prepared("node4")["disks"], changed="on"))  # a flag as Ansible may give it
+    assert "node4  data disks  read-ahead 4 KB set now" in out.prepare_lines([node])
+
+
+def test_prepare_lines_many_nodes_ranges_and_nothing():
+    lines = out.prepare_lines([prepared("node%d" % i) for i in range(1, 8)])
+    assert lines[0] == "node1..node7  repository  ok (already set)"  # no "7 nodes: " on every line
+    assert out.prepare_lines([]) == [] and out.prepare_lines(None) == []
+    assert out.prepare_lines([{"name": "node1"}]) == []  # a node that ran no step
+
+
+def test_left_system_warning_once_with_its_nodes():
+    hosts = [{"name": n, "left": ["/var/lib/cassandra/data"], "dirs": ["/data/cassandra"]} for n in ("node4", "node5")]
+    lines = out.left_system_warning(hosts + [{"name": "node6", "left": [], "dirs": ["/data/cassandra"]}])
+    assert max(len(line) for line in lines[1:]) <= 110  # wrapped, under the WARNING line (its colour)
+    assert all(line.startswith("  ") for line in lines[1:])
+    text = " ".join(line.strip() for line in lines[1:])
+    assert lines[0] == ("WARNING: node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data"
+                        " directories the config uses (/data/cassandra)")
+    assert text.startswith("Cassandra does not read it: the node starts empty")  # why: ignored for the run
+    # the way out: its keyspace directories, not the whole directory; never another instance's
+    assert "if no other Cassandra on node4, node5 uses it: delete by hand the keyspace directories in" in text
+    assert "reset_node does not" in text and "keeping" not in text
+    assert "already initialized" not in " ".join(lines)
+    # a data directory of the config under it: kept
+    inside = out.left_system_warning([{"name": "node4", "left": ["/var/lib/cassandra/data"],
+                                       "dirs": ["/var/lib/cassandra/data/d1"]}])
+    assert "keeping /var/lib/cassandra/data/d1." in " ".join(line.strip() for line in inside)  # what the hostile suite checks an add never says
+    assert out.left_system_warning([{"name": "node6", "left": []}]) == []
+
+
 # --- progress (Q2) ---
 
 NOW = time.mktime((2026, 10, 8, 13, 24, 0, 0, 0, -1))

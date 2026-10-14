@@ -15,7 +15,8 @@ docs/docsite/rst/guide_output.rst.
   aligned, wrapped in a width: wrap_value, wrap_list), setting_rows, by_nodes;
   lines fit in a terminal's width: fit; laid out at the width where they are
   printed: flow, laid_out (the help text);
-- before a change: plan; during it: progress_line; at the end: recap,
+- before a change: plan; while new nodes are prepared: prepare_lines,
+  left_system_warning; during it: progress_line; at the end: recap,
   perm_lines, diff_lines, changed_lines;
 - what is left to do: command, extra_var, todo, inventory_steps,
   in_git_work_tree;
@@ -742,6 +743,7 @@ PHASES = {
     "check_leaving": "Checking the nodes to remove ({nodes})...",
     "ring": "Reading the ring and seeds...",
     "prepare": "Preparing the new nodes ({nodes})...",
+    "prepare_cluster": "Preparing the nodes ({nodes})...",
     "join": "Starting {node} and waiting for its bootstrap...",
     "join_again": "Waiting for the bootstrap of {node} (started by an earlier run)...",
     "join_no_stream": "Starting {node}, joining without streaming (auto_bootstrap false)...",
@@ -822,6 +824,196 @@ def check_what(present, kind="", targets=None, replacing="", run=None, absent=No
     if run is not None and set(run) != set(whole):
         text += "; --limit: " + nodes(run, keep_order=True)
     return text
+
+
+# --- the prepare of new nodes ---------------------------------------------------------------
+
+# The steps of a prepare (cassandra_service action_add_prepare.yml, create_cluster), in their order
+PREPARE_STEPS = ("repository", "install", "java", "os tuning", "data disks", "config", "firewall", "medusa", "seeds")
+_FILE_CHANGED = re.compile(r"\d+ line\(s\) changed$")  # cassandra_config's item for a file it writes
+_VERSION = re.compile(r"(?:\d+:)?(\d+(?:\.\d+)*)")  # "1:17.0.12+7-1~deb12u1" -> 17.0.12
+
+
+def _on(value):
+    """A flag as Ansible may template it: True, "True", "yes", "on"..."""
+    return value is True or str(value).strip().lower() in ("true", "yes", "on", "y", "1")
+
+
+def _version(text):
+    found = _VERSION.match(str(text or ""))
+    return found.group(1) if found else str(text or "")
+
+
+def _changes(count, check):
+    if not count:
+        return "ok (already set)"
+    return ("would make %s" if check else "%s") % plural(count, "change")
+
+
+def _grouped(pairs):
+    """[(key, name)] -> [(key, [names])], the keys in the order first seen."""
+    groups = []
+    for key, name in pairs:
+        group = next((g for g in groups if g[0] == key), None)
+        if group is None:
+            groups.append((key, [name]))
+        else:
+            group[1].append(name)
+    return groups
+
+
+def _package(item):
+    """The package a change item of cassandra_install names, without a version pin ("pkg=17.0.12*"), else ""."""
+    text = str(item.get("item", ""))
+    return re.sub(r"[=<>].*$", "", text[len("package "):]) if text.startswith("package ") else ""
+
+
+def _package_step(name, version, items, check, also=(), label=None):
+    """A package's text: "cassandra 5.0.9 (installed now)", "(already installed)", "(would be
+    installed)"; label: what names it ("" for its version alone), also: other packages installed with it."""
+    new = next((i for i in items if _package(i) == name), None)
+    if new is None:
+        state = "already installed"
+    else:
+        state = "would be installed" if check else "installed now"
+        after = new.get("after") or ""
+        # (a pinned name the role looked up as is: "not in configured repos yet", the version read is better)
+        version = after if _VERSION.match(str(after)) or not _VERSION.match(str(version or "")) else version
+    extra = "; also " + ", ".join(also) if also else ""
+    label = name if label is None else label
+    shown = _version(version)
+    if shown and not _VERSION.match(str(version or "")):  # a candidate not found ("not in configured repos yet")
+        return ("%s (%s: %s%s)" % (label, state, version, extra)).strip()
+    return ("%s %s (%s%s)" % (label, shown, state, extra) if shown else "%s (%s%s)" % (label, state, extra)).strip()
+
+
+def _prepare_texts(node, check):
+    """{step: text} for one node of prepare_lines (a step it has nothing for: left out)."""
+    texts = {}
+    items = list(node.get("packages") or [])
+    repository = node.get("repository")
+    if repository:
+        texts["repository"] = {
+            "off": "not managed (cassandra_repository_manage: false)",
+            "packages": "none (cassandra_install_method: packages)",
+            "set": "would be set" if check else "set now",
+        }.get(repository, "ok (already set)")
+    ran = list(node.get("ran") or [])
+    if "cassandra_install" in ran:
+        java = node.get("java") or {}
+        others = [_package(i) for i in items if _package(i) not in ("", "cassandra", str(java.get("package", "")))]
+        texts["install"] = _package_step("cassandra", node.get("cassandra"), items, check, also=others)
+        if not _on(java.get("managed", True)):
+            texts["java"] = "not managed (cassandra_install_java: false)"
+        elif java.get("home"):
+            texts["java"] = "%s from %s" % (java.get("version") or java.get("series", ""), java["home"])
+        elif java.get("package"):
+            texts["java"] = _package_step(java["package"], java.get("version"), items, check, label="")
+    if ran:  # no report from cassandra_linux: it left the OS as it is
+        if "cassandra_linux" in ran:
+            texts["os tuning"] = _changes(int(node.get("os") or 0), check)
+        else:
+            texts["os tuning"] = "not managed (cassandra_linux_manage: false)"
+    disks = node.get("disks") or {}
+    if disks:
+        kb = "read-ahead %s KB " % disks["kb"] if str(disks.get("kb", "")) not in ("", "none") else ""
+        if _on(disks.get("changed")):
+            text = kb + ("would be set" if check else "set now")
+        elif disks.get("brief"):
+            text = kb + "already set"
+        else:
+            text = "nothing to tune"
+        if disks.get("warnings"):
+            text += " (%s below)" % plural(len(disks["warnings"]), "warning")
+        elif disks.get("info"):
+            text += " (see below)"
+        texts["data disks"] = text.strip()
+    if "cassandra_config" in ran:
+        config = list(node.get("config") or [])
+        templated = next((i for i in config if i.get("item") == "config files"), None)
+        files = [i for i in config if _FILE_CHANGED.search(str(i.get("after", "")))]
+        other = [i for i in config if i is not templated and i not in files]
+        if templated is not None:
+            text = "would write the files (%s)" % str(templated.get("before", "")).lower()
+        elif files:
+            text = ("would write %s" if check else "%s written") % plural(len(files), "file")
+        else:
+            text = "" if other else "ok (unchanged)"
+        if other:  # owners, modes, the RedHat conf link
+            text += (", " if text else "") + ("would make %s" if check else "%s") % plural(len(other), "other change")
+        texts["config"] = text
+    for step, switch in (("firewall", "cassandra_manage_firewall"), ("medusa", "cassandra_medusa_enabled")):
+        value = node.get(step)
+        if value is None or not ran:
+            continue
+        if value == "off":
+            texts[step] = "off (%s: false)" % switch
+        elif value == "not managed":  # turned on, the role's own switch off (the firewall's)
+            texts[step] = "not managed" + (" (cassandra_firewall_manage: false)" if step == "firewall" else "")
+        elif not isinstance(value, str):
+            changes = list(value)
+            medusa = next((i for i in changes if i.get("item") == "Medusa"), None)
+            if medusa is not None:
+                text = ("would install Medusa %s" if check else "Medusa %s installed now") % medusa.get("after")
+                texts[step] = text + ("" if len(changes) == 1 else " (+%s)" % plural(len(changes) - 1, "change"))
+            else:
+                texts[step] = _changes(len(changes), check)
+    seeds = node.get("seeds")
+    if seeds:
+        seeds = [s.strip() for s in seeds.split(",")] if isinstance(seeds, str) else list(seeds)
+        texts["seeds"] = ("would join with " if check else "joins with ") + ", ".join(seeds)
+    return texts
+
+
+def prepare_lines(hosts, check=False):
+    """What the prepare of new nodes did (check: would do), a line per step
+    and per group of nodes with the same outcome, the steps in their order:
+    "node4, node5  repository  ok (already set)", "node4  install  cassandra
+    5.0.9 (installed now)". hosts: [{name, ran (the roles whose change
+    report ran), repository (off, packages, set or ok), packages
+    (cassandra_install's change items), cassandra (its version installed),
+    java ({managed, package, version, home, series}), os (the count of OS
+    changes), disks (cassandra_linux's _cassandra_disk_summary), config
+    (cassandra_config's change items), firewall (its change items, off or
+    not managed), medusa (its change items or off), seeds (the seeds it joins
+    with)}]."""
+    texts = [(h["name"], _prepare_texts(h, check)) for h in hosts or [] if isinstance(h, dict) and h.get("name")]
+    rows = []
+    for step in PREPARE_STEPS:
+        groups = _grouped((said[step], name) for name, said in texts if step in said)
+        rows += [[who(names, counted=False), step, text] for text, names in groups]
+    return _table(rows)
+
+
+def _wrapped(text, width=110, indent="  "):
+    return textwrap.wrap(text, width, initial_indent=indent, subsequent_indent=indent, break_on_hyphens=False,
+                         break_long_words=False)
+
+
+def left_system_warning(hosts):
+    """The WARNING about an old system keyspace a new node has outside the
+    data directories its config uses, each directory once with its nodes:
+    why the run goes on, and what to delete by hand. hosts: [{name, left:
+    [directories holding a system keyspace], dirs: [the data directories its
+    config uses]}]."""
+    said = _grouped(((tuple(h["left"]), tuple(h.get("dirs") or [])), h["name"])
+                    for h in hosts or [] if isinstance(h, dict) and h.get("left"))
+    lines = []
+    for (left, dirs), names in said:
+        where, shown = ", ".join(d.rstrip("/") or "/" for d in left), who(names, counted=False)
+        inside = [d for d in dirs if any(d.startswith(x.rstrip("/") + "/") for x in left)]
+        lines.append("WARNING: %s: an old system keyspace in %s, not one of the data directories the config uses (%s)"
+                     % (shown, where, ", ".join(dirs) or "?"))
+        lines += _wrapped(
+            "Cassandra does not read it: the node starts empty in its own data directories, the run goes on. It is"
+            " what an earlier install or config left there: disk space taken, and a config pointing there again"
+            " would start the node on that old system keyspace.")
+        lines += _wrapped(
+            "The way out, once the run is over and if no other Cassandra on %s uses it: delete by hand the keyspace"
+            " directories in %s (system, system_schema, system_auth, system_distributed, system_traces and any"
+            " other there)%s. reset_node does not: it empties only the directories the inventory and"
+            " cassandra.yaml name." % (shown, where, ", keeping " + ", ".join(inside) if inside else ""))
+    return lines
 
 
 # --- progress ------------------------------------------------------------------------------

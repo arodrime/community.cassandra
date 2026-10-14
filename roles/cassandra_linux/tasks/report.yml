@@ -77,3 +77,5 @@
     cassandra_change_report_items: >-
       {{ _cassandra_linux_items | default([]) | map('dict2items') | map('rejectattr', 'key', 'equalto', 'timesync')
          | map('items2dict') | list }}
+    cassandra_change_report_state:
+      disk_changes: "{{ _cassandra_disk_items | default([]) | length }}"  # the last ones of the items

@@ -31,3 +31,21 @@
   when:
     - cassandra_repository_manage | bool
     - cassandra_install_method == 'packages'
+
+# What the step lines of a prepare say (cassandra_service prepare_lines.yml):
+# off, packages (no repository), set (its source, keys or credentials written or
+# changed now, the other series' removed; under --check also
+# a Debian node without python3-debian yet, where it can't be compared) or ok
+- name: Keep what was done with the repository
+  ansible.builtin.set_fact:
+    _cassandra_repository_outcome: >-
+      {{ 'off' if not cassandra_repository_manage | bool
+         else 'packages' if cassandra_install_method == 'packages'
+         else 'set' if [_cassandra_repository_yum | default({}), _cassandra_repository_apt | default({}),
+                        _cassandra_repository_old | default({}), _cassandra_repository_one_line | default({}),
+                        _cassandra_repository_credentials | default({}), _cassandra_repository_key_shipped | default({}),
+                        _cassandra_repository_key_downloaded | default({}), _cassandra_repository_old_yum | default({}),
+                        _cassandra_repository_debian_packages | default({}),
+                        _cassandra_repository_credentials_removed | default({})] | select('changed') | list | length > 0
+                   or (_cassandra_repository_python_debian | default({})).rc | default(0) != 0
+         else 'ok' }}

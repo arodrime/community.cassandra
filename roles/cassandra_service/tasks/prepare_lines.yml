@@ -1,0 +1,85 @@
+---
+# After the prepare of new nodes (action_add_prepare.yml; create_cluster's
+# roles), included by every host of the play: what it did, a line per step for
+# the nodes with the same outcome (each role's change report, quiet then, and
+# what the roles kept: no command on the nodes), in the progress colour; then
+# the data disks' summary when there is something to see in it (set now, a
+# warning, or -v) and the warning about an old system keyspace left outside
+# the data directories, once with its nodes. The roles say neither themselves
+# while _cassandra_prepare_lines is true.
+#   _cassandra_prepare_hosts: the hosts prepared (default: the batch's)
+- name: Keep what the prepare did
+  ansible.builtin.set_fact:
+    _cassandra_prepare_done:
+      name: "{{ inventory_hostname }}"
+      ran: "{{ _seen.keys() | list }}"  # the roles whose change report ran
+      repository: "{{ _cassandra_repository_outcome | default('') }}"
+      packages: "{{ _seen.cassandra_install['items'] | default([]) }}"
+      cassandra: "{{ _seen.cassandra_install.state.cassandra | default('') }}"
+      java: "{{ _seen.cassandra_install.state.java | default({}) }}"
+      os: >-
+        {{ (_seen.cassandra_linux['items'] | length - _seen.cassandra_linux.state.disk_changes | int)
+           if 'cassandra_linux' in _seen else 0 }}
+      disks: "{{ _cassandra_disk_summary | default({}) }}"
+      config: "{{ _seen.cassandra_config['items'] | default([]) }}"
+      firewall: >-
+        {{ 'off' if not cassandra_manage_firewall | default(false) | bool
+           else _seen.cassandra_firewall['items'] if 'cassandra_firewall' in _seen else 'not managed' }}
+      medusa: >-
+        {{ 'off' if not cassandra_medusa_enabled | default(false) | bool
+           else _seen.cassandra_medusa['items'] if 'cassandra_medusa' in _seen else 'not managed' }}
+      seeds: "{{ _cassandra_join_seeds | default('') }}"
+      left: "{{ _cassandra_config_left | default([]) }}"
+      dirs: "{{ _cassandra_config_own_dirs | default([]) }}"
+  when: inventory_hostname in _hosts
+  ignore_errors: true  # (as below)
+  vars:
+    _seen: "{{ _cassandra_change_report_seen | default({}) }}"
+    _hosts: "{{ _cassandra_prepare_hosts | default(ansible_play_batch) }}"  # (as below)
+
+# Said once (run_once), from what each node kept
+- name: Say what the prepare did, how the disks are tuned, what it left
+  vars:
+    _done: >-
+      {{ _cassandra_prepare_hosts | default(ansible_play_batch) | map('extract', hostvars)
+         | selectattr('_cassandra_prepare_done', 'defined') | map(attribute='_cassandra_prepare_done') | list }}
+  block:
+    - name: Say what the prepare did
+      ansible.builtin.debug:
+        msg: "{{ _done | community.cassandra.cassandra_prepare_lines(check=ansible_check_mode) }}"
+      run_once: true
+      ignore_errors: true  # it only prints: never a stop, nor a rescue of the caller's
+      when: _done | length > 0
+      vars:
+        cassandra_output: true
+        cassandra_output_info: true  # in the progress colour (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
+    # the whole summary when there is something to see in it: set now (or to set), a line to act on, a warning; -v
+    - name: Say how the data disks are tuned
+      ansible.builtin.debug:
+        msg: "{{ _disks | community.cassandra.cassandra_disk_summary(check=ansible_check_mode, verbose=ansible_verbosity | int > 0) }}"
+      run_once: true
+      ignore_errors: true  # it only prints: never a stop, nor a rescue of the caller's
+      when:
+        - _disks | length > 0
+        - >-
+          ansible_verbosity | int > 0
+          or _disks | map(attribute='changed', default=false) | map('bool') | select | list | length > 0
+          or _disks | map(attribute='warnings', default=[]) | flatten | length > 0
+          or _disks | map(attribute='info', default=[]) | flatten | length > 0
+      vars:
+        cassandra_output: true
+        cassandra_output_info: true  # in the progress colour, except the WARNING lines (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        _disks: "{{ _done | map(attribute='disks', default={}) | select | list }}"
+
+    - name: Warn about an old system keyspace left outside the data directories
+      ansible.builtin.debug:
+        msg: "{{ _done | community.cassandra.cassandra_left_system_warning }}"
+      run_once: true
+      ignore_errors: true  # it only prints: never a stop, nor a rescue of the caller's
+      when: _done | selectattr('left') | list | length > 0
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true  # a block of its own
