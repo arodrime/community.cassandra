@@ -2266,15 +2266,17 @@ def _host_entries(data):
 
 
 @_values_hidden
-def cassandra_import_kept_ansible_host(nodes, read, cluster_group, names, password=""):
+def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, names, password=""):
     """nodes: cassandra_import_nodes' -> the same, without ansible_host for the hosts the inventory already there
     reaches without one: the hosts file of this cluster an earlier import wrote (<cluster group>.yml, its first
     line naming the group, or holding that group alone) and the host_vars files there (a vaulted one decrypted
     with password; one that can't be read may set it). What was chosen then (import_cluster_set_ansible_host:
-    false, or ansible_host taken out by hand) stays; a node new to it too, when none of its hosts has one.
-    read: {path: text} of the inventory dir; names: {address: the node's name there} (the layout's). For a
+    false, or ansible_host taken out by hand) stays; a node new to it gets the import's own choice (its name
+    may not be known to the controller).
+    read: {path: text} of the inventory dir; hosts_file: the cluster's hosts file there (<cluster group>.yml);
+    names: {address: the node's name there} (the layout's). For a
     re-import that is not given import_cluster_set_ansible_host."""
-    text = (read or {}).get("%s.yml" % cluster_group)
+    text = (read or {}).get(hosts_file)
     if not text or (written_for(text) != cluster_group and not _cluster_tree(text, cluster_group)):
         return nodes
     try:
@@ -2302,7 +2304,7 @@ def cassandra_import_kept_ansible_host(nodes, read, cluster_group, names, passwo
     out = []
     for n in nodes:
         name = (names or {}).get(n.get("address"), n.get("name"))
-        if n.get("ansible_host") and (name in without or (name not in hosts and len(without) == len(hosts))):
+        if n.get("ansible_host") and name in without:
             # (its note on the address it was reached at, which ansible_host would replace: not said either)
             n = dict(n, ansible_host="", notes=[x for x in n.get("notes") or [] if not str(x).startswith("reached at ")])
         out.append(n)

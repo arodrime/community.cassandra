@@ -30,22 +30,27 @@ def hosts_file(entries, header=True):
     return cassandra_inventory_generated(text, "prod") if header else text
 
 
+def vaulted(text, password="pw"):
+    from ansible.parsing.vault import VaultLib, VaultSecret
+    return VaultLib([("default", VaultSecret(password.encode()))]).encrypt(text).decode()
+
+
 def kept(nodes, read):
-    return [n["ansible_host"] for n in cassandra_import_kept_ansible_host(nodes, read, "prod", NAMES)]
+    return [n["ansible_host"] for n in cassandra_import_kept_ansible_host(nodes, read, "prod.yml", "prod", NAMES)]
 
 
 def test_hosts_reached_without_ansible_host_stay_so():
     read = {"prod.yml": hosts_file({"node1": {}, "node2": None})}
-    out = cassandra_import_kept_ansible_host([node(1), node(2)], read, "prod", NAMES)
+    out = cassandra_import_kept_ansible_host([node(1), node(2)], read, "prod.yml", "prod", NAMES)
     assert [n["ansible_host"] for n in out] == ["", ""]
     assert [n["notes"] for n in out] == [[], []]  # its address is not said either: nothing replaces it
-    # a node new to the inventory (found in the ring): as its other hosts, none
-    assert kept([node(1), node(3)], read) == ["", ""]
+    # a node new to the inventory (found in the ring): the import's own choice (its name may be unknown here)
+    assert kept([node(1), node(3)], read) == ["", "10.0.0.3"]
 
 
 def test_hosts_with_ansible_host_keep_it_updated():
     read = {"prod.yml": hosts_file({"node1": {"ansible_host": "10.0.0.99"}, "node2": {}})}
-    # node1's address comes from the ring again; node2 stays without; node3 new: some host has one, so it gets one
+    # node1's address comes from the ring again; node2 stays without; node3 new: the import's choice
     assert kept([node(1), node(2), node(3)], read) == ["10.0.0.1", "", "10.0.0.3"]
 
 
@@ -54,8 +59,14 @@ def test_ansible_host_in_host_vars_counts():
             "host_vars/node1.yml": "ansible_host: node1.lan\n", "host_vars/node2/conn.yml": "ansible_port: 2222\n"}
     assert kept([node(1), node(2)], read) == ["10.0.0.1", ""]
     # a vaulted host_vars file not read (no password): it may set it, the import's default stays
-    read["host_vars/node2/vault.yml"] = "$ANSIBLE_VAULT;1.1;AES256\n6162\n"
+    read["host_vars/node2/vault.yml"] = vaulted("ansible_port: 2222\n")
     assert kept([node(1), node(2)], read) == ["10.0.0.1", "10.0.0.2"]
+    # read with the vault password: it does not set it / it does
+    assert [n["ansible_host"] for n in cassandra_import_kept_ansible_host([node(1), node(2)], read, "prod.yml", "prod", NAMES,
+                                                                         "pw")] == ["10.0.0.1", ""]
+    read["host_vars/node2/vault.yml"] = vaulted("ansible_host: node2.lan\n")
+    assert [n["ansible_host"] for n in cassandra_import_kept_ansible_host([node(1), node(2)], read, "prod.yml", "prod", NAMES,
+                                                                         "pw")] == ["10.0.0.1", "10.0.0.2"]
 
 
 def test_a_first_import_or_another_clusters_file_changes_nothing():
@@ -77,7 +88,7 @@ def test_a_reimport_writes_the_hosts_file_there_again():
     # first import with import_cluster_set_ansible_host=false: no ansible_host; the re-import (default true) writes
     # the same file
     first = hosts_text([node(i, ansible_host="") for i in (1, 2)])
-    again = cassandra_import_kept_ansible_host([node(1), node(2)], {"prod.yml": first}, "prod", NAMES)
+    again = cassandra_import_kept_ansible_host([node(1), node(2)], {"prod.yml": first}, "prod.yml", "prod", NAMES)
     assert "ansible_host" not in first
     assert hosts_text(again) == first
     # without it, the addresses would be written
@@ -88,9 +99,9 @@ def test_the_playbook_applies_it_unless_the_option_is_given():
     with open(PLAYBOOK, encoding="utf-8") as f:
         play = next(p for p in yaml.safe_load(f) if p["name"] == "Write the inventory")
     names = [t["name"] for t in play["tasks"]]
-    step = play["tasks"][names.index("Keep the hosts the inventory reaches without ansible_host so")]
+    step = play["tasks"][names.index("Leave ansible_host out where the inventory there has none")]
     assert step["when"] == "import_cluster_set_ansible_host is not defined"
-    assert "cassandra_import_kept_ansible_host(import_cluster_existing_text" in step["ansible.builtin.set_fact"]["_nodes"]
+    assert "cassandra_import_kept_ansible_host(import_cluster_existing_text, _hosts_file" in step["ansible.builtin.set_fact"]["_nodes"]
     # once the files there are read, before the layout the hosts file is written from
     assert names.index("Keep the files already there") < names.index(step["name"]) < names.index(
         "Lay out again over your own variables") < names.index("Write the hosts file")
