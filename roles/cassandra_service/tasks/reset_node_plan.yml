@@ -71,6 +71,9 @@
       line: "{{ _cassandra_node_reset_check.line | default('') if _auto | bool and _cassandra_node_reset_check.reset else '' }}"
       refusal: "{{ _cassandra_node_reset_check.line | default('') if _auto | bool and not _cassandra_node_reset_check.reset else '' }}"
       unit: "{{ _status.LoadState | default('not-found') != 'not-found' }}"
+      # the directories and where they resolved when the plan was made (the guard before the delete)
+      paths: "{{ _cassandra_node_reset_listed.dirs | map(attribute='path') | list }}"
+      resolved: "{{ cassandra_node_reset_realpath.stdout_lines | default([]) }}"
       # a fresh file system's lost+found stays
       delete: >-
         {{ cassandra_node_reset_found.files | default([]) | map(attribute='path')

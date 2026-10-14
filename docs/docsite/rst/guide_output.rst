@@ -88,8 +88,9 @@ Where a node stands
 
 Every operation that adds, empties or replaces a node decides from one reading of where the node stands
 (``roles/cassandra_service/tasks/node_standing.yml``, the filter ``community.cassandra.cassandra_node_standing``),
-read once per run: whether Cassandra runs there (its JVM, or the ``cassandra`` unit active), the ring the other
-nodes of the cluster see (each running node reads its own, all at once, in the preflight), what its Cassandra
+read once per step (each deciding play reads the node again): whether Cassandra runs there (its JVM, or the
+``cassandra`` unit active), the ring the other nodes of the cluster see (each running node reads its own, all at
+once, in the preflight; a node alone in its ring does not stand for the cluster while others did not answer), what its Cassandra
 directories hold (the data directories its config uses are the inventory's and the live ``cassandra.yaml``'s; a
 system keyspace left in the package's default directory that its config does not use is not the node's: said,
 left as it is), the cluster its live ``cassandra.yaml`` names, and the mark ``add_node`` leaves on a node while it

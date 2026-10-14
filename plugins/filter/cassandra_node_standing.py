@@ -139,6 +139,10 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
         own_addr = set(_addr(x) for x in a.get("addresses") or [])
         if any(_addr(n.get("address")) in own_addr and n.get("status") == "U" and n.get("state") == "N" for n in nodes):
             out["usable"].append((a.get("host"), nodes))
+    # a node alone in its ring (a host of the group not added yet, the package's own instance) does not stand for
+    # the cluster while other nodes asked did not answer: their ring is unknown
+    if len(out["usable"]) < len(answers or []):
+        out["usable"] = [(h, nodes) for h, nodes in out["usable"] if len(nodes) > 1]
     for other, nodes in out["usable"]:
         for n in nodes:
             address = _addr(n.get("address"))
@@ -325,6 +329,7 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
     # at one of its addresses first: another host ID there is a conflict, wherever its own host ID shows
     me = mine(addresses)
     at_address = [e for e in view["entries"] + view["replaced_up"] if _addr(e[1].get("address")) in me]
+    at_address.sort(key=lambda e: not (my_id and e[1].get("host_id") == my_id))  # its own entry, when one is there
     entry = (at_address or view["entries"] or view["replaced_up"] or [None])[0]
     if entry:
         other, n = entry

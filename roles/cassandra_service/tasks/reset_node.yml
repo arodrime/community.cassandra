@@ -174,10 +174,11 @@
       not stopped by the cassandra unit): nothing was deleted. Stop it, then run again.
     quiet: true
 
-# The confirmation may have waited: nothing moved under the directories since they were checked
+# The confirmation may have waited: nothing moved under the directories since the plan shown was made
+# (its own record: a later read of where the node stands, e.g. add_node's step of topology, does not count)
 - name: Resolve the directories again
   ansible.builtin.command:
-    argv: "{{ ['realpath', '-m', '--'] + _cassandra_node_reset_listed.dirs | map(attribute='path') | list }}"
+    argv: "{{ ['realpath', '-m', '--'] + _cassandra_node_reset_plan.paths }}"
   register: cassandra_node_reset_realpath_again
   changed_when: false
   check_mode: false  # read-only
@@ -185,10 +186,10 @@
 
 - name: The directories are where they were
   ansible.builtin.assert:
-    that: cassandra_node_reset_realpath_again.stdout_lines | default([]) == cassandra_node_reset_realpath.stdout_lines | default([])
+    that: cassandra_node_reset_realpath_again.stdout_lines | default([]) == _cassandra_node_reset_plan.resolved
     fail_msg: >-
       The directories of {{ inventory_hostname }} changed since they were checked (a link replaced?): nothing was deleted.
-      Before: {{ cassandra_node_reset_realpath.stdout_lines | default([]) | join(', ') }};
+      Before: {{ _cassandra_node_reset_plan.resolved | join(', ') }};
       now: {{ cassandra_node_reset_realpath_again.stdout_lines | default([]) | join(', ') }}.
     quiet: true
   when: _cassandra_node_reset_plan.delete | length > 0
