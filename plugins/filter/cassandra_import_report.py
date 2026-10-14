@@ -920,8 +920,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             if n.get("not_moved"):
                 not_moved.setdefault(n["not_moved"], []).append(n["name"])
         for why, who in sorted(not_moved.items()):
-            lines.append("  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, %s (%s)" % (
-                why, _who(who, names, groups, full)))
+            lines += out.fit(["  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, %s (%s)" % (
+                why, _who(who, names, groups, full))], width)
         lines.append("")
 
     # NOT A CASSANDRA SETTING: cassandra.yaml keys the node's Cassandra rejects, not imported
@@ -948,7 +948,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         javas = sorted(set(v for n in read for line in n.get("moved") or [] if " -> " in line
                            for v in re.findall(r"\bcassandra_jvm\d+_extra_options\b", line.split(" -> ", 1)[1])))
         if javas:
-            lines.append("  %s: read by that Java only; after update_java, move them to the new Java's" % ", ".join(javas))
+            lines += out.fit(["  %s: read by that Java only; after update_java, move them to the new Java's"
+                              % ", ".join(javas)], width)
         for files, members in sorted(rewrites.items()):
             lines.append("  apply_config rewrites %s on %s in the collection's layout (same JVM arguments; it"
                          " restarts the nodes it writes)" % (files, _nodes(members, names, groups, full)))

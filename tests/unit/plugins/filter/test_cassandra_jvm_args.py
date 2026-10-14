@@ -577,3 +577,35 @@ def test_no_move_before_another_spelling_the_import_does_not_see(tmp_path, mine,
         rendered, dummy = role_files(inventory, layout, files)
         assert settings(launch(rendered, "17", tmp_path, env)) == settings(cmdline)
     assert node["moved"] == []
+
+
+def test_not_moved_without_the_options_file_read(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    cmdline = launch(files, "17", tmp_path)
+    for name in ("jvm-server.options", "jvm17-server.options"):
+        node = imported(dict((k, v) for k, v in files.items() if k != name), "50x", "17", cmdline)[2]
+        assert node["moved"] == [] and node["not_moved"] == "%s not read" % name
+
+
+def test_not_moved_when_the_unit_gives_mx4j(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    environment = {"MX4J_PORT": "8081"}
+    cmdline = launch(files, "17", tmp_path, environment)
+    node = imported(files, "50x", "17", cmdline, environment=environment)[2]
+    assert node["moved"] == [] and "MX4J" in node["not_moved"]
+
+
+def test_no_reason_without_a_line_to_move(tmp_path):
+    files = node_files("50x", add_to("jvm17-server.options", "-XX:+UseNUMA"))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert node["moved"] == [] and node["not_moved"] == ""
+
+
+def test_options_that_add_up_counted():
+    assert jvm.differences(["-XX:OnError=a", "-XX:OnError=b"], ["-XX:OnError=b"]) == ["OnError"]
+
+
+def test_a_moved_line_with_a_secret_shows_its_other_options(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dcom.example.password=S3cr3t -Dz=1"'))
+    node = imported(files, "50x", "17", launch(files, "17", tmp_path))[2]
+    assert node["moved"] and "S3cr3t" not in str(node["moved"]) and "-Dz=1" in node["moved"][0]

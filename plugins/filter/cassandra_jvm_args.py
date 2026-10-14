@@ -643,7 +643,7 @@ def _moved(info, found, options, extras_var):
                 "%s: %s" % (var, out.mask(found[var])) if var in found else "left out")
             if where not in went:
                 went.append(where)
-        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], out.mask(" ".join(line["options"])) or "(no option)",
+        lines.append("%s line %d: %s -> %s" % (ENV, line["n"], " ".join(out.mask(o) for o in line["options"]) or "(no option)",
                                                "; ".join(went) or "left out"))
     if found.get("cassandra_heap_newsize") and not any("cassandra_heap_newsize" in line for line in lines):
         lines.append("the young generation the JVM runs with (MAX_HEAP_SIZE needs it without G1) -> "

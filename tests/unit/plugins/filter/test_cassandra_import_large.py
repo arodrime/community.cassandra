@@ -201,17 +201,21 @@ def test_jvm_moves_of_88_nodes_named_by_groups():
     nodes = fake_cluster()
     for n in nodes:
         if n["name"] in PART_B:
-            n.update(moved=["cassandra-env.sh, line 290: -XX:+UseNUMA -> cassandra_jvm11_extra_options"],
+            n.update(moved=["cassandra-env.sh line 290: -XX:+UseNUMA -> cassandra_jvm11_extra_options"],
                      rewritten=["cassandra-env.sh"],
-                     cleanup=["cassandra-env.sh, line 291: -XX:+UseParNewGC: not an option of Java 11"])
+                     cleanup=["jvm8-server.options line 12: -XX:+UseParNewGC: not read, Java 11 reads"
+                              " jvm11-server.options"])
         elif n["name"] in PART_C:
-            n["not_moved"] = "the running JVM's arguments not read"
+            n["not_moved"] = ("cassandra-env.sh would stop: the heap set without its pair (in the options files"
+                              " the JVM reads, -Xmx and -Xms; in cassandra-env.sh, MAX_HEAP_SIZE and HEAP_NEWSIZE)")
     layout = cassandra_inventory_layout(nodes, "Big Cluster")
     report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
     report = report[:report.index("DETAILS")]
     moved = [line for line in report if "UseNUMA" in line or "UseParNewGC" in line or "rewrites cassandra-env.sh" in line
              or "not moved to variables" in line]
-    assert len(moved) >= 4
+    assert len(moved) == 5  # the TO DO, MOVED's row, the rewrite, CLEANUP's row, the reason (wrapped)
+    assert "  cassandra_jvm11_extra_options: read by that Java only; after update_java, move them to the new Java's" \
+        in report
     for line in moved:
         assert len(line) <= 160 and "db071, db072" not in line and "db101, db102" not in line, line
     assert all(len(line) <= 100 for line in cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p",

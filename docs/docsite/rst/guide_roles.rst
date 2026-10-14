@@ -1201,7 +1201,8 @@ Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM
 ``MAX_DIRECT_MEMORY_SIZE``) set elsewhere in the file, are moved to the variables that write them where the role does:
 ``-Xms`` and ``-Xmx`` alike to ``cassandra_heap_size`` (with ``cassandra_heap_newsize`` the young generation the JVM
 runs with, which ``MAX_HEAP_SIZE`` needs without G1), the other options to ``cassandra_jvm<N>_extra_options`` of the
-Java the node runs (that Java's only: after ``update_java``, move them to the new Java's). Only when the JVM gets the same arguments from the role's files: worked out from the running JVM's
+Java the node runs (that Java's only: after ``update_java``, move them to the new Java's). Only when the JVM
+gets the same arguments from the role's files: worked out from the running JVM's
 arguments (``/proc/<pid>/cmdline``), what ``cassandra-env.sh`` adds by itself from what it finds in the options (the
 heap, the GC log, the GC threads) included, the last option of a name counting; an option set again later is left out.
 Not when Cassandra is not running or its files changed since it started, when JMX authenticates by JAAS, nor in the
