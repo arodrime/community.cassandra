@@ -35,8 +35,8 @@ def vaulted(text, password="pw"):
     return VaultLib([("default", VaultSecret(password.encode()))]).encrypt(text).decode()
 
 
-def kept(nodes, read):
-    return [n["ansible_host"] for n in cassandra_import_kept_ansible_host(nodes, read, "prod.yml", "prod", NAMES)]
+def kept(nodes, read, password=""):
+    return [n["ansible_host"] for n in cassandra_import_kept_ansible_host(nodes, read, "prod.yml", "prod", NAMES, password)]
 
 
 def test_hosts_reached_without_ansible_host_stay_so():
@@ -62,11 +62,9 @@ def test_ansible_host_in_host_vars_counts():
     read["host_vars/node2/vault.yml"] = vaulted("ansible_port: 2222\n")
     assert kept([node(1), node(2)], read) == ["10.0.0.1", "10.0.0.2"]
     # read with the vault password: it does not set it / it does
-    assert [n["ansible_host"] for n in cassandra_import_kept_ansible_host([node(1), node(2)], read, "prod.yml", "prod", NAMES,
-                                                                         "pw")] == ["10.0.0.1", ""]
+    assert kept([node(1), node(2)], read, "pw") == ["10.0.0.1", ""]
     read["host_vars/node2/vault.yml"] = vaulted("ansible_host: node2.lan\n")
-    assert [n["ansible_host"] for n in cassandra_import_kept_ansible_host([node(1), node(2)], read, "prod.yml", "prod", NAMES,
-                                                                         "pw")] == ["10.0.0.1", "10.0.0.2"]
+    assert kept([node(1), node(2)], read, "pw") == ["10.0.0.1", "10.0.0.2"]
 
 
 def test_a_first_import_or_another_clusters_file_changes_nothing():
