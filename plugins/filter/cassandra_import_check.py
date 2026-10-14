@@ -57,6 +57,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_permission
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
     yaml_rejected)
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -395,7 +396,8 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
     out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java,
-                         release or SERIES.get(str(variables.get("cassandra_version")), ""))
+                         release or SERIES.get(str(variables.get("cassandra_version")), ""),
+                         str(variables.get("cassandra_version")))
     if permissions is None:
         out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
     else:
@@ -413,7 +415,8 @@ def _rejected(live, rendered, release):
     return yaml_rejected(node - role, release)
 
 
-def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java="", release=""):
+def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java="", release="",
+                   series=""):
     differences, notes, heap = [], [], []
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
@@ -422,7 +425,8 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     for name in sorted(rendered):
         if name not in live:
             other_java = re.match(r"^jvm(\d+)-server\.options$", name)
-            if other_java and java and other_java.group(1) != str(java):
+            read = jvm.options_file(series, java) or "jvm%s-server.options" % java
+            if other_java and java and name != read:
                 notes.append("%s: not on the node, the roles would create it (Java %s does not read it)" % (name, java))
             else:
                 differences.append("%s: not on the node, the roles would create it" % name)

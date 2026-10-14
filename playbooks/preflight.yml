@@ -234,6 +234,40 @@
           {{ out | join(_nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | length > 0
 
+    # the JVM options the node's Java reads (cassandra_java_version, else the series' default) in the files the role
+    # writes: one worth a look (module_utils cassandra_jvm_options: -Xss far from the usual range,
+    # -XX:-UseBiasedLocking on Java 17)
+    - name: Find the JVM options worth a look
+      ansible.builtin.set_fact:
+        _cassandra_preflight_jvm: >-
+          {{ _options | community.cassandra.cassandra_jvm_option_checks(cassandra_version, _java,
+                                                                        kept=cassandra_config_keep_files | default([])) }}
+      vars:
+        # cassandra_install's defaults are not loaded here
+        _java: >-
+          {{ cassandra_java_version | default((cassandra_java_versions | default({}))[cassandra_version] | default('')) }}
+        _options:
+          cassandra_jvm_extra_options: "{{ cassandra_jvm_extra_options | default([]) }}"
+          cassandra_jvm8_extra_options: "{{ cassandra_jvm8_extra_options | default([]) }}"
+          cassandra_jvm11_extra_options: "{{ cassandra_jvm11_extra_options | default([]) }}"
+          cassandra_jvm17_extra_options: "{{ cassandra_jvm17_extra_options | default([]) }}"
+
+    - name: Warn about the JVM options
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: note.yml
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _note: >-
+          {%- set out = [] -%}
+          {%- for w in ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | unique -%}
+          {%-   set hosts = [] -%}
+          {%-   for h in ansible_play_hosts if w in hostvars[h]._cassandra_preflight_jvm -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
+          {%-   set _ = out.append('WARNING  ' ~ hosts | community.cassandra.cassandra_node_list ~ ': ' ~ w) -%}
+          {%- endfor -%}
+          {{ out | join(_nl) }}
+      when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_jvm') | flatten | length > 0
+
     # cassandra_seed_True / cassandra_seed_False, used by the other playbooks
     - name: Group seeds and other nodes
       ansible.builtin.group_by:

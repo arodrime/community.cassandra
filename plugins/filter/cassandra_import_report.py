@@ -228,6 +228,20 @@ def _not_settings(read):
     return groups
 
 
+def _jvm_warnings(read):
+    """[(warning, [nodes])]: the JVM options worth a look (cassandra_config_import's jvm_warnings), the nodes with
+    the same one together."""
+    groups = []
+    for n in read:
+        for text in n.get("jvm_warnings") or []:
+            entry = next((g for g in groups if g[0] == text), None)
+            if entry is None:
+                groups.append((text, [n["name"]]))
+            elif n["name"] not in entry[1]:
+                entry[1].append(n["name"])
+    return groups
+
+
 def _what_changes(changed, removed, changes):
     """ (3 new files; changed: a, b; removed: c), '' when not known."""
     if changed is None:
@@ -683,7 +697,7 @@ def _sections(layout, self_check):
         for k, v in sorted((n.get("keep") or {}).items(),
                            key=lambda kv: (order.index(kv[0]) if kv[0] in order else 99, kv[0])):
             if k == "cassandra_config_keep_files":
-                kept.append((n["name"], "config files with hand edits", ", ".join(v)))
+                kept.append((n["name"], "config files left as they are", ", ".join(v)))
             elif k in KEEP:
                 left_groups.setdefault(KEEP_SHORT.get(k, k), []).append(n["name"])
             else:
@@ -804,6 +818,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         todo.append("%s: cassandra.yaml has %s, which Cassandra %s rejects: it would not restart; remove %s" % (
             _who(members, None, groups, full), ", ".join(keys), release,
             "it" if len(keys) == 1 else "them"))
+    for text, members in _jvm_warnings(read):
+        todo.append("WARNING  %s: %s" % (_who(members, None, groups, full), text))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))

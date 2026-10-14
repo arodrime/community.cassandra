@@ -32,6 +32,7 @@
 #     (see the passwords below).
 #   import_cluster_medusa_path: none (see Medusa below).
 #   import_cluster_keep_hand_edits: false (see the hand edits below).
+#   import_cluster_keep_unread_jvm_options: false (see the JVM options below).
 #   import_cluster_allow_unread: false (see the nodes not read below).
 #   import_cluster_adopt: false; true takes the files of an earlier import of
 #     this cluster that do not say whose they are (no first line naming it,
@@ -98,6 +99,15 @@
 # Hand edits no variable covers fail the self-check:
 # import_cluster_keep_hand_edits=true leaves those files as they are on their
 # node (cassandra_config_keep_files) instead.
+# JVM options: the extra options of a jvm<N>-server.options the running Java
+# does not read (bin/cassandra reads jvm-server.options and the one of its
+# Java: on 4.x jvm8 on Java 8, else jvm11; on 5.0 jvm11 on Java 11, else
+# jvm17) are not imported, a heap there included (the report says where the
+# heap the JVM runs with comes from), and that file is left as it is on its
+# node (cassandra_config_keep_files): import_cluster_keep_unread_jvm_options=true
+# imports them all the same. An option worth a look (-Xss far from the usual
+# range, -XX:-UseBiasedLocking on Java 17) is imported as it is, with a
+# WARNING in the report (why, which variable to change).
 # A ring node it could not read (down, unreachable, nodetool not found, its
 # running Java removed by an update) fails the import, as its settings are
 # unknown: import_cluster_allow_unread=true accepts it.
@@ -816,7 +826,9 @@
                                                                      import_cluster_conf_target | default(''),
                                                                      import_cluster_storage_dir | default(''),
                                                                      import_cluster_jmx_files | default({}),
-                                                                     _release) }}
+                                                                     _release, import_cluster_java | default(''),
+                                                                     import_cluster_keep_unread_jvm_options | default(false),
+                                                                     import_cluster_jvm_cmdline.content | default('') | b64decode) }}
           vars:
             # the cassandra.yaml keys are judged by the release the next start runs: the package installed
             # since Cassandra started (a restart pending), else the running one

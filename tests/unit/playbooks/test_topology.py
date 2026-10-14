@@ -283,7 +283,8 @@ def test_preflight_notes_render_one_line_each():
         for t in play.get("tasks") or []:
             if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") == "note.yml":
                 found[t["name"]] = t
-    assert sorted(found) == ["Going on without the nodes that did not answer", "Seed layout", "Warn about them"]
+    assert sorted(found) == ["Going on without the nodes that did not answer", "Seed layout", "Warn about the JVM options",
+                             "Warn about them"]
     hostvars = {"n1": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds", "cassandra_x": ""}},
                 "n2": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}}
     t = found["Warn about them"]
