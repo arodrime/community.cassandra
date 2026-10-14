@@ -1403,7 +1403,18 @@
            leftovers=_leftovers | default({}), check=_report_args.check | bool,
            inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
            allow_unread=_report_args.allow_unread | bool,
-           self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo) | join(_newline) }}
+           self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
+           convergence=_convergence) | join(_newline) }}
+    # CONVERGENCE: how far the cluster is from one group, every setting in group_vars (what to change, and how);
+    # output only: the inventory is written as it is
+    _convergence: >-
+      {{ _layout | community.cassandra.cassandra_import_convergence(_self_check | default({}),
+           report_file=_report_args.report_file, inventory=_report_args.inventory, hosts=_report_args.hosts,
+           cwd=_report_args.cwd, self_check_ok=_self_check_ok | bool) }}
+    _convergence_screen: >-
+      {{ _layout | community.cassandra.cassandra_import_convergence(_self_check | default({}), screen=true,
+           report_file=_report_args.report_file, inventory=_report_args.inventory, hosts=_report_args.hosts,
+           cwd=_report_args.cwd, self_check_ok=_self_check_ok | bool) }}
     # the files the run wrote or removed (would, under --check) and the ones there before: a re-import that
     # changes nothing says so
     _changes:
@@ -1885,7 +1896,7 @@
       # (--check with the report in an inventory dir not there yet: not created)
       when: not ansible_check_mode or _report_args.report_file | dirname is directory
 
-    # the end of the run: its header, TO DO and SETTINGS; the rest is in report.txt
+    # the end of the run: its header, TO DO, SETTINGS and the CONVERGENCE score; the rest is in report.txt
     - name: Show the summary
       ansible.builtin.debug:
         msg: >-
@@ -1895,7 +1906,7 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-               screen=true, strict=import_cluster_strict | default(true) | bool) }}
+               screen=true, strict=import_cluster_strict | default(true) | bool, convergence=_convergence_screen) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)

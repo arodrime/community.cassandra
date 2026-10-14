@@ -1297,8 +1297,31 @@ that is not the collection's default, with every node that has each value (``all
 the same way, what the roles leave as it is, the OS tuning (live value, the collection's in parentheses), the files
 removed or replaced, the next commands (without ``-i`` on the inventory of ``ansible.cfg``, without
 ``-e cassandra_hosts`` when it holds this cluster alone), and the details line by line at the end. The run ends with
-its header, ``TO DO``, ``SETTINGS`` and ``DIFFERS FROM YOUR group_vars/all`` (node lists shortened, ``node1..node5``),
-and where the full report is; nothing else is printed under the ``community.cassandra.ops`` callback.
+its header, ``TO DO``, ``SETTINGS``, ``DIFFERS FROM YOUR group_vars/all`` (node lists shortened, ``node1..node5``),
+the ``CONVERGENCE`` score with its first five actions, and where the full report is; nothing else is printed under the
+``community.cassandra.ops`` callback.
+
+The report's ``CONVERGENCE`` section is the way from an imported cluster, with values kept per DC, rack or node, to one
+group with every setting in ``group_vars/<cluster group>/``; it is worked out from what the import found and changes
+nothing it writes. Its first line counts the settings every node shares (``41/47 settings common to all nodes, 6
+differ, 3 files kept by hand``): one per ``SETTINGS`` row, the addresses and what a node keeps for life
+(``cassandra_num_tokens``...) not counted. Then each setting that differs, the safest change first: its values with
+their nodes (an inventory group named when they are exactly its nodes), the value most nodes have and where to write
+it (in ``group_vars/<cluster group>/``, removed from the ``group_vars`` and ``host_vars`` below it, never from a shared file
+of yours such as ``group_vars/all``, which the other clusters of the directory read too (one below the cluster
+group is named); a sub-key of a dict set in the
+files that keep another value of it), how many nodes would change and what follows (``no restart`` for an owner,
+group or mode and for the OS settings of ``cassandra_linux``, ``then restart`` for a config file, ``restart unknown``
+for what ``apply_config`` does not write; a cluster-wide switch (encryption, authentication) with its procedure first, a keystore or truststore checked on the
+node first, a version only upgraded to the newest (``upgrade``, ``update_java``), a login of the
+playbooks (``cassandra_jmx_password``...) which the nodes must accept first, a heap sized for the machine, a data
+directory moved by hand, the node stopped; the seeds go with ``change_seeds``, live), and the command that shows it
+before it is done (``apply_config --check --diff``, with ``--limit`` to the nodes that change when there are 10 at
+most, the whole cluster when a file of yours is named: it reaches other nodes too). Last, the files the nodes keep as edited by hand (``import_cluster_keep_hand_edits``): each edit with the
+variable and the value that would carry it (or none), and how to give the file back to the roles (the variable in
+``group_vars/<cluster group>/`` when every node has the same edits, else in the host_vars of these nodes, taken out of ``cassandra_config_keep_files``: ``apply_config`` then writes the file and
+restarts the node). While the self-check fails, the end of the run shows the score only. Once the nodes have the new
+values, import again: the import keeps what every node has in ``group_vars/<cluster group>/``.
 
 A re-import reads the cluster from the inventory (``-e cassandra_hosts=<cluster group>``, or ``CASSANDRA_CLUSTER``,
 or nothing when the inventory holds this cluster alone): its connection variables and its JMX and CQL logins, vaulted

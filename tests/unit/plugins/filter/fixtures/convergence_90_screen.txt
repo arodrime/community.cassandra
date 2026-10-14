@@ -1,0 +1,13 @@
+CONVERGENCE  4/11 settings common to all nodes, 7 differ, 3 files kept by hand (1 node not read: not counted)
+  Next (5 of 7, the safest first, then the fewest nodes):
+    cassandra_linux_limits.nofile   100000 for all   1 node changes, no restart
+    cassandra_config_file_permissions.cassandra.yaml
+      0640 for all   3 nodes change, no restart
+    cassandra_extra_settings.streaming_connections_per_host
+      2 for all   6 nodes change, then restart
+    cassandra_heap_size             16G for all   10 nodes change, then restart
+    cassandra_medusa_extra_settings.storage.secret_access_key
+      secret 1 for all   30 nodes change, restart unknown
+  Check each one before it is applied: ansible-playbook community.cassandra.apply_config --check --diff
+  Kept by hand: jvm11-server.options on G3 + G4 + cass033; logback.xml on G7; cassandra-env.sh on cass090
+  The files to edit, the commands, the hand edits: reports/big/report.txt, section CONVERGENCE
