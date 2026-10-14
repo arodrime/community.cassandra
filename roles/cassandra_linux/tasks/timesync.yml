@@ -1,7 +1,13 @@
 ---
-# Time sync: chrony, or systemd-timesyncd on Debian/Ubuntu when chrony is not
-# installed (os.yml; apply_config also runs it alone, in a node's restart
-# window, Cassandra stopped)
+# Time sync: chrony kept where it is installed, else chrony (systemd-timesyncd
+# on Debian/Ubuntu when chrony is not installed); installed unless
+# cassandra_offline, enabled and started. The NTP servers are the site's: no
+# config is written. Run by os.yml; alone by apply_config (in a node's restart
+# window, Cassandra stopped) and by sync_clocks (include_role tasks_from, on a
+# node whose time sync does not run). cassandra_linux_timesync false leaves it
+# alone. Needs the os_family fact. With cassandra_offline and nothing
+# installed: a warning, refused instead when _cassandra_timesync_required
+# (sync_clocks: the clock is what it is there for).
 - name: Look for chrony (kept rather than replaced)
   ansible.builtin.stat:
     path: /usr/sbin/chronyd
@@ -60,8 +66,22 @@
     - cassandra_linux_timesync | bool
     - cassandra_offline | bool
     - cassandra_timesync_unit.rc != 0
+    - not _cassandra_timesync_required | default(false) | bool
   vars:
     cassandra_output: true
+
+- name: Refuse a time sync that is not installed (offline)
+  ansible.builtin.fail:
+    msg: >-
+      {{ _cassandra_timesync_pkg }} is not installed on {{ inventory_hostname }} and cassandra_offline downloads
+      nothing: install it from your image or mirror, or set cassandra_linux_timesync to false if the host's time
+      sync is managed another way.
+  when:
+    - cassandra_linux_timesync | bool
+    - cassandra_offline | bool
+    - cassandra_timesync_unit.rc != 0
+    - _cassandra_timesync_required | default(false) | bool
+    - not ansible_check_mode
 
 - name: Ensure timesync service starts
   ansible.builtin.service:

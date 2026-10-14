@@ -1,0 +1,28 @@
+---
+# sync_clocks' restart window, for a node whose clock needs a step while
+# Cassandra runs there (stepping it under a running Cassandra moves its
+# timestamps): drained, stopped, the clock set (clock_fix.yml: time sync brought
+# up where missing, synchronised, stepped), started again (action_restart.yml).
+# A clock that could not be set: Cassandra is started all the same, then the
+# run stops on this node. A mark on the node while the window is open: a run
+# interrupted there finds the node it stopped (resumed: started again).
+- name: Mark the restart window open
+  ansible.builtin.copy:
+    content: "sync_clocks stopped Cassandra here to set the clock\n"
+    dest: "{{ _cassandra_clock_window_mark }}"
+    mode: "0644"
+
+- name: Drain, stop, set the clock, start
+  ansible.builtin.include_tasks: action_restart.yml
+  vars:
+    _cassandra_service_while_stopped: clock_fix.yml
+
+- name: Mark the restart window closed
+  ansible.builtin.file:
+    path: "{{ _cassandra_clock_window_mark }}"
+    state: absent
+
+- name: Stop when the clock could not be set
+  ansible.builtin.fail:
+    msg: "{{ inventory_hostname }} was started again with its clock as it was: {{ _cassandra_clock_fix_error }}"
+  when: _cassandra_clock_fix_error | default('') | length > 0
