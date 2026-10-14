@@ -146,14 +146,43 @@ def test_blank_and_evidence():
     assert out["blank"] and out["elsewhere"] == ["/var/lib/cassandra/data/system"]
 
 
-def test_a_one_node_cluster_answers_alone():
-    """The only member of a one-node cluster is alone in its ring: its answer counts when it is the only one asked."""
-    alone = [{"host": "node1", "addresses": ["10.0.0.1"], "status": _ring(N1)}]
-    assert _state(answers=alone)["state"] == "failed_bootstrap"
-    assert _state(answers=alone)["ring"]["from"] == "node1"
-    stray = alone + [{"host": "node2", "addresses": ["10.0.0.2"], "status": None}]
-    assert _state(answers=stray)["state"] == "unknown"
-    assert cassandra_node_reset_refusal(_state(answers=stray, **OURS))
+LONE = [{"host": "node1", "addresses": ["10.0.0.1"], "status": _ring(N1)}]
+STOCK_HOST = {"host": "node3", "addresses": ["10.0.0.3"],
+              "status": _ring({"address": "127.0.0.1", "status": "U", "state": "N", "host_id": "id-3"})}
+STRAY = {"host": "node8", "addresses": ["10.0.0.8"],
+         "status": _ring({"address": "10.0.0.8", "status": "U", "state": "N", "host_id": "id-8"})}
+
+
+@pytest.mark.parametrize("answers, blank, holding", [
+    (LONE, "blank", "failed_bootstrap"),  # a one-node cluster adding its second node
+    (LONE + [STOCK_HOST], "blank", "failed_bootstrap"),  # another host of the group runs the package's own instance
+    (LONE + [{"host": "node3", "addresses": ["10.0.0.3"], "status": None}], "blank", "unknown"),  # node3 did not answer
+    (LONE + [{"host": "node3", "addresses": ["10.0.0.3"], "status": None, "asked": False}], "blank", "unknown"),  # stopped
+    ([STRAY, {"host": "node1", "addresses": ["10.0.0.1"], "status": None, "asked": False}], "blank", "unknown"),
+])
+def test_a_node_alone_in_its_ring(answers, blank, holding):
+    """A node alone in its ring stands for the cluster for a node without data (nothing to lose), not for one
+    holding data while another node of the group did not answer, or was stopped (a stray host, the members down)."""
+    assert _state(answers=answers, **BLANK)["state"] == blank
+    # add_node plans with that ring (new_node_state.yml needs it known)
+    assert _state(answers=answers, **BLANK)["ring"]["known"] is True
+    out = _state(answers=answers, **OURS)
+    assert out["state"] == (holding if holding != "failed_bootstrap" else "former_member")
+    if holding == "unknown":
+        assert cassandra_node_reset_refusal(out) and cassandra_add_node_reset_check(out)["reset"] is False
+        assert out["reasons"][1].startswith("only ")
+        assert out["ring"]["problems"][0].startswith("only ") and "nothing is reset" in out["ring"]["problems"][0]
+        assert "node1" not in out["ring"]["tried"] or answers[0]["status"]  # a stopped node is not said asked
+
+
+def test_the_ring_add_node_plans_with_is_not_a_lone_one():
+    assert _state(answers=[STRAY] + _answers(), **BLANK)["ring"]["from"] == "node1"
+
+
+def test_another_host_id_up_at_one_of_its_addresses_stays_a_conflict():
+    other = {"address": "10.0.0.70", "status": "U", "state": "N", "host_id": "id-x"}
+    out = _state(answers=_answers(other, _me("U", "N")), addresses=[ME, "10.0.0.70"], running=True, host_id="id-7")
+    assert out["state"] == "address_conflict"
 
 
 def test_its_own_entry_at_its_addresses_first():
