@@ -90,12 +90,15 @@ def test_rolling_restart_screen_and_question():
                            "Drains and restarts each node in turn, the cluster checked healthy before and after each;")
     assert "WARNING - session: " + SESSION in text
     assert question == "Restart node1..node3, one node at a time?"
-    assert "skipped (cassandra_rolling_resume)" in screen_text("rolling_restart.yml", resume=True)[0]
+    assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True)[0].split())
     rack, question = screen_text("rolling_restart.yml", mode="rack")
     assert "rack by rack" in rack and question == "Restart node1..node3, rack by rack?"
+    assert "Refused before any restart if a rack down would take down more than one replica" in " ".join(rack.split())
+    assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True, mode="rack")[0].split())
     # --check and cassandra_operation_confirm false: the screen, no question (said on the screen)
     assert "--check: nothing will be changed" in screen_text("rolling_restart.yml", check=True)[0]
-    assert "cassandra_operation_confirm" in screen_text("rolling_restart.yml", confirm=False)[0]
+    said = "cassandra_operation_confirm is false: no question, the run goes on."
+    assert said in screen_text("rolling_restart.yml", confirm=False)[0] and said not in text
 
 
 def test_rolling_reboot_screen_and_question():
@@ -120,6 +123,14 @@ def test_the_wait_is_for_nodes_down_and_ports_only():
     waiting = cassandra_health_waiting(found)
     # node4 once (seen from both), the port; not the schema disagreement
     assert [f["kind"] for f in waiting] == ["state", "port"]
+    # a nodetool that failed (a JMX timeout) is read again, as the module's polls did; not a login refused
+    failed = {"from": "node1", "result": {"msg": "nodetool gets no answer from JMX (timeout)"}}
+    refused = {"from": "node1", "result": {"msg": "nodetool failed", "stderr": "error: Authentication failed! Invalid username or password"}}
+    assert [f["kind"] for f in cassandra_health_waiting(cassandra_health_findings([failed], 3, "node2"))] == ["nodetool"]
+    assert cassandra_health_waiting(cassandra_health_findings([refused], 3, "node2")) == []
+    assert cassandra_health_wait_line(cassandra_health_waiting(cassandra_health_findings([failed], 3, "node2")), waited=10,
+                                      timeout=600, node="node2", operation="restart") == (
+        "node2 restart  waiting for nodetool status on node1 to answer  10s/10m")
     assert cassandra_health_waiting(cassandra_health_findings([view("node2", node("10.0.0.1"))], 3, "node2")) == []
 
 
@@ -159,12 +170,13 @@ def wait_on(**given):
 
 
 def test_when_the_health_check_waits():
-    assert wait_on() is True
-    assert wait_on(ansible_check_mode=True) is False  # nothing was started
-    assert wait_on(cassandra_service_health_resumed_down=["10.0.0.2"]) is False  # the node a resumed run left down
-    assert wait_on(_cassandra_health_no_wait=True) is False  # the nodes down_ok lists will not come back
-    assert wait_on(cassandra_service_health_report_only=True) is False  # health_check: a report
-    assert wait_on(cassandra_service_health_timeout=5) is False
+    assert wait_on() in (True, "True")
+    assert wait_on(ansible_check_mode=True) in (False, "False")  # nothing was started
+    assert wait_on(cassandra_service_health_resumed_down=["10.0.0.2"]) in (False, "False")  # the node a resumed run left down
+    assert wait_on(_cassandra_health_no_wait=True) in (False, "False")  # the nodes down_ok lists will not come back
+    # a report waits too (remove_dead_node after removenode force: gossip may lag), health_check reads once (5s)
+    assert wait_on(cassandra_service_health_report_only=True) in (True, "True")
+    assert wait_on(cassandra_service_health_timeout=5) in (False, "False")
 
 
 def test_each_read_is_one_read_the_wait_reads_again_with_a_progress_line():
@@ -182,3 +194,72 @@ def test_each_read_is_one_read_the_wait_reads_again_with_a_progress_line():
     # the stop says how long it waited
     stop = next(t for t in HEALTH if t["name"] == "Stop on an unhealthy cluster")
     assert "for them to come back (cassandra_service_health_timeout" in stop["ansible.builtin.fail"]["msg"]
+
+
+def check_task(name):
+    return next(t for t in CHECK["block"] if t["name"] == name)
+
+
+DOWN = [{"kind": "state", "address": "10.0.0.4", "state": "DN", "rack": "r1", "seen_from": "node1", "text": "x"}]
+
+
+def test_it_waits_only_when_allowed_and_while_something_is_down():
+    going = check_task("Note what is waited for")["ansible.builtin.set_fact"]["_cassandra_health_going"]
+    base = dict(trust(CHECK["vars"]), ansible_check_mode=False, cassandra_service_health_timeout=600, inventory_hostname="node2",
+                ansible_play_hosts=["node2"], hostvars={"node2": {"cassandra_health_findings": DOWN}})
+    assert render(going, base) in (True, "True")
+    assert render(going, dict(base, ansible_check_mode=True)) in (False, "False")  # not allowed: no wait, even with a node down
+    assert render(going, dict(base, hostvars={"node2": {"cassandra_health_findings": []}})) in (False, "False")
+    # a batch: the findings of its nodes, not those of a node an interrupted run did (skipped)
+    batch = dict(base, cassandra_service_health_batch=True, ansible_play_hosts=["node1", "node2"],
+                 hostvars={"node1": {"cassandra_health_findings": []}, "node2": {"cassandra_health_findings": DOWN}})
+    assert render(going, dict(batch, inventory_hostname="node1")) in (True, "True")
+    assert render(going, dict(batch, inventory_hostname="node1", cassandra_progress_done=["node2"])) in (False, "False")
+    # the wait and its lines only when it waits
+    for name in ("Start the wait", "Wait for the nodes down to come back"):
+        assert check_task(name)["when"] == "_cassandra_health_going | bool"
+
+
+def test_each_check_goes_on_while_something_is_down_and_time_is_left():
+    tasks = load("roles", "cassandra_service", "tasks", "cluster_health_wait.yml")
+    going = tasks[-1]["ansible.builtin.set_fact"]["_cassandra_health_going"]
+    import time
+    now = int(time.time())
+    base = dict(trust(CHECK["vars"]), ansible_check_mode=False, cassandra_service_health_timeout=600, inventory_hostname="node2",
+                ansible_play_hosts=["node2"], hostvars={"node2": {"cassandra_health_findings": DOWN}})
+    assert render(going, dict(base, _cassandra_health_wait_start=now - 30)) in (True, "True")
+    assert render(going, dict(base, _cassandra_health_wait_start=now - 601)) in (False, "False")  # the timeout: the stop follows
+    assert render(going, dict(base, _cassandra_health_wait_start=now - 30,
+                              hostvars={"node2": {"cassandra_health_findings": []}})) in (False, "False")  # back
+    # the wait between two reads: 10s at first, then 30s, never past the timeout
+    wait = tasks[1]
+    timeout = wait["ansible.builtin.wait_for"]["timeout"]
+
+    def pause(waited, limit=600):
+        variables = dict(cassandra_stream_early_check_interval=10, cassandra_stream_check_interval=30,
+                         cassandra_stream_early_time=300, cassandra_service_health_timeout=limit,
+                         _cassandra_health_wait_start=now - waited)
+        variables.update(trust(wait["vars"]))
+        return int(render(timeout, variables))
+    assert pause(20) == 10 and pause(400) == 30 and pause(595) in (4, 5, 6) and pause(700) == 1
+
+
+def test_the_ports_are_read_for_5s_when_the_loop_waits():
+    read = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]["block"]
+    ports = next(t for t in read if "ansible.builtin.wait_for" in t)["ansible.builtin.wait_for"]["timeout"]
+
+    def timeout(wait_on, batch=False, check=False):
+        return int(render(ports, {"_cassandra_health_wait_on": wait_on, "_batch": batch, "ansible_check_mode": check,
+                                  "cassandra_service_health_timeout": 600}))
+    assert timeout(True) == 5 and timeout(False, check=True) == 5
+    # no loop to wait for them (a node of a batch, a resumed node, a node down for good): as before, the full timeout
+    assert timeout(False) == 600 and timeout(True, batch=True) == 600
+
+
+def test_this_nodes_services_just_restarted_are_waited_for():
+    found = [{"kind": "gossip", "on": "node2", "text": "x"}, {"kind": "cql", "on": "node2", "text": "y"},
+             {"kind": "schema", "msg": "2 versions", "text": "z"}]
+    waiting = cassandra_health_waiting(found)
+    assert [f["kind"] for f in waiting] == ["gossip", "cql"]
+    assert cassandra_health_wait_line(waiting, waited=5, timeout=600, node="node2", operation="restart") == (
+        "node2 restart  waiting for gossip on node2 to run; the native transport (CQL) on node2 to run  5s/10m")

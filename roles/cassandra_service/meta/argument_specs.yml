@@ -287,7 +287,8 @@ argument_specs:
             C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
             C(move_node), C(topology)) and of a cleanup, after the first
             C(cassandra_stream_early_time) seconds. Each check reads C(nodetool netstats) and prints
-            one progress line (bar, percentage, rate, expected end) and one line for the other nodes.
+            one progress line (bar, percentage, rate, expected end) and one line for the other nodes. Also
+            the pace of the cluster health check's wait for nodes down (C(cassandra_service_health_timeout)).
       cassandra_stream_early_check_interval:
         type: int
         default: 10
@@ -338,7 +339,9 @@ argument_specs:
         default: 600
         description:
           - Operation playbooks, cluster health check before and after each
-            node. Seconds to wait for down nodes to come back.
+            node. Seconds to wait for down nodes to come back (and this node's storage and CQL ports, gossip and
+            native transport to answer), read again every C(cassandra_stream_check_interval) seconds (sooner at
+            first, plus the time of a read) with a progress line.
       cassandra_service_health_force:
         type: bool
         default: false

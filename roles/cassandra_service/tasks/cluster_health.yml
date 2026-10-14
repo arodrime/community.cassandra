@@ -59,17 +59,20 @@
     _node_checks: "{{ cassandra_service_health_node_checks | default(true) | bool }}"
     _down_ok: "{{ cassandra_service_health_down_ok | default([]) + cassandra_service_health_resumed_down | default([]) }}"
     # waits for down nodes to come back, not for the one a resumed run left down (one read), nor under --check
-    # (nothing was started: one read), nor for a report (health_check)
+    # (nothing was started: one read), nor with a timeout under 20s (health_check's report: 5s, one read)
     _cassandra_health_wait_on: >-
       {{ not (cassandra_service_health_resumed_down | default([]) or _cassandra_health_no_wait | default(false) | bool
-              or ansible_check_mode or cassandra_service_health_report_only | default(false) | bool)
+              or ansible_check_mode)
          and cassandra_service_health_timeout | int // 10 > 1 }}
-    # the longest a read may take: a minute each at most (a slow JMX), the schema's polls
+    # the longest a read may take: 70s (a nodetool, a slow JMX) + 300 (the schema's 6 polls 10s apart, their JMX calls)
     _async: 370
     # read once for the nodes of a batch, on the same node
     _batch: "{{ cassandra_service_health_batch | default(false) | bool }}"
-    # the nodes whose findings are waited for: this one, or every node of a batch (all wait together)
-    _cassandra_health_hosts: "{{ ansible_play_hosts if _batch | bool else [inventory_hostname] }}"
+    # the nodes whose findings are waited for: this one, or every node of a batch (all wait together; not those an
+    # interrupted run did, skipped)
+    _cassandra_health_hosts: >-
+      {{ ansible_play_hosts | reject('in', cassandra_progress_done | default([])) | list if _batch | bool
+         else [inventory_hostname] }}
     _cassandra_health_waiting: >-
       {%- set out = [] -%}
       {%- for h in _cassandra_health_hosts -%}
@@ -82,7 +85,7 @@
     _cassandra_health_head:
       index: "{{ ansible_play_hosts_all.index(inventory_hostname) + 1 if _cassandra_health_rolling | bool else 0 }}"
       steps: "{{ ansible_play_hosts_all | length if _cassandra_health_rolling | bool else 0 }}"
-      node: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list if _batch | bool else inventory_hostname }}"
+      node: "{{ _cassandra_health_hosts | community.cassandra.cassandra_node_list }}"
       operation: >-
         {{ {'apply_config': 'write_config'}.get(cassandra_service_node_action, cassandra_service_node_action)
            if cassandra_service_node_action is defined else 'cluster check' }}
@@ -95,6 +98,10 @@
         _cassandra_health_waited: false
         _cassandra_health_wait_start: "{{ now().timestamp() | int }}"
         _cassandra_health_going: "{{ _cassandra_health_wait_on | bool and _cassandra_health_waiting | length > 0 }}"
+        # the inventory names of the addresses in the ring, for its progress lines (each node's variables: read once)
+        _cassandra_health_names: >-
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)
+             if _cassandra_health_wait_on | bool and _cassandra_health_waiting | length > 0 else {} }}
       run_once: "{{ _batch }}"  # (a batch: on all its nodes)
 
     - name: Start the wait
