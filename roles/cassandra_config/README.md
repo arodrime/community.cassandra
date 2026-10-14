@@ -47,7 +47,7 @@ deletes the node's data).
 `--check` shows the diff and runs the checks below, and changes nothing. The role never restarts
 Cassandra: when it changed files of a running node, it says so.
 
-On a node already initialized, a file whose settings are the same as the
+On a node that is not blank, a file whose settings are the same as the
 role's (only comments, blank lines or their layout differ, e.g. a config
 written by hand, without the role's header line) is left as it is:
 `cassandra_config_normalize: true` rewrites it. Its owner, group and mode

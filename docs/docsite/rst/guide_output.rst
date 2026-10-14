@@ -83,6 +83,118 @@ Conventions
   ``--limit``); the lines above it say which. The ops callback puts the report under a heavy rule and the verdict
   (both lines) between two, and colours the table rows by the node's state: down red, joining, leaving or moving yellow.
 
+Where a node stands
+-------------------
+
+Every operation that adds, empties or replaces a node decides from one reading of where the node stands
+(``roles/cassandra_service/tasks/node_standing.yml``, the filter ``community.cassandra.cassandra_node_standing``),
+read once per run: whether Cassandra runs there (its JVM, or the ``cassandra`` unit active), the ring the other
+nodes of the cluster see (each running node reads its own, all at once, in the preflight), what its Cassandra
+directories hold (the data directories its config uses are the inventory's and the live ``cassandra.yaml``'s; a
+system keyspace left in the package's default directory that its config does not use is not the node's: said,
+left as it is), the cluster its live ``cassandra.yaml`` names, and the mark ``add_node`` leaves on a node while it
+bootstraps. The output gives the state in its words, with the reasons::
+
+    node7 (dc1/rack_b): holds 12.0 GiB of cluster 'my_cluster' (keyspaces shop), not in the ring, stopped
+      — a former member of this cluster: the writes only it holds would be lost if wiped
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 34 24 14 14
+
+   * - state
+     - its words
+     - ``add_node``, ``topology``
+     - ``reset_node``
+     - ``replace_node``
+   * - ``blank``
+     - blank: nothing in its Cassandra directories, Cassandra stopped, not in the ring
+     - added
+     - nothing to delete (kept from starting at boot)
+     - replaces
+   * - ``failed_bootstrap``
+     - never joined: data of this cluster or of the package's stock config, no user keyspace but those of a bootstrap add_node started there; not in the ring, Cassandra stopped
+     - emptied, then added (``-e cassandra_add_node_reset=false``: refused)
+     - emptied
+     - emptied first with ``-e cassandra_replace_node_reset=true``, else refused
+   * - ``former_member``
+     - former member: this cluster's keyspaces on disk, not in the ring, Cassandra stopped
+     - refused; ``-e cassandra_add_node_reset=true``: emptied, then added
+     - emptied
+     - emptied first with ``-e cassandra_replace_node_reset=true``, else refused
+   * - ``unidentified_data``
+     - data not known to be this cluster's (no readable cassandra.yaml, user keyspaces or other nodes met under the stock cluster name, keyspaces this cluster does not have or could not be read); not in the ring, Cassandra stopped
+     - refused, what it holds said
+     - emptied
+     - emptied first with ``-e cassandra_replace_node_reset=true``, else refused
+   * - ``other_cluster``
+     - another cluster's node: its cassandra.yaml names another cluster, or Cassandra runs there in another ring
+     - refused
+     - refused
+     - refused
+   * - ``running_outside_ring``
+     - Cassandra running alone, outside the cluster's ring
+     - refused: stop Cassandra first
+     - stopped, then emptied
+     - emptied first with ``-e cassandra_replace_node_reset=true``, else refused
+   * - ``member``
+     - in the ring, up (UN), under its own host ID
+     - not added again (joined)
+     - refused
+     - refused
+   * - ``member_joining``
+     - joining: UJ in the ring under its own host ID, a bootstrap running
+     - its bootstrap waited for again
+     - refused
+     - refused
+   * - ``member_down``
+     - in the ring, down (DN): Cassandra stopped there
+     - refused: start it
+     - refused
+     - refused
+   * - ``member_busy``
+     - in the ring, leaving or moving (UL, UM), or joining without its system keyspace here
+     - refused: wait until UN
+     - refused
+     - refused
+   * - ``dead_address``
+     - a dead node (DN) of the ring has its address, and it holds no system keyspace
+     - refused: run replace_node
+     - refused
+     - refused
+   * - ``address_conflict``
+     - the ring has another node at its address (another host ID, or this one does not answer)
+     - refused
+     - refused
+     - refused
+   * - ``unknown``
+     - can't be told: something needed could not be read or checked
+     - refused, what could not be read said
+     - refused
+     - refused
+
+``cassandra_config`` (``cassandra_config_confirm: auto``) asks before changing a file of a node that is not blank,
+and keeps the identity (cluster name, tokens, dc and rack) such a node started with; on a node the operation
+checked and asked about itself (``add_node``, ``topology``, ``replace_node``, ``create_cluster`` after its reset)
+it asks nothing, only its own data directories and a running Cassandra count there. ``create_cluster`` makes a
+new cluster (``cassandra_storage_compatibility_mode`` may be left out of a 5.0 one) only when every node of the
+group is blank, with no system keyspace left in the package's default directory either. ``import_cluster``
+reports a ring node it could not read in the same words (``in the ring, down (DN): Cassandra stopped there``).
+
+One word per meaning, in the output:
+
+- **blank**: nothing in its Cassandra directories, Cassandra stopped (and, as a state, not in the ring); **not
+  blank** says why (``/var/lib/cassandra/data/system``, ``Cassandra is running``, what could not be read).
+- **in the ring**: a node of the cluster that is up and normal (UN) lists it (``node1 sees 10.0.0.7 in its ring
+  (DN, host ID ...)``); **member**: in the ring under its own host ID; **in the group**: in the cluster's
+  inventory group, said as such.
+- **never joined** (``failed_bootstrap``), **former member** (``former_member``): its data on disk, not in the
+  ring.
+- **joining**: UJ, a bootstrap running; **joined**: ``add_node`` found it in the ring already (a bootstrap that
+  went through). A node back after a restart is up (Mode NORMAL), never "joined".
+- **Cassandra running** / **Cassandra stopped**: on that node (its JVM, or its unit); **down** (DN): as the ring
+  sees it.
+
 Printing a message
 ------------------
 

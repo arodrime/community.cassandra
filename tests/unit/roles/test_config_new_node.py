@@ -13,10 +13,18 @@ import select
 import sys
 import time
 
+import warnings
+
 import pytest
 import yaml
 
-from ansible_collections.community.cassandra.tests.unit.roles.test_config_preview import (
+from ansible.plugins.loader import init_plugin_loader
+
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # the collection's filters, under plain pytest too
+
+from ansible_collections.community.cassandra.tests.unit.roles.test_config_preview import (  # noqa: E402
     initialized_facts, render, task, task_vars)
 
 pty = pytest.importorskip("pty")
@@ -100,7 +108,7 @@ def test_a_stat_error_outside_its_data_dirs_does_not_count_for_a_new_node():
                              _cassandra_config_new_node=True)["_cassandra_config_initialized"] is True
 
 
-def prepare_vars(state, confirm=None, replace=False, planned=True, operation_confirm=None):
+def prepare_vars(state, confirm=None, replace=False, planned=True, operation_confirm=None, standing=None):
     """What action_add_prepare.yml passes to cassandra_config for a node in that state (planned: add_node worked
     out its reset, cassandra_add_node_reset not false)."""
     tasks = dict((t["name"], t) for t in load("roles", "cassandra_service", "tasks", "action_add_prepare.yml"))
@@ -110,6 +118,8 @@ def prepare_vars(state, confirm=None, replace=False, planned=True, operation_con
         v["_cassandra_node_reset_plan"] = {"problems": [], "delete": []}
     if operation_confirm is not None:
         v["cassandra_operation_confirm"] = operation_confirm
+    if standing is not None:  # where the node stands (node_standing.yml)
+        v["cassandra_node_standing"] = {"state": standing}
     if replace:
         v["_cassandra_add_checked_new"] = True
     if confirm is not None:
@@ -135,9 +145,20 @@ def test_add_prepare_asks_nothing_more_for_a_new_node(state, replace, confirm, g
 
 
 def test_add_node_reset_false_keeps_the_guard_of_cassandra_config():
-    # -e cassandra_add_node_reset=false: no reset plan, the live cassandra.yaml's dirs not looked at by add_node
+    # -e cassandra_add_node_reset=false: no reset plan; a node not known blank keeps cassandra_config's own guard
     assert prepare_vars("new", planned=False) == {"cassandra_config_confirm": "auto", "_cassandra_config_new_node": False,
                                                   "_cassandra_config_no_question": False}
+    for state in ("unknown", "failed_bootstrap", "running_outside_ring"):
+        assert prepare_vars("new", planned=False, standing=state)["_cassandra_config_new_node"] is False, state
+
+
+def test_add_node_reset_false_on_a_blank_node_asks_once():
+    """-e cassandra_add_node_reset=false, the node blank (where it stands, its live cassandra.yaml's dirs read too):
+    add_node's question covered it, cassandra_config asks nothing more (an old system keyspace left in the package's
+    default dir no longer brings a second question)."""
+    assert prepare_vars("new", planned=False, standing="blank") == {"cassandra_config_confirm": False,
+                                                                    "_cassandra_config_new_node": True,
+                                                                    "_cassandra_config_no_question": True}
 
 
 def test_no_second_question_whatever_e_cassandra_config_confirm_says():

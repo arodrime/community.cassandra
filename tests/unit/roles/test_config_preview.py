@@ -9,11 +9,13 @@ import json
 import os
 import subprocess
 import time
+import warnings
 
 import pytest
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -22,7 +24,11 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # the collection's filters (cassandra_node_standing), under plain pytest too
+
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview  # noqa: E402
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
@@ -141,7 +147,7 @@ def live_paths(text):
     return render(t["ansible.builtin.set_fact"]["_cassandra_config_live_paths"], **v)
 
 
-INVENTORY = dict(inventory_hostname="node1", cassandra_data_file_directories=["/var/lib/cassandra/data"],
+INVENTORY = dict(inventory_hostname="node1", cassandra_cluster_name="my_cluster", cassandra_data_file_directories=["/var/lib/cassandra/data"],
                  cassandra_extra_settings={}, cassandra_conf_dir="/etc/cassandra",
                  _cassandra_config_default_data_dir="/var/lib/cassandra/data",
                  cassandra_commitlog_dir="/var/lib/cassandra/commitlog", cassandra_saved_caches_dir="/var/lib/cassandra/saved_caches",
@@ -158,7 +164,7 @@ def stat_result(d, isdir):
 
 
 def initialized_facts(live=None, readable=True, isdir=os.path.isdir, services=None, **inventory):
-    """The facts of "Tell whether this node was already initialized": the role's templates, the modules simulated."""
+    """The facts of "Tell whether this node is blank": the role's templates, the modules simulated."""
     v = dict(INVENTORY, **inventory)
     v["cassandra_config_live_yaml_stat"] = {"stat": {"exists": live is not None}}
     v["cassandra_config_live"] = {"content": base64.b64encode(live.encode()).decode()} if live is not None and readable else {}
@@ -166,7 +172,7 @@ def initialized_facts(live=None, readable=True, isdir=os.path.isdir, services=No
     items = render(task(SYSTEM)["vars"]["_system"], **v)
     v["cassandra_config_system"] = {"results": [stat_result(d, isdir) for d in items]}
     v["ansible_facts"] = {"services": services or {}}
-    t = task("Tell whether this node was already initialized")
+    t = task("Tell whether this node is blank")
     v = task_vars(t, **v)
     return {k: render(val, **v) for k, val in t["ansible.builtin.set_fact"].items()}
 
@@ -255,7 +261,7 @@ def test_plain_path_with_spaces(text, path):
 def test_live_file_not_readable():
     facts = initialized_facts("data_file_directories: [/x]\n", readable=False, isdir=lambda d: False)
     assert facts["_cassandra_config_initialized"] is True
-    assert facts["_cassandra_config_initialized_why"] == "the live cassandra.yaml not readable"
+    assert facts["_cassandra_config_initialized_why"] == "the live cassandra.yaml can not be read"
     assert facts["_cassandra_config_reset"] == ""  # nothing found to empty
 
 
@@ -315,7 +321,7 @@ def test_stat_errors_read_on_the_node(tmp_path):
     assert found[2]["stat"]["isdir"] is True and found[3]["stat"] == {"exists": False}
     v = dict(INVENTORY, cassandra_config_system={"results": found}, cassandra_config_live_yaml_stat={"stat": {"exists": False}},
              cassandra_config_live={}, _cassandra_config_live_paths=[], ansible_facts={"services": {}})
-    t = task("Tell whether this node was already initialized")
+    t = task("Tell whether this node is blank")
     v = task_vars(t, **v)
     assert render(t["ansible.builtin.set_fact"]["_cassandra_config_initialized_why"], **v) == str(tmp_path / "old" / "system")
 
@@ -353,7 +359,7 @@ def test_identity_refusal_says_where_and_how_to_reset():
     msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
                   cassandra_config_identity={"stdout": '["cluster_name: Test Cluster -> Prod"]'}, cassandra_cluster_name="Prod",
                   _cassandra_config_initialized_why="/var/lib/cassandra/data/system", _cassandra_config_reset="RESET-HINT.")
-    assert msg.startswith("node1 was already initialized (/var/lib/cassandra/data/system) and these settings would change: "
+    assert msg.startswith("node1 is not blank (/var/lib/cassandra/data/system) and these settings would change: "
                           "cluster_name: Test Cluster -> Prod. A node keeps them for life: ")
     assert msg.endswith("set cassandra_config_force_identity_change: true. RESET-HINT.")
 
@@ -364,7 +370,7 @@ def test_identity_refusal_asks_first_whether_the_inventory_is_loaded():
                   cassandra_config_identity={"stdout": '["cluster_name: my_cluster -> Test Cluster"]'},
                   cassandra_cluster_name="Test Cluster",
                   _cassandra_config_initialized_why="Cassandra is running", _cassandra_config_reset="RESET-HINT.")
-    assert msg.startswith("node1 was already initialized (Cassandra is running) and these settings would change: "
+    assert msg.startswith("node1 is not blank (Cassandra is running) and these settings would change: "
                           "cluster_name: my_cluster -> Test Cluster. cassandra_cluster_name is the role default 'Test Cluster':"
                           " are the inventory's group_vars loaded? Check with ansible-inventory -i <inventory> --host node1"
                           " (group_vars are read next to the inventory file or directory given, not in its subdirectories)."
@@ -378,7 +384,7 @@ def test_identity_refusal_asks_first_whether_the_inventory_is_loaded():
 
 
 @pytest.mark.parametrize("initialized, expected", [
-    (True, "Config changes not confirmed on node1 (already initialized: Cassandra is running). Run interactively"
+    (True, "Config changes not confirmed on node1 (not blank: Cassandra is running). Run interactively"
            " and answer 'yes', or set cassandra_config_confirm: false to apply without asking."),
     (False, "Config changes not confirmed on node1. Run interactively"
             " and answer 'yes', or set cassandra_config_confirm: false to apply without asking."),

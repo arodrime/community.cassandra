@@ -47,16 +47,18 @@
   become: true
   vars:
     # the one there is wiped first (cassandra_create_cluster_reset), or a cluster never started: every
-    # host of the group in the run (no --limit), checked by the preflight (it answered) and below, none
-    # running, none with a system keyspace (a cluster stopped as a whole is not new)
+    # host of the group in the run (no --limit), checked by the preflight (it answered) and below, every
+    # one blank (where it stands, node_standing.yml: nothing in its Cassandra directories, Cassandra
+    # stopped), no system keyspace left in the package's default dir either (a cluster stopped as a
+    # whole is not new)
     _group: "{{ query('community.cassandra.cassandra_nodes') | default([]) }}"
     _new_cluster: >-
       {%- set fresh = [] -%}
       {%- for h in ansible_play_hosts_all -%}
       {%-   set v = hostvars[h] -%}
       {%-   if v._cassandra_preflight_running is defined and not v._cassandra_preflight_running | bool
-              and v.cassandra_create_system.results is defined
-              and v.cassandra_create_system.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length == 0 -%}
+              and v.cassandra_node_standing is defined and v.cassandra_node_standing.blank | bool
+              and v.cassandra_node_standing.elsewhere | length == 0 -%}
       {%-     set _ = fresh.append(h) -%}
       {%-   endif -%}
       {%- endfor -%}
@@ -76,12 +78,13 @@
         tasks_from: defaults.yml
         public: true
 
-    # the first data directory holds it (cassandra_data_dir is that one unless the inventory says otherwise)
-    - name: Look for the system keyspace of a node that ran already
-      ansible.builtin.stat:
-        path: "{{ item }}/system"
-      loop: "{{ [cassandra_data_dir, [cassandra_data_file_directories] | flatten | first] | unique }}"
-      register: cassandra_create_system
+    # read once, also by the reset below (cassandra_create_cluster_reset): no ring, a new cluster has none
+    - name: Where the node stands
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: node_standing.yml
+      vars:
+        _cassandra_node_standing_ring: false
 
     # Role defaults are not in hostvars: what is there came from the inventory or -e
     - name: Check the identity settings come from the inventory

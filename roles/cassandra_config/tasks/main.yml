@@ -363,18 +363,20 @@
       ansible.builtin.service_facts:
       when: _cassandra_config_unit_state == 'unread'
 
-    # Where it was found and, for a node started once by mistake (another
-    # config) that never joined the real cluster, the dirs to empty to start it over.
+    # Blank or not, as every operation says it (cassandra_node_standing, from what was read here: no
+    # ring): nothing in its data directories, Cassandra stopped. When not blank: why and, for a node
+    # started once by mistake (another config) that never joined the real cluster, the dirs to empty
+    # to start it over.
     # _cassandra_config_new_node (add_node, replace_node, topology; create_cluster after its
     # reset): the operation checked the node is new (in no ring, Cassandra down, its data
     # directories empty or emptied first) and asked its own question: only a system keyspace
     # in the data directories its config uses, or a running Cassandra, still count. One left
     # elsewhere (the package's default dir, a former cassandra.yaml's) is no longer this
     # node's: left as it is, said below; a missing or hand-edited cassandra.yaml is rewritten.
-    - name: Tell whether this node was already initialized
+    - name: Tell whether this node is blank
       ansible.builtin.set_fact:
-        _cassandra_config_initialized: "{{ _why | length > 0 }}"
-        _cassandra_config_initialized_why: "{{ _why | join(', ') }}"
+        _cassandra_config_initialized: "{{ not _standing.blank }}"
+        _cassandra_config_initialized_why: "{{ _standing.evidence | join(', ') }}"
         _cassandra_config_left: "{{ _found | reject('in', _counted) | list }}"
         _cassandra_config_reset: >-
           {{ '' if not _counted else "ONLY if this node never joined the real cluster (e.g. started once with the stock config),
@@ -403,13 +405,16 @@
           {{ cassandra_config_system.results | rejectattr('stat', 'defined')
              | selectattr('item', 'in', _own if _new | bool else cassandra_config_system.results | map(attribute='item') | list)
              | map(attribute='msg', default='') | reject('search', 'Not a directory|too long') | list | length > 0 }}
-        _why: >-
-          {{ _counted | map('regex_replace', '$', '/system') | list
-             + (['a data dir that could not be checked'] if _unchecked | bool else [])
-             + (['the live cassandra.yaml not readable'] if cassandra_config_live_yaml_stat.stat.exists
-                and cassandra_config_live.content is not defined and not _new | bool else [])
-             + (['a path with "{" in the live cassandra.yaml'] if '{' in _cassandra_config_live_paths and not _new | bool else [])
-             + (['Cassandra is running'] if _running | bool else []) }}
+        _standing: >-
+          {{ inventory_hostname | community.cassandra.cassandra_node_standing(cassandra_cluster_name, answers=none,
+               running=_running, held=_counted | map('regex_replace', '$', '/system') | list,
+               system=_counted | map('regex_replace', '$', '/system') | list,
+               elsewhere=_found | reject('in', _counted) | map('regex_replace', '$', '/system') | list,
+               live='absent' if _new | bool or not cassandra_config_live_yaml_stat.stat.exists
+                    else 'unreadable' if cassandra_config_live.content is not defined else 'read',
+               unreadable=(['a data dir that could not be checked'] if _unchecked | bool else [])
+                          + (['a path with "{" in the live cassandra.yaml'] if '{' in _cassandra_config_live_paths and not _new | bool
+                             else [])) }}
 
     - name: Say what a new node leaves as it is
       ansible.builtin.debug:
@@ -451,7 +456,7 @@
                                                            | map('regex_replace', '^(.*)$', _cassandra_config_series ~ '/\1.j2')))) }}
       no_log: true  # passwords
 
-    # On a node already initialized, a file with the same settings is left as it is: the live ones that
+    # On a node that is not blank, a file with the same settings is left as it is: the live ones that
     # differ read, their settings compared on the controller, as the import self-check does. Top-level keys
     # and rackdc properties a joined node must keep: plain text, no YAML parser needed on the node. A file
     # left as the node has it (cassandra_config_keep_files) changes none of them.
@@ -502,7 +507,7 @@
             {%-   set _ = out.append(r | combine({'stdout_lines': r.stdout.splitlines()})) -%}
             {%- endfor -%}
             {{ out }}
-        # the live files that differ, read on a node already initialized: {name: base64 content, none when unreadable}
+        # the live files that differ, read on a node that is not blank: {name: base64 content, none when unreadable}
         _cassandra_config_compared: "{{ _compare.live }}"
         cassandra_config_identity: "{{ {'stdout': _compare.identity.changes | to_json} if _compare.identity is not none else {'skipped': true} }}"
       vars:
@@ -522,7 +527,7 @@
       ansible.builtin.assert:
         that: _changes | length == 0 or cassandra_config_force_identity_change | bool
         fail_msg: >-
-          {{ inventory_hostname }} was already initialized ({{ _cassandra_config_initialized_why }}) and these settings
+          {{ inventory_hostname }} is not blank ({{ _cassandra_config_initialized_why }}) and these settings
           would change: {{ _changes | join('; ') }}.{{ _not_loaded }} A node keeps them for life: a new cluster_name, partitioner or
           num_tokens stops it from starting, a new dc or rack too (unless forced), a new snitch or forced dc/rack moves
           data ownership without streaming, and storage_compatibility_mode (5.0) only moves one step at a time,
@@ -540,7 +545,7 @@
           if cassandra_cluster_name == 'Test Cluster' and _changes | select('match', 'cluster_name: ') | list | length > 0 else '' }}
       when: _cassandra_config_initialized | bool
 
-    # On a node already initialized, a file with the same settings (only comments,
+    # On a node that is not blank, a file with the same settings (only comments,
     # blank lines or their layout differ, e.g. no header: set up by hand) is left as it is
     - name: List the files to change and whether to ask first
       ansible.builtin.set_fact:
@@ -567,7 +572,7 @@
           {%-   endif -%}
           {%- endfor -%}
           {{ out + _keep }}
-        # (where the node has them, on a node already initialized: a new one's are the package's)
+        # (where the node has them, on a node that is not blank: a new one's are the package's)
         _keep: >-
           {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
              | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
@@ -700,7 +705,7 @@
       ansible.builtin.assert:
         that: (cassandra_config_answer.user_input | default('')) == 'yes'
         fail_msg: >-
-          Config changes not confirmed on {{ inventory_hostname }}{{ (' (already initialized: ' ~ _cassandra_config_initialized_why ~ ')')
+          Config changes not confirmed on {{ inventory_hostname }}{{ (' (not blank: ' ~ _cassandra_config_initialized_why ~ ')')
           if _cassandra_config_initialized | bool else '' }}. Run interactively and answer 'yes',
           or set cassandra_config_confirm: false to apply without asking.
       when:
