@@ -23,7 +23,7 @@ from ansible_collections.community.cassandra.tests.unit.roles.config_reader impo
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
 READ = "Read the node's config files and directories"
-LOOK = "Look for the system keyspace of an initialized node, and into Cassandra's directories"
+LOOK = "Look for a system keyspace, and into Cassandra's directories"
 NOTE = "Note what was found in the directories"
 
 

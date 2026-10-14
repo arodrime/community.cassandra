@@ -52,11 +52,15 @@ def test_an_interrupted_run_that_joined_loses_its_mark():
 
 
 def test_the_reset_check_reads_the_mark_and_the_choice():
-    tasks = dict((t["name"], t) for t in load("reset_node_plan.yml"))
-    look = tasks["Look for a bootstrap add_node left unfinished"]
+    # read once, where the node stands (node_standing_read.yml), and the add_node check gets the choice
+    read = dict((t["name"], t) for t in load("node_standing_read.yml"))
+    look = read["Look for a bootstrap add_node left unfinished"]
     assert look["ansible.builtin.stat"]["path"] == "{{ _cassandra_service_bootstrap_mark }}"
-    check = tasks["Work out whether add_node may reset it"]["ansible.builtin.set_fact"]["_cassandra_node_reset_check"]
-    assert "bootstrap_started=cassandra_node_reset_bootstrap_mark.stat.exists | default(false)" in check
+    kept = read["Keep what was read"]["ansible.builtin.set_fact"]["_cassandra_node_standing_read"]["bootstrap_started"]
+    assert "cassandra_node_reset_bootstrap_mark.stat.exists | default(false)" in kept
+    assert "_cassandra_service_bootstrap_mark_days * 86400" in kept
+    tasks = dict((t["name"], t) for t in load("reset_node_plan.yml"))
+    check = tasks["Work out whether this node may be reset"]["ansible.builtin.set_fact"]["_cassandra_node_reset_check"]
     assert "explicit=cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice == 'true'" in check
 
 

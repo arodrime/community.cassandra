@@ -139,14 +139,14 @@ def _live_dirs(text):
     return out, node, ""
 
 
-def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=None, cluster_name=""):
+def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=None):
     """inventory: [[kind, path]] from the inventory (kinds: data, commitlog,
     saved_caches, hints, cdc_raw); live_yaml: the live cassandra.yaml text
     (None or '': no such file); mounts: ansible_facts['mounts'] and/or
     /proc/self/mounts lines; protected: paths
     a directory to empty must not hold (config, logs, the Cassandra install).
-    cluster_name: the inventory's; a live file of another cluster (but the
-    package's stock Test Cluster) is refused.
+    (A live file of another cluster: refused from where the node stands,
+    cassandra_node_reset_refusal.)
     Returns {'dirs': [{'path', 'kinds', 'from'}], 'problems': [...],
     'addresses': [...], 'cluster_name': ...}: the directories to empty
     (inventory and live file merged), the reasons not to touch any of them,
@@ -163,9 +163,6 @@ def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=
         if node:
             addresses = node["addresses"]
             live_cluster = node["cluster_name"]
-            if cluster_name and node["cluster_name"] not in (cluster_name, STOCK_CLUSTER):
-                problems.append("the live cassandra.yaml is for cluster '%s', not '%s' (nor the package's stock"
-                                " 'Test Cluster'): a node of another cluster?" % (node["cluster_name"], cluster_name))
         for kind, path in live or []:
             found.append((kind, path, "cassandra.yaml"))
     dirs = {}
@@ -219,32 +216,19 @@ _addr = standing._addr
 _nodes = standing._nodes
 
 
-def cassandra_node_reset_ring(answers, addresses, replace_address="", running=False, own=None, host="", known=None,
-                              has_data=False, cluster_ring=None):
-    """answers: [{'host', 'addresses', 'status'}]: the ring (cassandra_status
-    cluster_status, None when it did not answer) other nodes of the cluster
-    see, and their own addresses; addresses: this node's addresses;
-    replace_address: a replace of this node: that address may be in the
-    rings, down; running: Cassandra runs there; own: then its own ring (None:
-    it did not answer); known: the addresses of the cluster group's hosts;
-    has_data: the node holds data (a down node no host of the inventory
-    accounts for may be this one under an old address); cluster_ring: the
-    whole cluster is reset (create_cluster), these are the addresses of its
-    ring: the rings are not read, a node holding data must be in that one.
-    Returns {'problems', 'info'}. Where the node stands (cassandra_node_standing)
-    reads the rings the same way (ring_view)."""
+def cassandra_node_reset_ring(addresses, host="", has_data=False, cluster_ring=None):
+    """create_cluster's reset of the whole cluster (reset_node.yml with
+    _cassandra_node_reset_whole_cluster): the rings are not read again, the
+    caller checked them (cassandra_cluster_reset_check); a node holding data
+    must be in that ring (cluster_ring: its addresses). addresses: this
+    node's. Returns {'problems', 'info'}. Any other reset decides from where
+    the node stands (cassandra_node_standing, cassandra_node_reset_refusal)."""
     name = host or "this node"
-    if cluster_ring is not None:
-        me = standing.mine(addresses)
-        if has_data and not me & set(_addr(a) for a in cluster_ring):
-            return {"problems": ["%s holds data but none of its addresses (%s) is in the ring of the cluster: a node of"
-                                 " another cluster?" % (name, ", ".join(sorted(me)))], "info": []}
-        return {"problems": [], "info": ["the whole cluster is reset"]}
-    view = standing.ring_view(answers, addresses, standing.own_ids(addresses, running=running, own=own),
-                                replace_address, known, has_data)
-    info = ["%s sees %s down (%s): the node being replaced" % (other, _addr(n.get("address")), standing._seen(n))
-            for other, n in view["replaced"]]
-    return {"problems": standing.ring_problems(view, addresses, name, replace_address, running, own), "info": info}
+    me = standing.mine(addresses)
+    if has_data and not me & set(_addr(a) for a in cluster_ring or []):
+        return {"problems": ["%s holds data but none of its addresses (%s) is in the ring of the cluster: a node of"
+                             " another cluster?" % (name, ", ".join(sorted(me)))], "info": []}
+    return {"problems": [], "info": ["the whole cluster is reset"]}
 
 
 def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None):

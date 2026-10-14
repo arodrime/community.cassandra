@@ -90,7 +90,7 @@ def test_add_node_and_replace_node_decide_from_where_the_node_stands():
 @pytest.mark.parametrize("found, initialized", [([], False), (["/d2/data"], True)])
 def test_a_seed_started_once_is_known_by_any_dir(found, initialized):
     tasks = dict((t["name"], t) for t in walk(load("roles", "cassandra_service", "tasks", "main.yml")))
-    assert tasks["Check whether this node was already initialized"]["loop"] == "{{ _cassandra_service_system_dirs }}"
+    assert tasks["Check whether this node ever started (a system keyspace)"]["loop"] == "{{ _cassandra_service_system_dirs }}"
     remember = tasks["Remember whether it was"]["ansible.builtin.set_fact"]["cassandra_service_was_initialized"]
     assert render(remember, cassandra_service_initialized=stat_results(found)) is initialized
     assert "not cassandra_service_was_initialized | bool" in tasks["Look for other seeds already up"]["when"]

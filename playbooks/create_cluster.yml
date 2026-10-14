@@ -72,6 +72,11 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # what an earlier play (or playbook of this run) read may no longer stand: this step reads it again
+    - name: Read where the nodes stand again
+      ansible.builtin.set_fact:
+        _cassandra_node_standing_read: {}
+
     - name: Load the cassandra_config defaults
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config
@@ -252,6 +257,11 @@
         _cassandra_own_facts: "{{ inventory_hostname }}"
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
+
+    # what an earlier play (or playbook of this run) read may no longer stand: this step reads it again
+    - name: Read where the nodes stand again
+      ansible.builtin.set_fact:
+        _cassandra_node_standing_read: {}
 
     - name: Reset the whole cluster
       when: cassandra_create_cluster_reset | default(false) | bool

@@ -52,7 +52,7 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-SYSTEM = "Look for the system keyspace of an initialized node, and into Cassandra's directories"
+SYSTEM = "Look for a system keyspace, and into Cassandra's directories"
 
 
 def changed_lines(diff):
