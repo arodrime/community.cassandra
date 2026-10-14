@@ -232,7 +232,7 @@
              + (['stopped by the interrupted run (time sync): started once written'] if _stopped | bool else [])
              + (['WARNING stopped by an interrupted run for its time sync: left stopped; to start it, run again with'
                  ' -e cassandra_rolling_resume=true']
-                if not _running | bool and _clock.mark is defined and not cassandra_rolling_resume | default(false) | bool
+                if not _running | bool and _clock.mark is defined and not _stopped | bool
                 else [])
              + (_no_unit | map(attribute='item') | reject('match', 'package ') | map('regex_replace', '$',
                 ' cannot run here (the condition of its unit): left as it is') | list)
