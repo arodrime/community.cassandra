@@ -219,7 +219,8 @@
                  down_ok=_down_ok,
                  joining_ok=cassandra_service_health_joining_ok | default([]),
                  leaving_ok=cassandra_service_health_leaving_ok | default([]),
-                 names=query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)) }}
+                 names=_cassandra_health_read_names if _cassandra_health_read_names is defined
+                       else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)) }}
 
     # the same as sentences (cassandra_health_findings: as data, for the health_check report)
     - name: Word the problems

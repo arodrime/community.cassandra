@@ -33,6 +33,8 @@
 
 - name: Read the cluster state again
   ansible.builtin.include_tasks: cluster_health_read.yml
+  vars:
+    _cassandra_health_read_names: "{{ _cassandra_health_names }}"  # (read once, before the wait)
 
 - name: Note whether it still waits
   ansible.builtin.set_fact:

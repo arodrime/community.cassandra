@@ -64,8 +64,14 @@ def test_the_health_checks_pass_the_inventory_names():
         text = f.read()
     tasks = [t for b in yaml.safe_load(text) for t in [b] + b.get("block", [])]
     listed = next(t for t in tasks if t.get("name") == "List the problems")
-    assert "names=query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)" \
-        in listed["ansible.builtin.set_fact"]["cassandra_health_findings"]
+    findings = " ".join(listed["ansible.builtin.set_fact"]["cassandra_health_findings"].split())
+    assert ("names=_cassandra_health_read_names if _cassandra_health_read_names is defined"
+            " else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)") \
+        in findings
+    # the wait's reads: the names read once before it
+    with open(os.path.join(os.path.dirname(path), "cluster_health_wait.yml"), encoding="utf-8") as f:
+        again = next(t for t in yaml.safe_load(f) if t.get("name") == "Read the cluster state again")
+    assert again["vars"]["_cassandra_health_read_names"] == "{{ _cassandra_health_names }}"
 
 
 def test_node_missing_from_the_ring():
