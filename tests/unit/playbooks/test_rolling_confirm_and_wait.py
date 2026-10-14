@@ -319,7 +319,7 @@ def test_each_check_goes_on_while_something_is_down_and_time_is_left():
     def pause(waited, limit=600):
         variables = dict(cassandra_stream_early_check_interval=10, cassandra_stream_check_interval=30,
                          cassandra_stream_early_time=300, cassandra_service_health_timeout=limit,
-                         _cassandra_health_wait_start=now - waited)
+                         _cassandra_health_wait_start=int(time.time()) - waited)  # (now: a slow run takes seconds)
         variables.update(trust(wait["vars"]))
         return int(render(timeout, variables))
     assert pause(20) == 10 and pause(400) == 30 and pause(595) in (4, 5, 6) and pause(700) == 1

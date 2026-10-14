@@ -225,7 +225,24 @@ def test_a_clock_in_sync_is_not_stepped(tmp_path):
     assert "makestep" not in (fake / "log").read_text()
 
 
-def test_no_time_sync_offline_is_said_not_failed(tmp_path):
+def test_no_time_sync_offline_a_warning_elsewhere_a_refusal_for_sync_clocks():
+    # cassandra_linux's timesync.yml: os.yml and apply_config's window warn, sync_clocks
+    # (_cassandra_timesync_required) refuses; never both
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_linux", "tasks", "timesync.yml")
+    with open(path, encoding="utf-8") as f:
+        tasks = dict((t["name"], t) for t in yaml.safe_load(f))
+    warn = tasks["Say the time sync service is missing (offline)"]["when"]
+    refuse = tasks["Refuse a time sync that is not installed (offline)"]["when"]
+    assert "not _cassandra_timesync_required | default(false) | bool" in warn
+    assert "_cassandra_timesync_required | default(false) | bool" in refuse
+    assert [w for w in warn if "required" not in w] == [w for w in refuse if "required" not in w and "check_mode" not in w]
+    clock_fix = os.path.join(os.path.dirname(path), "..", "..", "cassandra_service", "tasks", "clock_fix.yml")
+    with open(clock_fix, encoding="utf-8") as f:
+        text = f.read()
+    assert "_cassandra_timesync_required: true" in text
+
+
+def test_no_time_sync_offline_is_refused_by_sync_clocks(tmp_path):
     # the start path: cassandra_linux's timesync.yml (its vars through include_role), nothing installed, offline
     setup(tmp_path, {"node1": {}})
     tasks = [{"ansible.builtin.setup": {"gather_subset": ["!all", "!min", "distribution"]}}] + FIX
