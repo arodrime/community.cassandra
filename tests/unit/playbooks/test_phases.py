@@ -103,7 +103,8 @@ def test_marked_phase_lines(path, at_least):
     ("restart", {}, "Restarting node5..."),
     ("apply_config", {}, "Writing the config (node5)..."),
     ("replace", {"cassandra_replace_address": "10.0.0.9"}, "Starting node5 and waiting while it replaces 10.0.0.9..."),
-    ("update_java", {}, "Updating Java on node5...")])
+    ("update_java", {}, "Updating Java on node5..."),
+    ("sync_clock", {}, "Setting the clock of node5 (drained, stopped, started again)...")])
 def test_each_node_says_what_is_done_to_it(action, extra, line):
     say = next(t for t in phases("roles", "cassandra_service", "tasks", "node_operation.yml")
                if t["name"].startswith("Say what is done"))

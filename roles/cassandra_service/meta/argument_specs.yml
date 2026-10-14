@@ -367,7 +367,7 @@ argument_specs:
             of slewing it (systemd-timesyncd steps past 400 ms). On a node where
             Cassandra runs, C(sync_clocks) steps it in a restart window (drain,
             stop, step, start), one node at a time.
-      cassandra_clock_sync_wait:
+      cassandra_clock_sync_timeout:
         type: int
         default: 60
         description:

@@ -66,7 +66,7 @@ ENV = "CASSANDRA_CLUSTER"
 # cluster group, even when they hold every host
 RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|move_left_going|move_order|leaving_dc|create_start_order|topology_(add|remove|seeds)"
                      r"|upgrade_nodes|(seed|apply_config|apply_config_batch|apply_config_os|apply_config_ts|apply_config_tsany|update_java"
-                     r"|sync_clock_live|sync_clock_window)_(True|False))$")
+                     r"|sync_clock_live|sync_clock_window|window_left)_(True|False))$")
 
 
 def _candidates(groups):

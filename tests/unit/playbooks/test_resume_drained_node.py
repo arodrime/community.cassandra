@@ -46,6 +46,7 @@ HOSTS = ["n1", "n2", "n3"]
     (True, "restart", "n3", ["n1"], False),         # a later node: checked as usual
     (False, "restart", "n2", ["n1"], False),        # not a resumed run
     (True, "update_java", "n1", [], True),
+    (True, "sync_clock", "n1", [], True),           # sync_clocks' restart window
     (True, "upgrade", "n1", [], False),             # its own phases, not this
     (True, "decommission", "n2", ["n1"], False),    # an operation that does not bring the node back
 ])

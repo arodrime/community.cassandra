@@ -4,8 +4,8 @@
 
 Cassandra orders the writes to a cell by their timestamps (the latest wins),
 and a timestamp is taken from a clock: the client's, or the coordinator's
-(cqlsh, a driver without client-side timestamps, the ballots of lightweight
-transactions); TTLs and tombstones expire by the node's clock. A node whose
+(a driver without client-side timestamps, the ballots of lightweight
+transactions; cqlsh stamps with the clock of its own host); TTLs and tombstones expire by the node's clock. A node whose
 clock is ahead stamps writes in the future: an update or a delete of the same
 data stamped by a correct clock loses against them until real time catches up.
 
@@ -126,7 +126,7 @@ def parse_chrony_sources(lines):
     """chronyc -n sources -> {selected: address or '', count, reachable: how many answered lately}."""
     selected, count, reachable = "", 0, 0
     for line in lines:
-        m = re.match(r"^([\^=#])([*+\-?x~ ])\s+(\S+)\s+(\d+)\s+(\d+)\s+([0-7]+)\s", line)
+        m = re.match(r"^([\^=#])([*+\-?x~ ])\s+(\S+)\s+(\d+)\s+(-?\d+)\s+([0-7]+)\s", line)
         if not m:
             continue
         count += 1
@@ -144,20 +144,27 @@ def parse_timesync(lines):
     server = f.get("Server", "")
     source = "" if not server or server.split()[0] in ("n/a", "null", "(null)") else server
     offset = _span(f.get("Offset")) if "Offset" in f else None
+    # the server's root distance, plus half the delay to it
     bound = _span(f.get("Root distance", "").split("(")[0]) if "Root distance" in f else None
+    if bound is not None and "Delay" in f:
+        bound += (_span(f["Delay"]) or 0.0) / 2
     leap = f.get("Leap", "").lower()
+    leap = ("normal" if leap == "normal" else "insert" if "extra" in leap or "insert" in leap
+            else "delete" if "fewer" in leap or "delete" in leap or "missing" in leap
+            else "unsynchronised" if "synchron" in leap or leap == "alarm" else leap)
     stratum = int(f["Stratum"]) if f.get("Stratum", "").isdigit() else None
-    return {"source": source, "offset": -offset if offset is not None else None, "bound": bound,
-            "leap": {"normal": "normal", "insert-second": "insert", "delete-second": "delete"}.get(
-                leap, "unsynchronised" if leap in ("not-synchronized", "unsynchronized", "alarm") else leap),
+    return {"source": source, "offset": -offset if offset is not None else None, "bound": bound, "leap": leap,
             "stratum": stratum}
 
 
 def parse_ntpq(lines):
-    """ntpq -pn -> {source, offset, bound, stratum} of the peer selected (*); {} when none is."""
+    """ntpq -pn -> {source, offset, bound, stratum} of the peer selected (*); {} when none is, {local: True}
+    when it is ntpd's own clock (127.127.1.x, .LOCL.)."""
     for line in lines:
         cols = line.split()
         if len(cols) >= 10 and cols[0].startswith("*"):
+            if cols[0][1:].startswith("127.127.1.") or cols[1] == ".LOCL.":
+                return {"local": True}  # its own clock (the local driver): no real source
             try:
                 delay, offset = float(cols[7]), float(cols[8])
             except ValueError:
@@ -174,7 +181,7 @@ def cassandra_clock_probe(text):
     out = {"daemon": "", "service": "", "active": False, "installed": False, "enabled": False, "masked": False,
            "synchronised": False, "source": "", "sources": 0, "reachable": 0, "configured": [], "offset": None,
            "bound": None, "leap": "", "stratum": None, "local": False, "kernel_synced": None, "container": "",
-           "query": None, "window": False}
+           "query": None, "window": False, "kernel_only": False}
     # the daemon that runs (several: the first of chrony, timesyncd, ntp), else one installed
     order = ["chronyd", "chrony", "systemd-timesyncd", "ntpd", "ntpsec", "ntp"]
     running = [u for u in order if units.get(u, {}).get("active")]
@@ -188,10 +195,16 @@ def cassandra_clock_probe(text):
     virt = " ".join(s.get("virt", [])).strip()
     out["container"] = "" if virt in ("", "none") else virt
     show = _fields(s.get("timedatectl", []), "=")
+    status = _fields(s.get("timedatectl_status", []))
     if "NTPSynchronized" in show:
         out["kernel_synced"] = show["NTPSynchronized"] == "yes"
+    else:  # systemd before 239: timedatectl status
+        said = status.get("System clock synchronized", status.get("NTP synchronized"))
+        if said is not None:
+            out["kernel_synced"] = said == "yes"
     out["configured"] = sorted(set(
-        line.split()[1] for line in s.get("chrony_conf", []) + s.get("timesync_servers", []) if len(line.split()) > 1))
+        line.split()[1] for line in s.get("chrony_conf", []) + s.get("timesync_servers", [])
+        if len(line.split()) > 1 and line.split()[0] != "makestep"))
     if out["active"] and out["daemon"] == "chrony":
         tracking = parse_chrony_tracking(s.get("tracking", []))
         sources = parse_chrony_sources(s.get("sources", []))
@@ -200,6 +213,9 @@ def cassandra_clock_probe(text):
             out["synchronised"] = tracking["synchronised"] and (bool(sources["selected"]) or not s.get("sources"))
             out["source"] = sources["selected"] or tracking["source"] if out["synchronised"] else ""
         out["sources"], out["reachable"] = sources["count"], sources["reachable"]
+    elif out["active"] and out["daemon"] == "timesyncd" and not any(x.strip() for x in s.get("timesync", [])):
+        # systemd before 239: no timesync-status, only the kernel's word (compared coarsely)
+        out["kernel_only"] = True
     elif out["active"] and out["daemon"] == "timesyncd":
         sync = parse_timesync(s.get("timesync", []))
         out.update(dict((k, sync[k]) for k in ("source", "offset", "bound", "leap", "stratum")))
@@ -212,11 +228,22 @@ def cassandra_clock_probe(text):
             [sync["source"].split("(")[-1].rstrip(")")] if "(" in sync["source"] else []))
     elif out["active"] and out["daemon"] == "ntp":
         peer = parse_ntpq(s.get("ntpq", []))
-        if peer:
+        if peer.get("local"):
+            out["local"] = True
+        elif peer:
             out.update(dict((k, peer[k]) for k in ("source", "offset", "bound", "stratum")))
             out["leap"] = "normal"
-        out["synchronised"] = bool(peer)
+        out["synchronised"] = bool(peer) and not peer.get("local")
+        out["sources"] = out["reachable"] = 1 if peer else 0
     out["window"] = "window" in s
+    # chrony's makestep threshold (a start steps an offset over it in its first updates)
+    steps = [line.split() for line in s.get("chrony_conf", []) if line.split()[:1] == ["makestep"]]
+    out["makestep"] = None
+    for parts in steps:
+        try:
+            out["makestep"] = float(parts[1])
+        except (IndexError, ValueError):
+            pass
     query = re.search(r"System clock wrong by (-?[0-9.]+) seconds", "\n".join(s.get("query", [])))
     if query:
         out["query"] = abs(float(query.group(1)))
@@ -246,7 +273,8 @@ def cassandra_clock_settled(probe, max_ms=50, synchronised_only=False):
     if why in ("not synchronised", "no offset"):
         return False
     if why == "off" and not synchronised_only:
-        return (probe.get("bound") or 0.0) * 1000 > float(max_ms)  # a bound over the threshold: no wait helps
+        # a bound over half the threshold (a far source): what a wait could still win is too little
+        return (probe.get("bound") or 0.0) * 1000 >= float(max_ms) / 2
     return True
 
 
@@ -326,7 +354,9 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
              "offset": p.get("offset"), "bound": p.get("bound"), "coarse": coarse, "how": "daemon",
              "running": bool(n.get("running")), "container": p.get("container", ""), "leap": p.get("leap", ""),
              "ahead": False, "why": "", "action": "none", "estimate": None}
-        why = _bad(p, max_s)
+        why = _bad(p, max_s) if not p.get("kernel_only") else "kernel only"
+        if p.get("kernel_only") and p.get("kernel_synced") is not True:
+            why = "not synchronised"
         if not why:
             v["verdict"] = "ok"
         elif why == "off":
@@ -340,7 +370,15 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
                 v["why"] = "%s its source by %s, more than %s" % ("ahead of" if v["ahead"] else "behind",
                                                                   ms(abs(p["offset"]), False), ms(max_s, False))
                 v["estimate"] = abs(p["offset"])
-                v["action"] = "slew" if abs(p["offset"]) <= step_s else ("window" if v["running"] else "step")
+                # what the daemon slews by itself (timesyncd steps past 400 ms, ntpd past 128 ms, on their own)
+                slews = min(step_s, {"timesyncd": 0.4, "ntp": 0.128}.get(p.get("daemon"), step_s))
+                v["action"] = "slew" if abs(p["offset"]) <= slews else ("window" if v["running"] else "step")
+                if v["action"] in ("window", "step") and p.get("daemon") == "ntp":
+                    v["action"] = "manual"  # no step of ours for ntpd: its own start (ntpd -g) or chrony
+                    v["why"] += "; ntpd steps it at its start (-g), or move the node to chrony"
+                if v["action"] == "slew" and p.get("daemon") != "chrony":
+                    v["why"] += (" (%s slews at most 0.5 ms per second: about %d min)"
+                                 % (p.get("service"), abs(p["offset"]) / 0.0005 // 60 + 1))
         elif why in ("not synchronised", "no offset"):
             v["verdict"] = "unsynchronised"
             if p.get("local"):
@@ -352,8 +390,23 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
             else:
                 v["why"] = "%s has not synchronised to any of its sources" % p.get("service")
             v["action"] = "manual"
-        else:  # no daemon running
-            if p.get("container"):
+        else:  # no daemon running (or one the probe can only ask the kernel about)
+            # the kernel synchronised with no daemon of ours enabled (a stopped one leaves the flag set for hours)
+            other = not p.get("container") and p.get("kernel_synced") is True and not (p.get("installed") and p.get("enabled"))
+            other = other or p.get("kernel_only") and p.get("kernel_synced") is True
+            if other:
+                # disciplined by a daemon the probe does not know (PTP, openntpd, the hypervisor's): compared coarsely
+                v["how"] = "coarse"
+                if coarse is not None and referenced and abs(coarse) > coarse_s:
+                    v["verdict"], v["ahead"], v["action"] = "off", coarse > 0, "manual"
+                    v["why"] = ("synchronised by another means (the kernel says so), %s the others by about %s (dates"
+                                " over SSH, coarse)" % ("ahead of" if coarse > 0 else "behind", ms(abs(coarse), False)))
+                else:
+                    v["verdict"] = "ok"
+                    v["why"] = ("%s, synchronised (the kernel says so; this systemd tells no offset)" % p["service"]
+                                if p.get("kernel_only") else
+                                "synchronised by another means (the kernel says so; no chrony, timesyncd or ntpd)")
+            elif p.get("container"):
                 # the host's clock (a container shares its kernel): the host syncs it, the dates say how far it is
                 v["how"] = "coarse"
                 if coarse is None or not referenced and len(skews) < 2:
@@ -381,7 +434,10 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
                     v["ahead"] = coarse is not None and referenced and coarse > 0
                 if not n.get("manage", True):
                     v["action"] = "manual"
-                    v["why"] += " (its time sync is left alone: cassandra_linux_timesync false)"
+                    v["why"] += " (its time sync is left alone: %s false)" % (n.get("unmanaged_by") or "cassandra_linux_timesync")
+                elif p.get("daemon") == "ntp":
+                    v["action"] = "manual"  # installing chrony or timesyncd would replace the site's ntpd
+                    v["why"] += " (start ntpd, or move the node to chrony)"
                 elif p.get("masked"):
                     v["action"] = "manual"
                 elif n.get("offline") and not p.get("installed"):
@@ -389,8 +445,8 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
                     v["why"] += " (cassandra_offline: install chrony from your mirror)"
                 elif not v["running"]:
                     v["action"] = "step"  # started, synchronised, stepped if still off: nothing runs to be moved
-                elif v["estimate"] is not None and v["estimate"] + 0.1 * step_s <= step_s:
-                    v["action"] = "start"  # a small offset: the daemon slews it, Cassandra running
+                elif p.get("query") is not None and p["query"] < 0.9 * _start_limit(p, step_s):
+                    v["action"] = "start"  # measured small (chronyd -Q): the daemon slews it, Cassandra running
                 else:
                     v["action"] = "window"
         if p.get("container") and v["action"] in ("step", "window"):
@@ -411,10 +467,10 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
     for v in ahead:
         amount = v["offset"] if v["offset"] is not None and v["how"] == "daemon" and v["active"] else v["coarse"] or v["estimate"]
         warnings.append(
-            "%s's clock is AHEAD by about %s: the writes it stamped (cqlsh, lightweight transactions, drivers"
-            " without client-side timestamps) carry future timestamps. An update or a delete of the same data from"
+            "%s's clock is AHEAD by about %s: the writes it stamped as coordinator (lightweight transactions,"
+            " drivers without client-side timestamps) carry future timestamps. An update or a delete of the same data from"
             " a correct clock in the next %s loses against them (the latest timestamp wins), silently; TTLs it"
-            " set expire late. Check what was written through it lately."
+            " set expire late, its compactions purge tombstones early. Check what was written through it lately."
             % (v["node"], ms(abs(amount or 0), False), ms(abs(amount or 0), False)))
     groups = []
     for n, v in zip(nodes, out):
@@ -453,8 +509,21 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
             "spread": spread, "max_ms": float(max_ms)}
 
 
+def _start_limit(p, step_s):
+    """The offset a daemon started on this node slews rather than steps: chrony's makestep threshold (the site's
+    chrony.conf), timesyncd's 400 ms, and never over cassandra_clock_step_ms."""
+    limit = step_s
+    if p.get("makestep") is not None and p.get("service") in ("chronyd", "chrony", ""):
+        limit = min(limit, p["makestep"])
+    if p.get("service") == "systemd-timesyncd":
+        limit = min(limit, 0.4)
+    return limit
+
+
 def _describe(v, p):
     """One node, as the table shows it: daemon, synchronised, source, offset (+/- bound)."""
+    if v["how"] == "coarse" and not v["container"]:
+        return v["why"]
     if v["how"] == "coarse":
         return "the host's clock (%s container)%s" % (
             v["container"], (", %s vs the others (coarse)" % ms(v["coarse"])) if v["coarse"] is not None else "")
@@ -490,19 +559,21 @@ def cassandra_clock_lines(verdicts, actions=True):
     return [("  %s  %s  %s" % (r[0].ljust(width[0]), r[1].ljust(width[1]), r[2])).rstrip() for r in rows]
 
 
-def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False):
+def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False):
     """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would
-    refuse), the nodes not in sync, why, and the way out; [] when every node is."""
+    refuse), the nodes not in sync, why, and the way out; [] when every node is. check, later_ok (a check before
+    cassandra_linux ran): a node not running with no time sync, which cassandra_linux would set up, is left to the
+    check after it."""
     verdicts = verdicts or {}
     bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"]
-    # --check installed and started nothing: a time sync cassandra_linux would start is checked by the real run
-    later = [v["node"] for v in bad if check and v["verdict"] == "no_sync" and v["action"] != "manual"]
+    later = [v["node"] for v in bad if (check or later_ok) and v["verdict"] == "no_sync" and v["action"] != "manual"
+             and not v["running"]]
     bad = [v for v in bad if v["node"] not in later]
     if not bad:
-        return ["NOTE  clocks: time sync would be started on %s (cassandra_linux), its clock checked by the real run"
-                % ", ".join(later)] if later else []
+        return ["NOTE  clocks: time sync would be started on %s (cassandra_linux), its clock checked %s"
+                % (", ".join(later), "by the real run" if check else "before the starts")] if later and check else []
     limit = ms(verdicts.get("max_ms", 50) / 1000, False)
-    head = ["REFUSED" if not check else "CHECK", "clocks", cluster,
+    head = ["REFUSED" if not check else "NOTE", "clocks", cluster,
             "nothing was started" if not check else "a real run would refuse to start the nodes"]
     lines = ["  ".join(x for x in head if x)]
     lines += cassandra_clock_lines({"nodes": bad}, actions=False)

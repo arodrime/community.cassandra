@@ -1,0 +1,19 @@
+---
+# What sync_clocks' restart window does while Cassandra is stopped
+# (action_sync_clock.yml, through action_restart.yml): Cassandra gone first (a
+# JVM still running, e.g. started by a script of its own, would see its clock
+# step: the run stops there, the clock left as it is), then the clock set
+# (clock_fix.yml).
+- name: Find a Cassandra still running
+  ansible.builtin.include_tasks: jvm_started.yml
+
+- name: Stop when Cassandra still runs
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: Cassandra still runs (pid {{ cassandra_jvm.pid }}) after systemctl stop cassandra: its
+      clock is left as it is (a step would move the timestamps it writes). Stop what started it, then run sync_clocks
+      again.
+  when: cassandra_jvm.pid is defined
+
+- name: Set the clock
+  ansible.builtin.include_tasks: clock_fix.yml

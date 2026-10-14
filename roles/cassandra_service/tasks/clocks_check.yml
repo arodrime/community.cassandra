@@ -6,44 +6,33 @@
 # compared (unrelated ones: a WARNING). A node no daemon reports on (a
 # container: the host's clock) is compared with the others by the dates
 # collected over SSH, coarsely. A time sync just started (cassandra_linux) is
-# waited for, up to cassandra_clock_sync_wait seconds. A node not in sync stops
+# waited for, up to cassandra_clock_sync_timeout seconds. A node not in sync stops
 # the run with nothing started: why, then the way out (the sync_clocks
 # playbook, or the NTP config). --check installed and started nothing: what a
 # real run would refuse is said, not refused. cassandra_clock_check: false
 # skips it (clocks kept in sync by other means). _cassandra_clock_operation:
-# the playbook (its name in the way out).
+# the playbook (its name in the way out). _cassandra_clock_later_ok: a check
+# before cassandra_linux ran (create_cluster's reset, before the wipe): a node
+# not running with no time sync is left to the check after it.
 - name: Check the clocks before the starts
   when: cassandra_clock_check | bool
   block:
-    - name: Read the clocks
-      ansible.builtin.include_tasks: clock_probe.yml
-      vars:
-        _cassandra_clock_wait: "{{ 0 if ansible_check_mode else cassandra_clock_sync_wait }}"
-
-    - name: Compare the clocks
+    - name: Note where Cassandra runs
       ansible.builtin.set_fact:
-        cassandra_clock_verdicts: >-
-          {{ _nodes | community.cassandra.cassandra_clock_verdicts(cassandra_clock_max_offset_ms, cassandra_clock_step_ms) }}
-      run_once: true
+        _cassandra_clock_running: "{{ _cassandra_preflight_running | default(false) | bool }}"
+
+    - name: Read and compare the clocks
+      ansible.builtin.include_tasks: clocks_read.yml
       vars:
-        _nodes: >-
-          {%- set l = [] -%}
-          {%- for h in ansible_play_hosts if hostvars[h].cassandra_clock_read_ok | default(false) | bool -%}
-          {%-   set v = hostvars[h] -%}
-          {%-   set _ = l.append({'node': h, 'probe': v.cassandra_clock, 'samples': v.cassandra_clock_samples,
-                                  'running': v._cassandra_preflight_running | default(false) | bool,
-                                  'manage': v.cassandra_linux_manage | default(true) | bool and v.cassandra_linux_timesync | default(true) | bool,
-                                  'offline': v.cassandra_offline | default(false) | bool,
-                                  'addresses': [h, v.ansible_host | default(h), (v._cassandra_preflight | default({})).ring_address | default('')]
-                                               + v.ansible_facts.all_ipv4_addresses | default([])}) -%}
-          {%- endfor -%}
-          {{ l }}
+        # --check started no time sync, nor the check before cassandra_linux ran: nothing to wait for
+        _cassandra_clock_wait: "{{ 0 if ansible_check_mode or _cassandra_clock_later_ok | default(false) | bool else cassandra_clock_sync_timeout }}"
 
     - name: Write what a start refused would say
       ansible.builtin.set_fact:
-        cassandra_clock_refusal: >-
-          {{ cassandra_clock_verdicts | community.cassandra.cassandra_clock_refusal(
+        _cassandra_clock_refusal: >-
+          {{ _cassandra_clock_verdicts | community.cassandra.cassandra_clock_refusal(
                operation=_cassandra_clock_operation | default(''), check=ansible_check_mode,
+               later_ok=_cassandra_clock_later_ok | default(false) | bool,
                cluster=(_cassandra_preflight | default({})).cassandra_cluster_name | default(''), command=_command) }}
       run_once: true
       vars:
@@ -54,8 +43,8 @@
 
     - name: Refuse to start nodes whose clocks are not in sync
       ansible.builtin.assert:
-        that: cassandra_clock_verdicts.ok or ansible_check_mode
-        fail_msg: "{{ cassandra_clock_refusal | join(_nl) }}"
+        that: _cassandra_clock_refusal | length == 0 or ansible_check_mode
+        fail_msg: "{{ _cassandra_clock_refusal | join(_nl) }}"
         quiet: true
       run_once: true
       vars:
@@ -64,10 +53,10 @@
 
     - name: Say what a real run would refuse (--check)
       ansible.builtin.debug:
-        msg: "{{ cassandra_clock_refusal | join(_nl) }}"
+        msg: "{{ _cassandra_clock_refusal | join(_nl) }}"
       run_once: true
       when:
-        - cassandra_clock_refusal | length > 0
+        - _cassandra_clock_refusal | length > 0
         - ansible_check_mode
       vars:
         cassandra_output: true
@@ -75,11 +64,12 @@
 
     - name: Say what is to know about the clocks
       ansible.builtin.debug:
-        msg: "{{ cassandra_clock_verdicts.warnings | map('regex_replace', '^', 'WARNING  clocks: ') | join(_nl) }}"
+        msg: "{{ _cassandra_clock_verdicts.warnings | map('regex_replace', '^', 'WARNING  clocks: ') | join(_nl) }}"
       run_once: true
       when:
-        - cassandra_clock_verdicts.ok
-        - cassandra_clock_verdicts.warnings | length > 0
+        - _cassandra_clock_refusal | length == 0
+        - _cassandra_clock_verdicts.warnings | length > 0
+        - not _cassandra_clock_later_ok | default(false) | bool  # said by the check after cassandra_linux
       vars:
         cassandra_output: true
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
