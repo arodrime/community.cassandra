@@ -301,6 +301,10 @@ def test_a_node_stopped_for_its_time_sync_is_started_by_the_resumed_run():
     assert facts["cassandra_apply_config_notes"] == ["stopped by the interrupted run (time sync): started once written"]
     # not resumed: as any node stopped (left stopped); running: the mark alone changes nothing
     assert note([], running=False, clock=["mark=yes"])[:2] == (False, "write")
+    # ... but said, with the way to start it
+    assert note([], running=False, clock=["mark=yes"])[3] == [
+        "WARNING stopped by an interrupted run for its time sync: left stopped; to start it, run again with"
+        " -e cassandra_rolling_resume=true"]
     assert note([], clock=["mark=yes"], resume=True)[:2] == (False, "none")
 
 
