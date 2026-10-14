@@ -46,6 +46,7 @@ _THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "star
 _WHY = {"start": "its Cassandra is not running: started once written (down over max_hint_window? repair it)",
         "write": "its Cassandra is stopped: left stopped, reads its config when it starts",
         "none": "an owner, group or mode only: Cassandra reads them when it starts"}
+_WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
 
 
 def _lines(text):
@@ -450,7 +451,9 @@ def _outcome(node, check, plan):
         text = ("would apply" if check or plan else "applied")
         said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
-        if plan and then in _WHY:
+        # a file written back as the running Cassandra started with it: its note says why, not "an owner... only"
+        written_back = any(_WRITTEN_BACK in str(n) for n in node.get("notes") or [])
+        if plan and then in _WHY and not (then == "none" and written_back):
             text += " (%s)" % _WHY[then]
         return text, ("would apply" if check or plan else "applied")
     result = str(node.get("result") or "nothing to apply")

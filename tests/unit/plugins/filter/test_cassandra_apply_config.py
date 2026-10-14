@@ -291,6 +291,10 @@ def test_the_outcomes_grouped_in_the_plan():
         "node1  would apply, then start (its Cassandra is not running: started once written (down over"
         " max_hint_window? repair it))",
         "node2  would apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)"]
+    # a file written back as the running Cassandra started with it: its note says why (not "an owner... only")
+    note = "jvm-server.options written back as the running Cassandra started with it: no restart for it"
+    nodes = [{"name": "node1", "todo": True, "then": "none", "notes": [note]}]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == ["node1  would apply, no restart", "  " + note]
 
 
 def test_the_check_recap_shows_the_settings_then_the_outcomes():
