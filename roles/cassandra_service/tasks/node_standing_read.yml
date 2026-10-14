@@ -1,5 +1,5 @@
 ---
-# What node_standing.yml works out a node's state from, read once per run on the
+# What node_standing.yml works out a node's state from, read once per step on the
 # node itself (each node at once): its Cassandra unit and JVM, its live
 # cassandra.yaml, what its Cassandra directories hold (the inventory's and the
 # live file's, links resolved), add_node's bootstrap mark, its host ID and own
@@ -140,13 +140,17 @@
   when: cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length > 0
 
 # a system keyspace left where its config does not look (the package's default dir, a tarball's): not its own
-- name: Look for a system keyspace its config does not use
+# and in a data directory of its config the reset refuses to empty (e.g. a top-level dir that is not a
+# mount point): not listed above, a system keyspace there is still its own
+- name: Look for a system keyspace its config does not use, or the reset does not list
   ansible.builtin.stat:
     path: "{{ item }}/system"
     get_checksum: false
-  loop: "{{ _cassandra_node_standing_data_dirs.elsewhere }}"
+  loop: "{{ _cassandra_node_standing_data_dirs.elsewhere + _cassandra_node_standing_data_dirs.own | reject('in', _listed) | list }}"
   register: cassandra_node_standing_elsewhere
   failed_when: false
+  vars:
+    _listed: "{{ _cassandra_node_reset_dirs.dirs | map(attribute='path') | list }}"
 
 # add_node's reset: how much it holds (for its line), and whether it met other nodes (its system.peers tables)
 - name: Measure what the directories hold
@@ -274,12 +278,10 @@
       live: >-
         {{ 'absent' if not cassandra_node_reset_live_stat.stat.exists else 'unreadable' if cassandra_node_reset_live.content is not defined
            else 'invalid' if _cassandra_node_standing_data_dirs.problem else 'read' }}
-      held: "{{ _held }}"
+      held: "{{ _held + _unlisted }}"
       # the system keyspaces in the data directories its config uses (links resolved)
-      system: "{{ _held | select('in', _data_dirs | map('regex_replace', '$', '/system') | list) | list }}"
-      elsewhere: >-
-        {{ cassandra_node_standing_elsewhere.results | default([]) | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
-           | map(attribute='item') | map('regex_replace', '$', '/system') | list }}
+      system: "{{ _held | select('in', _data_dirs | map('regex_replace', '$', '/system') | list) | list + _unlisted }}"
+      elsewhere: "{{ _found_apart | reject('in', _unlisted) | list }}"
       # in the words the reset's plan says them (reset_node_plan.yml)
       unreadable: >-
         {{ _unread + _cassandra_node_reset_dirs.problems | select('search', 'cassandra.yaml (can not be read|is not valid|is not a mapping)')
@@ -294,6 +296,12 @@
   vars:
     _active: "{{ cassandra_node_reset_unit.status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}"
     _held: "{{ cassandra_node_reset_found.files | default([]) | map(attribute='path') | reject('search', '/lost[+]found$') | list }}"
+    _found_apart: >-
+      {{ cassandra_node_standing_elsewhere.results | default([]) | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
+         | map(attribute='item') | map('regex_replace', '$', '/system') | list }}
+    # in a data directory of its config that the reset does not list (a path it refuses)
+    _unlisted: >-
+      {{ _found_apart | select('in', _cassandra_node_standing_data_dirs.own | map('regex_replace', '$', '/system') | list) | list }}
     _data_dirs: >-
       {{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real') | list
          + _cassandra_node_standing_data_dirs.own }}

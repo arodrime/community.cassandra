@@ -83,7 +83,7 @@
         tasks_from: defaults.yml
         public: true
 
-    # read once, also by the reset below (cassandra_create_cluster_reset): no ring, a new cluster has none
+    # no ring: a new cluster has none (the reset below reads it again, after the token question)
     - name: Where the node stands
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

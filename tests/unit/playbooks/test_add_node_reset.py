@@ -60,7 +60,7 @@ def render(template, variables):
 
 def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", peers=(), cluster="Test Cluster",
           keyspaces=None, ring="clear", auto=True, enabled="enabled", dir_problems=(), skipped=None, mark=None,
-          given=None, view=None, own_view=None):
+          given=None, view=None, own_view=None, unlisted=(), node1=None):
     """What the node reads (node_standing_read.yml), where it stands (node_standing.yml), then the reset's check and
     plan, all rendered from the task files. ring: what node1, the node of the cluster asked, sees: clear (not this
     node), seen (this node UN), none (no answer)."""
@@ -78,8 +78,9 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
         "cassandra_node_reset_found": {"files": [{"path": p} for p in found], "skipped_paths": skipped or {}},
         "cassandra_node_reset_live_stat": {"stat": {"exists": True}},
         "cassandra_node_reset_live": {"content": ""},
-        "cassandra_node_standing_elsewhere": {"results": []},
-        "_cassandra_node_standing_data_dirs": {"own": [DATA], "elsewhere": [], "problem": ""},
+        # a data directory of its config the reset does not list (a path it refuses): looked into for a system keyspace
+        "cassandra_node_standing_elsewhere": {"results": [{"item": d, "stat": {"isdir": True}} for d in unlisted]},
+        "_cassandra_node_standing_data_dirs": {"own": [DATA] + list(unlisted), "elsewhere": [], "problem": ""},
         "_cassandra_node_reset_listed": {"cluster_name": cluster, "addresses": [], "dirs": []},
         "_cassandra_node_reset_dirs": {"problems": list(dir_problems), "dirs": [
             {"path": DATA, "real": DATA, "kinds": ["data"], "from": ["inventory"]},
@@ -98,6 +99,8 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
             mark if mark is not True and mark else 0)}},
         "_cassandra_service_bootstrap_mark_days": 7,
     }
+    if node1 is not None:  # node1's variables, as the inventory gives them (a host left out by --limit)
+        v["hostvars"]["node1"] = node1
     if own_view is not None:  # the preflight's read of this node's own ring
         v["_cassandra_preflight_view"] = own_view
     if view is not None:  # the preflight's read of node1's own ring (_cassandra_preflight_view)
@@ -349,3 +352,29 @@ def test_each_checking_play_reads_again():
             again = [i for i, t in enumerate(tasks) if t.get("name") == "Read where the nodes stand again"]
             assert again and tasks[again[0]]["ansible.builtin.set_fact"] == {"_cassandra_node_standing_read": {}}, name
             assert again[0] <= 1, name  # first, before anything reads it
+
+
+def test_a_data_directory_the_reset_refuses_still_counts():
+    """/data, not a mount point, as a data directory: the reset will not empty it, its system keyspace is the node's."""
+    v = facts(unlisted=["/data"])
+    standing = v["cassandra_node_standing"]
+    assert standing["system"] == ["/data/system"] and not standing["blank"] and standing["state"] != "blank"
+    assert facts()["cassandra_node_standing"]["state"] == "blank"
+
+
+def test_a_member_left_out_by_limit_is_known_by_its_ansible_host():
+    """--limit to the new hosts: a member has no facts here, its ansible_host gives its address."""
+    assert facts(found=STOCK, node1={"ansible_host": "10.0.0.1"})["cassandra_node_standing"]["ring"]["known"] is True
+    assert facts(found=STOCK, node1={})["cassandra_node_standing"]["ring"]["known"] is False
+
+
+def test_the_reset_compares_with_the_plan_it_showed():
+    """The guard before the delete compares with where the directories resolved when the plan shown was made, not
+    with a later read (topology's add step reads where the node stands again)."""
+    plan = facts(found=STOCK)["_cassandra_node_reset_plan"]
+    assert plan["paths"] == [] and plan["resolved"] == []
+    reset = _tasks("reset_node.yml")
+    assert reset["Resolve the directories again"]["ansible.builtin.command"]["argv"] == (
+        "{{ ['realpath', '-m', '--'] + _cassandra_node_reset_plan.paths }}")
+    assert reset["The directories are where they were"]["ansible.builtin.assert"]["that"] == (
+        "cassandra_node_reset_realpath_again.stdout_lines | default([]) == _cassandra_node_reset_plan.resolved")

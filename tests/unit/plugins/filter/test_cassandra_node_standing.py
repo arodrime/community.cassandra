@@ -84,6 +84,11 @@ ROWS = [
     (dict(answers=[]), "unknown"),  # holds data: no node answered UN
     (dict(answers=None), "unknown"),
     (dict(answers=[{"host": "node1", "addresses": ["10.0.0.1"], "status": None}]), "unknown"),
+    # a host alone in its ring (not added yet, the package's own instance) while the members did not answer
+    (dict(OURS, answers=[{"host": "node1", "addresses": ["10.0.0.1"], "status": None},
+                         {"host": "node8", "addresses": ["10.0.0.8"],
+                          "status": _ring({"address": "10.0.0.8", "status": "U", "state": "N", "host_id": "id-8"})}]),
+     "unknown"),
     # node1 answers, but sees itself down: its ring does not count
     (dict(answers=[{"host": "node1", "addresses": ["10.0.0.1"], "status": _ring(dict(N1, status="D"), N2)}]), "unknown"),
     (dict(answers=_answers({"address": "10.0.0.50", "status": "D", "state": "N", "host_id": "id-50"})),
@@ -139,6 +144,23 @@ def test_blank_and_evidence():
     # an old system keyspace elsewhere: not its own, said apart (the caller decides)
     out = _state(**dict(BLANK, elsewhere=["/var/lib/cassandra/data/system"]))
     assert out["blank"] and out["elsewhere"] == ["/var/lib/cassandra/data/system"]
+
+
+def test_a_one_node_cluster_answers_alone():
+    """The only member of a one-node cluster is alone in its ring: its answer counts when it is the only one asked."""
+    alone = [{"host": "node1", "addresses": ["10.0.0.1"], "status": _ring(N1)}]
+    assert _state(answers=alone)["state"] == "failed_bootstrap"
+    assert _state(answers=alone)["ring"]["from"] == "node1"
+    stray = alone + [{"host": "node2", "addresses": ["10.0.0.2"], "status": None}]
+    assert _state(answers=stray)["state"] == "unknown"
+    assert cassandra_node_reset_refusal(_state(answers=stray, **OURS))
+
+
+def test_its_own_entry_at_its_addresses_first():
+    """A dead node of the ring used another address of this host: its own entry, under its host ID, decides."""
+    dead = {"address": "10.0.0.70", "status": "D", "state": "N", "host_id": "id-x"}
+    out = _state(answers=_answers(dead, _me("U", "N")), addresses=[ME, "10.0.0.70"], running=True, host_id="id-7")
+    assert out["state"] == "member" and out["ring"]["entry"]["host_id"] == "id-7"
 
 
 def test_its_own_address_first():
