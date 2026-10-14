@@ -153,7 +153,7 @@ def parse_timesync(lines):
             else "delete" if "fewer" in leap or "delete" in leap or "missing" in leap
             else "unsynchronised" if "synchron" in leap or leap == "alarm" else leap)
     stratum = int(f["Stratum"]) if f.get("Stratum", "").isdigit() else None
-    return {"source": source, "offset": -offset if offset is not None else None, "bound": bound, "leap": leap,
+    return {"source": source, "offset": -float(offset) if offset is not None else None, "bound": bound, "leap": leap,
             "stratum": stratum}
 
 
