@@ -60,7 +60,7 @@ def render(template, variables):
 
 def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", peers=(), cluster="Test Cluster",
           keyspaces=None, ring="clear", auto=True, enabled="enabled", dir_problems=(), skipped=None, mark=None,
-          given=None, view=None, own_view=None, unlisted=(), node1=None):
+          given=None, view=None, own_view=None, unlisted=(), node1=None, stopped=()):
     """What the node reads (node_standing_read.yml), where it stands (node_standing.yml), then the reset's check and
     plan, all rendered from the task files. ring: what node1, the node of the cluster asked, sees: clear (not this
     node), seen (this node UN), none (no answer)."""
@@ -68,8 +68,9 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
     v = {
         "inventory_hostname": "node7", "cassandra_cluster_name": "my_cluster", "_cassandra_node_reset_auto": auto,
         "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "rack_b", "address": "10.0.0.7"},
-        "groups": {"cassandra": ["node1", "node7"]},
+        "groups": {"cassandra": ["node1", "node7", "node3"]},
         "hostvars": {"node1": {"_cassandra_preflight": {"address": "10.0.0.1"}},
+                     "node3": {"_cassandra_preflight": {"address": "10.0.0.3"}},
                      "node7": {"_cassandra_preflight": {"address": "10.0.0.7"}}},
         "cassandra_node_reset_unit": {"status": {"ActiveState": active, "UnitFileState": enabled, "LoadState": "loaded"}},
         "cassandra_node_reset_jvm": {"rc": 0 if running else 1},
@@ -88,6 +89,7 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
              "from": ["inventory"]}]},
         # the node of the cluster asked (the preflight did not read it): its answer
         "_cassandra_node_standing_from": ["node1"],
+        "_cassandra_node_standing_stopped": list(stopped),  # the preflight found Cassandra stopped there: not asked
         "cassandra_node_reset_rings": {"results": [{"item": "node1", "cluster_status": status}]},
         # running: its own ring (alone), its host ID
         "cassandra_node_reset_own": {"cluster_status": {"dc1": {"nodes": [dict(SEEN)]}}} if running else {"skipped": True},
@@ -371,10 +373,43 @@ def test_a_member_left_out_by_limit_is_known_by_its_ansible_host():
 def test_the_reset_compares_with_the_plan_it_showed():
     """The guard before the delete compares with where the directories resolved when the plan shown was made, not
     with a later read (topology's add step reads where the node stands again)."""
-    plan = facts(found=STOCK)["_cassandra_node_reset_plan"]
-    assert plan["paths"] == [] and plan["resolved"] == []
+    v = facts(found=STOCK)
+    v.update({"_cassandra_node_reset_listed": {"cluster_name": "Test Cluster", "addresses": [],
+                                               "dirs": [{"path": DATA}, {"path": "/var/lib/cassandra/commitlog"}]},
+              "cassandra_node_reset_realpath": {"stdout_lines": ["/disk1/data", "/var/lib/cassandra/commitlog"]}})
+    plan = dict((k, render(t, v)) for k, t in PLAN["ansible.builtin.set_fact"]["_cassandra_node_reset_plan"].items()
+                if k in ("paths", "resolved"))
+    assert plan == {"paths": [DATA, "/var/lib/cassandra/commitlog"], "resolved": ["/disk1/data", "/var/lib/cassandra/commitlog"]}
     reset = _tasks("reset_node.yml")
     assert reset["Resolve the directories again"]["ansible.builtin.command"]["argv"] == (
         "{{ ['realpath', '-m', '--'] + _cassandra_node_reset_plan.paths }}")
-    assert reset["The directories are where they were"]["ansible.builtin.assert"]["that"] == (
-        "cassandra_node_reset_realpath_again.stdout_lines | default([]) == _cassandra_node_reset_plan.resolved")
+    guard = reset["The directories are where they were"]["ansible.builtin.assert"]["that"]
+    later = {"cassandra_node_reset_realpath": {"stdout_lines": ["/elsewhere"]}}  # a later read: not what was shown
+    for now, ok in ((["/disk1/data", "/var/lib/cassandra/commitlog"], True), (["/disk2/data", "/var/lib/cassandra/commitlog"], False)):
+        variables = dict(later, _cassandra_node_reset_plan=plan, cassandra_node_reset_realpath_again={"stdout_lines": now})
+        assert render("{{ %s }}" % guard, variables) is ok
+
+
+def test_the_probe_looks_into_the_data_directories_the_reset_does_not_list():
+    probe = _tasks("node_standing_read.yml")["Look for a system keyspace its config does not use, or the reset does not list"]
+    variables = dict(trust(probe["vars"]), _cassandra_node_standing_data_dirs={"own": ["/data", DATA], "elsewhere": ["/old"]},
+                     _cassandra_node_reset_dirs={"dirs": [{"path": DATA}]})
+    assert render(probe["loop"], variables) == ["/old", "/data"]
+    # one that can't be checked (without root): said
+    keep = KEEP["ansible.builtin.set_fact"]["_cassandra_node_standing_read"]["unreadable"]
+    v = facts()
+    v.update({"cassandra_node_standing_elsewhere": {"results": [{"item": "/data", "msg": "Permission denied"}]},
+              "_cassandra_node_standing_data_dirs": {"own": [DATA, "/data"], "elsewhere": [], "problem": ""}})
+    assert render(keep, v) == ["/data: can not be checked (without root?)"]
+
+
+def test_a_stopped_member_is_not_asked_but_counts():
+    """A member the preflight found stopped is not asked; for a node holding data, node1 alone in its ring does not
+    stand for the cluster then (node3's ring is unknown)."""
+    lone = {"cluster_status": {"dc1": {"nodes": [N1]}}}
+    assert facts(found=STOCK, view=lone)["cassandra_node_standing"]["state"] == "failed_bootstrap"
+    v = facts(found=STOCK, view=lone, stopped=["node3"])
+    assert v["_cassandra_node_standing_read"]["answers"][-1] == {"host": "node3", "addresses": ["10.0.0.3"], "status": None,
+                                                                 "asked": False}
+    assert v["cassandra_node_standing"]["state"] == "unknown"
+    assert v["cassandra_node_standing"]["ring"]["tried"] == ["node1"]
