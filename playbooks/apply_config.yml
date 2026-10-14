@@ -12,7 +12,9 @@
 # stopped before the restart), are touched. Cassandra reads its config at
 # start: a node whose files only need another owner, group or mode is not
 # restarted (the JMX password file is read at each login: its new owner and
-# mode apply at once). A node where Cassandra failed (e.g. it could not read
+# mode, or its content, apply at once, written first once the run is
+# confirmed; the JMX access file is read at start: written back or changed,
+# the node is restarted). A node where Cassandra failed (e.g. it could not read
 # its config) is started once its config is written; one stopped on purpose
 # gets its config and stays stopped. The health checks let these nodes be
 # down, except before a restart: any other node down stops the run.
@@ -101,21 +103,36 @@
 
     - name: Note what this node needs
       ansible.builtin.set_fact:
-        cassandra_apply_config_todo: "{{ _files | length > 0 or (_perms + _dirs) | length > 0 or _pending | bool }}"
-        # then, Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone:
-        # read at start); not running: start (its unit failed: it could not start, e.g. its config unreadable;
-        # or the node a resumed run stopped), write (stopped on purpose: left stopped)
+        cassandra_apply_config_todo: "{{ _files | length > 0 or (_perms + _dirs + _jmx) | length > 0 or _pending | bool }}"
+        # then, Cassandra running: restart (new settings, the JMX access file or a restart pending), none (an
+        # owner or mode alone: read at start; the JMX password file: read at each login); not running: start (its unit failed: it could not start, e.g. its config
+        # unreadable; or the node a resumed run stopped), write (stopped on purpose: left stopped)
         cassandra_apply_config_then: >-
-          {{ ('restart' if _files | length > 0 or _pending | bool else 'none') if _running | bool
+          {{ ('restart' if _files | length > 0 or _rights | length > 0 or _pending | bool else 'none') if _running | bool
              else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
         cassandra_apply_config_pending: "{{ _pending }}"
         # said under the node's outcome, in the plan and the recap (whatever the outcome)
         cassandra_apply_config_notes: >-
           {{ (['restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)']
               if _pending | bool else [])
-             + _cassandra_config_dir_notes | default([]) }}
+             + _cassandra_config_dir_notes | default([])
+             + (['WARNING ' ~ _keep_missing | join(', ') ~ ' kept by hand (cassandra_config_keep_files) '
+                 ~ ('is' if _keep_missing | length == 1 else 'are') ~ ' missing: written back from the template, the hand'
+                 ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else []) }}
+        # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
+        cassandra_apply_config_why: >-
+          {%- set out = ['an owner, group or mode: read at start'] if _perms + _dirs else [] -%}
+          {%- if 'jmxremote.password' in _jmx -%}{%- set _ = out.append('jmxremote.password: read at each JMX login') -%}{%- endif -%}
+          {%- if 'jmxremote.access' in _jmx and not _rights -%}{%- set _ = out.append('jmxremote.access: local JMX checks no login') -%}{%- endif -%}
+          {{ out if _jmx else [] }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
+        _keep_missing: "{{ _cassandra_config_keep_missing | default([]) }}"
+        # the JMX files written (missing, or other users or rights); the access file is read at start: written
+        # back or changed, the rights the running Cassandra has are not known to be these (local JMX logs in no one)
+        _jmx: "{{ _cassandra_config_jmx_changes | default([]) | map(attribute='file') | list }}"
+        _rights: >-
+          {{ _jmx | select('equalto', 'jmxremote.access') | list if not cassandra_local_jmx | default(false) | bool else [] }}
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
         _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
         _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
@@ -258,7 +275,8 @@
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('nothing to apply'),
-                                    'notes': v.cassandra_apply_config_notes | default([])}) -%}
+                                    'notes': v.cassandra_apply_config_notes | default([]),
+                                    'why': v.cassandra_apply_config_why | default([])}) -%}
           {%- endfor -%}
           {{ out }}
         cassandra_screen_question: "Apply the config on {{ _todo | community.cassandra.cassandra_node_list }}?"
@@ -276,6 +294,36 @@
           sections:
             - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
             - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true) }}"
+
+    # first, once the run is confirmed: read at each JMX login (no restart), the checks before a node's turn
+    # log in with it; a node it fails on stops the run, as a write at its turn would
+    - name: Write the JMX password file where it is missing or other
+      any_errors_fatal: true
+      when:
+        - not ansible_check_mode
+        - _password | length > 0
+      vars:
+        _password: "{{ _cassandra_config_jmx_changes | default([]) | selectattr('file', 'equalto', 'jmxremote.password') | list }}"
+      block:
+        - name: Write the JMX password file where it is missing or other
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+            tasks_from: jmx_password.yml
+
+        # (reported with the node's other changes, at its turn: by then the same)
+        - name: Note it for the report of the node's turn
+          ansible.builtin.set_fact:
+            _cassandra_config_jmx_written: >-
+              {{ [{'item': _password[0].path, 'before': 'absent' if _password[0].missing else 'other users or rights',
+                   'after': 'written whole', 'whole': true}] }}
+      rescue:
+        # (its error hidden: the file holds passwords)
+        - name: Stop the run
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: its JMX password file {{ _password[0].path }} could not be written (its directory,
+              disk space?), nothing else was changed on it. The other nodes' password files may be written already
+              (read at each login: no restart needed). Fix it, then run again.
   vars:
     # (from the group the nodes to do are put in: each node's when reads it, no other node's variables)
     _todo: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
@@ -344,6 +392,18 @@
       vars:
         cassandra_service_node_action: apply_config
         cassandra_service_node_batch: true
+        # --check: a node whose JMX password file is missing or other (a real run writes it first) refuses
+        # the JMX login: checked from the others
+        _no_login: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all if ansible_check_mode -%}  {#- (any such node is to do: in this play) -#}
+          {%-   if 'jmxremote.password' in hostvars[h]._cassandra_config_jmx_changes | default([]) | map(attribute='file') -%}
+          {%-     set _ = out.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+        cassandra_service_node_checks_before: "{{ inventory_hostname not in _no_login }}"
+        _cassandra_health_not_peers: "{{ _no_login | join(',') or cassandra_target_nodes | default('') }}"
         cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok }}"
         _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 

@@ -131,6 +131,17 @@
         tasks_from: node_facts.yml
         public: true
 
+    # (read at each JMX login: a running node without it refuses nodetool, the cluster is read on another)
+    - name: Look for the JMX password file
+      ansible.builtin.stat:
+        path: "{{ cassandra_jmx_remote_password_file | default('/etc/cassandra/jmxremote.password') }}"
+      register: cassandra_preflight_jmx_password
+      check_mode: false  # reads only
+      failed_when: false  # only to choose the node to read from
+      when:
+        - cassandra_jmx_users | default([]) | length > 0
+        - _cassandra_preflight_running | default(false) | bool
+
     # First: the other checks read the inventory's settings, which an inventory
     # not loaded leaves to the role defaults
     - name: Read the cluster from a running node
@@ -139,7 +150,9 @@
         - name: Find a running node to read the cluster from
           ansible.builtin.set_fact:
             _cassandra_preflight_running_nodes: "{{ _running }}"
-            _cassandra_preflight_from: "{{ (_running | reject('in', _aside) | list + _running) | first | default(inventory_hostname) }}"
+            _cassandra_preflight_from: >-
+              {{ (_answers | reject('in', _aside) | list + _running | reject('in', _aside) | list + _running) | first
+                 | default(inventory_hostname) }}
             # the cluster's nodes the run leaves out (--limit), when none of its own runs
             _cassandra_preflight_peers: >-
               {{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all + _aside) | list }}
@@ -147,6 +160,13 @@
             _running: >-
               {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
                  | map(attribute='inventory_hostname') | list }}
+            # first, the ones whose JMX password file is not missing
+            _answers: >-
+              {%- set out = [] -%}
+              {%- for h in _running if (hostvars[h].cassandra_preflight_jmx_password | default({})).stat.exists | default(true) -%}
+              {%-   set _ = out.append(h) -%}
+              {%- endfor -%}
+              {{ out }}
             # a node being added or reset may run alone, another cluster's way (e.g. the package's own instance)
             _aside_pattern: >-
               {{ [cassandra_target_nodes | default([])] | flatten | select | join(',')

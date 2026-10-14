@@ -4,11 +4,15 @@ __metaclass__ = type
 # A config file the role writes, deleted by hand on a joined, running node:
 # apply_config --check shows it (written whole) and says the node would apply,
 # then restart; the real run writes it again (the role's template task) and
-# restarts the node. Run through the role's node-side compare and its tasks'
+# restarts the node. A JMX users' file (cassandra_jmx_users) deleted: shown,
+# written back, no restart (the password file read at each login, the rights
+# read at start kept by the running JVM). Run through the role's node-side compare and its tasks'
 # own templates, then apply_config's plan and view.
 
 import json
 import os
+import subprocess
+import sys
 import warnings
 
 import pytest
@@ -195,11 +199,21 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
                 cassandra_config_newer_files=[], cassandra_apply_config_unit={"skipped": True})
     facts = set_facts(find(FIND["tasks"], "Note what this node needs"), note)
     assert facts["cassandra_apply_config_todo"] in (True, "True")
-    assert facts["cassandra_apply_config_then"] == "restart" and facts["cassandra_apply_config_notes"] == []
+    # kept by hand but gone: written from the template, said (its hand edits are lost)
+    warning = ("WARNING %s kept by hand (cassandra_config_keep_files) is missing: written back from the template, the hand"
+               " edits are lost. Restore your copy first to keep them." % deleted)
+    assert role["_cassandra_config_keep_missing"] == ([deleted] if keep else [])
+    assert facts["cassandra_apply_config_then"] == "restart"
+    assert facts["cassandra_apply_config_notes"] == ([warning] if keep else [])
     nodes = [{"name": "n1", "todo": False, "then": "none", "result": "nothing to apply", "notes": []},
              {"name": "n2", "todo": True, "then": facts["cassandra_apply_config_then"], "result": "nothing to apply",
               "notes": facts["cassandra_apply_config_notes"]}]
-    assert cassandra_apply_config_outcomes(nodes, plan=True) == ["n2  would apply, then restart", "n1  nothing to apply"]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == (
+        ["n2  would apply, then restart"] + (["  " + warning] if keep else []) + ["n1  nothing to apply"])
+    if keep:  # the role run alone says it too
+        said = find(ROLE, "Warn that a file kept by hand is missing")
+        assert " ".join(render(said["ansible.builtin.debug"]["msg"], dict(role, inventory_hostname="n2")).split()) == (
+            "WARNING n2: " + warning[len("WARNING "):])
 
     # the view of what differs: the file, absent on n2, written whole
     view = cassandra_apply_config_diff([
@@ -221,3 +235,170 @@ def test_the_role_reads_a_missing_live_cassandra_yaml_as_none():
     token = find(ROLE, "Keep the token a joined node was started with")
     variables = {"cassandra_initial_token": "", "_cassandra_config_initialized": True, "cassandra_config_live": facts["cassandra_config_live"]}
     assert not all(render("{{ %s }}" % w, variables) in (True, "True") for w in token["when"][:3])
+
+
+ACCESS_TASKS = load("roles", "cassandra_config", "tasks", "access.yml")
+JMX_USERS = [{"name": "ops", "password": "s3cret", "access": "readwrite"}, {"name": "mon", "password": "m0n", "access": "readonly"}]
+JMX_FILES = {"password": "ops s3cret\nmon m0n\n",
+             "access": "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n    unregister\nmon readonly\n"}
+
+
+def jmx_compare(tmp_path, live, initialized=True, extra=None):
+    """What cassandra_config finds of the JMX files on a joined, running node with these live ones ({password,
+    access}: text, none when deleted), the users of JMX_USERS: the facts its tasks set, as apply_config reads them."""
+    root = tmp_path / "jmx"
+    root.mkdir()
+    paths = dict((name, str(root / ("jmxremote." + name))) for name in ("password", "access"))
+    for name, text in live.items():
+        if text is not None:
+            (root / ("jmxremote." + name)).write_text(text)
+    # the role's own templates and compare script
+    templates = os.path.join(TOP, "roles", "cassandra_config", "templates")
+    wanted = {"paths": paths}
+    for name in ("password", "access"):
+        with open(os.path.join(templates, "jmxremote.%s.j2" % name), encoding="utf-8") as f:
+            wanted[name] = render(f.read(), {"cassandra_jmx_users": JMX_USERS})
+    assert wanted["password"] == JMX_FILES["password"] and wanted["access"] == JMX_FILES["access"]
+    compare_task = find(ACCESS_TASKS, "Compare the JMX files with the users")
+    variables = dict({"_cassandra_config_initialized": initialized, "cassandra_config_normalize": False}, **(extra or {}))
+    if all(render("{{ %s }}" % w, variables) in (True, "True") for w in compare_task["when"]):
+        same = subprocess.run([sys.executable, "-c", compare_task["ansible.builtin.command"]["argv"][2]],
+                              input=json.dumps(wanted).encode(), stdout=subprocess.PIPE, check=True).stdout.decode()
+        variables["cassandra_config_jmx_same"] = {"stdout": same}
+    else:
+        variables["cassandra_config_jmx_same"] = {"skipped": True}
+    live_stat = [{"cassandra_config_file": "jmxremote." + n, "stat": stat(paths[n], live.get(n) is not None)} for n in paths]
+    variables.update({"cassandra_config_live_stat": {"results": live_stat}, "_cassandra_config_items": [],
+                      "cassandra_jmx_remote_password_file": paths["password"], "cassandra_jmx_remote_access_file": paths["access"]})
+    variables.update(set_facts(find(ACCESS_TASKS, "List the JMX files to write"), variables))
+    # the copies that write them (the others' owner and mode only)
+    variables["written"] = [n for n in ("password", "access")
+                            if render("{{ %s }}" % find(ACCESS_TASKS, "Write jmxremote." + n)["when"], variables) in (True, "True")]
+    return variables
+
+
+def jmx_apply(role):
+    """apply_config's plan for a running node with these facts (nothing else to change): (facts, plan lines, view)."""
+    note = dict(role, _cassandra_preflight_running=True, cassandra_config_restart_pending=False,
+                cassandra_config_newer_files=[], cassandra_apply_config_unit={"skipped": True}, _cassandra_config_changes=[],
+                _cassandra_config_perm_changes=[], _cassandra_config_dir_changes=[])
+    facts = set_facts(find(FIND["tasks"], "Note what this node needs"), note)
+    nodes = [{"name": "n1", "todo": False, "then": "none", "result": "nothing to apply", "notes": []},
+             {"name": "n2", "todo": facts["cassandra_apply_config_todo"] in (True, "True"), "then": facts["cassandra_apply_config_then"],
+              "result": "nothing to apply", "notes": facts["cassandra_apply_config_notes"], "why": facts["cassandra_apply_config_why"]}]
+    view = cassandra_apply_config_diff([
+        {"name": "n1", "items": [], "live": [], "stats": [], "dir_stats": []},
+        {"name": "n2", "items": role["_cassandra_config_items"], "live": [], "stats": role["cassandra_config_live_stat"]["results"],
+         "dir_stats": []}])
+    return facts, cassandra_apply_config_outcomes(nodes, plan=True), view
+
+
+@pytest.mark.parametrize("initialized", [True, False])
+@pytest.mark.parametrize("deleted", ["password", "access"])
+def test_a_deleted_jmx_file_is_shown_and_written_back(tmp_path, deleted, initialized):
+    # (a node not compared, e.g. its system keyspace not found: its missing files still seen)
+    role = jmx_compare(tmp_path, dict((n, None if n == deleted else t) for n, t in JMX_FILES.items()), initialized)
+    path = role["cassandra_jmx_remote_%s_file" % deleted]
+    assert role["_cassandra_config_jmx_changes"] == [{"file": "jmxremote." + deleted, "missing": True, "path": path}]
+    assert role["_cassandra_config_items"] == [{"item": path, "before": "absent", "after": "written whole", "whole": True}]
+    # the real run's copy writes it, and only it (compared: the other kept)
+    assert role["written"] == ([deleted] if initialized else ["password", "access"])
+
+    facts, plan, view = jmx_apply(role)
+    assert facts["cassandra_apply_config_todo"] in (True, "True") and facts["cassandra_apply_config_notes"] == []
+    # the password file is read at each login: no restart; the access file at start: the rights the running
+    # Cassandra has are not known to be these
+    assert facts["cassandra_apply_config_then"] == {"password": "none", "access": "restart"}[deleted]
+    assert plan == ["n2  would apply, %s" % {"password": "no restart (jmxremote.password: read at each JMX login)",
+                                             "access": "then restart"}[deleted], "n1  nothing to apply"]
+    # the view: the file, absent on n2, written whole (never its content)
+    assert view == ["jmxremote." + deleted, "  file: absent   n2   %s differs (written whole)" % "←"]
+    if deleted == "access":  # local JMX logs in no one: its rights change nothing
+        facts, plan, _ = jmx_apply(dict(role, cassandra_local_jmx=True))
+        assert facts["cassandra_apply_config_then"] == "none"
+        assert plan[0] == "n2  would apply, no restart (jmxremote.access: local JMX checks no login)"
+
+
+def test_the_password_file_is_written_first_once_the_run_is_confirmed():
+    # the checks before a node's turn log in with it (nodetool on the node itself); its failure stops the run
+    names = [t.get("name") for t in FIND["tasks"]]
+    first = FIND["tasks"][names.index("Write the JMX password file where it is missing or other")]
+    assert names.index("Show the plan and confirm the run") + 1 == names.index(first["name"]) == len(names) - 1
+    assert first["any_errors_fatal"] is True
+    write, noted = first["block"]
+    # its error hidden (passwords): said, the run stopped
+    stop = first["rescue"][0]["ansible.builtin.fail"]["msg"]
+    assert " ".join(render(stop, with_task_vars(first, {"inventory_hostname": "n2", "_cassandra_config_jmx_changes": [
+        {"file": "jmxremote.password", "path": "/p", "missing": True}]})).split()) == (
+        "n2: its JMX password file /p could not be written (its directory, disk space?), nothing else was changed on it."
+        " The other nodes' password files may be written already (read at each login: no restart needed). Fix it, then"
+        " run again.")
+    assert write["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "jmx_password.yml"}
+    for changes, check, runs in (([{"file": "jmxremote.password", "path": "/p", "missing": True}], False, True),
+                                 ([{"file": "jmxremote.password", "path": "/p", "missing": True}], True, False),
+                                 ([{"file": "jmxremote.access", "path": "/a", "missing": True}], False, False), (None, False, False)):
+        variables = {"ansible_check_mode": check}
+        if changes is not None:
+            variables["_cassandra_config_jmx_changes"] = changes
+        variables = with_task_vars(first, variables)
+        assert all(render("{{ %s }}" % w, variables) in (True, "True") for w in first["when"]) is runs
+    # reported at the node's turn (by then the same, not listed by the compare)
+    variables = with_task_vars(first, {"_cassandra_config_jmx_changes": [{"file": "jmxremote.password", "path": "/p", "missing": True}]})
+    written = set_facts(noted, variables)["_cassandra_config_jmx_written"]
+    assert written == [{"item": "/p", "before": "absent", "after": "written whole", "whole": True}]
+    # the same task as the role's own (access.yml)
+    included = find(ACCESS_TASKS, "Write jmxremote.password")
+    assert included["ansible.builtin.include_tasks"] == "jmx_password.yml"
+    own = load("roles", "cassandra_config", "tasks", "jmx_password.yml")
+    copy = find(own, "Write jmxremote.password")
+    assert copy["no_log"] is True and copy["diff"] is False
+    assert copy["ansible.builtin.copy"]["dest"] == "{{ cassandra_jmx_remote_password_file }}"
+
+
+def test_the_password_file_written_first_is_in_the_report_of_the_node_turn(tmp_path):
+    early = [{"item": "/p", "before": "absent", "after": "written whole", "whole": True}]
+    role = jmx_compare(tmp_path, dict(JMX_FILES), extra={"_cassandra_config_jmx_written": early})
+    assert role["_cassandra_config_jmx_changes"] == [] and role["_cassandra_config_items"] == early
+
+
+def test_under_check_a_node_refusing_the_jmx_login_is_checked_from_the_others():
+    # a real run writes its password file first; --check writes nothing: no check run on it, nor read from it
+    play = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Apply the config where nothing is restarted, on these nodes at once"][0]
+    apply = find(play["tasks"], "Apply the config on these nodes")
+    hostvars = {"n1": {"_cassandra_config_jmx_changes": [{"file": "jmxremote.password"}]},
+                "n2": {"_cassandra_config_jmx_changes": [{"file": "jmxremote.access"}]}, "n3": {}}
+    for check, host, before, not_peers in ((True, "n1", False, "n1"), (True, "n2", True, "n1"), (False, "n1", True, "")):
+        variables = with_task_vars({"vars": dict((k, apply["vars"][k]) for k in (
+            "_no_login", "cassandra_service_node_checks_before", "_cassandra_health_not_peers"))},
+            {"ansible_check_mode": check, "inventory_hostname": host, "hostvars": hostvars,
+             "ansible_play_hosts_all": ["n1", "n2", "n3"]})
+        assert variables["cassandra_service_node_checks_before"] in ((True, "True") if before else (False, "False"))
+        assert variables["_cassandra_health_not_peers"] == not_peers
+
+
+def test_other_jmx_rights_restart_the_node(tmp_path):
+    # the access file is read at start: other rights apply once restarted; other passwords at the next login
+    role = jmx_compare(tmp_path, {"password": "ops other\nmon m0n\n", "access": "ops readonly\nmon readonly\n"})
+    assert [(c["file"], c["missing"]) for c in role["_cassandra_config_jmx_changes"]] == [
+        ("jmxremote.password", False), ("jmxremote.access", False)]
+    assert role["written"] == ["password", "access"]
+    facts, plan, view = jmx_apply(role)
+    assert facts["cassandra_apply_config_then"] == "restart"
+    assert plan == ["n2  would apply, then restart", "n1  nothing to apply"]
+    assert view == ["jmxremote.password", "  file: other users or rights   n2   %s differs (written whole)" % "←",
+                    "jmxremote.access", "  file: other users or rights   n2   %s differs (written whole)" % "←"]
+    assert not [line for line in view if "s3cret" in line or "ops " in line]  # no content shown
+
+
+def test_other_jmx_passwords_alone_need_no_restart(tmp_path):
+    role = jmx_compare(tmp_path, {"password": "ops other\nmon m0n\n", "access": JMX_FILES["access"]})
+    facts, plan, _ = jmx_apply(role)
+    assert facts["cassandra_apply_config_then"] == "none"
+    assert plan == ["n2  would apply, no restart (jmxremote.password: read at each JMX login)", "n1  nothing to apply"]
+
+
+def test_jmx_files_as_the_role_writes_them_change_nothing(tmp_path):
+    role = jmx_compare(tmp_path, dict(JMX_FILES))
+    assert role["_cassandra_config_jmx_changes"] == [] and role["_cassandra_config_items"] == [] and role["written"] == []
+    facts, plan, view = jmx_apply(role)
+    assert facts["cassandra_apply_config_todo"] in (False, "False") and view == []

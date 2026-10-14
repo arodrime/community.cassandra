@@ -56,6 +56,25 @@
     quiet: true
   run_once: true
 
+# A JMX login refused on a node whose password file (written by cassandra_config) is gone: said so, the JVM
+# reads it at each login (by the play's first host, which read the description)
+- name: Look for the JMX password file on the node that refused the login
+  ansible.builtin.stat:
+    path: "{{ hostvars[_from].cassandra_jmx_remote_password_file | default('/etc/cassandra/jmxremote.password') }}"
+  register: cassandra_cluster_jmx_password_file
+  delegate_to: "{{ _from or inventory_hostname }}"  # (templated before the when)
+  check_mode: false  # reads only
+  failed_when: false  # only to tell the cause
+  when:
+    - inventory_hostname == ansible_play_hosts | first
+    - _found | length > 0 and _found.rc | default(0) != 0
+    - (_found.stderr | default('') ~ _found.stdout | default('')) is search(_jmx_refused)
+    - hostvars[_from].cassandra_jmx_users | default([]) | length > 0
+  vars:
+    _found: "{{ _cassandra_cluster_found }}"
+    _from: "{{ _found.from | default('') }}"
+    _jmx_refused: Invalid username or password|Authentication failed|Credentials required|FailedLoginException|Authentication error
+
 # The likely cause first: a name the inventory does not set (the role default)
 # is an inventory not loaded far more often than a node of another cluster
 - name: The running node belongs to this cluster
@@ -96,5 +115,11 @@
                ~ " stock config? Check it is the right host; if it never joined '" ~ cassandra_cluster_name
                ~ "', the reset_node playbook makes it ready to join.")
          if _name == 'Test Cluster' and _found.rc | default(0) == 0
+         else (_jmx_path ~ ' is missing on ' ~ _from ~ ': Cassandra reads it at each JMX login. No running node of'
+               ~ ' this run has it: restore it on one (or run without --limit, so that one that has it is read), then'
+               ~ ' apply_config writes it back on the others, no restart.')
+              if _refused | bool and _jmx_file.stat is defined and not _jmx_file.stat.exists | default(true)
          else '' if _refused | bool
          else 'Check the inventory (-i) and cassandra_cluster_name.' }}
+    _jmx_file: "{{ hostvars[ansible_play_hosts | first].cassandra_cluster_jmx_password_file | default({}) }}"
+    _jmx_path: "{{ hostvars[_from].cassandra_jmx_remote_password_file | default('/etc/cassandra/jmxremote.password') if _from else '' }}"

@@ -339,8 +339,15 @@ def _file_entries(name, nodes, all_nodes):
         entries.append((label.replace("\r", "\\r"), _rows(records, shown_of, all_nodes)))
     if layout_only:
         entries.append(("comments or layout", [("differ", layout_only, "(no setting changes)")]))
-    if new_file:
-        entries.append(("file", [(ABSENT, [n for n, d in new_file], out.ARROW + " differs (written whole)")]))
+    # written whole with no diff shown: missing, or other content (said, not shown)
+    wholes = [(node["name"], node["wholes"][name]) for node in nodes if name in node["wholes"]]
+    absent = [n for n, d in new_file] + [n for n, before in wholes if before == ABSENT]
+    rows = [(before, [n for n, b in wholes if b == before], out.ARROW + " differs (written whole)")
+            for before in sorted(set(b for n, b in wholes if b != ABSENT))]
+    if absent:
+        rows.insert(0, (ABSENT, [n for n in all_nodes if n in absent], out.ARROW + " differs (written whole)"))
+    if rows:
+        entries.append(("file", rows))
     # not its diff: a secret's block value (a PEM key) is in clear there
     names = out.nodes([n for n, d in unread])
     lines = ["  %s: not read, or changed since it was compared: run apply_config again" % names] if unread else []
@@ -364,10 +371,12 @@ def _perm_entry(key, nodes, all_nodes, field):
 def _prepare(node):
     """A node's compare data -> its diffs, owner/mode changes, directory
     changes and other items by name, its live files and stats."""
-    diffs, perms, dirs, other = {}, {}, {}, []
+    diffs, perms, dirs, other, wholes = {}, {}, {}, [], {}
     for item in node.get("items") or []:
         name = str(item.get("item") or "")
-        if item.get("dir"):
+        if item.get("whole"):  # a file written whole, no diff shown (the JMX files: passwords)
+            wholes[name.rsplit("/", 1)[-1]] = str(item.get("before") or "")
+        elif item.get("dir"):
             dirs["%s %s" % (item["dir"], item.get("path"))] = (item.get("before"), item.get("after"))
         elif "diff" in item:
             diffs[name.rsplit("/", 1)[-1]] = str(item["diff"] or "")
@@ -375,7 +384,7 @@ def _prepare(node):
             perms[name[:-len(_PERMS)].rsplit("/", 1)[-1]] = (item.get("before"), item.get("after"))
         else:  # the RPM conf dir alternative, or nothing installed yet
             other.append((name, str(item.get("before") or "(none)"), str(item.get("after") or "")))
-    return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other,
+    return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other, "wholes": wholes,
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
             "dir_stats": _stats(node.get("dir_stats"), _dir_key)}
 
@@ -383,7 +392,8 @@ def _prepare(node):
 def cassandra_apply_config_diff(nodes, width=None):
     """nodes: [{name, items, live, stats, dir_stats}] in inventory order, the
     nodes compared: items, cassandra_config's _cassandra_config_items (diffs
-    masked, owner/mode changes, directory changes); live, the slurp results
+    masked, owner/mode changes, directory changes, the JMX files written
+    whole: said, never shown); live, the slurp results
     of the live files that differ on some node ({item: file name, content});
     stats, its cassandra_config_live_stat results; dir_stats, its
     cassandra_config_dir_stat results. -> the lines: per file, each setting
@@ -399,6 +409,7 @@ def cassandra_apply_config_diff(nodes, width=None):
     for node in prepared:
         files.update(node["diffs"])
         files.update(node["perms"])
+        files.update(node["wholes"])
     entries = []
     for name in sorted(files, key=_order):
         settings, unread = _file_entries(name, prepared, all_nodes)
@@ -450,8 +461,8 @@ def _outcome(node, check, plan):
         text = ("would apply" if check or plan else "applied")
         said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
-        if plan and then in _WHY:
-            text += " (%s)" % _WHY[then]
+        if plan and then in _WHY:  # (a node not restarted: its own reasons, when given)
+            text += " (%s)" % ("; ".join(node["why"]) if then == "none" and node.get("why") else _WHY[then])
         return text, ("would apply" if check or plan else "applied")
     result = str(node.get("result") or "nothing to apply")
     if "FAILED" in result:
@@ -486,11 +497,11 @@ def _grouped(nodes, check=False, plan=False):
 
 
 def cassandra_apply_config_outcomes(nodes, check=False, plan=False):
-    """nodes: [{name, todo, done, then, result, notes}] in inventory order ->
+    """nodes: [{name, todo, done, then, result, notes, why}] in inventory order ->
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
     before the run (every node to do would apply, with why it is not
-    restarted)."""
+    restarted: why, its reasons when not restarted, else the usual one)."""
     return _grouped(nodes, check, plan)[0]
 
 

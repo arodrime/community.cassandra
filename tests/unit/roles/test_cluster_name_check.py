@@ -180,7 +180,8 @@ def test_the_playbooks_check_it_before_any_change():
     # preflight, first thing after reading the nodes: from a running node of the run, else from a node --limit left out
     play = load("playbooks", "preflight.yml")[1]
     names = [t.get("name") for t in play["tasks"]]
-    assert names.index("Read this node's settings") + 1 == names.index("Read the cluster from a running node") \
+    assert names.index("Read this node's settings") + 2 == names.index("Look for the JMX password file") + 1 \
+        == names.index("Read the cluster from a running node") \
         == names.index("Check the running node belongs to this cluster") - 1 \
         < names.index("Check the account Cassandra runs as can read the config") < names.index("Check the running cluster")
     first = play["tasks"][names.index("Read the cluster from a running node")]
@@ -218,6 +219,24 @@ def test_the_playbooks_check_it_before_any_change():
     # the peers: the cluster's nodes (lookup) the run left out, not a node being added or reset
     peers = first["block"][0]["ansible.builtin.set_fact"]["_cassandra_preflight_peers"]
     assert "query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all + _aside) | list" in peers
+    # read from a running node whose JMX password file is there (read at each login: nodetool refused without it)
+    stat = play["tasks"][names.index("Look for the JMX password file")]
+    assert stat["register"] == "cassandra_preflight_jmx_password" and stat["failed_when"] is False
+    pick = first["block"][0]
+
+    def picked(missing, aside=()):
+        hostvars = dict((h, {"inventory_hostname": h, "_cassandra_preflight_running": h != "n4",
+                             "cassandra_preflight_jmx_password": {"stat": {"exists": h not in missing}} if h != "n2"
+                             else {"skipped": True}})
+                        for h in ("n1", "n2", "n3", "n4"))
+        variables = dict(pick["vars"], hostvars=hostvars, ansible_play_hosts=["n1", "n2", "n3", "n4"], inventory_hostname="n1",
+                         _aside_pattern="", _aside=list(aside))
+        return render(pick["ansible.builtin.set_fact"]["_cassandra_preflight_from"], dict(
+            (k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items()))
+    assert picked([]) == "n1"
+    assert picked(["n1"]) == "n2"  # (not looked at: as before)
+    assert picked(["n1"], aside=["n2"]) == "n3"
+    assert picked(["n1", "n3"], aside=["n2"]) == "n1"  # none has it: as before (refused, said why)
     # start_rack, which writes the unit of the rack's nodes, checks it on the other nodes first
     plays = load("playbooks", "start_rack.yml")
     find = [p for p in plays if p["name"] == "Find the rack's nodes"][0]

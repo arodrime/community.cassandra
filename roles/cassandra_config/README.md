@@ -169,7 +169,16 @@ Role Variables
   `cassandra-env.sh` points the JVM at), mode `0400`
   owned by `cassandra_user` (the JVM refuses a password file others can
   read; `cassandra_config_file_permissions` can set them apart too). Keep the
-  passwords in a vault.
+  passwords in a vault. A file missing, or with other users or rights, is
+  written again. `apply_config` writes the password file first and does not
+  restart a running node for it (read at each login); the access file is read
+  at start: written back or changed, the node is restarted (not with
+  `cassandra_local_jmx`, which checks no login). Keep the password file
+  read-only for Cassandra (the default `0400`): from Java 14 the JVM rewrites
+  a password file it can write with hashed passwords, which then differ from
+  the inventory's at each run. A new password for the user nodetool logs in
+  with (`cassandra_jmx_username`) cannot go through `apply_config`, whose
+  checks log in with it before the file is written.
 * `cassandra_cqlsh_credentials`: cqlsh set up for OS users, as
   `{os_user, username, password}`: `~/.cassandra/cqlshrc` points cqlsh at this
   node (`cassandra_rpc_address`), and from 4.1 the password goes to
