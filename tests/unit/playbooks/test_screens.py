@@ -577,7 +577,8 @@ def test_apply_config_shows_the_changes_once():
     def shown(show, **quiet):
         variables = dict(quiet, _cassandra_config_changes=["cassandra.yaml"], cassandra_change_report_items=[{"item": "x"}],
                          _cassandra_config_perm_changes=[{"item": "cassandra.yaml (owner:group mode)"}],
-                         _cassandra_config_dir_changes=[], _cassandra_config_dir_notes=[])
+                         _cassandra_config_dir_changes=[], _cassandra_config_dir_notes=[], _cassandra_config_ask=False,
+                         ansible_check_mode=False)
         templar = Templar(loader=DataLoader(), variables=variables)
         return all(templar.template(trust_as_template("{{ (%s) | bool }}" % c)) for c in show["when"])
 
