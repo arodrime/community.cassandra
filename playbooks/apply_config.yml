@@ -286,6 +286,12 @@
           sections:
             - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
             - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true) }}"
+          # --check: said here too (the recap says it again), in case a later play stops the run first
+          warnings:
+            - label: refused
+              text: >-
+                {{ ('a real run is refused, before changing anything: ' ~ _cassandra_apply_config_refused | join(' '))
+                   if ansible_check_mode and _cassandra_apply_config_refused | default([]) else '' }}
   vars:
     # (from the group the nodes to do are put in: each node's when reads it, no other node's variables)
     _todo: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"

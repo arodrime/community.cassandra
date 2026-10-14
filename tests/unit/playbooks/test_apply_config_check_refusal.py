@@ -90,7 +90,9 @@ def test_the_refusal_reason_and_its_way_out():
 
 def test_a_real_run_refuses_before_any_change_check_goes_on():
     t = task("Refuse restarts while a node is not running")
-    assert "not ansible_check_mode" in t["when"]
+    for check, refused, runs in ((False, [REASON, WAY], True), (True, [REASON, WAY], False), (False, [], False)):
+        variables = {"ansible_check_mode": check, "_cassandra_apply_config_refused": refused}
+        assert all(render("{{ %s | bool }}" % w, variables) in (True, "True") for w in t["when"]) is runs
     variables = {"_cassandra_apply_config_refused": [REASON, WAY]}
     assert render(t["ansible.builtin.fail"]["msg"], variables) == REASON + " Nothing was changed. " + WAY
     # the refusal comes before anything is written: in the first play, before the plan and its question
@@ -118,7 +120,7 @@ def test_the_check_recap_ends_with_the_refusal():
                      ansible_play_hosts_all=HOSTS, cassandra_cluster_name="c", ansible_check_mode=True)
     lines = render(t["ansible.builtin.debug"]["msg"], variables)
     assert lines[0] == "CHECK  apply_config  c  3 would apply, 1 nothing to apply"
-    assert lines[-3:] == ["", "WARNING  A real run is refused, before changing anything: " + REASON, "  " + WAY]
+    assert lines[-3:] == ["", "WARNING  a real run is refused, before changing anything: " + REASON, "  " + WAY]
     # the nodes' outcomes are all there, before it
     assert "node1, node2  would apply, then restart" in lines
 
@@ -126,3 +128,29 @@ def test_the_check_recap_ends_with_the_refusal():
 def test_the_recap_says_no_refusal_after_a_real_run():
     nodes = [{"name": "node1", "todo": True, "done": True, "then": "restart", "result": "", "notes": []}]
     assert cassandra_apply_config_recap(nodes, refused=[REASON, WAY]) == ["DONE  apply_config  1 applied", "node1  applied, restarted"]
+
+
+def test_the_check_plan_says_it_too():
+    # in case a later play stops the --check run before its recap
+    t = next(x for x in PLAYS[1]["tasks"] if x.get("name") == "Show the plan and confirm the run")
+    warning = t["vars"]["cassandra_screen"]["warnings"][0]
+    variables = {"_cassandra_apply_config_refused": [REASON, WAY]}
+    assert render(warning["text"], dict(variables, ansible_check_mode=True)) == (
+        "a real run is refused, before changing anything: " + REASON + " " + WAY)
+    assert render(warning["text"], dict(variables, ansible_check_mode=False)) == ""
+    assert render(warning["text"], {"ansible_check_mode": True}) == ""
+
+
+def test_the_owner_and_mode_changes_are_not_shown_twice():
+    # the role (or apply_config's view) shows them: no raw before/after diff under --diff
+    with open(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"), encoding="utf-8") as f:
+        role = yaml.safe_load(f)
+
+    def walk(tasks):
+        for t in tasks or []:
+            yield t
+            yield from walk(t.get("block"))
+    tasks = dict((t.get("name"), t) for t in walk(role))
+    for name in ("Set the owner and mode of the files left as they are", "Set the owner and mode of the existing ones",
+                 "Template Cassandra config files"):
+        assert tasks[name]["diff"] is False, name
