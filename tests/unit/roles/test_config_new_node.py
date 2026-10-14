@@ -128,12 +128,51 @@ def prepare_vars(state, confirm=None, replace=False, planned=True, operation_con
     ("joined", False, "auto", None, False), ("joined", False, True, True, False), ("joining", False, "auto", None, False),
 ])
 def test_add_prepare_asks_nothing_more_for_a_new_node(state, replace, confirm, given, new):
-    assert prepare_vars(state, given, replace) == {"cassandra_config_confirm": confirm, "_cassandra_config_new_node": new}
+    # _cassandra_config_no_question: what an -e cassandra_config_confirm=true (which beats the include's
+    # cassandra_config_confirm) can't override
+    assert prepare_vars(state, given, replace) == {"cassandra_config_confirm": confirm, "_cassandra_config_new_node": new,
+                                                   "_cassandra_config_no_question": confirm is False}
 
 
 def test_add_node_reset_false_keeps_the_guard_of_cassandra_config():
     # -e cassandra_add_node_reset=false: no reset plan, the live cassandra.yaml's dirs not looked at by add_node
-    assert prepare_vars("new", planned=False) == {"cassandra_config_confirm": "auto", "_cassandra_config_new_node": False}
+    assert prepare_vars("new", planned=False) == {"cassandra_config_confirm": "auto", "_cassandra_config_new_node": False,
+                                                  "_cassandra_config_no_question": False}
+
+
+def test_no_second_question_whatever_e_cassandra_config_confirm_says():
+    # add_node -e cassandra_add_node_reset=true -e cassandra_config_confirm=true: the extra var reaches
+    # cassandra_config as true, the add's own question covered the new nodes' config
+    template = task("List the files to change and whether to ask first")["ansible.builtin.set_fact"]["_cassandra_config_ask"]
+    preview = {"results": [{"stdout": "diff", "cassandra_config_file": "cassandra.yaml"}]}
+    passed = prepare_vars("new", confirm=True)
+    assert passed["_cassandra_config_no_question"] is True
+    assert render(template, cassandra_config_confirm=True, _cassandra_config_initialized=True, _kept=[],
+                  cassandra_config_preview=preview, _cassandra_config_no_question=True) is False
+    assert render(template, cassandra_config_confirm=True, _cassandra_config_initialized=True, _kept=[],
+                  cassandra_config_preview=preview) is True  # a run of the role on its own: asked
+    # the operations that ask once for the whole run say so too
+    for path in (("roles", "cassandra_service", "tasks", "action_apply_config.yml"),
+                 ("roles", "cassandra_service", "tasks", "action_update_java.yml"),
+                 ("roles", "cassandra_service", "tasks", "action_upgrade.yml")):
+        writes = [t for t in load(*path) if (t.get("ansible.builtin.include_role") or {}).get("name")
+                  == "community.cassandra.cassandra_config"]
+        assert [t["vars"]["_cassandra_config_no_question"] for t in writes] == [True], path
+
+
+def test_the_question_comes_after_the_diffs_it_is_about():
+    # "diffs above": printed by the ops callback too (marked), each node's under its name, when it asks
+    shown = task("Show the config changes")
+    asked = task("Show the config changes to confirm")
+    assert "cassandra_output" not in (shown.get("vars") or {}) and asked["vars"]["cassandra_output"] is True
+    preview = {"results": [{"stdout": "-a\n+b", "stdout_lines": ["-a", "+b"], "cassandra_config_file": "cassandra.yaml"},
+                           {"stdout": "", "stdout_lines": [], "cassandra_config_file": "logback.xml"}]}
+    variables = dict(inventory_hostname="n4", cassandra_config_preview=preview, _cassandra_config_kept=[])
+    assert render(shown["ansible.builtin.debug"]["msg"], **variables) == ["-a", "+b"]
+    assert render(asked["ansible.builtin.debug"]["msg"], **variables) == ["n4:", "-a", "+b"]
+    for ask, check, says in ((True, False, (False, True)), (False, False, (True, False)), (True, True, (True, False))):
+        variables = dict(_cassandra_config_changes=["cassandra.yaml"], _cassandra_config_ask=ask, ansible_check_mode=check)
+        assert tuple(all(render("{{ %s }}" % c, **variables) for c in t["when"]) for t in (shown, asked)) == says
 
 
 def test_replace_node_says_its_replacement_was_checked():

@@ -67,6 +67,7 @@
     name: community.cassandra.cassandra_config
   vars:
     cassandra_config_confirm: false  # previewed by the preflight phase, confirmed by the prepare phase
+    _cassandra_config_no_question: true  # whatever -e cassandra_config_confirm says
     _cassandra_config_no_restart_warning: true
 
 - name: Start it and wait until it has joined
