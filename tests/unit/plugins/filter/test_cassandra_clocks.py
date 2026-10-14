@@ -611,8 +611,13 @@ def test_a_daemon_disabled_on_a_node_left_alone_is_another_means():
         "chronyd|inactive|enabled|loaded", "chronyd|inactive|disabled|loaded")
     v = cassandra_clock_verdicts([node("node0", probe_text()), node("node1", ptp, manage=False)])
     assert by_node(v)["node1"]["verdict"] == "ok" and "another means" in by_node(v)["node1"]["text"]
+    assert "chronyd disabled, its time sync left alone" in by_node(v)["node1"]["text"]
     managed = cassandra_clock_verdicts([node("node0", probe_text()), node("node1", ptp)])
     assert by_node(managed)["node1"]["verdict"] == "no_sync"
+    # only stopped (still enabled) on a node left alone: the kernel's flag outlives it, not another means
+    stopped = probe_text(active="", installed=("chronyd",), tracking_text=None, synced="yes")
+    left = by_node(cassandra_clock_verdicts([node("node0", probe_text()), node("node1", stopped, manage=False)]))
+    assert left["node1"]["verdict"] == "no_sync" and left["node1"]["action"] == "manual"
 
 
 @pytest.mark.parametrize("did", [["start"], ["step"], ["start", "step"], ["slewing"], ["start", "slewing"],
