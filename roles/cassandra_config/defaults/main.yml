@@ -73,6 +73,11 @@ cassandra_permissions_validity: "2000ms"
 cassandra_credentials_validity: "2000ms"
 cassandra_partitioner: "org.apache.cassandra.dht.Murmur3Partitioner"
 cassandra_cdc_enabled: false
+# A node reads it at its first start only: false joins the ring without
+# streaming its data. The collection sets it where that is safe
+# (add_datacenter's new nodes, which rebuild next); preflight warns about false
+# in the inventory. auto_bootstrap: true on a node is the same as no line.
+cassandra_auto_bootstrap: true
 cassandra_disk_failure_policy: "stop"
 cassandra_commit_failure_policy: "stop"
 cassandra_prepared_statements_cache_size: ""
@@ -188,6 +193,41 @@ cassandra_storage_compatibility_mode: "NONE"
 cassandra_hints_dir: "/var/lib/cassandra/hints"
 cassandra_commitlog_dir: "/var/lib/cassandra/commitlog"
 cassandra_saved_caches_dir: "/var/lib/cassandra/saved_caches"
+# cdc_raw_directory; "" leaves it commented out (<storage dir>/cdc_raw,
+# /var/lib/cassandra/cdc_raw with the packages). Created, like the dirs above,
+# when set or with cassandra_cdc_enabled.
+cassandra_cdc_raw_dir: ""
+
+# ---- cassandra.yaml, settings commented out in stock ----
+# "" leaves the stock line commented out (Cassandra's default). Sizes, rates and
+# durations with their unit, as in the stock comments (4.1+; 4.0: the *_in_*
+# variables below).
+cassandra_disk_access_mode: ""  # auto, mmap, mmap_index_only, standard; 5.0 also legacy (4.x: a line at the end)
+cassandra_file_cache_size: ""  # e.g. 512MiB
+cassandra_memtable_heap_space: ""  # e.g. 2048MiB
+cassandra_memtable_offheap_space: ""  # e.g. 2048MiB (with memtable_allocation_type offheap_*)
+cassandra_memtable_flush_writers: ""
+cassandra_concurrent_compactors: ""
+cassandra_stream_entire_sstables: ""  # true/false
+cassandra_stream_throughput_outbound: ""  # e.g. 24MiB/s
+cassandra_inter_dc_stream_throughput_outbound: ""  # e.g. 24MiB/s
+cassandra_entire_sstable_stream_throughput_outbound: ""  # 4.1+, e.g. 24MiB/s
+cassandra_entire_sstable_inter_dc_stream_throughput_outbound: ""  # 4.1+, e.g. 24MiB/s
+cassandra_streaming_connections_per_host: ""
+cassandra_internode_streaming_tcp_user_timeout: ""  # e.g. 300000ms
+cassandra_roles_update_interval: ""  # e.g. 2000ms
+cassandra_permissions_update_interval: ""  # e.g. 2000ms
+cassandra_credentials_update_interval: ""  # e.g. 2000ms
+cassandra_gc_log_threshold: ""  # e.g. 200ms
+cassandra_gc_warn_threshold: ""  # e.g. 1000ms
+# 5.0 only: sstable.selected_format, bti or big (bti needs
+# cassandra_storage_compatibility_mode UPGRADING or NONE)
+cassandra_sstable_format: ""
+# 5.0 only: the partition size guardrail, e.g. 100MiB
+cassandra_partition_size_warn_threshold: ""
+cassandra_partition_size_fail_threshold: ""
+# column_index_size: 4.1's stock value, commented out in 5.0's
+cassandra_column_index_size: "{{ '' if cassandra_version == '50x' else '64KiB' }}"
 
 # ---- cassandra.yaml, TLS / mTLS (commented out in stock 5.0, active in 4.x) ----
 # 5.0: "" keeps the stock commented line; set a value to enable it.
@@ -204,7 +244,6 @@ cassandra_client_truststore_password: ""
 # ---- cassandra.yaml, keys absent from 5.0 ----
 # 4.0 and 4.1
 # 4.1 only
-cassandra_column_index_size: "64KiB"
 cassandra_scripted_user_defined_functions_enabled: false
 cassandra_compaction_large_partition_warning_threshold: "100MiB"
 cassandra_compaction_tombstone_warning_threshold: 100000
@@ -250,6 +289,18 @@ cassandra_enable_materialized_views: false
 cassandra_enable_sasi_indexes: false
 cassandra_enable_transient_replication: false
 cassandra_enable_drop_compact_storage: false
+# commented out in stock: "" leaves the line commented out
+cassandra_file_cache_size_in_mb: ""
+cassandra_memtable_heap_space_in_mb: ""
+cassandra_memtable_offheap_space_in_mb: ""
+cassandra_stream_throughput_outbound_megabits_per_sec: ""
+cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec: ""
+cassandra_internode_streaming_tcp_user_timeout_in_ms: ""
+cassandra_roles_update_interval_in_ms: ""
+cassandra_permissions_update_interval_in_ms: ""
+cassandra_credentials_update_interval_in_ms: ""
+cassandra_gc_log_threshold_in_ms: ""
+cassandra_gc_warn_threshold_in_ms: ""
 
 # Settings no variable covers, written as-is at the end of cassandra.yaml,
 # e.g. {commitlog_total_space: 8192MiB}. Keys the template already has are
@@ -265,7 +316,11 @@ cassandra_log_dir: /var/log/cassandra
 cassandra_heap_size: ""  # "" = stock auto-sizing; e.g. "8G" sets -Xms/-Xmx
 cassandra_heap_newsize: ""  # 4.x without G1: set together with cassandra_heap_size, e.g. "800M"
 cassandra_max_direct_memory_size: ""
-cassandra_heap_dump_dir: "$CASSANDRA_LOG_DIR"
+# Where the JVM writes a heap dump (-XX:HeapDumpPath, CASSANDRA_HEAPDUMP_DIR,
+# which the environment may still give); a path is also 5.0's heap_dump_path
+# in cassandra.yaml, and created. Stock: 5.0 the log dir (not empty there),
+# 4.x none (the JVM's working dir).
+cassandra_heap_dump_dir: "{{ '$CASSANDRA_LOG_DIR' if cassandra_version == '50x' else '' }}"
 cassandra_local_jmx: true  # false = remote JMX, with authentication
 cassandra_jmx_port: 7199
 cassandra_jmx_rmi_hostname: ""

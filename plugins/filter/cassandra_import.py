@@ -43,7 +43,8 @@ from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
-from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import yaml_rejected
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
+    DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, quantity, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
@@ -69,6 +70,8 @@ IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, 
                      "cassandra_allocate_tokens_for_local_replication_factor": (
                          "allocate_tokens_for_local_replication_factor",),
                      "cassandra_storage_compatibility_mode": ("storage_compatibility_mode",)}
+# Read the same way, whatever the layout of their section (moved, indented otherwise, flow style)
+BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format")}
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
 # Same masking as cassandra_config's diff preview (module_utils cassandra_output)
 SECRET, SECRET_VALUE, _mask, _secret = out.SECRET, out.SECRET_VALUE, out.mask, out.secret
@@ -82,6 +85,8 @@ ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
 RACKDC = ("cassandra_rackdc_dc", "cassandra_rackdc_rack")
 # Per node by nature: not reported as drift
 PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn", "cassandra_rackdc_rack"]
+# Kept on the node that has it only (host_vars), even when every node does: a node added later must not get it
+NODE_LEVEL = ("cassandra_auto_bootstrap",)
 # The rights the role gives a readwrite JMX user besides readwrite
 JMX_CREATE_UNREGISTER = ["create", "javax.management.monitor.*,javax.management.timer.*", "unregister"]
 # The rights of an access file line the role writes, as the JVM takes them (readonly alone; the role's own check)
@@ -112,6 +117,8 @@ HOSTNAME = "{{ ansible_facts['hostname'] }}"
 MISSING = object()
 TOP_KEY = re.compile(r"^(?:\{\{[^}]*\}\})?([a-z0-9_]+):")  # active top-level key, maybe behind a toggle
 EXTRA_HEADER = "# Settings no variable covers (cassandra_extra_settings)"
+# Before it: the variables of keys the stock file has no line for (tools/gen_templates.py)
+DECLARED_HEADER = "# Settings the stock file has no line for (their variables)"
 # The undefined errors naming a field or a variable, nothing else of the data.
 # Jinja words a missing dict key (d[key]) the same way: nothing here or in the
 # playbook may index a dict with a key read from the nodes.
@@ -135,9 +142,12 @@ def _load_role(series, facts):
     ctx["ansible_facts"] = facts
     ctx["_cassandra_config_quote"] = role_vars["_cassandra_config_quote"]
     ctx["_cassandra_config_extra_sections"] = role_vars["_cassandra_config_extra_sections"]
+    ctx["_cassandra_config_plain_path"] = role_vars["_cassandra_config_plain_path"]
     env = jinja2.Environment(keep_trailing_newline=True, trim_blocks=True)
     env.filters["regex_replace"] = regex_replace
-    env.filters["bool"] = lambda value: boolean(value, strict=False)  # (Ansible's, the JMX users' templates)
+    # Ansible's, as the templates use them (the JMX users' templates too)
+    env.filters["bool"] = lambda value: boolean(value, strict=False)
+    env.tests["match"] = lambda value, pattern: re.match(pattern, str(value)) is not None
     env.filters["to_nice_yaml"] = lambda data, indent=2: yaml.safe_dump(data, default_flow_style=False, indent=indent)
     for dummy in range(5):  # defaults referencing other defaults
         for k, v in ctx.items():
@@ -198,12 +208,20 @@ def _read_line(tpl, live, ctx=None):
         e = expr[2:-2].strip()
         if re.fullmatch(r"(\w+)", e):
             found[e] = _value(cap)
-        elif re.fullmatch(r"(\w+) \| lower", e):
-            found[e.split()[0]] = cap.lower() in ("true", "yes", "on")  # YAML's true, however written
+        elif re.fullmatch(r"(\w+) \| lower|\((\w+) \| bool\) \| lower", e):
+            if cap.strip().lower() not in YAML_BOOLS:
+                return None  # quoted, or no boolean: left to the report
+            found[e.strip("(").split()[0]] = YAML_BOOLS[cap.strip().lower()] == "true"  # YAML's true, however written
         elif re.fullmatch(r"'' if %s else '[^']*'" % V, e):
             flags[re.fullmatch(r"'' if %s else '[^']*'" % V, e).group(1)] = cap == ""
         elif re.fullmatch(r"'# ' if (\w+)(?: == ''| \| string in \['', 'None'\]) else ''", e):
             flags[e.split()[3]] = cap == ""
+        elif re.fullmatch(r"'#' if (\w+) \| string in \['', 'None'\] else ''", e):
+            flags[e.split()[2]] = cap == ""
+        elif re.fullmatch(r"(\w+) if \1 \| string not in \['', 'None'\] else '[^']*'", e):
+            values[e.split()[0]] = _value(cap)  # a number, 0 included
+        elif re.fullmatch(r"'true' if (\w+) \| string in \['', 'None'\] else \(\1 \| string \| lower\)", e):
+            values[e.split()[2]] = cap == "true"
         elif re.fullmatch(r"\(' ' ~ (\w+)\) if \w+ \| string not in \['', 'None'\] else ''", e):
             if cap:  # the text of the value, quotes undone
                 found[re.fullmatch(r"\(' ' ~ (\w+)\).*", e).group(1)] = re.sub(r"^(['\"])(.*)\1$", r"\2", cap[1:].strip())
@@ -236,6 +254,15 @@ def _read_line(tpl, live, ctx=None):
                 return None
         elif re.fullmatch(r"(\w+) if (\w+) == '([^']*)' else '([^']*)'", e):
             chosen[e.split()[0]] = re.fullmatch(r"\w+ if (\w+) == '([^']*)' else '([^']*)'", e).groups() + (cap,)
+        elif re.fullmatch(r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", e):
+            # a value between two texts, another text when empty (4.x CASSANDRA_HEAPDUMP_DIR)
+            prefix, var, suffix, off = re.fullmatch(r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", e).groups()
+            if cap == off:
+                found[var] = ""
+            elif cap.startswith(prefix) and cap.endswith(suffix) and len(cap) > len(prefix) + len(suffix):
+                found[var] = cap[len(prefix):len(cap) - len(suffix)]
+            else:
+                return None
         elif re.fullmatch(r"\('\\n' ~ .*\) if \w+ else ''", e):
             if cap:
                 return None
@@ -287,7 +314,9 @@ def _import_file(env, series, name, ctx, live):
             if got is not None:
                 found.update(got)
         return found
-    live = _align(rendered, _canonical(name, rendered, live))
+    # (the settings the stock file has no line for: written as by the role, however the node writes them)
+    live = _align(rendered, _canonical(name, rendered + _declared_samples(series) if name.endswith(".yaml") else rendered,
+                                       live))
     found = {}
     tail = [t for t in tpl[-2:] if "| join(" in t]
     extra = []  # JVM options the node sets that no variable covers: the file's extra options list
@@ -336,11 +365,12 @@ def _canonical(name, rendered, live):
     if name.endswith(".yaml"):
         styles, bools = {}, set()
         for r in rendered:
-            m = YAML_KEY.match(re.sub(r"^#\s?", "", r))
-            if m and m.group(4):
-                styles.setdefault((m.group(1), m.group(2) or "", m.group(3)), _style(m.group(4)))
-                if m.group(4).strip() in ("true", "false"):  # a boolean setting (| lower)
-                    bools.add((m.group(1), m.group(2) or "", m.group(3)))
+            # a commented sub-key: "#  key:" ("#" in place of its first space) or "# key:"
+            for m in map(YAML_KEY.match, (re.sub(r"^#\s?", "", r), re.sub(r"^#", "", r))):
+                if m and m.group(4):
+                    styles.setdefault((m.group(1), m.group(2) or "", m.group(3)), _style(m.group(4)))
+                    if m.group(4).strip() in ("true", "false"):  # a boolean setting (| lower)
+                        bools.add((m.group(1), m.group(2) or "", m.group(3)))
         out = []
         for line in live:
             m = YAML_KEY.match(line)
@@ -468,6 +498,11 @@ def _same_setting(name, role, node):
             role_value, node_value = yaml.safe_load(role), yaml.safe_load(node)
             if role_value == node_value:
                 return True
+            if isinstance(role_value, dict) and isinstance(node_value, dict) and list(role_value) == list(node_value) \
+                    and len(role_value) == 1 and str(list(role_value)[0]) in QUANTITY_KEYS:
+                key = list(role_value)[0]
+                if quantity(role_value[key]) is not None and quantity(role_value[key]) == quantity(node_value[key]):
+                    return True  # the same amount in another unit
             # the same text, unless one of them is null (no value): Cassandra keeps null as null
             return not _has_null(role_value) and not _has_null(node_value) and \
                 yaml.load(role, Loader=yaml.BaseLoader) == yaml.load(node, Loader=yaml.BaseLoader)
@@ -619,6 +654,68 @@ def _without_extras(rendered, live, extras, rejected=()):
     return rendered, live
 
 
+@functools.lru_cache(maxsize=None)
+def _declared_lines(series):
+    """The template's lines of the settings the stock file has no line for (after DECLARED_HEADER)."""
+    with open(os.path.join(ROLE, "templates", SERIES[series], "cassandra.yaml.j2")) as f:
+        tpl = f.read().split("\n")
+    if DECLARED_HEADER not in tpl:
+        return ()
+    at = tpl.index(DECLARED_HEADER)
+    end = next((i for i in range(at, len(tpl)) if tpl[i] == EXTRA_HEADER), len(tpl))
+    return tuple(line for line in tpl[at:end] if TOP_KEY.match(line))
+
+
+def _declared_keys(series):
+    return [TOP_KEY.match(line).group(1) for line in _declared_lines(series)]
+
+
+def _declared_samples(series):
+    """Their lines with a sample value, for _canonical: a plain value, true for a boolean."""
+    return [re.sub(r"\{\{ \(?\w+(?: \| bool\))?\)? \| lower \}\}", "true", re.sub(r"\{\{ \w+ \}\}", "x", line))
+            for line in _declared_lines(series)]
+
+
+def _without_declared(series, rendered, live):
+    """Both sides minus: the settings the stock file has no line for (the role's block before the extra settings),
+    with the node's line of each wherever it is when it sets the same (the import read them by key; another one
+    stays, a hand edit), or when it is Cassandra's default the role leaves out (auto_bootstrap: true, a note); the
+    settings the comparisons leave out where the role's file has a line for them (NOT_COMPARED, 5.0's
+    heap_dump_path), wherever they are on both sides, a note for the node's line the role would not write the same."""
+    role = {}
+    if DECLARED_HEADER in rendered:
+        at = rendered.index(DECLARED_HEADER) - 1  # its blank line
+        end = next((i for i in range(at, len(rendered)) if rendered[i] == EXTRA_HEADER), len(rendered))
+        end = end - 1 if end < len(rendered) else end  # the extra settings' blank line, where _without_extras cuts
+        role = dict((m.group(1), r) for m, r in ((TOP_KEY.match(r), r) for r in rendered[at:end]) if m)
+        rendered = rendered[:at] + rendered[end:]
+    in_live = set(key for key, dummy in _top_blocks(live))
+    skipped = [k for k in NOT_COMPARED if any(re.match(r"^#?\s?%s:" % k, r) for r in rendered)]
+    for key in skipped:
+        role[key] = next((r for r in rendered if r.startswith(key + ":")), None)
+        # its commented stock line too, in place of the node's line
+        rendered = [r for r in rendered if not re.match(r"^#?\s?%s:" % key if key in in_live else r"^%s:" % key, r)]
+    drop, notes = set(), []
+    for key, indexes in _top_blocks(live):
+        if key not in role and key not in DEFAULT_WHEN_ABSENT:
+            continue
+        line = live[indexes[0]]
+        same = len(indexes) == 1 and role.get(key) is not None and _same_setting("cassandra.yaml", role[key], line)
+        default = len(indexes) == 1 and role.get(key) is None and key in DEFAULT_WHEN_ABSENT \
+            and YAML_BOOLS.get(str(_yaml_string(line.split(":", 1)[1].strip())).lower()) == DEFAULT_WHEN_ABSENT[key]
+        if key in skipped:
+            drop.update(indexes)
+            if not same:
+                notes.append("cassandra.yaml: %s, not compared (%s)" % (_mask(line.strip()), NOT_COMPARED[key]))
+        elif same or default:
+            drop.update(indexes)
+            role.pop(key, None)
+            if default:
+                notes.append("cassandra.yaml: %s, Cassandra's default, left out" % line.strip())
+    rendered += [line for key, line in role.items() if key not in skipped and line is not None]  # the role adds them
+    return rendered, [n for i, n in enumerate(live) if i not in drop], notes
+
+
 def _snitch_reads_rackdc(snitch):
     """False for the snitches that take the node's dc and rack from elsewhere than
     cassandra-rackdc.properties' dc= and rack= (the role's list); a snitch of
@@ -710,6 +807,9 @@ def _leftovers(env, series, files, ctx, live_files, rejected=()):
                 normalized.append("%s: same settings, comments and layout rewritten" % name)
             continue
         live = _align(rendered, live_files[name].split("\n"))
+        if name == "cassandra.yaml":
+            rendered, live, notes = _without_declared(series, rendered, live)
+            normalized += notes
         if name == "cassandra.yaml" and (extras or rejected):
             # masked before the lines of those keys go: a secret's value may go on past the lines dropped
             rendered, live = _without_extras(_Shown.lines(rendered), _Shown.lines(live), extras, rejected)
@@ -982,6 +1082,10 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     where[0] = "cassandra.yaml"
     if "cassandra.yaml" in live_files:
         found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
+    if cassandra_version != "40x":
+        # a size, rate or duration in one unit whatever the node writes it in (100000000B/s, 2s): 200MiB/s, 2000ms
+        found.update((k, canonical_quantity(k[len("cassandra_"):], v)) for k, v in found.items()
+                     if k[len("cassandra_"):] in QUANTITY_KEYS)
     changed = {k: v for k, v in found.items()
                if not _same_value(v, _default(ctx, k))
                and not (v == "" and _default(ctx, k) in ([], {}))  # a list/dict variable left empty
@@ -990,9 +1094,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                and not (isinstance(_default(ctx, k), int) and not isinstance(_default(ctx, k), bool)
                         and not isinstance(v, int))
                # a shell expansion (CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"): not a value either,
-               # unless the variable is one (cassandra_heap_dump_dir: $CASSANDRA_LOG_DIR)
+               # unless the variable is one (cassandra_heap_dump_dir: $CASSANDRA_LOG_DIR, on 4.x too)
                and not (k in from_shell and isinstance(v, str) and re.search(r"[$`]", v)
-                        and not re.search(r"[$`]", str(_default(ctx, k))))}
+                        and not re.search(r"[$`]", str(_default(ctx, k))) and k != "cassandra_heap_dump_dir")}
     if storage_dir and "cassandra.yaml" in live_files:
         # directories cassandra.yaml leaves out: under the JVM's -Dcassandra.storagedir
         # (a tarball's is $CASSANDRA_HOME/data), where the role writes its defaults
@@ -1006,6 +1110,11 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                 found[var] = changed[var] = path
         # cassandra_config keeps such a file where it has the same directories, also while Cassandra is down
         if isinstance(data, dict) and any(data.get(key) is None for key in STORAGE_DIRS if key != "cdc_raw_directory"):
+            changed["cassandra_config_storage_dir"] = storage_dir
+        # with CDC on, the role creates the cdc_raw dir cassandra.yaml leaves out there too (else under the
+        # packages' /var/lib/cassandra)
+        elif isinstance(data, dict) and str(data.get("cdc_enabled")).lower() == "true" and data.get("cdc_raw_directory") is None \
+                and storage_dir.rstrip("/") != "/var/lib/cassandra":
             changed["cassandra_config_storage_dir"] = storage_dir
     render_dirs = None
     if "cassandra.yaml" in live_files:
@@ -1116,7 +1225,7 @@ def _identity(text, series):
         raise AnsibleFilterError("cassandra_config_import: cassandra.yaml is not valid YAML%s"
                                  % (" (line %d)" % (mark.line + 1) if mark else ""))
     found, missing = {}, []
-    for var, path in list(IDENTITY.items()) + list(IDENTITY_OPTIONAL.items()):
+    for var, path in list(IDENTITY.items()) + list(IDENTITY_OPTIONAL.items()) + list(BY_PATH.items()):
         value = conf
         for step in path:
             try:
@@ -1365,7 +1474,12 @@ def cassandra_inventory_layout(nodes, cluster_name):
             for n in read:
                 if key in n["vars"]:
                     n["vars"][key] = template
-    drift = [k for k in keys if not _place(k, read, levels, group_vars, host_vars) and k not in PER_NODE]
+    for key in [k for k in keys if k in NODE_LEVEL]:
+        for n in read:
+            if key in n["vars"]:
+                host_vars.setdefault(n["name"], {})[key] = n["vars"][key]
+    drift = [k for k in keys if k not in NODE_LEVEL and not _place(k, read, levels, group_vars, host_vars)
+             and k not in PER_NODE]
     differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
 

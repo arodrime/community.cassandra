@@ -56,3 +56,40 @@ _cassandra_config_quote: '(?s)^(?!(?!(?i:y|n|yes|no|true|false|on|off|null)$)[A-
 # data_file_directories when cassandra.yaml has none: <cassandra.storagedir>/data,
 # /var/lib/cassandra with the deb and rpm packages (cassandra.in.sh)
 _cassandra_config_default_data_dir: /var/lib/cassandra/data
+# A directory given as an absolute path, no shell expansion in it ($CASSANDRA_LOG_DIR)
+_cassandra_config_plain_path: '/[^$`]*$'
+# [kind, [path]] of the directories the role creates besides the data, commitlog, saved_caches and hints ones: cdc_raw when set or
+# with CDC on (Cassandra's default then, under the storage dir), the heap dump dir when it is a path
+_cassandra_config_more_dirs: >-
+  {{ ([['cdc_raw dir', [cassandra_cdc_raw_dir or ((cassandra_config_storage_dir or '/var/lib/cassandra')
+                                                  | regex_replace('(?<=.)/+$', '')) ~ '/cdc_raw']]]
+      if cassandra_cdc_raw_dir or cassandra_cdc_enabled | bool else [])
+     + ([['heap dump dir', [cassandra_heap_dump_dir]]] if cassandra_heap_dump_dir is match(_cassandra_config_plain_path) else []) }}
+# Variables of keys a series has from that one on (the role refuses them set for an earlier one)
+_cassandra_config_since:
+  cassandra_entire_sstable_stream_throughput_outbound: "4.1"
+  cassandra_entire_sstable_inter_dc_stream_throughput_outbound: "4.1"
+  cassandra_sstable_format: "5.0"
+  cassandra_partition_size_warn_threshold: "5.0"
+  cassandra_partition_size_fail_threshold: "5.0"
+# 4.1+: the former names (4.0's) of keys a variable writes; Cassandra refuses a cassandra.yaml with both
+_cassandra_config_old_names:
+  file_cache_size_in_mb: cassandra_file_cache_size
+  memtable_heap_space_in_mb: cassandra_memtable_heap_space
+  memtable_offheap_space_in_mb: cassandra_memtable_offheap_space
+  column_index_size_in_kb: cassandra_column_index_size
+  stream_throughput_outbound_megabits_per_sec: cassandra_stream_throughput_outbound
+  inter_dc_stream_throughput_outbound_megabits_per_sec: cassandra_inter_dc_stream_throughput_outbound
+  internode_streaming_tcp_user_timeout_in_ms: cassandra_internode_streaming_tcp_user_timeout
+  roles_update_interval_in_ms: cassandra_roles_update_interval
+  permissions_update_interval_in_ms: cassandra_permissions_update_interval
+  credentials_update_interval_in_ms: cassandra_credentials_update_interval
+  gc_log_threshold_in_ms: cassandra_gc_log_threshold
+  gc_warn_threshold_in_ms: cassandra_gc_warn_threshold
+# and the ones of one series
+_cassandra_config_old_names_of:
+  "4.1":
+    compaction_large_partition_warning_threshold_mb: cassandra_compaction_large_partition_warning_threshold
+  "5.0":
+    compaction_large_partition_warning_threshold_mb: cassandra_partition_size_warn_threshold
+    compaction_large_partition_warning_threshold: cassandra_partition_size_warn_threshold

@@ -223,6 +223,7 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: replace
+        cassandra_auto_bootstrap: true  # it streams the dead node's data: an inventory's false (e.g. imported) not used
         cassandra_service_node_checks_before: false  # not running yet
         _cassandra_add_checked_new: true  # blank, or reset first (checked above): a new node for cassandra_config
         cassandra_service_health_down_ok: ["{{ cassandra_replace_address | default('(not set)') }}"]

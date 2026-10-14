@@ -89,10 +89,12 @@
       {%- if _extra.local_system_data_file_directory is defined -%}
       {%-   set _ = l.append(['data', _extra.local_system_data_file_directory]) -%}
       {%- endif -%}
-      {%- if _extra.cdc_raw_directory is defined -%}
-      {%-   set _ = l.append(['cdc_raw', _extra.cdc_raw_directory]) -%}
+      {#- cassandra_extra_settings' cdc_raw_directory: an inventory from before cassandra_cdc_raw_dir -#}
+      {%- if cassandra_cdc_raw_dir | default('', true) or _extra.cdc_raw_directory is defined -%}
+      {%-   set _ = l.append(['cdc_raw', cassandra_cdc_raw_dir | default('', true) or _extra.cdc_raw_directory]) -%}
       {%- elif cassandra_cdc_enabled | default(false) | bool -%}
-      {%-   set _ = l.append(['cdc_raw', '/var/lib/cassandra/cdc_raw']) -%}
+      {%-   set _ = l.append(['cdc_raw', (cassandra_config_storage_dir | default('', true) or '/var/lib/cassandra')
+                                       | regex_replace('(?<=.)/+$', '') ~ '/cdc_raw']) -%}
       {%- endif -%}
       {{ l }}
     _live: "{{ (cassandra_node_reset_live.content | b64decode) if cassandra_node_reset_live.content is defined else none }}"

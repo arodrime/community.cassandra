@@ -55,7 +55,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
+    compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
     yaml_rejected)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as _out
 
@@ -214,7 +214,7 @@ def _top(path):
 def _compare(name, node, role, storage_dir="", left_out=()):
     """The settings that differ; left_out: cassandra.yaml keys left out of the node's (its Cassandra rejects them)."""
     if name.endswith(".yaml"):
-        a, b = yaml_settings(node, storage_dir), yaml_settings(role, storage_dir)
+        a, b = compared(yaml_settings(node, storage_dir), role), compared(yaml_settings(role, storage_dir), role)
         a = dict((k, v) for k, v in a.items() if _top(k) not in left_out)
         same = [k for k in set(a) & set(b) if same_yaml_value(a[k], b[k], k)]
         return _dict_diff(name, dict((k, v) for k, v in a.items() if k not in same),

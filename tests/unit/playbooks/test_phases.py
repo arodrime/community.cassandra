@@ -94,7 +94,7 @@ def test_marked_phase_lines(path, at_least):
     ("add", {"cassandra_new_node_state": "joining"}, "Waiting for the bootstrap of node5 (started by an earlier run)..."),
     ("add", {"cassandra_new_node_state": "joined"}, ""),
     # add_datacenter: no bootstrap
-    ("add", {"cassandra_extra_settings": {"auto_bootstrap": False}},
+    ("add", {"cassandra_auto_bootstrap": False},
      "Starting node5, joining without streaming (auto_bootstrap false)..."),
     ("decommission", {}, "Decommissioning node5..."),
     ("decommission", {"cassandra_leaving_node": {"state": "leaving"}},

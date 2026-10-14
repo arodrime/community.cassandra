@@ -175,9 +175,10 @@ def test_settings_without_a_variable_become_extra_settings():
     yaml_lines = files["cassandra.yaml"].split("\n")
     i = next(i for i, line in enumerate(yaml_lines) if line.startswith("# commitlog_total_space:"))
     yaml_lines[i] = "commitlog_total_space: 4096MiB"  # uncommented, other value
-    files["cassandra.yaml"] = "\n".join(yaml_lines) + "auto_bootstrap: false\n"  # not in the stock file at all
+    files["cassandra.yaml"] = "\n".join(yaml_lines) + "block_for_peers_in_remote_dcs: true\n"  # not in the stock file at all
     out = cassandra_config_import(files, "50x", FACTS)
-    assert out["vars"]["cassandra_extra_settings"] == {"commitlog_total_space": "4096MiB", "auto_bootstrap": False}
+    assert out["vars"]["cassandra_extra_settings"] == {"commitlog_total_space": "4096MiB",
+                                                       "block_for_peers_in_remote_dcs": True}
     assert out["hand_edits"] == []
     assert sum("kept with cassandra_extra_settings" in line for line in out["normalized"]) == 2
 
@@ -185,9 +186,9 @@ def test_settings_without_a_variable_become_extra_settings():
 def test_keys_cassandra_rejects_are_not_imported():
     # added by hand since Cassandra started: the node would not restart with it
     files = node_files("41x")
-    files["cassandra.yaml"] += "auto_bootstrap: false\nfake_option: 42\nother_fake:\n  - a\n  - b\n"
+    files["cassandra.yaml"] += "block_for_peers_in_remote_dcs: true\nfake_option: 42\nother_fake:\n  - a\n  - b\n"
     out = cassandra_config_import(files, "41x", FACTS, release="4.1.5")
-    assert out["vars"]["cassandra_extra_settings"] == {"auto_bootstrap": False}
+    assert out["vars"]["cassandra_extra_settings"] == {"block_for_peers_in_remote_dcs": True}
     assert out["not_settings"] == {"keys": ["fake_option", "other_fake"], "release": "4.1.5"}
     assert out["hand_edits"] == []  # left out by the role, reported apart
     # none: nothing to report

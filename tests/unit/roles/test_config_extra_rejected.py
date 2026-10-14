@@ -57,13 +57,13 @@ def run(extra, installed, series="4.1"):
 
 
 def test_rejected_key_stops_the_role():
-    passed, msg = run({"fake_option": 42, "auto_bootstrap": False}, "4.1.5")
+    passed, msg = run({"fake_option": 42, "block_for_peers_in_remote_dcs": True}, "4.1.5")
     assert passed is False
     assert msg == ("node1: cassandra_extra_settings has fake_option, which Cassandra 4.1.5 rejects: it would not"
                    " restart. Remove it from the inventory; nothing is changed.")
 
 
-@pytest.mark.parametrize("extra", [{"auto_bootstrap": False}, {"commitlog_total_space_in_mb": 8192}])
+@pytest.mark.parametrize("extra", [{"block_for_peers_in_remote_dcs": True}, {"commitlog_total_space_in_mb": 8192}])
 def test_accepted_keys_pass(extra):
     assert run(extra, "4.1.5")[0] is True
 

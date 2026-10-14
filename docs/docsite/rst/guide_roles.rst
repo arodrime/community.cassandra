@@ -1117,6 +1117,21 @@ something else, and the import keeps them as they are with ``cassandra_rackdc_dc
 lines that differ from the role's templates, such as the stock comments of the release a file came from, are listed
 apart: they set nothing.
 
+A ``cassandra.yaml`` setting with a variable is read into it wherever the node has its line, also the ones
+commented out in stock (``disk_access_mode``, the memtable, streaming, auth cache, guardrail and GC log settings,
+``cdc_raw_directory``, 5.0's ``heap_dump_path`` and ``sstable.selected_format``); only the others go to
+``cassandra_extra_settings``. A size, rate or duration of these settings is written in one unit, the stock comment's when the amount is
+whole in it (``209715200B/s`` as ``200MiB/s``, ``2s`` as ``2000ms``), so that nodes that write it differently share
+one value; ``cassandra_config`` takes the same amount in another unit as the same setting and leaves such a file as
+it is. ``auto_bootstrap: true``, Cassandra's default, is left out; ``auto_bootstrap: false`` is imported as
+``cassandra_auto_bootstrap: false`` in that node's ``host_vars`` (never in a group: a node added later must not get
+it), and the report, then the ``preflight`` playbook, warn about it among the sensitive or suspicious settings: a
+node that loses its data would restart empty without streaming it back. Remove it unless you know why it is there
+(a node that has joined reads it at its first start only; the next run drops the line). The
+heap dump directory has one variable, ``cassandra_heap_dump_dir``, taken from ``cassandra-env.sh``, where the JVM's
+``-XX:HeapDumpPath`` comes from; Cassandra 5.0 uses that before ``heap_dump_path`` in ``cassandra.yaml``, which is
+not compared (a node's other value there is noted, and stays until the file is rewritten).
+
 Medusa's ``fqdn`` is the node's folder in the backups: a new one means full backups. When every node has
 ``<short hostname>.<domain>``, the same domain everywhere, the import keeps ``cassandra_medusa_fqdn_domain`` (new
 nodes get the same form); otherwise each node keeps its value in ``host_vars``. The ``cassandra_medusa`` role refuses to

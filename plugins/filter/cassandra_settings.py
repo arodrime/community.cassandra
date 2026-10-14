@@ -28,8 +28,55 @@ from ansible_collections.community.cassandra.plugins.module_utils import cassand
 
 NULLS = ("", "~", "null", "Null", "NULL")
 BOOLS = {"true": "true", "yes": "true", "on": "true", "false": "false", "no": "false", "off": "false"}
+# The units Cassandra 4.1+ reads a size, a rate or a duration in (DataStorageSpec, DataRateSpec, DurationSpec),
+# in the smallest of each
+UNITS = {"B": ("size", 1), "KiB": ("size", 1024), "MiB": ("size", 1024 ** 2), "GiB": ("size", 1024 ** 3),
+         "B/s": ("rate", 1), "KiB/s": ("rate", 1024), "MiB/s": ("rate", 1024 ** 2),
+         "ns": ("duration", 1), "us": ("duration", 10 ** 3), "\u00b5s": ("duration", 10 ** 3),
+         "ms": ("duration", 10 ** 6), "s": ("duration", 10 ** 9), "m": ("duration", 60 * 10 ** 9),
+         "h": ("duration", 3600 * 10 ** 9), "d": ("duration", 86400 * 10 ** 9)}
+QUANTITY = re.compile(r"^(\d+)(%s)$" % "|".join(sorted((re.escape(u) for u in UNITS), key=len, reverse=True)))
+# The cassandra.yaml settings (4.1+) of cassandra_config's variables that Cassandra reads in any of these units: the
+# same amount is the same setting, and import_cluster writes it in the unit of the stock comment (else in the
+# largest one that keeps it whole)
+QUANTITY_KEYS = {
+    "file_cache_size": "MiB", "memtable_heap_space": "MiB", "memtable_offheap_space": "MiB", "column_index_size": "KiB",
+    "stream_throughput_outbound": "MiB/s", "inter_dc_stream_throughput_outbound": "MiB/s",
+    "entire_sstable_stream_throughput_outbound": "MiB/s", "entire_sstable_inter_dc_stream_throughput_outbound": "MiB/s",
+    "internode_streaming_tcp_user_timeout": "ms", "roles_update_interval": "ms", "permissions_update_interval": "ms",
+    "credentials_update_interval": "ms", "partition_size_warn_threshold": "MiB",
+    "partition_size_fail_threshold": "MiB", "gc_log_threshold": "ms", "gc_warn_threshold": "ms"}
 # Top-level settings the role leaves out at Cassandra's default, which a node may write: {key: that value}
 DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
+# Settings that set nothing on the nodes compared (with the role's cassandra-env.sh), left out of the comparisons
+# when the role's file has a line for them (5.0's, not 4.x's, which Cassandra refuses): {key: why}
+NOT_COMPARED = {"heap_dump_path": "the -XX:HeapDumpPath cassandra-env.sh gives wins"}
+
+
+def compared(settings, role_text):
+    """cassandra.yaml's settings (yaml_settings') without the NOT_COMPARED ones the role's text has a line for."""
+    gone = [k for k in NOT_COMPARED if re.search(r"(?m)^#?[ \t]*%s:" % k, role_text)]
+    return dict((k, v) for k, v in settings.items() if re.split(r"[.\[]", k, maxsplit=1)[0] not in gone)
+
+
+def quantity(text):
+    """(kind, amount in the smallest unit) of a size, rate or duration as Cassandra 4.1+ reads it, else None."""
+    m = QUANTITY.match(str(text)) if isinstance(text, str) else None
+    return (UNITS[m.group(2)][0], int(m.group(1)) * UNITS[m.group(2)][1]) if m else None
+
+
+def canonical_quantity(key, text):
+    """text of the setting key in its canonical unit (QUANTITY_KEYS), or as it is (another key, no unit)."""
+    found = quantity(text)
+    if key not in QUANTITY_KEYS or found is None:
+        return text
+    kind, amount = found
+    wanted = QUANTITY_KEYS[key]
+    if amount % UNITS[wanted][1] == 0:
+        return "%d%s" % (amount // UNITS[wanted][1], wanted)
+    unit = max((u for u, (k, f) in UNITS.items() if k == kind and amount % f == 0 and u != "\u00b5s"),
+               key=lambda u: UNITS[u][1])
+    return "%d%s" % (amount // UNITS[unit][1], unit)
 
 
 class Plain(str):
@@ -63,6 +110,8 @@ def same_yaml_value(a, b, path=""):
     parseBoolean reads false)."""
     if a == b:
         return True
+    if path in QUANTITY_KEYS and quantity(a) is not None and quantity(a) == quantity(b):
+        return True  # 200MiB/s, 209715200B/s
     if not (isinstance(a, Plain) and isinstance(b, Plain) and (a in ("true", "false") or b in ("true", "false"))):
         return False
     if re.search(r"(^|\.)parameters(\[|\.|$)", path):
@@ -308,7 +357,7 @@ def same_settings(name, live, new, storage_dir=""):
         return True
     try:
         if name.endswith(".yaml"):
-            a, b = yaml_settings(live, storage_dir), yaml_settings(new, storage_dir)
+            a, b = compared(yaml_settings(live, storage_dir), new), compared(yaml_settings(new, storage_dir), new)
             return set(a) == set(b) and all(same_yaml_value(a[k], b[k], k) for k in a)
         if name.endswith(".properties"):
             return properties_settings(live) == properties_settings(new)

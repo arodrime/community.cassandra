@@ -196,6 +196,18 @@ argument_specs:
         default: false
         description:
         - C(cdc_enabled) in C(cassandra.yaml).
+      cassandra_auto_bootstrap:
+        type: bool
+        default: true
+        description:
+        - C(auto_bootstrap) in C(cassandra.yaml), written only when V(false). Cassandra reads it at a node's first
+          start only. V(false) joins the ring without streaming the node's data, which then answers reads it has no
+          data for.
+        - The collection sets it itself where that is safe (C(add_datacenter)'s new nodes, which rebuild next;
+          C(add_node) and C(replace_node) stream). The C(preflight) playbook and the C(import_cluster) report warn
+          about V(false) in the inventory, which C(import_cluster) keeps in the C(host_vars) of a node whose
+          C(cassandra.yaml) has it.
+        - Once it is removed, the next run drops the line (C(auto_bootstrap) V(true) is the same as no line).
       cassandra_disk_failure_policy:
         type: str
         default: stop
@@ -701,6 +713,138 @@ argument_specs:
         - C(NONE) (5.0 formats and features) suits a new cluster. A cluster
           upgraded from 4.x sets C(CASSANDRA_4), then moves through
           C(UPGRADING) to C(NONE) with rolling restarts.
+      cassandra_disk_access_mode:
+        type: str
+        default: ''
+        description:
+        - C(disk_access_mode) in C(cassandra.yaml), e.g. C(mmap_index_only). Left commented out (Cassandra's
+          default) when empty.
+        - 4.x takes C(auto), C(mmap), C(mmap_index_only) or C(standard); 5.0 also C(legacy), 4.x's C(auto) (5.0's
+          C(auto) is C(mmap_index_only)). On 4.x, whose stock file has no line for it, it is written at the end of
+          the file.
+      cassandra_file_cache_size:
+        type: str
+        default: ''
+        description:
+        - C(file_cache_size) in C(cassandra.yaml) (4.1+), e.g. C(512MiB). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_memtable_heap_space:
+        type: str
+        default: ''
+        description:
+        - C(memtable_heap_space) in C(cassandra.yaml) (4.1+), e.g. C(2048MiB). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_memtable_offheap_space:
+        type: str
+        default: ''
+        description:
+        - C(memtable_offheap_space) in C(cassandra.yaml) (4.1+), e.g. C(2048MiB). Left commented out
+          (Cassandra's default) when empty.
+        - Used with an off-heap O(cassandra_memtable_allocation_type).
+      cassandra_memtable_flush_writers:
+        type: raw
+        default: ''
+        description:
+        - C(memtable_flush_writers) in C(cassandra.yaml), e.g. C(2). Left commented out (Cassandra's default)
+          when empty.
+      cassandra_concurrent_compactors:
+        type: raw
+        default: ''
+        description:
+        - C(concurrent_compactors) in C(cassandra.yaml), e.g. C(4). Left commented out (Cassandra's default) when empty.
+      cassandra_stream_entire_sstables:
+        type: raw
+        default: ''
+        description:
+        - C(stream_entire_sstables) in C(cassandra.yaml), e.g. C(false). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(stream_throughput_outbound) in C(cassandra.yaml) (4.1+), e.g. C(24MiB/s). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_inter_dc_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(inter_dc_stream_throughput_outbound) in C(cassandra.yaml) (4.1+), e.g. C(24MiB/s). Left commented
+          out (Cassandra's default) when empty.
+      cassandra_entire_sstable_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(entire_sstable_stream_throughput_outbound) in C(cassandra.yaml) (4.1+, refused on 4.0), e.g.
+          C(24MiB/s). Left commented out (Cassandra's default) when empty.
+      cassandra_entire_sstable_inter_dc_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(entire_sstable_inter_dc_stream_throughput_outbound) in C(cassandra.yaml) (4.1+, refused on 4.0),
+          e.g. C(24MiB/s). Left commented out (Cassandra's default) when empty.
+      cassandra_streaming_connections_per_host:
+        type: raw
+        default: ''
+        description:
+        - C(streaming_connections_per_host) in C(cassandra.yaml), e.g. C(1). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_internode_streaming_tcp_user_timeout:
+        type: str
+        default: ''
+        description:
+        - C(internode_streaming_tcp_user_timeout) in C(cassandra.yaml) (4.1+), e.g. C(300000ms). Left
+          commented out (Cassandra's default) when empty.
+      cassandra_roles_update_interval:
+        type: str
+        default: ''
+        description:
+        - C(roles_update_interval) in C(cassandra.yaml) (4.1+), e.g. C(2000ms). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_permissions_update_interval:
+        type: str
+        default: ''
+        description:
+        - C(permissions_update_interval) in C(cassandra.yaml) (4.1+), e.g. C(2000ms). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_credentials_update_interval:
+        type: str
+        default: ''
+        description:
+        - C(credentials_update_interval) in C(cassandra.yaml) (4.1+), e.g. C(2000ms). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_gc_log_threshold:
+        type: str
+        default: ''
+        description:
+        - C(gc_log_threshold) in C(cassandra.yaml) (4.1+), e.g. C(200ms). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_gc_warn_threshold:
+        type: str
+        default: ''
+        description:
+        - C(gc_warn_threshold) in C(cassandra.yaml) (4.1+), e.g. C(1000ms). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_sstable_format:
+        type: str
+        default: ''
+        choices: ['', big, bti]
+        description:
+        - C(sstable.selected_format) in C(cassandra.yaml) (5.0 only, refused on 4.x). Left commented out
+          (Cassandra's default, V(big)) when empty.
+        - V(bti) needs O(cassandra_storage_compatibility_mode) V(UPGRADING) or V(NONE). New SSTables are written in
+          that format; the existing ones are read as they are.
+      cassandra_partition_size_warn_threshold:
+        type: str
+        default: ''
+        description:
+        - C(partition_size_warn_threshold) in C(cassandra.yaml) (5.0 only, refused on 4.x), e.g. C(100MiB).
+          Left commented out (Cassandra's default) when empty.
+      cassandra_partition_size_fail_threshold:
+        type: str
+        default: ''
+        description:
+        - C(partition_size_fail_threshold) in C(cassandra.yaml) (5.0 only, refused on 4.x), e.g. C(1GiB). Left
+          commented out (Cassandra's default) when empty.
       cassandra_hints_dir:
         type: path
         default: /var/lib/cassandra/hints
@@ -716,6 +860,14 @@ argument_specs:
         default: /var/lib/cassandra/saved_caches
         description:
         - C(saved_caches_directory) in C(cassandra.yaml).
+      cassandra_cdc_raw_dir:
+        type: str
+        default: ''
+        description:
+        - C(cdc_raw_directory) in C(cassandra.yaml). Left commented out when empty (C(<storage dir>/cdc_raw),
+          C(/var/lib/cassandra/cdc_raw) with the packages).
+        - Created and owned like the data directories when set, or when O(cassandra_cdc_enabled) is on (then the
+          packages' C(/var/lib/cassandra/cdc_raw), or C(<cassandra_config_storage_dir>/cdc_raw)).
       cassandra_server_keystore_password:
         type: str
         description:
@@ -764,9 +916,9 @@ argument_specs:
         - C(client_encryption_options.truststore_password). Left commented out when empty.
       cassandra_column_index_size:
         type: str
-        default: 64KiB
         description:
-        - C(column_index_size) in C(cassandra.yaml) (4.1 only).
+        - C(column_index_size) in C(cassandra.yaml) (4.1, 5.0). Defaults to 4.1's stock value C(64KiB); on 5.0 to
+          empty, which leaves the line commented out (a default that suits the SSTable format).
       cassandra_scripted_user_defined_functions_enabled:
         type: bool
         default: false
@@ -990,6 +1142,72 @@ argument_specs:
         default: false
         description:
         - C(enable_drop_compact_storage) in C(cassandra.yaml) (4.0 only).
+      cassandra_file_cache_size_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(file_cache_size_in_mb) in C(cassandra.yaml) (4.0 only), e.g. C(512). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_memtable_heap_space_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(memtable_heap_space_in_mb) in C(cassandra.yaml) (4.0 only), e.g. C(2048). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_memtable_offheap_space_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(memtable_offheap_space_in_mb) in C(cassandra.yaml) (4.0 only), e.g. C(2048). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_stream_throughput_outbound_megabits_per_sec:
+        type: raw
+        default: ''
+        description:
+        - C(stream_throughput_outbound_megabits_per_sec) in C(cassandra.yaml) (4.0 only), e.g. C(200). Left
+          commented out (Cassandra's default) when empty.
+      cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec:
+        type: raw
+        default: ''
+        description:
+        - C(inter_dc_stream_throughput_outbound_megabits_per_sec) in C(cassandra.yaml) (4.0 only), e.g.
+          C(200). Left commented out (Cassandra's default) when empty.
+      cassandra_internode_streaming_tcp_user_timeout_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(internode_streaming_tcp_user_timeout_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(300000). Left
+          commented out (Cassandra's default) when empty.
+      cassandra_roles_update_interval_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(roles_update_interval_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(2000). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_permissions_update_interval_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(permissions_update_interval_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(2000). Left commented
+          out (Cassandra's default) when empty.
+      cassandra_credentials_update_interval_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(credentials_update_interval_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(2000). Left commented
+          out (Cassandra's default) when empty.
+      cassandra_gc_log_threshold_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(gc_log_threshold_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(200). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_gc_warn_threshold_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(gc_warn_threshold_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(1000). Left commented out
+          (Cassandra's default) when empty.
       cassandra_log_dir:
         type: path
         default: /var/log/cassandra
@@ -1013,10 +1231,15 @@ argument_specs:
         description:
         - 'C(MAX_DIRECT_MEMORY_SIZE) in C(cassandra-env.sh) (5.0). Empty: stock default.'
       cassandra_heap_dump_dir:
-        type: path
-        default: $CASSANDRA_LOG_DIR
+        type: str
         description:
-        - C(CASSANDRA_HEAPDUMP_DIR) in C(cassandra-env.sh) (5.0).
+        - Where the JVM writes a heap dump on OutOfMemoryError (C(-XX:HeapDumpPath), through C(CASSANDRA_HEAPDUMP_DIR)
+          in C(cassandra-env.sh); a C(CASSANDRA_HEAPDUMP_DIR) the environment gives still wins).
+        - An absolute path is also C(heap_dump_path) in 5.0's C(cassandra.yaml) (the one-shot dump on an uncaught
+          exception; Cassandra uses C(-XX:HeapDumpPath) first, so the role does not compare that line), and the role
+          creates it like the data directories (an existing one it owns, as them).
+        - Defaults to the stock behaviour, C($CASSANDRA_LOG_DIR) on 5.0 (where it must not be empty) and empty on 4.x
+          (no C(-XX:HeapDumpPath), the JVM's working directory).
       cassandra_local_jmx:
         type: bool
         default: true
