@@ -101,12 +101,16 @@ def _seen(node):
 
 def _unread_ring(view):
     """Why the ring the cluster's nodes see is unknown, in short."""
-    if view.get("lone") and not view.get("silent"):
-        return "%s answered, each alone in its ring: which one is the cluster can't be told" % ", ".join(view["lone"])
-    if view.get("lone"):
-        return ("only %s answered, alone in its ring, while %s did not answer as up and normal (or Cassandra is stopped"
-                " there)" % (", ".join(view["lone"]), ", ".join(view["silent"])))
     stopped = [h for h in view.get("silent") or [] if h not in view["tried"]]
+    silent = [h for h in view.get("silent") or [] if h in view["tried"]]
+    others = "; ".join(x for x in (("%s did not answer as up and normal" % ", ".join(silent)) if silent else "",
+                                   ("Cassandra stopped on %s" % ", ".join(stopped)) if stopped else "") if x)
+    lone = view.get("lone") or []
+    if len(lone) > 1:
+        return "%s answered, each alone in its ring: which one is the cluster can't be told%s" % (
+            ", ".join(lone), ("; " + others) if others else "")
+    if lone:
+        return "only %s answered, alone in its ring; %s" % (lone[0], others)
     return "no other node of the cluster answered as up and normal (UN) (asked: %s%s)" % (
         ", ".join(view["tried"]) or "none", ("; Cassandra stopped on %s" % ", ".join(stopped)) if stopped else "")
 
@@ -152,8 +156,9 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
             out["usable"].append((a.get("host"), nodes))
     # for a node holding data, a node alone in its ring (a host of the group not added yet, the package's own
     # instance) does not stand for the cluster while other nodes of the group did not answer (asked, or stopped:
-    # asked False): their ring is unknown. A node without data needs no proof (nothing to lose): a one-node cluster
-    # adding its second node, a stock instance on another host of the group, do not stop it.
+    # asked False): their ring is unknown. A node without data needs no proof of that (nothing to lose): a one-node
+    # cluster adding its second node, a stock instance on 127.0.0.1 elsewhere in the group (never usable), do not
+    # stop it. Several nodes each alone (a one-node cluster and a stray instance at a real address): unknown for any.
     silent = [a for a in answers or [] if not a.get("status")
               or (len(_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, _ in out["usable"]])]
     out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
