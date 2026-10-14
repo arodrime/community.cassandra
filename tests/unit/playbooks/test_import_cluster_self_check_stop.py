@@ -87,8 +87,8 @@ def test_the_stop_under_the_ops_callback(tmp_path, check):
                          "  nodes; 1 node not read %s" % ("(--check: the inventory not written)" if check
                                                           else "(written for inspection only, marked NOT VALID)")]
     for line in ("  Hand edits no variable covers (cassandra_config would revert them):",
-                 "    jvm17-server.options UseFoo   inventory none   node2: -XX:+UseFoo",
-                 "  Your own files win over the import:",
+                 "    - jvm17-server.options, on node2:", "        -XX:+UseFoo (not in the inventory)",
+                 "  Your inventory files override the import (Ansible will apply your value):",
                  "  Not read, so not checked: node4 (unreachable)", "HOW TO MAKE IT PASS",
                  "Details: reports/my_cluster/report.txt, section SELF-CHECK"):
         assert line in lines, out
