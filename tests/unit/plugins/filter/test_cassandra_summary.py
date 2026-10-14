@@ -57,7 +57,7 @@ def test_a_failed_node_makes_it_failed_the_others_said():
                    ("node6", "not reached"), ("node7", "not in this run (--limit)")], cluster="c")
     assert lines[0] == "FAILED  decommission_node  c  1 decommissioned, 1 failed, 2 not touched"
     assert [" ".join(line.split()) for line in lines[1:]] == ["node4 decommissioned 2m45s",
-                                                              "node5 FAILED: the stream stopped",
+                                                              "node5 FAILED", "the stream stopped",
                                                               "node6 not touched (not reached)",
                                                               "node7 not touched (left out by --limit)"]
 
@@ -84,7 +84,7 @@ def test_nodes_not_touched_say_why(result, reason):
     ("restart FAILED: One or more items failed", "One or more items failed"),
 ])
 def test_refusals_and_failures(result, reason):
-    assert recap([("node4", result)], cluster="c")[1] == "  node4  FAILED: %s" % reason
+    assert recap([("node4", result)], cluster="c")[1:] == ["  node4  FAILED", "    %s" % reason]
 
 
 def test_the_operation_given_wins():

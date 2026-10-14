@@ -294,8 +294,15 @@ def test_recap_failed_and_skipped():
         {"node": "node4", "status": "skipped", "reason": "after the failure"}])
     assert lines == ["FAILED  rolling_restart  my_cluster  1 restarted, 1 failed, 2 not touched",
                      "  node1         restarted                        1m40s",
-                     "  node2         FAILED: not UN after 10m",
+                     "  node2         FAILED",
+                     "    not UN after 10m",
                      "  node3, node4  not touched (after the failure)"]
+
+
+def test_recap_columns_not_stretched_by_a_long_reason():
+    reason = "Cluster not healthy, nothing more is done: " + "x" * 300
+    lines = out.recap("rolling_restart", "c", restarts([96]) + [{"node": "node2", "status": "failed", "reason": reason}])
+    assert lines[1:] == ["  node1  restarted  1m36s", "  node2  FAILED", "    " + reason]
 
 
 def test_recap_check_mode_says_would_and_nothing_changed():
