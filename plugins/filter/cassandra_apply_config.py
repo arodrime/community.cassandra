@@ -494,7 +494,7 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False):
     return _grouped(nodes, check, plan)[0]
 
 
-def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None):
+def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None):
     """nodes: [{name, todo, done, then, result, notes}] in inventory order:
     todo, whether the node had something to apply; done, whether its turn
     ended well (node_operation's cassandra_op_done); then, its
@@ -506,7 +506,9 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     apply, 3 nothing to apply (12s)" (DONE, FAILED when a node failed).
     Under check, then the settings that differ (no question was asked: the
     plan did not show them), a blank line, the outcomes; after a real run
-    the outcomes only (its plan showed the settings before its question)."""
+    the outcomes only (its plan showed the settings before its question).
+    refused: under check, [why a real run is refused, the way out] (a node not
+    running while others are to restart): said last, as a WARNING."""
     lines, counts = _grouped(nodes, check)
     verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
     said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
@@ -515,6 +517,9 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     shown = ["  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)]
     if check and diff:
         shown += [""] + list(diff) + [""]
+    if check and refused:
+        lines = lines + ["", "WARNING  A real run is refused, before changing anything: %s" % refused[0]]
+        lines += ["  %s" % line for line in refused[1:]]
     return shown + lines
 
 
