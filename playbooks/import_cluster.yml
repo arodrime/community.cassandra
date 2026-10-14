@@ -839,6 +839,7 @@
               java: "{{ import_cluster_java | default('') }}"
               environment: "{{ import_cluster_unit.env | default({}) }}"
               newer: "{{ import_cluster_newer_files | default([]) }}"
+              keep: "{{ import_cluster_keep_hand_edits | default(false) }}"  # those files not moved
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
               {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')

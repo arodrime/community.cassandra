@@ -82,6 +82,9 @@ ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
 # cassandra-rackdc.properties' dc= and rack= lines, apart from the node's dc and rack
 # (cassandra_dc/_rack, the ring's) under a snitch that doesn't read them
 RACKDC = ("cassandra_rackdc_dc", "cassandra_rackdc_rack")
+# the config files cassandra_config writes (import_cluster_keep_hand_edits names some)
+CONFIG_FILE = re.compile(r"^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties"
+                         r"|logback[.]xml)$")
 # Per node by nature: not reported as drift
 PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn", "cassandra_rackdc_rack"]
 # The rights the role gives a readwrite JMX user besides readwrite
@@ -715,7 +718,7 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
 def _same_xml(live, rendered):
     try:
         return xml_settings(live) == xml_settings(rendered)
-    except ET.ParseError:
+    except (ET.ParseError, RecursionError):  # not XML, or nested too deep to walk: compared line by line
         return False
 
 
@@ -902,7 +905,8 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     '': the keys no release of the series accepts are the ones rejected);
     jvm: the running JVM, {cmdline: its /proc/<pid>/cmdline, java: its major
     version, environment: what the unit gives it, newer: the config files
-    written since it started}."""
+    written since it started, keep: import_cluster_keep_hand_edits, the JVM's
+    files it keeps not moved}."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
@@ -1022,7 +1026,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
     where[0] = "the JVM options"
-    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, jvm or {})
+    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(jvm or {}, jaas=jmx_files["jaas"]))
     for key, value in moved["vars"].items():
         render[key] = value
         if _same_value(value, _default(ctx, key)):
@@ -1062,14 +1066,41 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             "not_moved": moved["not_moved"]}
 
 
+def _keep_files(value):
+    """import_cluster_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
+    commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]; a name not of a config file fails."""
+    if isinstance(value, str) and value.strip().lower() in ("", "yes", "no", "on", "off", "true", "false", "1", "0"):
+        return boolean(value.strip(), strict=False) or []
+    if isinstance(value, str):
+        value = re.sub(r"[\[\]'\"]", "", value).split(",")
+    if not isinstance(value, (list, tuple)):
+        return boolean(value, strict=False) or []
+    names = [str(v).strip() for v in value if str(v).strip()]
+    wrong = [n for n in names if not CONFIG_FILE.match(n)]
+    if wrong:
+        raise AnsibleFilterError("import_cluster_keep_hand_edits: %s: not a config file of cassandra_config (true,"
+                                 " false, or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
+                                 " cassandra-rackdc.properties, logback.xml)" % ", ".join(wrong))
+    return names
+
+
 def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
     """cassandra-env.sh's hand edits moved to variables when the JVM gets the same arguments from the role's files
     (cassandra_jvm_args), and the options it does not use -> {vars, moved, rewritten: the JVM's files the role
-    rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits)}."""
+    rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits),
+    not_moved: why not, '' if moved or nothing to say}; jvm: cassandra_config_import's, jaas: what says JMX
+    authenticates by JAAS."""
     dep = jvm_args.options_file(series, jvm.get("java"))
     if dep is None:  # the running Java not known (Cassandra not running): nothing worked out
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
     jvm_files = [f for f in (jvm_args.ENV, jvm_args.COMMON, dep) if f in files]
+    keep = _keep_files(jvm.get("keep", False))
+    kept = jvm_files if keep is True else [f for f in jvm_files if f in keep]
+    if kept:  # import_cluster_keep_hand_edits: those files left as they are (said with the files kept)
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
+    if jvm.get("jaas"):  # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note)
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [],
+                "not_moved": "JMX authenticates by JAAS (%s), not imported" % jvm["jaas"]}
 
     def rendered(variables):
         return dict((name, "\n".join(_render(env, series, name, variables)[1])) for name in jvm_files)
@@ -2437,6 +2468,8 @@ SAFE_REASONS = [
                 r"it may show a value read from the nodes\))"), r"\1"),
     (re.compile(r"(cassandra_import_nodes: [0-9A-Fa-f.:]+: \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
+    # the user's own -e value
+    (re.compile(r"(import_cluster_keep_hand_edits: [^\n]*?: not a config file of cassandra_config \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),

@@ -531,7 +531,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     extras_var = "cassandra_%s_extra_options" % dep.split("-", maxsplit=1)[0]
     # -Xms and -Xmx alike: the heap variables; else (or when that is not the same) every option in the extra options
     last = dict((_jvm_name(o), o) for o in keep if _jvm_name(o) in HEAP_OPTIONS)
-    last = dict((k, o) for k, o in last.items() if o.startswith(k) or k == "MaxDirectMemorySize")
+    last = dict((k, o) for k, o in last.items() if o.startswith(k) or (k == "MaxDirectMemorySize" and "=" in o))
     by_vars, to_vars = dict(heap_vars), []
     if "-Xmx" in last and "-Xms" in last and last["-Xmx"][4:] == last["-Xms"][4:]:
         by_vars["cassandra_heap_size"] = last["-Xmx"][4:]

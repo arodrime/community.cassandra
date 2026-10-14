@@ -21,7 +21,8 @@ import re
 
 from ansible.errors import AnsibleFilterError
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _values_hidden
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+    CONFIG_FILE, _keep_files, _values_hidden)  # (CONFIG_FILE: the report's too)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 
 # the variables of a host the import reads (its facts, and what the play read on it)
@@ -35,8 +36,6 @@ KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_clust
         "import_cluster_repos_answer", "import_cluster_running", "import_cluster_series", "import_cluster_slurp",
         "import_cluster_storage_dir", "import_cluster_system_java", "import_cluster_unit",
         "import_cluster_unit_slurp", "import_cluster_version")
-CONFIG_FILE = re.compile(r"^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties"
-                         r"|logback[.]xml)$")
 DSBULK = re.compile(r"^/usr/share/dsbulk-([0-9]+(?:[.][0-9]+)*)/bin/dsbulk$")
 NOT_READ_KEEP = {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                  "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
@@ -52,24 +51,6 @@ def _bool(value):
     if isinstance(value, str):
         value = value.lower()
     return value in ("yes", "on", "1", "true", 1)
-
-
-def _keep_files(value):
-    """import_cluster_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
-    commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]; a name not of a config file fails."""
-    if isinstance(value, str) and value.strip().lower() in ("", "yes", "no", "on", "off", "true", "false", "1", "0"):
-        return _bool(value.strip()) or []
-    if isinstance(value, str):
-        value = re.sub(r"[\[\]'\"]", "", value).split(",")
-    if not isinstance(value, (list, tuple)):
-        return _bool(value) or []
-    names = [str(v).strip() for v in value if str(v).strip()]
-    wrong = [n for n in names if not CONFIG_FILE.match(n)]
-    if wrong:
-        raise AnsibleFilterError("import_cluster_keep_hand_edits: %s: not a config file of cassandra_config (true,"
-                                 " false, or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
-                                 " cassandra-rackdc.properties, logback.xml)" % ", ".join(wrong))
-    return names
 
 
 def _d(value):

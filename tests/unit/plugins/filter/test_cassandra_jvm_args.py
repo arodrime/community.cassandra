@@ -147,8 +147,8 @@ def both(*edits):
     return edit
 
 
-def imported(files, series, java, cmdline, newer=None, environment=None):
-    inventory, layout = import_node(files, series, jvm={"cmdline": cmdline, "java": java,
+def imported(files, series, java, cmdline, newer=None, environment=None, keep=False):
+    inventory, layout = import_node(files, series, jvm={"cmdline": cmdline, "java": java, "keep": keep,
                                                         "environment": environment or {}, "newer": newer or []})
     return inventory, layout, layout["nodes"][0]
 
@@ -501,3 +501,62 @@ def test_why_not_moved_holds_names_only(tmp_path):
                                            % tmp_path))
     node = imported(files, "50x", "17", launch(files, "17", tmp_path, paths=True))[2]
     assert node["moved"] == [] and "gc.log" not in node["not_moved"] and "-Xlog" in node["not_moved"]
+
+
+@pytest.mark.parametrize("keep", [True, "true", "cassandra-env.sh", ["logback.xml", "cassandra-env.sh"],
+                                  "jvm17-server.options"])
+def test_no_move_in_files_import_cluster_keep_hand_edits_keeps(tmp_path, keep):
+    # the files kept as they are: not rewritten, the hand edits left to import_cluster_keep_hand_edits
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    cmdline = launch(files, "17", tmp_path)
+    dummy, dummy2, node = imported(files, "50x", "17", cmdline, keep=keep)
+    assert node["moved"] == [] and node["rewritten"] == [] and node["not_moved"] == ""
+    if keep != "jvm17-server.options":
+        assert [e for e in node["hand_edits"] if e.startswith("cassandra-env.sh")]
+    # another file kept: the move goes on
+    dummy, dummy2, node = imported(files, "50x", "17", cmdline, keep="logback.xml")
+    assert node["moved"] and node["rewritten"]
+
+
+def test_a_wrong_name_of_import_cluster_keep_hand_edits_said(tmp_path):
+    from ansible.errors import AnsibleFilterError
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_import_error
+
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -Dfoo=1"'))
+    with pytest.raises(AnsibleFilterError) as raised:
+        imported(files, "50x", "17", launch(files, "17", tmp_path), keep="logbak.xml")
+    # the import's no_log tasks show it: the user's own value
+    assert cassandra_import_error({"failed": True, "msg": "cassandra_config_import: %s" % raised.value}) == (
+        "import_cluster_keep_hand_edits: logbak.xml: not a config file of cassandra_config (true, false, or among"
+        " cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml)")
+
+
+def test_no_move_when_jmx_authenticates_by_jaas(tmp_path):
+    # the JAAS note says to keep cassandra-env.sh as it is: its JAAS lines not moved
+    files = node_files("50x", before_extra(
+        'JVM_OPTS="$JVM_OPTS -Dcassandra.jmx.remote.login.config=CassandraLogin"\n'
+        'JVM_OPTS="$JVM_OPTS -Djava.security.auth.login.config=/etc/cassandra/cassandra-jaas.config"'))
+    dummy, dummy2, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
+    assert node["moved"] == [] and node["rewritten"] == []
+    assert node["not_moved"].startswith("JMX authenticates by JAAS")
+    assert [e for e in node["hand_edits"] if e.startswith("JMX authentication by JAAS")]
+
+
+def test_a_max_direct_memory_size_without_value_not_moved_no_error(tmp_path):
+    files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -XX:+MaxDirectMemorySize"'))
+    cmdline = "\0".join(["java", "-XX:+MaxDirectMemorySize", "-Xss1M", "org.apache.cassandra.service.CassandraDaemon"])
+    try:
+        cmdline = launch(files, "17", tmp_path)
+    except Exception:  # pylint: disable=broad-except
+        pass
+    dummy, dummy2, node = imported(files, "50x", "17", cmdline)
+    assert "cassandra_max_direct_memory_size" not in node["vars"]
+
+
+def test_a_logback_xml_nested_too_deep_compared_by_its_lines():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_config_import
+
+    files = node_files("50x")
+    files["logback.xml"] = "<configuration>" + "<a>" * 3000 + "</a>" * 3000 + "<root level='INFO'/></configuration>"
+    imported_files = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert [e for e in imported_files["hand_edits"] if e.startswith("logback.xml")]
