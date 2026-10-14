@@ -1,0 +1,2 @@
+bugfixes:
+  - import_cluster - a re-import no longer adds ``ansible_host`` to the hosts an earlier import was told to leave without it (``import_cluster_set_ansible_host=false``), which made them unreachable when they are reached by name - without ``-e import_cluster_set_ansible_host``, the hosts the inventory there reaches without ``ansible_host`` (its hosts file and host_vars) get none again, so a re-import over a full import changes nothing.

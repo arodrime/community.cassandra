@@ -25,7 +25,9 @@
 #     is there already (a re-import).
 #   import_cluster_host_names: hostname (default, the short one as the node
 #     reports it), fqdn or ip: the name of each node.
-#   import_cluster_set_ansible_host: true; false leaves ansible_host out.
+#   import_cluster_set_ansible_host: true; false leaves ansible_host out. Not
+#     given, a re-import leaves it out of the hosts the inventory there
+#     reaches without it (the earlier choice kept).
 #   import_cluster_vault_password_file, import_cluster_vault_id: none, default
 #     (see the passwords below).
 #   import_cluster_medusa_path: none (see Medusa below).
@@ -1599,6 +1601,16 @@
       vars:
         _results: >-
           {{ (import_cluster_existing_read.stdout | from_json).vars if import_cluster_existing_read is not skipped else [] }}
+
+    # a re-import keeps how the inventory there reaches its hosts: one it reaches without ansible_host (imported
+    # with import_cluster_set_ansible_host=false, or taken out by hand) gets none again, unless the option is given
+    - name: Keep the hosts the inventory reaches without ansible_host so
+      no_log: "{{ not import_cluster_debug | default(false) | bool }}"
+      ansible.builtin.set_fact:
+        _nodes: >-
+          {{ _nodes | community.cassandra.cassandra_import_kept_ansible_host(import_cluster_existing_text, _layout.cluster_group,
+                                                                           _layout.names, _vault_secret | default('')) }}
+      when: import_cluster_set_ansible_host is not defined
 
     # CQL authentication on (a PasswordAuthenticator): the operations that read the replication (decommission,
     # topology, rolling restarts...) log in with cassandra_cql_username and _password, which no node gives. Set
