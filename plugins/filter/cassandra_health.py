@@ -29,10 +29,10 @@ def _ip(address):
 def _by_ip(names):
     """{address: name} by one spelling of each address, the first given winning (cassandra_host_addresses
     puts what hosts listen on first)."""
-    out = {}
+    by_ip = {}
     for address, name in (names or {}).items():
-        out.setdefault(_ip(address), name)
-    return out
+        by_ip.setdefault(_ip(address), name)
+    return by_ip
 
 
 def _nodes(cluster_status):

@@ -109,15 +109,18 @@
           - cassandra_jvm.pid | default('') | string == cassandra_apply_config_as_started.pid | string
           - (cassandra_jvm.start | default(0) | float - cassandra_apply_config_as_started.start | float) | abs < 2
         fail_msg: >-
-          {{ _what }} (the plan said no restart): restart it
-          (ansible-playbook community.cassandra.rolling_restart --limit {{ inventory_hostname }}) so that it runs
-          with the inventory's config.
+          {{ _what }} (the plan said no restart): {{ ("restart it so that it runs with the inventory's config: " ~ _restart)
+          if cassandra_jvm.pid is defined else 'start Cassandra on it (systemctl start cassandra), then run apply_config again' }}
         quiet: true
       vars:
         _what: >-
           {{ (_differ | join(', ') ~ ' written with another content than the running Cassandra started with')
-             if _differ else ('Cassandra restarted while ' ~ cassandra_apply_config_as_started.files | join(', ')
-                              ~ ' was written back') }}
+             if _differ else ('Cassandra restarted or stopped while ' ~ cassandra_apply_config_as_started.files | join(', ')
+                              ~ (' were' if cassandra_apply_config_as_started.files | length > 1 else ' was') ~ ' written back') }}
+        _restart: >-
+          {{ 'rolling_restart' | community.cassandra.cassandra_command(inventory=ansible_inventory_sources,
+               default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'), hosts=cassandra_hosts | default(''),
+               limit=inventory_hostname, cwd=lookup('ansible.builtin.env', 'PWD')) }}
         _differ: >-
           {%- set out = [] -%}
           {%- for r in cassandra_apply_config_written_back.results -%}
