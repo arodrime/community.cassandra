@@ -61,6 +61,11 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # what an earlier play (or playbook of this run) read may no longer stand: this step reads it again
+    - name: Read where the nodes stand again
+      ansible.builtin.set_fact:
+        _cassandra_node_standing_read: {}
+
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service

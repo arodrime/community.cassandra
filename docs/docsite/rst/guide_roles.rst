@@ -842,7 +842,8 @@ Changing the configuration
 Before writing anything, :ansplugin:`community.cassandra.cassandra_config#role` renders the files into a temporary
 directory on the node and shows a diff against the live files. Passwords are shown as ``****``.
 
-On a node that was already initialized, it then asks for confirmation (type ``yes``), once for all the hosts of the
+On a node that is not blank (a system keyspace in its data directories, or Cassandra running: see where a node
+stands in the operator output guide), it then asks for confirmation (type ``yes``), once for all the hosts of the
 batch. Without a terminal to answer, the run fails instead of applying. ``cassandra_config_confirm: false`` applies
 without asking, ``true`` always asks. It refuses outright to change the settings a node keeps for life (see
 `Inventory`_) unless ``cassandra_config_force_identity_change: true``.
@@ -1150,7 +1151,7 @@ after a ``--check --diff``; a host rebuilt under the same name must lose them an
 touching a node whose repositories are not managed and lack the target version. On RPM nodes the config stays where the node reads it (``cassandra_rpm_conf_alternative: ""`` unless it
 already is the role's conf dir), a heap set in a kept unit stays there, a readwrite JMX user without the create and
 unregister rights keeps them that way, and ``cassandra_config`` leaves the content of a file (the JMX users' files
-too) alone on an initialized node when its settings are the same as the role's (only comments or layout differ). After an import,
+too) alone on a node that is not blank when its settings are the same as the role's (only comments or layout differ). After an import,
 the roles change nothing on the imported nodes.
 
 The OS tuning already on the nodes (set by hand, by another tool or in the image) is read too, and listed in the

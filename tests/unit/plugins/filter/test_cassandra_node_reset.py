@@ -5,9 +5,24 @@ import pytest
 
 from ansible.errors import AnsibleFilterError
 
+from ansible_collections.community.cassandra.plugins.filter import cassandra_node_reset, cassandra_node_standing as standing
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
     cassandra_add_node_refusal, cassandra_cluster_reset_check, cassandra_node_reset_dirs, cassandra_node_reset_real,
-    cassandra_node_reset_ring, cassandra_reset_choice, reset_path_problem)
+    cassandra_reset_choice, reset_path_problem)
+
+
+def cassandra_node_reset_ring(answers, addresses, replace_address="", running=False, own=None, host="", known=None,
+                              has_data=False, cluster_ring=None):
+    """What the reset says of the rings: create_cluster's whole-cluster check, else the ring problems where the node
+    stands gives (ring_view, ring_problems), as reset_node refuses on them."""
+    if cluster_ring is not None:
+        return cassandra_node_reset.cassandra_node_reset_ring(addresses, host=host, has_data=has_data, cluster_ring=cluster_ring)
+    view = standing.ring_view(answers, addresses, standing.own_ids(addresses, running=running, own=own), replace_address,
+                              known, has_data)
+    return {"problems": standing.ring_problems(view, addresses, host or "this node", replace_address, running, own),
+            "info": ["%s sees %s down (%s): the node being replaced" % (o, standing._addr(n.get("address")), standing._seen(n))
+                     for o, n in view["replaced"]]}
+
 
 INVENTORY = [["data", "/var/lib/cassandra/data"], ["commitlog", "/var/lib/cassandra/commitlog"],
              ["saved_caches", "/var/lib/cassandra/saved_caches"], ["hints", "/var/lib/cassandra/hints"]]
@@ -145,13 +160,11 @@ def test_live_file_empty_data_list_is_the_default():
 
 def test_live_file_cluster_name_and_addresses():
     live = "cluster_name: Billing\nlisten_address: 10.100.100.50\nbroadcast_address: 192.0.2.50\nrpc_address: ''\n"
-    out = cassandra_node_reset_dirs([], live, cluster_name="Orders")
-    assert out["problems"] == ["the live cassandra.yaml is for cluster 'Billing', not 'Orders' (nor the package's stock"
-                               " 'Test Cluster'): a node of another cluster?"]
+    # another cluster's: refused from where the node stands (cassandra_node_reset_refusal), not here
+    out = cassandra_node_reset_dirs([], live)
+    assert out["problems"] == [] and out["cluster_name"] == "Billing"
     assert out["addresses"] == ["10.100.100.50", "192.0.2.50"]
-    for name in "Orders", "Test Cluster":
-        assert cassandra_node_reset_dirs([], "cluster_name: %s\n" % name, cluster_name="Orders")["problems"] == []
-    assert cassandra_node_reset_dirs(INVENTORY, None, cluster_name="Orders")["addresses"] == []
+    assert cassandra_node_reset_dirs(INVENTORY, None)["addresses"] == []
 
 
 def test_live_file_a_stock_one_without_directories():
@@ -162,13 +175,13 @@ def test_live_file_a_stock_one_without_directories():
 @pytest.mark.parametrize("live", [None, ""])
 def test_no_live_file(live):
     # Ansible before 2.19 turns a none passed through a var into ''
-    out = cassandra_node_reset_dirs([["data", "/data/cassandra/data"]], live, cluster_name="Orders")
+    out = cassandra_node_reset_dirs([["data", "/data/cassandra/data"]], live)
     assert out == {"dirs": [{"path": "/data/cassandra/data", "kinds": ["data"], "from": ["inventory"]}], "problems": [],
                    "addresses": [], "cluster_name": None}
 
 
 def test_live_file_without_cluster_name_is_test_cluster():
-    assert cassandra_node_reset_dirs([], "num_tokens: 16\n", cluster_name="Orders")["problems"] == []
+    assert cassandra_node_reset_dirs([], "num_tokens: 16\n")["cluster_name"] == "Test Cluster"
 
 
 def test_mount_points_from_proc_mounts():

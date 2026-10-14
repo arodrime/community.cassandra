@@ -142,7 +142,7 @@
         - cassandra_jmx_users | default([]) | length > 0
         - _cassandra_preflight_running | default(false) | bool
 
-    # Where a node stands (cassandra_service standing.yml) is worked out from the rings the cluster's nodes
+    # Where a node stands (cassandra_service node_standing.yml) is worked out from the rings the cluster's nodes
     # see: each running node reads its own, all at once (collected at the end of this play). The playbooks
     # that add, reset or replace nodes ask for it (_cassandra_preflight_node_views)
     - name: Start reading the ring this node sees
@@ -532,4 +532,6 @@
         state: absent
       changed_when: false
       check_mode: false
-      when: cassandra_preflight_view_job.results_file is defined
+      when:
+        - cassandra_preflight_view_job.results_file is defined
+        - _cassandra_preflight_view.finished | default(0) | bool  # else the job writes it again

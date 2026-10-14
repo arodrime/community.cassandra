@@ -272,16 +272,18 @@ def test_the_ways_out_add_node_gives_a_former_member_go_through():
 
 def test_the_rings_the_preflight_read_are_used():
     """Each running node read its own ring in the preflight: its answer is that one, not asked again. A read the
-    preflight skipped (not asked for) is asked here, as before."""
+    preflight skipped (not asked for), or one that failed (JMX not listening yet), is asked here."""
     seen = {"cluster_status": {"dc1": {"nodes": [N1, SEEN]}}}
     assert facts(found=STOCK, view=seen)["cassandra_node_standing"]["ring"]["in_ring"] == "UN"
     # the preflight read nothing there: the answer read here (clear)
     assert facts(found=STOCK, view={"skipped": True})["cassandra_node_standing"]["state"] == "failed_bootstrap"
-    # read, and no answer: not asked again, no ring
-    assert facts(found=STOCK, view={"failed": False})["cassandra_node_standing"]["state"] == "unknown"
+    # read, and no answer: asked again here (clear)
+    for failed in ({"failed": False}, {"cluster_status": None}, {"cluster_status": {}}):
+        assert facts(found=STOCK, view=failed)["cassandra_node_standing"]["state"] == "failed_bootstrap", failed
     # the preflight's read is not asked again; one it skipped is
     loop = _tasks("node_standing_read.yml")["Read the ring other nodes of the cluster see"]
-    for v, asked in (({"cluster_status": {}}, []), ({"skipped": True}, ["node1"]), (None, ["node1"])):
+    for v, asked in (({"cluster_status": {"dc1": {"nodes": [N1]}}}, []), ({"skipped": True}, ["node1"]), (None, ["node1"]),
+                     ({"cluster_status": None}, ["node1"]), ({"failed": False}, ["node1"])):
         hv = {"node1": {"inventory_hostname": "node1"}}
         if v is not None:
             hv["node1"]["_cassandra_preflight_view"] = v
@@ -297,3 +299,53 @@ def test_its_own_ring_only_when_its_jvm_runs():
     assert v["cassandra_node_standing"]["state"] == "running_outside_ring"
     v = facts(found=STOCK, running=True, active="active", own_view=ring)
     assert v["_cassandra_node_standing_read"]["own"] == ring["cluster_status"]
+
+
+def test_whole_cluster_reset_refuses_another_clusters_node():
+    """create_cluster -e cassandra_create_cluster_reset=true: the rings are not read again, but a node whose
+    cassandra.yaml names another cluster is still refused (an address of the ring reused by another cluster's host)."""
+    def whole(cluster):
+        v = facts(found=STOCK, cluster=cluster, auto=False)
+        v.update({"_cassandra_node_reset_whole_cluster": True, "_cassandra_node_reset_cluster_ring": ["10.0.0.7"],
+                  "_cassandra_node_standing_read": dict(v["_cassandra_node_standing_read"], ring_read=False)})
+        v["cassandra_node_standing"] = render(STANDING["ansible.builtin.set_fact"]["cassandra_node_standing"], v)
+        v.update(trust(CHECK.get("vars", {})))
+        ring = render(CHECK["ansible.builtin.set_fact"]["_cassandra_node_reset_ring"], v)
+        return ring["problems"]
+    assert whole("my_cluster") == [] and whole("Test Cluster") == []
+    assert whole("billing") == ["the live cassandra.yaml is for cluster 'billing', not 'my_cluster' (nor the package's"
+                                " stock 'Test Cluster'): a node of another cluster?"]
+
+
+@pytest.mark.parametrize("read, ring, size, again", [
+    ({}, True, False, True),  # never read: read
+    ({"ring_read": True, "size_read": False, "held": ["/x"]}, True, False, False),  # read once: not again
+    ({"ring_read": False, "size_read": False, "held": []}, True, False, True),  # read without the rings, asked for
+    ({"ring_read": False, "size_read": False, "held": []}, False, False, False),
+    ({"ring_read": True, "size_read": False, "held": ["/x"]}, True, True, True),  # the size asked for, not measured
+    ({"ring_read": True, "size_read": False, "held": []}, True, True, False),  # nothing to measure
+    ({"ring_read": True, "size_read": True, "held": ["/x"]}, True, True, False),
+])
+def test_read_once_unless_asked_for_more(read, ring, size, again):
+    include = _tasks("node_standing.yml")["Read where {{ inventory_hostname }} stands"]
+    variables = {"_cassandra_node_standing_read": read, "_cassandra_node_standing_ring": ring,
+                 "_cassandra_node_standing_size": size}
+    assert render("{{ %s }}" % include["when"], variables) is again
+
+
+def test_each_checking_play_reads_again():
+    """What an earlier play read may no longer stand (topology's plan before its question, create_cluster's
+    identity play before its token question): each play that decides reads it again."""
+    top = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks")
+    for playbook, play_names in (("add_node.yml", ["Check the new nodes"]), ("reset_node.yml", ["Reset the nodes"]),
+                                 ("replace_node.yml", ["Check the replacement"]),
+                                 ("topology.yml", ["Work out the plan and confirm it"]),
+                                 ("create_cluster.yml", ["Refuse an identity left to the role defaults",
+                                                         "Reset the whole cluster first (cassandra_create_cluster_reset)"])):
+        with open(os.path.join(top, playbook), encoding="utf-8") as f:
+            plays = dict((p.get("name"), p) for p in yaml.safe_load(f))
+        for name in play_names:
+            tasks = plays[name]["tasks"]
+            again = [i for i, t in enumerate(tasks) if t.get("name") == "Read where the nodes stand again"]
+            assert again and tasks[again[0]]["ansible.builtin.set_fact"] == {"_cassandra_node_standing_read": {}}, name
+            assert again[0] <= 1, name  # first, before anything reads it

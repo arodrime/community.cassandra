@@ -131,7 +131,7 @@ bootstraps. The output gives the state in its words, with the reasons::
    * - ``blank``
      - blank: nothing in its Cassandra directories, Cassandra stopped, not in the ring
      - added
-     - nothing to delete (kept from starting at boot)
+     - nothing to delete (kept from starting at boot); refused when no node of the cluster answers UN
      - replaces
    * - ``failed_bootstrap``
      - never joined: data of this cluster or of the package's stock config, no user keyspace but those of a bootstrap add_node started there; not in the ring, Cassandra stopped
@@ -174,7 +174,7 @@ bootstraps. The output gives the state in its words, with the reasons::
      - refused
      - refused
    * - ``member_busy``
-     - in the ring, leaving or moving (UL, UM), or joining without its system keyspace here
+     - in the ring, leaving or moving (UL, UM), or joining (UJ) without its host ID or system keyspace read here
      - refused: wait until UN
      - refused
      - refused
@@ -195,9 +195,12 @@ bootstraps. The output gives the state in its words, with the reasons::
      - refused
 
 ``cassandra_config`` (``cassandra_config_confirm: auto``) asks before changing a file of a node that is not blank,
-and keeps the identity (cluster name, tokens, dc and rack) such a node started with; on a node the operation
-checked and asked about itself (``add_node``, ``topology``, ``replace_node``, ``create_cluster`` after its reset)
-it asks nothing, only its own data directories and a running Cassandra count there. ``create_cluster`` makes a
+and keeps the identity (cluster name, tokens, dc and rack) such a node started with. Run on its own (``apply_config``,
+a role in your play), it reads the node itself and, as a precaution, also counts a system keyspace left in a usual
+place its config does not use (the package's default directory, a tarball's ``data/data``, a path its live
+``cassandra.yaml`` names); on a node the operation checked and asked about itself (``add_node``, ``topology``,
+``replace_node``, ``create_cluster`` after its reset) it asks nothing, only its own data directories and a running
+Cassandra count there. ``create_cluster`` makes a
 new cluster (``cassandra_storage_compatibility_mode`` may be left out of a 5.0 one) only when every node of the
 group is blank, with no system keyspace left in the package's default directory either. ``import_cluster``
 reports a ring node it could not read in the same words (``in the ring, down (DN): Cassandra stopped there``).

@@ -1,5 +1,5 @@
 ---
-# What standing.yml works out a node's state from, read once per run on the
+# What node_standing.yml works out a node's state from, read once per run on the
 # node itself (each node at once): its Cassandra unit and JVM, its live
 # cassandra.yaml, what its Cassandra directories hold (the inventory's and the
 # live file's, links resolved), add_node's bootstrap mark, its host ID and own
@@ -188,7 +188,9 @@
   failed_when: false
   check_mode: false  # read-only; --check needs it too
   no_log: "{{ cassandra_jmx_password | length > 0 }}"
-  when: _running | bool
+  when:
+    - _running | bool
+    - _cassandra_node_standing_ring | default(true) | bool  # only matched against a ring
   vars:
     _running: >-
       {{ cassandra_node_reset_jvm.rc == 0
@@ -205,7 +207,8 @@
   failed_when: false
   when:
     - cassandra_node_reset_jvm.rc == 0
-    - _cassandra_preflight_view.cluster_status is not defined  # the preflight's read of it
+    - _cassandra_node_standing_ring | default(true) | bool
+    - not _cassandra_preflight_view.cluster_status | default(none)  # the preflight read it (a failed read: again)
 
 # Every other node of the cluster group, but the ones the preflight found stopped and the ones
 # being added or reset (they may run alone): an answer of a node outside the cluster (its own
@@ -238,9 +241,10 @@
   ignore_unreachable: true
   when: _cassandra_node_standing_ring | default(true) | bool
   vars:
+    # the preflight's reads that answered (one that failed, e.g. JMX not listening yet: asked again)
     _viewed: >-
-      {{ _cassandra_node_standing_from | map('extract', hostvars) | selectattr('_cassandra_preflight_view', 'defined')
-         | rejectattr('_cassandra_preflight_view.skipped', 'defined') | map(attribute='inventory_hostname') | list }}
+      {{ _cassandra_node_standing_from | map('extract', hostvars) | selectattr('_cassandra_preflight_view.cluster_status', 'defined')
+         | selectattr('_cassandra_preflight_view.cluster_status') | map(attribute='inventory_hostname') | list }}
 
 - name: Keep what was read
   ansible.builtin.set_fact:
@@ -257,13 +261,14 @@
       answers: >-
         {%- set out = [] -%}
         {%- for h in _cassandra_node_standing_from -%}
-        {%-   set v = hostvars[h]._cassandra_preflight_view | default({'skipped': true}) -%}
-        {%-   set r = (cassandra_node_reset_rings.results | default([]) | selectattr('item', 'equalto', h) | first | default({}))
-                      if v.skipped is defined else v -%}
+        {%-   set v = hostvars[h]._cassandra_preflight_view | default({}) -%}
+        {%-   set r = v if v.cluster_status | default(none)
+                      else cassandra_node_reset_rings.results | default([]) | selectattr('item', 'equalto', h) | first | default({}) -%}
         {%-   set _ = out.append({'host': h, 'addresses': _addresses_of[h] | default([]), 'status': r.cluster_status | default(none)}) -%}
         {%- endfor -%}
         {{ out }}
       ring_read: "{{ _cassandra_node_standing_ring | default(true) | bool }}"
+      size_read: "{{ cassandra_node_reset_du.stdout_lines is defined }}"
       addresses: "{{ (_addresses_of[inventory_hostname] | default([]) + _cassandra_node_reset_listed.addresses) | unique }}"
       known: "{{ _addresses_of.values() | flatten | unique }}"
       live: >-
@@ -305,7 +310,7 @@
       {%-   set v = hostvars[h] -%}
       {%-   set _ = out.update({h: (v.ansible_facts.all_ipv4_addresses | default([]) + v.ansible_facts.all_ipv6_addresses | default([])
                                     + [v._cassandra_preflight.address | default(''), v._cassandra_preflight.ring_address | default(''),
-                                       v.cassandra_listen_address | default(''),
+                                       v.cassandra_listen_address | default(''), v.ansible_host | default(''),
                                        (v.cassandra_extra_settings | default({})).broadcast_address | default('')])
                                    | select | reject('in', ['localhost', '127.0.0.1', '::1']) | unique | list}) -%}
       {%- endfor -%}
