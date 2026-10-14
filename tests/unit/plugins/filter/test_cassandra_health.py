@@ -59,7 +59,7 @@ def test_the_health_checks_pass_the_inventory_names():
     import os
     import yaml
     path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_service", "tasks",
-                        "cluster_health.yml")
+                        "cluster_health_read.yml")
     with open(path, encoding="utf-8") as f:
         text = f.read()
     tasks = [t for b in yaml.safe_load(text) for t in [b] + b.get("block", [])]

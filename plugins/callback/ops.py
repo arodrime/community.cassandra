@@ -131,7 +131,7 @@ _VERDICTS = _ASSERTS + ("fail", "ansible.builtin.fail", "ansible.legacy.fail")
 # ansible-core 2.19, the others before)
 _CORE_ERRORS = ("Task failed: ", "The conditional check ", "The task includes an option with an undefined variable",
                 "Unexpected templating type error occurred on ", "An unhandled exception occurred while ",
-                "the field 'args' has an invalid value")
+                "the field 'args' has an invalid value", "Unexpected failure during module execution")
 
 
 def _task(result):

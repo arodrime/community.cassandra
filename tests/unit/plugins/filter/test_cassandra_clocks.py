@@ -541,7 +541,7 @@ def test_recap_of_sync_clocks():
     assert lines[0].startswith("FAILED  sync_clocks  Orders")
     assert "time sync started, clock stepped" in text and "clock set in a restart window" in text
     assert "clock being corrected by its daemon (minutes)" in text
-    assert "node5  FAILED: refused: chronyd reaches none of its 2 sources (to fix by hand)" in text
+    assert "node5  FAILED\n    refused: chronyd reaches none of its 2 sources (to fix by hand)" in text
     assert "node1  not touched (already in sync)" in text
     check = cassandra_op_recap([{"node": "node1", "result": "already in sync"},
                                 {"node": "node2", "result": "would set the clock in a restart window (--check: nothing"

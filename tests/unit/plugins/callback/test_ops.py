@@ -1224,7 +1224,8 @@ def test_a_marked_verdict_whose_template_fails_is_the_default_output(tmp_path):
                                  "Task failed: Syntax error in expression",
                                  "Unexpected templating type error occurred on ({{ a + 1 }}): ...",
                                  "An unhandled exception occurred while templating '{{ x }}'. ...",
-                                 "the field 'args' has an invalid value ({...}), and could not be converted to a dict."])
+                                 "the field 'args' has an invalid value ({...}), and could not be converted to a dict.",
+                                 "Unexpected failure during module execution: missing ), unterminated subpattern"])
 def test_core_template_errors_are_not_verdicts(msg):
     from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
     callback = CallbackModule()
