@@ -518,7 +518,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     if check and diff:
         shown += [""] + list(diff) + [""]
     if check and refused:
-        lines = lines + ["", "WARNING  A real run is refused, before changing anything: %s" % refused[0]]
+        lines = lines + ["", "WARNING  a real run is refused, before changing anything: %s" % refused[0]]
         lines += ["  %s" % line for line in refused[1:]]
     return shown + lines
 
