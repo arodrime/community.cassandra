@@ -26,6 +26,10 @@
 # has no user keyspace but a failed bootstrap's of this cluster; else refused with
 # what it holds. The screen says it ("node7 (dc1/rack_b): has data (...) — will be
 # reset", what it deletes in a warning), the one question covers it.
+# Before the first start, the clocks of the new nodes and the running ones are
+# checked (sync_clocks: each synchronised, within cassandra_clock_max_offset_ms
+# of its source; else refused, nothing started; -e cassandra_clock_check=false
+# skips it).
 # One screen first, one confirmation (cassandra_operation_confirm: false or
 # --check skips it): cluster, version, Java, Medusa, each new node (address, dc, rack, data
 # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
@@ -633,6 +637,32 @@
                    hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'),
                    extra={} if _cassandra_screen_asked_by | default('')
                    else {'cassandra_target_nodes': cassandra_target_nodes}) }}
+
+# Before the first start: the clocks of the new nodes (time sync started by
+# cassandra_linux, waited for) and of the running ones, none started when apart
+- name: Check the clocks
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | union(query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) }}"
+  any_errors_fatal: true
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check the clocks
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: clocks_check.yml
+      vars:
+        _cassandra_clock_operation: "{{ _cassandra_screen_asked_by | default('') or 'add_node' }}"
+      when: >-
+        query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | map('extract', hostvars)
+        | selectattr('cassandra_new_node_state', 'defined') | selectattr('cassandra_new_node_state', 'equalto', 'new')
+        | list | length > 0
 
 # Then the starts, one at a time: each one bootstraps, waited for
 - name: Add the new nodes, one at a time

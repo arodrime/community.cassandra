@@ -48,6 +48,7 @@ comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a da
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between.
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
 - `update_java`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
+- `sync_clocks`- Shows each node's clock as its time sync daemon reports it (synchronised, source, offset, error bound) with a verdict, and brings time sync up where it is missing (live, or in a restart window for a running node whose clock needs a step); `create_cluster` and `add_node` check the clocks the same way before starting nodes.
 - `apply_config`- Applies the inventory's config: shows the settings that differ (the inventory's value, then each other value with its nodes), asks once, then writes the nodes that need it: the ones it does not restart at once, then the others one at a time, restarting only those that need it.
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
 - `status`- Read-only view of the ring from one node (`nodetool status` per datacenter, a summary per rack and datacenter, inventory hosts missing from the ring and the reverse, the verdict last); fails only when no node answers (of `cassandra_target_nodes`, when given).

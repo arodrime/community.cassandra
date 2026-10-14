@@ -127,6 +127,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
         -e cassandra_token_auto=bisect        one token per node: how the new nodes get their
                                               tokens, bisect, balanced or true (shows both, asks)
                                               (default: false)
+        -e cassandra_clock_check=false        starts the nodes without checking their clocks first
+                                              (kept in sync by other means) (default: true)
       Example (then the cleanup, one node at a time):
       $ $PLAY $C.add_node -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential
 
@@ -221,6 +223,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                                               the reset without a terminal (with
                                               cassandra_operation_confirm=false): the cluster's
                                               name, the answer to its question
+        -e cassandra_clock_check=false        starts the nodes without checking their clocks first
+                                              (kept in sync by other means) (default: true)
       Example (the plan only):
       $ $PLAY $C.create_cluster --check
 
@@ -288,6 +292,23 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                                               done (default: false)
       Example (an interrupted run resumed):
       $ $PLAY $C.update_java -e cassandra_rolling_resume=true
+
+  ● sync_clocks        Shows each node's clock as its time sync daemon reports it (synchronised,
+                       source, offset) with a verdict, then brings time sync up where it is missing;
+                       a running node whose clock needs a step gets a restart window, one node at a
+                       time.
+      $ $PLAY $C.sync_clocks
+        -e cassandra_clock_max_offset_ms=50   a node is in sync within this many milliseconds of its
+                                              source (offset plus the daemon's error bound)
+                                              (default: 50)
+        -e cassandra_clock_step_ms=400        a correction above it steps the clock: on a running
+                                              node, in a restart window (default: 400)
+        -e cassandra_clock_sync_wait=60       seconds to wait for a time sync to synchronise
+                                              (default: 60)
+        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
+                                              done (default: false)
+      Example (the clocks, changing nothing):
+      $ $PLAY $C.sync_clocks --check
 
   ● upgrade            Upgrades the cluster to the version in the inventory, one phase per run:
                        preflight, prepare, canary, rolling, sstables, cleanup.

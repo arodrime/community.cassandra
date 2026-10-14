@@ -739,6 +739,55 @@ a Java installed by other means. Its ``python3`` (3.12) suits 5.0's cqlsh but no
 ``python3.11``: with 4.x, install a Python 3.11 by other means and give it in ``cassandra_cqlsh_python``.
 
 
+Clocks
+------
+
+Cassandra orders the writes to a cell by their timestamps: the latest wins. A timestamp comes from a clock, the
+client's or the coordinator's (``cqlsh``, drivers without client-side timestamps, the ballots of lightweight
+transactions), and TTLs and tombstones expire by the node's clock. A node whose clock is ahead stamps writes in the
+future: an update or a delete of the same data stamped by a correct clock loses against them until real time catches
+up, silently. The clocks of the nodes must agree closely, and never jump back under a running Cassandra.
+
+``sync_clocks`` shows, for every node at once, what its time sync daemon reports (chrony: ``chronyc tracking`` and
+``chronyc sources``; systemd-timesyncd: ``timedatectl timesync-status``; ntpd: ``ntpq -pn``): the service, whether it
+is synchronised, its source, its offset and the daemon's error bound (half the root delay plus the root dispersion),
+then a verdict. A node is in sync when it is synchronised to a source and its offset plus the error bound is within
+``cassandra_clock_max_offset_ms`` (50 ms by default). A node that follows only its own clock (``local stratum``) is
+not synchronised. The sources are compared too: nodes that share no configured server and follow different ones get a
+warning (each may be within its source while the sources differ); give every node the same servers, and never mix
+sources that smear leap seconds with sources that step them. A node with no daemon to ask (a container: its clock is
+the host's) is compared with the others by the dates collected over SSH, a coarse measure that only counts a gap over
+a second.
+
+.. code-block:: console
+
+   $ ansible-playbook -i inventory community.cassandra.sync_clocks --check   # shows, changes nothing
+   $ ansible-playbook -i inventory community.cassandra.sync_clocks
+
+The real run asks once, then brings time sync up where it is missing, the way ``cassandra_linux`` sets it up:
+installed (unless ``cassandra_offline``), enabled, started. It writes no NTP configuration: the site's
+``chrony.conf`` stays as it is, and ``cassandra_linux_timesync: false`` leaves a node's time sync alone. Where
+Cassandra does not run, and where the correction is small (within ``cassandra_clock_step_ms``, 400 ms: the daemon
+slews the clock, no jump), that is done live, on those nodes at once. A running node whose clock needs a step (a
+larger offset, or one that cannot be measured before its daemon starts) gets a restart window, one node at a time, as
+``rolling_restart`` does: the cluster checked, the node drained and stopped, time sync started and synchronised, the
+clock stepped (``chronyc makestep``; systemd-timesyncd steps by itself past 400 ms when it syncs), Cassandra started,
+the cluster checked again. An interrupted run resumes with ``-e cassandra_rolling_resume=true``; a node it left
+stopped is started again. A node whose clock is ahead gets a warning about the writes it stamped meanwhile. What it
+cannot fix (a source unreachable, a container's clock, a time sync left alone) is said, and the run ends failed.
+``sync_clocks`` is not monitoring: it schedules nothing and alerts no one.
+
+``create_cluster`` and ``add_node`` check the clocks the same way before they start any node (after ``cassandra_linux``
+started time sync, waiting up to ``cassandra_clock_sync_wait`` seconds for it to synchronise), the running nodes too
+for ``add_node``. A node off by more than the threshold, or without a synchronised source, stops the run with nothing
+started, and the way out: ``sync_clocks``, or the NTP configuration of these nodes. ``-e cassandra_clock_check=false``
+skips the check, for clocks kept in sync by other means.
+
+chrony is the safer daemon: systemd-timesyncd follows one server, reports the offset of its last poll only, and steps
+the clock by itself whenever it is off by more than 400 ms, Cassandra running or not. chrony's own ``makestep``
+setting (``makestep 1 3`` in most distributions) only steps in its first updates: a large offset found later is
+slewed, at most about 83 ms per second.
+
 Changing the seeds
 ------------------
 

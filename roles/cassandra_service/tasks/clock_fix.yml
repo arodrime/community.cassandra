@@ -1,0 +1,85 @@
+---
+# What sync_clocks does to the clock of one node, its plan in
+# cassandra_clock_action: start (time sync brought up, cassandra_linux's way:
+# installed unless cassandra_offline, enabled, started; no NTP config written,
+# the site's stays), slew (its daemon corrects a small offset: waited for), step
+# (Cassandra not running there, or stopped by the restart window,
+# action_sync_clock.yml): time sync brought up where missing, synchronised,
+# then the clock stepped (chronyc makestep; systemd-timesyncd steps by itself
+# past 400 ms when it syncs, restarted). Then the clock is read again; still
+# not in sync, _cassandra_clock_fix_error says why: nothing fails here, so the
+# restart window starts Cassandra again first. _cassandra_clock_did: what was
+# done (timesync started, clock stepped), for the recap.
+- name: Forget an earlier error
+  ansible.builtin.set_fact:
+    _cassandra_clock_fix_error: ""
+    _cassandra_clock_was_active: "{{ cassandra_clock.active }}"
+
+- name: Set the clock
+  vars:
+    _step: "{{ cassandra_clock_action in ['step', 'window'] }}"
+  block:
+    - name: Bring time sync up
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+        tasks_from: timesync.yml
+      when: not cassandra_clock.active
+
+    - name: Wait for its daemon to synchronise
+      ansible.builtin.include_tasks: clock_probe.yml
+      vars:
+        _cassandra_clock_wait: "{{ cassandra_clock_sync_wait }}"
+        _cassandra_clock_synchronised_only: "{{ _step }}"
+
+    - name: Step the clock (chrony)
+      ansible.builtin.command:
+        argv: [chronyc, makestep]
+      register: cassandra_clock_makestep
+      changed_when: true
+      when:
+        - _step | bool
+        - cassandra_clock.daemon == 'chrony'
+        - cassandra_clock.synchronised
+        - not cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+
+    # its first sync after a start steps an offset over 400 ms
+    - name: Step the clock (systemd-timesyncd)
+      ansible.builtin.systemd_service:
+        name: systemd-timesyncd
+        state: restarted
+      register: cassandra_clock_timesyncd_step
+      when:
+        - _step | bool
+        - cassandra_clock.daemon == 'timesyncd'
+        - not cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+
+    - name: Read the clock again
+      ansible.builtin.include_tasks: clock_probe.yml
+      vars:
+        _cassandra_clock_wait: "{{ cassandra_clock_sync_wait }}"
+      when: >-
+        cassandra_clock_makestep is changed or cassandra_clock_timesyncd_step is changed
+        or not cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+
+    - name: Note a clock still not in sync
+      ansible.builtin.set_fact:
+        _cassandra_clock_fix_error: >-
+          clock still not in sync after {{ cassandra_clock_sync_wait }}s: {{ _v.text }}{{ (': ' ~ _v.why) if _v.why and _v.why not in _v.text else '' }}
+      vars:
+        _v: >-
+          {{ (([{'node': inventory_hostname, 'probe': cassandra_clock}]
+               | community.cassandra.cassandra_clock_verdicts(cassandra_clock_max_offset_ms, cassandra_clock_step_ms)).nodes | first) }}
+      when: not cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+  rescue:
+    - name: Note why the clock could not be set
+      ansible.builtin.set_fact:
+        _cassandra_clock_fix_error: >-
+          {{ ansible_failed_task.name | default('') }}: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+  always:
+    - name: Note what was done
+      ansible.builtin.set_fact:
+        _cassandra_clock_did: >-
+          {{ (['start'] if not _cassandra_clock_was_active | bool and cassandra_timesync_service_result | default({}) is changed
+              else [])
+             + (['step'] if cassandra_clock_makestep | default({}) is changed or cassandra_clock_timesyncd_step | default({}) is changed
+                else []) }}

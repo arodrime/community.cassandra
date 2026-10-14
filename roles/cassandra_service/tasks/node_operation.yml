@@ -32,7 +32,7 @@
     _cassandra_group_size: "{{ query('community.cassandra.cassandra_nodes') | length }}"
     _cassandra_resume_candidate: >-
       {{ cassandra_rolling_resume | default(false) | bool
-         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java']
+         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java', 'sync_clock']
          and inventory_hostname == ansible_play_hosts_all | reject('in', cassandra_progress_done | default([])) | first | default('') }}
     _cassandra_resumed_node: >-
       {{ _cassandra_resume_candidate | bool

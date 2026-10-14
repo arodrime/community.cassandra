@@ -1,0 +1,68 @@
+---
+# Time sync only, as the role sets it up (os.yml): chrony kept where it is
+# installed, else chrony (systemd-timesyncd on Debian/Ubuntu); installed
+# unless cassandra_offline, enabled and started. The NTP servers are the
+# site's: no config is written. Run by sync_clocks (include_role tasks_from)
+# on a node whose time sync does not run; cassandra_linux_timesync false
+# leaves it alone. Needs the os_family fact.
+- name: Look for chrony (kept rather than replaced)
+  ansible.builtin.stat:
+    path: /usr/sbin/chronyd
+  register: cassandra_linux_chrony
+  when: cassandra_linux_timesync | bool
+
+- name: Keep what was found
+  ansible.builtin.set_fact:
+    _cassandra_chrony_present: "{{ cassandra_linux_chrony.stat.exists | default(false) }}"
+
+- name: Read the installed packages (time sync)
+  ansible.builtin.package_facts:
+  check_mode: false  # read-only
+  when:
+    - cassandra_linux_timesync | bool
+    - not cassandra_offline | bool
+
+- name: Install time sync package
+  ansible.builtin.package:
+    name: "{{ _cassandra_timesync_pkg }}"
+    state: present
+  retries: 3
+  register: cassandra_timesync_install
+  when:
+    - cassandra_linux_timesync | bool
+    - not cassandra_offline | bool
+    - _cassandra_timesync_pkg not in ansible_facts['packages'] | default({})
+
+- name: Look for the time sync service (offline)
+  ansible.builtin.command:
+    argv: [systemctl, cat, "{{ _cassandra_timesync_service }}"]
+  register: cassandra_timesync_unit
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when:
+    - cassandra_linux_timesync | bool
+    - cassandra_offline | bool
+
+- name: Refuse a time sync that is not installed (offline)
+  ansible.builtin.fail:
+    msg: >-
+      {{ _cassandra_timesync_pkg }} is not installed on {{ inventory_hostname }} and cassandra_offline downloads
+      nothing: install it from your image or mirror, or set cassandra_linux_timesync to false if the host's time
+      sync is managed another way.
+  when:
+    - cassandra_linux_timesync | bool
+    - cassandra_offline | bool
+    - cassandra_timesync_unit.rc != 0
+    - not ansible_check_mode
+
+- name: Ensure timesync service starts
+  ansible.builtin.service:
+    name: "{{ _cassandra_timesync_service }}"
+    enabled: true
+    state: started
+  register: cassandra_timesync_service_result
+  when:
+    - cassandra_linux_timesync | bool
+    - not (cassandra_offline | bool and cassandra_timesync_unit.rc | default(0) != 0)
+    - not (ansible_check_mode and cassandra_timesync_install is changed)  # not installed yet under --check

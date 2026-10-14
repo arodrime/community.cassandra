@@ -751,6 +751,7 @@ PHASES = {
     "move": "Moving {node}...",
     "reboot": "Rebooting {node}...",
     "update_java": "Updating Java on {node}...",
+    "sync_clock": "Setting the clock of {node} (drained, stopped, started again)...",
     "upgrade": "Upgrading {node}...",
     "upgradesstables": "Upgrading the SSTables of {node}...",
     "wait_un": "Waiting for every node to be UN...",

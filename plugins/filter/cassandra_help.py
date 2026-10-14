@@ -85,7 +85,9 @@ OPERATIONS = [
                  ("-e cassandra_add_node_cleanup=sequential", "runs the cleanup afterwards: sequential, rack, dc or"
                                                               " all; none prints its command", "none"),
                  ("-e cassandra_token_auto=bisect", "one token per node: how the new nodes get their tokens, bisect,"
-                                                    " balanced or true (shows both, asks)", "false")],
+                                                    " balanced or true (shows both, asks)", "false"),
+                 ("-e cassandra_clock_check=false", "starts the nodes without checking their clocks first (kept in"
+                                                    " sync by other means)", "true")],
      "example": ("then the cleanup, one node at a time", ["-e cassandra_add_node_cleanup=sequential"])},
     {"name": "topology", "theme": "nodes", "cql": True, "cql_when": "to remove nodes",
      "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, applies"
@@ -149,7 +151,9 @@ OPERATIONS = [
                  ("-e cassandra_create_cluster_reset=true", "rebuilds a running cluster, ALL ITS DATA LOST", "false"),
                  ("-e '{\"cassandra_create_cluster_reset_confirm\": \"<cluster name>\"}'",
                   "the reset without a terminal (with cassandra_operation_confirm=false): the cluster's name, the answer"
-                  " to its question", "")],
+                  " to its question", ""),
+                 ("-e cassandra_clock_check=false", "starts the nodes without checking their clocks first (kept in"
+                                                    " sync by other means)", "true")],
      "example": ("the plan only", ["--check"])},
     {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode", "confirm": False,
      "summary": "Drains and restarts the nodes one at a time, the cluster checked before and after each one.",
@@ -190,6 +194,17 @@ OPERATIONS = [
      "summary": "Moves the cluster to the Java in cassandra_java_version, one node at a time.",
      "options": [RESUME],
      "example": ("an interrupted run resumed", [RESUME[0]])},
+    {"name": "sync_clocks", "theme": "cluster",
+     "summary": "Shows each node's clock as its time sync daemon reports it (synchronised, source, offset) with a"
+                " verdict, then brings time sync up where it is missing; a running node whose clock needs a step"
+                " gets a restart window, one node at a time.",
+     "options": [("-e cassandra_clock_max_offset_ms=50", "a node is in sync within this many milliseconds of its"
+                                                         " source (offset plus the daemon's error bound)", "50"),
+                 ("-e cassandra_clock_step_ms=400", "a correction above it steps the clock: on a running node, in a"
+                                                    " restart window", "400"),
+                 ("-e cassandra_clock_sync_wait=60", "seconds to wait for a time sync to synchronise", "60"),
+                 RESUME],
+     "example": ("the clocks, changing nothing", ["--check"])},
     {"name": "upgrade", "theme": "cluster",
      "summary": "Upgrades the cluster to the version in the inventory, one phase per run: preflight, prepare,"
                 " canary, rolling, sstables, cleanup.",

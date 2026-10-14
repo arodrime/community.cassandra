@@ -168,7 +168,7 @@ PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_c
 
 # a plan or a screen (its first line), a recap, a progress line
 _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_node|replace_node|decommission_node|remove_dead_node|"
-                     r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|add_datacenter|"
+                     r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|sync_clocks|add_datacenter|"
                      r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")

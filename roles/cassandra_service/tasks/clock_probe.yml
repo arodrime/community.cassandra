@@ -1,0 +1,89 @@
+---
+# The clock of this node as its time sync daemon reports it, read-only (run on
+# the nodes of a play at once): cassandra_clock (filter cassandra_clock_probe:
+# daemon, synchronised, source, offset, error bound) and cassandra_clock_samples
+# (the node's date with the controller's, three times: the coarse comparison of
+# a node no daemon reports on, e.g. a container). _cassandra_clock_wait: seconds
+# to wait while a daemon just started synchronises (0: read once);
+# _cassandra_clock_query: also measures the offset with chronyd -Q where chrony
+# is installed but no daemon runs (sync_clocks, before it starts one);
+# _cassandra_clock_synchronised_only: the wait ends once synchronised (a step follows).
+# Also says whether a restart window of sync_clocks was left open there
+# (_cassandra_clock_window_mark: an interrupted run stopped Cassandra there).
+# timedatectl timesync-status is only asked while systemd-timesyncd runs: the
+# D-Bus call would start it, and starting a daemon steps the clock.
+- name: Read what the time sync daemon says
+  ansible.builtin.shell: |
+    LC_ALL=C; export LC_ALL
+    echo "==units=="
+    for u in chronyd chrony systemd-timesyncd ntpd ntpsec ntp; do
+      echo "$u|$(systemctl is-active $u.service 2>/dev/null)|$(systemctl is-enabled $u.service 2>/dev/null)|$(systemctl show -p LoadState --value $u.service 2>/dev/null)"
+    done
+    echo "==virt=="
+    systemd-detect-virt -c 2>/dev/null || true
+    if command -v chronyc >/dev/null 2>&1; then
+      echo "==tracking=="; chronyc -n tracking 2>&1
+      echo "==sources=="; chronyc -n sources 2>&1
+    fi
+    echo "==chrony_conf=="
+    for f in /etc/chrony.conf /etc/chrony/chrony.conf /etc/chrony.d/*.conf /etc/chrony/conf.d/*.conf /etc/chrony/sources.d/*.sources; do
+      [ -f "$f" ] && grep -hE '^[[:space:]]*(server|pool|peer|refclock)[[:space:]]' "$f" | awk '{print $1, $2}'
+    done
+    if command -v timedatectl >/dev/null 2>&1; then
+      echo "==timedatectl=="; timedatectl show 2>/dev/null
+      if [ "$(systemctl is-active systemd-timesyncd.service 2>/dev/null)" = active ]; then
+        echo "==timesync=="; timedatectl timesync-status 2>/dev/null
+        echo "==timesync_servers=="
+        timedatectl show-timesync -p SystemNTPServers -p FallbackNTPServers -p LinkNTPServers --value 2>/dev/null \
+          | tr ' ' '\n' | sed -n 's/^\(..*\)$/server \1/p'
+      fi
+    fi
+    if command -v ntpq >/dev/null 2>&1; then
+      echo "==ntpq=="; ntpq -pn 2>&1
+    fi
+    [ -e "$CLOCK_WINDOW_MARK" ] && echo "==window=="
+    if [ "$CLOCK_QUERY" = 1 ] && command -v chronyd >/dev/null 2>&1; then
+      running=no
+      for u in chronyd chrony systemd-timesyncd ntpd ntpsec ntp; do
+        [ "$(systemctl is-active $u.service 2>/dev/null)" = active ] && running=yes
+      done
+      if [ $running = no ]; then
+        echo "==query=="; timeout 40 chronyd -Q -t 30 2>&1
+      fi
+    fi
+    exit 0
+  args:
+    executable: /bin/sh
+  environment:
+    CLOCK_QUERY: "{{ '1' if _cassandra_clock_query | default(false) | bool else '0' }}"
+    CLOCK_WINDOW_MARK: "{{ _cassandra_clock_window_mark }}"
+  register: cassandra_clock_read
+  changed_when: false
+  check_mode: false  # read-only
+  ignore_unreachable: true  # a node that does not answer: left out of the comparison (add_node's running nodes)
+  retries: "{{ (_cassandra_clock_wait | default(0) | int / 5) | round(0, 'ceil') | int }}"
+  delay: 5
+  until: >-
+    cassandra_clock_read.unreachable | default(false)
+    or cassandra_clock_read.stdout | default('') | community.cassandra.cassandra_clock_probe
+       | community.cassandra.cassandra_clock_settled(cassandra_clock_max_offset_ms, _cassandra_clock_synchronised_only | default(false))
+
+# templated on the controller right before each one runs (raw: no Python to start on the node, the least delay)
+- name: Read the node's date with the controller's
+  ansible.builtin.raw: "echo {{ now().timestamp() }} $(date +%s.%N)"
+  loop: [1, 2, 3]
+  register: cassandra_clock_dates
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  become: false  # date needs no root
+  ignore_unreachable: true
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  when: not cassandra_clock_read.unreachable | default(false)
+
+- name: Note what it says
+  ansible.builtin.set_fact:
+    cassandra_clock: "{{ cassandra_clock_read.stdout | default('') | community.cassandra.cassandra_clock_probe }}"
+    cassandra_clock_read_ok: "{{ not cassandra_clock_read.unreachable | default(false) and cassandra_clock_read.stdout is defined }}"
+    cassandra_clock_samples: "{{ cassandra_clock_dates.results | default([]) | map(attribute='stdout', default='') | list }}"
