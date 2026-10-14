@@ -37,7 +37,8 @@
         cassandra_client_encryption_enabled: true
         cassandra_client_encryption_optional: false
         cassandra_client_truststore: /etc/cassandra/client.truststore
-        cassandra_extra_settings: {commitlog_total_space: 8192MiB, auto_bootstrap: false}
+        cassandra_extra_settings: {commitlog_total_space: 8192MiB}
+        cassandra_auto_bootstrap: false
 
     - name: Render 4.x series with defaults
       ansible.builtin.include_role:
@@ -69,7 +70,7 @@
         cassandra_heap_size: 512M
         cassandra_heap_newsize: 128M
         cassandra_jvm8_extra_options: ["-Dmolecule.jvm8=1"]
-        cassandra_extra_settings: {auto_bootstrap: false}
+        cassandra_auto_bootstrap: false
 
     - name: Render the group commit log mode
       ansible.builtin.include_role:

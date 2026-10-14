@@ -70,7 +70,7 @@
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
         _phase: >-
-          {{ {'new': 'join' if (cassandra_extra_settings | default({})).auto_bootstrap | default(true) | bool
+          {{ {'new': 'join' if cassandra_auto_bootstrap | default(true) is none or cassandra_auto_bootstrap | default(true) | bool
                      else 'join_no_stream', 'joining': 'join_again'}.get(cassandra_new_node_state | default('new'), '')
              if cassandra_service_node_action == 'add'
              else {'normal': 'decommission', 'leaving': 'leave_again'}.get(

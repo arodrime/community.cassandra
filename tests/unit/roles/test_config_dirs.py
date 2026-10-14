@@ -75,7 +75,8 @@ def test_dirs_whose_owner_and_mode_are_checked(tmp_path):
     # data, commit log, saved caches, hints (each path once, the first kind wins); not the log dir
     read = task(READ)
     assert render(read["vars"]["_request"]["dir_stats"], cassandra_data_file_directories=["/d1", "/d2"], cassandra_commitlog_dir="/cl",
-                  cassandra_saved_caches_dir="/d1", cassandra_hints_dir="", cassandra_log_dir="/log") == [
+                  cassandra_saved_caches_dir="/d1", cassandra_hints_dir="", cassandra_log_dir="/log",
+                  _cassandra_config_more_dirs=[]) == [
         ["data dir", "/d1"], ["data dir", "/d2"], ["commitlog dir", "/cl"]]
     # read as the stat module does with follow (a link to a disk: the disk's directory)
     (tmp_path / "disk").mkdir(mode=0o750)

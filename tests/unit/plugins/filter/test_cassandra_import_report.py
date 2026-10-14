@@ -742,3 +742,21 @@ def test_self_check_stop_a_value_none_is_not_unset():
     assert "        node none, inventory all" in lines and "        node dc, inventory none" in lines
     assert "    - jvm17-server.options javax.net.ssl.keyStorePassword, on node1:" in lines
     assert "        node ****, inventory ****" in lines
+
+
+def test_auto_bootstrap_false_kept_on_its_nodes_with_a_warning():
+    # host_vars only, even on every node (a node added later must not get it); a WARNING, the import not refused
+    nodes = [node(i) for i in range(1, 4)]
+    for n in nodes[:2]:
+        n["vars"]["cassandra_auto_bootstrap"] = False
+    layout = cassandra_inventory_layout(nodes, "My Cluster")
+    assert [h for h, v in layout["host_vars"].items() if v.get("cassandra_auto_bootstrap") is False] == ["node1", "node2"]
+    assert not [g for g, v in layout["group_vars"].items() if "cassandra_auto_bootstrap" in v]
+    lines = report(nodes)
+    assert any(u"WARNING node1, node2: auto_bootstrap: false, kept as found \u2014 a node that loses its data restarts"
+               u" empty without streaming it back; remove the setting (default true) unless you know why it is there"
+               in line for line in lines)
+    every = [node(i) for i in range(1, 4)]
+    for n in every:
+        n["vars"]["cassandra_auto_bootstrap"] = False
+    assert sorted(cassandra_inventory_layout(every, "My Cluster")["host_vars"]) == ["node1", "node2", "node3"]

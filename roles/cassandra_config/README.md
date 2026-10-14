@@ -138,11 +138,49 @@ Role Variables
   The directories (`data_file_directories`, `commitlog_directory`,
   `saved_caches_directory`, `hints_directory`) are set from
   `cassandra_data_dir`, `cassandra_commitlog_dir`,
-  `cassandra_saved_caches_dir` and `cassandra_hints_dir`.
+  `cassandra_saved_caches_dir` and `cassandra_hints_dir`;
+  `cdc_raw_directory` from `cassandra_cdc_raw_dir` when set (else commented
+  out, Cassandra's `<storage dir>/cdc_raw`). The role creates these
+  directories, the cdc_raw one when set or with `cassandra_cdc_enabled`.
   One deliberate difference from stock: `cassandra_storage_compatibility_mode`
   defaults to `NONE` (5.0 formats and features, right for a new cluster).
   A cluster upgraded from 4.x must set `CASSANDRA_4`, then move through
   `UPGRADING` to `NONE` with rolling restarts.
+* Settings commented out in stock have a variable too, empty by default
+  (the line stays commented out, Cassandra's default): `cassandra_disk_access_mode`,
+  `cassandra_file_cache_size`, `cassandra_memtable_heap_space`,
+  `cassandra_memtable_offheap_space`, `cassandra_memtable_flush_writers`,
+  `cassandra_concurrent_compactors`, `cassandra_column_index_size` (on 4.1
+  it defaults to the stock `64KiB`), streaming (`cassandra_stream_entire_sstables`,
+  `cassandra_stream_throughput_outbound`, `cassandra_inter_dc_stream_throughput_outbound`,
+  `cassandra_entire_sstable_stream_throughput_outbound`,
+  `cassandra_entire_sstable_inter_dc_stream_throughput_outbound`,
+  `cassandra_streaming_connections_per_host`,
+  `cassandra_internode_streaming_tcp_user_timeout`), the auth caches'
+  `cassandra_roles_update_interval`, `cassandra_permissions_update_interval`,
+  `cassandra_credentials_update_interval`, the GC log thresholds
+  `cassandra_gc_log_threshold` and `cassandra_gc_warn_threshold`, and on 5.0
+  `cassandra_sstable_format` (`sstable.selected_format`: `bti` or `big`;
+  `bti` needs `cassandra_storage_compatibility_mode` `UPGRADING` or `NONE`),
+  `cassandra_partition_size_warn_threshold` and
+  `cassandra_partition_size_fail_threshold`. Numbers take 0 too. Sizes,
+  rates and durations take their unit, as in the stock comments
+  (`24MiB/s`, `2000ms`); 4.0 has its own variables under its key names, in
+  the key's unit (`cassandra_stream_throughput_outbound_megabits_per_sec`,
+  `cassandra_roles_update_interval_in_ms`, `cassandra_file_cache_size_in_mb`...).
+  A variable of a later series (5.0's, the `entire_sstable_*` ones on 4.0) is
+  refused; one of the other naming (a 4.0 `*_in_*` variable on 4.1+, or the
+  reverse) is ignored, as for the older variables. On 4.x, `disk_access_mode`, which the stock file has no line for,
+  is written at the end, under its own header.
+* `cassandra_auto_bootstrap` (default `true`, not written): `false` writes
+  `auto_bootstrap: false`, which a node reads at its first start: it then
+  joins without streaming its data. The collection sets it itself where that
+  is safe (`add_datacenter`'s new nodes, which rebuild next). Set in the
+  inventory, the `preflight` playbook and the `import_cluster` report warn
+  about it (`import_cluster` keeps a node's `false` in its `host_vars`): a
+  node that loses its data then restarts empty without streaming it back.
+  Removed, the next run drops the line (`auto_bootstrap: true` on a node is
+  the same as no line).
 * `cassandra_user`, `cassandra_group` (default `cassandra`): the account
   Cassandra runs as (`cassandra_service` runs it so). The directories the
   role creates (`0750`) and the JMX users' files are theirs
@@ -190,7 +228,10 @@ Role Variables
   each file the role replaces, next to it, to roll back.
 * `cassandra_extra_settings`: settings no variable covers, as a dict written
   as-is at the end of `cassandra.yaml` (e.g. `{commitlog_total_space: 8192MiB}`).
-  Keys the template already has are refused: set them with their variable;
+  Keys the template already has are refused, a dotted key (`sstable.selected_format`)
+  by its first part: set them with their variable (also the ones earlier
+  releases took here, e.g. `disk_access_mode`, `auto_bootstrap`,
+  `heap_dump_path`, the streaming and memtable settings above);
   but `audit_logging_options` takes the sub-keys no variable covers (e.g.
   `{audit_logging_options: {included_categories: DDL}}`), written in that section.
   Cassandra refuses unknown keys at startup: so does the role, before
@@ -202,8 +243,14 @@ Role Variables
   it goes with `cassandra_heap_size`, both or neither; on 5.0 a heap size
   needs G1; the role asserts it),
   `cassandra_heap_size` (empty = stock auto-sizing),
-  `cassandra_max_direct_memory_size` and `cassandra_heap_dump_dir` (5.0
-  only; on 4.x set `CASSANDRA_HEAPDUMP_DIR` in the service environment),
+  `cassandra_max_direct_memory_size` (5.0 only), `cassandra_heap_dump_dir`
+  (where the JVM writes a heap dump, `-XX:HeapDumpPath`; a
+  `CASSANDRA_HEAPDUMP_DIR` the service environment gives still wins. Stock
+  default: 5.0 `$CASSANDRA_LOG_DIR` (not empty there), 4.x empty, the JVM's
+  working dir. An absolute path is also 5.0's `heap_dump_path` in
+  `cassandra.yaml`, which the role does not compare since Cassandra uses
+  `-XX:HeapDumpPath` first, and the role creates it, or gives an existing one
+  to the account Cassandra runs as like the data directories),
   `cassandra_local_jmx`, `cassandra_jmx_port`, `cassandra_jmx_rmi_hostname`.
 * GC: `cassandra_jvm_gc` defaults to the series' stock GC (`CMS` on 4.x,
   `G1` on 5.0). `G1` on 4.x turns on the stock G1 block with the

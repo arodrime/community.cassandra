@@ -951,8 +951,6 @@ def test_self_check_of_the_nodes_hides_another_filters_error(monkeypatch):
 # --- sections no variable covers: imported whole into cassandra_extra_settings ----
 
 NESTED = [  # (id, pattern, replacement, what cassandra_extra_settings gets)
-    ("sstable", r"(?m)^#sstable:\n#  selected_format: big$", "sstable:\n  selected_format: bti",
-     {"sstable": {"selected_format": "bti"}}),
     ("audit sub-keys", r"(?m)^(\s*)# included_categories:$", r"\1included_categories: DDL,DCL\n\1included_users: [a, b]",
      {"audit_logging_options": {"included_categories": "DDL,DCL", "included_users": ["a", "b"]}}),
     ("full query logging", r"(?m)^# ?full_query_logging_options:\n(\s*)# log_dir:\n(\s*)# roll_cycle: HOURLY$",

@@ -586,6 +586,7 @@
             tasks_from: action_add_prepare.yml
           when: cassandra_new_node_state == 'new'
           vars:
+            cassandra_auto_bootstrap: true  # it streams its data: an inventory's false (e.g. imported) not used
             # a new node: every setting goes from absent to set, a list per role and node says nothing (-v, or
             # cassandra_change_report_dir, still have them): a line per step instead, below
             _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"
@@ -713,6 +714,7 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: add
+        cassandra_auto_bootstrap: true  # it streams its data: an inventory's false (e.g. imported) not used
         _cassandra_add_prepared: true
         # no progress file: a run again finds where each node stands (new_node_state.yml)
         cassandra_service_resume_hint: >-

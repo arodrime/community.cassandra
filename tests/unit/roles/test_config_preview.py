@@ -190,7 +190,7 @@ INVENTORY = dict(inventory_hostname="node1", cassandra_cluster_name="my_cluster"
                  cassandra_extra_settings={}, cassandra_conf_dir="/etc/cassandra",
                  _cassandra_config_default_data_dir="/var/lib/cassandra/data",
                  cassandra_commitlog_dir="/var/lib/cassandra/commitlog", cassandra_saved_caches_dir="/var/lib/cassandra/saved_caches",
-                 cassandra_hints_dir="/var/lib/cassandra/hints")
+                 cassandra_hints_dir="/var/lib/cassandra/hints", _cassandra_config_more_dirs=[])
 
 
 def stat_result(d, isdir):

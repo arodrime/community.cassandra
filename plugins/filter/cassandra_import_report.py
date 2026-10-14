@@ -28,6 +28,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     KEEP, NOT_READ, _chains, _hand_edits_kept, _secret, _sort_key, _values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE
+from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import suspicious
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 # shown in the header, or the ring's (dc and rack): not among the settings
@@ -808,6 +809,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
         todo.append("%s: cassandra.yaml has %s, which Cassandra %s rejects: it would not restart; remove %s" % (
             _who(members, None, groups, full), ", ".join(keys), release,
             "it" if len(keys) == 1 else "them"))
+    # sensitive or suspicious settings found on the nodes (kept as they are)
+    for names, setting, why in suspicious(dict((n["name"], n.get("vars") or {}) for n in read)):
+        todo.append("WARNING %s: %s, kept as found %s %s" % (_who(names, None, groups, full), setting, DASH, why))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
