@@ -55,7 +55,7 @@ def summary(new_nodes=("node7",), joining=(), **inventory):
     new.update(own)
     variables = {
         "hostvars": {"node7": new, "node1": {"cassandra_preflight_describe": {"stdout": ""}}},
-        "_new": list(new_nodes), "_joining": list(joining), "_existing": ["node1"], "ansible_play_hosts_all": ["node7"],
+        "_new": list(new_nodes), "_joining": list(joining), "_joined": [], "_existing": ["node1"], "ansible_play_hosts_all": ["node7"],
         "cassandra_add_node_plan": {"estimate": [], "cleanup": {}, "scope": {}, "warnings": []},
         "cassandra_stream_check_interval": 30, "cassandra_stream_stall_time": 900, "_cassandra_session_warning": "",
         "_single": False, "_auto": "false", "ansible_check_mode": False, "cassandra_operation_confirm": True,
@@ -102,7 +102,7 @@ def test_medusa_on(inventory, line, fqdn):
     ([], [], "one", True),
 ])
 def test_shown_and_confirmed_when_there_is_something_to_do(new, joining, cleanup, shown):
-    variables = {"_new": new, "_joining": joining, "cassandra_add_node_cleanup": cleanup}
+    variables = {"_new": new, "_joining": joining, "_joined": [], "cassandra_add_node_cleanup": cleanup}
     condition = "{{ %s }}" % TASK["when"]
     assert Templar(loader=DataLoader(), variables=variables).template(trust_as_template(condition)) is shown
 
