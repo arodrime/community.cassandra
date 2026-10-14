@@ -195,6 +195,16 @@ def test_a_daemon_just_started_is_waited_for_while_it_converges(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "3"
 
 
+def test_a_daemon_right_after_an_update_is_waited_for_by_its_skew(tmp_path):
+    # its bound small for a moment after an update, its skew still 100%: converging, not a far source
+    node2 = dict(synced(), **{"tracking.1": converging(0.5)})
+    fake = setup(tmp_path, {"node1": synced(), "node2": node2})
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 15})
+    assert rc == 0, out
+    assert "node2: chronyd converging (\u00b1500.4 ms), waiting up to 15s" in out, out
+    assert (fake / "node2" / "calls").read_text().strip() == "2"
+
+
 def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
     fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": converging(62.04),
                                                          "sources": SOURCES}})

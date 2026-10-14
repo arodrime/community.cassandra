@@ -282,9 +282,9 @@ def _converging(probe, max_s):
 
 def cassandra_clock_settled(probe, max_ms=50, synchronised_only=False):
     """Whether waiting longer can change the verdict of this probe: a daemon running but not synchronised yet,
-    still converging (an error bound over CONVERGING_S: just started), or still correcting an offset (its own
-    error bound within the threshold), is not settled. synchronised_only: settled once synchronised (a step
-    follows)."""
+    still converging (an error bound over CONVERGING_S, or chrony's skew over CONVERGING_SKEW_PPM: just started),
+    or still correcting an offset (its own error bound within the threshold), is not settled. synchronised_only:
+    settled once synchronised (a step follows)."""
     if not isinstance(probe, dict):
         raise AnsibleFilterError("cassandra_clock_settled: a cassandra_clock_probe result is expected")
     why = _bad(probe, float(max_ms) / 1000)
