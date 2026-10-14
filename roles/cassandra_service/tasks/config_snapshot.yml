@@ -2,25 +2,64 @@
 # Records the checksums of the config files (and of the systemd unit) the running Cassandra started with,
 # so config_pending.yml can tell a change still to apply by content (a file
 # rewritten with the same content, or a change applied live, is not pending).
-- name: Checksum the config files
-  ansible.builtin.find:
-    paths: "{{ _cassandra_service_conf_dir }}"
-    file_type: file
-    get_checksum: true
-  register: cassandra_config_snapshot_files
-
-# the unit too: a new User=, Group= or limit also waits for a restart
-- name: Checksum the unit
-  ansible.builtin.stat:
-    path: /etc/systemd/system/cassandra.service
-  register: cassandra_config_snapshot_unit
-
-- name: Record them
-  ansible.builtin.copy:
-    content: >-
-      {{ dict(cassandra_config_snapshot_files.files | map(attribute='path')
-              | zip(cassandra_config_snapshot_files.files | map(attribute='checksum')))
-         | combine({cassandra_config_snapshot_unit.stat.path: cassandra_config_snapshot_unit.stat.checksum}
-                   if cassandra_config_snapshot_unit.stat.exists else {}) | to_nice_json }}
-    dest: "{{ _cassandra_service_config_snapshot }}"
-    mode: "0644"
+# Run after the start (and its wait): a file written since the JVM started is
+# left out (what it read is unknown: pending until a restart), and the JVM is
+# recorded (_jvm: its pid and start, as jvm_started.yml finds them), so that
+# apply_config trusts the record for that JVM only. In one go, as
+# config_pending.yml reads them.
+- name: Record the config Cassandra started with
+  ansible.builtin.command:
+    argv:
+      - "{{ _cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')) }}"
+      - -c
+      - "{{ _record }}"
+      - "{{ _cassandra_service_conf_dir | trim }}"
+      - /etc/systemd/system/cassandra.service
+      - "{{ _cassandra_service_config_snapshot }}"
+  changed_when: true
+  vars:
+    _record: |
+      import hashlib, json, os, stat, sys, time
+      conf, unit, record = [os.path.expanduser(os.path.expandvars(p)) for p in sys.argv[1:4]]
+      def sha1(path):
+          digest = hashlib.sha1()
+          with open(path, "rb") as f:
+              for block in iter(lambda: f.read(65536), b""):
+                  digest.update(block)
+          return digest.hexdigest()
+      def jvm():
+          try:
+              me = os.readlink("/proc/self/ns/pid")
+          except OSError:
+              me = None
+          for pid in sorted((p for p in os.listdir("/proc") if p.isdigit()), key=int):
+              try:
+                  with open("/proc/%s/cmdline" % pid, "rb") as f:
+                      if b"org.apache.cassandra.service.CassandraDaemon" not in f.read().split(b"\0"):
+                          continue
+                  if me is not None and os.readlink("/proc/%s/ns/pid" % pid) != me:  # a container's on this host
+                      continue
+                  with open("/proc/%s/stat" % pid) as f:
+                      ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+                  with open("/proc/uptime") as f:
+                      up = float(f.read().split()[0])
+                  return {"pid": pid, "start": round(time.time() - up + ticks / float(os.sysconf("SC_CLK_TCK")), 2)}
+              except (IOError, OSError, IndexError, ValueError):
+                  continue
+          return None
+      started = jvm()
+      out = {}
+      names = sorted(os.listdir(conf)) if os.path.isdir(conf) else []
+      for path in [os.path.normpath(os.path.join(conf, n)) for n in names if not n.startswith(".")] + [unit]:
+          try:
+              st = os.lstat(path)
+          except OSError:
+              continue
+          if stat.S_ISREG(st.st_mode) and (started is None or st.st_ctime <= started["start"]):
+              out[path] = sha1(path)
+      if started is not None:
+          out["_jvm"] = started
+      with open(record + ".tmp", "w") as f:
+          json.dump(out, f, indent=4, sort_keys=True)
+      os.chmod(record + ".tmp", 0o644)
+      os.rename(record + ".tmp", record)

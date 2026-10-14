@@ -76,14 +76,15 @@
         tasks_from: config_pending.yml
 
     # A file written back with the content the running Cassandra started with (deleted or edited by hand
-    # since): no restart for it. Only when the record is that JVM's (written after it started: a start
-    # outside the roles leaves an older one)
+    # since): no restart for it. Only when the record is that JVM's (its pid and start, recorded with it:
+    # a start outside the roles leaves the one of an earlier JVM), never cassandra.yaml (settings changed
+    # live since, seeds reloaded...), nor when the conf directory itself changes (rpm alternative)
     - name: Note the files written back as the running Cassandra started with them
       ansible.builtin.set_fact:
         _cassandra_apply_config_as_started: >-
           {%- set out = [] -%}
           {%- set conf = _cassandra_service_conf_dir | trim | regex_replace('/+$', '') -%}
-          {%- for f in _cassandra_config_changes | default([]) if f in _new -%}
+          {%- for f in _cassandra_config_changes | default([]) if f in _new and f != 'cassandra.yaml' and not _switch -%}
           {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
           {%-     if sum == _new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
           {%-   endfor -%}
@@ -92,6 +93,9 @@
       vars:
         _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
         _new: "{{ _cassandra_config_new | default({}) }}"  # the files as cassandra_config renders them
+        _target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is defined
+                     and cassandra_config_conf_target is not skipped else '' }}"
+        _switch: "{{ _target | length > 0 and _target != cassandra_rpm_conf_alternative | default(_target) }}"
 
     - name: Read when the running Cassandra started (files written back as it started with them)
       ansible.builtin.include_role:
@@ -135,6 +139,9 @@
           {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _pending | bool else 'none') if _running | bool
              else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
         cassandra_apply_config_pending: "{{ _pending }}"
+        # checked again before the write (action_apply_config.yml): that JVM still runs
+        cassandra_apply_config_as_started: "{{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start}
+                                               if _as_started else {} }}"
         # said under the node's outcome, in the plan and the recap (whatever the outcome)
         cassandra_apply_config_notes: >-
           {{ (['restart pending (' ~ _newer | join(', ') ~ ' changed since the running Cassandra started)']
@@ -145,11 +152,13 @@
              + _cassandra_config_dir_notes | default([]) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
-        # (trusted when the record was written after the running JVM started: the start it records)
+        # (trusted for the JVM the record was written for: the same pid, the same start)
+        _jvm: "{{ (cassandra_pending_snapshot.content | b64decode | from_json)._jvm | default({})
+                  if cassandra_pending_snapshot.content is defined else {} }}"
         _as_started: >-
           {{ _cassandra_apply_config_as_started | default([])
-             if cassandra_jvm.start is defined and cassandra_pending_snapshot.mtime is defined
-                and cassandra_pending_snapshot.mtime | float >= cassandra_jvm.start | float else [] }}
+             if cassandra_jvm.start is defined and _jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
+                and (_jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 else [] }}
         # the files changed since the start, but the ones written back as they were then
         _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | list }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
