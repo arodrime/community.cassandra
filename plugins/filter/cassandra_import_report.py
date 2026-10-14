@@ -735,7 +735,7 @@ def _sections(layout, self_check):
 def cassandra_import_report(layout, written, report_file, self_check, self_check_ok, secrets_clear=None,
                             leftovers=None, check=False, inventory="", hosts="", allow_unread=False, screen=False,
                             self_check_error="", cwd=None, in_git=None, changes=None, todo=None, width=None,
-                            strict=False):
+                            strict=False, convergence=None):
     """layout: cassandra_inventory_layout's (its nodes); written: [the hosts file, the inventory dir];
     report_file: where report.txt goes (report.check.txt under --check); self_check: {node: {differences, notes}}; self_check_ok;
     secrets_clear: the secrets.yml files written in clear; leftovers: cassandra_inventory_leftovers'; check:
@@ -746,7 +746,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     that change], removed: [the files removed], existed: [the files there before]}, paths in the inventory dir
     (None: not known); todo: more TO DO items (the CQL login); width: the lines fit in it (default: the
     terminal's for the screen, REPORT_WIDTH for the report); strict: import_cluster_strict (the run stops on a failed
-    self-check, its HOW TO MAKE IT PASS below the screen). Returns the lines.
+    self-check, its HOW TO MAKE IT PASS below the screen); convergence: the lines of the CONVERGENCE section
+    (cassandra_import_convergence's, the screen's or the report's), before where the full report is on the screen,
+    before NOT READ in the report. Returns the lines.
     From GROUPS_FROM nodes on (cassandra_output), the node lists are by NODE GROUPS defined at the top, the same
     in the screen and the report; DETAILS names every node."""
     cluster = layout["cluster_group"]
@@ -928,6 +930,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if screen:
         while lines and not lines[-1]:
             lines.pop()
+        if convergence:
+            lines += [""] + list(convergence)
         return lines + ["", "full report%s: %s" % (" (--check)" if check else "", shown(report_file))]
 
     # SELF-CHECK: what the roles would change, grouped by what makes it pass, each node's differences under it
@@ -1027,6 +1031,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if any(leftovers.get(k) for k in ("stale", "replaced", "kept")):
         lines.append("")
 
+    if convergence:
+        lines += list(convergence) + [""]
     lines += ["NOT READ %s set in group_vars/all if they apply" % DASH, "  " + ", ".join(NOT_READ), ""]
     commands = [(out.command("apply_config", inventory=inventory or None, hosts=hosts or None,
                              extra=["--check", "--diff"], cwd=cwd),

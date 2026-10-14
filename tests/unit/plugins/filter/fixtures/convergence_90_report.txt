@@ -1,0 +1,59 @@
+CONVERGENCE — towards one group, every setting in group_vars/big/
+  4/11 settings common to all nodes, 7 differ, 3 files kept by hand (1 node not read: not counted); 82 node values to change, on 47 nodes
+  Not counted, per node by nature or kept by each node for life: cassandra_broadcast_rpc_address, cassandra_num_tokens
+  Also in host_vars: cassandra_linux_manage: false (LEFT AS IT IS above)
+
+  SETTINGS THAT DIFFER — the safest change first, then the fewest nodes
+  Each one: edit the files it names, review it with its check, run that without --check, then import again: once every node has the value, the import keeps it
+    in group_vars/big/ and the line goes away.
+  cassandra_linux_limits.nofile   100000 (88 nodes)   200000 (1: cass007)
+      → 100000 for all: nofile: 100000 in cassandra_linux_limits in host_vars/cass007/
+      1 node changes, no restart (cassandra_linux, applied live); check: ansible-playbook community.cassandra.apply_config --limit cass007 --check --diff
+  cassandra_config_file_permissions.cassandra.yaml   0640 (86 nodes)   0644 (3: cass002, cass033, cass077)
+      → 0640 for all: cassandra.yaml: 0640 in cassandra_config_file_permissions in host_vars of 3 nodes (cass002, cass033, cass077)
+      3 nodes change, no restart; check: ansible-playbook community.cassandra.apply_config --limit cass002,cass033,cass077 --check --diff
+  cassandra_extra_settings.streaming_connections_per_host   2 (83 nodes)   1 (5: G6)   6 (1: cass090)
+      → 2 for all: streaming_connections_per_host: 2 in cassandra_extra_settings in host_vars of 6 nodes (cass011, cass012, cass013, cass014, cass015, cass090)
+      6 nodes change, then restart; check:
+        ansible-playbook community.cassandra.apply_config --limit cass011,cass012,cass013,cass014,cass015,cass090 --check --diff
+  cassandra_heap_size   16G (79 nodes)   12G (10: big_dc2_r1 (G3 + cass033))
+      → 16G for all: cassandra_heap_size: 16G in group_vars/big/main.yml, removed from group_vars of 5 groups (big_dc1, big_dc2_r1, big_dc2_r2, big_dc2_r3,
+        big_dc3)
+      10 nodes change, then restart; sized for the machine: one value only where the machines are alike, else keep it per group; check:
+        ansible-playbook community.cassandra.apply_config --limit cass031,cass032,cass033,cass034,cass035,cass036,cass037,cass038,cass039,cass040 --check --diff
+  cassandra_medusa_extra_settings.storage.secret_access_key   secret 1 (59 nodes)   secret 2 (30: big_dc3 (G2 + G5 + G7 + cass077, cass088, cass089, cass090))
+      → secret 1 for all: storage.secret_access_key: secret 1 (its value in group_vars/big_dc1/) in cassandra_medusa_extra_settings in group_vars/big_dc3/
+      30 nodes change, restart unknown (apply_config does not write it); check: none, apply_config does not show it
+  cassandra_jmx_password   secret 1 (59 nodes)   secret 2 (30: big_dc3 (G2 + G5 + G7 + cass077, cass088, cass089, cass090))
+      → secret 1 for all: cassandra_jmx_password: secret 1 (its value in group_vars/big_dc1/) in group_vars/big/secrets.yml, removed from group_vars of 3 groups
+        (big_dc1, big_dc2, big_dc3)
+      30 nodes change, none on the nodes: the playbooks' login, which the nodes must accept first (their jmxremote.password, cassandra_jmx_users; their CQL
+        role); check: none, apply_config does not show it
+  cassandra_data_file_directories   /data (87 nodes)   /data1, /data2 (2: cass088, cass089)
+      → /data for all: cassandra_data_file_directories: /data in group_vars/big/main.yml, removed from group_vars of 4 groups (big_dc1, big_dc2, big_dc3_r1,
+        big_dc3_r2), host_vars of 10 nodes (cass081, cass082, cass083, cass084, cass085, cass086, cass087, cass088, cass089, cass090)
+      2 nodes change, moved by hand first, the node stopped (apply_config would restart it on the new path); check:
+        ansible-playbook community.cassandra.apply_config --limit cass088,cass089 --check --diff
+
+  KEPT BY HAND — cassandra_config_keep_files: left as their node has them
+  jvm11-server.options   kept on G3 + G4 + cass033
+      line 60:  + -XX:+UseNUMA   → cassandra_jvm11_extra_options: [-XX:+UseNUMA] (if no other line of the file sets it)
+    → to give it back to the roles: set cassandra_jvm11_extra_options in host_vars of 19 nodes (cass031, cass032, cass033, cass034, cass035, cass036, cass037,
+      cass038, cass039, cass040, cass041, cass042, cass043, cass044, cass046, cass047, cass048, cass049, cass050) (in group_vars/big/ instead, the 70 other
+      nodes get them too, then restart); then take jvm11-server.options out of cassandra_config_keep_files (the same host_vars): apply_config writes it, then
+      restarts the node; check first: ansible-playbook community.cassandra.apply_config --check --diff (what its diff still shows, the roles would revert)
+  logback.xml   kept on G7
+      line 40:  - <logger name="org.apache.cassandra" level="DEBUG"/>   + <logger name="org.apache.cassandra" level="INFO"/>   → cassandra_log_level_cassandra:
+          INFO
+      line 52:  + <logger name="com.example.audit" level="WARN"/>   → no variable
+    → to give it back to the roles: set cassandra_log_level_cassandra in host_vars of 3 nodes (cass061, cass062, cass063) (in group_vars/big/ instead, the 86
+      other nodes get them too, then restart); undo the edits no variable carries on the nodes, or keep the file; then take logback.xml out of
+      cassandra_config_keep_files (the same host_vars): apply_config writes it, then restarts the node; check first:
+      ansible-playbook community.cassandra.apply_config --limit cass061,cass062,cass063 --check --diff (what its diff still shows, the roles would revert)
+  cassandra-env.sh   kept on cass090
+      line 300:  + JVM_OPTS="$JVM_OPTS -Dcassandra.example=1"   → cassandra_jvm_extra_options: [-Dcassandra.example=1]
+      line 301:  + export KEYSTORE_PASSWORD=****   → no variable
+    → to give it back to the roles: set cassandra_jvm_extra_options in host_vars/cass090/ (in group_vars/big/ instead, the 88 other nodes get them too, then
+      restart); undo the edits no variable carries on the nodes, or keep the file; then take cassandra-env.sh out of cassandra_config_keep_files (the same
+      host_vars): apply_config writes it, then restarts the node; check first: ansible-playbook community.cassandra.apply_config --limit cass090 --check --diff
+      (what its diff still shows, the roles would revert)
