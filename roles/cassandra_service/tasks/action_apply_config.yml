@@ -4,7 +4,8 @@
 #   restart: new settings, the node is drained and restarted;
 #   start: its unit failed (it could not start, or crashed) or a resumed run
 #     stopped it: started once written;
-#   none: an owner, group or mode alone, read when Cassandra started;
+#   none: an owner, group or mode alone, read when Cassandra started; the JMX
+#     password file (read at each login, written first by apply_config);
 #   write: stopped on purpose, left stopped.
 # A unit restarting in a loop (Restart=on-failure) or past its start limit
 # would not start again: it is stopped before the write, so that the loop does

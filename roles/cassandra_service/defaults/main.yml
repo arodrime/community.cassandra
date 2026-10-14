@@ -217,9 +217,10 @@ _cassandra_service_system_dirs: >-
 # an older mark is not trusted (a node that may have joined since, its end not seen)
 _cassandra_service_bootstrap_mark_days: 7
 # The files of the conf dir cassandra_config writes: the config a restart picks up
-# (and the JMX users' files, in the conf dir on Debian and Ubuntu)
+# (and the JMX access file, in the conf dir on Debian and Ubuntu; not the password
+# file, read at each login: a new one needs no restart)
 _cassandra_service_config_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties, logback.xml,
-                                  jmxremote.password, jmxremote.access]
+                                  jmxremote.access]
 _cassandra_service_jmx: >-
   {{ {'port': cassandra_jmx_port | default(7199) | int}
      | combine({'username': cassandra_jmx_username} if cassandra_jmx_username else {})
