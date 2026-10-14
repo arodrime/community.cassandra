@@ -330,7 +330,7 @@ _CREATED = re.compile(r"^([^:\s]+): not on the node, the roles would create it$"
 # the kinds of differences, by what makes the self-check pass, in the order shown
 _HAND, _YOURS, _OTHER = "hand", "yours", "other"
 _KINDS = ((_HAND, "Hand edits no variable covers (cassandra_config would revert them)"),
-          (_YOURS, "Your own files win over the import"),
+          (_YOURS, "Your inventory files override the import (Ansible will apply your value)"),
           (_OTHER, "Other differences"))
 SCREEN_VALUE = 50  # a value longer than this is cut on the screen (whole in the report)
 SCREEN_MOST = 100  # the stop's lines at most (the ops callback's rules)
@@ -420,8 +420,8 @@ def _self_check_items(read, self_check, theirs_win=None):
             if setting:
                 node_text, role_text = _unquoted(node_text), _unquoted(role_text)
                 secret = _secret(setting, node_text) or _secret(setting, role_text)
-                item["pairs"].append((name, out.MASK if secret else out.mask(node_text),
-                                      out.MASK if secret else out.mask(role_text)))
+                item["pairs"].append(tuple([name] + [None if v is None else out.MASK if secret else out.mask(v)
+                                                     for v in (node_text, role_text)]))
             item["lines"].append((name, out.mask(d)))
             if winner:
                 item["wins"][name] = winner
@@ -430,9 +430,9 @@ def _self_check_items(read, self_check, theirs_win=None):
 
 
 def _unquoted(text):
-    """A value as the self-check quotes a string ('64') -> 64, '' as is; "nothing" (none on that side) -> none."""
+    """A value as the self-check quotes a string ('64') -> 64, '' as is; "nothing" (none on that side) -> None."""
     if text == "nothing":
-        return "none"
+        return None
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
         try:
             value = ast.literal_eval(text)
@@ -461,36 +461,43 @@ def _cut(text, room):
     return text if not room or len(text) <= room else text[:room - 3].rstrip() + "..."
 
 
-def _item_text(item, who, room=None):
-    """What an item shows right of its name: the inventory's value and each node's ("inventory 32   node3: 64"),
-    else the line and its nodes ("JVM_OPTS=...   hand edit on node2"); room: a value or a line cut to it (the
-    screen), a sentence never."""
+def _item_lines(item, who, width, room=None):
+    """An item: "- <name>, on <nodes>:", then what differs under it ("node 64, inventory 32", the line the node has,
+    "-XX:+UseFoo (not in the inventory)"), a line per value when the nodes differ ("node3: node 128, ..."), where a
+    file of yours sets it; room: a value or a line cut to it (the screen), a sentence never."""
+    def value(node_text, role_text):
+        if role_text is None:
+            return "%s (not in the inventory)" % _cut(node_text, room)
+        if node_text is None:
+            return "not on the node, inventory %s" % _cut(role_text, room)
+        return "node %s, inventory %s" % (_cut(node_text, room), _cut(role_text, room))
+
     if item["setting"]:
-        values, roles = [], []
+        values = []
         for name, node_text, role_text in item["pairs"]:
             entry = next((v for v in values if v[0] == (node_text, role_text)), None)
             if entry is None:
                 values.append(((node_text, role_text), [name]))
             elif name not in entry[1]:
                 entry[1].append(name)
-            if role_text not in roles:
-                roles.append(role_text)
-        if len(roles) == 1:
-            text = "inventory%s%s   %s" % (out.NBSP, _cut(roles[0], room), "; ".join(
-                "%s:%s%s" % (who(names), out.NBSP, _cut(n, room)) for (n, dummy), names in values))
-        else:
-            text = "; ".join("%s:%s%s (inventory%s%s)" % (who(names), out.NBSP, _cut(n, room), out.NBSP,
-                                                          _cut(r, room)) for (n, r), names in values)
+        details = [value(*pair) for pair, names in values] if len(values) == 1 else \
+            ["%s: %s" % (who(names), value(*pair)) for pair, names in values]
     else:
-        text = "%s   %s%s" % (_cut(item["text"], room if item["setting"] == "" else None),
-                              _whole("hand edit on ") if item["kind"] == _HAND else "on" + out.NBSP,
-                              who(_item_nodes(item)))
+        details = [_cut(item["text"], room if item["setting"] == "" else None)]
     wins = sorted(set(w["path"] for w in item["wins"].values()))
-    return text + ("   (yours:%s%s)" % (out.NBSP, ", ".join(wins)) if wins else "")
+    if wins:
+        details[-1] += " (set in %s)" % ", ".join(wins)
+    lines = _fill("- %s, on %s:" % (_item_name(item), who(_item_nodes(item))), width, "    ", "    ")
+    for detail in details:
+        lines += _fill(detail, width, "        ", "  ")
+    return lines
 
 
 def _item_name(item):
-    return out.mask("%s %s" % (item["file"], item["setting"]) if item["setting"] else item["file"] or "?")
+    """cassandra.yaml concurrent_reads; a JVM option's file alone when its values name it (-XX:+UseFoo; not ****)."""
+    named = item["setting"] and not (item["file"].endswith(".options") and all(
+        v is None or v.startswith("-") for dummy, n, r in item["pairs"] for v in (n, r)))
+    return out.mask("%s %s" % (item["file"], item["setting"]) if named else item["file"] or "?")
 
 
 def _column(names, most=40):
@@ -542,10 +549,13 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
             hand.setdefault(f, [])
             hand[f] += [n for n in _item_nodes(item) if n not in hand[f]]
     if hand:
-        hints.append(("hand edits", "to keep them as they are: import again with %s, these files are then left as"
-                      " their node has them (not managed by apply_config): %s. To drop them: undo them on the node,"
-                      " then import again" % (_whole("-e import_cluster_keep_hand_edits=true"),
-                                              "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
+        hints.append(("hand edits", "to keep them as they are: import again with %s; these files are then NOT"
+                      " managed by Ansible (kept as the node has them): %s. To bring them under Ansible later: carry"
+                      " the edit in the inventory (cassandra_jvm*_extra_options, cassandra_extra_settings, ...),"
+                      " remove the file from cassandra_config_keep_files, import again. To drop them instead: undo"
+                      " them on the node, then import again" % (
+                          _whole("-e import_cluster_keep_hand_edits=true"),
+                          "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
     yours = {}  # (the file of yours, its variable): the nodes' values
     for item in items:
         for w in item["wins"].values():
@@ -611,14 +621,11 @@ def _self_check_lines(layout, self_check, who, width, report_file="", error="", 
         if not mine:
             continue
         differs += _fill("%s:" % title, width, "  ", "  ")
-        if not report:
-            differs += _aligned([(_item_name(i), _item_text(i, who, room)) for i in mine], "    ", width)
-            continue
-        column = _column([_item_name(i) for i in mine])
         for item in mine:
-            differs += _aligned([(_item_name(item), _item_text(item, who))], "    ", width, column)
-            for name, d in item["lines"]:
-                differs += _fill("%s: %s" % (name, d), width, "      ", "  ")
+            differs += _item_lines(item, who, width, room)
+            if report:
+                for name, d in item["lines"]:
+                    differs += _fill("%s: %s" % (name, d), width, "          ", "  ")
     if unread:
         differs += _fill("Not read, so not checked: %s" % ", ".join(
             "%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread), width, "  ")

@@ -111,9 +111,10 @@ def test_the_stop_reads_the_self_checks_own_differences():
     heap = [d for d in check_heap() if d.startswith("heap")]
     lines = cassandra_import_self_check_advice(layout, {"n1": {"differences": out["differences"] + heap}}, width=160)
     at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
-    assert lines[at + 1].startswith("    logback.xml   /configuration") and lines[at + 1].endswith("hand edit on n1")
-    assert "    heap MAX_HEAP_SIZE   inventory 8G   n1: 4G" in lines
-    assert "    heap HEAP_NEWSIZE    inventory none   n1: 800M" in lines
+    assert lines[at + 1] == "    - logback.xml, on n1:" and lines[at + 2].startswith("        /configuration")
+    at = lines.index("    - heap MAX_HEAP_SIZE, on n1:")
+    assert lines[at + 1] == "        node 4G, inventory 8G"
+    assert lines[lines.index("    - heap HEAP_NEWSIZE, on n1:") + 1] == "        800M (not in the inventory)"
     assert lines[0].startswith("SELF-CHECK FAILED  c  the inventory would change 3 settings on 1 node")
 
 
