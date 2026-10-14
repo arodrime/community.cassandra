@@ -91,6 +91,9 @@ def test_a_cql_login_refused_by_its_cause_no_driver_dump():
                                                              "{'10.0.0.1:9042': ConnectionRefusedError(111)})"})
     assert said == ["The keyspaces' replication could not be read with cqlsh on n1 (no connection): check that Cassandra"
                     " runs there and takes CQL connections, then run this again."]
+    said = refusal({"msg": "module execution failed", "err": "Using ssl: False\nSyntaxException: line 1:7 no viable"})
+    assert said == ["The keyspaces' replication could not be read with cqlsh on n1 (SyntaxException: line 1:7 no viable):"
+                    " check that Cassandra runs there and takes CQL connections, then run this again."]
 
 
 def test_the_node_named_when_the_message_does_not():

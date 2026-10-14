@@ -108,7 +108,7 @@ def _verdict(nodes, differ, unreached=()):
     """"ALL 3 NODES UP" or "1 NODE DOWN: node2 (dc1/rack_b)", then the nodes
     joining, leaving or moving and a ring that differs from the inventory.
     nodes: (name, datacenter, node) of each node of the ring. unreached: the
-    hosts Ansible did not reach: "1 NODE NOT REACHED: node3" (but the ones
+    hosts Ansible did not reach: "1 NODE NOT REACHED: node3" (except the ones
     down), never ALL UP then (the ring's view, gossip, can be late)."""
     down = ["%s (%s/%s)" % (name, dc, n["rack"]) for name, dc, n in nodes if n["status"] == "D"]
     unreached = [h for h in unreached if h not in [name.rstrip("?") for name, dc, n in nodes if n["status"] == "D"]]

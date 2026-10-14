@@ -98,6 +98,8 @@ def test_typo_refused_by_the_lookup_too():
 def test_empty_group():
     passed, msg = check(cassandra_hosts="empty")
     assert passed is False and msg.startswith("cassandra_hosts: group 'empty' has no host")
+    assert msg.endswith("Add its hosts to the inventory, or name the cluster's group: -e cassandra_hosts=<group>."
+                        " Nothing was changed.")
 
 
 @pytest.mark.parametrize("playbook", ["preflight.yml", "health_check.yml", "start_rack.yml", "status.yml"])

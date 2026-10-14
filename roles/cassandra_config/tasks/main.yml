@@ -580,7 +580,7 @@
       when:
         - _cassandra_config_changes | length > 0
         - not _cassandra_config_quiet | default(false)  # shown by the caller (apply_config: before its run)
-        - not (_cassandra_config_ask | bool and not ansible_check_mode)  # (next)
+        - not (_cassandra_config_ask | bool and not ansible_check_mode)  # asked below: shown with its question
 
     # the diffs the question below is about: printed by the ops callback too, each node's under its name
     - name: Show the config changes to confirm
