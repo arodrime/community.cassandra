@@ -100,6 +100,9 @@ def _seen(node):
 
 
 def _no_ring(view):
+    if view.get("lone"):
+        return ("only %s answered, alone in its ring, %s did not: whether it is in the ring can't be checked"
+                % (", ".join(view["lone"]), ", ".join(view["silent"])))
     return ("no other node of the cluster answered UN (asked: %s): whether it is in the ring can't be checked"
             % (", ".join(view["tried"]) or "none"))
 
@@ -132,16 +135,22 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
     me = mine(addresses)
     own = set(i for i in ids or [] if i)
     replace = _addr(replace_address)
-    out = {"usable": [], "tried": [str(a.get("host")) for a in answers or []], "entries": [], "replaced": [],
-           "replaced_up": [], "unknown_down": []}
+    out = {"usable": [], "tried": [str(a.get("host")) for a in answers or [] if a.get("asked", True)], "entries": [],
+           "replaced": [], "replaced_up": [], "unknown_down": []}
     for a in answers or []:
         nodes = _nodes(a.get("status"))
         own_addr = set(_addr(x) for x in a.get("addresses") or [])
         if any(_addr(n.get("address")) in own_addr and n.get("status") == "U" and n.get("state") == "N" for n in nodes):
             out["usable"].append((a.get("host"), nodes))
-    # a node alone in its ring (a host of the group not added yet, the package's own instance) does not stand for
-    # the cluster while other nodes asked did not answer: their ring is unknown
-    if len(out["usable"]) < len(answers or []):
+    # for a node holding data, a node alone in its ring (a host of the group not added yet, the package's own
+    # instance) does not stand for the cluster while other nodes of the group did not answer (asked, or stopped:
+    # asked False): their ring is unknown. A node without data needs no proof (nothing to lose): a one-node cluster
+    # adding its second node, a stock instance on another host of the group, do not stop it.
+    silent = [a for a in answers or [] if not a.get("status")
+              or (len(_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, _ in out["usable"]])]
+    out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
+    if _true(has_data) and silent:
+        out["lone"] = [h for h, nodes in out["usable"] if len(nodes) <= 1]
         out["usable"] = [(h, nodes) for h, nodes in out["usable"] if len(nodes) > 1]
     for other, nodes in out["usable"]:
         for n in nodes:
@@ -186,7 +195,10 @@ def ring_problems(view, addresses, name, replace_address="", running=False, own=
             if len(_nodes(own)) > 1 and others:
                 problems.append("Cassandra runs on %s and its ring has other nodes (%s): it is a member of a cluster,"
                                 " never reset a live member" % (name, ", ".join(others[:5]) + (", ..." if len(others) > 5 else "")))
-    if not view["usable"]:
+    if not view["usable"] and view.get("lone"):
+        problems.append("only %s answered, alone in its ring, %s did not: whether %s is in the ring can't be checked,"
+                        " nothing is reset" % (", ".join(view["lone"]), ", ".join(view["silent"]), name))
+    elif not view["usable"]:
         problems.append("no other node of the cluster answered as up and normal (UN) (asked: %s): whether %s is in the"
                         " ring can't be checked, nothing is reset" % (", ".join(view["tried"]) or "none", name))
     for other, n in view["unknown_down"]:
@@ -323,13 +335,15 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
 
     reasons = []
     ring = {"read": ring_read, "known": ring_known, "in_ring": "", "entry": {}, "seen_by": "", "tried": view["tried"],
-            # the first node of the cluster that answered UN: the ring add_node plans with
-            "from": view["usable"][0][0] if ring_known else "",
+            # the first node of the cluster that answered UN, one not alone in its ring first: the ring add_node plans with
+            "from": ([h for h, nodes in view["usable"] if len(nodes) > 1] + [h for h, _ in view["usable"]] + [""])[0],
             "problems": ring_problems(view, addresses, name, replace_address, jvm, own) if ring_read else []}
     # at one of its addresses first: another host ID there is a conflict, wherever its own host ID shows
     me = mine(addresses)
     at_address = [e for e in view["entries"] + view["replaced_up"] if _addr(e[1].get("address")) in me]
-    at_address.sort(key=lambda e: not (my_id and e[1].get("host_id") == my_id))  # its own entry, when one is there
+    # its own entry first, before a down one (a dead node's old address); another host ID up there stays a conflict
+    at_address.sort(key=lambda e: 0 if e[1].get("status") == "U" and e[1].get("host_id") != my_id
+                    else 1 if my_id and e[1].get("host_id") == my_id else 2)
     entry = (at_address or view["entries"] or view["replaced_up"] or [None])[0]
     if entry:
         other, n = entry

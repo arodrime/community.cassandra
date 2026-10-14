@@ -220,6 +220,7 @@
 - name: Work out which nodes to ask
   ansible.builtin.set_fact:
     _cassandra_node_standing_from: "{{ _others | reject('in', _stopped) | list }}"
+    _cassandra_node_standing_stopped: "{{ _stopped }}"
   vars:
     _aside_pattern: "{{ [cassandra_target_nodes | default([])] | flatten | select | join(',') }}"
     # the nodes being added or reset (the play's hosts when not named: topology runs this on every node)
@@ -270,6 +271,9 @@
                       else cassandra_node_reset_rings.results | default([]) | selectattr('item', 'equalto', h) | first | default({}) -%}
         {%-   set _ = out.append({'host': h, 'addresses': _addresses_of[h] | default([]), 'status': r.cluster_status | default(none)}) -%}
         {%- endfor -%}
+        {%- for h in _cassandra_node_standing_stopped -%}  {#- not asked: their ring is unknown -#}
+        {%-   set _ = out.append({'host': h, 'addresses': _addresses_of[h] | default([]), 'status': none, 'asked': false}) -%}
+        {%- endfor -%}
         {{ out }}
       ring_read: "{{ _cassandra_node_standing_ring | default(true) | bool }}"
       size_read: "{{ cassandra_node_reset_du.stdout_lines is defined }}"
@@ -285,7 +289,10 @@
       # in the words the reset's plan says them (reset_node_plan.yml)
       unreadable: >-
         {{ _unread + _cassandra_node_reset_dirs.problems | select('search', 'cassandra.yaml (can not be read|is not valid|is not a mapping)')
-           | list }}
+           | list
+           + cassandra_node_standing_elsewhere.results | default([]) | selectattr('stat', 'undefined') | map(attribute='item')
+             | select('in', _cassandra_node_standing_data_dirs.own) | map('regex_replace', '$', ': can not be checked (without root?)')
+             | list }}
       keyspaces: "{{ _held | select('regex', '^(' ~ _data_dirs | map('regex_escape') | join('|') ~ ')/[^/]+$') | map('basename') | list }}"
       peers: >-
         {{ cassandra_node_reset_peers.files | default([]) | map(attribute='path') | select('search', '/peers(_v2)?-[^/]*/') | list | length > 0 }}
