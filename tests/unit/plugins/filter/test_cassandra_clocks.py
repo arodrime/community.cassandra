@@ -48,8 +48,9 @@ TRACKING_LOCAL = (TRACKING_SYNCED.replace("C0000201 (192.0.2.1)", "7F7F0101 ()")
                   .replace("Stratum         : 3", "Stratum         : 10"))
 
 
-def tracking(seconds, way="slow", delay="0.000800000", dispersion="0.000300000", leap="Normal"):
+def tracking(seconds, way="slow", delay="0.000800000", dispersion="0.000300000", leap="Normal", skew="0.012"):
     return (TRACKING_SYNCED.replace("0.000012345 seconds slow", "%.9f seconds %s" % (seconds, way))
+            .replace("Skew            : 0.012 ppm", "Skew            : %s ppm" % skew)
             .replace("Root delay      : 0.000800000", "Root delay      : " + delay)
             .replace("Root dispersion : 0.000300000", "Root dispersion : " + dispersion)
             .replace("Leap status     : Normal", "Leap status     : " + leap))
@@ -256,6 +257,12 @@ def test_settled():
     assert cassandra_clock_settled(fresh, 10000)  # under ten times a 10 s threshold: a far source
     big = cassandra_clock_probe(probe_text(tracking_text=tracking(0.0001, "fast", dispersion="1.200000000")))
     assert not cassandra_clock_settled(big, 50)
+    # right after one of its first updates: a small bound, but chrony's skew still its initial 100%
+    just_updated = cassandra_clock_probe(probe_text(tracking_text=tracking(0.0001, "fast", dispersion="0.500000000",
+                                                                           skew="1000000.000")))
+    assert just_updated["skew"] == 1000000.0
+    assert not cassandra_clock_settled(just_updated, 50)
+    assert "converging" in cassandra_clock_wait_line(just_updated, "node4", 180)
     nothing = cassandra_clock_probe(probe_text(active="", tracking_text=None))
     assert cassandra_clock_settled(nothing, 50)  # nothing runs to wait for
     with pytest.raises(AnsibleFilterError):

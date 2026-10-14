@@ -180,7 +180,8 @@ def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
 
 def converging(dispersion):
     # a daemon just started: synchronised, its error bound still large (its skew from a few samples)
-    return tracking(0.0001, "fast").replace("Root dispersion : 0.000300000", "Root dispersion : %.9f" % dispersion)
+    return (tracking(0.0001, "fast").replace("Root dispersion : 0.000300000", "Root dispersion : %.9f" % dispersion)
+            + "Skew            : 1000000.000 ppm\n")
 
 
 def test_a_daemon_just_started_is_waited_for_while_it_converges(tmp_path):

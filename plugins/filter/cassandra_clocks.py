@@ -48,6 +48,9 @@ COARSE_MS = 1000
 # an error bound over this (and over 10 times the threshold): a daemon just started, its skew still estimated
 # from a few samples, not a far source; it shrinks with the next samples (chrony: its first polls, ~64 s apart)
 CONVERGING_S = 1.0
+# chrony's own word for it: a skew over its maxupdateskew default (ppm; 1000000 with no drift file yet), its
+# error bound then a sawtooth from ~0 at each update (1 s more per second since it)
+CONVERGING_SKEW_PPM = 1000.0
 # what chronyc tracking says of a clock that follows no source: no reference, or its own (local stratum N)
 _NO_REFERENCE = ("00000000", "7F7F0101")
 _DAEMONS = {"chronyd": "chrony", "chrony": "chrony", "systemd-timesyncd": "timesyncd", "ntpd": "ntp", "ntp": "ntp",
@@ -106,8 +109,8 @@ def parse_units(lines):
 
 
 def parse_chrony_tracking(lines):
-    """chronyc -n tracking -> {ref_id, source, stratum, offset, bound, leap, synchronised}; {} if chronyd did not
-    answer (506 Cannot talk to daemon)."""
+    """chronyc -n tracking -> {ref_id, source, stratum, offset, bound, leap, synchronised, skew (ppm)}; {} if
+    chronyd did not answer (506 Cannot talk to daemon)."""
     f = _fields(lines)
     if "Reference ID" not in f:
         return {}
@@ -124,9 +127,10 @@ def parse_chrony_tracking(lines):
     leap = {"normal": "normal", "insert second": "insert", "delete second": "delete"}.get(leap, "unsynchronised")
     stratum = int(f["Stratum"]) if f.get("Stratum", "").isdigit() else None
     synchronised = leap != "unsynchronised" and ref_id not in _NO_REFERENCE and bool(stratum)
+    skew = re.match(r"([0-9.]+) ppm", f.get("Skew", ""))
     return {"ref_id": ref_id, "source": source if ref_id not in _NO_REFERENCE else "",
             "local": ref_id == "7F7F0101", "stratum": stratum, "offset": offset, "bound": bound, "leap": leap,
-            "synchronised": synchronised}
+            "synchronised": synchronised, "skew": float(skew.group(1)) if skew else None}
 
 
 def parse_chrony_sources(lines):
@@ -187,7 +191,7 @@ def cassandra_clock_probe(text):
     units = parse_units(s.get("units", []))
     out = {"daemon": "", "service": "", "active": False, "installed": False, "enabled": False, "masked": False,
            "synchronised": False, "source": "", "sources": 0, "reachable": 0, "configured": [], "offset": None,
-           "bound": None, "leap": "", "stratum": None, "local": False, "kernel_synced": None, "container": "",
+           "bound": None, "skew": None, "leap": "", "stratum": None, "local": False, "kernel_synced": None, "container": "",
            "query": None, "window": False, "kernel_only": False}
     # the daemon that runs (several: the first of chrony, timesyncd, ntp), else one installed
     order = ["chronyd", "chrony", "systemd-timesyncd", "ntpd", "ntpsec", "ntp"]
@@ -216,7 +220,7 @@ def cassandra_clock_probe(text):
         tracking = parse_chrony_tracking(s.get("tracking", []))
         sources = parse_chrony_sources(s.get("sources", []))
         if tracking:
-            out.update(dict((k, tracking[k]) for k in ("source", "offset", "bound", "leap", "stratum", "local")))
+            out.update(dict((k, tracking[k]) for k in ("source", "offset", "bound", "skew", "leap", "stratum", "local")))
             out["synchronised"] = tracking["synchronised"] and (bool(sources["selected"]) or not s.get("sources"))
             out["source"] = sources["selected"] or tracking["source"] if out["synchronised"] else ""
         out["sources"], out["reachable"] = sources["count"], sources["reachable"]
@@ -271,6 +275,8 @@ def _bad(probe, max_s):
 
 
 def _converging(probe, max_s):
+    if probe.get("daemon") == "chrony" and (probe.get("skew") or 0.0) > CONVERGING_SKEW_PPM:
+        return True
     return (probe.get("bound") or 0.0) > max(CONVERGING_S, 10 * max_s)
 
 
