@@ -6,8 +6,11 @@
 # per rack and datacenter (nodes up, down, joining, leaving, moving, total
 # load), where the group and the ring differ (a ring node that is another
 # host of the inventory is named), and last the verdict (ALL 5 NODES UP,
-# 1 NODE DOWN: node1 (dc1/rack1), the nodes joining, leaving or moving, a
-# ring that differs). A down node is shown, not an error (the check
+# 1 NODE DOWN: node1 (dc1/rack1), 1 NODE NOT REACHED: node3 (by Ansible: never
+# ALL UP then), the nodes joining, leaving or moving, a ring that differs).
+# A host Ansible does not reach and no address of the ring matches is taken
+# for the one ring node no host has in its datacenter and rack (node3?). A
+# down node is shown, not an error (the check
 # is health_check): fails only when no node answers (of cassandra_target_nodes,
 # when given).
 #   ansible-playbook -i inventory community.cassandra.status
@@ -215,7 +218,7 @@
                ansible_play_hosts_all | reject('in', _reached) | list, ansible_limit is defined,
                group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
                absent=query('community.cassandra.cassandra_nodes', state='absent'),
-               cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from) }}
+               cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from, places=_places) }}
       vars:
         cassandra_output: true
         # the other hosts of the inventory, by the addresses it gives them
@@ -225,11 +228,22 @@
           {%-   set _ = out.update({h: [h, hostvars[h].ansible_host | default('')]}) -%}
           {%- endfor -%}
           {{ out }}
+        # a host not reached: what its variables say (ansible_host, the address it listens on or broadcasts)
         _addresses: >-
           {%- set out = {} -%}
+          {%- set known = ansible_play_hosts_all | reject('in', _reached) | list
+                          | community.cassandra.cassandra_host_addresses(hostvars) -%}
           {%- for h in ansible_play_hosts_all -%}
           {%-   set _ = out.update({h: hostvars[h].cassandra_status_addresses
-                                       | default([h, hostvars[h].ansible_host | default('')])}) -%}
+                                       | default(known | dict2items | selectattr('value', 'equalto', h) | map(attribute='key') | list)}) -%}
+          {%- endfor -%}
+          {{ out }}
+        # where the inventory puts each host: an unreachable one matched by no address is paired with the
+        # one ring node no host has there
+        _places: >-
+          {%- set out = {} -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].cassandra_dc | default('') and hostvars[h].cassandra_rack | default('') -%}
+          {%-   set _ = out.update({h: [hostvars[h].cassandra_dc, hostvars[h].cassandra_rack]}) -%}
           {%- endfor -%}
           {{ out }}
       run_once: true

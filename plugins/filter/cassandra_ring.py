@@ -104,13 +104,18 @@ def _header(cluster, seen_from, matches, members, total):
     return "  ".join(x for x in [cluster, "(%s)" % ", ".join(where)] if x)
 
 
-def _verdict(nodes, differ):
+def _verdict(nodes, differ, unreached=()):
     """"ALL 3 NODES UP" or "1 NODE DOWN: node2 (dc1/rack_b)", then the nodes
     joining, leaving or moving and a ring that differs from the inventory.
-    nodes: (name, datacenter, node) of each node of the ring."""
+    nodes: (name, datacenter, node) of each node of the ring. unreached: the
+    hosts Ansible did not reach: "1 NODE NOT REACHED: node3" (but the ones
+    down), never ALL UP then (the ring's view, gossip, can be late)."""
     down = ["%s (%s/%s)" % (name, dc, n["rack"]) for name, dc, n in nodes if n["status"] == "D"]
-    parts = [("%s DOWN: %s" % (out.plural(len(down), "NODE", "NODES"), ", ".join(down))) if down
-             else "ALL %s UP" % out.plural(len(nodes), "NODE", "NODES")]
+    unreached = [h for h in unreached if h not in [name for name, dc, n in nodes if n["status"] == "D"]]
+    parts = [("%s DOWN: %s" % (out.plural(len(down), "NODE", "NODES"), ", ".join(down)))] if down else []
+    if unreached:
+        parts.append("%s NOT REACHED: %s" % (out.plural(len(unreached), "NODE", "NODES"), ", ".join(unreached)))
+    parts = parts or ["ALL %s UP" % out.plural(len(nodes), "NODE", "NODES")]
     for letter, word in _STATES[2:]:
         moving = [name for name, dc, n in nodes if n["status"] == "U" and n["state"] == letter]
         if moving:
@@ -120,8 +125,25 @@ def _verdict(nodes, differ):
     return u" \u2014 ".join(parts)
 
 
+def _taken_for(owner, elsewhere, nodes, inventory, unreachable, places):
+    """{ring address: host}: an unreachable host no address of the ring
+    matched (no facts, no ansible_host) and the one ring address no host
+    has: taken for each other, when the host's place (dc, rack), if known,
+    is that node's. Never a guess between several."""
+    matched = set(owner[_ip(n["address"])] for dc, n in nodes if _ip(n["address"]) in owner)
+    lost = [h for h in inventory if h in unreachable and h not in matched]
+    unknown = [(dc, n) for dc, n in nodes if _ip(n["address"]) not in owner and _ip(n["address"]) not in elsewhere]
+    if len(lost) != 1 or len(unknown) != 1:
+        return {}
+    dc, n = unknown[0]
+    place = (places or {}).get(lost[0])
+    if place and list(place) != [dc, n["rack"]]:
+        return {}
+    return {_ip(n["address"]): lost[0]}
+
+
 def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
-                          outside=None, absent=None, cluster="", seen_from=""):
+                          outside=None, absent=None, cluster="", seen_from="", places=None):
     """cluster_status: the cassandra_status module's. inventory: {host:
     [addresses and names it is known by]} of the hosts of the run. unreachable:
     the hosts Ansible could not reach. limited: the play runs on part of the
@@ -131,7 +153,10 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     hosts of outside marked cassandra_node_state: absent (topology removes
     them from the ring). cluster: the cluster's name, seen_from: the node
     the ring was read from, for the header line (none without either).
-    Returns the report as a list of lines."""
+    places: {host: [dc, rack]} of the hosts, from the inventory: an
+    unreachable host matched by no address is taken for the one ring node
+    no host has in its place (marked "host?"). Returns the report as a list
+    of lines."""
     cluster_status = cluster_status or {}
     owner = _host_of(inventory, [_ip(n["address"]) for dc in cluster_status
                                  for n in cluster_status[dc].get("nodes", [])])
@@ -140,6 +165,10 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
         for address in outside[host]:
             if address and _IP.search(address):
                 elsewhere.setdefault(_ip(address), host)
+    unreachable = set(unreachable or [])
+    guessed = _taken_for(owner, elsewhere, [(dc, n) for dc in cluster_status for n in cluster_status[dc].get("nodes", [])],
+                         inventory, unreachable, places)
+    owner.update(guessed)
     lines = []
     in_ring = set()
     stray = []
@@ -163,16 +192,19 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
             mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
                 "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
             rows.append([n["status"] + n["state"], n["address"], n["load"] or "?", n["tokens"] or "",
-                         n["owns"] or "", n["host_id"], n["rack"], host or "-", mark])
+                         n["owns"] or "", n["host_id"], n["rack"],
+                         (host + "?") if _ip(n["address"]) in guessed else host or "-", mark])
         lines.extend(["", "Datacenter: %s" % dc, ""])
         lines.extend(" " + line for line in _table(rows))
         racks = sorted(set(n["rack"] for n in nodes))
         summary = [_summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks] if len(racks) > 1 else []
         lines.extend([""] + _summaries(summary + [_summary(dc, nodes)]))
     missing = [h for h in inventory if h not in in_ring]
-    unreachable = set(unreachable or [])
     run = "this run (--limit)" if limited else group
-    notes = []
+    notes = ["%s not reached by Ansible: taken for %s, the only node of the ring no host has (its ansible_host or"
+             " cassandra_listen_address in the inventory would say for sure)" % (host, address)
+             for address, host in guessed.items()]
+    matches = not missing and not known and not leaving and not stray
     if missing:
         notes.append("In %s, not in the ring: " % run + ", ".join(
             h + (" (unreachable)" if h in unreachable else "") for h in missing))
@@ -184,7 +216,6 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     if stray:
         notes.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
                      + ", ".join(stray))
-    matches = not notes
     members = "inventory" if run == group else run
     if cluster or seen_from:
         lines.insert(0, _header(cluster, seen_from, matches, members, len(named)))
@@ -194,7 +225,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
         lines.extend([""] + notes)
     if named:
         # a ring node that is another host of the inventory: expected under --limit or a sub-group, not a problem
-        lines.extend(["", _verdict(named, bool(missing or stray or leaving))])
+        lines.extend(["", _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable])])
     return lines[1:] if lines[:1] == [""] else lines
 
 

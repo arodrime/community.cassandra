@@ -127,11 +127,21 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     Each problem once, with every node that saw it. Returns {healthy,
     problems (count), lines}: "HEALTHY  my_cluster  6 nodes  6 UN, schema
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
-    checked, 2 problems", a line per problem, then a TO DO."""
-    names = names or {}
+    checked, 2 problems", a line per problem, then a TO DO (a node down
+    and not reached: one item)."""
+    names = dict(names or {})
     unreachable = [h for h in hosts if h in (unreachable or [])]
     checked = [h for h in hosts if h not in unreachable]
     rows, seen = [], {}
+    # an unreachable host known by no address (no facts, no ansible_host, no listen address) and the one
+    # node of the ring not up whose address no host has: taken for each other ("node3?"), never a guess
+    # between several
+    unnamed = sorted(set(f["address"] for host in checked for f in (findings or {}).get(host) or []
+                         if f.get("kind") == "state" and f["address"] not in names))
+    addressed = set(name for address, name in names.items() if address != name)
+    lost = [h for h in unreachable if h not in addressed]
+    if len(unnamed) == 1 and len(lost) == 1:
+        names[unnamed[0]] = lost[0] + "?"
 
     def add(label, key, text, who=None):
         if key not in seen:
@@ -194,13 +204,20 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
                 cluster, out.plural(len(hosts), "node"), size)]}
     todo = []
     down = [names.get(k[1], k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
+    # a node down and not reached: one thing to do, its server first
+    both = [h for h in unreachable if h in down or h + "?" in down]
+    down = [d for d in down if d not in both and d.rstrip("?") not in both]
     if down:
         todo.append("start Cassandra on %s (its server first if it is down); a node that can't be recovered: "
                     "replace_node" % ", ".join(down))
+    if both:
+        todo.append("bring %s back (not reached over SSH, down in the ring): its server first, then Cassandra, then run "
+                    "this again; a node that can't be recovered: replace_node" % out.nodes(both))
     if absent and counted and topology_command:
         todo.append({"text": "remove %s from the ring" % out.nodes(absent), "command": topology_command})
-    if unreachable:
-        todo.append("reach %s over SSH, then run this again" % out.nodes(unreachable))
+    others = [h for h in unreachable if h not in both]
+    if others:
+        todo.append("reach %s over SSH, then run this again" % out.nodes(others))
     if any(k[0] == "streams" for k in rows):
         todo.append("wait for the streams to end (nodetool netstats), then run this again")
     head = "NOT HEALTHY  %s  %s checked, %s" % (cluster, out.plural(len(checked), "node"), out.plural(len(rows), "problem"))

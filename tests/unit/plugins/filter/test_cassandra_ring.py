@@ -70,14 +70,38 @@ def test_summary_counts_every_state_and_unknown_load():
 
 
 def test_mismatches_both_ways():
-    lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.7", "D")),
+    # two ring addresses no host has: no guess for n3
+    lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.7", "D"), node("10.0.0.8", "D")),
                                   {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"], "n3": ["n3"]}, unreachable=["n3"])
     assert " DN  10.0.0.7  1.0 GiB  16      33.3%  id-10.0.0.7  r1    -          \u2190 down" in lines
     assert lines[-5:] == ["",
                           "In the inventory, not in the ring: n2, n3 (unreachable)",
-                          "In the ring, not in the inventory: 10.0.0.7 (dc1, DN)",
+                          "In the ring, not in the inventory: 10.0.0.7 (dc1, DN), 10.0.0.8 (dc1, DN)",
                           "",
-                          u"1 NODE DOWN: 10.0.0.7 (dc1/r1) \u2014 RING AND INVENTORY DIFFER"]
+                          u"2 NODES DOWN: 10.0.0.7 (dc1/r1), 10.0.0.8 (dc1/r1) \u2014 1 NODE NOT REACHED: n3"
+                          u" \u2014 RING AND INVENTORY DIFFER"]
+
+
+def test_an_unreachable_host_known_by_no_address_taken_for_the_one_ring_node_no_host_has():
+    # Ansible reached h3 by its name (no ansible_host, no facts now): gossip still says UN
+    inventory = {"h1": ["h1", "10.0.0.1"], "h2": ["h2", "10.0.0.2"], "h3": ["h3"]}
+    status = ring(node("10.0.0.4"), node("10.0.0.2"), node("10.0.0.1"))
+    lines = cassandra_ring_report(status, inventory, unreachable=["h3"], cluster="c", seen_from="h1",
+                                  places={"h3": ["dc1", "r1"]})
+    assert lines[0] == "c  (seen from h1, ring = inventory, 3 nodes)"
+    assert " UN  10.0.0.4  1.0 GiB  16      33.3%  id-10.0.0.4  r1    h3?" in lines
+    assert lines[-3:] == ["h3 not reached by Ansible: taken for 10.0.0.4, the only node of the ring no host has (its"
+                          " ansible_host or cassandra_listen_address in the inventory would say for sure)", "",
+                          "1 NODE NOT REACHED: h3"]  # never ALL 3 NODES UP while one is not reached
+    # in another rack than that node, or two such hosts: no guess
+    lines = cassandra_ring_report(status, inventory, unreachable=["h3"], places={"h3": ["dc1", "r2"]})
+    assert lines[-1] == u"1 NODE NOT REACHED: h3 \u2014 RING AND INVENTORY DIFFER"
+    lines = cassandra_ring_report(status, dict(inventory, h4=["h4"]), unreachable=["h3", "h4"])
+    assert lines[-1] == u"2 NODES NOT REACHED: h3, h4 \u2014 RING AND INVENTORY DIFFER"
+    # known by its address (the import's ansible_host): matched, not reached
+    lines = cassandra_ring_report(status, dict(inventory, h3=["h3", "10.0.0.4"]), unreachable=["h3"])
+    assert " UN  10.0.0.4  1.0 GiB  16      33.3%  id-10.0.0.4  r1    h3" in lines
+    assert lines[-3:] == ["The ring and the inventory match (3 nodes)", "", "1 NODE NOT REACHED: h3"]
 
 
 def test_unreachable_host_found_by_its_resolved_name():
