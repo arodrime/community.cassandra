@@ -31,7 +31,7 @@
           {%- endfor -%}
           {{ out }}
 
-    # Like the config files: on a node already initialized, files with the same
+    # Like the config files: on a node that is not blank, files with the same
     # users and rights (other comments, spacing or order) are left as they are,
     # and so are the ones it has in cassandra_config_keep_files
     - name: Compare the JMX files with the users

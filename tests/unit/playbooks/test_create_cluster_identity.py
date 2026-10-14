@@ -43,14 +43,15 @@ def render(template, variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def variables(inventory, running, reset=False, task=IDENTITY, others=None, play=None, group=None, data=()):
+def variables(inventory, running, reset=False, task=IDENTITY, others=None, play=None, group=None, data=(), elsewhere=()):
     """others: {host: running (None: no preflight fact)}; play: the hosts in the run; group: the group's hosts;
-    data: the hosts holding a system keyspace"""
+    data: the hosts holding a system keyspace (where they stand, node_standing.yml: not blank)"""
     hostvars = {"n1": dict(inventory, _cassandra_preflight_running=running, inventory_hostname="n1")}
     for h, r in (others or {}).items():
         hostvars[h] = dict(inventory, inventory_hostname=h, **({} if r is None else {"_cassandra_preflight_running": r}))
     for h, v in hostvars.items():
-        v["cassandra_create_system"] = {"results": [{"stat": {"exists": False}}, {"stat": {"exists": h in data}}]}
+        v["cassandra_node_standing"] = {"blank": h not in data,
+                                        "elsewhere": ["/var/lib/cassandra/data/system"] if h in elsewhere else []}
     hosts = play or list(hostvars)
     v = dict(PLAY["vars"], **task.get("vars", {}))
     v.update(inventory, hostvars=hostvars, inventory_hostname="n1", ansible_play_hosts_all=hosts, ansible_play_hosts=hosts,
@@ -72,6 +73,7 @@ def test_new_cluster_may_leave_the_mode_out():
     {"others": {"n2": None}},  # a host the preflight did not reach
     {"others": {"n2": True}, "play": ["n1"]},  # --limit to the stopped ones
     {"others": {"n2": False}, "data": ["n2"]},  # a cluster stopped as a whole (e.g. upgraded, in CASSANDRA_4)
+    {"others": {"n2": False}, "elsewhere": ["n2"]},  # an old system keyspace left in the package's default dir
 ])
 def test_partly_running_or_unknown_is_not_new(kw):
     assert missing(SET, running=False, **kw) == ["cassandra_storage_compatibility_mode"]

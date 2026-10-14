@@ -1,0 +1,32 @@
+---
+# Where this node stands: cassandra_node_standing, worked out in one place
+# (plugins/filter/cassandra_node_standing.py, its STATES: blank, failed_bootstrap,
+# former_member, unidentified_data, other_cluster, running_outside_ring, member,
+# member_joining, member_down, member_busy, dead_address, address_conflict,
+# unknown) from what node_standing_read.yml read on it, once per run (a reset
+# that emptied it reads it again). Every operation decides from it: add_node
+# and topology (new_node_standing.yml, reset_node_plan.yml), reset_node and
+# replace_node (reset_node_plan.yml), create_cluster (a new cluster: every node
+# blank). Worked out again on each include, from the same reads: the
+# cluster's keyspaces (cassandra_keyspaces) may have been read since.
+# Vars: cassandra_node_reset_replace_address (replace_node: the dead node's
+# address), _cassandra_node_standing_ring: false (the rings are not read),
+# _cassandra_node_standing_size: true (measure what it holds, add_node's line).
+- name: Read where {{ inventory_hostname }} stands
+  ansible.builtin.include_tasks: node_standing_read.yml
+  when: _cassandra_node_standing_read | default({}) | length == 0
+
+- name: Work out where {{ inventory_hostname }} stands
+  ansible.builtin.set_fact:
+    cassandra_node_standing: >-
+      {{ inventory_hostname | community.cassandra.cassandra_node_standing(cassandra_cluster_name,
+           title=inventory_hostname ~ ((' (' ~ _p.cassandra_dc ~ '/' ~ _p.cassandra_rack | default('?') ~ ')') if _p.cassandra_dc | default('') else ''),
+           running=_r.running, jvm=_r.jvm, own=_r.own, host_id=_r.host_id, no_mbean=_r.no_mbean,
+           answers=_r.answers if _r.ring_read | bool else none, addresses=_r.addresses, known=_r.known,
+           replace_address=cassandra_node_reset_replace_address | default(''),
+           live=_r.live, live_cluster=_cassandra_node_reset_listed.cluster_name, held=_r.held, system=_r.system, elsewhere=_r.elsewhere,
+           unreadable=_r.unreadable, keyspaces=_r.keyspaces, peers=_r.peers, bootstrap_started=_r.bootstrap_started,
+           cluster_keyspaces=(cassandra_keyspaces.keys() | list) if cassandra_keyspaces | default(none) is mapping else none) }}
+  vars:
+    _r: "{{ _cassandra_node_standing_read }}"
+    _p: "{{ _cassandra_preflight | default({}) }}"

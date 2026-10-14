@@ -69,28 +69,22 @@ def stat_results(found):
     return {"results": [{"item": d, "stat": {"exists": d in found}} for d in ["/d1/data", "/d2/data", "/ssd/system"]]}
 
 
-@pytest.mark.parametrize("found, has_data", [([], False), (["/d2/data"], True), (["/ssd/system"], True)])
-def test_add_node_finds_data_in_any_dir(found, has_data):
+def test_add_node_and_replace_node_decide_from_where_the_node_stands():
+    """Its data directories (the inventory's and the live cassandra.yaml's) are read once, by node_standing.yml."""
     block = load("roles", "cassandra_service", "tasks", "new_node_state.yml")[0]
-    look = next(t for t in block["block"] if t["name"] == "Look for this node's system keyspace")
-    assert look["loop"] == "{{ _cassandra_service_system_dirs }}"
-    assert look["ansible.builtin.stat"]["path"] == "{{ item }}/system"
-    v = dict(cassandra_new_node_system=stat_results(found))
-    v["_data"] = render(block["vars"]["_data"], **v)
-    assert v["_data"] == [d + "/system" for d in found]
-    assert render(block["vars"]["_has_data"], **v) is has_data
-
-
-@pytest.mark.parametrize("found", [[], ["/ssd/system"]])
-def test_replace_node_finds_data_in_any_dir(found):
+    tasks = dict((t["name"], t) for t in block["block"])
+    assert tasks["Read where it stands"]["ansible.builtin.include_tasks"] == "node_standing.yml"
+    # no node of the cluster answered UN: add_node stops, it has no ring to plan with
+    need = tasks["Need the ring of the cluster"]["ansible.builtin.assert"]["that"]
+    for known in (True, False):
+        assert render("{{ %s }}" % need, cassandra_node_standing={"ring": {"known": known}}) is known
     play = next(p for p in load("playbooks", "replace_node.yml") if p.get("name") == "Check the replacement")
     tasks = dict((t["name"], t) for t in walk(play["tasks"]))
-    assert tasks["Look for data on the new host"]["loop"] == "{{ _cassandra_service_system_dirs }}"
-    blank = tasks["The new host is blank"]
-    v = dict(cassandra_replace_system=stat_results(found))
-    v["_found"] = render(blank["vars"]["_found"], **v)
-    assert v["_found"] == [d + "/system" for d in found]
-    assert render("{{ %s }}" % blank["ansible.builtin.assert"]["that"], **v) is (not found)
+    assert tasks["Where the new host stands"]["ansible.builtin.include_role"]["tasks_from"] == "node_standing.yml"
+    blank = tasks["The new host is blank"]["ansible.builtin.assert"]["that"]
+    for state, given, ok in (("blank", False, True), ("failed_bootstrap", False, False), ("failed_bootstrap", True, True)):
+        v = {"cassandra_node_standing": {"state": state}, "cassandra_replace_node_reset": given}
+        assert render("{{ %s }}" % blank, **v) is ok, (state, given)
 
 
 @pytest.mark.parametrize("found, initialized", [([], False), (["/d2/data"], True)])

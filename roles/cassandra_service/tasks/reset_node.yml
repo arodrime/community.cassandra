@@ -205,3 +205,12 @@
     path: "{{ _cassandra_service_bootstrap_mark }}"
     state: absent
   when: _cassandra_node_reset_plan.delete | length > 0
+
+# what was read there no longer stands: read again by the next include of node_standing.yml
+- name: Read where it stands again next time
+  ansible.builtin.set_fact:
+    _cassandra_node_standing_read: {}
+  when:
+    - not ansible_check_mode
+    - _cassandra_node_reset_plan.delete | length > 0 or _cassandra_node_reset_plan.stop | bool
+      or _cassandra_node_reset_plan.disable | bool

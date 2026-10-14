@@ -47,6 +47,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
     _cassandra_preflight_target: add  # what cassandra_target_nodes are
+    _cassandra_preflight_node_views: true  # where the nodes stand (node_standing.yml)
 
 # Before anything is installed: every problem of the new hosts at once
 - name: Check the new hosts are ready

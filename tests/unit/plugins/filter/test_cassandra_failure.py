@@ -30,7 +30,7 @@ def test_a_repository_problem_is_named():
 
 def test_other_causes_in_full_and_masked():
     # why and the way out, in full: e.g. cassandra_config's refusal of a change not confirmed
-    said = ("Config changes not confirmed on node5 (already initialized: /var/lib/cassandra/data/system). Run"
+    said = ("Config changes not confirmed on node5 (not blank: /var/lib/cassandra/data/system). Run"
             " interactively and answer 'yes', or set cassandra_config_confirm: false to apply without asking.")
     assert cassandra_failure_cause({"msg": said}, "Stop unless the changes were confirmed") == (
         "Stop unless the changes were confirmed: " + said)

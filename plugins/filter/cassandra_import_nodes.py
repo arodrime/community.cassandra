@@ -23,6 +23,7 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _values_hidden
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
+from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 
 # the variables of a host the import reads (its facts, and what the play read on it)
 KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
@@ -210,7 +211,9 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     if "rc" not in running:
         reason = "unreachable"
     elif running["rc"] != 0:
-        reason = "Cassandra not running"
+        # in the words of where a node stands (cassandra_node_standing)
+        reason = (standing.WORDS["member_down"] if str(item.get("state", "")).startswith("D")
+                  else "Cassandra stopped there, %s in the ring (not seen down yet)" % item.get("state", "?"))
     elif "import_cluster_error" in hv:
         reason = hv["import_cluster_error"]
     else:

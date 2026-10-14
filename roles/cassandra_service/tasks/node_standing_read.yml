@@ -1,0 +1,312 @@
+---
+# What standing.yml works out a node's state from, read once per run on the
+# node itself (each node at once): its Cassandra unit and JVM, its live
+# cassandra.yaml, what its Cassandra directories hold (the inventory's and the
+# live file's, links resolved), add_node's bootstrap mark, its host ID and own
+# ring when Cassandra runs there, and the rings the other nodes of the cluster
+# see (the preflight's reads, _cassandra_preflight_view; a node it did not
+# read, e.g. left out by --limit, is asked from here). Read-only, under
+# --check too. reset_node_plan.yml builds the reset's plan from the same reads.
+# _cassandra_node_standing_ring: false (create_cluster): the rings are not read.
+- name: Load the cassandra_config defaults (directories)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+    tasks_from: defaults.yml
+    public: true
+
+- name: Read the facts the state needs (addresses, mounts)
+  ansible.builtin.setup:
+    gather_subset: [network, hardware]
+  when: ansible_facts['mounts'] is not defined or ansible_facts['all_ipv4_addresses'] is not defined
+
+- name: Read the Cassandra unit
+  ansible.builtin.systemd_service:
+    name: cassandra
+  register: cassandra_node_reset_unit
+  failed_when: false
+  check_mode: false  # read-only
+
+# An init script's unit (systemd-sysv-generator) only says "generated": its rc links tell
+- name: Read whether the init script starts Cassandra at boot
+  ansible.builtin.command: systemctl is-enabled cassandra
+  register: cassandra_node_reset_sysv
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when: cassandra_node_reset_unit.status.UnitFileState | default('') == 'generated'
+
+- name: Look for a running Cassandra JVM
+  ansible.builtin.command: pgrep -f org.apache.cassandra.service.CassandraDaemon
+  register: cassandra_node_reset_jvm
+  changed_when: false
+  failed_when: cassandra_node_reset_jvm.rc > 1
+  check_mode: false  # read-only
+
+# The facts leave out some (e.g. ZFS datasets, tmpfs)
+- name: Read the mount points
+  ansible.builtin.slurp:
+    src: /proc/self/mounts
+  register: cassandra_node_reset_mounts
+  failed_when: false
+
+- name: Look for the live cassandra.yaml
+  ansible.builtin.stat:
+    path: "{{ cassandra_conf_dir }}/cassandra.yaml"
+    get_checksum: false
+  register: cassandra_node_reset_live_stat
+
+- name: Read the live cassandra.yaml
+  ansible.builtin.slurp:
+    src: "{{ cassandra_conf_dir }}/cassandra.yaml"
+  register: cassandra_node_reset_live
+  failed_when: false
+  no_log: true  # it may hold passwords
+  when: cassandra_node_reset_live_stat.stat.exists
+
+# Parsed on the controller: only the paths, the cluster name and the addresses are kept
+- name: Work out its Cassandra directories
+  ansible.builtin.set_fact:
+    _cassandra_node_reset_protected: "{{ _protected }}"
+    _cassandra_node_reset_listed: "{{ _inventory | community.cassandra.cassandra_node_reset_dirs(_live, _mounts, _protected) }}"
+    # the data directories its config uses, and the usual ones it does not (a system keyspace left there)
+    _cassandra_node_standing_data_dirs: >-
+      {{ [cassandra_data_file_directories] | flatten + [_extra.local_system_data_file_directory | default('', true) | string]
+         | community.cassandra.cassandra_node_data_dirs(_live, usual=[cassandra_data_dir | default('/var/lib/cassandra/data'),
+             (cassandra_conf_dir | regex_replace('(?<=.)/+$', '') | dirname) ~ '/data/data']) }}
+  no_log: true  # the live file's text is in the vars
+  vars:
+    _mounts: "{{ ansible_facts['mounts'] | default([]) + (cassandra_node_reset_mounts.content | default('') | b64decode).splitlines() }}"
+    # what a directory to empty must not hold
+    _protected: >-
+      {{ [cassandra_conf_dir, cassandra_log_dir | default('/var/log/cassandra'), '/usr/share/cassandra',
+          cassandra_java_home | default(''), ansible_facts['user_dir'] | default('')] | select | list }}
+    _extra: "{{ cassandra_extra_settings | default({}) }}"
+    _inventory: >-
+      {%- set l = [] -%}
+      {%- for d in [cassandra_data_file_directories] | flatten -%}{%- set _ = l.append(['data', d]) -%}{%- endfor -%}
+      {%- set _ = l.extend([['commitlog', cassandra_commitlog_dir], ['saved_caches', cassandra_saved_caches_dir],
+                            ['hints', cassandra_hints_dir]]) -%}
+      {%- if _extra.local_system_data_file_directory is defined -%}
+      {%-   set _ = l.append(['data', _extra.local_system_data_file_directory]) -%}
+      {%- endif -%}
+      {%- if _extra.cdc_raw_directory is defined -%}
+      {%-   set _ = l.append(['cdc_raw', _extra.cdc_raw_directory]) -%}
+      {%- elif cassandra_cdc_enabled | default(false) | bool -%}
+      {%-   set _ = l.append(['cdc_raw', '/var/lib/cassandra/cdc_raw']) -%}
+      {%- endif -%}
+      {{ l }}
+    _live: "{{ (cassandra_node_reset_live.content | b64decode) if cassandra_node_reset_live.content is defined else none }}"
+
+# Links resolved, also in the parents: a link to / is refused like / itself
+- name: Resolve the directories
+  ansible.builtin.command:
+    argv: "{{ ['realpath', '-m', '--'] + _cassandra_node_reset_listed.dirs | map(attribute='path') | list }}"
+  register: cassandra_node_reset_realpath
+  changed_when: false
+  check_mode: false  # read-only
+  when: _cassandra_node_reset_listed.dirs | length > 0
+
+- name: Check them where they really are
+  ansible.builtin.set_fact:
+    _cassandra_node_reset_dirs: "{{ _real | combine({'problems': _unreadable + _real.problems}) }}"
+  vars:
+    _real: >-
+      {{ _cassandra_node_reset_listed | community.cassandra.cassandra_node_reset_real(
+           dict(_cassandra_node_reset_listed.dirs | map(attribute='path') | zip(cassandra_node_reset_realpath.stdout_lines | default([]))),
+           _mounts, _cassandra_node_reset_protected) }}
+    _unreadable: >-
+      {{ ['the live ' ~ cassandra_conf_dir ~ '/cassandra.yaml can not be read: its directories are unknown']
+         if cassandra_node_reset_live_stat.stat.exists and cassandra_node_reset_live.content is not defined else [] }}
+    _mounts: "{{ ansible_facts['mounts'] | default([]) + (cassandra_node_reset_mounts.content | default('') | b64decode).splitlines() }}"
+
+# stat fails on a directory that can't be reached (no root: become turned off?): find would skip it silently
+- name: Look at the directories
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ _cassandra_node_reset_dirs.dirs | map(attribute='real') | list }}"
+  register: cassandra_node_reset_stat
+  failed_when: false
+
+# Listed where they really are: what is deleted is what is shown
+- name: List what the directories hold
+  ansible.builtin.find:
+    paths: >-
+      {{ cassandra_node_reset_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list }}
+    file_type: any
+    hidden: true
+  register: cassandra_node_reset_found
+  when: cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length > 0
+
+# a system keyspace left where its config does not look (the package's default dir, a tarball's): not its own
+- name: Look for a system keyspace its config does not use
+  ansible.builtin.stat:
+    path: "{{ item }}/system"
+    get_checksum: false
+  loop: "{{ _cassandra_node_standing_data_dirs.elsewhere }}"
+  register: cassandra_node_standing_elsewhere
+  failed_when: false
+
+# add_node's reset: how much it holds (for its line), and whether it met other nodes (its system.peers tables)
+- name: Measure what the directories hold
+  ansible.builtin.command:
+    argv: "{{ ['du', '-sbc', '--'] + _there }}"
+  register: cassandra_node_reset_du
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when:
+    - _cassandra_node_standing_size | default(false) | bool
+    - cassandra_node_reset_found.files | default([]) | length > 0
+  vars:
+    _there: >-
+      {{ cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list }}
+
+- name: Look for the peers it met
+  ansible.builtin.find:
+    paths: "{{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real')
+               | map('regex_replace', '$', '/system') | list }}"
+    patterns: "*-Data.db"
+    recurse: true
+  register: cassandra_node_reset_peers
+  failed_when: false
+  when: cassandra_node_reset_found.files | default([]) | length > 0  # a blank host: no system dir to look in
+
+# add_node's mark of a bootstrap it started there and that never ended (action_add.yml)
+- name: Look for a bootstrap add_node left unfinished
+  ansible.builtin.stat:
+    path: "{{ _cassandra_service_bootstrap_mark }}"
+    get_checksum: false
+  register: cassandra_node_reset_bootstrap_mark
+
+- name: Read this node's host ID
+  ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
+  register: cassandra_node_standing_info
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only; --check needs it too
+  no_log: "{{ cassandra_jmx_password | length > 0 }}"
+  when: _running | bool
+  vars:
+    _running: >-
+      {{ cassandra_node_reset_jvm.rc == 0
+         or cassandra_node_reset_unit.status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}
+
+# the preflight read it already, when it runs there and the playbook asked for it
+- name: Read this node's own ring
+  community.cassandra.cassandra_status:
+    down: 10000
+    interval: 0
+  module_defaults:
+    community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+  register: cassandra_node_reset_own
+  failed_when: false
+  when:
+    - cassandra_node_reset_jvm.rc == 0
+    - _cassandra_preflight_view.cluster_status is not defined  # the preflight's read of it
+
+# Every other node of the cluster group, but the ones the preflight found stopped and the ones
+# being added or reset (they may run alone): an answer of a node outside the cluster (its own
+# ring) can't hide the answers of the real members
+- name: Work out which nodes to ask
+  ansible.builtin.set_fact:
+    _cassandra_node_standing_from: "{{ _others | reject('in', _stopped) | list }}"
+  vars:
+    _aside_pattern: "{{ [cassandra_target_nodes | default([])] | flatten | select | join(',') }}"
+    # the nodes being added or reset (the play's hosts when not named: topology runs this on every node)
+    _aside: >-
+      {{ query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else ansible_play_hosts_all }}
+    _others: "{{ query('community.cassandra.cassandra_nodes') | default([]) | reject('in', _aside + [inventory_hostname]) | list }}"
+    _stopped: >-
+      {{ _others | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
+         | rejectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list }}
+
+# Those the preflight did not read (left out by --limit, or not asked for) only
+- name: Read the ring other nodes of the cluster see
+  community.cassandra.cassandra_status:
+    down: 10000  # read it whatever the state of the nodes
+    interval: 0  # no wait when a node is down
+    port: "{{ hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int }}"
+  module_defaults:
+    community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ _cassandra_node_standing_from | reject('in', _viewed) | list }}"
+  register: cassandra_node_reset_rings
+  failed_when: false  # a node that does not answer is left out
+  ignore_unreachable: true
+  when: _cassandra_node_standing_ring | default(true) | bool
+  vars:
+    _viewed: >-
+      {{ _cassandra_node_standing_from | map('extract', hostvars) | selectattr('_cassandra_preflight_view', 'defined')
+         | rejectattr('_cassandra_preflight_view.skipped', 'defined') | map(attribute='inventory_hostname') | list }}
+
+- name: Keep what was read
+  ansible.builtin.set_fact:
+    _cassandra_node_standing_read:
+      running: "{{ cassandra_node_reset_jvm.rc == 0 or _active | bool }}"
+      jvm: "{{ cassandra_node_reset_jvm.rc == 0 }}"
+      active: "{{ _active | bool }}"
+      own: >-
+        {{ _cassandra_preflight_view.cluster_status | default(cassandra_node_reset_own.cluster_status | default(none), true)
+           if cassandra_node_reset_jvm.rc == 0 else none }}
+      host_id: "{{ cassandra_node_standing_info.stdout | default('') | regex_findall('(?m)^ID\\s*:\\s*(\\S+)') | first | default('') }}"
+      # 5.0.0 to 5.0.4: nodetool can't answer on a bootstrapping node (CASSANDRA-19902)
+      no_mbean: "{{ 'InstanceNotFoundException' in cassandra_node_standing_info.stderr | default('') }}"
+      answers: >-
+        {%- set out = [] -%}
+        {%- for h in _cassandra_node_standing_from -%}
+        {%-   set v = hostvars[h]._cassandra_preflight_view | default({'skipped': true}) -%}
+        {%-   set r = (cassandra_node_reset_rings.results | default([]) | selectattr('item', 'equalto', h) | first | default({}))
+                      if v.skipped is defined else v -%}
+        {%-   set _ = out.append({'host': h, 'addresses': _addresses_of[h] | default([]), 'status': r.cluster_status | default(none)}) -%}
+        {%- endfor -%}
+        {{ out }}
+      ring_read: "{{ _cassandra_node_standing_ring | default(true) | bool }}"
+      addresses: "{{ (_addresses_of[inventory_hostname] | default([]) + _cassandra_node_reset_listed.addresses) | unique }}"
+      known: "{{ _addresses_of.values() | flatten | unique }}"
+      live: >-
+        {{ 'absent' if not cassandra_node_reset_live_stat.stat.exists else 'unreadable' if cassandra_node_reset_live.content is not defined
+           else 'invalid' if _cassandra_node_standing_data_dirs.problem else 'read' }}
+      held: "{{ _held }}"
+      # the system keyspaces in the data directories its config uses (links resolved)
+      system: "{{ _held | select('in', _data_dirs | map('regex_replace', '$', '/system') | list) | list }}"
+      elsewhere: >-
+        {{ cassandra_node_standing_elsewhere.results | default([]) | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
+           | map(attribute='item') | map('regex_replace', '$', '/system') | list }}
+      # in the words the reset's plan says them (reset_node_plan.yml)
+      unreadable: >-
+        {{ _unread + _cassandra_node_reset_dirs.problems | select('search', 'cassandra.yaml (can not be read|is not valid|is not a mapping)')
+           | list }}
+      keyspaces: "{{ _held | select('regex', '^(' ~ _data_dirs | map('regex_escape') | join('|') ~ ')/[^/]+$') | map('basename') | list }}"
+      peers: >-
+        {{ cassandra_node_reset_peers.files | default([]) | map(attribute='path') | select('search', '/peers(_v2)?-[^/]*/') | list | length > 0 }}
+      bootstrap_started: >-
+        {{ cassandra_node_reset_bootstrap_mark.stat.exists | default(false)
+           and now().timestamp() - cassandra_node_reset_bootstrap_mark.stat.mtime | default(0) < _cassandra_service_bootstrap_mark_days * 86400 }}
+      size: "{{ (cassandra_node_reset_du.stdout_lines | default(['0']) | last | default('0')).split() | first | default(0) | int }}"
+  vars:
+    _active: "{{ cassandra_node_reset_unit.status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}"
+    _held: "{{ cassandra_node_reset_found.files | default([]) | map(attribute='path') | reject('search', '/lost[+]found$') | list }}"
+    _data_dirs: >-
+      {{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real') | list
+         + _cassandra_node_standing_data_dirs.own }}
+    # what could not be looked at
+    _unread: >-
+      {{ (cassandra_node_reset_found.skipped_paths | default({}) | dict2items
+          | rejectattr('value', 'search', 'not a directory|No such file')
+          | map(attribute='key') | map('regex_replace', '$', ': can not be read (without root?)') | list)
+         + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
+            | map(attribute='item') | map('regex_replace', '$', ': can not be checked (without root?)') | list) }}
+    _addresses_of: >-
+      {%- set out = {} -%}
+      {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] | default([]) -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   set _ = out.update({h: (v.ansible_facts.all_ipv4_addresses | default([]) + v.ansible_facts.all_ipv6_addresses | default([])
+                                    + [v._cassandra_preflight.address | default(''), v._cassandra_preflight.ring_address | default(''),
+                                       v.cassandra_listen_address | default(''),
+                                       (v.cassandra_extra_settings | default({})).broadcast_address | default('')])
+                                   | select | reject('in', ['localhost', '127.0.0.1', '::1']) | unique | list}) -%}
+      {%- endfor -%}
+      {{ out }}
