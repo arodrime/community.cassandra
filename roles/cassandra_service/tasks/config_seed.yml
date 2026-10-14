@@ -3,7 +3,7 @@
 # Cassandra with no record of the files it started with (started another way,
 # e.g. imported): records the files not written since its JVM started, which
 # are the ones it runs with, so config_pending.yml tells the change still to
-# apply by content.
+# apply by content (_jvm: that JVM, as config_snapshot.yml records it).
 - name: Look for the directory of the record of the config Cassandra started with
   ansible.builtin.stat:
     path: "{{ _cassandra_service_config_snapshot | dirname }}"
@@ -57,7 +57,8 @@
     - name: Record the ones not written since it started
       ansible.builtin.copy:
         content: >-
-          {{ dict(_files | map(attribute='path') | zip(_files | map(attribute='checksum'))) | to_nice_json }}
+          {{ dict(_files | map(attribute='path') | zip(_files | map(attribute='checksum')))
+             | combine({'_jvm': {'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start | float}}) | to_nice_json }}
         dest: "{{ _cassandra_service_config_snapshot }}"
         mode: "0644"
       vars:

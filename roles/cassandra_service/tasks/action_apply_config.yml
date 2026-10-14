@@ -46,6 +46,29 @@
       changed_when: false
       failed_when: false  # not failed: nothing to reset
 
+# A file written back as the running Cassandra started with it, no restart planned for it: that JVM
+# must still be the one running (restarted since the plan, it may have started without that file)
+- name: Check the JVM a file is written back for still runs
+  when:
+    - cassandra_apply_config_as_started | default({}) | length > 0
+    - cassandra_apply_config_then | default('restart') == 'none'
+  block:
+    - name: Read the running Cassandra again
+      ansible.builtin.include_tasks: jvm_started.yml
+
+    - name: Stop if it restarted since the plan
+      ansible.builtin.assert:
+        that:
+          - cassandra_jvm.pid | default('') | string == _plan.pid | string
+          - (cassandra_jvm.start | default(0) | float - _plan.start | float) | abs < 2
+        fail_msg: >-
+          {{ inventory_hostname }}: Cassandra restarted since the plan was shown, maybe without
+          {{ _plan.files | join(', ') }}, which the plan wrote back with no restart. Nothing was changed on it:
+          run apply_config again (it then restarts it if it needs it).
+        quiet: true
+      vars:
+        _plan: "{{ cassandra_apply_config_as_started }}"
+
 - name: Write the config
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config

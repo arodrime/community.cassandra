@@ -95,11 +95,9 @@ def test_only_the_files_cassandra_config_writes(tmp_path):
     assert found["unit"]["exists"] is True and found["unit"]["path"] == str(tmp_path / "unit")
     assert found["unit"]["checksum"] == hashlib.sha1(b"[Unit]\n").hexdigest()
     assert base64.b64decode(found["record"]) == b"{}"
-    # when the record was written: apply_config trusts it for the running JVM only when written after its start
-    assert found["record_mtime"] == os.stat(str(tmp_path / "record.json")).st_mtime
     argv[4:6] = [str(tmp_path / "no-unit"), str(tmp_path / "no-record")]
     found = json.loads(subprocess.run(argv, stdout=subprocess.PIPE, check=True).stdout)
-    assert found["unit"] == {"exists": False} and found["record"] is None and found["record_mtime"] is None
+    assert found["unit"] == {"exists": False} and found["record"] is None
 
 
 @pytest.mark.parametrize("checksum, expected", [("y1", []), ("y2", ["cassandra.yaml"])])
@@ -128,13 +126,14 @@ def test_seed_leaves_out_the_files_written_since_the_start():
         "cassandra_seed_files": {"files": [{"path": YAML, "checksum": "y1", "ctime": 90.0},
                                            {"path": ENV, "checksum": "e1", "ctime": 110.0}]},
         "cassandra_seed_unit": {"stat": {"exists": True, "path": UNIT, "checksum": "u1", "ctime": 95.0}},
-        "cassandra_jvm": {"start": "100.00"},
+        "cassandra_jvm": {"pid": "42", "start": "100.00"},
     }
     variables["_files"] = trust_as_template(rec["vars"]["_files"])
-    assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", UNIT: "u1"}
+    jvm = {"pid": "42", "start": 100.0}  # the JVM it records, as config_snapshot.yml does
+    assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", UNIT: "u1", "_jvm": jvm}
     # the unit written since the start: left out too
     variables["cassandra_seed_unit"]["stat"]["ctime"] = 105.0
-    assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1"}
+    assert json.loads(render(rec["ansible.builtin.copy"]["content"], variables)) == {YAML: "y1", "_jvm": jvm}
 
 
 def test_service_seeds_before_changing_the_unit():
@@ -249,3 +248,36 @@ def test_import_lists_the_config_files_written_since_the_start():
              for n, m in [("cassandra.yaml", 90.0), ("jvm17-server.options", 100.6), ("cassandra-env.sh", 100.4)]]
     assert render(note, {"import_cluster_conf_files": {"files": files}, "cassandra_jvm": {"start": "100.50"}}) == [
         "jvm17-server.options"]
+
+
+def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_since(tmp_path):
+    """config_snapshot.yml: the files the JVM read (not one written after its start), and that JVM (pid,
+    start), for which apply_config trusts the record only."""
+    record = task("config_snapshot.yml", "Record the config Cassandra started with")
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    for name in ("cassandra.yaml", "jvm17-server.options", ".hidden"):
+        (conf / name).write_text(name)
+    (tmp_path / "unit").write_text("[Unit]\n")
+    out = tmp_path / "record.json"
+    argv = [sys.executable, "-c", record["vars"]["_record"], str(conf), str(tmp_path / "unit"), str(out)]
+    # a process taken for Cassandra (its main class on its command line), started after the files
+    time.sleep(0.05)
+    jvm = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "org.apache.cassandra.service.CassandraDaemon"])
+    try:
+        time.sleep(1.2)
+        (conf / "jvm17-server.options").write_text("edited after the start")
+        subprocess.run(argv, check=True)
+        got = json.loads(out.read_text())
+        assert got["_jvm"]["pid"] == str(jvm.pid) and abs(got["_jvm"]["start"] - time.time()) < 30
+        assert sorted(k for k in got if k != "_jvm") == [str(conf / "cassandra.yaml"), str(tmp_path / "unit")]
+        assert got[str(conf / "cassandra.yaml")] == hashlib.sha1(b"cassandra.yaml").hexdigest()
+        assert oct(os.stat(str(out)).st_mode & 0o777) == "0o644"
+    finally:
+        jvm.kill()
+        jvm.wait()
+    # no JVM found: every file, no _jvm (apply_config then trusts it for nothing)
+    subprocess.run(argv, check=True)
+    got = json.loads(out.read_text())
+    assert "_jvm" not in got and sorted(got) == sorted([str(conf / "cassandra.yaml"), str(conf / "jvm17-server.options"),
+                                                        str(tmp_path / "unit")])
