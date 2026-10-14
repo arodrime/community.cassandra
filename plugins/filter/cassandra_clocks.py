@@ -407,6 +407,8 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
                     v["verdict"] = "ok"
                     v["why"] = ("%s, synchronised (the kernel says so; this systemd tells no offset)" % p["service"]
                                 if p.get("kernel_only") else
+                                "synchronised by another means (the kernel says so; %s disabled, its time sync left alone)"
+                                % p["service"] if p.get("installed") else
                                 "synchronised by another means (the kernel says so; no chrony, timesyncd or ntpd)")
             elif p.get("container"):
                 # the host's clock (a container shares its kernel): the host syncs it, the dates say how far it is

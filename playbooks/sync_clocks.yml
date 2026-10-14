@@ -90,14 +90,17 @@
       ansible.builtin.assert:
         that: _unread | length == 0
         fail_msg: >-
-          REFUSED  sync_clocks  the clock of {{ _unread | join(', ') }} could not be read
-          ({{ _unread | map('extract', hostvars, ['_cassandra_clock_read', 'msg']) | map('default', '') | join('; ') }}).
-          Nothing was changed.
+          REFUSED  sync_clocks  the clock of {{ _unread | join(', ') }} could not be read{{ (': ' ~ _why | join('; '))
+          if _why else '' }}. Nothing was changed.
         quiet: true
       run_once: true
+      when: not ansible_check_mode  # --check: said in the recap
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _unread: "{{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_clock_action', 'equalto', 'unread') | map(attribute='inventory_hostname') | list }}"
+        _why: >-
+          {{ _unread | map('extract', hostvars, ['_cassandra_clock_read', 'msg']) | map('default', '') | map('string')
+             | map('regex_replace', '\s+', ' ') | map('trim') | select | list }}
 
     - name: Group the nodes set live
       ansible.builtin.group_by:

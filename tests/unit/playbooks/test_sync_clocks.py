@@ -41,5 +41,14 @@ def test_a_window_left_open_comes_first_and_alone_may_be_down():
     assert progress["vars"]["_cassandra_progress_resume"] is False  # a fresh file: the clocks read again say the rest
 
 
-def test_a_node_not_read_stops_the_run():
-    assert play("Read the clocks")["any_errors_fatal"] is True
+def test_a_node_unreachable_or_not_read_stops_the_run_before_the_screen():
+    read = play("Read the clocks")
+    assert read["any_errors_fatal"] is True  # unreachable: jvm_started.yml fails there
+    names = [t["name"] for t in read["tasks"]]
+    refuse = read["tasks"][names.index("Refuse to go on when a clock could not be read")]
+    assert names.index("Refuse to go on when a clock could not be read") < names.index("Show the clocks and confirm the run")
+    assert refuse["run_once"] is True and refuse["ansible.builtin.assert"]["that"] == "_unread | length == 0"
+    assert "selectattr('_cassandra_clock_action', 'equalto', 'unread')" in refuse["vars"]["_unread"]
+    # the result words of the live play, as the recap knows them (test_cassandra_clocks)
+    live = " ".join(str(play("Set the clocks live")["tasks"]).split())
+    assert "'clock_' ~ (_cassandra_clock_did | join('_') or 'slew')" in live

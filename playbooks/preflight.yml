@@ -318,8 +318,8 @@
         - name: Every seed is up
           ansible.builtin.assert:
             # a cluster about to be wiped: a seed of the group, up or not; a resumed rolling run: a member
-            # drained or stopped by the interrupted run (sync_clocks: a window left open, ended first; its checks
-            # before each window stop on any other node down); apply_config: a member of this run not running, which
+            # drained or stopped by the interrupted run; sync_clocks: any member down (e.g. a window left open, ended
+            # first; the check before each window stops on any other node down); apply_config: a member of this run not running, which
             # it writes (each node's own check before it stops on any other)
             that: >-
               _addr in _up or (_cassandra_preflight_cluster_reset | default(false) | bool and _host | length > 0)
