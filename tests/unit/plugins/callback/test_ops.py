@@ -525,6 +525,9 @@ def test_status_verdict_and_table_rows_coloured():
         == colour(u"1 NODE DOWN: node1 (dc1/r1) \u2014 1 LEAVING: node3") == C.COLOR_ERROR
     assert colour(u"ALL 5 NODES UP \u2014 RING AND INVENTORY DIFFER") == C.COLOR_ERROR
     assert colour(u"ALL 5 NODES UP \u2014 1 JOINING: node6 \u2014 RING AND INVENTORY DIFFER") == C.COLOR_ERROR
+    assert colour("1 NODE NOT REACHED: node3") == colour("2 NODES NOT REACHED: node3, node4") == C.COLOR_ERROR
+    from ansible_collections.community.cassandra.plugins.callback.ops import _RING_VERDICT
+    assert _RING_VERDICT.match("1 NODE NOT REACHED: node3")  # the report's last line, framed as the verdict
     # the table rows by their state, never by the line above (a UN row under a DN one stays plain)
     assert colour(u" DN  10.0.0.5  5.25 GiB  16  22.5%  1e96  r1  node1  \u2190 down") == C.COLOR_ERROR
     assert colour(" DL  10.0.0.5  ?  16  22.5%  1e96  r1  node1") == C.COLOR_ERROR

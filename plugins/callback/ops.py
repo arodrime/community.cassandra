@@ -43,7 +43,7 @@ description:
     of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  applied))). The rows of
     a C(FAILED) recap do not keep its colour (the nodes done stay plain). The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
-    as a change, C(1 NODE DOWN) and a ring that differs from the inventory as an error; the
+    as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) and a ring that differs from the inventory as an error; the
     rows of its table (C( DN  10.0.0.5 ...)) by the node's state, down as an error, joining, leaving or moving as
     a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
@@ -152,7 +152,7 @@ _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
-    (re.compile(r"\d+ NODES? DOWN: |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
+    (re.compile(r"\d+ NODES? (DOWN|NOT REACHED): |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
     (re.compile(r"IMPORT \S+ .*\bFAILED\b|CHECK\b.*\bfailed\b"), "COLOR_ERROR"),
     (_WARNING, "WARNING"),
     (re.compile(r"ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),
@@ -180,7 +180,7 @@ _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_nod
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
 # the status playbook's verdict, its last line: heavy rules around it
-_RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
+_RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
 # a row of the status playbook's nodetool table: its colour by the node's state
 _RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
 # the help playbook's text: a rule naming a section, an operation (its key), a command

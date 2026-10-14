@@ -423,13 +423,33 @@ def test_report_each_problem_once_with_who_saw_it():
         "  streams:  in progress on n3",
         "  ssh:      not reached by Ansible: n2",
         "  not counted, marked cassandra_node_state: absent: n7, n8",
-        "TO DO",
-        "  1. start Cassandra on n2 (its server first if it is down); a node that can't be recovered: replace_node",
+        "TO DO",  # n2 down and not reached: one item
+        "  1. bring n2 back (not reached over SSH, down in the ring): its server first, then Cassandra, then run this"
+        " again; a node that can't be recovered: replace_node",
         P, "  2. remove n7, n8 from the ring:",
         "     ansible-playbook community.cassandra.topology",
-        P, "  3. reach n2 over SSH, then run this again",
-        P, "  4. wait for the streams to end (nodetool netstats), then run this again",
+        P, "  3. wait for the streams to end (nodetool netstats), then run this again",
     ]
+
+
+def test_report_an_unreachable_host_known_by_no_address_taken_for_the_one_node_down():
+    # no ansible_host, no facts (Ansible reached it by name): its ring entry is the one no host has
+    ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.4", status="D")]
+    names = {"10.0.0.1": "n1", "10.0.0.2": "n2", "n1": "n1", "n2": "n2", "n3": "n3"}
+    per_host = dict((h, findings(h, [view(h, *ring)])) for h in ("n1", "n2"))
+    lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3"], unreachable=["n3"], names=names)["lines"]
+    assert lines[1:3] == ["  ring:  n3? 10.0.0.4 (r1) DN   seen from n1, n2", "  ssh:   not reached by Ansible: n3"]
+    assert lines[3:] == ["TO DO", "  1. bring n3 back (not reached over SSH, down in the ring): its server first, then"
+                                  " Cassandra, then run this again; a node that can't be recovered: replace_node"]
+    # two such hosts, or a host known by an address: no guess
+    names4 = dict(names, n4="n4")
+    lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3", "n4"], unreachable=["n3", "n4"], names=names4)["lines"]
+    assert "  ring:  10.0.0.4 (r1) DN   seen from n1, n2" in lines
+    lines = cassandra_health_report(per_host, "c", ["n1", "n2", "n3"], unreachable=["n3"],
+                                    names=dict(names, **{"10.0.0.3": "n3"}))["lines"]
+    assert "  ring:  10.0.0.4 (r1) DN   seen from n1, n2" in lines
+    assert lines[-3:] == ["TO DO", "  1. start Cassandra on 10.0.0.4 (its server first if it is down); a node that can't"
+                                   " be recovered: replace_node", "  2. reach n3 over SSH, then run this again"]
 
 
 def test_report_node_level_failures():
