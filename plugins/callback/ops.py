@@ -128,8 +128,10 @@ _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
 _VERDICTS = _ASSERTS + ("fail", "ansible.builtin.fail", "ansible.legacy.fail")
 # a marked task that failed on its own template: core's message, not the verdict ("Task failed: ..." since
-# ansible-core 2.19, the other two before)
-_CORE_ERRORS = ("Task failed: ", "The conditional check ", "The task includes an option with an undefined variable")
+# ansible-core 2.19, the others before)
+_CORE_ERRORS = ("Task failed: ", "The conditional check ", "The task includes an option with an undefined variable",
+                "Unexpected templating type error occurred on ", "An unhandled exception occurred while ",
+                "the field 'args' has an invalid value")
 
 
 def _task(result):

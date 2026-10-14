@@ -30,6 +30,7 @@ with open(os.path.join(TOP, "playbooks", "decommission_node.yml"), encoding="utf
     PLAY = next(p for p in yaml.safe_load(f) if p.get("name") == "Check the nodes to remove")
 CHECK = next(t for t in PLAY["tasks"] if t.get("name") == "Check this node")
 RECORD, STOP = CHECK["rescue"]
+FORGET = CHECK["block"][0]
 REPLICAS = next(t for t in CHECK["block"] if t.get("name") == "Every datacenter keeps enough nodes for its replicas")
 GROUPS = {"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"]}
 
@@ -39,9 +40,9 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def refusal(result, host="n3"):
+def refusal(result, host="n3", task=None):
     variables = dict(RECORD["vars"], ansible_failed_result=result, inventory_hostname=host, _staying=["n1", "n2"],
-                     groups=GROUPS, cassandra_hosts="prod")
+                     groups=GROUPS, cassandra_hosts="prod", ansible_failed_task=task or {"name": "x"})
     return render(RECORD["ansible.builtin.set_fact"]["_cassandra_decommission_refusal"], **variables)
 
 
@@ -95,4 +96,16 @@ def test_a_cql_login_refused_by_its_cause_no_driver_dump():
 def test_the_node_named_when_the_message_does_not():
     assert refusal({"msg": ["n3 is in cassandra_seeds: take it out"]}) == ["n3 is in cassandra_seeds: take it out"]
     assert refusal({"msg": "dc2 would keep no seed"}) == ["n3: dc2 would keep no seed"]
-    assert refusal({}) == ["n3: failed"]
+    assert refusal({"msg": "n30 is a seed"}) == ["n3: n30 is a seed"]  # n30 is not n3
+    # a check of the whole cluster (run once): about the cluster, no node named
+    assert refusal({"msg": "dc2 would keep no seed"}, task={"name": "Every datacenter keeps a seed", "run_once": True}) == [
+        "dc2 would keep no seed"]
+
+
+def test_only_the_nodes_that_failed_say_why():
+    # any_errors_fatal brings the nodes that passed into the rescue too (no failure of their own): nothing for
+    # them, and none left from an earlier play (topology runs add_node's first)
+    assert FORGET["name"] == "Forget an earlier failure"
+    assert FORGET["ansible.builtin.set_fact"] == {"ansible_failed_result": {}, "ansible_failed_task": {}}
+    assert render("{{ %s }}" % RECORD["when"], ansible_failed_result={}) is False
+    assert render("{{ %s }}" % RECORD["when"], ansible_failed_result={"msg": "n3 is in cassandra_seeds"}) is True

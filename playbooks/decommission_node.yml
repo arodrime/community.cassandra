@@ -95,6 +95,12 @@
       vars:
         cassandra_output_rescued: true  # the rescue says what failed (ops callback)
       block:
+        # (topology runs add_node's plays first: a failure of theirs stays in this fact)
+        - name: Forget an earlier failure
+          ansible.builtin.set_fact:
+            ansible_failed_result: {}
+            ansible_failed_task: {}
+
         - name: A node to remove is in the cluster
           ansible.builtin.assert:
             that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')]
@@ -152,9 +158,11 @@
             quiet: true
           run_once: true
       rescue:
-        # its lines; the host named when they do not; cqlsh's error by its cause, none of its text (it could
-        # quote the login)
+        # its lines; the host named when they do not (not for a check of the whole cluster, run once);
+        # cqlsh's error by its cause, none of its text (it could quote the login). Only on a host that failed:
+        # any_errors_fatal brings the others here too
         - name: Record the refusal
+          when: ansible_failed_result | default({}) | length > 0
           ansible.builtin.set_fact:
             _cassandra_decommission_refusal: >-
               {{ ([_staying[0] ~ ' refused the CQL login (CQL authentication is on): check cassandra_cql_username and'
@@ -163,7 +171,8 @@
                   else ["The keyspaces' replication could not be read with cqlsh on " ~ _staying[0] ~ ' (' ~ _why
                         ~ '): check that Cassandra runs there and takes CQL connections, then run this again.'])
                  if _err
-                 else _msg if inventory_hostname in _msg | first
+                 else _msg if ansible_failed_task.run_once | default(false) | bool
+                                or _msg | first is search('(^|\W)' ~ inventory_hostname | regex_escape ~ '(\W|$)')
                  else [inventory_hostname ~ ': ' ~ _msg | first] + _msg[1:] }}
           vars:
             _msg: "{{ [ansible_failed_result.msg | default('failed', true)] | flatten }}"

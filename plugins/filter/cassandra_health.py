@@ -12,10 +12,19 @@ cassandra_removal_force_target: the node to run removenode force on."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import ipaddress
 import re
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import _JMX_CAUSES
+
+
+def _ip(address):
+    """One spelling per address: nodetool prints IPv6 uncompressed, the variables compressed."""
+    try:
+        return ipaddress.ip_address(u"%s" % address.split("%")[0]).compressed
+    except ValueError:
+        return address
 
 
 def _nodes(cluster_status):
@@ -47,7 +56,7 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
     schema (msg)."""
-    names = names or {}
+    names = dict((_ip(a), n) for a, n in (names or {}).items())
     found = []
     for view in views:
         result = view["result"]
@@ -65,7 +74,7 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
                 continue
             if n["status"] != "U" or n["state"] != "N":
                 # by its inventory name when it has one: "node4 (10.0.0.4, rack1) is DN"
-                name = names.get(n["address"])
+                name = names.get(_ip(n["address"]))
                 where = ("%s, %s" % (n["address"], n["rack"])) if name else n["rack"]
                 found.append({"kind": "state", "address": n["address"], "rack": n["rack"],
                               "state": n["status"] + n["state"], "seen_from": view["from"],
