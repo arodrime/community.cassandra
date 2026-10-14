@@ -159,6 +159,11 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # what an earlier play (or playbook of this run) read may no longer stand: this step reads it again
+    - name: Read where the nodes stand again
+      ansible.builtin.set_fact:
+        _cassandra_node_standing_read: {}
+
     - name: Say what the run does
       ansible.builtin.debug:
         msg: "{{ 'ring' | community.cassandra.cassandra_phase }}"

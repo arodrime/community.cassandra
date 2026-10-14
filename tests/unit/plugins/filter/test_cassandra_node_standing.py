@@ -7,13 +7,10 @@ import re
 
 import pytest
 
-from ansible.errors import AnsibleFilterError
-
-from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import (
-    cassandra_node_reset_ring, cassandra_reset_choice)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import cassandra_reset_choice
 from ansible_collections.community.cassandra.plugins.filter.cassandra_node_standing import (
     RESETTABLE, STATES, cassandra_add_node_reset_check, cassandra_node_add_state, cassandra_node_data_dirs,
-    cassandra_node_reset_refusal, cassandra_node_standing, cassandra_node_standing_words)
+    cassandra_node_reset_refusal, cassandra_node_standing)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 
@@ -51,7 +48,7 @@ OURS = dict(live_cluster="my_cluster", keyspaces=["system", "shop"], cluster_key
 
 
 # Every state, from the facts that make it (each row: the facts, the state)
-@pytest.mark.parametrize("facts, state", [
+ROWS = [
     (BLANK, "blank"),
     (dict(BLANK, answers=[]), "blank"),  # nothing to lose: the ring does not matter
     (dict(BLANK, answers=None), "blank"),  # cassandra_config, create_cluster: the ring is not read
@@ -97,7 +94,18 @@ OURS = dict(live_cluster="my_cluster", keyspaces=["system", "shop"], cluster_key
     (dict(running=True, own=None), "unknown"),  # nodetool does not answer there
     (dict(running=True, own=_ring(_me("U", "N"), N1)), "unknown"),  # its own ring lists this cluster's nodes
     (dict(running=True, own=_ring(_me("U", "N")), answers=[]), "unknown"),
-])
+    (dict(running=True, own=_ring(_me("U", "N")), answers=None), "unknown"),  # running, the ring not read
+    # running alone, holding data, a down node no host has: maybe this node under an old address
+    (dict(RUNNING_ALONE, answers=_answers({"address": "10.0.0.50", "status": "D", "state": "N", "host_id": "id-50"})),
+     "unknown"),
+    (dict(answers=_answers(_me("D", "N")), running=True, own=None), "unknown"),  # it runs, the ring sees it down
+    (dict(BLANK, answers=_answers(_me("D", "N")), running=True, own=None), "unknown"),
+    # up under its own host ID, its system keyspace not where the inventory or its cassandra.yaml say: itself
+    (dict(BLANK, answers=_answers(_me("U", "N")), running=True, host_id="id-7"), "member"),
+]
+
+
+@pytest.mark.parametrize("facts, state", ROWS)
 def test_each_state(facts, state):
     out = _state(**facts)
     assert out["state"] == state, out["reasons"]
@@ -106,10 +114,7 @@ def test_each_state(facts, state):
 
 def test_every_state_is_reached_by_a_row():
     """No state without a row above: each one is tested."""
-    with open(__file__) as f:
-        text = f.read()
-    for state, words in STATES:
-        assert '"%s")' % state in text, state
+    assert set(state for facts, state in ROWS) == set(dict(STATES))
 
 
 def test_replace_of_itself_is_not_in_the_ring():
@@ -136,14 +141,11 @@ def test_blank_and_evidence():
     assert out["blank"] and out["elsewhere"] == ["/var/lib/cassandra/data/system"]
 
 
-def test_ring_of_the_state_is_reset_node_ring():
-    """One reading of the rings: the state's ring problems are reset_node's."""
-    for facts in ({}, dict(answers=[]), dict(answers=_answers(_me("D", "N"))), RUNNING_ALONE,
-                  dict(running=True, own=None), dict(running=True, own=_ring(_me("U", "N"), N1))):
-        out = _state(**facts)
-        args = dict(answers=facts.get("answers", _answers()), addresses=[ME], running=facts.get("running", False),
-                    own=facts.get("own"), host="node7 (dc1/rack_b)", known=KNOWN, has_data=True)
-        assert out["ring"]["problems"] == cassandra_node_reset_ring(**args)["problems"]
+def test_its_own_address_first():
+    """Its own host ID UN under another address, its address DN under another host ID: a conflict, not this node."""
+    other = {"address": "10.0.0.3", "status": "U", "state": "N", "host_id": "id-7"}
+    out = _state(answers=_answers(other, _me("D", "N", "id-x")), running=True, own=_ring(_me("U", "N")), host_id="id-7")
+    assert out["state"] == "address_conflict" and out["ring"]["entry"]["host_id"] == "id-x"
 
 
 # add_node (and topology): the decision of each state, for each cassandra_add_node_reset
@@ -156,7 +158,13 @@ def test_ring_of_the_state_is_reset_node_ring():
     (dict(keyspaces=["system", "shop"]), "refused", "refused", "orphan"),
     (dict(live_cluster="billing"), "refused", "refused", "orphan"),
     (RUNNING_ALONE, "refused", "refused", "orphan"),
-    (dict(BLANK, **RUNNING_ALONE), "new", "new", "new"),  # nothing to reset: new_node_checks refuses it (running)
+    (dict(BLANK, **RUNNING_ALONE), "running", "running", "running"),  # never added while Cassandra runs there
+    (dict(BLANK, unreadable=["/x: can not be read (without root?)"]), "unknown", "unknown", "unknown"),
+    (dict(BLANK, live="unreadable"), "unknown", "unknown", "unknown"),
+    (dict(BLANK, running=True, own=_ring(_me("U", "N"), {"address": "10.9.9.9", "status": "U", "state": "N"})),
+     "other_cluster", "other_cluster", "other_cluster"),
+    (dict(answers=_answers(_me("D", "N")), running=True, own=None), "unknown", "unknown", "unknown"),
+    (dict(unreadable=["/x: can not be read (without root?)"]), "refused", "refused", "orphan"),
     (dict(answers=[]), "refused", "refused", "orphan"),
     (dict(answers=_answers(_me("U", "N")), running=True, host_id="id-7"), "joined", "joined", "joined"),
     (dict(answers=_answers(_me("U", "J")), running=True, host_id="id-7"), "joining", "joining", "joining"),
@@ -177,26 +185,40 @@ def test_add_node_decides_from_the_state(facts, auto, given, refused):
         else:
             assert add["state"] == expected, (choice, add)
             assert bool(add["refusal"]) is (expected not in ("new", "joined", "joining"))
+            if expected in ("running", "unknown", "other_cluster"):
+                assert add["refusal"] and "it holds data" not in add["refusal"]
 
 
-def test_add_node_resets_only_what_its_state_allows():
-    """The reset add_node does is the state's: never joined, or a former member when given."""
-    for facts, _ in [(f, s) for f, s in [({}, 1), (OURS, 1), (dict(live_cluster="billing"), 1), (RUNNING_ALONE, 1),
-                                         (dict(answers=[]), 1), (dict(answers=_answers(_me("D", "N"))), 1),
-                                         (dict(unreadable=["/x: can not be read (without root?)"]), 1),
-                                         (dict(OURS, bootstrap_started=True), 1)]]:
-        state = _state(**facts)
-        for explicit in (False, True):
-            check = cassandra_add_node_reset_check(state, explicit=explicit)
-            allowed = state["state"] == "failed_bootstrap" or (explicit and state["state"] == "former_member")
-            assert check["reset"] is allowed, (facts, explicit)
-            assert (check["problems"] == []) is allowed
+@pytest.mark.parametrize("facts, explicit, reset", [
+    ({}, False, True), ({}, True, True),
+    (OURS, False, False), (OURS, True, True),
+    (dict(OURS, bootstrap_started=True), False, True),
+    (dict(keyspaces=["system", "shop"]), True, False),  # given: a former member only, never data of no known cluster
+    (dict(live_cluster="billing"), True, False),
+    (RUNNING_ALONE, True, False),
+    (dict(answers=[]), True, False),
+    (dict(answers=_answers(_me("D", "N"))), True, False),
+    (dict(unreadable=["/x: can not be read (without root?)"]), True, False),
+])
+def test_add_node_resets_only_what_its_state_allows(facts, explicit, reset):
+    check = cassandra_add_node_reset_check(_state(**facts), explicit=explicit)
+    assert check["reset"] is reset, (facts, explicit)
+    assert (check["problems"] == []) is reset
+
+
+def test_a_problem_always_stops_the_reset():
+    """Never joined, but with a ring problem (a state made by hand, as a drift of the states would make it): refused."""
+    state = dict(_state(), ring=dict(_state()["ring"], problems=["node1 sees 10.0.0.7 in its ring"]))
+    assert state["state"] == "failed_bootstrap"
+    check = cassandra_add_node_reset_check(state)
+    assert check["reset"] is False and check["problems"] == ["node1 sees 10.0.0.7 in its ring"]
 
 
 # reset_node and replace_node's reset: what may be emptied
 @pytest.mark.parametrize("facts, may", [
     (BLANK, True),
-    (dict(BLANK, answers=[]), True),  # nothing to delete: the ring does not matter
+    (dict(BLANK, answers=[]), False),  # no node answered: whether it is in the ring can't be checked, nothing is reset
+    (dict(BLANK, live_cluster="billing"), False),  # another cluster's cassandra.yaml
     ({}, True),
     (OURS, True),
     (dict(keyspaces=["system", "shop"]), True),  # reset_node is told to: user keyspaces of no known cluster
@@ -214,12 +236,35 @@ def test_add_node_resets_only_what_its_state_allows():
     (dict(running=True, own=None), False),
     (dict(unreadable=["/x: can not be read (without root?)"]), False),
     (dict(answers=_answers({"address": "10.0.0.50", "status": "D", "state": "N", "host_id": "id-50"})), False),
+    (dict(RUNNING_ALONE, answers=_answers({"address": "10.0.0.50", "status": "D", "state": "N", "host_id": "id-50"})),
+     False),
+    (dict(running=True, jvm=False, own=None,
+          answers=_answers({"address": "10.0.0.50", "status": "D", "state": "N", "host_id": "id-50"})), False),
 ])
 def test_reset_node_decides_from_the_state(facts, may):
     state = _state(**facts)
     problems = cassandra_node_reset_refusal(state)
     assert (problems == []) is may, (state["state"], problems)
-    assert (state["state"] in RESETTABLE) is may
+    if may:
+        assert state["state"] in RESETTABLE
+
+
+def test_the_state_is_never_the_only_guard_of_a_reset():
+    """A resettable state with a ring problem (as a drift of the states would make it): refused anyway."""
+    state = dict(_state(), ring=dict(_state()["ring"], problems=["node1 sees 10.0.0.7 in its ring"]))
+    assert state["state"] in RESETTABLE
+    assert cassandra_node_reset_refusal(state) == ["node1 sees 10.0.0.7 in its ring"]
+
+
+def test_whole_cluster_reset_refuses_another_cluster():
+    """create_cluster's reset checked the ring itself: the node's cassandra.yaml still counts."""
+    assert cassandra_node_reset_refusal(_state(answers=None, live_cluster="billing"), whole_cluster=True) == [
+        "the live cassandra.yaml is for cluster 'billing', not 'my_cluster' (nor the package's stock 'Test Cluster'):"
+        " a node of another cluster?"]
+    for live in ("my_cluster", "Test Cluster", None):
+        assert cassandra_node_reset_refusal(_state(answers=None, live_cluster=live), whole_cluster=True) == []
+    # the ring is not looked at there (not read)
+    assert cassandra_node_reset_refusal(_state(answers=[]), whole_cluster=True) == []
 
 
 def test_reset_refusal_texts():
@@ -432,10 +477,14 @@ def test_add_node_refusal_texts():
 
 
 def test_a_member_by_its_host_id_under_another_address():
-    """Its own ring gives its host ID: a node of the ring with that ID is this node (another address)."""
+    """Its own ring gives its host ID: a node of the ring with that ID is this node (another address). Seen down
+    while it runs here: can't be told (gossip late, or another machine)."""
     other = {"address": "10.0.0.77", "status": "D", "state": "N", "host_id": "id-7"}
     out = _state(answers=_answers(other), running=True, own=_ring(_me("U", "N")))
-    assert out["state"] == "member_down"
+    assert out["state"] == "unknown" and out["ring"]["entry"]["address"] == "10.0.0.77"
+    assert "Cassandra runs here but the ring sees it down" in out["reasons"]
+    up = dict(other, status="U")
+    assert _state(answers=_answers(up), running=True, own=_ring(_me("U", "N")))["state"] == "member"
 
 
 def test_data_dirs_own_and_elsewhere():
@@ -457,11 +506,16 @@ def test_data_dirs_own_and_elsewhere():
 
 
 def test_words():
-    for state, words in STATES:
-        assert cassandra_node_standing_words(state) == words
-    with pytest.raises(AnsibleFilterError, match="unknown node state"):
-        cassandra_node_standing_words("initialized")
     assert len(dict(STATES)) == len(STATES)
+    for state, words in STATES:
+        assert _state()["words"] == dict(STATES)[_state()["state"]] and words
+
+
+def test_import_says_a_stopped_ring_node_in_these_words():
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_import_nodes
+    with open(cassandra_import_nodes.__file__) as f:
+        text = f.read()
+    assert 'standing.WORDS["member_down"]' in text
 
 
 def test_the_guide_lists_every_state_with_its_words():

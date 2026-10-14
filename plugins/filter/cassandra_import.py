@@ -1365,7 +1365,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
                           " no effect, kept unless the role rewrites the file for a setting:")
             report += ["    " + line for line in n["comments"]]
         if n["normalized"]:
-            report.append("  Same setting, written another way by the role (no effect; on an initialized node, a"
+            report.append("  Same setting, written another way by the role (no effect; on a node that is not blank, a"
                           " file whose settings are all the same is left as it is):")
             report += ["    " + _mask(line) for line in n["normalized"]]
         report.append("")

@@ -20,7 +20,7 @@
            cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice, _address) }}
     _state: "{{ _add.state }}"
   block:
-    - name: Need a node of the cluster to read the ring from
+    - name: A node of the cluster is not being added (its ring to join)
       ansible.builtin.assert:
         that: _from | length > 0
         fail_msg: "Every node of {{ lookup('community.cassandra.cassandra_hosts') }} is in cassandra_target_nodes: use create_cluster for a new cluster"

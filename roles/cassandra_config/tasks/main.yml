@@ -302,7 +302,7 @@
     # in the data dirs, a sample of the keyspace and table dirs another account
     # owns (their content is not changed: a recursive chown of TBs is the
     # operator's call), said in apply_config's recap
-    - name: Look for the system keyspace of an initialized node, and into Cassandra's directories
+    - name: Look for a system keyspace, and into Cassandra's directories
       ansible.builtin.command:
         argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_read.py') }}"]
         stdin: "{{ {'step': 'dirs', 'system': _system, 'tries': _tries | map(attribute='path') | list, 'foreign': _foreign,

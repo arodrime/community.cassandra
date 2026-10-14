@@ -95,7 +95,8 @@
     - cassandra_service_state in ['started', 'restarted']
     - _cassandra_service_act
   block:
-    - name: Check whether this node was already initialized
+    # not where the node stands (node_standing.yml): whether it ever started, for the seed check below
+    - name: Check whether this node ever started (a system keyspace)
       ansible.builtin.stat:
         path: "{{ item }}/system"
         get_checksum: false
