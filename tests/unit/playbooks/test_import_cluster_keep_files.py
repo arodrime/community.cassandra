@@ -20,6 +20,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_config_import, cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
     cassandra_import_self_check, cassandra_import_self_check_nodes)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
+    cassandra_import_self_check_advice)
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -97,6 +99,35 @@ def test_self_check_leaves_out_the_kept_files():
     out, layout = check(files, {"cassandra_config_keep_files": ["logback.xml"]})
     assert out["differences"] == []
     assert "in files LEFT AS THEY ARE on this node" in layout["report"]
+
+
+def test_the_stop_reads_the_self_checks_own_differences():
+    # what the self-check really writes, read back by the stop: a logback.xml hand edit and the heap
+    files = stock()
+    files["logback.xml"] = re.sub(r"<root level=\"INFO\">", '<logger name="com.example" level="WARN"/>\n  <root level="INFO">',
+                                  files["logback.xml"], count=1)
+    out, layout = check(files, {})
+    out["differences"].append(out["differences"][0])  # (the same difference twice: one item)
+    heap = [d for d in check_heap() if d.startswith("heap")]
+    lines = cassandra_import_self_check_advice(layout, {"n1": {"differences": out["differences"] + heap}}, width=160)
+    at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
+    assert lines[at + 1].startswith("    logback.xml   /configuration") and lines[at + 1].endswith("hand edit on n1")
+    assert "    heap MAX_HEAP_SIZE   inventory 8G   n1: 4G" in lines
+    assert "    heap HEAP_NEWSIZE    inventory none   n1: 800M" in lines
+    assert lines[0].startswith("SELF-CHECK FAILED  c  the inventory would change 3 settings on 1 node")
+
+
+def check_heap():
+    files = stock()
+    files["cassandra-env.sh"] += '\nMAX_HEAP_SIZE="4G"\nHEAP_NEWSIZE="800M"\n'
+    imported = cassandra_config_import(dict(files), "50x", FACTS, "", "/var/lib/cassandra")
+    imported["vars"]["cassandra_heap_size"] = "8G"  # (the inventory's other value)
+    node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
+            "vars": dict(imported["vars"], cassandra_version="50x"), "hand_edits": [], "normalized": [],
+            "comments": [], "notes": [], "keep": {"cassandra_service_unit_manage": False}}
+    layout = cassandra_inventory_layout([node], "c")
+    return cassandra_import_self_check(cassandra_inventory_files(layout), layout["hosts"], "n1", FACTS, files, {},
+                                       "/var/lib/cassandra", "17", "", role_permissions(files))["differences"]
 
 
 def test_role_leaves_them():

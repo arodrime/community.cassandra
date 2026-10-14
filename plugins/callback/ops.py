@@ -17,7 +17,7 @@ description:
     task's own C(vars)). Its C(msg) is printed as plain text, a line per list item. When such a task fails (an
     M(ansible.builtin.assert) or M(ansible.builtin.fail) written as a verdict), its C(msg) is printed the same way,
     once for a C(run_once) task that runs again with the same C(msg) (a rescue some hosts reach later); in red,
-    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...)).
+    or coloured by its lines when it is a block of its own (C(REFUSED  ...), C(FAILED  ...), C(SELF-CHECK FAILED  ...)).
     A marked M(ansible.builtin.assert) that passes prints its C(success_msg), nothing without one.
   - A failed task that is not ignored (C(ignore_errors)) and an unreachable host are printed as the default
     callback prints them, task name included; a host unreachable where the play goes on without it
@@ -28,7 +28,8 @@ description:
   - The operator messages are coloured by the start of their lines (Ansible's colours, so C(ANSIBLE_NOCOLOR),
     C(ANSIBLE_FORCE_COLOR) and a non-terminal output apply). C(WARNING) in O(warning_color), indented or not; C(DONE), C(HEALTHY),
     C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
-    says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED), a
+    says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED),
+    C(SELF-CHECK FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
     progress lines (C([1/2] node5 ...)), the phase lines (ending with C(...)) and the first line of a plan or a
     screen (C(PLAN  ...), C(add_node on cluster ...)) in O(progress_color). The lines of an informative summary
@@ -145,7 +146,7 @@ PLAN_COLOUR = "PROGRESS"
 _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
 # the colour of a message line by its start, the lines indented under it the same
 _COLOURS = (
-    (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
+    (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE|SELF-CHECK FAILED)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
     (re.compile(r"\d+ NODES? DOWN: |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
     (re.compile(r"IMPORT \S+ .*\bFAILED\b|CHECK\b.*\bfailed\b"), "COLOR_ERROR"),
@@ -171,6 +172,8 @@ _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_nod
                      r"reset_node|move_node|stop_rack|start_rack|change_seeds|apply_config|update_java|add_datacenter|"
                      r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart)( on cluster |: |$)")
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
+# a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
+_BLOCK = re.compile(r"SELF-CHECK FAILED  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
 # the status playbook's verdict, its last line: heavy rules around it
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? DOWN: ")
@@ -570,7 +573,7 @@ class CallbackModule(DefaultCallback):
             msg[first] = "%s: %s" % (host.get_name(), msg[first])
         # a block of its own (REFUSED  add_node ..., FAILED  ...): coloured by its lines, its verdict line red
         head = next((line for line in msg if line.strip()), "")
-        self._print(msg, color=None if _HEADED.match(head) or _RECAP.match(head) else C.COLOR_ERROR)
+        self._print(msg, color=None if _HEADED.match(head) or _RECAP.match(head) or _BLOCK.match(head) else C.COLOR_ERROR)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         if self._verbose():

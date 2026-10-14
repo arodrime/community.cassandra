@@ -980,6 +980,27 @@ def test_a_refusal_block_is_red_on_its_verdict_line_only():
     assert said == [("No node was added.", C.COLOR_ERROR)]
 
 
+def test_a_failed_self_check_is_red_on_its_verdict_line_only():
+    # import_cluster's stop: a block without rules, its blank lines blank, red on the verdict (and its next line)
+    # only
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule()
+    said = []
+    callback._display = type("D", (), {"verbosity": 0, "columns": 80,
+                                       "display": lambda self, line, color=None, **kw: said.append((line, color))})()
+    block = ["SELF-CHECK FAILED  my_cluster  the inventory would change 1 setting on 1 node", "  (written for inspection"
+             " only)", "", "  Hand edits no variable covers (cassandra_config would revert them):",
+             "    logback.xml   <logger>   hand edit on node1", "", "HOW TO MAKE IT PASS",
+             "  hand edits   to keep them as they are: import again with -e import_cluster_keep_hand_edits=true", "",
+             "Details: reports/my_cluster/report.txt, section SELF-CHECK"]
+    callback.v2_runner_on_failed(_Result(_Task(run_once=True), "localhost", "\n".join(block)))
+    assert [line for line, dummy in said] == block  # no rule, the blank lines blank
+    coloured = dict((line, color) for line, color in said if line.strip() and not re.match(r"^[-=]{4,}$", line))
+    assert coloured == dict([(block[0], C.COLOR_ERROR), (block[1], C.COLOR_ERROR)]
+                            + [(line, None) for line in block[3:] if line.strip()])
+
+
 # --- the help playbook's text ---
 
 HELP_INVENTORY = """

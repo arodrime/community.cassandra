@@ -1135,9 +1135,14 @@ and the unit and ``medusa.ini`` when the roles manage them) are compared with th
 Cassandra, the JVM, bash and systemd read them; and the owner, group and mode ``cassandra_config`` would give the
 config and JMX files with the node's (one line per file that differs). The report starts with ``SELF-CHECK PASSED``, or with ``SELF-CHECK
 FAILED`` and the differences: the inventory is then marked ``# NOT VALID`` in its hosts file and the playbook fails
-(``-e import_cluster_strict=false`` writes the same files without failing, to inspect them: not safe to apply). Fix
-the variables or the nodes before any run; when only hand edits no variable covers fail it,
-``-e import_cluster_keep_hand_edits=true`` leaves those files as they are on their nodes, and the self-check passes. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
+(``-e import_cluster_strict=false`` writes the same files without failing, to inspect them: not safe to apply). The run
+ends with a short ``SELF-CHECK FAILED`` block: what differs, one line per setting or file with its nodes, grouped by
+what makes the self-check pass (hand edits no variable covers, a file of yours that still wins over the import, other
+differences, the nodes not read), then ``HOW TO MAKE IT PASS``: ``-e import_cluster_keep_hand_edits=true`` to keep the
+hand edits (those files are then left as they are on their nodes), the value to set in your file (or the line to
+remove), ``-e import_cluster_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
+``-e import_cluster_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
+The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
 and ``medusa.ini`` are not compared.
 
 When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and settings are imported and

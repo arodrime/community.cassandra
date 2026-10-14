@@ -49,6 +49,8 @@ def test_check_is_green_only_with_nothing_to_do():
 def test_import_verdict():
     assert colour(u"IMPORT my_cluster (--check, nothing written) — 4 nodes read / 4 — SELF-CHECK PASSED") == C.COLOR_OK
     assert colour(u"IMPORT my_cluster — 4 nodes read / 4 — SELF-CHECK FAILED") == C.COLOR_ERROR
+    assert colour("SELF-CHECK FAILED  my_cluster  the inventory would change 3 settings on 2 nodes") == C.COLOR_ERROR
+    assert colour("  Hand edits no variable covers (cassandra_config would revert them):") is None
 
 
 def test_an_indented_line_takes_the_colour_of_the_line_it_is_under():
