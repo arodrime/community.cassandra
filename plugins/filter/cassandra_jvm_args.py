@@ -78,13 +78,15 @@ IN_PLACE = re.compile(r"^-XX:(VMOptionsFile|Flags)=|^@")
 
 def _jvm_name(option):
     """The setting an option sets: -XX:[+-]Name -> Name, -Dx=1 -> -Dx, -Xmx4G -> -Xmx (and -XX:MaxHeapSize, the same
-    setting), -Xss (and -XX:ThreadStackSize), -Xloggc, -verbose:gc; -Xms and -Xmn are not -XX:InitialHeapSize and -XX:NewSize (they also
+    setting), -Xss (and -XX:ThreadStackSize), -Xloggc, -verbose:gc, the -X options of a flag (-Xint, -Xrs, -Xshare:off...,
+    their families); -Xms and -Xmn are not -XX:InitialHeapSize and -XX:NewSize (they also
     set the minimum heap, the maximum young generation). None: an option without a name."""
     m = re.match(r"^-XX:[+-]?(\w+)", option)
     if m:
         return {"MaxHeapSize": "-Xmx", "ThreadStackSize": "-Xss"}.get(m.group(1), m.group(1))
-    m = re.match(r"^(-D[^=]+)", option) or re.match(r"^(-X(?:mx|ms|mn|ss|loggc))", option) \
-        or re.match(r"^(-verbose:gc)$", option)
+    m = re.match(r"^(-D[^=]+)", option) or re.match(r"^(-X(?:mx|ms|mn|ss|loggc|maxjitcodesize))", option) \
+        or re.match(r"^(-verbose:gc|-X(?:int|mixed|comp|rs|noclassgc|batch|concgc|incgc))$", option) \
+        or re.match(r"^(-Xshare)(?::\w+)?$", option)
     return m.group(1) if m else None
 
 
@@ -95,6 +97,14 @@ FAMILIES = {
     "(young generation)": ("-Xmn", "NewSize", "MaxNewSize"),
     # Java 8: -Xloggc turns PrintGC and PrintGCTimeStamps on where it is, -verbose:gc PrintGC
     "(GC log)": ("-Xloggc", "-verbose:gc", "PrintGC", "PrintGCTimeStamps"),
+    # the -X options of a -XX flag, or of one another (the last one wins)
+    "(execution mode)": ("-Xint", "-Xmixed", "-Xcomp", "UseInterpreter", "UseCompiler"),
+    "(signals)": ("-Xrs", "ReduceSignalUsage"),
+    "(class unloading)": ("-Xnoclassgc", "ClassUnloading"),
+    "(background compilation)": ("-Xbatch", "BackgroundCompilation"),
+    "(code cache)": ("-Xmaxjitcodesize", "ReservedCodeCacheSize"),
+    "(class data sharing)": ("-Xshare", "UseSharedSpaces", "RequireSharedSpaces"),
+    "(CMS)": ("-Xconcgc", "-Xincgc", "UseConcMarkSweepGC"),
 }
 
 

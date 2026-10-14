@@ -1196,15 +1196,17 @@ path are imported. Files written another way (other keys or names, other signing
 the role's header, another series' file, or any file when the package came from a file) get
 ``cassandra_repository_manage: false`` on that node, and the report says why.
 
-Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xmx8G
+Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G
 -XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,
 ``MAX_DIRECT_MEMORY_SIZE``) set elsewhere in the file, are moved to the variables that write them where the role does:
 ``-Xms`` and ``-Xmx`` alike to ``cassandra_heap_size`` (with ``cassandra_heap_newsize`` the young generation the JVM
 runs with, which ``MAX_HEAP_SIZE`` needs without G1), the other options to ``cassandra_jvm<N>_extra_options`` of the
-Java the node runs. Only when the JVM gets the same arguments from the role's files: worked out from the running JVM's
+Java the node runs (that Java's only: after ``update_java``, move them to the new Java's). Only when the JVM gets the same arguments from the role's files: worked out from the running JVM's
 arguments (``/proc/<pid>/cmdline``), what ``cassandra-env.sh`` adds by itself from what it finds in the options (the
 heap, the GC log, the GC threads) included, the last option of a name counting; an option set again later is left out.
-Not when Cassandra is not running or its files changed since it started. ``apply_config`` then rewrites those files in
+Not when Cassandra is not running or its files changed since it started, when JMX authenticates by JAAS, nor in the
+files ``import_cluster_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays a hand edit (moved, the JVM would
+get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrites those files in
 the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
 (in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
 ``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the

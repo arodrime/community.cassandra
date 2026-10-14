@@ -326,14 +326,16 @@ def test_report_moved_cleanup_and_next(tmp_path):
     at = lines.index(u"MOVED — cassandra-env.sh hand edits now set by variables, the JVM gets the same arguments")
     assert re.match(r"^  cassandra-env.sh line \d+: -Xms8G -Xmx8G -XX:\+AlwaysPreTouch:$", lines[at + 1])
     assert re.match(r"^ +cassandra_heap_size: 8G; cassandra_jvm17_extra_options +all$", lines[at + 2])
-    assert lines[at + 3] == ("  apply_config rewrites cassandra-env.sh, jvm17-server.options on all nodes in the"
+    assert lines[at + 3] == ("  cassandra_jvm17_extra_options: read by that Java only; after update_java, move them to"
+                             " the new Java's")
+    assert lines[at + 4] == ("  apply_config rewrites cassandra-env.sh, jvm17-server.options on all nodes in the"
                              " collection's layout (same JVM arguments; it restarts the nodes it writes)")
     at = lines.index(u"CLEANUP — options the running JVM does not use: left out of the lines moved, else left as"
                      u" they are")
     assert re.match(r"^  jvm11-server.options line \d+: -Xmx4G: +not read, Java 17 reads jvm17-server.options +all$",
                     lines[at + 1])
     assert u"  1. cassandra-env.sh hand edits moved to variables (see MOVED): apply_config rewrites cassandra-env.sh," \
-        u" jvm17-server.options and restarts n1, n2 (same JVM arguments)" in lines
+        u" jvm17-server.options and restarts all nodes (same JVM arguments)" in lines
     assert [line for line in lines if "apply_config --check --diff" in line][0].endswith(
         "expect: cassandra-env.sh, jvm17-server.options rewritten (same JVM arguments, see MOVED), nothing else")
 
@@ -560,3 +562,18 @@ def test_a_logback_xml_nested_too_deep_compared_by_its_lines():
     files["logback.xml"] = "<configuration>" + "<a>" * 3000 + "</a>" * 3000 + "<root level='INFO'/></configuration>"
     imported_files = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
     assert [e for e in imported_files["hand_edits"] if e.startswith("logback.xml")]
+
+
+@pytest.mark.parametrize("mine, other", [("-Xint", "-Xmixed"), ("-Xrs", "-XX:-ReduceSignalUsage"),
+                                         ("-Xshare:off", "-XX:+UseSharedSpaces"), ("-Xnoclassgc", "-XX:+ClassUnloading")])
+def test_no_move_before_another_spelling_the_import_does_not_see(tmp_path, mine, other):
+    # JVM_EXTRA_OPTS from a file the import does not read (/etc/default/cassandra), a hand line after it: moved
+    # before it, the other spelling would win
+    files = node_files("50x", add_to("cassandra-env.sh", 'JVM_OPTS="$JVM_OPTS %s"' % mine))
+    env = {"JVM_EXTRA_OPTS": other}
+    cmdline = launch(files, "17", tmp_path, env)
+    inventory, layout, node = imported(files, "50x", "17", cmdline, environment={})
+    if node["moved"]:
+        rendered, dummy = role_files(inventory, layout, files)
+        assert settings(launch(rendered, "17", tmp_path, env)) == settings(cmdline)
+    assert node["moved"] == []
