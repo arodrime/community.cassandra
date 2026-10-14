@@ -7,7 +7,8 @@
 # load), where the group and the ring differ (a ring node that is another
 # host of the inventory is named), and last the verdict (ALL 5 NODES UP,
 # 1 NODE DOWN: node1 (dc1/rack1), 1 NODE NOT REACHED: node3 (by Ansible: never
-# ALL UP then), the nodes joining, leaving or moving, a ring that differs).
+# ALL UP then), the nodes joining, leaving or moving; under it "WARNING - ring
+# and inventory differ" when they do).
 # A host Ansible does not reach and no address of the ring matches is taken
 # for the one ring node no host has in its datacenter and rack (node3?). A
 # down node is shown, not an error (the check is health_check): fails only

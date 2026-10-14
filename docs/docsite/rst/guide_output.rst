@@ -77,10 +77,11 @@ Conventions
     1 NODE DOWN: node1 (dc1/rack3)
 
   The verdict: ``ALL 5 NODES UP`` (green under the ops callback), or ``1 NODE DOWN: ...`` (red); then, after
-  ``—``, the nodes joining, leaving or moving (``ALL 6 NODES UP — 1 JOINING: node6``, yellow) and ``RING AND
-  INVENTORY DIFFER`` (red: a host of the run missing from the ring, a ring node unknown to the inventory or marked
-  absent; not a ring node that is another host of the inventory, as under ``--limit``). The ops callback puts the report under a heavy rule and the verdict between two, and
-  colours the table rows by the node's state: down red, joining, leaving or moving yellow.
+  ``—``, the nodes joining, leaving or moving (``ALL 6 NODES UP — 1 JOINING: node6``, yellow). Under it, a second
+  line ``WARNING - ring and inventory differ`` (orange) when a host of the run is missing from the ring, or a ring
+  node is unknown to the inventory or marked absent (not a ring node that is another host of the inventory, as under
+  ``--limit``); the lines above it say which. The ops callback puts the report under a heavy rule and the verdict
+  (both lines) between two, and colours the table rows by the node's state: down red, joining, leaving or moving yellow.
 
 Printing a message
 ------------------
@@ -170,7 +171,7 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
   ``DELETED``, what a node would get or got (``node1  would apply, then restart``, ``node1  applied``), the nodes
   joining, leaving or moving;
 - **red** (error): ``REFUSED``, ``FAILED``, ``NOT HEALTHY``, ``IMPORT ... FAILED``, a progress line that stalled
-  or failed, ``← down``, a recap's failed node, ``RING AND INVENTORY DIFFER``;
+  or failed, ``← down``, a recap's failed node, ``1 NODE DOWN: ...``, ``1 NODE NOT REACHED: ...``;
 - **cyan** (option ``progress_color``): ``NOTE``, the progress and phase lines, the first line of a plan or a
   screen, an informative summary (``cassandra_output_info``), the help's commands and options;
 - **orange** (option ``warning_color``, ``color208`` by default): every ``WARNING`` line, indented or not, an
