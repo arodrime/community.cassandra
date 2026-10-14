@@ -131,19 +131,18 @@
              and _unit.Result | default('') != 'timeout' and _unit.ExecMainStatus | default('') | string != '143' }}
 
     # a restart waits for every other node up (cluster health): a node not running that this run leaves
-    # down, or starts after the restart (nodes go in inventory order), would stop it halfway
-    - name: Refuse restarts while a node is not running
-      ansible.builtin.assert:
-        that: _down | length == 0
-        fail_msg: >-
-          {{ _down | join(', ') }}: Cassandra not running, and {{ _restart | join(', ') }} would be restarted, which needs
-          every other node up. Nothing was changed. Apply the config there first (--limit {{ _down | join(',') }}) and
-          start {{ 'them' if _down | length > 1 else 'it' }} if stopped on purpose, or, if an interrupted run stopped
-          {{ 'them' if _down | length > 1 else 'it' }}, resume it (-e cassandra_rolling_resume=true); then run again.
-        quiet: true
+    # down, or starts after the restart (nodes go in inventory order), would stop it halfway. A real run refuses
+    # here; --check (nothing restarted) goes on to show everything, the refusal said in its recap
+    - name: Note whether restarts are refused while a node is not running
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_refused: >-
+          {{ [] if not _down else
+             [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
+              ~ ' every other node up.',
+              'Apply the config there first (--limit ' ~ _down | join(',') ~ ') and start ' ~ _them ~ ' if stopped on purpose,'
+              ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'] }}
       run_once: true
       vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
         _restart: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | bool
@@ -165,6 +164,17 @@
           {%-   endfor -%}
           {%- endif -%}
           {{ out }}
+        _them: "{{ 'them' if _down | length > 1 else 'it' }}"
+
+    - name: Refuse restarts while a node is not running
+      ansible.builtin.fail:
+        msg: "{{ _cassandra_apply_config_refused[0] }} Nothing was changed. {{ _cassandra_apply_config_refused[1] }}"
+      run_once: true
+      when:
+        - _cassandra_apply_config_refused | length > 0
+        - not ansible_check_mode
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
 
     # every node's value of the settings that differ somewhere: the live files that differ on a node (listed
     # once for all), read on each one in one go (only shown masked; one not on this node or not readable: no
@@ -324,14 +334,15 @@
     - name: Note the other nodes that may stay down
       ansible.builtin.set_fact:
         # the other nodes where Cassandra is not running may stay down: those started later in the run, after
-        # these (or not to do: left down), those left stopped (a restart under --check waits for every other node up)
+        # these (or not to do: left down), those left stopped (for a restart under --check too: a real run refuses
+        # it, as the recap says)
         _cassandra_apply_config_down_ok: >-
           {%- set out = [] -%}
           {%- for h in query('community.cassandra.cassandra_nodes') if h != inventory_hostname
                                                                       and hostvars[h].cassandra_apply_config_then is defined -%}
           {%-   set v = hostvars[h] -%}
           {%-   if v.cassandra_apply_config_then == 'start'
-                   or (v.cassandra_apply_config_then == 'write' and cassandra_apply_config_then != 'restart') -%}
+                   or (v.cassandra_apply_config_then == 'write' and (cassandra_apply_config_then != 'restart' or ansible_check_mode)) -%}
           {%-     set _ = out.append(v._cassandra_preflight.ring_address) -%}
           {%-   endif -%}
           {%- endfor -%}
@@ -411,7 +422,7 @@
         msg: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
                                                                         seconds=(now().timestamp() | int - _start | int) if _start else none,
-                                                                        diff=_diff) }}
+                                                                        diff=_diff, refused=_refused) }}
       run_once: true
       vars:
         cassandra_output: true
@@ -419,6 +430,10 @@
         _start: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_start', 'defined')
              | map(attribute='_cassandra_apply_config_start') | first | default('') }}
+        # --check: why a real run would refuse (a node not running, restarts to do)
+        _refused: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_refused', 'defined')
+             | map(attribute='_cassandra_apply_config_refused') | first | default([]) }}
         # the settings that differ (said under --check only: a real run showed them before its question)
         _diff: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_diff', 'defined')

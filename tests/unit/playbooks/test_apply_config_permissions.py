@@ -309,10 +309,11 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
         hostvars[h].update(cassandra_apply_config_then=t, cassandra_apply_config_todo=h != "n5")
     variables = {"groups": {"all": list(hostvars), "cassandra": list(hostvars)}, "hostvars": hostvars}
     # written before any start or restart: every start node is still down; --check also checks the restart node, which
-    # needs every other node up but the ones it starts
+    # needs every other node up but the ones it starts and, a real run refusing it (said in the recap), the ones left
+    # stopped
     for host, expected in (("n1", ["10.100.100.2", "10.100.100.3", "10.100.100.5"]), ("n3", ["10.100.100.2", "10.100.100.5"]),
-                           ("n4", ["10.100.100.2"])):
-        values = dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host])
+                           ("n4", ["10.100.100.2", "10.100.100.3", "10.100.100.5"])):
+        values = dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host], ansible_check_mode=host == "n4")
         assert render(include["cassandra_service_health_down_ok"], values) == expected
     # done at once: the ones no restart or start takes down, every one under --check; the others one at a time
     group = [t for t in plays[1]["tasks"] if t.get("name") == "Group the nodes to do at once"][0]
@@ -325,11 +326,11 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
 
 def plan(nodes):
     """The hosts the restart refusal names (nodes: [(host, then, todo)] in inventory order)."""
-    refusal = find(FIND["tasks"], "Refuse restarts while a node is not running")
+    refusal = find(FIND["tasks"], "Note whether restarts are refused while a node is not running")
     hostvars = dict((h, {"cassandra_apply_config_then": t, "cassandra_apply_config_todo": d}) for h, t, d in nodes)
     variables = {"ansible_play_hosts": [h for h, t, d in nodes], "hostvars": hostvars}
     variables = with_task_vars(refusal, variables)
-    return render("{{ %s }}" % refusal["ansible.builtin.assert"]["that"], variables), variables["_down"]
+    return render(refusal["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [], variables["_down"]
 
 
 @pytest.mark.parametrize("nodes, refused", [

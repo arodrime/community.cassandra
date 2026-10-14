@@ -1,0 +1,3 @@
+bugfixes:
+  - apply_config - under ``--check``, a node not running while others are to restart no longer stops the run before its view - every node and every setting that differs are shown, then the recap ends with a WARNING saying why a real run is refused and the way out (``--limit`` the node first, start it, or resume). The real run still refuses before any change.
+  - cassandra_config - the owner, group and mode changes of the config files and data directories are no longer shown a second time as a raw ``--- before`` / ``+++ after`` diff under ``--diff`` (the role, or apply_config's view, shows them already).

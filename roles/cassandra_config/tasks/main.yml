@@ -772,6 +772,7 @@
         owner: "{{ _cassandra_config_perm.owner }}"
         group: "{{ _cassandra_config_perm.group }}"
         mode: "{{ _cassandra_config_perm.mode }}"
+      diff: false  # shown above (or by the caller: apply_config's view)
       loop: "{{ _cassandra_config_kept }}"
       loop_control:
         loop_var: cassandra_config_file
@@ -805,6 +806,7 @@
         owner: "{{ _cassandra_config_perm_settings.user }}"  # as in item (the filter's), from the same variables
         group: "{{ _cassandra_config_perm_settings.user_group }}"
         mode: "{{ item.mode }}"
+      diff: false  # shown above (or by the caller: apply_config's view)
       loop: "{{ _cassandra_config_dir_changes }}"
       loop_control:
         label: "{{ item.path }}"
