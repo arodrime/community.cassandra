@@ -518,14 +518,14 @@ def test_colours_by_line_start():
 
 def test_status_verdict_and_table_rows_coloured():
     from ansible import constants as C
-    from ansible_collections.community.cassandra.plugins.callback.ops import colour, WARNING_COLOR
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour
     assert colour("ALL 5 NODES UP") == colour("ALL 1 NODE UP") == C.COLOR_OK
     assert colour(u"ALL 6 NODES UP \u2014 1 JOINING: node6") == C.COLOR_CHANGED
     assert colour("1 NODE DOWN: node1 (dc1/rack1)") == colour("2 NODES DOWN: node1 (dc1/r1), node4 (dc1/r2)") \
         == colour(u"1 NODE DOWN: node1 (dc1/r1) \u2014 1 LEAVING: node3") == C.COLOR_ERROR
     assert colour("1 NODE NOT REACHED: node3") == colour("2 NODES NOT REACHED: node3, node4") == C.COLOR_ERROR
     # a ring that differs: a warning line of its own, under the nodes' line (coloured by the nodes alone)
-    assert colour("WARNING - ring and inventory differ") == WARNING_COLOR
+    assert colour("WARNING - ring and inventory differ") == C.COLOR_WARN  # Ansible's own (option warning_color)
     from ansible_collections.community.cassandra.plugins.callback.ops import _RING_DIFFER, _ring_verdict
     from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _DIFFER
     assert _RING_DIFFER.match(_DIFFER)  # the filter's line, the one the callback frames
