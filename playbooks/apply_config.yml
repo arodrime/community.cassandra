@@ -12,7 +12,9 @@
 # stopped before the restart), are touched. Cassandra reads its config at
 # start: a node whose files only need another owner, group or mode is not
 # restarted (the JMX password file is read at each login: its new owner and
-# mode apply at once). A node where Cassandra failed (e.g. it could not read
+# mode apply at once), nor one whose files are only written back as its
+# running Cassandra started with them (deleted or edited by hand since; never
+# cassandra.yaml, whose settings can change live). A node where Cassandra failed (e.g. it could not read
 # its config) is started once its config is written; one stopped on purpose
 # gets its config and stays stopped. The health checks let these nodes be
 # down, except before a restart: any other node down stops the run.

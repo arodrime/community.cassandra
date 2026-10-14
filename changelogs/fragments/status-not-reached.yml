@@ -1,3 +1,5 @@
 bugfixes:
-  - status playbook - a node Ansible does not reach is in the verdict (``1 NODE NOT REACHED: node3``), never ``ALL 3 NODES UP`` while one is not reached (gossip can still say UN); an unreachable host is matched to the ring by the addresses its variables give (``ansible_host``, ``cassandra_listen_address``, ``broadcast_address``), else, known by no address, taken for the one ring node no host has in its datacenter and rack (shown ``node3?``, said in a note), instead of "not in the ring" plus an unknown ring address.
-  - health_check playbook - the same pairing for a node down that no host is known by; a node down and not reached is one TO DO item (its server first, then Cassandra), not two.
+  - >-
+    status playbook - a node Ansible does not reach is in the verdict (``1 NODE NOT REACHED: node3``), never ``ALL 3 NODES UP`` while one is not reached (gossip can still say UN); an unreachable host is matched to the ring by the addresses its variables give (``ansible_host``, ``cassandra_listen_address``, ``broadcast_address``), else, known by no address, taken for the one ring node no host has in its datacenter and rack (shown ``node3?``, said in a note), instead of "not in the ring" plus an unknown ring address.
+  - >-
+    health_check playbook - the same pairing for a node down that no host is known by; a node down and not reached is one TO DO item (its server first, then Cassandra), not two.

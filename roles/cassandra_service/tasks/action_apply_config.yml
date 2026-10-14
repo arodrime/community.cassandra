@@ -62,7 +62,7 @@
           - cassandra_jvm.pid | default('') | string == _plan.pid | string
           - (cassandra_jvm.start | default(0) | float - _plan.start | float) | abs < 2
         fail_msg: >-
-          {{ inventory_hostname }}: Cassandra restarted since the plan was shown, maybe without
+          Cassandra restarted since the plan was shown, maybe without
           {{ _plan.files | join(', ') }}, which the plan wrote back with no restart. Nothing was changed on it:
           run apply_config again (it then restarts it if it needs it).
         quiet: true

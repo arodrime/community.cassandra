@@ -159,8 +159,8 @@
           run_once: true
       rescue:
         # its lines; the host named when they do not (not for a check of the whole cluster, run once);
-        # cqlsh's error by its cause, none of its text (it could quote the login). Only on a host that failed:
-        # any_errors_fatal brings the others here too
+        # a refused login by its cause, none of cqlsh's text (it could quote the login), another cqlsh error
+        # by its last line. Only on a host that failed: any_errors_fatal brings the others here too
         - name: Record the refusal
           when: ansible_failed_result | default({}) | length > 0
           ansible.builtin.set_fact:
@@ -180,9 +180,8 @@
             _err: "{{ ansible_failed_result.err | default('') | trim }}"
             _login_refused: "requires authentication|AuthenticationFailed|Bad credentials|username and/or password are incorrect"
             _why: >-
-              {{ 'no cqlsh there' if _err is search('cqlsh: (command )?not found|No such file or directory')
-                 else 'no connection' if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
-                 else 'it failed' }}
+              {{ 'no connection' if _err is search('Unable to connect|Connection refused|timed out|NoHostAvailable')
+                 else _err.splitlines() | last | truncate(200) }}
 
         # nothing changed yet, under --check or not; each refusal once (a run_once check refuses every node)
         - name: Stop here

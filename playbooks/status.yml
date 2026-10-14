@@ -10,9 +10,8 @@
 # ALL UP then), the nodes joining, leaving or moving, a ring that differs).
 # A host Ansible does not reach and no address of the ring matches is taken
 # for the one ring node no host has in its datacenter and rack (node3?). A
-# down node is shown, not an error (the check
-# is health_check): fails only when no node answers (of cassandra_target_nodes,
-# when given).
+# down node is shown, not an error (the check is health_check): fails only
+# when no node answers (of cassandra_target_nodes, when given).
 #   ansible-playbook -i inventory community.cassandra.status
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group

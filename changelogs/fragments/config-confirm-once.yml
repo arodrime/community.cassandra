@@ -1,3 +1,5 @@
 bugfixes:
-  - add_node - with ``-e cassandra_config_confirm=true`` (an extra variable beats the playbook's own ``cassandra_config_confirm: false``), cassandra_config no longer asks a second question after the add's, when the nodes were already reset (answering no there stopped with the nodes emptied). apply_config and upgrade, whose own question shows the config changes, likewise.
-  - cassandra_config - when it asks to confirm its changes, the diffs the question is about are printed before it under the ops callback too, each node's under its name (the question said "diffs above" with none on screen).
+  - >-
+    add_node - with ``-e cassandra_config_confirm=true`` (an extra variable beats the playbook's own ``cassandra_config_confirm: false``), cassandra_config no longer asks a second question after the add's, when the nodes were already reset (answering no there stopped with the nodes emptied). apply_config and upgrade, whose own question shows the config changes, likewise.
+  - >-
+    cassandra_config - when it asks to confirm its changes, the diffs the question is about are printed before it under the ops callback too, each node's under its name (the question said "diffs above" with none on screen).
