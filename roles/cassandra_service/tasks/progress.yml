@@ -64,6 +64,8 @@
         state: directory
         mode: "0755"
       diff: false
+      # --check makes no dir (and ansible-core 2.16 shows the file module's diff under --diff whatever diff: says)
+      when: cassandra_progress_dir_stat.stat.exists or not ansible_check_mode
 
     - name: Find old progress files
       ansible.builtin.find:
