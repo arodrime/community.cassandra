@@ -101,6 +101,14 @@ def test_rolling_restart_screen_and_question():
     assert said in screen_text("rolling_restart.yml", confirm=False)[0] and said not in text
 
 
+def test_the_screens_say_it_with_single_spaces():
+    for playbook, modes in (("rolling_restart.yml", ("node", "rack")), ("rolling_reboot.yml", ("node",))):
+        for mode in modes:
+            for resume in (False, True):
+                intro = screen_text(playbook, resume=resume, mode=mode)[0].split("\n\n")[1]
+                assert "  " not in intro and intro == intro.strip(), (playbook, mode, resume, intro)
+
+
 def test_rolling_reboot_screen_and_question():
     text, question = screen_text("rolling_reboot.yml")
     assert text.startswith("rolling_reboot on cluster 'Orders': reboot node1..node3, one host at a time")
@@ -123,15 +131,67 @@ def test_the_wait_is_for_nodes_down_and_ports_only():
     waiting = cassandra_health_waiting(found)
     # node4 once (seen from both), the port; not the schema disagreement
     assert [f["kind"] for f in waiting] == ["state", "port"]
-    # a nodetool that failed (a JMX timeout) is read again, as the module's polls did; not a login refused
-    failed = {"from": "node1", "result": {"msg": "nodetool gets no answer from JMX (timeout)"}}
-    refused = {"from": "node1", "result": {"msg": "nodetool failed", "stderr": "error: Authentication failed! Invalid username or password"}}
-    assert [f["kind"] for f in cassandra_health_waiting(cassandra_health_findings([failed], 3, "node2"))] == ["nodetool"]
-    assert cassandra_health_waiting(cassandra_health_findings([refused], 3, "node2")) == []
-    assert cassandra_health_wait_line(cassandra_health_waiting(cassandra_health_findings([failed], 3, "node2")), waited=10,
-                                      timeout=600, node="node2", operation="restart") == (
-        "node2 restart  waiting for nodetool status on node1 to answer  10s/10m")
     assert cassandra_health_waiting(cassandra_health_findings([view("node2", node("10.0.0.1"))], 3, "node2")) == []
+
+
+REFUSED_JMX = ("nodetool gets no answer from JMX on 10.0.0.2:7199 (Connection refused): Cassandra is not running there, "
+               "or its JMX listens on another port (cassandra_jmx_port). Check: systemctl status cassandra, and its system.log")
+TIMED_OUT = "nodetool gets no answer from JMX on 10.0.0.2:7199 (no answer in time): a firewall, or JMX listening on another address"
+NAMES = {"10.0.0.1": "node1", "10.0.0.2": "node2", "10.0.0.4": "node4"}
+
+
+def test_the_jmx_failures_waited_for_are_the_ones_nodetool_says():
+    # the module's own words (version_error), not a copy: a cause renamed or reordered there would end the wait
+    from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import version_error
+    seen_down = view("node1", node("10.0.0.1"), node("10.0.0.2", "D"))
+    for why, waited in (("ConnectException: 'Connection refused (Connection refused)'", True),
+                        ("SocketTimeoutException: 'connect timed out'", True),
+                        ("NoRouteToHostException: 'No route to host'", False),
+                        ("UnknownHostException: 'node2'", False)):
+        msg = version_error("", "nodetool: Failed to connect to '10.0.0.2:7199' - %s." % why)
+        waiting = cassandra_health_waiting(cassandra_health_findings([failed_on("node2", msg), seen_down], 2, "node2"), NAMES)
+        assert ("nodetool" in [f["kind"] for f in waiting]) is waited, msg
+
+
+def failed_on(host, msg, stderr=""):
+    return {"from": host, "result": {"msg": msg, "stderr": stderr}}
+
+
+def test_a_nodetool_failure_is_waited_for_only_while_another_node_sees_that_node_down():
+    # node2 just restarted: JMX not up yet (refused) or too slow (timed out), node1 sees it down: waited for, said why
+    for error, cause in ((REFUSED_JMX, "Connection refused"), (TIMED_OUT, "no answer in time")):
+        found = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.1"), node("10.0.0.2", "D"))],
+                                          2, "node2")
+        waiting = cassandra_health_waiting(found, NAMES)
+        assert [f["kind"] for f in waiting] == ["nodetool", "state"]
+        assert cassandra_health_wait_line(waiting, NAMES, waited=10, timeout=600, node="node2", operation="restart") == (
+            "node2 restart  waiting for node2 (10.0.0.2) DN to come back; nodetool status on node2 to answer (JMX: %s)"
+            "  10s/10m" % cause)
+        # node1 sees node2 up (a wrong JMX port for node2): never goes away, no wait
+        up = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.1"), node("10.0.0.2"))], 2, "node2")
+        assert cassandra_health_waiting(up, NAMES) == []
+        # another node down (node4): the wait is for node4, not for node2's nodetool
+        other = cassandra_health_findings([failed_on("node2", error), view("node1", node("10.0.0.2"), node("10.0.0.4", "D"))],
+                                          2, "node2")
+        assert [f["kind"] for f in cassandra_health_waiting(other, NAMES)] == ["state"]
+        # no view of node2 at all (the other read failed too): no wait
+        assert cassandra_health_waiting(cassandra_health_findings([failed_on("node2", error), failed_on("node1", error)], 2,
+                                                                  "node2"), NAMES) == []
+    # the errors that do not go away waiting, node2 seen down or not: a login refused, nodetool missing or failing,
+    # a JMX it can't speak to; nodetool status failing after its version answered
+    seen_down = view("node1", node("10.0.0.1"), node("10.0.0.2", "D"))
+    for msg, stderr in (("JMX login refused (Authentication failed! Invalid username or password): check the JMX user", ""),
+                        ("nodetool version failed on 10.0.0.2:7199: is Cassandra installed and running? (no error printed)", ""),
+                        ("[Errno 2] No such file or directory: b'nodetool'", ""),
+                        ("nodetool can't reach JMX on 10.0.0.2:7199 (non-JRMP server at remote endpoint): is Cassandra running", ""),
+                        ("nodetool gets no answer from JMX on 10.0.0.2:7199 (no route to host): the host is down", ""),
+                        ("nodetool error: error: Connection refused", "")):
+        waiting = cassandra_health_waiting(cassandra_health_findings([failed_on("node2", msg, stderr), seen_down], 2, "node2"),
+                                           NAMES)
+        assert [f["kind"] for f in waiting] == ["state"], msg
+    # by its inventory name only when the names say it: an address the names do not have is not node2
+    assert [f["kind"] for f in cassandra_health_waiting(
+        cassandra_health_findings([failed_on("node2", REFUSED_JMX), seen_down], 2, "node2"))] == ["state"]
 
 
 def test_the_progress_line():
@@ -153,6 +213,8 @@ def test_the_progress_lines_are_coloured_as_progress():
     assert colour("[2/5] node2 restart  waiting for node4 (10.0.0.4) DN to come back  1m30s/10m") == PROGRESS_COLOR
     assert colour("node2 cluster check  waiting for 10.0.0.5 DN to come back  10s/10m") == PROGRESS_COLOR
     assert colour("node2 cluster check  all back after 40s") == PROGRESS_COLOR
+    assert colour("[2/5] node2 restart  waiting for node2 (10.0.0.2) DN to come back; nodetool status on node2 to answer"
+                  " (JMX: Connection refused)  10s/10m") == PROGRESS_COLOR
     # the screens' first lines: a block of their own
     from ansible_collections.community.cassandra.plugins.callback.ops import _HEADED
     assert _HEADED.match("rolling_reboot on cluster 'Orders': reboot node1..node3, one host at a time")
@@ -177,6 +239,10 @@ def test_when_the_health_check_waits():
     # a report waits too (remove_dead_node after removenode force: gossip may lag), health_check reads once (5s)
     assert wait_on(cassandra_service_health_report_only=True) in (True, "True")
     assert wait_on(cassandra_service_health_timeout=5) in (False, "False")
+    report = next(t for play in load("playbooks", "health_check.yml") for dummy, t in includes(play.get("tasks"))
+                  if t["name"] == "Check the cluster from this node")
+    assert wait_on(**report["vars"]) in (False, "False")
+    assert report["vars"]["_cassandra_health_no_wait"] is True  # not only its 5s timeout
 
 
 def test_each_read_is_one_read_the_wait_reads_again_with_a_progress_line():
@@ -215,6 +281,15 @@ def test_it_waits_only_when_allowed_and_while_something_is_down():
                  hostvars={"node1": {"cassandra_health_findings": []}, "node2": {"cassandra_health_findings": DOWN}})
     assert render(going, dict(batch, inventory_hostname="node1")) in (True, "True")
     assert render(going, dict(batch, inventory_hostname="node1", cassandra_progress_done=["node2"])) in (False, "False")
+    # a nodetool failed on node2 (JMX refused): waited for while node1 sees node2 (by its ring address) down
+    nodetool = [{"kind": "nodetool", "on": "node2", "error": REFUSED_JMX, "text": "x"}]
+    seen = {"kind": "state", "address": "192.168.1.2", "state": "DN", "rack": "r1", "seen_from": "node1", "text": "y"}
+    findings = {"node2": {"cassandra_health_findings": nodetool,  # (node2 seen by no one)
+                          "_cassandra_preflight": {"ring_address": "192.168.1.2"}}}
+    assert render(going, dict(base, hostvars=findings)) in (False, "False")
+    findings["node2"]["cassandra_health_findings"] = nodetool + [seen]
+    waiting = render("{{ _cassandra_health_waiting }}", dict(base, hostvars=findings))
+    assert [f["kind"] for f in waiting] == ["nodetool", "state"]
     # the wait and its lines only when it waits
     for name in ("Start the wait", "Wait for the nodes down to come back"):
         assert check_task(name)["when"] == "_cassandra_health_going | bool"
@@ -248,12 +323,16 @@ def test_the_ports_are_read_for_5s_when_the_loop_waits():
     read = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]["block"]
     ports = next(t for t in read if "ansible.builtin.wait_for" in t)["ansible.builtin.wait_for"]["timeout"]
 
-    def timeout(wait_on, batch=False, check=False):
+    def timeout(wait_on, batch=False, check=False, host="node2"):
         return int(render(ports, {"_cassandra_health_wait_on": wait_on, "_batch": batch, "ansible_check_mode": check,
-                                  "cassandra_service_health_timeout": 600}))
+                                  "cassandra_service_health_timeout": 600, "inventory_hostname": host,
+                                  "_cassandra_health_hosts": ["node2", "node3"] if batch else ["node2"]}))
     assert timeout(True) == 5 and timeout(False, check=True) == 5
-    # no loop to wait for them (a node of a batch, a resumed node, a node down for good): as before, the full timeout
-    assert timeout(False) == 600 and timeout(True, batch=True) == 600
+    # a node of a batch waited for too (its ports in the batch's wait, with its progress line)
+    assert timeout(True, batch=True) == 5
+    # no loop to wait for them (a node of a batch an interrupted run did, a resumed node, a node down for good): as
+    # before, the full timeout
+    assert timeout(False) == 600 and timeout(True, batch=True, host="node1") == 600
 
 
 def test_this_nodes_services_just_restarted_are_waited_for():

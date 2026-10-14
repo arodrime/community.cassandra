@@ -79,7 +79,8 @@
         tasks_from: cluster_health.yml
       vars:
         cassandra_service_health_report_only: true
-        cassandra_service_health_timeout: 5  # a report: no waiting for down nodes
+        _cassandra_health_no_wait: true  # a report: one read, no waiting for down nodes
+        cassandra_service_health_timeout: 5  # (its ports asked for 5s)
 
     # the verdict first, each problem once with the nodes that saw it; fails the run
     # (non-zero exit) when there is one

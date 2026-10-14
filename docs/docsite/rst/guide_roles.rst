@@ -254,8 +254,9 @@ checked this way: the ones set in the inventory get the ``preflight`` warning ab
 Operations that touch running nodes check the whole cluster before and after each node: every node up and normal,
 gossip and the native transport running, no streams, schema agreement, and the storage and CQL ports answering. A
 node is only touched when the cluster is healthy, and the run stops at the first node that does not come back
-healthy: a node down (or a port not answering yet) is waited for up to ``cassandra_service_health_timeout`` (600 s),
-with a progress line at each check (``waiting for node4 (10.0.0.4) DN to come back  1m/10m``), then the run stops
+healthy: a node down (or this node's ports, gossip or native transport not up yet) is waited for up to
+``cassandra_service_health_timeout`` (600 s),
+with a progress line at each check (``waiting for node4 (10.0.0.4) DN to come back  1m30s/10m``), then the run stops
 (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same checks on
 its own, changing nothing, and fails when there is a problem, so it can be scheduled.
 ``status`` only shows the ring as one node sees it (the first that answers, of ``cassandra_target_nodes`` if given), per

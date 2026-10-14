@@ -59,11 +59,10 @@
             - >-
               {{ 'Drains and restarts every node of a rack together, rack by rack' if _rack | bool
                  else 'Drains and restarts each node in turn' }}, the cluster checked healthy before and after each;
-              stops at the first problem, without touching the next {{ 'rack' if _rack | bool else 'node' }}.
-              {{ ' Refused before any restart if a rack down would take down more than one replica of some data.'
-                 if _rack | bool else '' }}
-              {{ ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
-                 if cassandra_rolling_resume | default(false) | bool else '' }}
+              stops at the first problem, without touching the next {{ 'rack' if _rack | bool else 'node' }}.{{
+                ' Refused before any restart if a rack down would take down more than one replica of some data.'
+                if _rack | bool else '' }}{{ ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
+                                             if cassandra_rolling_resume | default(false) | bool else '' }}
 
     - name: Set up the progress file
       ansible.builtin.include_role:
