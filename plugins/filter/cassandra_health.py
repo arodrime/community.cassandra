@@ -15,6 +15,7 @@ __metaclass__ = type
 import re
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import _JMX_CAUSES
 
 
 def _nodes(cluster_status):
@@ -97,31 +98,39 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     return found
 
 
-_REFUSED = re.compile(r"(?i)authentication|credentials|password|login|access denied")
+# A nodetool failure a restart explains, as nodetool_cmd_objects.version_error says it: JMX refused (not up
+# yet) or not answering in time (too busy). Not the ones that do not go away waiting: a login refused, nodetool
+# missing, a JMX over SSL it can't speak, nodetool version failed (and a wrong JMX port: the node is seen up).
+_PASSING = re.compile(r"^nodetool gets no answer from JMX on \S* ?\((%s)\):" % "|".join(
+    re.escape(cause) for dummy, cause, dummy2 in _JMX_CAUSES[:2]))
 
 
-def cassandra_health_waiting(findings):
+def cassandra_health_waiting(findings, names=None):
     """The findings a wait may see go (cluster_health.yml waits while there is one): a node down (DN, DL, DJ,
     DM: restarting, stopped meanwhile), a port, gossip or the native transport of this node not up yet (just
-    restarted), a nodetool status that failed (a JMX timeout), not for a login refused; each node down once,
-    whatever view saw it. The others (a ring of another size, streams, a schema disagreement...) stop the run at
-    once."""
-    out, seen = [], set()
-    for f in findings or []:
+    restarted), a nodetool status that failed with JMX not answering (refused, timed out) on a node another
+    one sees down (names: {address: inventory name}); each one once, whatever view saw it. The others (a ring
+    of another size, streams, a schema disagreement, nodetool failing on a node seen up...) are not waited
+    for: alone, they stop the run at once; with one of these, at the end of the wait."""
+    findings = findings or []
+    down = set((names or {}).get(f.get("address"), f.get("address")) for f in findings
+               if f.get("kind") == "state" and str(f.get("state", ""))[:1] == "D")
+    kept, seen = [], set()
+    for f in findings:
         key = (f.get("kind"), f.get("address") or "%s %s" % (f.get("on"), f.get("port")))
         if key in seen:
             continue
         if (f.get("kind") == "state" and str(f.get("state", ""))[:1] == "D") or f.get("kind") in ("port", "gossip", "cql") or (
-                f.get("kind") == "nodetool" and not _REFUSED.search(str(f.get("error", "")))):
+                f.get("kind") == "nodetool" and f.get("on") in down and _PASSING.search(str(f.get("error", "")))):
             seen.add(key)
-            out.append(f)
-    return out
+            kept.append(f)
+    return kept
 
 
 def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0, steps=0, node="", operation="",
                                done=False):
     """The progress line of the wait for waiting (cassandra_health_waiting's): "[2/5] node2 restart  waiting for
-    node4 (10.0.0.4) DN to come back  1m/10m"; names: {address: inventory name}; waited, timeout: seconds; done:
+    node4 (10.0.0.4) DN to come back  1m30s/10m"; names: {address: inventory name}; waited, timeout: seconds; done:
     the line once nothing is waited for any more ("[2/5] node2 restart  all back after 1m40s")."""
     if int(steps or 0):
         head = "[%d/%d] %s %s" % (int(index), int(steps), node, operation)
@@ -142,7 +151,10 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
               for f in waiting or [] if f.get("kind") == "port"]
     parts += ["%s on %s to run" % ("gossip" if f["kind"] == "gossip" else "the native transport (CQL)", f["on"])
               for f in waiting or [] if f.get("kind") in ("gossip", "cql")]
-    parts += ["nodetool status on %s to answer" % f["on"] for f in waiting or [] if f.get("kind") == "nodetool"]
+    for f in waiting or []:
+        if f.get("kind") == "nodetool":
+            cause = _PASSING.search(str(f.get("error", "")))
+            parts.append("nodetool status on %s to answer%s" % (f["on"], " (JMX: %s)" % cause.group(1) if cause else ""))
     return "  ".join(x for x in [head, "waiting for " + "; ".join(parts) if parts else "",
                                  "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
 

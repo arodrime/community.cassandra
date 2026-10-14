@@ -44,9 +44,9 @@
           intro:
             - >-
               Drains each node in turn and reboots its host, the cluster checked healthy before and after each;
-              stops at the first problem, without touching the next node.
-              {{ ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
-                 if cassandra_rolling_resume | default(false) | bool else '' }}
+              stops at the first problem, without touching the next node.{{
+                ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
+                if cassandra_rolling_resume | default(false) | bool else '' }}
 
     - name: Set up the progress file
       ansible.builtin.include_role:

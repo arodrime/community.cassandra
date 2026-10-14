@@ -2,7 +2,7 @@
 # One read of the cluster health (cluster_health.yml, which reads it again while it waits): the reads on this
 # node at once (async), those from the other node while they run, then what they found
 # (cassandra_health_findings, cassandra_health_problems). The caller's vars: _node_checks, _down_ok, _async,
-# _batch, _cassandra_health_wait_on.
+# _batch, _cassandra_health_wait_on, _cassandra_health_hosts.
 - name: Read the cluster state
   module_defaults:
     community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
@@ -75,14 +75,14 @@
       check_mode: false  # read-only; --check needs it too
 
     # Native transport listens on rpc_address (all interfaces for 0.0.0.0); --check waits for nothing, nor a
-    # read cluster_health.yml reads again while it waits (a port not answering yet is waited for there; a batch,
-    # whose nodes may not all wait, here)
+    # read cluster_health.yml reads again while it waits (a port not answering yet is waited for there, with its
+    # progress line; a node of a batch an interrupted run did, not waited for there, here)
     - name: Check the storage and CQL ports on this node
       ansible.builtin.wait_for:
         host: "{{ item.host }}"
         port: "{{ item.port }}"
         timeout: >-
-          {{ 5 if ansible_check_mode or (_cassandra_health_wait_on | bool and not _batch | bool)
+          {{ 5 if ansible_check_mode or (_cassandra_health_wait_on | bool and inventory_hostname in _cassandra_health_hosts)
              else cassandra_service_health_timeout }}
       loop:
         - name: storage

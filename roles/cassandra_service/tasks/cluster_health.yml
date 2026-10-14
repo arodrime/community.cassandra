@@ -1,9 +1,11 @@
 ---
 # Cluster health before and after a node operation, seen from this node and
 # from another node of the cluster. Waits up to cassandra_service_health_timeout
-# for down nodes to come back (and this node's ports to answer), a progress
-# line at each read (every cassandra_stream_check_interval seconds, sooner at
-# first, as the bootstrap's), then fails listing every problem.
+# for down nodes to come back (and this node's ports, gossip and native
+# transport to answer; a nodetool failing with JMX not answering on a node
+# another one sees down), a progress line at each read (every
+# cassandra_stream_check_interval seconds, sooner at first, as the
+# bootstrap's), then fails listing every problem; anything else fails at once.
 #   include_role: name=community.cassandra.cassandra_service tasks_from=cluster_health.yml
 # Expects the cluster's inventory group in cassandra_hosts (default: the
 # cluster CASSANDRA_CLUSTER names, else the inventory's cluster group, see the
@@ -12,12 +14,12 @@
 # (this node has no Cassandra running yet, e.g. before it is added).
 # cassandra_service_health_down_ok: addresses expected down (a dead node being replaced);
 # cassandra_service_health_resumed_down: the same, for the node a resumed run stopped at.
-# _cassandra_health_no_wait: true reads once, no wait for down nodes (the ones
-# down_ok lists will not come back).
+# _cassandra_health_no_wait: true reads once, no wait (the nodes down_ok lists
+# will not come back; a report); nor a timeout under 20s.
 # cassandra_service_health_joining_ok: addresses expected joining (UJ: a bootstrap to wait for).
 # cassandra_service_health_leaving_ok: addresses expected leaving (UL: a decommission to wait for).
 # cassandra_service_health_report_only: true only sets cassandra_health_problems
-# and cassandra_health_findings (no wait, no failure), for read-only reports.
+# and cassandra_health_findings (no failure; it waits as above unless told not to).
 # cassandra_service_health_batch: true for the hosts of a play checked at once:
 # the ring and the schema are read once for them, from the same node.
 # Under --check nothing waits: one read of each, the ports asked for 5s.
@@ -73,12 +75,15 @@
     _cassandra_health_hosts: >-
       {{ ansible_play_hosts | reject('in', cassandra_progress_done | default([])) | list if _batch | bool
          else [inventory_hostname] }}
+    # (a nodetool failed on a node: waited for only while another node sees it down, its address from its variables)
     _cassandra_health_waiting: >-
       {%- set out = [] -%}
       {%- for h in _cassandra_health_hosts -%}
-      {%-   set _ = out.extend(hostvars[h].cassandra_health_findings | default([]) | community.cassandra.cassandra_health_waiting) -%}
+      {%-   set _ = out.extend(hostvars[h].cassandra_health_findings | default([])) -%}
       {%- endfor -%}
-      {{ out | community.cassandra.cassandra_health_waiting }}
+      {%- set failed = out | selectattr('kind', 'equalto', 'nodetool') | map(attribute='on') | unique | list -%}
+      {{ out | community.cassandra.cassandra_health_waiting(
+                 failed | community.cassandra.cassandra_host_addresses(hostvars) if failed else {}) }}
     # the head of the progress lines: [2/5] node2 restart (a node of a rolling operation), the nodes of a
     # batch, else this node
     _cassandra_health_rolling: "{{ cassandra_service_node_action is defined and not _batch | bool }}"
