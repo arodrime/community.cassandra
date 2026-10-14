@@ -11,8 +11,8 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import (
     cassandra_clock_in_sync, cassandra_clock_lines, cassandra_clock_probe, cassandra_clock_refusal,
-    cassandra_clock_settled, cassandra_clock_verdicts, parse_chrony_sources, parse_chrony_tracking, parse_ntpq,
-    parse_timesync)
+    cassandra_clock_settled, cassandra_clock_verdicts, cassandra_clock_wait_line, parse_chrony_sources,
+    parse_chrony_tracking, parse_ntpq, parse_timesync)
 
 TRACKING_SYNCED = """\
 Reference ID    : C0000201 (192.0.2.1)
@@ -248,10 +248,29 @@ def test_settled():
     assert cassandra_clock_settled(slewing, 50, synchronised_only=True)  # a step follows
     far_source = cassandra_clock_probe(probe_text(tracking_text=tracking(0.001, delay="0.200000000")))
     assert cassandra_clock_settled(far_source, 50)  # its error bound alone is over: no wait helps
+    # a daemon just started: synchronised, its bound still huge (its skew from a few samples): it shrinks
+    fresh = cassandra_clock_probe(probe_text(tracking_text=tracking(0.0001, "fast", dispersion="62.040000000")))
+    assert not cassandra_clock_settled(fresh, 50)
+    assert cassandra_clock_settled(fresh, 50, synchronised_only=True)  # a step follows
+    assert not cassandra_clock_settled(fresh, 200)  # over 1 s and over ten times the threshold
+    assert cassandra_clock_settled(fresh, 10000)  # under ten times a 10 s threshold: a far source
+    big = cassandra_clock_probe(probe_text(tracking_text=tracking(0.0001, "fast", dispersion="1.200000000")))
+    assert not cassandra_clock_settled(big, 50)
     nothing = cassandra_clock_probe(probe_text(active="", tracking_text=None))
     assert cassandra_clock_settled(nothing, 50)  # nothing runs to wait for
     with pytest.raises(AnsibleFilterError):
         cassandra_clock_settled("text")
+
+
+def test_wait_line():
+    fresh = cassandra_clock_probe(probe_text(tracking_text=tracking(0.0001, "fast", dispersion="62.040000000")))
+    assert cassandra_clock_wait_line(fresh, "node4", 180) == u"node4: chronyd converging (\u00b162.04 s), waiting up to 3m"
+    unsynced = cassandra_clock_probe(probe_text(tracking_text=TRACKING_UNSYNCED, sources=SOURCES_NONE_REACHED))
+    assert cassandra_clock_wait_line(unsynced, "node4", 60) == "node4: chronyd not synchronised yet, waiting up to 1m"
+    slewing = cassandra_clock_probe(probe_text(tracking_text=tracking(0.2, "fast")))
+    assert cassandra_clock_wait_line(slewing, "node4", 30) == "node4: chronyd correcting +200.0 ms, waiting up to 30s"
+    with pytest.raises(AnsibleFilterError):
+        cassandra_clock_wait_line("text", "node4", 30)
 
 
 # --- verdicts -----------------------------------------------------------------------------------------------------

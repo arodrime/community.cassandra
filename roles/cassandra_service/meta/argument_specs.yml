@@ -369,9 +369,11 @@ argument_specs:
             stop, step, start), one node at a time.
       cassandra_clock_sync_timeout:
         type: int
-        default: 60
+        default: 180
         description:
-          - Seconds to wait for a time sync daemon just started to synchronise.
+          - Seconds to wait for a time sync daemon just started to synchronise and
+            converge (its error bound shrinks with its first samples; chrony polls
+            about every 64 s at first).
       cassandra_clock_check:
         type: bool
         default: true

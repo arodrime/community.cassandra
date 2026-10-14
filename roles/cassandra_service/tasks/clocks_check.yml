@@ -40,8 +40,8 @@
         _unread: >-
           {%- set d = {} -%}
           {%- for h in ansible_play_hosts if not hostvars[h]._cassandra_clock_read_ok | default(false) | bool
-                                              and not hostvars[h]._cassandra_clock_read.unreachable | default(false) -%}
-          {%-   set _ = d.update({h: hostvars[h]._cassandra_clock_read.msg | default('')}) -%}
+                                              and not hostvars[h]._cassandra_clock_last.unreachable | default(false) -%}
+          {%-   set _ = d.update({h: hostvars[h]._cassandra_clock_last.msg | default('')}) -%}
           {%- endfor -%}
           {{ d }}
         _command: >-

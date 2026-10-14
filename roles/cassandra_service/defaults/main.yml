@@ -165,10 +165,11 @@ cassandra_service_health_force: false
 # cassandra_clock_step_ms steps the clock rather than slewing it (timesyncd
 # steps past 400 ms): on a node where Cassandra runs, sync_clocks does it in a
 # restart window. cassandra_clock_sync_timeout: seconds to wait for a time sync
-# just started. cassandra_clock_check: false skips the check before the starts.
+# just started (chrony's error bound only shrinks with its first polls, ~64 s
+# apart). cassandra_clock_check: false skips the check before the starts.
 cassandra_clock_max_offset_ms: 50
 cassandra_clock_step_ms: 400
-cassandra_clock_sync_timeout: 60
+cassandra_clock_sync_timeout: 180
 cassandra_clock_check: true
 
 # JMX access for the modules and nodetool calls of the operation playbooks

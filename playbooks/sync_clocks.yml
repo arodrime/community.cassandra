@@ -29,7 +29,7 @@
 # future timestamps. A source that is unreachable or
 # missing, a container's clock (the host's), a time sync left alone: said, to fix
 # by hand, the run ends failed. Not monitoring: it schedules and alerts nothing.
-# -e cassandra_clock_sync_timeout=60: seconds to wait for a time sync to synchronise.
+# -e cassandra_clock_sync_timeout=180: seconds to wait for a time sync to synchronise.
 # An interrupted run: run it again, the same command (the clocks read again say
 # what is left; a node it left drained or stopped gets its window again, started).
 - name: Preflight
@@ -99,7 +99,7 @@
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _unread: "{{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_clock_action', 'equalto', 'unread') | map(attribute='inventory_hostname') | list }}"
         _why: >-
-          {{ _unread | map('extract', hostvars, ['_cassandra_clock_read', 'msg']) | map('default', '') | map('string')
+          {{ _unread | map('extract', hostvars, ['_cassandra_clock_last', 'msg']) | map('default', '') | map('string')
              | map('regex_replace', '\s+', ' ') | map('trim') | select | list }}
 
     - name: Group the nodes set live

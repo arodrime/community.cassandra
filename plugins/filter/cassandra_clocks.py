@@ -18,8 +18,11 @@ cassandra_clock_probe: what the probe (clock_probe.yml) printed on a node ->
     (chronyc tracking and sources), systemd-timesyncd (timedatectl
     timesync-status), ntpd (ntpq -pn).
 cassandra_clock_settled: a probe result -> whether waiting longer can change
-    it (False while a daemon runs but is not synchronised, or still corrects
-    an offset over the threshold): the wait of a time sync just started.
+    it (False while a daemon runs but is not synchronised, is still converging
+    - an error bound over CONVERGING_S, a daemon just started - or still
+    corrects an offset over the threshold): the wait of a time sync just started.
+cassandra_clock_wait_line: a probe not settled, the node, the timeout -> the
+    progress line of that wait.
 cassandra_clock_verdicts: the nodes' probes, their date samples and context
     -> each node's verdict (ok, off, unsynchronised, no_sync), why, what
     sync_clocks does about it (none, slew, start, step, window, manual), and
@@ -38,9 +41,13 @@ __metaclass__ = type
 import re
 
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
 
 # a node no daemon reports on: the dates collected over SSH, only this coarse
 COARSE_MS = 1000
+# an error bound over this (and over 10 times the threshold): a daemon just started, its skew still estimated
+# from a few samples, not a far source; it shrinks with the next samples (chrony: its first polls, ~64 s apart)
+CONVERGING_S = 1.0
 # what chronyc tracking says of a clock that follows no source: no reference, or its own (local stratum N)
 _NO_REFERENCE = ("00000000", "7F7F0101")
 _DAEMONS = {"chronyd": "chrony", "chrony": "chrony", "systemd-timesyncd": "timesyncd", "ntpd": "ntp", "ntp": "ntp",
@@ -263,19 +270,41 @@ def _bad(probe, max_s):
     return ""
 
 
+def _converging(probe, max_s):
+    return (probe.get("bound") or 0.0) > max(CONVERGING_S, 10 * max_s)
+
+
 def cassandra_clock_settled(probe, max_ms=50, synchronised_only=False):
-    """Whether waiting longer can change the verdict of this probe: a daemon running but not synchronised yet, or
-    still correcting an offset (its own error bound within the threshold), is not settled. synchronised_only: settled
-    once synchronised (a step follows)."""
+    """Whether waiting longer can change the verdict of this probe: a daemon running but not synchronised yet,
+    still converging (an error bound over CONVERGING_S: just started), or still correcting an offset (its own
+    error bound within the threshold), is not settled. synchronised_only: settled once synchronised (a step
+    follows)."""
     if not isinstance(probe, dict):
         raise AnsibleFilterError("cassandra_clock_settled: a cassandra_clock_probe result is expected")
     why = _bad(probe, float(max_ms) / 1000)
     if why in ("not synchronised", "no offset"):
         return False
     if why == "off" and not synchronised_only:
+        if _converging(probe, float(max_ms) / 1000):
+            return False
         # a bound over half the threshold (a far source): what a wait could still win is too little
         return (probe.get("bound") or 0.0) * 1000 >= float(max_ms) / 2
     return True
+
+
+def cassandra_clock_wait_line(probe, node, timeout, max_ms=50):
+    """The progress line of a wait for a clock not settled (cassandra_clock_settled false): what it waits for,
+    and for how long at most. "node4: chronyd converging (\u00b162.04 s), waiting up to 3m"."""
+    if not isinstance(probe, dict):
+        raise AnsibleFilterError("cassandra_clock_wait_line: a cassandra_clock_probe result is expected")
+    service = probe.get("service") or "its time sync"
+    if not probe.get("synchronised") or probe.get("offset") is None:
+        what = "%s not synchronised yet" % service
+    elif _converging(probe, float(max_ms) / 1000):
+        what = "%s converging (\u00b1%s)" % (service, ms(probe.get("bound"), False))
+    else:
+        what = "%s correcting %s" % (service, ms(probe.get("offset")))
+    return "%s: %s, waiting up to %s" % (node, what, cassandra_output.duration(int(timeout), True))
 
 
 def cassandra_clock_in_sync(probe, max_ms=50):
@@ -601,6 +630,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
 class FilterModule(object):
     def filters(self):
         return {"cassandra_clock_probe": cassandra_clock_probe, "cassandra_clock_settled": cassandra_clock_settled,
+                "cassandra_clock_wait_line": cassandra_clock_wait_line,
                 "cassandra_clock_in_sync": cassandra_clock_in_sync,
                 "cassandra_clock_verdicts": cassandra_clock_verdicts, "cassandra_clock_lines": cassandra_clock_lines,
                 "cassandra_clock_refusal": cassandra_clock_refusal}

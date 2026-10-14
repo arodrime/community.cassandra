@@ -303,8 +303,8 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                                               (default: 50)
         -e cassandra_clock_step_ms=400        a correction above it steps the clock: on a running
                                               node, in a restart window (default: 400)
-        -e cassandra_clock_sync_timeout=60    seconds to wait for a time sync to synchronise
-                                              (default: 60)
+        -e cassandra_clock_sync_timeout=180   seconds to wait for a time sync to synchronise
+                                              (default: 180)
       Example (the clocks, changing nothing):
       $ $PLAY $C.sync_clocks --check
 

@@ -175,7 +175,43 @@ def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
     rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 5})
     assert rc != 0, out
     assert "REFUSED  clocks  nothing was started" in out and "node2  NOT SYNCHRONISED" in out
-    assert (fake / "node2" / "calls").read_text().strip() == "2"
+    assert (fake / "node2" / "calls").read_text().strip() == "3"  # the first read, then the wait's two
+
+
+def converging(dispersion):
+    # a daemon just started: synchronised, its error bound still large (its skew from a few samples)
+    return tracking(0.0001, "fast").replace("Root dispersion : 0.000300000", "Root dispersion : %.9f" % dispersion)
+
+
+def test_a_daemon_just_started_is_waited_for_while_it_converges(tmp_path):
+    # its error bound shrinks over its first samples: said, waited for, then in sync
+    node2 = dict(synced(), **{"tracking.1": converging(62.04), "tracking.2": converging(30.5)})
+    fake = setup(tmp_path, {"node1": synced(), "node2": node2})
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 15})
+    assert rc == 0, out
+    assert "node2: chronyd converging (\u00b162.04 s), waiting up to 15s" in out, out
+    assert "node1: chronyd" not in out  # in sync: no wait, no line
+    assert (fake / "node2" / "calls").read_text().strip() == "3"
+
+
+def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
+    fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": converging(62.04),
+                                                         "sources": SOURCES}})
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 5})
+    assert rc != 0, out
+    assert "REFUSED  clocks  nothing was started" in out and "node2  OFF" in out and "error bound alone is 62.04 s" in out
+    assert (fake / "node2" / "calls").read_text().strip() == "3"
+
+
+def test_a_far_source_is_refused_at_once(tmp_path):
+    # an error bound over the threshold but under a second (a far source): no wait can win, refused at once
+    far = tracking(0.0001, "fast").replace("Root delay      : 0.000800000", "Root delay      : 0.200000000")
+    fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": far, "sources": SOURCES}})
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 15})
+    assert rc != 0, out
+    assert "REFUSED  clocks  nothing was started" in out and "node2  OFF" in out
+    assert "waiting up to" not in out
+    assert (fake / "node2" / "calls").read_text().strip() == "1"
 
 
 def test_a_node_whose_read_fails_is_refused(tmp_path):
