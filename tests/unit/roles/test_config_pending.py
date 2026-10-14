@@ -74,10 +74,11 @@ def test_only_the_files_cassandra_config_writes(tmp_path):
     assert "+ _cassandra_service_config_files" in read["ansible.builtin.command"]["argv"]
     names = ["cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm11-server.options", "jvm17-server.options",
              "jvm8-server.options", "cassandra-rackdc.properties", "logback.xml",
-             "jmxremote.password", "jmxremote.access"]  # in the conf dir on Debian: read at start too
+             "jmxremote.access"]  # in the conf dir on Debian: read at start too
     # a keystore touched, an editor backup, the topology file: not the config Cassandra restarts for
     others = [".keystore", "cassandra.yaml~", "cassandra.yaml.12345.2026-10-06@10:00:00~", "cassandra-topology.properties",
-              "commitlog_archiving.properties", "logback-tools.xml"]
+              "commitlog_archiving.properties", "logback-tools.xml",
+              "jmxremote.password"]  # read at each JMX login: a new one applies at once
     conf = tmp_path / "conf"
     conf.mkdir()
     for name in names + others:
