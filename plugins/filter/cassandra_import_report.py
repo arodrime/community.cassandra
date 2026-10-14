@@ -230,6 +230,20 @@ def _not_settings(read):
     return groups
 
 
+def _jvm_warnings(read):
+    """[(warning, [nodes])]: the JVM options worth a look (cassandra_config_import's jvm_warnings), the nodes with
+    the same one together."""
+    groups = []
+    for n in read:
+        for text in n.get("jvm_warnings") or []:
+            entry = next((g for g in groups if g[0] == text), None)
+            if entry is None:
+                groups.append((text, [n["name"]]))
+            elif n["name"] not in entry[1]:
+                entry[1].append(n["name"])
+    return groups
+
+
 def _what_changes(changed, removed, changes):
     """ (3 new files; changed: a, b; removed: c), '' when not known."""
     if changed is None:
@@ -819,6 +833,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     for row, names, setting, why in found:
         todo.append("WARNING %s: %s, kept as found %s %s (%s)"
                     % (_who(names, None, groups, full), setting, DASH, why, how_to_keep(row)))
+    for text, members in _jvm_warnings(read):
+        todo.append("WARNING  %s: %s" % (_who(members, None, groups, full), text))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))

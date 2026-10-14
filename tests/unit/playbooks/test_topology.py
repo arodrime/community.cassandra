@@ -284,7 +284,7 @@ def test_preflight_notes_render_one_line_each():
             if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") == "note.yml":
                 found[t["name"]] = t
     assert sorted(found) == ["Going on without the nodes that did not answer", "Seed layout",
-                             "Warn about sensitive or suspicious settings", "Warn about them"]
+                             "Warn about sensitive or suspicious settings", "Warn about the JVM options", "Warn about them"]
     t = found["Warn about sensitive or suspicious settings"]
     note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], _nl="\n", _found=t["vars"]["_found"],
                   _ring=t["vars"]["_ring"], _members=t["vars"]["_members"],

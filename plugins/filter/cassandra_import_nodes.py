@@ -139,7 +139,11 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         f = re.sub(r"[:,].*$", "", str(line))
         if CONFIG_FILE.match(f) and f not in hand_kept:
             hand_kept.append(f)
-    hand_kept = {"cassandra_config_keep_files": hand_kept} if hand_kept and keep_hand_edits else {}
+    hand_kept = hand_kept if keep_hand_edits else []
+    # a jvm<N> file its Java does not read, whose options are not imported: left as it is on the node
+    if read:
+        hand_kept += [f for f in config.get("keep_files") or [] if f not in hand_kept]
+    hand_kept = {"cassandra_config_keep_files": hand_kept} if hand_kept else {}
 
     pkgs = hv.get("import_cluster_packages", {})
     installed = {}
@@ -243,6 +247,8 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     if read and not _bool(hv.get("import_cluster_repos_answer", True)):
         notes.append("no repository answered the package query (an air-gapped host?): set cassandra_offline: true"
                      " (group_vars) unless the roles may download from the mirror")
+    if read:
+        notes += list(config.get("jvm_notes") or [])
     if read and hv.get("import_cluster_newer_files", []):
         notes.append("%s written after Cassandra started: it may not run what they say. apply_config does not restart"
                      " it for them; rolling_restart applies them" % ", ".join(hv["import_cluster_newer_files"]))
@@ -277,6 +283,8 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "trusted": config.get("trusted", []) if read else [],
         # cassandra.yaml keys its Cassandra rejects: not imported, the node would not restart with them
         "not_settings": config.get("not_settings") or {},
+        # JVM options worth a look (why, the way out): in the report's TO DO
+        "jvm_warnings": list(config.get("jvm_warnings") or []) if read else [],
         "notes": notes,
     }
 

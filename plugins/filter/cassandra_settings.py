@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_yaml_properties as known
 
 NULLS = ("", "~", "null", "Null", "NULL")
@@ -205,10 +206,8 @@ def properties_settings(text):
     return out
 
 
-# the -XX options that are -X ones under another name
-JVM_ALIASES = {"MaxHeapSize": "-Xmx", "InitialHeapSize": "-Xms", "NewSize": "-Xmn", "ThreadStackSize": "-Xss"}
 # HotSpot options that add up when given twice (the others: the last one counts)
-JVM_LISTS = ("OnError", "OnOutOfMemoryError", "CompileCommand", "CompileOnly", "StartFlightRecording")
+JVM_LISTS = jvm.LISTS
 # options the ones they unlock must come after
 JVM_UNLOCK = ("UnlockDiagnosticVMOptions", "UnlockExperimentalVMOptions", "UnlockCommercialFeatures")
 # what cassandra-env.sh looks for in the options (grep), whatever comes after
@@ -216,12 +215,7 @@ JVM_ENV_GREPS = ("Xmn", "Xmx", "Xms", "UseConcMarkSweepGC", "+UseG1GC", "-Xlog:g
                  "ParallelGCThreads", "ConcGCThreads")
 
 
-def _jvm_name(option):
-    m = re.match(r"^-XX:[+-]?(\w+)", option)
-    if m:
-        return JVM_ALIASES.get(m.group(1), m.group(1))
-    m = re.match(r"^(-D[^=]+)", option) or re.match(r"^(-X(?:mx|ms|mn|ss))", option)
-    return m.group(1) if m else None
+_jvm_name = jvm.option_name
 
 
 def jvm_options_settings(text):

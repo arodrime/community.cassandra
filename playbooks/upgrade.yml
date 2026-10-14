@@ -190,6 +190,15 @@
         name: community.cassandra.cassandra_install
         tasks_from: java_check.yml
 
+    # another series reads its options file as it is when cassandra_config keeps it
+    - name: The target reads an options file the role writes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_options_kept.yml
+      vars:
+        _cassandra_java_options_now: ""
+      when: cassandra_upgrade_from_series != cassandra_version
+
     - name: One version before the upgrade
       ansible.builtin.assert:
         that: ansible_play_hosts | map('extract', hostvars, 'cassandra_upgrade_from') | unique | list | length == 1
