@@ -111,7 +111,7 @@ def _verdict(nodes, differ, unreached=()):
     hosts Ansible did not reach: "1 NODE NOT REACHED: node3" (but the ones
     down), never ALL UP then (the ring's view, gossip, can be late)."""
     down = ["%s (%s/%s)" % (name, dc, n["rack"]) for name, dc, n in nodes if n["status"] == "D"]
-    unreached = [h for h in unreached if h not in [name for name, dc, n in nodes if n["status"] == "D"]]
+    unreached = [h for h in unreached if h not in [name.rstrip("?") for name, dc, n in nodes if n["status"] == "D"]]
     parts = [("%s DOWN: %s" % (out.plural(len(down), "NODE", "NODES"), ", ".join(down)))] if down else []
     if unreached:
         parts.append("%s NOT REACHED: %s" % (out.plural(len(unreached), "NODE", "NODES"), ", ".join(unreached)))
@@ -188,7 +188,8 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
                 stray.append("%s (%s, %s%s)" % (n["address"], dc, n["status"], n["state"]))
             else:
                 in_ring.add(host)
-            named.append((host or elsewhere.get(_ip(n["address"])) or n["address"], dc, n))
+            named.append(((host + "?") if _ip(n["address"]) in guessed else host or elsewhere.get(_ip(n["address"])) or n["address"],
+                          dc, n))
             mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
                 "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
             rows.append([n["status"] + n["state"], n["address"], n["load"] or "?", n["tokens"] or "",
@@ -204,7 +205,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     notes = ["%s not reached by Ansible: taken for %s, the only node of the ring no host has (its ansible_host or"
              " cassandra_listen_address in the inventory would say for sure)" % (host, address)
              for address, host in guessed.items()]
-    matches = not missing and not known and not leaving and not stray
+    matches = not missing and not known and not leaving and not stray and not guessed  # a guess is no match
     if missing:
         notes.append("In %s, not in the ring: " % run + ", ".join(
             h + (" (unreachable)" if h in unreachable else "") for h in missing))

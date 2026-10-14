@@ -110,7 +110,8 @@
                lookup('community.cassandra.cassandra_hosts'), ansible_play_hosts_all,
                unreachable=ansible_play_hosts_all | reject('in', _checked) | list,
                absent=query('community.cassandra.cassandra_nodes', state='absent'),
-               names=ansible_play_hosts_all | community.cassandra.cassandra_host_addresses(hostvars),
+               names=(ansible_play_hosts_all + query('community.cassandra.cassandra_nodes', state='absent'))
+                     | community.cassandra.cassandra_host_addresses(hostvars), ring=_first_ring,
                members=_first_ring.values() | map(attribute='nodes') | flatten | length if _first_ring else none,
                topology_command='topology' | community.cassandra.cassandra_command(
                  inventory=ansible_inventory_sources,

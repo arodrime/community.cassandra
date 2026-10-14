@@ -326,15 +326,20 @@ def _fit(names, room):
 def cassandra_host_addresses(hosts, hostvars):
     """{address: inventory name} of hosts, from what their variables say they
     broadcast or listen on, their ansible_host and default IPv4 fact (netstats
-    names the other ends by address). A variable that can't be read is skipped."""
+    names the other ends by address). A variable that can't be read is skipped.
+    What a host broadcasts or listens on first, for every host, then ansible_host
+    and the facts: one host's ansible_host never takes the address another one
+    is in the ring by (127.0.0.1 for ccm-like nodes, a stale ansible_host)."""
     names = {}
+    for paths in ((("cassandra_extra_settings", "broadcast_address"), ("_cassandra_preflight", "ring_address"),
+                   ("_cassandra_preflight", "address"), ("cassandra_listen_address",)),
+                  (("ansible_host",), ("ansible_facts", "default_ipv4", "address"))):
+        for host in hosts:
+            for path in paths:
+                address = _host_var(hostvars, host, *path)
+                if address and address != "localhost":
+                    names.setdefault(address, host)
     for host in hosts:
-        for path in (("cassandra_extra_settings", "broadcast_address"), ("_cassandra_preflight", "ring_address"),
-                     ("_cassandra_preflight", "address"), ("cassandra_listen_address",), ("ansible_host",),
-                     ("ansible_facts", "default_ipv4", "address")):
-            address = _host_var(hostvars, host, *path)
-            if address and address != "localhost":
-                names.setdefault(address, host)
         names.setdefault(host, host)
     return names
 

@@ -642,6 +642,14 @@ def test_host_addresses():
     assert cassandra_host_addresses(["n4"], {"n4": Broken()}) == {"n4": "n4"}
 
 
+def test_host_addresses_what_a_host_listens_on_before_another_ones_ansible_host():
+    # n3's ansible_host (stale, or 127.0.0.1 for ccm-like nodes) is n1's ring address: n1's, whatever the order
+    hostvars = {"n3": {"ansible_host": "10.0.0.1", "_cassandra_preflight": {"ring_address": "10.0.0.3"}},
+                "n1": {"_cassandra_preflight": {"ring_address": "10.0.0.1"}}}
+    names = cassandra_host_addresses(["n3", "n1"], hostvars)
+    assert names["10.0.0.1"] == "n1" and names["10.0.0.3"] == "n3"
+
+
 def test_checks_every_10s_for_5_minutes_then_every_30s():
     views = [read("n4", session("10.0.0.1", 10, 100))]
     s, now, waits = None, 0, []

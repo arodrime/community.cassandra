@@ -117,13 +117,16 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
 
 
 def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=None, names=None, members=None,
-                            topology_command=""):
+                            topology_command="", ring=None):
     """The health_check report. findings: {host: its
     cassandra_health_findings} for the hosts checked; hosts: every host of
     the run; unreachable: the ones Ansible did not reach (or whose check
     did not run); absent: the hosts marked cassandra_node_state: absent;
     names: {address: inventory name}; members: the ring's size as a node
-    saw it; topology_command: the command that removes the absent nodes.
+    saw it; topology_command: the command that removes the absent nodes;
+    ring: the cluster_status a node saw (an unreachable host known by no
+    address is taken for the one node of that ring no host has, when it is
+    down: "node3?").
     Each problem once, with every node that saw it. Returns {healthy,
     problems (count), lines}: "HEALTHY  my_cluster  6 nodes  6 UN, schema
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
@@ -134,13 +137,15 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     checked = [h for h in hosts if h not in unreachable]
     rows, seen = [], {}
     # an unreachable host known by no address (no facts, no ansible_host, no listen address) and the one
-    # node of the ring not up whose address no host has: taken for each other ("node3?"), never a guess
-    # between several
-    unnamed = sorted(set(f["address"] for host in checked for f in (findings or {}).get(host) or []
-                         if f.get("kind") == "state" and f["address"] not in names))
+    # node of the ring no host has, down: taken for each other ("node3?"), never a guess between several,
+    # nor with a ring of another size than the inventory's
+    found = [f for host in checked for f in (findings or {}).get(host) or []]
+    unnamed = sorted(set(n["address"] for dc in (ring or {}).values() for n in dc.get("nodes", [])
+                         if n["address"] not in names))
+    down = set(f["address"] for f in found if f.get("kind") == "state" and f["state"].startswith("D"))
     addressed = set(name for address, name in names.items() if address != name)
     lost = [h for h in unreachable if h not in addressed]
-    if len(unnamed) == 1 and len(lost) == 1:
+    if len(unnamed) == 1 and unnamed[0] in down and len(lost) == 1 and not any(f.get("kind") == "count" for f in found):
         names[unnamed[0]] = lost[0] + "?"
 
     def add(label, key, text, who=None):
@@ -205,8 +210,8 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     todo = []
     down = [names.get(k[1], k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
     # a node down and not reached: one thing to do, its server first
-    both = [h for h in unreachable if h in down or h + "?" in down]
-    down = [d for d in down if d not in both and d.rstrip("?") not in both]
+    both = [h + "?" if h + "?" in down else h for h in unreachable if h in down or h + "?" in down]  # a guess said so
+    down = [d for d in down if d not in both]
     if down:
         todo.append("start Cassandra on %s (its server first if it is down); a node that can't be recovered: "
                     "replace_node" % ", ".join(down))
@@ -215,7 +220,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
                     "this again; a node that can't be recovered: replace_node" % out.nodes(both))
     if absent and counted and topology_command:
         todo.append({"text": "remove %s from the ring" % out.nodes(absent), "command": topology_command})
-    others = [h for h in unreachable if h not in both]
+    others = [h for h in unreachable if h not in both and h + "?" not in both]
     if others:
         todo.append("reach %s over SSH, then run this again" % out.nodes(others))
     if any(k[0] == "streams" for k in rows):
