@@ -238,8 +238,148 @@ def universal(value):
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
-# values of password/secret keys never reach the output: all of the line after the key
-SECRET = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*[ \t]*[:=][ \t]*)\S[^\r\n]*")
+# values of secret keys never reach the output: all of the line after the key, and the lines the value goes on
+# to (a port of the collection's cassandra_output.mask: a YAML block key: |, a plain value on more indented lines, the
+# value under key:, a quote or a flow [ { left open, a line ending with a backslash)
+SECRET_NAME = (r"(?<![\w.-])[\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material"
+               r"|auth_token|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*(?<![._-]file)(?<![._-]path)")
+SECRET = re.compile(r"(?i)(" + SECRET_NAME + r"[\"']?[ \t]*[:=][ \t]*)\S[^\r\n]*")
+SECRET_KEY = re.compile(r"(?i)(" + SECRET_NAME + r"[\"']?\s*[:=]\s*)")
+# the text of an XML element of a secret's name (logback.xml: <password>...</password>)
+# (its text up to its own closing tag: CDATA sections and comments, closed or not, child elements too)
+ELEMENT_TEXT = r"<!\[CDATA\[(?:.*?\]\]>|.*)|<!--(?:.*?-->|.*)"
+SECRET_ELEMENT = re.compile(r"(?i)(<(?P<name>" + SECRET_NAME + r")(?:\s[^<>]*)?>)(\s*(?!</(?P=name)\s*>)(?:" + ELEMENT_TEXT + r"|\S)"
+                            r"(?:" + ELEMENT_TEXT + r"|(?!</(?P=name)\s*>).)*)")
+
+SECRET_WORD = re.compile(r"(?i)password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
+                         r"|ca_key|_kspw|_tspw|_pw|_pass")
+
+
+def scan(text, depth=0, quote=None, brackets="[{"):
+    """(depth, quote) after text: the brackets left open and the quote (" or ')
+    left open; a quote opens only where a value starts; a comment ends the text."""
+    return scan_to(text, depth, quote, brackets)[:2]
+
+
+def scan_to(text, depth=0, quote=None, brackets="[{"):
+    """scan, and where the text ends: its comment's #, else its length."""
+    closers = "".join({"[": "]", "{": "}", "(": ")"}[b] for b in brackets)
+    i, prev = 0, " "
+    while i < len(text):
+        c = text[i]
+        if quote == '"':
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                quote = None
+        elif quote == "'":
+            if c == "'" and text[i + 1:i + 2] == "'":
+                i += 1
+            elif c == "'":
+                quote = None
+        elif c in "\"'" and prev in " \t[{(,:=$":
+            quote = c
+        elif c in brackets:
+            depth += 1
+        elif c in closers:
+            depth -= 1
+        elif c == "#" and prev in " \t":
+            break
+        prev = c
+        i += 1
+    return depth, quote, i
+
+
+def odd_backslashes(text):
+    text = text.rstrip("\r")  # a CRLF line
+    return (len(text) - len(text.rstrip("\\"))) % 2 == 1
+
+
+def in_flow(before):
+    before = before.replace("{{", "").replace("}}", "")
+    return before.count("{") > before.count("}")
+
+
+def goes_on(line):
+    """How the value of the line's secret (its first one whose value goes on) goes on to the next lines, else None."""
+    if line.lstrip().startswith("#"):
+        return None
+    code = line[:scan_to(line)[2]]  # the line without its comment: a name in it is no key
+    keys = list(SECRET_KEY.finditer(code))
+    # each key tried costs a scan of the line: the first ones, then the last (a line of many: a JSON file)
+    for key in (keys[:16] + keys[-1:]) if len(keys) > 17 else keys:
+        state = goes_on_from(line, code, key)
+        if state is not None:
+            return state
+    return ("backslash",) if odd_backslashes(line) else None
+
+
+def goes_on_from(line, code, key):
+    """goes_on for one secret key of the line, None when its value ends on it."""
+    rest, colon, flow = code[key.end():], key.group(1).rstrip()[-1:] == ":", in_flow(line[:key.start()])
+    value = re.sub(r"^(?:[!&]\S*(?:[ \t]+|$))+", "", rest) if colon else rest  # after a YAML tag or anchor
+    before = scan(line[:key.end()])[1]
+    if flow:
+        depth, quote = scan(line.replace("{{", "").replace("}}", ""))
+        opened = scan(rest, 0, before)[0] > 0
+        ended = re.search(r"[,}\]]", re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*'", "", rest))
+        if quote or (depth > 0 and (opened or not ended)):
+            return ("scan", depth, quote, "[{")
+    elif value[:1] and (value[:1] in "\"'[{(" or (not (colon and not before) and value[:1] == "$")):  # the shell's $' $( $"
+        brackets = "[{" if colon else "[{("
+        depth, quote = scan(value, 0, before, brackets)
+        if depth > 0 or quote:
+            return ("scan", depth, quote, brackets)
+    elif colon and not before:
+        return ("indent", key.start(1), not value.strip())
+    return None
+
+
+def still_on(state, line):
+    """The state after line, a line of the secret's value (False: not one)."""
+    if state[0] == "indent":
+        indent = len(line) - len(line.lstrip())
+        if not line.strip() or indent > state[1] or (state[2] and indent == state[1] and
+                                                     re.match(r"-(\s|$)", line.lstrip())):
+            return state
+        return False
+    if state[0] == "scan":
+        depth, quote = scan(line, state[1], state[2], state[3])
+        return ("scan", depth, quote, state[3]) if depth > 0 or quote else None
+    return False
+
+
+def masked(lines):
+    """The lines of a file (their line ends kept), secrets masked."""
+    out, state, continued = [], None, False
+    for line in lines:
+        text = line.rstrip("\r\n")
+        end = line[len(text):]
+        indent = len(text) - len(text.lstrip())
+        if state is not None:
+            after = still_on(state, text)
+            if after is False and continued:
+                after = state
+            if after is None and odd_backslashes(text):
+                after = ("backslash",)
+            if after is not False:
+                out.append((text[:indent] + "****" if text.strip() else text) + end)
+                state, continued = after, odd_backslashes(text)
+                continue
+        if not SECRET_WORD.search(text):
+            state = None
+            out.append(line)
+            continue
+        state, continued = goes_on(text), odd_backslashes(text)
+        out.append(SECRET.sub(r"\1****", SECRET_ELEMENT.sub(r"\1****", text)) + end)
+    return out
+
+
+def unified_range(start, stop):
+    """A hunk's range as difflib's unified_diff writes it."""
+    if stop - start == 1:
+        return "%d" % (start + 1)
+    return "%d,%d" % (start + 1 if stop > start else start, stop - start)
 
 
 def diff(live, new_text):
@@ -248,9 +388,22 @@ def diff(live, new_text):
     a = io.open(fs(live), encoding="utf-8", errors="replace", newline="").read().splitlines(True) \
         if os.path.exists(fs(live)) else []
     b = new_text.splitlines(True)
-    d = list(difflib.unified_diff(a, b, live + " (live)", "(new)"))
+    # unified_diff's hunks of the files, their lines shown masked as in the whole file (a secret's value spans lines)
+    shown_a, shown_b = masked(a), masked(b)
+    d = []
+    for group in difflib.SequenceMatcher(None, a, b).get_grouped_opcodes(3):
+        if not d:
+            d += ["--- %s (live)\n" % live, "+++ (new)\n"]
+        old, new = unified_range(group[0][1], group[-1][2]), unified_range(group[0][3], group[-1][4])
+        d.append("@@ -%s +%s @@\n" % (old, new))
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                d += [" " + x for x in shown_a[i1:i2]]
+                continue
+            d += ["-" + x for x in shown_a[i1:i2]] if tag in ("replace", "delete") else []
+            d += ["+" + x for x in shown_b[j1:j2]] if tag in ("replace", "insert") else []
     d = [x if x.endswith(("\n", "\r")) else x + "\n" for x in d]  # a last line without one: not joined to the next
-    out = "".join(SECRET.sub(r"\1****", line) for line in d)
+    out = "".join(d)
     return (1 if d else 0), out.encode("utf-8", "replace").decode("utf-8")  # a path not in UTF-8 too
 
 

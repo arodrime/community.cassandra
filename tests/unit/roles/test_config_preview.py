@@ -5,8 +5,10 @@ __metaclass__ = type
 # changing an initialized node and refuses to change the identity of a joined node.
 
 import base64
+import difflib
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -22,6 +24,7 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.plugins.module_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
@@ -79,6 +82,42 @@ def test_crlf_is_a_change(tmp_path):
 ])
 def test_secrets_masked_in_the_diff(tmp_path, live, new, shown):
     assert changed_lines(preview(tmp_path, "cassandra.yaml", live, new)) == shown
+
+
+@pytest.mark.parametrize("name, live, new", [
+    ("cassandra.yaml", "a: 1\nkeystore_password: |\n  OLDLEAK\nb: 2\n",
+     "a: 1\nkeystore_password: |\n  NEWLEAK\nb: 2\n"),  # (its key a context line)
+    ("cassandra.yaml", "  keystore_password: x\n    OLDLEAK\n  b: 2\n", "  keystore_password: x\n    NEWLEAK\n  b: 2\n"),
+    ("cassandra.yaml", "keystore_password: \"OLDLEAK1\n  OLDLEAK2\n  END\"\nnext: 1\n",
+     "keystore_password: \"NEWLEAK1\n  NEWLEAK2\n  END\"\nnext: 1\n"),
+    ("cassandra.yaml", "keystore_password:\n  - OLDLEAK\nnext: 1\n", "keystore_password:\n  - NEWLEAK\nnext: 1\n"),
+    ("cassandra.yaml", "sse_c_key: OLDLEAK\nca_key: OLDLEAK\n", "sse_c_key: NEWLEAK\nca_key: NEWLEAK\n"),
+    ("cassandra.yaml", "\"keystore_password\": \"OLDLEAK1\n  OLDLEAK2\"\n", "'keystore_password': NEWLEAK\n"),
+    ("cassandra-env.sh", 'export TRUSTSTORE_PASSWORD="x\nOLDLEAK"\n', 'export TRUSTSTORE_PASSWORD="x\nNEWLEAK"\n'),
+    ("cassandra-rackdc.properties", "ldap_password=x\\\n  OLDLEAK\n", "ldap_password=x\\\n  NEWLEAK\n"),
+    ("cassandra.yaml", "keystore_password: |\r\n  OLDLEAK\r\nb: 2\r\n", "keystore_password: |\n  NEWLEAK\nb: 2\n"),
+])
+def test_a_secret_value_on_several_lines_masked_in_the_diff(tmp_path, name, live, new):
+    out = preview(tmp_path, name, live, new)
+    assert out and "LEAK" not in out, out
+    if "\r" in live:  # a CRLF line masked keeps its \r (bash reads it)
+        assert "-  ****\r" in changed_lines(out)
+
+
+@pytest.mark.parametrize("live, new", [
+    ("a: 1\nb: 2\nc: 3\n", "a: 1\nb: 3\nc: 3\nd: 4\n"),
+    ("".join("k%d: %d\n" % (i, i) for i in range(30)), "".join("k%d: %d\n" % (i, i * (i % 7 != 0)) for i in range(32))),
+    ("x: 1\r\ny: 2\n", "x: 1\ny: 2"),
+    ("a: 1\n", ""),
+    ("# keystore_password: cassandra\nnum_tokens: 16\n", "# keystore_password: cassandra\nnum_tokens: 8\n"),
+])
+def test_the_diff_is_unified_diff(tmp_path, live, new):
+    # (its lines masked one at a time, the hunks as difflib's unified_diff makes them)
+    want = list(difflib.unified_diff(live.splitlines(True), new.splitlines(True), "x (live)", "(new)"))
+    want = "".join(line if line.endswith(("\n", "\r")) else line + "\n" for line in want).rstrip("\r\n")
+    want = re.sub(r"(keystore_password: ).*", r"\1****", want)
+    got = preview(tmp_path, "cassandra.yaml", live, new)
+    assert got.split("\n", 1)[1] == want.split("\n", 1)[1]  # (the live file's path in the first line)
 
 
 # an ASCII locale (LANG=C, no UTF-8 mode, as on Python 3.6) and a UTF-8 one
@@ -531,3 +570,19 @@ def test_unit_state_read_with_the_node_or_by_service_facts(read, state, fallback
     t = task("Note what was read")
     assert render(t["ansible.builtin.set_fact"]["_cassandra_config_unit_state"], _read={"running": read}) == state
     assert render("{{ %s }}" % task("Look for a running Cassandra")["when"], _cassandra_config_unit_state=state) is fallback
+
+
+@pytest.mark.parametrize("text", BLOCK_SECRETS_AFTER_AUDIT)
+def test_the_role_masks_every_line_of_a_secret_value_as_the_collection(tmp_path, text):
+    # config_read is a port of cassandra_output.mask (it runs on the node): the same cases, a new file's diff
+    name = "logback.xml" if text.lstrip().startswith("<") else "cassandra-env.sh" if "=" in text else "cassandra.yaml"
+    out = preview(tmp_path, name, None, text + "\n")
+    assert out and "LEAK" not in out, out
+    assert text.rsplit("\n", maxsplit=1)[-1] in out  # the next setting shown
+
+
+def test_a_password_file_s_path_is_shown(tmp_path):
+    # a path, not a secret (as the collection's mask): its change said
+    live = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"\n'
+    out = preview(tmp_path, "cassandra-env.sh", live, live.replace("/etc/cassandra/", "/etc/other/"))
+    assert "+JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/other/jmxremote.password\"" in out, out

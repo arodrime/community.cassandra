@@ -335,6 +335,21 @@ def test_a_secret_setting_of_a_hand_edit_is_never_shown():
     assert [line.split()[2] for line in lines if line.startswith("  cassandra.yaml ldap_password:")] == ["****"]
 
 
+def test_a_secret_value_on_several_lines_of_a_hand_edit_is_never_shown():
+    # (masked where the edits are made, from the whole file; the report and the screen mask each hunk again)
+    hand = ["cassandra.yaml, line 10:", "  - #ldap_password: x", "  + ldap_password: |", "  +   LEAK1", "  +   LEAK2",
+            "cassandra-env.sh, line 3:", '  + export X_PASSWORD="LEAK3', '  + LEAK4"']
+    for keep in (None, {"cassandra_config_keep_files": ["cassandra.yaml", "cassandra-env.sh"]}):
+        extra = {"keep": keep} if keep else {}
+        for kwargs in ({}, {"screen": True}, {"check": True, "report_file": REPORT_CHECK}):
+            text = "\n".join(report([node(1, hand=hand, **extra), node(2)], **kwargs))
+            assert re.findall(r"LEAK\d", text) == [], (keep, kwargs)
+        assert "ldap_password: ****" in cassandra_inventory_layout([node(1, hand=hand, **extra)], "c")["report"]
+    # a head too: a properties key as Java reads it holds no value, masked all the same
+    head = "cassandra-rackdc.properties: keystore.password:c2VjcmV0SEC=="
+    assert "c2VjcmV0" not in cassandra_inventory_layout([node(1, hand=[head])], "c")["report"]
+
+
 def test_the_screen_width_is_ansibles(monkeypatch):
     from ansible_collections.community.cassandra.plugins.filter import cassandra_import_report as module
 

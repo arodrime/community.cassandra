@@ -57,6 +57,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_permission
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
     yaml_rejected)
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as _out
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -241,11 +242,12 @@ def _compare(name, node, role, storage_dir="", left_out=()):
         a = shell_lines("\n".join(line for line in node.split("\n") if not heap.match(line)))
         b = shell_lines("\n".join(line for line in role.split("\n") if not heap.match(line)))
     out = []
+    # masked as in the whole file: a line of a secret's value (a quote left open) without its key in the block
+    shown_a, shown_b = _out.mask_lines(a), _out.mask_lines(b)
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
         if op != "equal":
             out.append("%s: node has %s, import would write %s"
-                       % (name, " | ".join(_mask(x) for x in a[i1:i2]) or "nothing",
-                          " | ".join(_mask(x) for x in b[j1:j2]) or "nothing"))
+                       % (name, " | ".join(shown_a[i1:i2]) or "nothing", " | ".join(shown_b[j1:j2]) or "nothing"))
     return out
 
 

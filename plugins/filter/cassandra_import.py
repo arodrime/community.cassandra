@@ -648,17 +648,40 @@ def _same_settings(name, role, node):
 def _properties(lines):
     """The settings of a key=value (or key: value) file, comments and blank
     lines left out; a value keeps its trailing spaces, as for Java's Properties
-    (prefer_local=true followed by a space is not true)."""
-    out = {}
+    (prefer_local=true followed by a space is not true). A line ending with an
+    odd number of backslashes goes on to the next one, as for Java (a comment
+    line never does): its value is not read as another setting."""
+    out, logical = {}, []
     for line in lines:
-        line = line.lstrip()
-        if not line.strip() or line.startswith(("#", "!")):
-            continue
-        key, sep, value = line.partition("=")
-        if not sep:
-            key, sep, value = line.partition(":")
-        out[key.strip()] = value.lstrip()
+        line = line.lstrip(" \t\f").rstrip("\r")  # a CRLF file: \r ends the line, as for Java
+        if logical and (len(logical[-1]) - len(logical[-1].rstrip("\\"))) % 2:
+            logical[-1] = logical[-1][:-1] + line
+        elif line.strip() and not line.startswith(("#", "!")):
+            logical.append(line)
+    for line in logical:
+        # the key up to =, : or a space (key value too), as Java reads it (cassandra_settings' properties_settings)
+        key, value = re.match(r"^((?:[^\\=: \t\f]|\\.)*)[ \t\f]*[=: \t\f]?[ \t\f]*(.*)$", line).groups()
+        out[key] = value
     return out
+
+
+class _Shown(str):
+    """A line of a file with its text masked as in the whole file (shown), kept through the filters that drop lines."""
+    def __new__(cls, text, shown):
+        line = str.__new__(cls, text)
+        line.shown = shown
+        return line
+
+    @classmethod
+    def lines(cls, lines):
+        return [cls(line, shown) for line, shown in zip(lines, out.mask_lines(lines))]
+
+    @staticmethod
+    def masked(lines):
+        """The lines as shown: masked as in the whole file (out.mask_lines), each _Shown one as it was."""
+        if all(isinstance(line, _Shown) for line in lines):
+            return [line.shown for line in lines]
+        return [line.shown if isinstance(line, _Shown) else shown for line, shown in zip(lines, out.mask_lines(lines))]
 
 
 def _leftovers(env, series, files, ctx, live_files, rejected=()):
@@ -683,24 +706,43 @@ def _leftovers(env, series, files, ctx, live_files, rejected=()):
             continue
         live = _align(rendered, live_files[name].split("\n"))
         if name == "cassandra.yaml" and (extras or rejected):
-            rendered, live = _without_extras(rendered, live, extras, rejected)
+            # masked before the lines of those keys go: a secret's value may go on past the lines dropped
+            rendered, live = _without_extras(_Shown.lines(rendered), _Shown.lines(live), extras, rejected)
             sections = _extra_sections()
             normalized += ["cassandra.yaml: %s kept with cassandra_extra_settings (written %s)" % (
                 k, "in its section" if k in sections else "at the end of the file") for k in sorted(extras)]
         ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
+        if all(op == "equal" for op, i1, i2, j1, j2 in ops):
+            continue
+        # shown masked as in the whole file: a line of a secret's value (a YAML block, a quote left open) is
+        # masked even when its key is not in the lines that differ
+        shown_rendered, shown_live = _Shown.masked(rendered), _Shown.masked(live)
         for op, i1, i2, j1, j2 in ops:
             if op == "equal":
                 continue
             pairs = _same_settings(name, rendered[i1:i2], live[j1:j2])
             if pairs is not None:
-                normalized += ["%s: %s  (node: %s)" % (name, _mask(r.strip()), _mask(n.strip())) for r, n in pairs]
+                at_r = _in_order(rendered[i1:i2], [r for r, n in pairs])
+                at_n = _in_order(live[j1:j2], [n for r, n in pairs])
+                normalized += ["%s: %s  (node: %s)" % (name, shown_rendered[i1 + r].strip(), shown_live[j1 + n].strip())
+                               for r, n in zip(at_r, at_n)]
                 if (i2 - i1) + (j2 - j1) > 2 * len(pairs):
                     # comment lines too, e.g. the stock comments of the release the file came from
                     comments.append((name, j1 + 1, j2 - j1, i2 - i1))
                 continue
             hand.append("%s, line %d:" % (name, j1 + 1))
-            hand += ["  - " + _mask(line) for line in rendered[i1:i2]] + ["  + " + _mask(line) for line in live[j1:j2]]
+            hand += ["  - " + line for line in shown_rendered[i1:i2]] + ["  + " + line for line in shown_live[j1:j2]]
     return hand, normalized, _comment_lines(comments)
+
+
+def _in_order(lines, picked):
+    """The indexes in lines of picked, lines of it in the same order."""
+    at, out = 0, []
+    for line in picked:
+        at = lines.index(line, at)
+        out.append(at)
+        at += 1
+    return out
 
 
 def _comment_lines(blocks):
@@ -1354,10 +1396,10 @@ def cassandra_inventory_layout(nodes, cluster_name):
         if kept:
             report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
                           " (cassandra_config_keep_files; nodes added later get the role's):")
-            report += ["    " + _mask(line) for line in kept]
+            report += ["    " + line for line in out.mask_hunks(kept)]
         if edits:
             report.append("  HAND EDITS no variable covers (cassandra_config would revert them):")
-            report += ["    " + _mask(line) for line in edits]
+            report += ["    " + line for line in out.mask_hunks(edits)]
         if not n["hand_edits"]:
             report.append("  No hand edit left: cassandra_config would not change the config.")
         if n.get("comments"):

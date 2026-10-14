@@ -1,6 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import difflib
+import re
 import time
 
 import pytest
@@ -784,3 +786,151 @@ def test_flow_keeps_one_line():
     line = out.flow(4, "  Cluster 'Multi\nline' (inventory group a)")
     assert "\n" not in line and out.laid_out(line, 100) == (["  Cluster 'Multi line' (inventory group a)"], "")
     assert "\n" not in out.flow(4, "x\r\ny", "  key\nz")
+
+
+# --- a secret's value on several lines: every line of it masked ---
+
+# a secret name in the key line's comment or inside the value, a YAML tag or anchor, the shell's $'...', an XML element
+BLOCK_SECRETS_AFTER_AUDIT = [
+    "  keystore_password: |  # PEM password: see vault\n    LEAK1\n    LEAK2\n  next: 1",
+    "keystore_password: | # rotate the password: yearly\n  LEAK1\n  LEAK2\nnext: 1",
+    "keystore_password:  # old_password: x\n    LEAK1\nnext: 1",
+    "export KS_PASSWORD=\"LEAK0 # a password: x\nLEAK1\"\nnext=1",
+    "keystore_password: !!str \"LEAK1\nLEAK2\"\nnext: 1",
+    "keystore_password: &a 'LEAK1\nLEAK2'\nnext: 1",
+    "export KS_PASSWORD=$'LEAK1\nLEAK2'\nnext=1",
+    "JVM_OPTS=\"$JVM_OPTS -Da.password=x -Db.password='LEAK1\nLEAK2'\"\nnext=1",
+    "<password>LEAK1</password>\n<next>1</next>",
+    "<password><![CDATA[LEAK1]]></password>\n<next>1</next>",
+    "JVM_OPTS=\"$JVM_OPTS -Dx.password:$x\n  LEAK1\"\nnext=1",  # $ after a colon, inside a shell quote
+    "  <secretKey attr=\"1\">LEAK1</secretKey>\n<next>1</next>",
+    "ldap_password=x\\\r\n  LEAK1\r\nnext=1",  # a CRLF line continued by its backslash
+    "password: $abc\n  LEAK1\nother: 1",  # a YAML plain value starting with $: its more indented lines
+    "password: $(x\n  LEAK1\nother: 1",
+    "password: &a\n- LEAK1\nother: 1",  # an anchor alone: the list under the key
+    "password: !!seq\n- LEAK1\nother: 1",
+]
+
+
+@pytest.mark.parametrize("text", [
+    "keystore_password: |\n  LEAK1\n  LEAK2\nnext: 1",
+    "keystore_password: >-\n  LEAK1\n\n  LEAK2\nnext: 1",
+    "keystore_password: |+2\n    LEAK1\n  LEAK2\nnext: 1",
+    "  keystore_password: LEAK1\n    LEAK2\n  next: 1",  # a plain value on more indented lines
+    "keystore_password: \"LEAK1\nLEAK2\"\nnext: 1",  # a quote left open: its lines, whatever their indent
+    "keystore_password: \"LEAK1\n  LEAK2\n  LEAK3\"\nnext: 1",
+    "opts: {keystore_password: \"LEAK1, x\n  LEAK2\"}\nnext: 1",
+    "keystore_password: \"LEAK1 \\\"\n  LEAK2 \\\n  LEAK3\"\nnext: 1",
+    "keystore_password: 'LEAK1 it''s\n  LEAK2'\nnext: 1",
+    "keystore_password: [LEAK1,\n  LEAK2]\nnext: 1",
+    "keystore_password: {a: LEAK1,\n  b: \"LEAK2 }\"\n  }\nnext: 1",
+    "opts: {a: 1, keystore_password: \"LEAK1\n  LEAK2\"}\nnext: 1",
+    "opts: {keystore_password: x, other_password: \"LEAK1\n  LEAK2\"}\nnext: 1",  # the line's last secret
+    "keystore_password:\n  LEAK1\n  LEAK2\nnext: 1",  # the value under the key
+    "keystore_password:  # rotated\n  a: LEAK1\n  b: LEAK2\nnext: 1",
+    "secrets:\n- LEAK1\n- LEAK2\nnext: 1",  # a list at the key's column
+    "export KEYSTORE_PASSWORD=\"LEAK1\nLEAK2\"\nnext=1",  # cassandra-env.sh
+    "KEYSTORE_PASSWORD='LEAK1\nLEAK2'\nnext=1",
+    "-Djavax.net.ssl.keyStorePassword=\"LEAK1\nLEAK2\"\n-Xss256k",  # jvm options
+    "keystore.password=LEAK1\\\n    LEAK2\\\\\\\n    LEAK3\nnext=1",  # a properties file's continued line
+    "export KS_PASSWORD=x TS_PASSWORD=\"LEAK1\nLEAK2\"\nnext=1",  # the line's last secret
+    "KEY_PASSWORD=\"LEAK1\"\\\nLEAK2\nnext=1",  # a quote closed, then a backslash
+    "KEY_PASSWORD=\"LEAK1\nLEAK2\"\\\nLEAK3\nnext=1",
+    "PASSWORDS=(LEAK1\n  LEAK2)\nnext=1",  # a shell array
+    "opts: {keystore_password: a\n  LEAK1, x: 1}\nnext: 1",  # a flow mapping's plain value on the next line
+    "opts: {keystore_password: [a,\n  LEAK1], x: 1}\nnext: 1",
+] + BLOCK_SECRETS_AFTER_AUDIT)
+def test_mask_every_line_of_a_secret_value(text):
+    masked = out.mask(text)
+    assert "LEAK" not in masked, masked
+    assert masked.rsplit("\n", maxsplit=1)[-1] == text.rsplit("\n", maxsplit=1)[-1]  # the next setting shown
+    assert len(masked.split("\n")) == len(text.split("\n"))
+
+
+@pytest.mark.parametrize("text", [
+    "- keystore_password: x\n  store_type: JCEKS",  # a list item's next key
+    "keystore_password: \"x\"\n  next: 1",  # closed on its line
+    "keystore_password: x\nnext: 1",
+    "keystore_password: {a: x}\n  next: 1",
+    "opts: {keystore_password: x,\n  next: 1}",
+    "keystore_password=x\n  next=1",  # not YAML: an indented line is another setting
+    "keystore_password=x\\\\\nnext=1",  # an even number of backslashes: not continued
+    "keystore_password: [it's, x]\n  next: 1",  # a quote inside a word: not one that opens a value
+    "# keystore_password: x\n# next: 1",
+    "keystore_password: [x, y]  # see [1\n  next: 1",  # a comment: no bracket, no quote in it
+    "JVM_OPTS=\"$JVM_OPTS -Djavax.net.ssl.trustStorePassword=\"\nJVM_OPTS=\"$JVM_OPTS -Dx=1\"",  # its quote closes
+    "echo \"the password: \"\n  next",  # (inside a quote: not a YAML key)
+    "# keystore_password: \"see the vault\nnum_tokens: 8",  # a comment goes on to no other line
+    "opts: {keystore_password: a, x: 1,\n  next: 1}",
+])
+def test_mask_stops_where_the_secret_value_does(text):
+    masked = out.mask(text).split("\n")
+    assert masked[0] != text.split("\n")[0] or "x" not in masked[0]
+    assert masked[1] == text.split("\n")[1]
+
+
+def test_mask_lines_masks_a_value_line_without_its_key():
+    lines = ["a: 1", "keystore_password: |", "  LEAK1", "  LEAK2", "b: 2"]
+    assert out.mask_lines(lines) == ["a: 1", "keystore_password: ****", "  ****", "  ****", "b: 2"]
+    assert out.mask_lines([]) == []
+
+
+def test_mask_hunks_masks_each_side_of_each_hunk_as_a_block():
+    lines = ["cassandra.yaml, line 3:", "  - keystore_password: x", "  + keystore_password: |", "  +   LEAK1",
+             "cassandra.yaml, line 9:", "  +   LEAK2", "cassandra-env.sh, line 2:", "  + export X_PASSWORD=\"LEAK3",
+             "  + LEAK4\"", "  - JVM_OPTS=1"]
+    shown = out.mask_hunks(lines)
+    assert "LEAK1" not in "\n".join(shown) and "LEAK3" not in "\n".join(shown) and "LEAK4" not in "\n".join(shown)
+    assert shown[:4] == ["cassandra.yaml, line 3:", "  - keystore_password: ****", "  + keystore_password: ****",
+                         "  +   ****"]
+    assert shown[5] == "  +   LEAK2"  # (its key in another hunk: masked where the hunks are made, from the file)
+    assert shown[9] == "  - JVM_OPTS=1"
+
+
+@pytest.mark.parametrize("text", [
+    "ldap.password=LEAK1 #x\\\n  LEAK2\nnext=1",  # (a # inside a properties value)
+    "ldap_password: LEAK1\\\nLEAK2\nnext: 1",  # a properties file with key: value
+    "keystore_password: \"LEAK1\\\nLEAK2\"\nnext: 1",
+])
+def test_mask_a_line_after_a_backslash(text):
+    masked = out.mask(text)
+    assert "LEAK" not in masked and masked.endswith("\nnext" + text.split("\nnext")[1])
+
+
+def test_changed_lines_mask_each_side_with_its_context():
+    lines = list(difflib.unified_diff(["a: 1", "keystore_password: |", "  OLDLEAK", "b: 2"],
+                                      ["a: 1", "keystore_password: |", "  NEWLEAK", "b: 2"], lineterm=""))
+    assert out.changed_lines(lines) == ["  -  ****", "  +  ****"]  # (its key a context line)
+    old = ["keystore_password: \"OLD1", "  OLD2", "  END\"", "next: 1"]
+    new = ["keystore_password: \"NEW1", "  SEC2", "  END\"", "next: 1"]
+    shown = out.changed_lines(list(difflib.unified_diff(old, new, lineterm="")))
+    assert not [line for line in shown if re.search(r"OLD|NEW|SEC|END", line)], shown
+    # a hunk of its own: not masked with the one before
+    old = ["keystore_password: x"] + ["  # c%d" % i for i in range(10)] + ["  parameters: 1"]
+    new = ["keystore_password: y"] + ["  # c%d" % i for i in range(10)] + ["  parameters: 2"]
+    assert out.changed_lines(list(difflib.unified_diff(old, new, lineterm="")))[-2:] == [
+        "  -  parameters: 1", "  +  parameters: 2"]
+
+
+def test_mask_a_long_word_is_quick():
+    start = time.time()
+    for text in ("a" * 4000, "password" * 500, "x_" * 2000 + "=1"):
+        out.mask(text)
+    assert time.time() - start < 5
+
+
+def test_mask_an_element_s_text_only():
+    assert out.mask("<password>LEAK1</password> x") == "<password>****</password> x"
+    assert out.mask("<password></password>") == "<password></password>"
+    assert out.mask("<password> LEAK1 </password>\r") == "<password>****</password>\r"
+    for text in ("<password><![CDATA[LEAK1 a</b]]></password>", "<password><!-- c -->LEAK1</password>",
+                 "<password>a<b/>LEAK1</password>", "<password>a<b>x</b>LEAK1</password>",
+                 "<password><!-- </x> -->LEAK1</password>"):  # its text up to its own closing tag
+        assert out.mask(text) == "<password>****</password>", text
+
+
+def test_mask_a_line_of_many_secrets_is_quick():
+    start = time.time()
+    assert out.mask("<password>" + "<![CDATA[" * 30000).startswith("<password>****")  # (unclosed: to the end)
+    assert "LEAK" not in out.mask("{" + ", ".join('"password%d": "LEAK"' % i for i in range(2000)) + "}")
+    assert time.time() - start < 5

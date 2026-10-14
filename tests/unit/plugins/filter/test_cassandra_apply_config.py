@@ -4,7 +4,7 @@ __metaclass__ = type
 import base64
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
-    ROLE_MASK, _line_settings, _patched, _yaml_settings, cassandra_apply_config_diff, cassandra_apply_config_outcomes,
+    _line_settings, _masked, _patched, _yaml_settings, cassandra_apply_config_diff, cassandra_apply_config_outcomes,
     cassandra_apply_config_recap)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
@@ -216,6 +216,37 @@ def test_the_conf_dir_alternative():
         "             /etc/cassandra/default.conf   node1   %s differs" % ARROW]
 
 
+def test_a_change_next_to_a_secret_on_several_lines_is_read(tmp_path):
+    # the live lines masked as the role's diff masks them (a secret's value lines, sse_c_key): the diff fits them
+    def yml(tokens):
+        return YAML + "sse_c_key: abc\nldap_password: |\n  LINE1\n  LINE2\nnum_tokens: %d\n" % tokens
+    lines = view(Node(tmp_path, "node1", files={"cassandra.yaml": yml(16)}, targets={"cassandra.yaml": yml(8)}))
+    assert [line.split()[:2] for line in lines[1:3]] == [["num_tokens:", "8"], ["16", "node1"]]
+    assert lines[2].endswith(ARROW + " differs")
+    assert not [line for line in lines if "abc" in line or "LINE" in line]
+
+
+def test_a_masked_change_is_said_on_its_own_key(tmp_path):
+    # a comment line with a masked value: no secret change; a secret mapping's lines, a line going on from a
+    # secret's: its key's change
+    cases = [("ks_password: x\n# truststore_password: cassandra\nb: 2\n", "cassandra.yaml", "# truststore_password", None),
+             ("my_secret:\n  user: a\n  pass: b\n", "cassandra.yaml", "pass: b", "my_secret"),
+             ('JVM_OPTS="$JVM_OPTS -Dx.password=abc \\\n  -Dother=1"\n', "cassandra-env.sh", "-Dother=1", "JVM_OPTS"),
+             ("a: 1 # ks_password: x\nb: 2\n", "cassandra.yaml", "# ks_password: x", None),  # (in a comment)
+             ("-Dx.password=a\n-Xss256k\n-Dx.password=b\n", "jvm-server.options", "-Dx.password=b", "-Dx.password"),
+             ("  -Dx.password=a\n-Xss256k\n  -Dx.password=b\n", "jvm-server.options", "-Dx.password=b", "-Dx.password"),
+             ("ldap_password: |\n  L1\n\n  L3\nb: 2\n", "cassandra.yaml", "L3", "ldap_password")]  # (a blank line in it)
+    for n, (live, name, old, key) in enumerate(cases):
+        new = live.replace(old, old[:-1] + "2" if old[-1] != "d" else "# other")
+        (tmp_path / str(n)).mkdir()
+        lines = view(Node(tmp_path / str(n), "node1", files={name: live}, targets={name: new}))
+        said = [line for line in lines if "differs (masked)" in line]
+        assert bool(said) == (key is not None), (live, lines)
+        if key:
+            assert [line for line in lines if line.lstrip().startswith(key)], lines
+            assert "(empty)" not in "\n".join(lines)  # (the value under the key: ****)
+
+
 def test_a_block_value_is_its_key_s_value(tmp_path):
     # a PEM key or a certificate over several lines (4.1+ ssl_context_factory): a change of it is said on its key,
     # a secret's lines never shown, nor taken for keys
@@ -250,7 +281,7 @@ def test_the_parsers():
                      "-Dx=1": [None, 2, "-Dx=1"], "-Dx=2": [None, 3, "-Dx=2"]}  # a key twice: by its lines
     assert _line_settings(["dc = dc1", "export X=1", "if true; then"], "cassandra-rackdc.properties") == {
         "dc": ["dc1", 0, "dc = dc1"], "X": ["1", 1, "export X=1"], "if true; then": [None, 2, "if true; then"]}
-    assert ROLE_MASK.sub(r"\1****", "keystore_password: x") == "keystore_password: ****"
+    assert _masked(["keystore_password: x", "a: 1"]) == ["keystore_password: ****", "a: 1"]
     assert _yaml_settings(["a: 'x'  # c", 'b: "y" # c', "c: z # c"]) == {"a": ["x", 0], "b": ["y", 1], "c": ["z", 2]}
     # a comment after a key with children: its children stay keys
     assert _yaml_settings(["opts: # TLS", "  enabled: true", "tags: &t", "  x: 1"]) == {

@@ -19,7 +19,10 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import base64
+import functools
 import hashlib
+import importlib.util
+import os
 import re
 from collections import OrderedDict
 
@@ -31,7 +34,6 @@ FILES = ("cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm8-serve
          "jvm17-server.options", "cassandra-rackdc.properties", "logback.xml", "jmxremote.password", "jmxremote.access")
 # the masking of cassandra_config's diff (its "Diff them against the live files" task): the live lines get it too,
 # so that a line the diff masked compares with the live one
-ROLE_MASK = re.compile(r"(?i)([\w.-]*(?:password|passwd|secret)[\w.-]*[ \t]*[:=][ \t]*)\S[^\r\n]*")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
 _YAML_KEY = re.compile(r"^( *)(- +)?([A-Za-z0-9_][\w.\-/]*)[ \t]*:(?:[ \t]+(.*?))?[ \t]*$")
 _YAML_ITEM = re.compile(r"^( *)- +(.*?)[ \t]*$")
@@ -108,10 +110,13 @@ def _yaml_settings(lines):
     value part of it (a block value "key: |", a PEM key, a value that goes on
     over lines); no YAML parser (a masked "****" is no valid YAML), comments
     and blank lines left out."""
-    found, stack, parents, value_of = {}, [], set(), None
+    found, stack, parents, value_of, last = {}, [], set(), None, None
     for index, raw in enumerate(lines):
         line = raw.rstrip("\r")
         if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line.strip() == out.MASK and last and found[last][0] == "":
+            found[last][0] = out.MASK  # the value under a secret's key (a mapping, a list), masked
             continue
         if value_of and len(line) - len(line.lstrip(" ")) > value_of[0]:
             value = found[value_of[1]][0]
@@ -132,6 +137,7 @@ def _yaml_settings(lines):
                 name = "%s[%d]" % (path, n)
             value = _unquote(key.group(4) or "")
             found[name] = ["" if re.match(r"^[|>][-+0-9]*$", value) else value, index]  # a block: its lines
+            last = name
             stack.append((column, name.rsplit(".", 1)[-1] if "." in name else name))
             if value:  # a block indicator too: its lines are its value
                 value_of = (column, name)
@@ -190,8 +196,37 @@ def _settings(name, lines):
     return _line_settings(lines, name)
 
 
+# the role's node-side reader: its diffs are masked by it, the live lines here the same way to match them
+CONFIG_READ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "files",
+                           "config_read.py")
+
+
+@functools.lru_cache(maxsize=None)
+def _config_read():
+    spec = importlib.util.spec_from_file_location("cassandra_config_read", CONFIG_READ)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _secrets_written(lines, written):
+    """The new file's (masked) lines, the indexes of the ones the diff writes -> the indexes of the lines whose
+    secret it writes: a line with a masked value, or the key line above a line of a secret's value (****
+    alone, the lines of a YAML block, a quote going on)."""
+    found = set()
+    for i in written:
+        if lines[i].strip() == out.MASK:
+            while i > 0 and lines[i].strip() in (out.MASK, ""):
+                i -= 1
+            found.add(i)
+        elif out.MASK in re.sub(r"(^|\s)#.*$", "", lines[i]):  # (not one in a comment)
+            found.add(i)
+    return found
+
+
 def _masked(lines):
-    return [ROLE_MASK.sub(r"\1" + out.MASK, line) for line in lines]
+    """A file's lines masked as the role's diff masks them (a secret's value on several lines too)."""
+    return _config_read().masked(lines)
 
 
 def _live_texts(node):
@@ -291,7 +326,7 @@ def _file_entries(name, nodes, all_nodes):
         if diff is None:
             if live is not None:
                 settings = _settings(name, _masked(live))
-                per_node[node["name"]] = (settings, settings, set())
+                per_node[node["name"]] = (settings, settings, (set(), set()))
             continue
         if live is None:  # not there (the diff writes it whole), or not read
             (new_file if re.search(r"(?m)^@@ -0,0 ", diff) else unread).append((node["name"], diff))
@@ -301,18 +336,21 @@ def _file_entries(name, nodes, all_nodes):
             unread.append((node["name"], diff))
             continue
         before, after = _settings(name, _masked(live)), _settings(name, patched[0])
-        per_node[node["name"]] = (before, after, patched[1])
+        secrets = _secrets_written(patched[0], patched[1])
+        per_node[node["name"]] = (before, after, (secrets, set(patched[0][i].strip(" \t") for i in secrets)))
     # the keys changed on some node, in the order of the new file
     keys, changed = [], {}
     for node_name in all_nodes:
         if node_name not in per_node:
             continue
-        before, after, added = per_node[node_name]
+        before, after, (secrets, secret_lines) = per_node[node_name]
         mine = []
         for key in list(after) + [k for k in before if k not in after]:
             a, b = before.get(key), after.get(key)
-            # a masked value on a line the diff writes: changed, the same **** on both sides
-            secret = b is not None and b[1] in added and out.MASK in str(b[0]) and a is not None
+            # a masked value the diff writes (on its key's line or the lines of its value): changed, the same
+            # **** on both sides
+            # (a line written twice: by its text, its key gives its first line)
+            secret = b is not None and a is not None and (b[1] in secrets or (b[2] is not None and b[2] in secret_lines))
             if (a is None) != (b is None) or (a is not None and (a[0], a[2]) != (b[0], b[2])) or secret:
                 mine.append(key)
                 if key not in keys:
@@ -325,7 +363,7 @@ def _file_entries(name, nodes, all_nodes):
     yaml = name.endswith((".yaml", ".yml"))
     for key in keys:
         records = {}
-        for node_name, (before, after, added) in per_node.items():
+        for node_name, (before, after, dummy) in per_node.items():
             records[node_name] = (before.get(key), after.get(key), key in changed.get(node_name, ()))
         forms = set(v[2] for r in records.values() for v in r[:2] if v is not None)
         if not yaml and len(forms) == 1:  # one form of the line: there or not

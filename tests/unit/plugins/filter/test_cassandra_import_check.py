@@ -226,6 +226,15 @@ def test_secrets_are_masked():
     assert "keyStorePassword=****" in out
 
 
+def test_a_difference_after_an_element_text_of_several_lines_is_the_right_one():
+    # (each XML setting masked on its own: its text may hold a line break)
+    node = "<configuration><appender name='A'><pattern>%d\n%msg</pattern></appender><root level='INFO'/>" \
+           "<logger name='x' level='DEBUG'/></configuration>"
+    out = _compare_files({"logback.xml": node.replace("DEBUG", "WARN")}, {"logback.xml": node})["differences"]
+    assert out == ['logback.xml: node has /configuration/logger[level="DEBUG" name="x"], import would write'
+                   ' /configuration/logger[level="WARN" name="x"]']
+
+
 # --- how each file is read --------------------------------------------------
 
 @pytest.mark.parametrize("node, role, same", [
@@ -1091,3 +1100,59 @@ def test_self_check_of_the_nodes_judges_by_each_nodes_release():
                                             {"10.0.0.1": "n1"}, {"h1": hv})
     assert out["n1"]["differences"] == []
     assert [n for n in out["n1"]["notes"] if "fake_option, which Cassandra 4.1.5 rejects" in n]
+
+
+# --- a secret's value on several lines: never shown, wherever the hand edits are printed ---
+
+def _every_text(files, keep=None):
+    """Everything an import shows of a node: its hand edits, the report, the self-check, the end screen (run and
+    --check), the self-check stop."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
+        cassandra_import_report, cassandra_import_self_check_advice)
+    inventory, layout = import_node(files, "50x", keep=keep)
+    hosts = layout["hosts"]
+    found = cassandra_import_self_check(inventory, hosts, "n1", FACTS, files, {}, "/var/lib/cassandra", "17", "", {})
+    checks = {"n1": found}
+    node = layout["nodes"][0]
+    texts = [layout["report"], layout["differences"], "\n".join(node["hand_edits"] + node["normalized"]),
+             "\n".join(found.get("differences") or []), "\n".join(found.get("notes") or []),
+             "\n".join(f["content"] for f in inventory if not f["secret"])]
+    for check_mode in (False, True):
+        for screen in (False, True):
+            texts.append("\n".join(cassandra_import_report(
+                layout, ["/p/inventories/c.yml", "/p/inventories"], "/p/r/report.txt", checks,
+                not found.get("differences"), cwd="/p", in_git=True, screen=screen, check=check_mode, width=100)))
+    texts.append("\n".join(cassandra_import_self_check_advice(layout, checks, "/p/r/report.txt", width=100)))
+    return "\n".join(texts), node
+
+
+KEEP_THEM = {"cassandra_config_keep_files": ["cassandra.yaml", "cassandra-env.sh", "cassandra-rackdc.properties"]}
+
+
+@pytest.mark.parametrize("value, keep", [
+    ("|\n    LEAKA1\n    LEAKA2", None),
+    ("|\n    LEAKA1\n    LEAKA2", KEEP_THEM),  # (import_cluster_keep_hand_edits: the files left as they are)
+    (">-\n    LEAKA1\n\n    LEAKA2", None),
+    ("\"LEAKA1\n    LEAKA2\"", KEEP_THEM),
+    ("\"LEAKA1 \\\n  LEAKA2\"", None),
+    ("'LEAKA1 it''s\nLEAKA2'", None),
+    ("[LEAKA1,\n    LEAKA2]", None),
+    ("\n    LEAKA1\n    LEAKA2", None),
+    ("cassandra\n    LEAKA2", None),  # its first line as the role writes it: only the next one differs
+    ("cassandra\n    LEAKA2", KEEP_THEM),
+])
+def test_a_secret_on_several_lines_is_never_shown(value, keep):
+    files = seeded(stock("50x"))
+    files["cassandra.yaml"] = edit(files["cassandra.yaml"], "  #keystore_password: cassandra",
+                                   "  keystore_password: " + value)
+    files["cassandra-env.sh"] += 'export TRUSTSTORE_PASSWORD="LEAKE1\nLEAKE2"\nKEY_PASSWORD=\'LEAKE3\nLEAKE4\'\n'
+    files["cassandra-rackdc.properties"] += "\nldap_password=LEAKP1\\\n    LEAKP2\ntrust.password LEAKP3\n"
+    # a key Cassandra rejects (left out of the comparison, its lines dropped), its block value going on after a
+    # blank line; a quoted value going on at column 0
+    files["cassandra.yaml"] += "\nfake_password: |\n  LEAKR1\n\n  LEAKR2\nmy_secret_password: \"LEAKX1\nLEAKX2\"\n"
+    text, node = _every_text(files, keep)
+    assert re.findall(r"LEAK\w*", text) == []
+    # (shown, masked: the test sees them)
+    assert re.search(r"cassandra-env.sh, line \d+:", "\n".join(node["hand_edits"]))
+    assert "  + export TRUSTSTORE_PASSWORD=****" in node["hand_edits"] and "  + ****" in node["hand_edits"]
+    assert "  + ldap_password=****" in node["hand_edits"] and "  + trust.password=****" in node["hand_edits"]
