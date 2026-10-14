@@ -151,13 +151,15 @@ def test_no_second_question_whatever_e_cassandra_config_confirm_says():
                   cassandra_config_preview=preview, _cassandra_config_no_question=True) is False
     assert render(template, cassandra_config_confirm=True, _cassandra_config_initialized=True, _kept=[],
                   cassandra_config_preview=preview) is True  # a run of the role on its own: asked
-    # the operations that ask once for the whole run say so too
-    for path in (("roles", "cassandra_service", "tasks", "action_apply_config.yml"),
-                 ("roles", "cassandra_service", "tasks", "action_update_java.yml"),
-                 ("roles", "cassandra_service", "tasks", "action_upgrade.yml")):
+    # the operations whose own question shows the config changes say so too; update_java's and
+    # add_datacenter's show none: -e cassandra_config_confirm=true still asks there
+    for path, said in ((("roles", "cassandra_service", "tasks", "action_apply_config.yml"), [True]),
+                       (("roles", "cassandra_service", "tasks", "action_upgrade.yml"), [True]),
+                       (("roles", "cassandra_service", "tasks", "action_update_java.yml"), [None])):
         writes = [t for t in load(*path) if (t.get("ansible.builtin.include_role") or {}).get("name")
                   == "community.cassandra.cassandra_config"]
-        assert [t["vars"]["_cassandra_config_no_question"] for t in writes] == [True], path
+        assert [t["vars"].get("_cassandra_config_no_question") for t in writes] == said, path
+    assert "_cassandra_config_no_question" not in open(os.path.join(TOP, "playbooks", "add_datacenter.yml")).read()
 
 
 def test_the_question_comes_after_the_diffs_it_is_about():
