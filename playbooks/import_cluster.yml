@@ -1604,12 +1604,13 @@
 
     # a re-import keeps how the inventory there reaches its hosts: one it reaches without ansible_host (imported
     # with import_cluster_set_ansible_host=false, or taken out by hand) gets none again, unless the option is given
-    - name: Keep the hosts the inventory reaches without ansible_host so
+    - name: Leave ansible_host out where the inventory there has none
       no_log: "{{ not import_cluster_debug | default(false) | bool }}"
       ansible.builtin.set_fact:
         _nodes: >-
-          {{ _nodes | community.cassandra.cassandra_import_kept_ansible_host(import_cluster_existing_text, _layout.cluster_group,
-                                                                           _layout.names, _vault_secret | default('')) }}
+          {{ _nodes | community.cassandra.cassandra_import_kept_ansible_host(import_cluster_existing_text, _hosts_file,
+                                                                           _layout.cluster_group, _layout.names,
+                                                                           _vault_secret | default('')) }}
       when: import_cluster_set_ansible_host is not defined
 
     # CQL authentication on (a PasswordAuthenticator): the operations that read the replication (decommission,
