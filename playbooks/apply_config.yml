@@ -98,7 +98,9 @@
         _new: "{{ _cassandra_config_new | default({}) }}"  # the files as cassandra_config renders them
         _target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is defined
                      and cassandra_config_conf_target is not skipped else '' }}"
-        _switch: "{{ _target | length > 0 and _target != cassandra_rpm_conf_alternative | default(_target) }}"
+        _switch: >-
+          {{ _target | length > 0 and _target | regex_replace('/+$', '')
+             != cassandra_rpm_conf_alternative | default(_target) | regex_replace('/+$', '') }}
 
     - name: Read when the running Cassandra started (files written back as it started with them)
       ansible.builtin.include_role:
@@ -143,8 +145,10 @@
              else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
         cassandra_apply_config_pending: "{{ _pending }}"
         # checked again before the write (action_apply_config.yml): that JVM still runs
-        cassandra_apply_config_as_started: "{{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start}
-                                               if _as_started else {} }}"
+        cassandra_apply_config_as_started: >-
+          {{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start,
+              'sha1': dict(_as_started | zip(_as_started | map('extract', _cassandra_config_new) | map('hash', 'sha1')))}
+             if _as_started else {} }}
         # said under the node's outcome, in the plan and the recap (whatever the outcome)
         cassandra_apply_config_notes: >-
           {{ (['restart pending (' ~ _newer | join(', ') ~ ' changed since the running Cassandra started)']

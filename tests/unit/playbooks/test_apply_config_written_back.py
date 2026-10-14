@@ -98,7 +98,7 @@ def test_the_jvm_is_checked_again_before_the_write():
     assert names.index("Check the JVM a file is written back for still runs") < names.index("Write the config")
     assert check["block"][0]["ansible.builtin.include_tasks"] == "jvm_started.yml"
     plan = needs(full=True)[2]
-    assert plan == {"files": [OPTIONS], "pid": "42", "start": "100.00"}
+    assert plan == {"files": [OPTIONS], "pid": "42", "start": "100.00", "sha1": {OPTIONS: sha1(STARTED_WITH)}}
     stop = check["block"][1]
     for jvm, ok in (({"pid": "42", "start": "100.00"}, True), ({"pid": "43", "start": "300.00"}, False),
                     ({"pid": "42", "start": "300.00"}, False), ({}, False)):
@@ -107,6 +107,22 @@ def test_the_jvm_is_checked_again_before_the_write():
     # restarted anyway for another file: nothing to check (the check is for the nodes left running)
     assert needs(changes=[OPTIONS, "cassandra.yaml"])[0] == "restart"
     assert "cassandra_apply_config_then | default('restart') == 'none'" in check["when"]
+
+
+def test_the_files_written_back_are_checked_after_the_write():
+    from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
+    action = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
+    names = [t["name"] for t in action]
+    assert names.index("Write the config") < names.index("Check the files written back")
+    check = action[names.index("Check the files written back")]
+    stop = check["block"][1]
+    plan = needs(full=True)[2]
+    for written, ok in ((sha1(STARTED_WITH), True), (sha1("-Xss512k\n"), False), (None, False)):
+        results = {"results": [{"item": OPTIONS, "stat": {"exists": written is not None, "checksum": written}}
+                               if written else {"item": OPTIONS, "stat": {"exists": False}}]}
+        variables = dict(stop["vars"], cassandra_apply_config_as_started=plan, cassandra_apply_config_written_back=results,
+                         inventory_hostname="n3")
+        assert render("{{ %s }}" % stop["ansible.builtin.assert"]["that"], variables) is ok
 
 
 def test_a_node_not_running_reads_its_files_when_it_starts():

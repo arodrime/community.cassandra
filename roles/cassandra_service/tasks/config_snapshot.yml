@@ -19,7 +19,7 @@
   changed_when: true
   vars:
     _record: |
-      import hashlib, json, os, stat, sys, time
+      import hashlib, json, os, stat, sys, tempfile, time
       conf, unit, record = [os.path.expanduser(os.path.expandvars(p)) for p in sys.argv[1:4]]
       def sha1(path):
           digest = hashlib.sha1()
@@ -34,6 +34,9 @@
               me = None
           for pid in sorted((p for p in os.listdir("/proc") if p.isdigit()), key=int):
               try:
+                  with open("/proc/%s/comm" % pid) as f:
+                      if f.read().strip() != "java":  # as jvm_started.yml (pgrep -x java), not a sudo or a grep
+                          continue
                   with open("/proc/%s/cmdline" % pid, "rb") as f:
                       if b"org.apache.cassandra.service.CassandraDaemon" not in f.read().split(b"\0"):
                           continue
@@ -53,13 +56,19 @@
       for path in [os.path.normpath(os.path.join(conf, n)) for n in names if not n.startswith(".")] + [unit]:
           try:
               st = os.lstat(path)
-          except OSError:
+              if stat.S_ISREG(st.st_mode) and (started is None or st.st_ctime <= started["start"]):
+                  out[path] = sha1(path)
+          except (IOError, OSError):  # gone or unreadable meanwhile: left out (pending until a restart)
               continue
-          if stat.S_ISREG(st.st_mode) and (started is None or st.st_ctime <= started["start"]):
-              out[path] = sha1(path)
       if started is not None:
           out["_jvm"] = started
-      with open(record + ".tmp", "w") as f:
-          json.dump(out, f, indent=4, sort_keys=True)
-      os.chmod(record + ".tmp", 0o644)
-      os.rename(record + ".tmp", record)
+      # a file of its own (never one planted in that directory, which Cassandra's account owns), then renamed
+      fd, tmp = tempfile.mkstemp(dir=os.path.dirname(record) or ".", prefix=".ansible_config_at_start.")
+      try:
+          os.fchmod(fd, 0o644)
+          with os.fdopen(fd, "w") as f:
+              json.dump(out, f, indent=4, sort_keys=True)
+          os.rename(tmp, record)
+      except BaseException:
+          os.unlink(tmp)
+          raise

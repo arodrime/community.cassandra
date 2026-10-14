@@ -94,6 +94,10 @@
       loop: "{{ _todo }}"
       loop_control:
         loop_var: cassandra_restarted_node
+      vars:
+        # that node's Python (the tasks' vars are this host's)
+        _cassandra_config_python: >-
+          {{ hostvars[cassandra_restarted_node].ansible_facts.python.executable | default('/usr/bin/python3') }}
 
     - name: Add the rack to the progress file
       ansible.builtin.lineinfile:

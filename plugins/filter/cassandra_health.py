@@ -141,7 +141,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
     checked, 2 problems", a line per problem, then a TO DO (a node down
     and not reached: one item)."""
-    names = dict(names or {})
+    names = dict((_ip(a), n) for a, n in (names or {}).items())  # nodetool prints IPv6 uncompressed
     unreachable = [h for h in hosts if h in (unreachable or [])]
     checked = [h for h in hosts if h not in unreachable]
     rows, seen = [], {}
@@ -149,9 +149,9 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     # node of the ring no host has, down: taken for each other ("node3?"), never a guess between several,
     # nor with a ring of another size than the inventory's
     found = [f for host in checked for f in (findings or {}).get(host) or []]
-    unnamed = sorted(set(n["address"] for dc in (ring or {}).values() for n in dc.get("nodes", [])
-                         if n["address"] not in names))
-    down = set(f["address"] for f in found if f.get("kind") == "state" and f["state"].startswith("D"))
+    unnamed = sorted(set(_ip(n["address"]) for dc in (ring or {}).values() for n in dc.get("nodes", [])
+                         if _ip(n["address"]) not in names))
+    down = set(_ip(f["address"]) for f in found if f.get("kind") == "state" and f["state"].startswith("D"))
     addressed = set(name for address, name in names.items() if address != name)
     lost = [h for h in unreachable if h not in addressed]
     if len(unnamed) == 1 and unnamed[0] in down and len(lost) == 1 and not any(f.get("kind") == "count" for f in found):
@@ -168,7 +168,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
         for f in (findings or {}).get(host) or []:
             kind = f.get("kind")
             if kind == "state":
-                name = names.get(f["address"])
+                name = names.get(_ip(f["address"]))
                 add("ring", ("state", f["address"], f["state"]), "%s%s (%s) %s" % (
                     (name + " ") if name else "", f["address"], f["rack"], f["state"]), f["seen_from"])
             elif kind == "count":
@@ -217,7 +217,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
             "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (
                 cluster, out.plural(len(hosts), "node"), size)]}
     todo = []
-    down = [names.get(k[1], k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
+    down = [names.get(_ip(k[1]), k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
     # a node down and not reached: one thing to do, its server first
     both = [h + "?" if h + "?" in down else h for h in unreachable if h in down or h + "?" in down]  # a guess said so
     down = [d for d in down if d not in both]
