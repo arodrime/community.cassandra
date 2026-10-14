@@ -88,11 +88,14 @@ def test_an_unreachable_host_known_by_no_address_taken_for_the_one_ring_node_no_
     status = ring(node("10.0.0.4"), node("10.0.0.2"), node("10.0.0.1"))
     lines = cassandra_ring_report(status, inventory, unreachable=["h3"], cluster="c", seen_from="h1",
                                   places={"h3": ["dc1", "r1"]})
-    assert lines[0] == "c  (seen from h1, ring = inventory, 3 nodes)"
+    assert lines[0] == "c  (seen from h1, ring and inventory differ, 3 nodes)"  # a guess is no match
     assert " UN  10.0.0.4  1.0 GiB  16      33.3%  id-10.0.0.4  r1    h3?" in lines
     assert lines[-3:] == ["h3 not reached by Ansible: taken for 10.0.0.4, the only node of the ring no host has (its"
                           " ansible_host or cassandra_listen_address in the inventory would say for sure)", "",
                           "1 NODE NOT REACHED: h3"]  # never ALL 3 NODES UP while one is not reached
+    # down too: the verdict names the guess as such
+    down = ring(node("10.0.0.4", "D"), node("10.0.0.2"), node("10.0.0.1"))
+    assert cassandra_ring_report(down, inventory, unreachable=["h3"])[-1] == "1 NODE DOWN: h3? (dc1/r1)"
     # in another rack than that node, or two such hosts: no guess
     lines = cassandra_ring_report(status, inventory, unreachable=["h3"], places={"h3": ["dc1", "r2"]})
     assert lines[-1] == u"1 NODE NOT REACHED: h3 \u2014 RING AND INVENTORY DIFFER"

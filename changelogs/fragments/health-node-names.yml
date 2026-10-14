@@ -1,2 +1,4 @@
 minor_changes:
   - cluster health checks - a node of the ring that is not up and normal is named by its inventory host, then its address and rack (``node4 (10.0.0.4, rack1) is DN, seen from node2``), not by its address only.
+bugfixes:
+  - cassandra_host_addresses filter - what a host broadcasts or listens on is matched first, for every host, before any host's ``ansible_host`` or facts, so one host's ``ansible_host`` (stale, or ``127.0.0.1`` for local nodes) no longer names the node another host is in the ring by.
