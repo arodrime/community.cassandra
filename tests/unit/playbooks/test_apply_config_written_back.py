@@ -124,15 +124,33 @@ def test_the_files_written_back_are_checked_after_the_write():
         results = {"results": [{"item": OPTIONS, "stat": {"exists": written is not None, "checksum": written}}
                                if written else {"item": OPTIONS, "stat": {"exists": False}}]}
         variables = dict(stop["vars"], cassandra_apply_config_as_started=plan, cassandra_apply_config_written_back=results,
-                         inventory_hostname="n3", cassandra_jvm=jvm)
+                         inventory_hostname="n3", cassandra_jvm=jvm, ansible_inventory_sources=["/srv/inv/prod.yml"],
+                         cassandra_hosts="prod")
         assert all(render("{{ %s }}" % c, variables) for c in stop["ansible.builtin.assert"]["that"]) is ok
-        if not ok:  # the way out: a command rolling_restart takes (no cassandra_target_nodes there)
+        if not ok:  # the way out: a command rolling_restart takes (--limit, not cassandra_target_nodes), this inventory
             msg = render(stop["ansible.builtin.assert"]["fail_msg"], variables)
-            assert msg.endswith("(the plan said no restart): restart it (ansible-playbook community.cassandra.rolling_restart"
-                                " --limit n3) so that it runs with the inventory's config."), msg
+            assert "(the plan said no restart): restart it so that it runs with the inventory's config: ansible-playbook" in msg
+            assert "community.cassandra.rolling_restart" in msg and "--limit n3" in msg and "/srv/inv/prod.yml" in msg, msg
+            assert "cassandra_hosts=prod" in msg and "cassandra_target_nodes" not in msg, msg
+    # stopped during the write: started again, then apply_config again
+    results = {"results": [{"item": OPTIONS, "stat": {"exists": True, "checksum": sha1(STARTED_WITH)}}]}
+    variables = dict(stop["vars"], cassandra_apply_config_as_started=plan, cassandra_apply_config_written_back=results,
+                     inventory_hostname="n3", cassandra_jvm={})
+    assert render(stop["ansible.builtin.assert"]["fail_msg"], variables) == (
+        "Cassandra restarted or stopped while %s was written back (the plan said no restart): start Cassandra on it"
+        " (systemctl start cassandra), then run apply_config again" % OPTIONS)
 
 
 def test_a_node_not_running_reads_its_files_when_it_starts():
     # stopped on purpose: written, left stopped (no JVM, nothing written back "as it started")
     then, notes = needs(running=False, start=None)
     assert then == "write" and notes == []
+
+
+def test_the_play_level_tasks_use_no_role_private_default():
+    # cassandra_service's defaults are seen inside its includes only (not public here): a play-level task
+    # reading one fails on every node ('_cassandra_service_conf_dir' is undefined, seen in the e2e)
+    for t in FIND["tasks"]:
+        if any(k in t for k in ("ansible.builtin.include_role", "ansible.builtin.include_tasks", "ansible.builtin.import_role")):
+            continue
+        assert "_cassandra_service_" not in str(t), t.get("name")
