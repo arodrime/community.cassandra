@@ -60,7 +60,7 @@
           {{ dict(_files | map(attribute='path') | zip(_files | map(attribute='checksum')))
              | combine({'_jvm': {'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start | float}}) | to_nice_json }}
         dest: "{{ _cassandra_service_config_snapshot }}"
-        mode: "0644"
+        mode: "0600"  # root only: the checksum of the JMX password file
       vars:
         _files: >-
           {{ (cassandra_seed_files.files + ([cassandra_seed_unit.stat] if cassandra_seed_unit.stat.exists else []))

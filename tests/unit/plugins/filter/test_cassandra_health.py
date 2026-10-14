@@ -47,6 +47,10 @@ def test_a_node_of_the_inventory_named_by_its_host_and_address():
     # IPv6: nodetool prints it uncompressed, the inventory compressed
     v6 = problems([view("n2", node("2001:db8:0:0:0:0:0:5", status="D"))], expected=1, names={"2001:db8::5": "n4"})
     assert v6 == ["n4 (2001:db8:0:0:0:0:0:5, r1) is DN, seen from n2"]
+    # two spellings of one address: the first given wins, as cassandra_host_addresses orders them
+    v6 = problems([view("n2", node("2001:db8:0:0:0:0:0:5", status="D"))], expected=1,
+                  names={"2001:db8:0:0:0:0:0:5": "n4", "2001:db8::5": "n9"})
+    assert v6 == ["n4 (2001:db8:0:0:0:0:0:5, r1) is DN, seen from n2"]
     findings = cassandra_health_findings([view("n2", *ring)], 3, "n1", names=names)
     assert [f["address"] for f in findings if f["kind"] == "state"] == ["10.0.0.5", "10.0.0.9"]
 

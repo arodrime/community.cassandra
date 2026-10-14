@@ -65,7 +65,7 @@
       # a file of its own (never one planted in that directory, which Cassandra's account owns), then renamed
       fd, tmp = tempfile.mkstemp(dir=os.path.dirname(record) or ".", prefix=".ansible_config_at_start.")
       try:
-          os.fchmod(fd, 0o644)
+          os.fchmod(fd, 0o600)  # root only: it holds the checksum of the JMX password file
           with os.fdopen(fd, "w") as f:
               json.dump(out, f, indent=4, sort_keys=True)
           os.rename(tmp, record)

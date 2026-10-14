@@ -40,7 +40,7 @@ def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), sta
     if recorded is not None:
         record = dict(record, _jvm={"pid": recorded[0], "start": recorded[1]})
     variables = {"_cassandra_config_changes": list(changes), "_cassandra_config_new": new,
-                 "_cassandra_service_conf_dir": CONF,
+                 "cassandra_conf_dir": CONF,  # (public from the compare step; the role default of cassandra_service is not seen here)
                  "cassandra_pending_snapshot": {"content": base64.b64encode(json.dumps(record).encode()).decode()},
                  "cassandra_rpm_conf_alternative": "/etc/cassandra/conf.ansible",
                  "cassandra_config_conf_target": {"stat": {"lnk_source": target}} if target else {"skipped": True},
@@ -115,14 +115,21 @@ def test_the_files_written_back_are_checked_after_the_write():
     names = [t["name"] for t in action]
     assert names.index("Write the config") < names.index("Check the files written back")
     check = action[names.index("Check the files written back")]
-    stop = check["block"][1]
+    assert check["block"][1]["ansible.builtin.include_tasks"] == "jvm_started.yml"  # restarted during the write?
+    stop = check["block"][2]
     plan = needs(full=True)[2]
-    for written, ok in ((sha1(STARTED_WITH), True), (sha1("-Xss512k\n"), False), (None, False)):
+    same = {"pid": "42", "start": "100.00"}
+    for written, jvm, ok in ((sha1(STARTED_WITH), same, True), (sha1("-Xss512k\n"), same, False), (None, same, False),
+                             (sha1(STARTED_WITH), {"pid": "43", "start": "300.00"}, False)):
         results = {"results": [{"item": OPTIONS, "stat": {"exists": written is not None, "checksum": written}}
                                if written else {"item": OPTIONS, "stat": {"exists": False}}]}
         variables = dict(stop["vars"], cassandra_apply_config_as_started=plan, cassandra_apply_config_written_back=results,
-                         inventory_hostname="n3")
-        assert render("{{ %s }}" % stop["ansible.builtin.assert"]["that"], variables) is ok
+                         inventory_hostname="n3", cassandra_jvm=jvm)
+        assert all(render("{{ %s }}" % c, variables) for c in stop["ansible.builtin.assert"]["that"]) is ok
+        if not ok:  # the way out: a command rolling_restart takes (no cassandra_target_nodes there)
+            msg = render(stop["ansible.builtin.assert"]["fail_msg"], variables)
+            assert msg.endswith("(the plan said no restart): restart it (ansible-playbook community.cassandra.rolling_restart"
+                                " --limit n3) so that it runs with the inventory's config."), msg
 
 
 def test_a_node_not_running_reads_its_files_when_it_starts():

@@ -27,6 +27,15 @@ def _ip(address):
         return address
 
 
+def _by_ip(names):
+    """{address: name} by one spelling of each address, the first given winning (cassandra_host_addresses
+    puts what hosts listen on first)."""
+    out = {}
+    for address, name in (names or {}).items():
+        out.setdefault(_ip(address), name)
+    return out
+
+
 def _nodes(cluster_status):
     return [n for dc in cluster_status.values() for n in dc.get("nodes", [])]
 
@@ -56,7 +65,7 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
     schema (msg)."""
-    names = dict((_ip(a), n) for a, n in (names or {}).items())
+    names = _by_ip(names)
     found = []
     for view in views:
         result = view["result"]
@@ -203,7 +212,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
     checked, 2 problems", a line per problem, then a TO DO (a node down
     and not reached: one item)."""
-    names = dict((_ip(a), n) for a, n in (names or {}).items())  # nodetool prints IPv6 uncompressed
+    names = _by_ip(names)  # nodetool prints IPv6 uncompressed
     unreachable = [h for h in hosts if h in (unreachable or [])]
     checked = [h for h in hosts if h not in unreachable]
     rows, seen = [], {}
