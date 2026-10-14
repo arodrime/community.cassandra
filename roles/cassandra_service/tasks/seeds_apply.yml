@@ -71,7 +71,7 @@
           ansible.builtin.copy:
             content: "{{ _seeds_started | combine({_seeds_file: cassandra_seeds_file_after.stat.checksum}) | to_nice_json }}"
             dest: "{{ _cassandra_service_config_snapshot }}"
-            mode: "0644"
+            mode: "0600"  # root only: the checksum of the JMX password file
           vars:
             _seeds_started: "{{ cassandra_seeds_snapshot.content | b64decode | from_json }}"
           when:

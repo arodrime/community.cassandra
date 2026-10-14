@@ -86,7 +86,7 @@
       ansible.builtin.set_fact:
         _cassandra_apply_config_as_started: >-
           {%- set out = [] -%}
-          {%- set conf = _cassandra_service_conf_dir | trim | regex_replace('/+$', '') -%}
+          {%- set conf = cassandra_conf_dir | trim | regex_replace('/+$', '') -%}
           {%- for f in _cassandra_config_changes | default([]) if f in _new and f != 'cassandra.yaml' and not _switch -%}
           {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
           {%-     if sum == _new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}

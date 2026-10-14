@@ -82,7 +82,8 @@
     _cassandra_change_report_quiet: true
   when: not ansible_check_mode
 
-# what the plan wrote back with no restart is on disk as the running Cassandra started with it
+# what the plan wrote back with no restart is on disk as the running Cassandra started with it, and that
+# Cassandra still runs (restarted during the write, it may have read the files before)
 - name: Check the files written back
   when:
     - cassandra_apply_config_as_started | default({}) | length > 0
@@ -98,15 +99,25 @@
       loop: "{{ cassandra_apply_config_as_started.files }}"
       register: cassandra_apply_config_written_back
 
+    - name: Read the running Cassandra once written
+      ansible.builtin.include_tasks: jvm_started.yml
+
     - name: Stop if one differs from what Cassandra started with
       ansible.builtin.assert:
-        that: _differ | length == 0
+        that:
+          - _differ | length == 0
+          - cassandra_jvm.pid | default('') | string == cassandra_apply_config_as_started.pid | string
+          - (cassandra_jvm.start | default(0) | float - cassandra_apply_config_as_started.start | float) | abs < 2
         fail_msg: >-
-          {{ _differ | join(', ') }} written with another content than the running Cassandra started with (the plan
-          said no restart for {{ 'it' if _differ | length == 1 else 'them' }}): restart it (rolling_restart
-          -e cassandra_target_nodes={{ inventory_hostname }}) so that it runs with the inventory's config.
+          {{ _what }} (the plan said no restart): restart it
+          (ansible-playbook community.cassandra.rolling_restart --limit {{ inventory_hostname }}) so that it runs
+          with the inventory's config.
         quiet: true
       vars:
+        _what: >-
+          {{ (_differ | join(', ') ~ ' written with another content than the running Cassandra started with')
+             if _differ else ('Cassandra restarted while ' ~ cassandra_apply_config_as_started.files | join(', ')
+                              ~ ' was written back') }}
         _differ: >-
           {%- set out = [] -%}
           {%- for r in cassandra_apply_config_written_back.results -%}

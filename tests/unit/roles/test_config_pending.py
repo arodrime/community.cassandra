@@ -276,7 +276,7 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
         assert got["_jvm"]["pid"] == str(jvm.pid) and abs(got["_jvm"]["start"] - time.time()) < 30
         assert sorted(k for k in got if k != "_jvm") == [str(conf / "cassandra.yaml"), str(tmp_path / "unit")]
         assert got[str(conf / "cassandra.yaml")] == hashlib.sha1(b"cassandra.yaml").hexdigest()
-        assert oct(os.stat(str(out)).st_mode & 0o777) == "0o644"
+        assert oct(os.stat(str(out)).st_mode & 0o777) == "0o600"  # root only (the JMX password file's checksum)
         # never a file planted at a temporary path (the directory is Cassandra's account's)
         assert not [p for p in os.listdir(str(tmp_path)) if p.startswith(".ansible_config_at_start.")]
     finally:
