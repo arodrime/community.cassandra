@@ -75,6 +75,32 @@
         name: community.cassandra.cassandra_service
         tasks_from: config_pending.yml
 
+    # A file written back with the content the running Cassandra started with (deleted or edited by hand
+    # since): no restart for it. Only when the record is that JVM's (written after it started: a start
+    # outside the roles leaves an older one)
+    - name: Note the files written back as the running Cassandra started with them
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_as_started: >-
+          {%- set out = [] -%}
+          {%- set conf = _cassandra_service_conf_dir | trim | regex_replace('/+$', '') -%}
+          {%- for f in _cassandra_config_changes | default([]) if f in _new -%}
+          {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
+          {%-     if sum == _new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      vars:
+        _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+        _new: "{{ _cassandra_config_new | default({}) }}"  # the files as cassandra_config renders them
+
+    - name: Read when the running Cassandra started (files written back as it started with them)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: jvm_started.yml
+      when:
+        - _cassandra_apply_config_as_started | length > 0
+        - cassandra_jvm.start is not defined
+
     # no record of the files it started with: an edit made since may be applied or not
     - name: Say which files changed since Cassandra started, with no record of the ones it started with
       ansible.builtin.debug:
@@ -106,23 +132,34 @@
         # read at start); not running: start (its unit failed: it could not start, e.g. its config unreadable;
         # or the node a resumed run stopped), write (stopped on purpose: left stopped)
         cassandra_apply_config_then: >-
-          {{ ('restart' if _files | length > 0 or _pending | bool else 'none') if _running | bool
+          {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _pending | bool else 'none') if _running | bool
              else 'start' if _unit_failed | bool or _pending | bool else 'write' }}
         cassandra_apply_config_pending: "{{ _pending }}"
         # said under the node's outcome, in the plan and the recap (whatever the outcome)
         cassandra_apply_config_notes: >-
-          {{ (['restart pending (' ~ cassandra_config_newer_files | join(', ') ~ ' changed since the running Cassandra started)']
+          {{ (['restart pending (' ~ _newer | join(', ') ~ ' changed since the running Cassandra started)']
               if _pending | bool else [])
+             + ([_as_started | join(', ') ~ ' written back as the running Cassandra started with '
+                 ~ ('it' if _as_started | length == 1 else 'them') ~ ': no restart for ' ~ ('it' if _as_started | length == 1 else 'them')]
+                if _as_started and _running | bool else [])
              + _cassandra_config_dir_notes | default([]) }}
       vars:
         _files: "{{ _cassandra_config_changes | default([]) }}"
+        # (trusted when the record was written after the running JVM started: the start it records)
+        _as_started: >-
+          {{ _cassandra_apply_config_as_started | default([])
+             if cassandra_jvm.start is defined and cassandra_pending_snapshot.mtime is defined
+                and cassandra_pending_snapshot.mtime | float >= cassandra_jvm.start | float else [] }}
+        # the files changed since the start, but the ones written back as they were then
+        _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | list }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
         _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
         _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
         # a node not running reads its files when it starts: pending only under a resumed run, taken for the
         # node the interrupted run stopped (then started)
         _pending: >-
-          {{ cassandra_config_restart_pending | bool and (_running | bool or cassandra_rolling_resume | default(false) | bool) }}
+          {{ cassandra_config_restart_pending | bool and _newer | length > 0
+             and (_running | bool or cassandra_rolling_resume | default(false) | bool) }}
         _unit: "{{ cassandra_apply_config_unit.status | default({}) }}"
         # failed, or restarting after a failure; not a stop that ended failed (SIGTERM's 143 with no
         # SuccessExitStatus=143 in a unit kept as it was, a timeout: a stop's, or a forking unit's start)

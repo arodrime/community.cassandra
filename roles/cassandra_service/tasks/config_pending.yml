@@ -53,15 +53,18 @@
       try:
           with open(record, "rb") as f:
               content = base64.b64encode(f.read()).decode("ascii")
+          written = os.stat(record).st_mtime
       except (IOError, OSError):
-          content = None
-      print(json.dumps({"files": files, "unit": unit_stat, "record": content}))
+          content = written = None
+      print(json.dumps({"files": files, "unit": unit_stat, "record": content, "record_mtime": written}))
 
 - name: Note the checksums read
   ansible.builtin.set_fact:
     cassandra_pending_files: {files: "{{ _read.files }}"}
     cassandra_pending_unit_file: {stat: "{{ _read.unit }}"}
-    cassandra_pending_snapshot: "{{ {'content': _read.record} if _read.record is not none else {'failed': true} }}"
+    # mtime: when the record was written (after the start it records)
+    cassandra_pending_snapshot: >-
+      {{ {'content': _read.record, 'mtime': _read.record_mtime} if _read.record is not none else {'failed': true} }}
   vars:
     _read: "{{ cassandra_pending_read.stdout | from_json }}"
 
