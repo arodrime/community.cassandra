@@ -34,6 +34,8 @@
 # what is left; a node it left drained or stopped gets its window again, started).
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_members_down_ok: true  # a seed an interrupted window left drained or stopped
 
 - name: Read the clocks
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -138,6 +140,9 @@
                + _cassandra_clock_verdicts.notes
                + ((['Live, on those nodes at once: ' ~ groups['cassandra_sync_clock_live_True'] | join(', ') ~ '.'])
                   if groups['cassandra_sync_clock_live_True'] | default([]) | length > 0 else [])
+               + ((['Left open by an interrupted run (Cassandra drained or stopped there), ended first: '
+                    ~ groups['cassandra_window_left_True'] | join(', ') ~ '.'])
+                  if groups['cassandra_window_left_True'] | default([]) | length > 0 else [])
                + ((['In a restart window, one node at a time (cluster checked, drained, stopped, clock set, started,'
                     ~ ' cluster checked): ' ~ groups['cassandra_sync_clock_window_True'] | join(', ') ~ '.'])
                   if groups['cassandra_sync_clock_window_True'] | default([]) | length > 0 else []) }}
@@ -173,7 +178,7 @@
           ansible.builtin.set_fact:
             cassandra_op_result: >-
               {{ ('sync_clock FAILED: ' ~ _cassandra_clock_fix_error) if _cassandra_clock_fix_error | length > 0
-                 else 'clock_' ~ ('slewing' if 'slewing' in _cassandra_clock_did else _cassandra_clock_did | join('_') or 'slew')
+                 else 'clock_' ~ (_cassandra_clock_did | join('_') or 'slew')
                       ~ ' done in '
                       ~ (now().timestamp() | int - _cassandra_clock_start | int) ~ 's' }}
 
@@ -210,7 +215,11 @@
   gather_facts: false
   become: true
   vars:
-    cassandra_rolling_resume: true  # (that node only: the first one not done)
+    # a window left open: that node may be down (node_operation's resumed node, the first one not done)
+    cassandra_rolling_resume: "{{ inventory_hostname in groups['cassandra_window_left_True'] | default([]) }}"
+    cassandra_service_resume_hint: >-
+      Once fixed, run sync_clocks again, the same command: the clocks are read again, a node left drained or stopped
+      gets its window first.
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts

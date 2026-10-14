@@ -24,14 +24,18 @@ PLAYBOOKS = {"add": "add_node", "decommission": "decommission_node", "restart": 
              "upgrade": "upgrade", "upgradesstables": "upgrade", "cleanup": "cleanup", "clean": "cleanup",
              "apply_config": "apply_config", "update": "update_java", "apply": "apply_config",  # (the last two: would ...)
              "sync_clock": "sync_clocks", "clock_start": "sync_clocks", "clock_step": "sync_clocks",
-             "clock_start_step": "sync_clocks", "clock_slew": "sync_clocks", "clock_slewing": "sync_clocks"}
+             "clock_start_step": "sync_clocks", "clock_slew": "sync_clocks", "clock_slewing": "sync_clocks",
+             "clock_start_slewing": "sync_clocks", "clock_step_slewing": "sync_clocks", "clock_start_step_slewing": "sync_clocks"}
 # the same action, done
 DONE = {"add": "added", "decommission": "decommissioned", "restart": "restarted", "reboot": "rebooted",
         "replace": "replaced", "move": "moved", "update_java": "Java updated", "upgrade": "upgraded",
         "upgradesstables": "SSTables upgraded", "cleanup": "cleaned up", "apply_config": "applied",
         "sync_clock": "clock set in a restart window", "clock_start": "time sync started", "clock_step": "clock stepped",
         "clock_start_step": "time sync started, clock stepped", "clock_slew": "clock corrected by its daemon",
-        "clock_slewing": "clock being corrected by its daemon (minutes)"}
+        "clock_slewing": "clock being corrected by its daemon (minutes)",
+        "clock_start_slewing": "time sync started, clock being corrected by it (minutes)",
+        "clock_step_slewing": "clock stepped, being corrected by its daemon (minutes)",
+        "clock_start_step_slewing": "time sync started, clock stepped, being corrected (minutes)"}
 
 # the texts node_operation.yml, restart_batch.yml, cleanup_batch.yml and the playbooks record
 _DONE = re.compile(r"^(?P<action>\w+) done(?P<how> with its rack)? in (?P<seconds>\d+)s$")

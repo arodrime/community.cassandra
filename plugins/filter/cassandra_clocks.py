@@ -391,8 +391,8 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
                 v["why"] = "%s has not synchronised to any of its sources" % p.get("service")
             v["action"] = "manual"
         else:  # no daemon running (or one the probe can only ask the kernel about)
-            # the kernel synchronised with no daemon of ours enabled (a stopped one leaves the flag set for hours)
-            other = not p.get("container") and p.get("kernel_synced") is True and not (p.get("installed") and p.get("enabled"))
+            # the kernel synchronised and no daemon of ours installed (one stopped leaves the flag set for hours)
+            other = not p.get("container") and p.get("kernel_synced") is True and not p.get("installed")
             other = other or p.get("kernel_only") and p.get("kernel_synced") is True
             if other:
                 # disciplined by a daemon the probe does not know (PTP, openntpd, the hypervisor's): compared coarsely
@@ -538,7 +538,8 @@ def _describe(v, p):
     return "%s, synchronised to %s, %s (\u00b1%s)" % (v["service"], v["source"] or "?", ms(v["offset"]), bound)
 
 
-VERDICT_WORDS = {"ok": "ok", "off": "OFF", "unsynchronised": "NOT SYNCHRONISED", "no_sync": "NO TIME SYNC"}
+VERDICT_WORDS = {"ok": "ok", "off": "OFF", "unsynchronised": "NOT SYNCHRONISED", "no_sync": "NO TIME SYNC",
+                 "unread": "NOT READ"}
 ACTION_WORDS = {"none": "", "slew": "being corrected by its daemon (slew)", "start": "time sync started live",
                 "step": "clock stepped now (Cassandra not running)",
                 "window": "clock stepped in a restart window (drain, stop, step, start)",
@@ -559,15 +560,17 @@ def cassandra_clock_lines(verdicts, actions=True):
     return [("  %s  %s  %s" % (r[0].ljust(width[0]), r[1].ljust(width[1]), r[2])).rstrip() for r in rows]
 
 
-def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False):
+def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False, unread=None):
     """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would
     refuse), the nodes not in sync, why, and the way out; [] when every node is. check, later_ok (a check before
     cassandra_linux ran): a node not running with no time sync, which cassandra_linux would set up, is left to the
-    check after it."""
+    check after it. unread: {node: why} of the nodes that answered but whose clock could not be read: refused."""
     verdicts = verdicts or {}
     bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"]
+    bad += [{"node": n, "verdict": "unread", "text": "its clock could not be read", "why": str(why or ""),
+             "action": "manual", "running": False} for n, why in sorted((unread or {}).items())]
     later = [v["node"] for v in bad if (check or later_ok) and v["verdict"] == "no_sync" and v["action"] != "manual"
-             and not v["running"]]
+             and (later_ok or not v["running"])]  # (before a wipe: every node stopped, then set up)
     bad = [v for v in bad if v["node"] not in later]
     if not bad:
         return ["NOTE  clocks: time sync would be started on %s (cassandra_linux), its clock checked %s"
