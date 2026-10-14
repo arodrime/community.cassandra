@@ -1,7 +1,8 @@
 ---
 # Restarts every node of a cluster, one at a time: checks the cluster, drains
 # the node, restarts it, waits until it has joined, checks the cluster again.
-# Stops at the first problem, without touching the next node.
+# Stops at the first problem, without touching the next node. Asks once first
+# (cassandra_operation_confirm: false, or --check, asks nothing).
 #   ansible-playbook -i inventory community.cassandra.rolling_restart
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
@@ -33,9 +34,34 @@
     - name: Check the mode
       ansible.builtin.assert:
         that: cassandra_rolling_mode | default('node') in ['node', 'rack']
-        fail_msg: "cassandra_rolling_mode must be node or rack (got {{ cassandra_rolling_mode | default('node') }})"
+        fail_msg: >-
+          cassandra_rolling_mode must be node or rack (got {{ cassandra_rolling_mode | default('node') }}). Nothing was
+          changed: run again with -e cassandra_rolling_mode=node (the default) or rack.
         quiet: true
       run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+
+    # before the progress file: a run stopped here leaves none (a resume takes the latest)
+    - name: Show the plan and confirm the run
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: screen.yml
+      vars:
+        _rack: "{{ cassandra_rolling_mode | default('node') == 'rack' }}"
+        _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list }}"
+        cassandra_screen_question: "Restart {{ _nodes }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}?"
+        cassandra_screen_session_warning: true
+        cassandra_screen:
+          operation: rolling_restart
+          summary: "restart {{ _nodes }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}"
+          intro:
+            - >-
+              {{ 'Drains and restarts every node of a rack together, rack by rack' if _rack | bool
+                 else 'Drains and restarts each node in turn' }}, the cluster checked healthy before and after each;
+              stops at the first problem, without touching the next {{ 'rack' if _rack | bool else 'node' }}.
+              {{ ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
+                 if cassandra_rolling_resume | default(false) | bool and not _rack | bool else '' }}
 
     - name: Set up the progress file
       ansible.builtin.include_role:

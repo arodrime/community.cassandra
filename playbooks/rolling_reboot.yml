@@ -1,7 +1,8 @@
 ---
 # Reboots every host of a cluster, one at a time: checks the cluster, drains
 # the node, reboots the host, waits until Cassandra has joined, checks the cluster again.
-# Stops at the first problem, without touching the next node.
+# Stops at the first problem, without touching the next node. Asks once first
+# (cassandra_operation_confirm: false, or --check, asks nothing).
 #   ansible-playbook -i inventory community.cassandra.rolling_reboot
 # Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
 # variable names (its group or its cassandra_cluster_name), else the group
@@ -27,6 +28,25 @@
         _cassandra_own_facts: "{{ inventory_hostname }}"
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
+
+    # before the progress file: a run stopped here leaves none (a resume takes the latest)
+    - name: Show the plan and confirm the run
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: screen.yml
+      vars:
+        _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list }}"
+        cassandra_screen_question: "Reboot {{ _nodes }}, one host at a time?"
+        cassandra_screen_session_warning: true
+        cassandra_screen:
+          operation: rolling_reboot
+          summary: "reboot {{ _nodes }}, one host at a time"
+          intro:
+            - >-
+              Drains each node in turn and reboots its host, the cluster checked healthy before and after each;
+              stops at the first problem, without touching the next node.
+              {{ ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
+                 if cassandra_rolling_resume | default(false) | bool else '' }}
 
     - name: Set up the progress file
       ansible.builtin.include_role:

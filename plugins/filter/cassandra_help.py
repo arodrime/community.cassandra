@@ -151,14 +151,14 @@ OPERATIONS = [
                   "the reset without a terminal (with cassandra_operation_confirm=false): the cluster's name, the answer"
                   " to its question", "")],
      "example": ("the plan only", ["--check"])},
-    {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode", "confirm": False,
+    {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode",
      "summary": "Drains and restarts the nodes one at a time, the cluster checked before and after each one.",
      "options": [("-e cassandra_rolling_mode=rack", "the nodes of a rack together, rack by rack", "node"),
                  ("-e cassandra_rack_force=true", "rack mode: goes on although keyspaces would lose more than one"
                                                   " replica", "false"),
                  RESUME],
      "example": ("a rack at a time", ["-e cassandra_rolling_mode=rack"])},
-    {"name": "rolling_reboot", "theme": "cluster", "confirm": False,
+    {"name": "rolling_reboot", "theme": "cluster",
      "summary": "Same as rolling_restart, rebooting the hosts (OS patching).",
      "options": [("-e cassandra_reboot_timeout=3600", "seconds to wait for a host to come back", "1800"), RESUME],
      "example": ("an interrupted run resumed", [RESUME[0]])},
