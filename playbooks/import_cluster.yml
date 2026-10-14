@@ -1895,19 +1895,20 @@
                inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd,
                allow_unread=_report_args.allow_unread | bool,
                self_check_error=_self_check_error | default(''), changes=_changes, todo=_report_args.todo,
-               screen=true) }}
+               screen=true, strict=import_cluster_strict | default(true) | bool) }}
       vars:
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)
 
+    # what differs, grouped by what makes the self-check pass, and how (report.txt: the same, each node's lines);
+    # one text: plain under the default callback too (ansible-core 2.19+ prints it as is, before its result)
     - name: Stop on a failed self-check
       ansible.builtin.fail:
         msg: >-
-          SELF-CHECK FAILED: the inventory in {{ _dir }} is NOT VALID (written for inspection only): with it, the
-          roles would change settings on the nodes{{ (', ' ~ _unchecked | join(', ') ~ ' not read')
-          if _unchecked and not import_cluster_allow_unread | default(false) | bool else '' }}. See TO DO above, and
-          DETAILS in {{ _report_args.report_file }}.
-          {{ _layout | community.cassandra.cassandra_import_self_check_advice(_self_check | default({})) }}.
+          {{ _layout | community.cassandra.cassandra_import_self_check_advice(_self_check | default({}),
+               report_file=_report_args.report_file, error=_self_check_error | default(''),
+               allow_unread=_report_args.allow_unread | bool, check=_report_args.check | bool,
+               inventory=_report_args.inventory, hosts=_report_args.hosts, cwd=_report_args.cwd) | join(_newline) }}
       when:
         - not _self_check_ok | bool
         - import_cluster_strict | default(true) | bool

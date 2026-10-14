@@ -64,6 +64,8 @@ SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
 # import may move them from one to the other, so they are compared on their own
 HEAP_ENV = ("MAX_HEAP_SIZE", "HEAP_NEWSIZE")
 ASSIGN = re.compile(r"^(\w+)=(.*)$")
+# the heap's differences are named so (the report reads them back)
+HEAP_FILE = "heap (cassandra-env.sh, else the unit's Environment)"
 # the files cassandra_config writes, left as they are when their settings are the same
 with open(os.path.join(ROLES, "cassandra_config", "vars", "main.yml")) as _vars:
     CONFIG_FILES = set(f for files in yaml.safe_load(_vars)["_cassandra_config_files"].values() for f in files)
@@ -416,7 +418,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
-        heap = _dict_diff("heap (cassandra-env.sh, else the unit's Environment)", node_heap, role_heap)
+        heap = _dict_diff(HEAP_FILE, node_heap, role_heap)
     for name in sorted(rendered):
         if name not in live:
             other_java = re.match(r"^jvm(\d+)-server\.options$", name)

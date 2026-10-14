@@ -18,6 +18,7 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
 
 PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks", "import_cluster.yml")
@@ -52,14 +53,23 @@ def test_unread_ring_node_fails_the_check(nodes, extra, expected):
 
 
 def test_report_and_stop_name_them():
-    variables = dict(_nodes=NODES, _layout=LAYOUT, _dir="/inv", _report_dir="/reports/c", ansible_check_mode=False)
-    variables["_unchecked"] = trust_as_template(WRITE["vars"]["_unchecked"])
-    variables["_report_args"] = {"report_file": trust_as_template(WRITE["vars"]["_report_args"]["report_file"])}
-    msg = render(STOP["ansible.builtin.fail"]["msg"], **variables)
-    assert "n2 not read" in msg and "See TO DO above, and DETAILS in /reports/c/report.txt." in msg
+    load_collection_filters()
+    layout = {"cluster_group": "c", "names": LAYOUT["names"],
+              "nodes": [{"name": "n1", "read": True, "hand_edits": []},
+                        {"name": "n2", "read": False, "reason": "unreachable", "hand_edits": []}]}
+    report_file = trust_as_template(WRITE["vars"]["_report_args"]["report_file"])
+    variables = dict(_nodes=NODES, _layout=layout, _dir="/inv", _report_dir="/reports/c", ansible_check_mode=False,
+                     _self_check=CHECK, _newline="\n", import_cluster_allow_unread=False)
+    variables["_report_args"] = {"report_file": report_file, "allow_unread": False, "inventory": "", "hosts": "",
+                                 "cwd": "",
+                                 "check": trust_as_template(WRITE["vars"]["_report_args"]["check"])}
+    msg = render(STOP["ansible.builtin.fail"]["msg"], **variables).split("\n")
+    assert msg[0].startswith("SELF-CHECK FAILED  c  1 node not read")
+    assert "  Not read, so not checked: n2 (unreachable)" in msg
+    assert "Details: /reports/c/report.txt, section SELF-CHECK" in msg
     variables["ansible_check_mode"] = True  # --check writes its report as report.check.txt
-    assert "See TO DO above, and DETAILS in /reports/c/report.check.txt." in render(
-        STOP["ansible.builtin.fail"]["msg"], **variables)
+    msg = render(STOP["ansible.builtin.fail"]["msg"], **variables).split("\n")
+    assert "Details: /reports/c/report.check.txt, section SELF-CHECK" in msg and "(--check: the inventory not written)" in " ".join(msg[:2])
     assert "allow_unread=_report_args.allow_unread" in WRITE["vars"]["_report"]
     assert "import_cluster_strict | default(true) | bool" in STOP["when"]
 
