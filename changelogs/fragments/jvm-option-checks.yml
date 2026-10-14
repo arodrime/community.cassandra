@@ -1,0 +1,18 @@
+minor_changes:
+  - >-
+    preflight - a WARNING for an extra JVM option worth a look among the ones the node's Java reads (``-Xss`` far from the usual 256k to 1m, e.g. ``-Xss1024M``; ``-XX:-UseBiasedLocking`` on Java 17), with why and the variable to change; nothing is changed.
+  - >-
+    update_java, upgrade, cassandra_install, new nodes - a Java change is refused, before anything changes, while the JVM options that Java reads hold one it does not start with (``-XX:-UseBiasedLocking`` on Java 21, or any Java after 17 cassandra_java_allow_unsupported allows: the JVM does not start with it), the role's own template lines included (4.x's ``jvm-server.options``).
+  - >-
+    update_java, upgrade (to another series) - refused, before anything changes, when the options file the node then reads is in ``cassandra_config_keep_files`` (e.g. a jvm11-server.options import_cluster left as it is): it would be read as it is.
+  - >-
+    import_cluster - the extra options of a jvm<N>-server.options the running Java does not read (e.g. a heap in jvm11-server.options on Java 17) are not imported, with a note saying where the heap the JVM runs with comes from; the node's file is left as it is (``cassandra_config_keep_files``), so apply_config after the import does not rewrite it nor restart the node for it. ``import_cluster_keep_unread_jvm_options: true`` imports them all the same.
+  - >-
+    import_cluster - the report's TO DO has a WARNING for an imported JVM option worth a look (as preflight), the option imported as it is.
+  - >-
+    cassandra_jvm_option_checks, cassandra_jvm_options_file, cassandra_jvm_options_variable filters - the JVM options checks (a table in module_utils ``cassandra_jvm_options``), the options file a Java reads.
+bugfixes:
+  - >-
+    import_cluster - an option the role's template writes already (``-Xss256k``), found at another place in the file, is no longer imported again as an extra option, and the file is not listed as a hand edit (the role leaves it as it is).
+  - >-
+    import_cluster - the self-check names the jvm<N>-server.options a 4.x node on Java 17 reads (jvm11-server.options, not jvm17).

@@ -1252,6 +1252,18 @@ variable); a re-import does not carry the end lines your template has itself. Wi
 they are on their node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither
 writes nor compares them); nodes added later get the role's files.
 
+The JVM options are imported as the running Java reads them: ``bin/cassandra`` passes on ``jvm-server.options`` and
+one ``jvm<N>-server.options`` (4.x: ``jvm8`` on Java 8, else ``jvm11``; 5.0: ``jvm11`` on Java 11, else ``jvm17``).
+The extra options of another one (a heap in ``jvm11-server.options`` on Java 17) are not imported: the report says so,
+and where the heap the JVM runs with comes from; that file is left as it is on its node (``cassandra_config_keep_files``),
+and ``-e import_cluster_keep_unread_jvm_options=true`` imports them all the same. An option worth a look (``-Xss``
+far from the usual 256k to 1m, ``-XX:-UseBiasedLocking`` on Java 17) is imported as it is, with a WARNING
+in the report's TO DO saying why and which variable to change; ``preflight`` warns the same way, and a Java change
+(``update_java``, ``upgrade``) is refused while the options that Java reads hold one it does not start with;
+``update_java`` and an ``upgrade`` to another series also while the options file the node then reads is in
+``cassandra_config_keep_files`` (it would be read as it is). Options given another way
+(``JVM_EXTRA_OPTS`` in ``cassandra_service_environment``) are not checked.
+
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,
 and the unit and ``medusa.ini`` when the roles manage them) are compared with the node's, setting by setting, as

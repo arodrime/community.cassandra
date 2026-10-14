@@ -71,6 +71,7 @@
     - name: Note what this node needs
       ansible.builtin.set_fact:
         cassandra_update_java_running: "{{ _running }}"
+        cassandra_update_java_major: "{{ _major }}"
         cassandra_update_java_todo: >-
           {{ _major != cassandra_java_version | string
              or (_cassandra_java_home != ''
@@ -81,6 +82,15 @@
           {{ cassandra_update_java_spec.stderr | default('') | regex_findall('java[.]specification[.]version = (\S+)')
              | first | default('') }}
         _major: "{{ _spec.split('.')[1] if _spec.startswith('1.') else _spec }}"
+
+    - name: The new Java reads an options file the role writes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_options_kept.yml
+      vars:
+        _cassandra_java_options_now: >-
+          {{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_update_java_major) }}
+      when: cassandra_update_java_todo | bool
 
     - name: Settings that only apply to another Java
       ansible.builtin.debug:
