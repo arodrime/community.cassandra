@@ -558,9 +558,25 @@ def test_refusal_leaves_to_later_only_the_nodes_cassandra_linux_sets_up():
     lines = cassandra_clock_refusal(v, check=True)
     assert any(line.startswith("  old1  NO TIME SYNC") for line in lines)
     assert not any(line.startswith("  new1 ") for line in lines)
-    before = cassandra_clock_refusal(v, later_ok=True)
-    assert before[0] == "REFUSED  clocks  nothing was started" and not any(line.startswith("  new1 ") for line in before)
-    assert cassandra_clock_refusal(cassandra_clock_verdicts([node("new1", blank, running=False)]), later_ok=True) == []
+    # before a wipe (create_cluster's reset): every node is stopped then set up by cassandra_linux, running or not
+    assert cassandra_clock_refusal(v, later_ok=True) == []
+    off = cassandra_clock_verdicts([node("old1", probe_text(tracking_text=tracking(1.0)), running=True)])
+    assert cassandra_clock_refusal(off, later_ok=True)[0] == "REFUSED  clocks  nothing was started"
+
+
+def test_refusal_names_a_node_whose_clock_could_not_be_read():
+    v = cassandra_clock_verdicts([node("node1", probe_text())])
+    lines = cassandra_clock_refusal(v, unread={"node2": "/bin/sh: not found"})
+    assert lines[0] == "REFUSED  clocks  nothing was started"
+    assert lines[1] == "  node2  NOT READ  its clock could not be read: /bin/sh: not found"
+
+
+def test_a_daemon_stopped_and_disabled_is_not_another_means():
+    # the kernel keeps its synchronised flag for hours after a daemon stops
+    stopped = probe_text(active="", installed=("systemd-timesyncd",), tracking_text=None, synced="yes").replace(
+        "systemd-timesyncd|inactive|enabled|loaded", "systemd-timesyncd|inactive|disabled|loaded")
+    v = cassandra_clock_verdicts([node("node1", stopped, running=False)])
+    assert v["nodes"][0]["verdict"] == "no_sync"
 
 
 def test_ntpd_is_only_read():
