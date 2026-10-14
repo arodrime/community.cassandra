@@ -55,11 +55,11 @@ def test_the_prepare_names_the_new_nodes_only():
 def test_the_progress_lines_count_the_bootstraps():
     add = next(t for t in PLAYS["Add the new nodes, one at a time"]["tasks"] if t.get("name") == "Add this node")
     variables = dict(add["vars"], ansible_play_hosts_all=HOSTS, hostvars=HOSTVARS)
-    assert render(add["vars"]["_cassandra_stream_index"], inventory_hostname="node5", **variables) == 1
-    assert render(add["vars"]["_cassandra_stream_steps"], inventory_hostname="node5", **variables) == 1
+    assert int(render(add["vars"]["_cassandra_stream_index"], inventory_hostname="node5", **variables)) == 1
+    assert int(render(add["vars"]["_cassandra_stream_steps"], inventory_hostname="node5", **variables)) == 1
     hostvars = dict(HOSTVARS, node4={"inventory_hostname": "node4", "cassandra_new_node_state": "new"})
     variables = dict(add["vars"], ansible_play_hosts_all=HOSTS, hostvars=hostvars)
-    assert render(add["vars"]["_cassandra_stream_index"], inventory_hostname="node5", **variables) == 2
+    assert int(render(add["vars"]["_cassandra_stream_index"], inventory_hostname="node5", **variables)) == 2
     # a node already in the ring: no bootstrap followed ("[1/2] node4 bootstrap NORMAL done 0s")
     wait = next(t for t in load("roles", "cassandra_service", "tasks", "action_add.yml")
                 if t.get("name") == "Wait for the bootstrap")

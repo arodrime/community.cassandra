@@ -185,7 +185,8 @@ def test_the_role_s_check_mode_also_when_applied_to_it():
 
 def test_the_disk_warnings_said_under_the_node():
     notes = NOTE["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
-    variables = {"cassandra_config_newer_files": [], "_pending": False, "_running": True, "_then": "none", "_os": [],
+    variables = {"cassandra_config_newer_files": [], "_newer": [], "_as_started": [], "_pending": False, "_running": True,
+                 "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]},
                  "_stopped": False, "_timesync": False, "_no_unit": []}
     assert render(notes, variables) == ["WARNING data disks: tuned: not switched"]
@@ -238,7 +239,8 @@ def test_the_question_names_what_is_applied(config, os_nodes, ts_nodes, ts_any, 
 @pytest.mark.parametrize("live, swapoff, said", [(True, False, True), (True, True, False), (None, None, False)])
 def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     notes = NOTE["ansible.builtin.set_fact"]["cassandra_apply_config_notes"]
-    variables = {"cassandra_config_newer_files": [], "_pending": False, "_running": True, "_then": "none", "_os": [],
+    variables = {"cassandra_config_newer_files": [], "_newer": [], "_as_started": [], "_pending": False, "_running": True,
+                 "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_linux_before": {"swap|active": "1"},
                  "_stopped": False, "_timesync": False, "_no_unit": []}
     if live is not None:  # (not set on a node with cassandra_linux_manage false)
