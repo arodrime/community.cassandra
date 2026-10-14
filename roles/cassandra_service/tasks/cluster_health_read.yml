@@ -75,12 +75,15 @@
       check_mode: false  # read-only; --check needs it too
 
     # Native transport listens on rpc_address (all interfaces for 0.0.0.0); --check waits for nothing, nor a
-    # read cluster_health.yml reads again while it waits (a port not answering yet is waited for there)
+    # read cluster_health.yml reads again while it waits (a port not answering yet is waited for there; a batch,
+    # whose nodes may not all wait, here)
     - name: Check the storage and CQL ports on this node
       ansible.builtin.wait_for:
         host: "{{ item.host }}"
         port: "{{ item.port }}"
-        timeout: "{{ 5 if ansible_check_mode or _cassandra_health_wait_on | bool else cassandra_service_health_timeout }}"
+        timeout: >-
+          {{ 5 if ansible_check_mode or (_cassandra_health_wait_on | bool and not _batch | bool)
+             else cassandra_service_health_timeout }}
       loop:
         - name: storage
           host: "{{ _listen if _listen not in ['', 'localhost'] else ansible_facts['default_ipv4']['address'] | default('127.0.0.1') }}"

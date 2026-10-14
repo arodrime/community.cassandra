@@ -1,13 +1,14 @@
 ---
 # One check of the wait for the nodes down (cluster_health.yml, through wait_loop.yml): what is waited for (a
 # progress line), the wait before the next read (cassandra_stream_early_check_interval seconds for the first
-# cassandra_stream_early_time seconds, then cassandra_stream_check_interval, as the bootstrap's), the read,
+# cassandra_stream_early_time seconds, then cassandra_stream_check_interval, as the bootstrap's; the read itself
+# takes seconds more), the read,
 # then whether it goes on: something still waited for, and time left (cassandra_service_health_timeout)
 - name: Say what is waited for
   ansible.builtin.debug:
     msg: >-
       {{ _cassandra_health_waiting | community.cassandra.cassandra_health_wait_line(
-           names=query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars),
+           names=_cassandra_health_names,
            waited=now().timestamp() | int - _cassandra_health_wait_start | int, timeout=cassandra_service_health_timeout | int,
            index=_cassandra_health_head.index, steps=_cassandra_health_head.steps, node=_cassandra_health_head.node,
            operation=_cassandra_health_head.operation) }}

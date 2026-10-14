@@ -97,16 +97,22 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     return found
 
 
+_REFUSED = re.compile(r"(?i)authentication|credentials|password|login|access denied")
+
+
 def cassandra_health_waiting(findings):
     """The findings a wait may see go (cluster_health.yml waits while there is one): a node down (DN, DL, DJ,
-    DM: restarting, stopped meanwhile), a port of this node not answering yet; each node down once, whatever
-    view saw it. The others (a ring of another size, a failed nodetool, gossip off...) stop the run at once."""
+    DM: restarting, stopped meanwhile), a port, gossip or the native transport of this node not up yet (just
+    restarted), a nodetool status that failed (a JMX timeout), not for a login refused; each node down once,
+    whatever view saw it. The others (a ring of another size, streams, a schema disagreement...) stop the run at
+    once."""
     out, seen = [], set()
     for f in findings or []:
         key = (f.get("kind"), f.get("address") or "%s %s" % (f.get("on"), f.get("port")))
         if key in seen:
             continue
-        if (f.get("kind") == "state" and str(f.get("state", ""))[:1] == "D") or f.get("kind") == "port":
+        if (f.get("kind") == "state" and str(f.get("state", ""))[:1] == "D") or f.get("kind") in ("port", "gossip", "cql") or (
+                f.get("kind") == "nodetool" and not _REFUSED.search(str(f.get("error", "")))):
             seen.add(key)
             out.append(f)
     return out
@@ -134,6 +140,9 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
         parts.append("%s to come back" % ", ".join(downs))
     parts += ["the %s port %s on %s (%s) to answer" % (f["name"], f["port"], f["on"], f["host"])
               for f in waiting or [] if f.get("kind") == "port"]
+    parts += ["%s on %s to run" % ("gossip" if f["kind"] == "gossip" else "the native transport (CQL)", f["on"])
+              for f in waiting or [] if f.get("kind") in ("gossip", "cql")]
+    parts += ["nodetool status on %s to answer" % f["on"] for f in waiting or [] if f.get("kind") == "nodetool"]
     return "  ".join(x for x in [head, "waiting for " + "; ".join(parts) if parts else "",
                                  "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
 

@@ -30,8 +30,9 @@ description:
     C(NOTHING TO DO), C(READY), C(IMPORT ... PASSED) and a C(CHECK) with nothing left to do as ok; a C(CHECK) that
     says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
-    progress lines (C([1/2] node5 ...), and the health check's wait for nodes down, C(... waiting for ...  1m/10m)), the phase lines (ending with C(...)) and the first line of a plan or a
-    screen (C(PLAN  ...), C(add_node on cluster ...)) in O(progress_color). The lines of an informative summary
+    progress lines (C([1/2] node5 ...), and the health check's wait for nodes down, C(... waiting for ...  1m/10m)),
+    the phase lines (ending with C(...)) and the first line of a plan or a screen (C(PLAN  ...), C(add_node on cluster ...))
+    in O(progress_color). The lines of an informative summary
     (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
     in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
     indented under a coloured one keep its colour, but for an indented line with a mark of its own, which colours that line only (a node down
