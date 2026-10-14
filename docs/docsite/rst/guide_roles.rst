@@ -1017,7 +1017,8 @@ between nodes and the hand edits no variable covers (``cassandra_config`` would 
 
 In ``<cluster group>.yml`` every node is named by its hostname, the short one it reports, with ``ansible_host`` set to its
 address in the ring. ``import_cluster_host_names`` picks the name: ``hostname`` (default), ``fqdn`` or ``ip``;
-``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address.
+``import_cluster_set_ansible_host: false`` leaves ``ansible_host`` out, when the names resolve to the right address;
+a re-import without the option keeps it out of the hosts the inventory there reaches without it (the earlier choice).
 The nodes found in the ring are reached as the given one is: by the name the given node knows them by (``getent
 hosts`` there) when the controller can reach that name (it resolves it, or the ssh configuration gives it a
 ``HostName`` or a jump host; a connection by name such as docker always), else by their address; with its connection variables (``ansible_user``,

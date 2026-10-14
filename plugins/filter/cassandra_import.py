@@ -2244,6 +2244,71 @@ def cassandra_inventory_own_values(read, cluster_group, keys, password=""):
     return out
 
 
+# a host's own vars file, as Ansible reads them: host_vars/<host>.yml, or any file of host_vars/<host>/
+_HOST_VARS_FILE = re.compile(r"^host_vars/([^/]+?)(?:[.](?:yml|yaml|json)|/[^/]+[.](?:yml|yaml|json))$")
+
+
+def _host_entries(data):
+    """A YAML inventory (parsed) -> {host: the variables it gives the host itself ({} for none)}."""
+    out, seen = {}, set()
+
+    def walk(level):
+        if not isinstance(level, dict) or id(level) in seen:  # an anchor that loops back
+            return
+        seen.add(id(level))
+        for group in level.values():
+            if isinstance(group, dict):
+                for host, variables in (group["hosts"] if isinstance(group.get("hosts"), dict) else {}).items():
+                    out.setdefault(host, {}).update(variables if isinstance(variables, dict) else {})
+                walk(group.get("children"))
+    walk(data)
+    return out
+
+
+@_values_hidden
+def cassandra_import_kept_ansible_host(nodes, read, cluster_group, names, password=""):
+    """nodes: cassandra_import_nodes' -> the same, without ansible_host for the hosts the inventory already there
+    reaches without one: the hosts file of this cluster an earlier import wrote (<cluster group>.yml, its first
+    line naming the group, or holding that group alone) and the host_vars files there (a vaulted one decrypted
+    with password; one that can't be read may set it). What was chosen then (import_cluster_set_ansible_host:
+    false, or ansible_host taken out by hand) stays; a node new to it too, when none of its hosts has one.
+    read: {path: text} of the inventory dir; names: {address: the node's name there} (the layout's). For a
+    re-import that is not given import_cluster_set_ansible_host."""
+    text = (read or {}).get("%s.yml" % cluster_group)
+    if not text or (written_for(text) != cluster_group and not _cluster_tree(text, cluster_group)):
+        return nodes
+    try:
+        hosts = _host_entries(yaml.load(text, Loader=_TagsLoader))  # nosec B506: the loader builds no object
+    except yaml.YAMLError:
+        return nodes
+    if not hosts:
+        return nodes
+    for path, content in sorted((read or {}).items()):
+        match = _HOST_VARS_FILE.match(path)
+        if not match or match.group(1) not in hosts:
+            continue
+        if str(content or "").startswith("$ANSIBLE_VAULT"):
+            content = _decrypt(content, password)
+            if content is None:
+                hosts[match.group(1)]["ansible_host"] = None  # not read: it may set it
+                continue
+        try:
+            variables = yaml.load(content or "", Loader=_TagsLoader)  # nosec B506: the loader builds no object
+        except yaml.YAMLError:
+            continue
+        if isinstance(variables, dict) and "ansible_host" in variables:
+            hosts[match.group(1)]["ansible_host"] = variables["ansible_host"]
+    without = set(h for h, v in hosts.items() if "ansible_host" not in v)
+    out = []
+    for n in nodes:
+        name = (names or {}).get(n.get("address"), n.get("name"))
+        if n.get("ansible_host") and (name in without or (name not in hosts and len(without) == len(hosts))):
+            # (its note on the address it was reached at, which ansible_host would replace: not said either)
+            n = dict(n, ansible_host="", notes=[x for x in n.get("notes") or [] if not str(x).startswith("reached at ")])
+        out.append(n)
+    return out
+
+
 def cassandra_config_ignored_vars(names, cassandra_version):
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
@@ -2353,6 +2418,7 @@ class FilterModule(object):
             "cassandra_inventory_leftovers": cassandra_inventory_leftovers,
             "cassandra_inventory_same_secret": cassandra_inventory_same_secret,
             "cassandra_inventory_own_values": cassandra_inventory_own_values,
+            "cassandra_import_kept_ansible_host": cassandra_import_kept_ansible_host,
             "cassandra_config_ignored_vars": cassandra_config_ignored_vars,
             "cassandra_unit_environment": cassandra_unit_environment,
             "cassandra_import_error": cassandra_import_error,
