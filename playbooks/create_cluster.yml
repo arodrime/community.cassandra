@@ -308,6 +308,15 @@
               {%- endfor -%}
               {{ out }}
 
+        # before the wipe: clocks apart would refuse the starts after it, the cluster then down
+        - name: Check the clocks before the wipe
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_service
+            tasks_from: clocks_check.yml
+          vars:
+            _cassandra_clock_operation: create_cluster
+            _cassandra_clock_later_ok: true  # a node with no time sync yet: cassandra_linux sets it up, checked then
+
         - name: Show what the reset does
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_service
@@ -392,6 +401,7 @@
 # node of a new rack before one it would refuse
 - name: Order the starts
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  any_errors_fatal: true  # a node failing here: none is started
   gather_facts: false
   become: true
   tasks:

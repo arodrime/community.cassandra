@@ -52,7 +52,7 @@
         name: cassandra
         state: stopped
 
-    - name: Do it
+    - name: Run what is done while it is stopped
       ansible.builtin.include_tasks: "{{ _cassandra_service_while_stopped }}"
 
 - name: Restart it and wait until it has joined

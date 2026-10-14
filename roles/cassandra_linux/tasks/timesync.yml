@@ -4,7 +4,9 @@
 # unless cassandra_offline, enabled and started. The NTP servers are the
 # site's: no config is written. Run by sync_clocks (include_role tasks_from)
 # on a node whose time sync does not run; cassandra_linux_timesync false
-# leaves it alone. Needs the os_family fact.
+# leaves it alone. Needs the os_family fact. The same tasks as os.yml's time
+# sync, but for cassandra_offline with nothing installed, refused here (a
+# warning there): os.yml is to include this file instead of its own block.
 - name: Look for chrony (kept rather than replaced)
   ansible.builtin.stat:
     path: /usr/sbin/chronyd

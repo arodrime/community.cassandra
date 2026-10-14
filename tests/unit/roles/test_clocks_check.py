@@ -22,9 +22,11 @@ for a in "$@"; do last=$a; done
 u=${last%.service}
 case "$1" in
   is-active) if [ "$(cat $d/active 2>/dev/null)" = "$u" ]; then echo active; else echo inactive; exit 3; fi;;
-  is-enabled) if [ "$(cat $d/active 2>/dev/null)" = "$u" ]; then echo enabled; else exit 1; fi;;
-  show) if [ "$(cat $d/active 2>/dev/null)" = "$u" ] || grep -qx "$u" $d/installed 2>/dev/null; then echo loaded;
-        else echo not-found; fi;;
+  is-enabled) if [ "$(cat $d/active 2>/dev/null)" = "$u" ] || grep -qx "$u" $d/installed 2>/dev/null; then echo enabled;
+              else exit 1; fi;;
+  cat) exit 1;;
+  show) if [ "$(cat $d/active 2>/dev/null)" = "$u" ] || grep -qx "$u" $d/installed 2>/dev/null; then echo LoadState=loaded;
+        else echo LoadState=not-found; fi;;
 esac
 """
 CHRONYC = """#!/bin/sh
@@ -89,7 +91,7 @@ def setup(tmp_path, nodes):
 
 def run(tmp_path, tasks, *args, extra=None):
     hosts = ",".join(sorted(d.name for d in (tmp_path / "fake").iterdir() if d.is_dir()))
-    play = [{"hosts": hosts, "gather_facts": False, "vars": dict({"cassandra_clock_sync_wait": 0}, **(extra or {})),
+    play = [{"hosts": hosts, "gather_facts": False, "vars": dict({"cassandra_clock_sync_timeout": 0}, **(extra or {})),
              "tasks": tasks},
             {"hosts": hosts, "gather_facts": False,
              "tasks": [{"ansible.builtin.debug": {"msg": "NEXT PLAY ON {{ inventory_hostname }}"}}]}]
@@ -161,8 +163,18 @@ def test_a_time_sync_just_started_is_waited_for(tmp_path):
     # unsynchronised at the first read, synchronised at the second (5 s later)
     node2 = dict(synced(), **{"tracking.1": tracking(0, synced=False)})
     fake = setup(tmp_path, {"node1": synced(), "node2": node2})
-    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_wait": 10})
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 10})
     assert rc == 0, out
+    assert (fake / "node2" / "calls").read_text().strip() == "2"
+
+
+def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
+    # never synchronised within the wait: the REFUSED verdict, not a failed read that drops the node from the play
+    fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": tracking(0, synced=False),
+                                                         "sources": UNREACHED}})
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 5})
+    assert rc != 0, out
+    assert "REFUSED  clocks  nothing was started" in out and "node2  NOT SYNCHRONISED" in out
     assert (fake / "node2" / "calls").read_text().strip() == "2"
 
 
@@ -175,7 +187,7 @@ def test_the_check_can_be_skipped(tmp_path):
 
 FIX = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_service", "tasks_from": "clock_probe.yml"}},
        {"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_service", "tasks_from": "clock_fix.yml"},
-        "vars": {"cassandra_clock_action": "step"}},
+        "vars": {"_cassandra_clock_action": "step"}},
        {"ansible.builtin.debug": {"msg": "FIX {{ inventory_hostname }} did={{ _cassandra_clock_did | join(',') }}"
                                          " error={{ _cassandra_clock_fix_error }}"}}]
 
@@ -193,7 +205,7 @@ def test_a_step_that_does_not_help_says_why(tmp_path):
     fake = setup(tmp_path, {"node1": synced(2.0, "fast")})
     rc, out = run(tmp_path, FIX)
     assert rc == 0, out  # nothing fails there: the restart window starts Cassandra again first
-    assert "FIX node1 did=step error=clock still not in sync after 0s: chronyd, synchronised to 192.0.2.1, +2.00 s" in out
+    assert "FIX node1 did=step error=clock still not in sync after waiting up to 0s: chronyd, synchronised to 192.0.2.1, +2.00 s" in out
     assert "node1 chronyc makestep" in (fake / "log").read_text()
 
 
@@ -202,3 +214,13 @@ def test_a_clock_in_sync_is_not_stepped(tmp_path):
     rc, out = run(tmp_path, FIX)
     assert rc == 0 and "FIX node1 did= error=" in out, out
     assert "makestep" not in (fake / "log").read_text()
+
+
+def test_no_time_sync_offline_is_said_not_failed(tmp_path):
+    # the start path: cassandra_linux's timesync.yml (its vars through include_role), nothing installed, offline
+    setup(tmp_path, {"node1": {}})
+    tasks = [{"ansible.builtin.setup": {"gather_subset": ["!all", "!min", "distribution"]}}] + FIX
+    rc, out = run(tmp_path, tasks, extra={"cassandra_offline": True})
+    assert rc == 0, out
+    assert "FIX node1 did= error=Refuse a time sync that is not installed (offline):" in out
+    assert "is not installed on node1 and cassandra_offline downloads nothing: install it from your image or mirror" in out

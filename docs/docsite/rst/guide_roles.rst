@@ -769,22 +769,25 @@ installed (unless ``cassandra_offline``), enabled, started. It writes no NTP con
 ``chrony.conf`` stays as it is, and ``cassandra_linux_timesync: false`` leaves a node's time sync alone. Where
 Cassandra does not run, and where the correction is small (within ``cassandra_clock_step_ms``, 400 ms: the daemon
 slews the clock, no jump), that is done live, on those nodes at once. A running node whose clock needs a step (a
-larger offset, or one that cannot be measured before its daemon starts) gets a restart window, one node at a time, as
+larger offset, or one that cannot be measured before its daemon starts: only ``chronyd -Q`` measures it, and a start
+must stay under the site's chrony ``makestep`` threshold) gets a restart window, one node at a time, as
 ``rolling_restart`` does: the cluster checked, the node drained and stopped, time sync started and synchronised, the
 clock stepped (``chronyc makestep``; systemd-timesyncd steps by itself past 400 ms when it syncs), Cassandra started,
-the cluster checked again. An interrupted run resumes with ``-e cassandra_rolling_resume=true``; a node it left
-stopped is started again. A node whose clock is ahead gets a warning about the writes it stamped meanwhile. What it
-cannot fix (a source unreachable, a container's clock, a time sync left alone) is said, and the run ends failed.
+the cluster checked again. An interrupted run is run again, the same command: the clocks read again say what is
+left, and a node it left drained or stopped gets its window first, Cassandra started again. A node whose clock is ahead gets a warning about the writes it stamped meanwhile. What it
+cannot fix (a source unreachable, a container's clock, a time sync left alone) is said, and the run ends failed. ntpd is only read: a step it needs is left to it (``ntpd -g`` at its start) or to a
+move to chrony; an installed but stopped ntpd is not replaced.
 ``sync_clocks`` is not monitoring: it schedules nothing and alerts no one.
 
 ``create_cluster`` and ``add_node`` check the clocks the same way before they start any node (after ``cassandra_linux``
-started time sync, waiting up to ``cassandra_clock_sync_wait`` seconds for it to synchronise), the running nodes too
+started time sync, waiting up to ``cassandra_clock_sync_timeout`` seconds for it to synchronise), the running nodes too
 for ``add_node``. A node off by more than the threshold, or without a synchronised source, stops the run with nothing
 started, and the way out: ``sync_clocks``, or the NTP configuration of these nodes. ``-e cassandra_clock_check=false``
 skips the check, for clocks kept in sync by other means.
 
-chrony is the safer daemon: systemd-timesyncd follows one server, reports the offset of its last poll only, and steps
-the clock by itself whenever it is off by more than 400 ms, Cassandra running or not. chrony's own ``makestep``
+chrony is the safer daemon: systemd-timesyncd follows one server, reports the offset of its last poll only, slews a
+smaller offset through the kernel at most 0.5 ms per second (minutes: ``sync_clocks`` says so rather than waiting),
+and steps the clock by itself whenever it is off by more than 400 ms, Cassandra running or not. chrony's own ``makestep``
 setting (``makestep 1 3`` in most distributions) only steps in its first updates: a large offset found later is
 slewed, at most about 83 ms per second.
 

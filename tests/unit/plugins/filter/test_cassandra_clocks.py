@@ -100,14 +100,15 @@ def units(active="chronyd", installed=()):
         if unit == active:
             lines.append("%s|active|enabled|loaded" % unit)
         elif unit in installed:
-            lines.append("%s|inactive|disabled|loaded" % unit)
+            lines.append("%s|inactive|enabled|loaded" % unit)
         else:
             lines.append("%s|inactive||not-found" % unit)
     return lines
 
 
 def probe_text(active="chronyd", installed=(), tracking_text=TRACKING_SYNCED, sources=SOURCES, conf=("pool pool.example.net",),
-               virt="none", timesync=None, ntpq=None, synced="yes", query=None, window=False):
+               virt="none", timesync=None, ntpq=None, synced=None, query=None, window=False):
+    synced = synced or ("yes" if active or virt != "none" else "no")
     lines = units(active, installed) + ["==virt==", virt]
     if tracking_text is not None:
         lines += ["==tracking=="] + tracking_text.splitlines() + ["==sources=="] + sources.splitlines()
@@ -164,7 +165,7 @@ def test_timesync_offset_is_the_servers_minus_the_nodes():
     sync = parse_timesync(TIMESYNC.splitlines())
     # Offset +2.513ms: the server ahead of the node, the node 2.5 ms behind
     assert sync["offset"] == pytest.approx(-0.002513)
-    assert sync["bound"] == pytest.approx(0.001981)
+    assert sync["bound"] == pytest.approx(0.001981 + 0.001695 / 2)  # root distance plus half the delay
     assert sync["source"] == "192.0.2.1 (ntp1.example.net)" and sync["stratum"] == 2
     assert parse_timesync(TIMESYNC.replace("+2.513ms", "-1min 2.5s").splitlines())["offset"] == pytest.approx(62.5)
     assert parse_timesync(TIMESYNC.replace("+2.513ms", "+523us").splitlines())["offset"] == pytest.approx(-0.000523)
@@ -464,4 +465,125 @@ def test_refusal_under_check():
         "NOTE  clocks: time sync would be started on node1, node2 (cassandra_linux), its clock checked by the real run"]
     assert cassandra_clock_refusal(v)[0] == "REFUSED  clocks  nothing was started"
     off = cassandra_clock_verdicts([node("node1", probe_text(tracking_text=tracking(1.0)))])
-    assert cassandra_clock_refusal(off, check=True)[0] == "CHECK  clocks  a real run would refuse to start the nodes"
+    assert cassandra_clock_refusal(off, check=True)[0] == "NOTE  clocks  a real run would refuse to start the nodes"
+
+
+# --- found by the audit -------------------------------------------------------------------------------------------
+
+
+def test_sources_with_a_negative_poll():
+    line = "^* 192.0.2.1                     1  -4   377     1    -12us[  -15us] +/-  410us"
+    assert parse_chrony_sources([line])["selected"] == "192.0.2.1"
+
+
+def test_timesync_leap_sentences_and_delay_in_the_bound():
+    sync = parse_timesync(TIMESYNC.replace("Leap: normal", "Leap: last minute of the day has an extra second").splitlines())
+    assert sync["leap"] == "insert"
+    assert parse_timesync(TIMESYNC.replace("Leap: normal", "Leap: not synchronized").splitlines())["leap"] == "unsynchronised"
+    assert parse_timesync(TIMESYNC.splitlines())["bound"] == pytest.approx(0.001981 + 0.001695 / 2)
+
+
+def test_ntpd_on_its_local_clock_is_not_synchronised():
+    local = NTPQ.replace("*192.0.2.1       .GPS.            1 u", "*127.127.1.0     .LOCL.          10 l")
+    p = cassandra_clock_probe(probe_text(active="ntpd", tracking_text=None, conf=(), ntpq=local))
+    assert not p["synchronised"] and p["local"]
+    v = cassandra_clock_verdicts([node("node1", probe_text(active="ntpd", tracking_text=None, conf=(), ntpq=local))])
+    assert "own clock (local stratum)" in v["nodes"][0]["why"]
+
+
+def test_a_live_start_respects_the_sites_makestep():
+    # chronyd -Q measured 200 ms: with makestep 0.1 a start would step it under Cassandra, a window
+    blank = dict(active="", installed=("chronyd",), tracking_text=None, query="0.2")
+    assert cassandra_clock_verdicts([node("node1", probe_text(**blank))])["nodes"][0]["action"] == "start"
+    tight = probe_text(conf=("pool pool.example.net", "makestep 0.1 3"), **blank)
+    assert cassandra_clock_verdicts([node("node1", tight)])["nodes"][0]["action"] == "window"
+    # only the dates over SSH to go by: too coarse for a start under Cassandra
+    coarse = probe_text(active="", installed=("chronyd",), tracking_text=None)
+    v = cassandra_clock_verdicts([node("node0", probe_text()), node("node1", coarse, skew=0.01)])
+    assert by_node(v)["node1"]["action"] == "window"
+
+
+def test_timesyncd_slews_slowly_and_steps_past_400_ms():
+    ts = dict(active="systemd-timesyncd", tracking_text=None, conf=())
+    slow = cassandra_clock_verdicts([node("node1", probe_text(timesync=TIMESYNC.replace("+2.513ms", "+200ms"), **ts))])
+    assert slow["nodes"][0]["action"] == "slew" and "about 7 min" in slow["nodes"][0]["why"]
+    far = cassandra_clock_verdicts([node("node1", probe_text(timesync=TIMESYNC.replace("+2.513ms", "+600ms"), **ts))],
+                                   step_ms=1000)
+    assert far["nodes"][0]["action"] == "window"
+
+
+def test_a_clock_synchronised_by_another_means():
+    # no chrony, timesyncd or ntpd, the kernel synchronised (PTP, the hypervisor's): not another daemon, compared coarsely
+    other = probe_text(active="", tracking_text=None, synced="yes")
+    v = by_node(cassandra_clock_verdicts([node("node1", probe_text()), node("node2", other, skew=0.01)]))
+    assert v["node2"]["verdict"] == "ok" and v["node2"]["action"] == "none"
+    assert "synchronised by another means" in v["node2"]["text"]
+    far = by_node(cassandra_clock_verdicts([node("node1", probe_text()), node("node2", other, skew=2.0)]))
+    assert far["node2"]["verdict"] == "off" and far["node2"]["action"] == "manual"
+    unsynced = by_node(cassandra_clock_verdicts([node("node1", probe_text()),
+                                                 node("node2", other.replace("NTPSynchronized=yes", "NTPSynchronized=no"))]))
+    assert unsynced["node2"]["verdict"] == "no_sync"
+
+
+# --- the recap of sync_clocks -------------------------------------------------------------------------------------
+
+
+def test_recap_of_sync_clocks():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_op_recap
+    lines = cassandra_op_recap([{"node": "node1", "result": "already in sync"},
+                                {"node": "node2", "result": "clock_start_step done in 12s"},
+                                {"node": "node3", "result": "sync_clock done in 95s"},
+                                {"node": "node4", "result": "clock_slewing done in 1s"},
+                                {"node": "node5", "result": "sync_clock refused: chronyd reaches none of its 2 sources"
+                                                            " (to fix by hand)"}],
+                               cluster="Orders", operation="sync_clocks")
+    text = "\n".join(lines)
+    assert lines[0].startswith("FAILED  sync_clocks  Orders")
+    assert "time sync started, clock stepped" in text and "clock set in a restart window" in text
+    assert "clock being corrected by its daemon (minutes)" in text
+    assert "node5  FAILED: refused: chronyd reaches none of its 2 sources (to fix by hand)" in text
+    assert "node1  not touched (already in sync)" in text
+    check = cassandra_op_recap([{"node": "node1", "result": "already in sync"},
+                                {"node": "node2", "result": "would set the clock in a restart window (--check: nothing"
+                                                            " was changed)"},
+                                {"node": "node3", "result": "would need a fix by hand: chronyd has no source configured"}],
+                               check=True, cluster="Orders", operation="sync_clocks")
+    assert check[0].startswith("CHECK  sync_clocks  Orders") and "FAILED" not in "\n".join(check)
+
+
+def test_refusal_leaves_to_later_only_the_nodes_cassandra_linux_sets_up():
+    # a running node with no time sync: cassandra_linux never touches it, --check and the check before a wipe refuse it
+    blank = probe_text(active="", tracking_text=None)
+    v = cassandra_clock_verdicts([node("new1", blank, running=False), node("old1", blank, running=True)])
+    lines = cassandra_clock_refusal(v, check=True)
+    assert any(line.startswith("  old1  NO TIME SYNC") for line in lines)
+    assert not any(line.startswith("  new1 ") for line in lines)
+    before = cassandra_clock_refusal(v, later_ok=True)
+    assert before[0] == "REFUSED  clocks  nothing was started" and not any(line.startswith("  new1 ") for line in before)
+    assert cassandra_clock_refusal(cassandra_clock_verdicts([node("new1", blank, running=False)]), later_ok=True) == []
+
+
+def test_ntpd_is_only_read():
+    stopped = probe_text(active="", installed=("ntpd",), tracking_text=None)
+    v = cassandra_clock_verdicts([node("node1", stopped, running=False)])
+    assert v["nodes"][0]["action"] == "manual" and "start ntpd" in v["nodes"][0]["why"]
+    far = NTPQ.replace("-3.250", "900.000")
+    v = cassandra_clock_verdicts([node("node1", probe_text(active="ntpd", tracking_text=None, conf=(), ntpq=far))])
+    assert v["nodes"][0]["action"] == "manual" and "its start (-g)" in v["nodes"][0]["why"]
+
+
+def test_the_variable_that_leaves_time_sync_alone_is_named():
+    blank = probe_text(active="", tracking_text=None)
+    v = cassandra_clock_verdicts([node("node1", blank, manage=False, unmanaged_by="cassandra_linux_manage")])
+    assert "cassandra_linux_manage false" in v["nodes"][0]["why"]
+
+
+def test_old_systemd_timesyncd_kernel_only():
+    # no timedatectl show, no timesync-status (systemd 237): the kernel's word, compared coarsely
+    text = probe_text(active="systemd-timesyncd", tracking_text=None, conf=()).replace(
+        "==timedatectl==\nTimezone=UTC\nNTP=yes\nNTPSynchronized=yes",
+        "==timedatectl_status==\n               Local time: Wed 2026-10-14 10:00:00 UTC\nSystem clock synchronized: yes")
+    p = cassandra_clock_probe(text)
+    assert p["kernel_only"] and p["kernel_synced"] is True
+    v = cassandra_clock_verdicts([node("node1", probe_text()), node("node2", text, skew=0.01)])
+    assert by_node(v)["node2"]["verdict"] == "ok" and "this systemd tells no offset" in by_node(v)["node2"]["text"]

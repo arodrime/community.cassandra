@@ -202,8 +202,7 @@ OPERATIONS = [
                                                          " source (offset plus the daemon's error bound)", "50"),
                  ("-e cassandra_clock_step_ms=400", "a correction above it steps the clock: on a running node, in a"
                                                     " restart window", "400"),
-                 ("-e cassandra_clock_sync_wait=60", "seconds to wait for a time sync to synchronise", "60"),
-                 RESUME],
+                 ("-e cassandra_clock_sync_timeout=60", "seconds to wait for a time sync to synchronise", "60")],
      "example": ("the clocks, changing nothing", ["--check"])},
     {"name": "upgrade", "theme": "cluster",
      "summary": "Upgrades the cluster to the version in the inventory, one phase per run: preflight, prepare,"

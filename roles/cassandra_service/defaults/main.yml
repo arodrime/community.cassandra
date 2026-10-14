@@ -139,7 +139,6 @@ _cassandra_wait_size: "{{ ((_cassandra_stream_round_size | int) ** 0.5) | round(
 # the words of an action in a --check result ("would restart")
 _cassandra_service_would:
   apply_config: apply the config
-  sync_clock: step the clock in a restart window
   update_java: update Java
   upgradesstables: upgrade the SSTables
 
@@ -165,11 +164,11 @@ cassandra_service_health_force: false
 # cassandra_clock_max_offset_ms (milliseconds). A correction over
 # cassandra_clock_step_ms steps the clock rather than slewing it (timesyncd
 # steps past 400 ms): on a node where Cassandra runs, sync_clocks does it in a
-# restart window. cassandra_clock_sync_wait: seconds to wait for a time sync
+# restart window. cassandra_clock_sync_timeout: seconds to wait for a time sync
 # just started. cassandra_clock_check: false skips the check before the starts.
 cassandra_clock_max_offset_ms: 50
 cassandra_clock_step_ms: 400
-cassandra_clock_sync_wait: 60
+cassandra_clock_sync_timeout: 60
 cassandra_clock_check: true
 
 # JMX access for the modules and nodetool calls of the operation playbooks
