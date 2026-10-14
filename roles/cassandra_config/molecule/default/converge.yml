@@ -185,7 +185,7 @@
           ansible.builtin.assert:
             that:
               - ansible_failed_task.name == "Stop unless the changes were confirmed"
-              - "'(already initialized: /tmp/initialized-node/system)' in ansible_failed_result.msg"
+              - "'(not blank: /tmp/initialized-node/system)' in ansible_failed_result.msg"
 
     # No PyYAML needed on the node, and a data dir not created yet does not
     # make a node initialized
@@ -271,7 +271,7 @@
                   - ansible_failed_task.name == "Refuse to change the identity of a joined node"
                   - "'num_tokens: 16 -> 8' in ansible_failed_result.msg"
                   - "'rack: rack1 -> rack2' in ansible_failed_result.msg"
-                  - "'already initialized (/tmp/initialized-node/system)' in ansible_failed_result.msg"
+                  - "'is not blank (/tmp/initialized-node/system)' in ansible_failed_result.msg"
                   - "'empty them: /tmp/initialized-node, /var/lib/cassandra/commitlog' in ansible_failed_result.msg"
                   - "'which DELETES its data' in ansible_failed_result.msg"
 

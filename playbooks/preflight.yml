@@ -142,6 +142,23 @@
         - cassandra_jmx_users | default([]) | length > 0
         - _cassandra_preflight_running | default(false) | bool
 
+    # Where a node stands (cassandra_service standing.yml) is worked out from the rings the cluster's nodes
+    # see: each running node reads its own, all at once (collected at the end of this play). The playbooks
+    # that add, reset or replace nodes ask for it (_cassandra_preflight_node_views)
+    - name: Start reading the ring this node sees
+      community.cassandra.cassandra_status:
+        down: 10000  # read it whatever the state of the nodes
+        interval: 0  # no wait when a node is down
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      register: cassandra_preflight_view_job
+      async: 600
+      poll: 0
+      check_mode: false  # read-only (async cannot run in check mode); --check needs it too
+      when:
+        - _cassandra_preflight_node_views | default(false) | bool
+        - _cassandra_preflight_running | bool
+
     # First: the other checks read the inventory's settings, which an inventory
     # not loaded leaves to the role defaults
     - name: Read the cluster from a running node
@@ -497,3 +514,22 @@
         - _hint | string not in ['', 'None']
         - cassandra_num_tokens | int > 1
       run_once: true
+
+    - name: Collect the ring this node sees
+      ansible.builtin.async_status:
+        jid: "{{ cassandra_preflight_view_job.ansible_job_id }}"
+      register: _cassandra_preflight_view
+      until: _cassandra_preflight_view.finished | default(1) | bool
+      retries: 600
+      delay: 1
+      failed_when: false  # a node that does not answer: no ring (cassandra_node_standing, an answer of none)
+      check_mode: false  # the read ran under --check too
+      when: cassandra_preflight_view_job.ansible_job_id is defined
+
+    - name: Remove the file of that read
+      ansible.builtin.file:
+        path: "{{ cassandra_preflight_view_job.results_file }}"
+        state: absent
+      changed_when: false
+      check_mode: false
+      when: cassandra_preflight_view_job.results_file is defined

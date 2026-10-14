@@ -35,9 +35,9 @@
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_linux
 
-# A new node the operation checked (add_node and topology: not in the ring, empty or reset
-# first, new_node_state.yml and reset_node_plan.yml, not with cassandra_add_node_reset=false
-# that skips the latter; replace_node: blank or reset first,
+# A new node the operation checked (add_node and topology: not in the ring, blank or reset
+# first, new_node_state.yml and reset_node_plan.yml, where it stands read once: node_standing.yml,
+# with cassandra_add_node_reset=false too when it is blank; replace_node: blank or reset first,
 # _cassandra_add_checked_new) and whose question covered the add, config included:
 # cassandra_config asks nothing more, and a system keyspace left outside its data
 # directories, a missing or hand-edited cassandra.yaml do not make it a joined node.
@@ -50,9 +50,10 @@
       {{ false if _new | bool or not cassandra_operation_confirm | default(true) | bool
          else cassandra_config_confirm | default('auto') }}
   vars:
-    # add_node, topology: with its reset plan (cassandra_add_node_reset not false: the live cassandra.yaml's dirs looked at too)
+    # add_node, topology: blank (the live cassandra.yaml's dirs looked at too), or with its reset plan
     _new: >-
-      {{ (cassandra_new_node_state | default('') == 'new' and _cassandra_node_reset_plan is defined)
+      {{ (cassandra_new_node_state | default('') == 'new'
+          and (cassandra_node_standing.state | default('') == 'blank' or _cassandra_node_reset_plan is defined))
          or _cassandra_add_checked_new | default(false) | bool }}
 
 # --check: the reset add_node plans (reset_node_plan.yml) did not run, the node still holds the data a real

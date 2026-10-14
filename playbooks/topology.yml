@@ -52,6 +52,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
     _cassandra_preflight_adding: "{{ query('community.cassandra.cassandra_nodes') }}"  # a seed not in the ring yet is added
+    _cassandra_preflight_node_views: true  # where the hosts to add stand (node_standing.yml)
     _cassandra_notes_deferred: true  # its notes in the plan
 
 # Out of preflight: they are not part of the cluster any more, and may be gone

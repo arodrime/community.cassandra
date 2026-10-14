@@ -4,9 +4,11 @@
 #   ansible-playbook -i inventory community.cassandra.reset_node -e cassandra_target_nodes=node7
 # Cassandra is stopped and kept from starting at boot, then what its data,
 # commitlog, saved_caches, hints and cdc_raw directories hold is deleted (from
-# the inventory and the live cassandra.yaml). Refused on a node any up node of
-# the cluster lists in its ring (or when no other node answers as up), on a
-# running member, on a node of another cluster, and on paths that look wrong.
+# the inventory and the live cassandra.yaml). Refused unless where the node
+# stands allows it (cassandra_service node_standing.yml, docs: guide_output):
+# never a node any up node of the cluster lists in its ring (even down), one
+# running in another ring, another cluster's, one holding data whose ring
+# can't be checked (no other node answers as up), nor on paths that look wrong.
 # Shown, then confirmed once (cassandra_operation_confirm: false skips it);
 # --check shows it only. add_node (cassandra_add_node_reset) and
 # replace_node (cassandra_replace_node_reset) run the same reset themselves.
@@ -15,6 +17,7 @@
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
     _cassandra_preflight_target: reset  # what cassandra_target_nodes are
+    _cassandra_preflight_node_views: true  # where the nodes stand (node_standing.yml)
 
 - name: Reset the nodes
   hosts: "{{ cassandra_target_nodes }}"

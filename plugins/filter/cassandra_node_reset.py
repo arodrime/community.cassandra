@@ -11,9 +11,8 @@ cassandra_cluster_reset_check: create_cluster's reset of a whole cluster, only
     when every node of the ring is a host of the inventory's group.
 cassandra_node_reset_ring: whether the node may be reset, from the rings
     other nodes of the cluster see and, when Cassandra runs there, its own.
-cassandra_add_node_reset_check: add_node's reset, on by default: only a node
-    that is down, in no ring, of this cluster or the stock 'Test Cluster',
-    with no user keyspace but a failed bootstrap's of this cluster.
+(add_node's own reset, on by default, decides from the node's state:
+cassandra_node_standing.py, cassandra_add_node_reset_check.)
 cassandra_add_node_refusal: add_node's refusal of the new nodes it may not
     add or reset, one block, then what to do.
 """
@@ -28,6 +27,7 @@ import yaml
 
 from ansible.errors import AnsibleFilterError
 
+from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command as _command
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
 
@@ -49,7 +49,7 @@ SYSTEM_TREES = ("/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/l
 SYSTEM_DIRS = ("/home", "/media", "/mnt", "/opt", "/srv", "/tmp", "/var", "/var/cache", "/var/lib", "/var/local",
                "/var/log", "/var/mail", "/var/opt", "/var/spool", "/var/tmp")
 # the cluster name of the package's own cassandra.yaml (and Cassandra's default)
-STOCK_CLUSTER = "Test Cluster"
+STOCK_CLUSTER = standing.STOCK_CLUSTER
 # cassandra.yaml settings with this node's addresses
 LIVE_ADDRESSES = ("listen_address", "broadcast_address", "rpc_address", "broadcast_rpc_address")
 
@@ -215,18 +215,8 @@ def cassandra_node_reset_real(result, real, mounts=None, protected=None):
     return dict(result, dirs=dirs, problems=problems)
 
 
-def _addr(address):
-    """An address of nodetool status, without a :port (nodetool -pp)."""
-    a = str(address or "")
-    return a.rsplit(":", 1)[0] if a.count(":") == 1 else a
-
-
-def _loopback(address):
-    return address.startswith("127.") or address in ("::1", "0:0:0:0:0:0:0:1", "localhost")
-
-
-def _nodes(status):
-    return [n for dc in (status or {}).values() if isinstance(dc, dict) for n in dc.get("nodes") or []]
+_addr = standing._addr
+_nodes = standing._nodes
 
 
 def cassandra_node_reset_ring(answers, addresses, replace_address="", running=False, own=None, host="", known=None,
@@ -235,64 +225,26 @@ def cassandra_node_reset_ring(answers, addresses, replace_address="", running=Fa
     cluster_status, None when it did not answer) other nodes of the cluster
     see, and their own addresses; addresses: this node's addresses;
     replace_address: a replace of this node: that address may be in the
-    rings, down; running: Cassandra runs here; own: then its own ring (None:
+    rings, down; running: Cassandra runs there; own: then its own ring (None:
     it did not answer); known: the addresses of the cluster group's hosts;
     has_data: the node holds data (a down node no host of the inventory
     accounts for may be this one under an old address); cluster_ring: the
     whole cluster is reset (create_cluster), these are the addresses of its
     ring: the rings are not read, a node holding data must be in that one.
-    Returns {'problems', 'info'}."""
-    mine = set(_addr(a) for a in addresses or [] if a and not _loopback(_addr(a)))
+    Returns {'problems', 'info'}. Where the node stands (cassandra_node_standing)
+    reads the rings the same way (ring_view)."""
     name = host or "this node"
     if cluster_ring is not None:
-        if has_data and not mine & set(_addr(a) for a in cluster_ring):
+        me = standing.mine(addresses)
+        if has_data and not me & set(_addr(a) for a in cluster_ring):
             return {"problems": ["%s holds data but none of its addresses (%s) is in the ring of the cluster: a node of"
-                                 " another cluster?" % (name, ", ".join(sorted(mine)))], "info": []}
+                                 " another cluster?" % (name, ", ".join(sorted(me)))], "info": []}
         return {"problems": [], "info": ["the whole cluster is reset"]}
-    problems, info = [], []
-    own_ids = set()
-    if running:
-        if not own:
-            problems.append("Cassandra runs on %s but nodetool status does not answer there: whether it is a member of a"
-                            " cluster is unknown. Check it, stop it (systemctl stop cassandra), then run again" % name)
-        else:
-            # alone in its ring (e.g. the package's stock config on a loopback address): not a member
-            others = sorted(set(_addr(n.get("address")) for n in _nodes(own)) - mine)
-            if len(_nodes(own)) > 1 and others:
-                problems.append("Cassandra runs on %s and its ring has other nodes (%s): it is a member of a cluster,"
-                                " never reset a live member" % (name, ", ".join(others[:5]) + (", ..." if len(others) > 5 else "")))
-            own_ids = set(n.get("host_id") for n in _nodes(own) if _addr(n.get("address")) in mine and n.get("host_id"))
-    usable = []
-    for a in answers or []:
-        nodes = _nodes(a.get("status"))
-        own_addr = set(_addr(x) for x in a.get("addresses") or [])
-        if any(_addr(n.get("address")) in own_addr and n.get("status") == "U" and n.get("state") == "N" for n in nodes):
-            usable.append((a.get("host"), nodes))
-    if not usable:
-        tried = ", ".join(str(a.get("host")) for a in answers or []) or "none"
-        problems.append("no other node of the cluster answered as up and normal (UN) (asked: %s): whether %s is in the"
-                        " ring can't be checked, nothing is reset" % (tried, name))
-    for other, nodes in usable:
-        for n in nodes:
-            address = _addr(n.get("address"))
-            if address not in mine and n.get("host_id") not in own_ids:
-                if (has_data and n.get("status") == "D" and known is not None and address not in known
-                        and address != _addr(replace_address)):
-                    problems.append("%s sees %s down (host ID %s), a node no host of the inventory has: if it is %s"
-                                    " under an old address, its data would be lost. Remove it first (remove_dead_node),"
-                                    " or give the inventory host its address" % (other, address, n.get("host_id") or "?", name))
-                continue
-            seen = "%s%s, host ID %s" % (n.get("status", "?"), n.get("state", "?"), n.get("host_id") or "?")
-            if replace_address and address == _addr(replace_address) and n.get("status") == "D":
-                info.append("%s sees %s down (%s): the node being replaced" % (other, address, seen))
-            elif replace_address and address == _addr(replace_address):
-                problems.append("%s sees %s up (%s): only a dead node is replaced, never reset a live member"
-                                % (other, address, seen))
-            else:
-                problems.append("%s sees %s in its ring (%s): %s is a member of the cluster, never reset it."
-                                " A node leaves with decommission_node (remove_dead_node when dead), then can be reset"
-                                % (other, address, seen, name))
-    return {"problems": sorted(set(problems), key=problems.index), "info": info}
+    view = standing.ring_view(answers, addresses, standing.own_ids(addresses, running=running, own=own),
+                                replace_address, known, has_data)
+    info = ["%s sees %s down (%s): the node being replaced" % (other, _addr(n.get("address")), standing._seen(n))
+            for other, n in view["replaced"]]
+    return {"problems": standing.ring_problems(view, addresses, name, replace_address, running, own), "info": info}
 
 
 def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None):
@@ -337,19 +289,6 @@ def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None)
     return {"problems": problems, "info": info, "ring": result_ring}
 
 
-def _names(names, most=5):
-    names = sorted(names)
-    return ", ".join(names[:most]) + (", ..." if len(names) > most else "")
-
-
-def _user_keyspace(name):
-    return not str(name).startswith("system") and name != "lost+found"
-
-
-def _true_value(value):
-    return str(value).strip().lower() in ("true", "yes", "1")
-
-
 def cassandra_reset_choice(value):
     """cassandra_add_node_reset as one word: 'auto' (the default: only a
     node that can't hold anything of value), 'true' (given: also a former
@@ -364,117 +303,6 @@ def cassandra_reset_choice(value):
     # a typo must not reset a node the operator meant to keep
     raise AnsibleFilterError("cassandra_add_node_reset must be auto (the default), true or false, not %r: nothing was"
                              " changed" % (value,))
-
-
-def cassandra_add_node_reset_check(node, cluster_name, live_cluster=None, has_data=False, running=False, size=0,
-                                   keyspaces=None, peers=False, cluster_keyspaces=None, ring_problems=None, title="",
-                                   bootstrap_started=False, explicit=False):
-    """add_node's reset of a new node holding data (cassandra_add_node_reset,
-    on by default): done only when the node is down, in no ring, of this
-    cluster or the package's stock 'Test Cluster', and has no user keyspace
-    but the ones of a failed bootstrap of this cluster.
-    node: its name; cluster_name: this cluster's; live_cluster: the cluster
-    name of its live cassandra.yaml (Cassandra refuses to start with another
-    name than its data's; None: no such file, or unreadable); has_data: its
-    directories hold something; running: a Cassandra JVM runs there or the
-    unit is active; size: bytes in its directories; keyspaces: the keyspace
-    directories in its data directories; peers: its system.peers tables hold
-    data (it met other nodes); cluster_keyspaces: the cluster's keyspaces
-    (None: unknown); ring_problems: cassandra_node_reset_ring's problems (an
-    up node of the cluster sees it, no node answered...); title: how the
-    lines name it, e.g. "node7 (dc1/rack_b)"; bootstrap_started: add_node
-    started a bootstrap there that never ended (its mark on the node); else
-    a node of this cluster with its keyspaces is a former member (removed
-    with removenode, put back in the inventory), whose writes no other
-    replica got would be lost: refused unless explicit
-    (-e cassandra_add_node_reset=true given).
-    Returns {'reset': bool, 'problems': [...], 'line': str, 'holds': str,
-    'why': str, 'former': bool, 'way': str}: without data, nothing to reset (no line);
-    else the line for the plan ("... - will be reset") or the refusal, which
-    says what the node holds. holds and why: the refusal in short for
-    cassandra_add_node_refusal ("holds 12.0 GiB of cluster 'x' (keyspaces
-    shop), not in the ring, stopped", why it is refused); former: refused
-    only as a former member (reset_node or -e cassandra_add_node_reset=true
-    empties it); way: what to do about the first reason it is refused for."""
-    title = title or node
-    if not _true_value(has_data):
-        return {"reset": False, "problems": [], "line": "", "holds": "", "why": "", "former": False, "way": ""}
-    running = _true_value(running)
-    ring_problems = [ring_problems] if isinstance(ring_problems, str) else list(ring_problems or [])
-    users = sorted(set(k for k in keyspaces or [] if _user_keyspace(k)))
-    # a cluster that kept the stock name: a stock node is not known to be one of its own
-    ours = live_cluster is not None and live_cluster == cluster_name and cluster_name != STOCK_CLUSTER
-    problems = []
-    if running:
-        problems.append("Cassandra runs on it: add_node resets only a node where Cassandra is down. Stop it"
-                        " (systemctl stop cassandra) if it holds nothing you need, then run add_node again")
-    problems.extend(ring_problems)
-    if live_cluster is None:
-        problems.append("the cluster its data belongs to is unknown (no readable cassandra.yaml)")
-    elif live_cluster not in (cluster_name, STOCK_CLUSTER):
-        problems.append("its data is of cluster '%s', neither '%s' nor the package's stock '%s'"
-                        % (live_cluster, cluster_name, STOCK_CLUSTER))
-    elif _true_value(peers) and not ours:
-        problems.append("its system.peers lists other nodes: a member of another '%s' ring" % live_cluster)
-    if users and live_cluster is not None:
-        foreign = [k for k in users if cluster_keyspaces is not None and k not in cluster_keyspaces]
-        if not ours:
-            problems.append("it holds user keyspaces (%s): only a failed bootstrap of this cluster may" % _names(users))
-        elif cluster_keyspaces is None:
-            problems.append("it holds user keyspaces (%s) and the cluster's keyspaces could not be read: whether they"
-                            " are a failed bootstrap's can't be checked" % _names(users))
-        elif foreign:
-            problems.append("it holds keyspaces this cluster does not have (%s)" % _names(foreign))
-    # this cluster's keyspaces, and no bootstrap of add_node left unfinished there: a former member
-    former = bool(ours and users and cluster_keyspaces is not None and not problems
-                  and not _true_value(bootstrap_started))
-    if former and not _true_value(explicit):
-        problems.append("it holds this cluster's keyspaces (%s) and no bootstrap add_node left unfinished: a former"
-                        " member of this cluster (removed with removenode?). The writes only it holds would be lost:"
-                        " snapshot or copy its data directories first if in doubt, then -e cassandra_add_node_reset=true"
-                        " resets it" % _names(users))
-    seen = [p for p in ring_problems if " sees " in p]
-    ring = ("in the ring of this cluster" if seen else "ring unknown" if ring_problems
-            else "in another ring" if _true_value(peers) and not ours else "not in any ring")
-    held = ["%s" % cassandra_output.size(float(size or 0)), "cluster '%s'" % live_cluster if live_cluster is not None
-            else "cluster unknown"]
-    if users:
-        held.append("user keyspaces %s" % _names(users)
-                    + ((" (a former member of this cluster)" if former else " (a failed bootstrap of this cluster)")
-                       if ours and not problems else ""))
-    held.extend([ring, "running" if running else "down"])
-    holds = "%s: has data (%s)" % (title, ", ".join(held))
-    short = "holds %s of %s%s, %s, %s" % (
-        cassandra_output.size(float(size or 0)), ("cluster '%s'" % live_cluster) if live_cluster is not None
-        else "an unknown cluster", (" (keyspaces %s)" % _names(users)) if users else "",
-        {"not in any ring": "not in the ring"}.get(ring, ring), "running" if running else "stopped")
-    if problems:
-        only_former = former and len(problems) == 1
-        # the way out that works for the first reason, what it is refused for
-        if seen:
-            way = "a member of this cluster: never reset it; take it out of cassandra_target_nodes"
-        elif ring_problems:
-            way = "its ring could not be checked: wait until the cluster's nodes answer"
-        elif live_cluster is not None and live_cluster not in (cluster_name, STOCK_CLUSTER):
-            way = ("a node of another cluster: take it out of cassandra_target_nodes, or, if nothing it holds is needed,"
-                   " empty its directories by hand (reset_node refuses another cluster's node)")
-        elif running:
-            way = "if it holds nothing you need, stop Cassandra on it (systemctl stop cassandra): add_node then resets it"
-        elif users and live_cluster is not None and ours and cluster_keyspaces is None:
-            way = "let add_node read the cluster's keyspaces (CQL login: cassandra_cql_username, cassandra_cql_password)"
-        else:
-            way = ("check what it holds; if nothing is needed, empty it (reset_node), else take it out of"
-                   " cassandra_target_nodes")
-        return {"reset": False, "problems": problems, "holds": short, "former": only_former, "way": way,
-                "why": ("a former member of this cluster: the writes only it holds would be lost if wiped" if only_former
-                        else "; ".join(problems)),
-                "line": "%s: not reset automatically, %s. Nothing was changed: check what it holds; if nothing is"
-                        " needed, empty it (reset_node) or remove it from cassandra_target_nodes"
-                        % (holds, "; ".join(problems))}
-    given = (" (-e cassandra_add_node_reset=true: the writes only it holds are lost; snapshot or copy its data first"
-             " if in doubt)") if former else ""
-    return {"reset": True, "problems": [], "holds": short, "why": "", "former": False, "way": "",
-            "line": "%s \u2014 will be reset%s" % (holds, given)}
 
 
 def cassandra_add_node_refusal(refused, cluster="", operation="add_node", targets=None, inventory=None, hosts=None,
@@ -541,7 +369,6 @@ class FilterModule(object):
     def filters(self):
         return {
             "cassandra_add_node_refusal": cassandra_add_node_refusal,
-            "cassandra_add_node_reset_check": cassandra_add_node_reset_check,
             "cassandra_reset_choice": cassandra_reset_choice,
             "cassandra_cluster_reset_check": cassandra_cluster_reset_check,
             "cassandra_node_reset_dirs": cassandra_node_reset_dirs,
