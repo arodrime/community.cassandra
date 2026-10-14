@@ -398,6 +398,15 @@ def test_findings_carry_the_sentences():
     assert found[1]["kind"] == "count" and found[1]["ring"] == 2
 
 
+def test_report_names_ipv6_nodes_as_the_inventory_writes_them():
+    ring = [node("2001:db8:0:0:0:0:0:1"), node("2001:db8:0:0:0:0:0:4", status="D")]
+    per_host = {"n1": findings("n1", [view("n1", *ring)], expected=2)}
+    lines = cassandra_health_report(per_host, "c", ["n1", "n4"], unreachable=["n4"],
+                                    names={"2001:db8::1": "n1", "2001:db8::4": "n4", "n1": "n1", "n4": "n4"})["lines"]
+    assert lines[1] == "  ring:  n4 2001:db8:0:0:0:0:0:4 (r1) DN   seen from n1"
+    assert lines[-1].startswith("  1. bring n4 back (not reached over SSH, down in the ring)")
+
+
 def test_report_healthy():
     ring = [node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.3")]
     report = cassandra_health_report(dict((h, findings(h, [view(h, *ring)])) for h in ("n1", "n2", "n3")),

@@ -261,9 +261,13 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
     (tmp_path / "unit").write_text("[Unit]\n")
     out = tmp_path / "record.json"
     argv = [sys.executable, "-c", record["vars"]["_record"], str(conf), str(tmp_path / "unit"), str(out)]
-    # a process taken for Cassandra (its main class on its command line), started after the files
+    # a process taken for Cassandra (a java, its main class on its command line), started after the files;
+    # one that is not a java (a sudo, a grep) with that argument too is not it
+    java = tmp_path / "java"
+    java.symlink_to(sys.executable)
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "org.apache.cassandra.service.CassandraDaemon"])
     time.sleep(0.05)
-    jvm = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "org.apache.cassandra.service.CassandraDaemon"])
+    jvm = subprocess.Popen([str(java), "-c", "import time; time.sleep(60)", "org.apache.cassandra.service.CassandraDaemon"])
     try:
         time.sleep(1.2)
         (conf / "jvm17-server.options").write_text("edited after the start")
@@ -273,9 +277,12 @@ def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_sin
         assert sorted(k for k in got if k != "_jvm") == [str(conf / "cassandra.yaml"), str(tmp_path / "unit")]
         assert got[str(conf / "cassandra.yaml")] == hashlib.sha1(b"cassandra.yaml").hexdigest()
         assert oct(os.stat(str(out)).st_mode & 0o777) == "0o644"
+        # never a file planted at a temporary path (the directory is Cassandra's account's)
+        assert not [p for p in os.listdir(str(tmp_path)) if p.startswith(".ansible_config_at_start.")]
     finally:
-        jvm.kill()
-        jvm.wait()
+        for p in (jvm, other):
+            p.kill()
+            p.wait()
     # no JVM found: every file, no _jvm (apply_config then trusts it for nothing)
     subprocess.run(argv, check=True)
     got = json.loads(out.read_text())

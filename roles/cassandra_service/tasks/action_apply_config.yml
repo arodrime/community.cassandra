@@ -82,6 +82,40 @@
     _cassandra_change_report_quiet: true
   when: not ansible_check_mode
 
+# what the plan wrote back with no restart is on disk as the running Cassandra started with it
+- name: Check the files written back
+  when:
+    - cassandra_apply_config_as_started | default({}) | length > 0
+    - cassandra_apply_config_then | default('restart') == 'none'
+    - not ansible_check_mode
+  block:
+    - name: Checksum the files written back
+      ansible.builtin.stat:
+        path: "{{ _cassandra_service_conf_dir | trim | regex_replace('/+$', '') }}/{{ item }}"
+        checksum_algorithm: sha1
+        get_mime: false
+        get_attributes: false
+      loop: "{{ cassandra_apply_config_as_started.files }}"
+      register: cassandra_apply_config_written_back
+
+    - name: Stop if one differs from what Cassandra started with
+      ansible.builtin.assert:
+        that: _differ | length == 0
+        fail_msg: >-
+          {{ _differ | join(', ') }} written with another content than the running Cassandra started with (the plan
+          said no restart for {{ 'it' if _differ | length == 1 else 'them' }}): restart it (rolling_restart
+          -e cassandra_target_nodes={{ inventory_hostname }}) so that it runs with the inventory's config.
+        quiet: true
+      vars:
+        _differ: >-
+          {%- set out = [] -%}
+          {%- for r in cassandra_apply_config_written_back.results -%}
+          {%-   if r.stat.checksum | default('') != cassandra_apply_config_as_started.sha1[r.item] -%}
+          {%-     set _ = out.append(r.item) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
 # --check writes nothing: what the plan found on this node (the same role run in check mode, just before),
 # reported as a real run reports what it writes
 - name: Report what would be written

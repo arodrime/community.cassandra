@@ -261,14 +261,17 @@ def _stall(state, going):
 
 
 def _host_var(hostvars, host, *path):
-    """hostvars[host][path[0]][path[1]]... when it is a string, else ""."""
+    """hostvars[host][path[0]][path[1]]... when it is a string, else "" (also
+    for a template left as it is: hostvars gives that of a host without facts,
+    e.g. "{{ ansible_facts['default_ipv4']['address'] }}" when Ansible did not
+    reach it)."""
     try:
         value = hostvars[host]
         for key in path:
             value = value.get(key) or {}
     except Exception:  # pylint: disable=broad-except  # an undefined or broken template in that host's variables
         return ""
-    return value if isinstance(value, str) else ""
+    return value if isinstance(value, str) and "{{" not in value and "{%" not in value else ""
 
 
 def cassandra_stream_progress_by_host(views, states=None, **kwargs):
