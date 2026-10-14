@@ -28,6 +28,7 @@
       (groups: {{ groups | list | reject('in', ['all', 'ungrouped']) | sort | join(', ') }}).
       Name the cluster's group: -e cassandra_hosts=<group>. Nothing was changed.
     quiet: true
+  run_once: true  # its msg as is, not "localhost: ..." (ops callback)
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     # cassandra_hosts read as is: the lookup refuses a wrong one too (under --limit, where this play does not run)

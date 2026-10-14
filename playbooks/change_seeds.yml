@@ -137,6 +137,7 @@
           check_mode: true
       vars:
         cassandra_config_confirm: false
+        _cassandra_config_no_question: true  # a preview, whatever -e cassandra_config_confirm says
         cassandra_config_reload_seeds: false
         cassandra_seeds: "{{ _new }}"  # the seeds just applied
 

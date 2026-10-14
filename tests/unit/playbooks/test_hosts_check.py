@@ -64,7 +64,7 @@ def test_missing_group_named_with_the_groups():
 
 def test_the_refusal_is_a_verdict_and_the_group_line_is_the_default_callbacks():
     # ops callback: the refusal's message alone (marked), no "Cluster group ..." line on every run (not marked)
-    assert CHECK["vars"]["cassandra_output"] is True
+    assert CHECK["vars"]["cassandra_output"] is True and CHECK["run_once"] is True  # not "localhost: ..."
     assert "success_msg" not in CHECK["ansible.builtin.assert"]
     assert "cassandra_output" not in SAY["vars"]
     assert SAY["vars"]["_name"] == CHECK["vars"]["_name"]

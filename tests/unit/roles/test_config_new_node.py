@@ -160,6 +160,12 @@ def test_no_second_question_whatever_e_cassandra_config_confirm_says():
                   == "community.cassandra.cassandra_config"]
         assert [t["vars"].get("_cassandra_config_no_question") for t in writes] == said, path
     assert "_cassandra_config_no_question" not in open(os.path.join(TOP, "playbooks", "add_datacenter.yml")).read()
+    # the previews (apply: check_mode, under which ansible_check_mode stays false and the pause would run)
+    for playbook in ("apply_config.yml", "change_seeds.yml", "upgrade.yml"):
+        previews = [t for p in load("playbooks", playbook) for t in p.get("tasks", []) or []
+                    if (t.get("ansible.builtin.include_role") or {}).get("name") == "community.cassandra.cassandra_config"
+                    and (t["ansible.builtin.include_role"].get("apply") or {}).get("check_mode") is True]
+        assert previews and all(t["vars"]["_cassandra_config_no_question"] is True for t in previews), playbook
 
 
 def test_the_question_comes_after_the_diffs_it_is_about():

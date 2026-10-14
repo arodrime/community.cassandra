@@ -1191,7 +1191,10 @@ def test_a_marked_verdict_whose_template_fails_is_the_default_output(tmp_path):
 
 @pytest.mark.parametrize("msg", ["The conditional check 'a in b' failed. The error was: ...",
                                  "The task includes an option with an undefined variable.. 'x' is undefined",
-                                 "Task failed: Syntax error in expression"])
+                                 "Task failed: Syntax error in expression",
+                                 "Unexpected templating type error occurred on ({{ a + 1 }}): ...",
+                                 "An unhandled exception occurred while templating '{{ x }}'. ...",
+                                 "the field 'args' has an invalid value ({...}), and could not be converted to a dict."])
 def test_core_template_errors_are_not_verdicts(msg):
     from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
     callback = CallbackModule()
