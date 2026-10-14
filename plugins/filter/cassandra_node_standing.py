@@ -99,12 +99,20 @@ def _seen(node):
     return "%s%s, host ID %s" % (node.get("status", "?"), node.get("state", "?"), node.get("host_id") or "?")
 
 
-def _no_ring(view):
+def _unread_ring(view):
+    """Why the ring the cluster's nodes see is unknown, in short."""
+    if view.get("lone") and not view.get("silent"):
+        return "%s answered, each alone in its ring: which one is the cluster can't be told" % ", ".join(view["lone"])
     if view.get("lone"):
-        return ("only %s answered, alone in its ring, %s did not: whether it is in the ring can't be checked"
-                % (", ".join(view["lone"]), ", ".join(view["silent"])))
-    return ("no other node of the cluster answered UN (asked: %s): whether it is in the ring can't be checked"
-            % (", ".join(view["tried"]) or "none"))
+        return ("only %s answered, alone in its ring, while %s did not answer as up and normal (or Cassandra is stopped"
+                " there)" % (", ".join(view["lone"]), ", ".join(view["silent"])))
+    stopped = [h for h in view.get("silent") or [] if h not in view["tried"]]
+    return "no other node of the cluster answered as up and normal (UN) (asked: %s%s)" % (
+        ", ".join(view["tried"]) or "none", ("; Cassandra stopped on %s" % ", ".join(stopped)) if stopped else "")
+
+
+def _no_ring(view):
+    return "%s: whether it is in the ring can't be checked" % _unread_ring(view)
 
 
 def _unknown_down(view):
@@ -149,8 +157,10 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
     silent = [a for a in answers or [] if not a.get("status")
               or (len(_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, _ in out["usable"]])]
     out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
-    if _true(has_data) and silent:
-        out["lone"] = [h for h, nodes in out["usable"] if len(nodes) <= 1]
+    alone = [h for h, nodes in out["usable"] if len(nodes) <= 1]
+    if (_true(has_data) and silent) or (len(alone) > 1 and len(alone) == len(out["usable"])):
+        # several nodes each alone in its ring (a one-node cluster and a stray instance): which is the cluster?
+        out["lone"] = alone
         out["usable"] = [(h, nodes) for h, nodes in out["usable"] if len(nodes) > 1]
     for other, nodes in out["usable"]:
         for n in nodes:
@@ -195,12 +205,8 @@ def ring_problems(view, addresses, name, replace_address="", running=False, own=
             if len(_nodes(own)) > 1 and others:
                 problems.append("Cassandra runs on %s and its ring has other nodes (%s): it is a member of a cluster,"
                                 " never reset a live member" % (name, ", ".join(others[:5]) + (", ..." if len(others) > 5 else "")))
-    if not view["usable"] and view.get("lone"):
-        problems.append("only %s answered, alone in its ring, %s did not: whether %s is in the ring can't be checked,"
-                        " nothing is reset" % (", ".join(view["lone"]), ", ".join(view["silent"]), name))
-    elif not view["usable"]:
-        problems.append("no other node of the cluster answered as up and normal (UN) (asked: %s): whether %s is in the"
-                        " ring can't be checked, nothing is reset" % (", ".join(view["tried"]) or "none", name))
+    if not view["usable"]:
+        problems.append("%s: whether %s is in the ring can't be checked, nothing is reset" % (_unread_ring(view), name))
     for other, n in view["unknown_down"]:
         problems.append("%s sees %s down (host ID %s), a node no host of the inventory has: if it is %s"
                         " under an old address, its data would be lost. Remove it first (remove_dead_node),"
@@ -335,6 +341,8 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
 
     reasons = []
     ring = {"read": ring_read, "known": ring_known, "in_ring": "", "entry": {}, "seen_by": "", "tried": view["tried"],
+            # why it is unknown, when it is (the operator's words)
+            "why": "" if ring_known else _unread_ring(view),
             # the first node of the cluster that answered UN, one not alone in its ring first: the ring add_node plans with
             "from": ([h for h, nodes in view["usable"] if len(nodes) > 1] + [h for h, _ in view["usable"]] + [""])[0],
             "problems": ring_problems(view, addresses, name, replace_address, jvm, own) if ring_read else []}
