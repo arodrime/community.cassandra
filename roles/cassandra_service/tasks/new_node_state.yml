@@ -35,10 +35,11 @@
       ansible.builtin.assert:
         that: cassandra_node_standing.ring.known | bool
         fail_msg: >-
-          The ring of {{ lookup('community.cassandra.cassandra_hosts') }} can't be read ({{ cassandra_node_standing.ring.why }}):
-          nothing was changed. Check that Cassandra runs on its nodes and the JMX access (cassandra_jmx_port,
-          cassandra_jmx_username, cassandra_jmx_password); a host of the group that is not a member yet and is stopped:
-          start it, or take it out of the group.
+          The ring of {{ lookup('community.cassandra.cassandra_hosts') }} can't be read: {{ cassandra_node_standing.ring.why }}.
+          Nothing was changed. A member down: start it, and check the JMX access (cassandra_jmx_port,
+          cassandra_jmx_username, cassandra_jmx_password); a host of the group not in the cluster yet: put it in
+          cassandra_target_nodes, or take it out of the group; an instance alone in its ring that is not the cluster:
+          stop Cassandra there, or take that host out of the group.
         quiet: true
 
     # add_node (_cassandra_new_node_refused_by_caller): kept for its one refusal block of all the nodes

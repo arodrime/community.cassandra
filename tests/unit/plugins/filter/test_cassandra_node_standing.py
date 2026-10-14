@@ -182,8 +182,12 @@ def test_a_ring_that_does_not_count_makes_a_lone_one_set_aside():
                "status": _ring(N1, {"address": "10.0.0.3", "status": "U", "state": "J", "host_id": "id-3"})}
     out = _state(answers=LONE + [joining], **OURS)
     assert out["state"] == "unknown"
-    assert out["ring"]["why"] == ("only node1 answered, alone in its ring, while node3 did not answer as up and normal"
-                                  " (or Cassandra is stopped there)")
+    assert out["ring"]["why"] == "only node1 answered, alone in its ring; node3 did not answer as up and normal"
+    stopped = _state(answers=LONE + [{"host": "node3", "addresses": ["10.0.0.3"], "status": None, "asked": False}], **OURS)
+    assert stopped["ring"]["why"] == "only node1 answered, alone in its ring; Cassandra stopped on node3"
+    both = _state(answers=LONE + [STRAY, joining], **OURS)
+    assert both["ring"]["why"] == ("node1, node8 answered, each alone in its ring: which one is the cluster can't be"
+                                   " told; node3 did not answer as up and normal")
 
 
 def test_several_lone_rings_can_not_be_told_apart():
