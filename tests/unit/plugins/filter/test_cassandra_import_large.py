@@ -194,3 +194,25 @@ def test_a_default_is_never_folded_into_the_value_per_node_row():
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
     assert [line for line in screen if line.startswith("  cassandra_concurrent_writes:")][0].split()[1:5] == [
         "(a", "value", "per", "node)"]
+
+
+def test_jvm_moves_of_88_nodes_named_by_groups():
+    # part B's cassandra-env.sh hand edits moved, the options its JVM does not use, part C's not moved
+    nodes = fake_cluster()
+    for n in nodes:
+        if n["name"] in PART_B:
+            n.update(moved=["cassandra-env.sh, line 290: -XX:+UseNUMA -> cassandra_jvm11_extra_options"],
+                     rewritten=["cassandra-env.sh"],
+                     cleanup=["cassandra-env.sh, line 291: -XX:+UseParNewGC: not an option of Java 11"])
+        elif n["name"] in PART_C:
+            n["not_moved"] = "the running JVM's arguments not read"
+    layout = cassandra_inventory_layout(nodes, "Big Cluster")
+    report = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=160)
+    report = report[:report.index("DETAILS")]
+    moved = [line for line in report if "UseNUMA" in line or "UseParNewGC" in line or "rewrites cassandra-env.sh" in line
+             or "not moved to variables" in line]
+    assert len(moved) >= 4
+    for line in moved:
+        assert len(line) <= 160 and "db071, db072" not in line and "db101, db102" not in line, line
+    assert all(len(line) <= 100 for line in cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p",
+                                                                    in_git=True, screen=True, width=100)[1:])

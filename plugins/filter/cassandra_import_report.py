@@ -64,6 +64,12 @@ def _who(nodes, everyone, groups=None, full=True):
     return out.full_list(nodes) if full else _compress(nodes)
 
 
+def _nodes(nodes, everyone, groups=None, full=True):
+    """_who, "all nodes" for every one."""
+    who = _who(nodes, everyone, groups, full)
+    return "all nodes" if who == "all" else who
+
+
 def _rows(settings, everyone, where=None, full=True, groups=None, width=None, per_node=False):
     """settings: [(name, [(value text, [nodes])])], most nodes first -> the lines of a section: the setting, its
     value and the nodes that have it ("all": every one), a line per other value marked "<- differs" on the values
@@ -808,7 +814,8 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if moves:
         todo.append("cassandra-env.sh hand edits moved to variables (see MOVED%s): apply_config rewrites %s and"
                     " restarts %s (same JVM arguments)" % (" in the report" if screen else "", ", ".join(moves),
-                                                           _compress([n["name"] for n in read if n.get("rewritten")])))
+                                                           _nodes([n["name"] for n in read if n.get("rewritten")],
+                                                                  [n["name"] for n in read], groups, full)))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
@@ -914,7 +921,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                 not_moved.setdefault(n["not_moved"], []).append(n["name"])
         for why, who in sorted(not_moved.items()):
             lines.append("  cassandra-env.sh JVM_OPTS lines, heap: not moved to variables, %s (%s)" % (
-                why, "all" if sorted(who) == sorted(names) else out.full_list(who)))
+                why, _who(who, names, groups, full)))
         lines.append("")
 
     # NOT A CASSANDRA SETTING: cassandra.yaml keys the node's Cassandra rejects, not imported
@@ -933,15 +940,14 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if moved:
         lines.append("MOVED %s cassandra-env.sh hand edits now set by variables, the JVM gets the same arguments"
                      % DASH)
-        lines += _rows(moved, names, full=full)
+        lines += _rows(moved, names, full=full, groups=groups, width=width)
         rewrites = {}
         for n in read:
             if n.get("rewritten"):
                 rewrites.setdefault(", ".join(n["rewritten"]), []).append(n["name"])
         for files, members in sorted(rewrites.items()):
             lines.append("  apply_config rewrites %s on %s in the collection's layout (same JVM arguments; it"
-                         " restarts the nodes it writes)" % (files, "all nodes" if sorted(members) == sorted(names)
-                                                             else out.full_list(members)))
+                         " restarts the nodes it writes)" % (files, _nodes(members, names, groups, full)))
         lines.append("")
 
     # CLEANUP: options the running JVM does not use (where: option: why)
@@ -950,7 +956,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if cleanup:
         lines.append("CLEANUP %s options the running JVM does not use: left out of the lines moved, else left as they"
                      " are" % DASH)
-        lines += _rows(cleanup, names, full=full)
+        lines += _rows(cleanup, names, full=full, groups=groups, width=width)
         lines.append("")
 
     # LEFT AS IT IS: the parts left to the node as found, grouped by the nodes that have them
