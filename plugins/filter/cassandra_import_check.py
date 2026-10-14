@@ -443,7 +443,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                          " restart with %s)" % (", ".join(left_out), release, "it" if len(left_out) == 1 else "them"))
         try:
             found = _compare(name, live[name], rendered[name], storage_dir, left_out)
-        except (yaml.YAMLError, ET.ParseError, configparser.Error):
+        except (yaml.YAMLError, ET.ParseError, configparser.Error, RecursionError):
             found = ["%s: cannot be read as its program reads it (node's or the roles' version)" % name]
         # cassandra_config keeps a file only with the same settings by its own test: else it rewrites it
         # (a key left out: it rewrites it, as it should)

@@ -1035,7 +1035,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             changed[key] = value
     where[0] = "comparing the files with the role's"
     hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
-                                          moved["shown"])
+                                            moved["shown"])
     hand += jmx_note
     out = dict((k, v) for k, v in changed.items() if k not in RACKDC)
     if "cassandra-rackdc.properties" in live_files and not _snitch_reads_rackdc(found.get("cassandra_endpoint_snitch")):
@@ -1098,12 +1098,14 @@ def _jvm_moves(env, series, files, ctx, render, live_files, jvm):
     kept = jvm_files if keep is True else [f for f in jvm_files if f in keep]
     if kept:  # import_cluster_keep_hand_edits: those files left as they are (said with the files kept)
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
-    if jvm.get("jaas"):  # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note)
-        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [],
-                "not_moved": "JMX authenticates by JAAS (%s), not imported" % jvm["jaas"]}
 
     def rendered(variables):
         return dict((name, "\n".join(_render(env, series, name, variables)[1])) for name in jvm_files)
+    if jvm.get("jaas") and jvm_args.ENV in live_files and jvm_args.ENV in jvm_files \
+            and jvm_args._candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
+        # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note), its lines not moved
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [],
+                "not_moved": "JMX authenticates by JAAS (%s), not imported" % jvm["jaas"]}
     cmdline = str(jvm.get("cmdline") or "")
     if set(jvm.get("newer") or []) & set(jvm_files):
         cmdline = ""  # the files changed since the JVM started: its arguments are not theirs

@@ -542,16 +542,17 @@ def test_no_move_when_jmx_authenticates_by_jaas(tmp_path):
     assert node["moved"] == [] and node["rewritten"] == []
     assert node["not_moved"].startswith("JMX authenticates by JAAS")
     assert [e for e in node["hand_edits"] if e.startswith("JMX authentication by JAAS")]
+    # nothing to move (the stock line uncommented, with a variable: not a line to move): no reason either
+    files = node_files("50x", before_extra(
+        'JVM_OPTS="$JVM_OPTS -Djava.security.auth.login.config=$CASSANDRA_CONF/cassandra-jaas.config"'))
+    dummy, dummy2, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
+    assert [e for e in node["hand_edits"] if e.startswith("JMX authentication by JAAS")]
+    assert node["moved"] == [] and node["not_moved"] == ""
 
 
 def test_a_max_direct_memory_size_without_value_not_moved_no_error(tmp_path):
     files = node_files("50x", before_extra('JVM_OPTS="$JVM_OPTS -XX:+MaxDirectMemorySize"'))
-    cmdline = "\0".join(["java", "-XX:+MaxDirectMemorySize", "-Xss1M", "org.apache.cassandra.service.CassandraDaemon"])
-    try:
-        cmdline = launch(files, "17", tmp_path)
-    except Exception:  # pylint: disable=broad-except
-        pass
-    dummy, dummy2, node = imported(files, "50x", "17", cmdline)
+    dummy, dummy2, node = imported(files, "50x", "17", launch(files, "17", tmp_path))
     assert "cassandra_max_direct_memory_size" not in node["vars"]
 
 
@@ -562,6 +563,11 @@ def test_a_logback_xml_nested_too_deep_compared_by_its_lines():
     files["logback.xml"] = "<configuration>" + "<a>" * 3000 + "</a>" * 3000 + "<root level='INFO'/></configuration>"
     imported_files = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
     assert [e for e in imported_files["hand_edits"] if e.startswith("logback.xml")]
+    # cassandra_config's own test and the self-check: not the same, no failure
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
+
+    assert not same_settings("logback.xml", files["logback.xml"], node_files("50x")["logback.xml"])
+    assert [d for d in check(files, "50x")["differences"] if d.startswith("logback.xml")]
 
 
 @pytest.mark.parametrize("mine, other", [("-Xint", "-Xmixed"), ("-Xrs", "-XX:-ReduceSignalUsage"),
