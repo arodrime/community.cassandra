@@ -95,6 +95,8 @@
               | selectattr('cassandra_new_node_state', 'equalto', 'new') | map(attribute='inventory_hostname') | list }}"
     _joining: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
                   | selectattr('cassandra_new_node_state', 'equalto', 'joining') | map(attribute='inventory_hostname') | list }}"
+    _joined: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
+                 | selectattr('cassandra_new_node_state', 'equalto', 'joined') | map(attribute='inventory_hostname') | list }}"
     _existing: "{{ query('community.cassandra.cassandra_nodes') | reject('in', ansible_play_hosts_all) | list }}"
     # one token per node: the new nodes' tokens (cassandra_token_auto)
     _p0: "{{ hostvars[ansible_play_hosts_all[0]]._cassandra_preflight }}"
@@ -435,6 +437,7 @@
                   ~ cassandra_stream_stall_time | int | community.cassandra.cassandra_duration(true) ~ ' without progress.') if _new or _joining
                  else ('No node to add (' ~ ansible_play_hosts_all | join(', ') ~ ' already in the ring).') }}
             - "{{ ('Still bootstrapping, waited for first: ' ~ _joining | join(', ')) if _joining else '' }}"
+            - "{{ ('Already in the ring (an earlier run), only checked: ' ~ _joined | join(', ') ~ '.') if _joined and (_new or _joining) else '' }}"
           blocks: "{{ _blocks }}"
           after:
             - >-
@@ -540,14 +543,20 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # the nodes it prepares: not one already in the ring or still bootstrapping (an earlier run)
     - name: Say what the run does
       ansible.builtin.debug:
-        msg: "{{ 'prepare' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+        msg: "{{ 'prepare' | community.cassandra.cassandra_phase(_new) }}"
       run_once: true
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - _new | length > 0
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
+        _new: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
+             | selectattr('cassandra_new_node_state', 'equalto', 'new') | map(attribute='inventory_hostname') | list }}
 
     - name: Prepare this node
       vars:
@@ -660,9 +669,12 @@
         cassandra_service_resume_hint: >-
           Once fixed, run {{ _cassandra_screen_asked_by | default('') or 'add_node' }} again, the same command: the nodes
           already in the ring are only checked, a bootstrap still running is waited for.
-        # the progress lines' [i/n]
-        _cassandra_stream_index: "{{ ansible_play_hosts_all.index(inventory_hostname) + 1 }}"
-        _cassandra_stream_steps: "{{ ansible_play_hosts_all | length }}"
+        # the progress lines' [i/n]: the bootstraps (a node already in the ring, an earlier run's, has none)
+        _bootstraps: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | rejectattr('cassandra_new_node_state', 'equalto', 'joined')
+             | map(attribute='inventory_hostname') | list }}
+        _cassandra_stream_index: "{{ _bootstraps.index(inventory_hostname) + 1 if inventory_hostname in _bootstraps else 0 }}"
+        _cassandra_stream_steps: "{{ _bootstraps | length }}"
         cassandra_service_node_checks_before: false
         # not in the ring yet: this node and the ones after it that never started (--check: all of them)
         _pending: >-

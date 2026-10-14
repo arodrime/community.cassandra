@@ -1,0 +1,2 @@
+minor_changes:
+  - add_node - run again after an interrupted run, a node that joined meanwhile is said once and the same way everywhere - the screen says it is only checked (``Already in the ring (an earlier run), only checked: node4.``), the prepare line names the new nodes only, and the progress lines count the bootstraps left (``[1/1] node5``), no ``bootstrap NORMAL done 0s`` line for the node already in the ring.

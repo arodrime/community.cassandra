@@ -40,6 +40,7 @@
   when:
     - cassandra_service_wait_for_normal
     - not ansible_check_mode
+    - cassandra_new_node_state | default('new') != 'joined'  # in the ring already (an earlier run): nothing to follow
   module_defaults:
     community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
   block:
