@@ -35,11 +35,13 @@
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
-    _cassandra_preflight_members_down_ok: true  # a seed an interrupted window left drained or stopped
+    # any member seed down (e.g. one an interrupted window left drained or stopped): let through, the check before
+    # each window stops on any node down but that window's own
+    _cassandra_preflight_members_down_ok: true
 
 - name: Read the clocks
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
-  any_errors_fatal: true  # a node not read: none is changed
+  any_errors_fatal: true  # a node unreachable: none is changed
   gather_facts: false
   become: true
   tasks:
@@ -83,6 +85,19 @@
              else _v.action | default('none') }}
       vars:
         _v: "{{ _cassandra_clock_verdicts.nodes | selectattr('node', 'equalto', inventory_hostname) | first | default({}) }}"
+
+    - name: Refuse to go on when a clock could not be read
+      ansible.builtin.assert:
+        that: _unread | length == 0
+        fail_msg: >-
+          REFUSED  sync_clocks  the clock of {{ _unread | join(', ') }} could not be read
+          ({{ _unread | map('extract', hostvars, ['_cassandra_clock_read', 'msg']) | map('default', '') | join('; ') }}).
+          Nothing was changed.
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _unread: "{{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_clock_action', 'equalto', 'unread') | map(attribute='inventory_hostname') | list }}"
 
     - name: Group the nodes set live
       ansible.builtin.group_by:
