@@ -77,6 +77,7 @@
     mode: "0600"
   no_log: true
   diff: false
+  register: _cassandra_repository_credentials
   when:
     - ansible_facts['os_family'] == "Debian"
     - cassandra_install_username != ""
@@ -105,6 +106,7 @@
     update_cache: true
     cache_valid_time: 3600
   retries: 3
+  register: _cassandra_repository_debian_packages
   when: ansible_facts['os_family'] == "Debian"
 
 - name: Set the signing key path
@@ -122,6 +124,7 @@
     src: KEYS
     dest: "{{ _cassandra_repository_key_path }}"
     mode: "0644"
+  register: _cassandra_repository_key_shipped
   when: cassandra_repository_key_url == ""
 
 - name: Download the Cassandra signing keys and check their fingerprints
@@ -186,6 +189,7 @@
         dest: "{{ _cassandra_repository_key_path }}"
         remote_src: true
         mode: "0644"
+      register: _cassandra_repository_key_downloaded
   always:
     - name: Remove the downloaded file
       ansible.builtin.file:
@@ -204,6 +208,7 @@
     password: "{{ cassandra_install_password | default(omit, true) }}"
     mode: "{{ '0600' if cassandra_install_username != '' else '0644' }}"  # the file then holds the password
   diff: false  # the old file may hold a password
+  register: _cassandra_repository_yum
   when: ansible_facts['os_family'] == "RedHat"
 
 # One series at a time: after a series change (an upgrade), the old series'
@@ -214,6 +219,7 @@
     state: absent
   diff: false  # they may hold a password
   loop: "{{ ['311x', '40x', '41x', '50x'] | reject('equalto', cassandra_version) | list }}"
+  register: _cassandra_repository_old_yum
   when: ansible_facts['os_family'] == "RedHat"
 
 - name: Remove the repositories of the other series (Debian & Ubuntu)
@@ -229,6 +235,7 @@
   ansible.builtin.file:
     path: "/etc/apt/sources.list.d/cassandra-{{ cassandra_version }}.list"
     state: absent
+  register: _cassandra_repository_one_line
   when: ansible_facts['os_family'] == "Debian"
 
 # --check on a blank host: python3-debian, which deb822_repository needs even

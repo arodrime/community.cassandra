@@ -376,6 +376,7 @@
         _cassandra_config_initialized: "{{ _why | length > 0 }}"
         _cassandra_config_initialized_why: "{{ _why | join(', ') }}"
         _cassandra_config_left: "{{ _found | reject('in', _counted) | list }}"
+        _cassandra_config_own_dirs: "{{ _own }}"  # (said with _cassandra_config_left)
         _cassandra_config_reset: >-
           {{ '' if not _counted else "ONLY if this node never joined the real cluster (e.g. started once with the stock config),
           it can start over, which DELETES its data: stop Cassandra, check these are this node's dirs (not another
@@ -411,12 +412,15 @@
              + (['a path with "{" in the live cassandra.yaml'] if '{' in _cassandra_config_live_paths and not _new | bool else [])
              + (['Cassandra is running'] if _running | bool else []) }}
 
+    # in a prepare of new nodes (_cassandra_prepare_lines), said once for all of them after
+    # its step lines instead (cassandra_service prepare_lines.yml)
     - name: Say what a new node leaves as it is
       ansible.builtin.debug:
-        msg: >-
-          {{ inventory_hostname }}: an old system keyspace in {{ _cassandra_config_left | join(', ') }} (not one of its
-          data directories) is left as it is; the node starts empty in {{ [cassandra_data_file_directories] | flatten | join(', ') }}.
-      when: _cassandra_config_left | length > 0
+        msg: "{{ [{'name': inventory_hostname, 'left': _cassandra_config_left, 'dirs': _cassandra_config_own_dirs}]
+                 | community.cassandra.cassandra_left_system_warning }}"
+      when:
+        - _cassandra_config_left | length > 0
+        - not _cassandra_prepare_lines | default(false) | bool
       vars:
         cassandra_output: true
 

@@ -114,7 +114,10 @@ then a `WARNING - ...` line for what should be looked at (a filesystem on
 NFS, ZFS or btrfs, `lvchange` or `tuned-adm` failing, a tuned profile setting
 another read-ahead). Under `--check` it says `would be set`. With `-v`: the
 kernel names (`dm-2`), and why something is left alone or how a device is
-shared. What changes on each node is listed in its change report.
+shared. What changes on each node is listed in its change report. In a
+prepare of new nodes (add_node, create_cluster...), the summary comes after
+the prepare's step lines (`data disks  read-ahead 4 KB already set`), and only
+when something was set, a line to act on (not tuned yet, a restart to take it), a warning, or with `-v`.
 
 What read-ahead is used: the kernel reads ahead for a file (`read()`, and the
 read-around of `mmap` faults) with the read-ahead of the device its

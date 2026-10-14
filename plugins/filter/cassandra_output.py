@@ -13,6 +13,7 @@ cassandra_plan: {operation, cluster, version, summary, steps, facts, warnings,
     question} -> the plan screen.
 cassandra_progress_line: a cassandra_stream_progress state -> the progress line
     and the line of the other ends.
+cassandra_prepare_lines, cassandra_left_system_warning: what the prepare of new nodes did.
 cassandra_recap: [{node, outcome, status, seconds, reason}] -> the end of run recap.
 cassandra_perm_lines, cassandra_diff_lines, cassandra_changed_lines: what changed.
 cassandra_command, cassandra_todo, cassandra_inventory_steps,
@@ -24,6 +25,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import os
+
+from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
@@ -168,6 +171,18 @@ def cassandra_phase(name, names=None, node="", what="", count=None):
     return out.phase(name, names=names, node=node, what=what, count=count)
 
 
+def cassandra_prepare_lines(hosts, check=False):
+    """What the prepare of new nodes did, a line per step and group of nodes
+    (module_utils cassandra_output prepare_lines)."""
+    return out.prepare_lines(hosts, check=boolean(check, strict=False))
+
+
+def cassandra_left_system_warning(hosts):
+    """The WARNING about an old system keyspace left outside the data
+    directories of new nodes (module_utils cassandra_output left_system_warning)."""
+    return out.left_system_warning(hosts)
+
+
 def cassandra_check_what(present, kind="", targets=None, replacing="", run=None, absent=None):
     """What preflight's check line says of the cluster (module_utils
     cassandra_output check_what): "3 nodes; adding node4, node5"."""
@@ -215,6 +230,8 @@ class FilterModule(object):
             "cassandra_todo": cassandra_todo,
             "cassandra_phase": cassandra_phase,
             "cassandra_check_what": cassandra_check_what,
+            "cassandra_prepare_lines": cassandra_prepare_lines,
+            "cassandra_left_system_warning": cassandra_left_system_warning,
             "cassandra_path_from": cassandra_path_from,
             "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_reimport_hosts": cassandra_reimport_hosts,

@@ -69,5 +69,5 @@ def test_new_nodes_prepared_without_a_change_list_per_role():
         assert templar.template(trust_as_template(quiet)) is expected
     with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_change_report", "tasks", "main.yml"),
               encoding="utf-8") as f:
-        show = yaml.safe_load(f)[0]
+        show = next(t for t in yaml.safe_load(f) if t["name"].startswith("Show changes"))
     assert "not _cassandra_change_report_quiet | default(false) | bool" in show["when"]  # "False" as a string too

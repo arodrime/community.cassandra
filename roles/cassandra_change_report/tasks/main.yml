@@ -3,6 +3,17 @@
 #   cassandra_change_report_role: role name
 #   cassandra_change_report_items: [{item, before, after}] for what changes
 #   _cassandra_change_report_quiet: true when the caller shows them its own way (written all the same)
+#   cassandra_change_report_state: optional, what the role found (e.g. the version installed)
+# Kept per role in _cassandra_change_report_seen (no diff): the step lines of a
+# prepare read it (cassandra_service prepare_lines.yml)
+- name: Keep what changed ({{ cassandra_change_report_role }})
+  ansible.builtin.set_fact:
+    _cassandra_change_report_seen: >-
+      {{ _cassandra_change_report_seen | default({}) | combine({cassandra_change_report_role: {
+           'items': cassandra_change_report_items | default([], true) | map('dict2items')
+                    | map('selectattr', 'key', 'in', ['item', 'before', 'after']) | map('items2dict') | list,
+           'state': cassandra_change_report_state | default({})}}) }}
+
 - name: Show changes ({{ cassandra_change_report_role }})
   ansible.builtin.debug:
     msg: "{{ [inventory_hostname ~ ' (' ~ cassandra_change_report_role ~ '):'] + lines.splitlines() }}"

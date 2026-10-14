@@ -1,0 +1,9 @@
+---
+# Before a prepare of new nodes (action_add_prepare.yml, create_cluster): what
+# its step lines say (prepare_lines.yml) is this prepare's only
+- name: Forget what an earlier prepare did
+  ansible.builtin.set_fact:
+    _cassandra_change_report_seen: {}
+    _cassandra_repository_outcome: ""
+    _cassandra_config_left: []
+    _cassandra_config_own_dirs: []

@@ -581,8 +581,9 @@
           when: cassandra_new_node_state == 'new'
           vars:
             # a new node: every setting goes from absent to set, a list per role and node says nothing (-v, or
-            # cassandra_change_report_dir, still have them)
+            # cassandra_change_report_dir, still have them): a line per step instead, below
             _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"
+            _cassandra_prepare_lines: true
 
         # The package may start it at boot: a reboot while the nodes before it bootstrap would make it
         # join out of turn. Its start (main.yml) enables it again.
@@ -601,6 +602,7 @@
           when:
             - cassandra_new_node_state == 'new'
             - cassandra_add_node_enabled.stdout | default('') | trim == 'enabled'
+
       rescue:
         # any_errors_fatal: the other nodes come here too, without a failure of their own
         - name: Record the failure
@@ -646,6 +648,17 @@
                    hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'),
                    extra={} if _cassandra_screen_asked_by | default('')
                    else {'cassandra_target_nodes': cassandra_target_nodes}) }}
+
+    # every node at once: a line per step, the nodes with the same outcome together (after the block: what
+    # only prints never goes to its rescue, nor stops the add)
+    - name: Say what the prepare did
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: prepare_lines.yml
+      vars:
+        _cassandra_prepare_hosts: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_new_node_state', 'defined')
+             | selectattr('cassandra_new_node_state', 'equalto', 'new') | map(attribute='inventory_hostname') | list }}
 
 # Before the first start: the clocks of the new nodes (time sync started by
 # cassandra_linux, waited for) and of the running ones, none started when apart

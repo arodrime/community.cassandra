@@ -215,3 +215,5 @@ def test_the_summary_reads_the_nodes_that_tuned_their_disks():
     assert render(when, _nodes=[]) is False
     # apply_config's compare: in its view of the settings that differ instead
     assert render(when, _nodes=nodes, _cassandra_linux_quiet=True) is False
+    # in a prepare of new nodes: said after its step lines (cassandra_service prepare_lines.yml)
+    assert render(when, _nodes=nodes, _cassandra_prepare_lines=True) is False

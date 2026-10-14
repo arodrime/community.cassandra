@@ -41,6 +41,20 @@ Conventions
   bootstrap...``, ``Decommissioning node3...``, ``Waiting for every node to be UN...``, ``Restarting node2...``. Their
   words are in one place (``PHASES`` in ``plugins/module_utils/cassandra_output.py``, filter
   ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only.
+- **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
+  per step, the nodes with the same outcome together, in the progress colour::
+
+    node4, node5  repository  ok (already set)
+    node4         install     cassandra 5.0.9 (installed now)
+    node5         install     cassandra 5.0.9 (already installed)
+    node4, node5  os tuning   2 changes
+    node4, node5  data disks  read-ahead 4 KB already set
+    node4, node5  config      3 files written
+    node4, node5  firewall    off (cassandra_manage_firewall: false)
+
+  ``would ...`` under ``--check`` (``prepare_lines``, filter ``community.cassandra.cassandra_prepare_lines``,
+  from each role's change report: the lists per role and node with ``-v`` or in ``cassandra_change_report_dir``).
+  The data disks' summary follows only when something was set, a line to act on (not tuned yet, a restart to take it), a warning, or with ``-v``.
 - **Progress**: one line per check, then always a compact line of the nodes at the other end::
 
     [1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m
