@@ -933,8 +933,8 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     (under check too), "CHECK  op  cluster  would restart 6 nodes  nothing
     was changed" under check, "NOTHING TO DO" when no node did anything. Then the nodes grouped by identical outcome ("node1..node6
     restarted  (1m49s..1m58s each)"), and a line of its own for a node more
-    than slow_factor times the median of its group (slow), a failed node and
-    the skipped ones, with the reason. extra: lines added after (the ring
+    than slow_factor times the median of its group (slow), a failed node (its
+    reason on the line under it) and the skipped ones, with the reason. extra: lines added after (the ring
     after, versions...). full: every name (-v)."""
     outcomes = list(outcomes or [])
     for item in outcomes:
@@ -985,14 +985,19 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
             rows.append([nodes([o["node"] for o in usual], keep_order=True, full=full), word, note])
         for o in slow:
             rows.append([o["node"], word, "%s  %s slow (median %s)" % (duration(o["seconds"]), ARROW, duration(middle))])
+    # a failure's reason on its own line under its row: the columns are not sized on it
+    under = {}
     for o in failed:
-        rows.append([o["node"], "FAILED" + (": %s" % o["reason"] if o.get("reason") else ""), ""])
+        if o.get("reason"):
+            under[len(rows)] = "    %s" % o["reason"]
+        rows.append([o["node"], "FAILED", ""])
     reasons = {}
     for o in skipped:
         reasons.setdefault(o.get("reason") or "", []).append(o["node"])
     for reason, names in reasons.items():
         rows.append([nodes(names, keep_order=True, full=full), "not touched" + (" (%s)" % reason if reason else ""), ""])
-    lines += _table(rows, "  ")
+    for i, line in enumerate(_table(rows, "  ")):
+        lines += [line] + ([under[i]] if i in under else [])
     if extra:
         lines += [""] + list(extra)
     return lines

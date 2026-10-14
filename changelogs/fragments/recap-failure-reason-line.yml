@@ -1,0 +1,2 @@
+minor_changes:
+  - node operation recaps - a failed node's reason is on its own line under its row, so a long reason no longer widens the columns of the other rows (``node1  restarted`` followed by hundreds of spaces before its time).
