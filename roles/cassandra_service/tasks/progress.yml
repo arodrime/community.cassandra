@@ -82,6 +82,7 @@
       loop: "{{ cassandra_progress_old.files | default([]) }}"
       loop_control:
         label: "{{ item.path | basename }}"
+      diff: false
 
     - name: Find the progress file to resume
       ansible.builtin.find:

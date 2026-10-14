@@ -1233,3 +1233,17 @@ def test_core_template_errors_are_not_verdicts(msg):
     task.action = "ansible.builtin.assert"
     assert callback._own_failure(_Result(task, "node1", msg)) is False
     assert callback._own_failure(_Result(task, "node1", "Seed n5 is not up")) is True
+
+
+def test_a_task_with_diff_false_shows_no_diff():
+    # ansible-core 2.16-2.18 call v2_on_file_diff under --diff whatever the task's diff: says
+    from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule
+    callback = CallbackModule()
+    shown = []
+    callback._display = type("D", (), {"display": lambda self, msg, *a, **k: shown.append(msg)})()
+    task = _Task(run_once=False)
+    task.diff = False
+    result = _Result(task, "node1", "")
+    result._result = {"changed": True, "diff": {"before": "state: absent\n", "after": "state: directory\n"}}
+    callback.v2_on_file_diff(result)
+    assert shown == []

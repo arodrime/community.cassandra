@@ -657,6 +657,8 @@ class CallbackModule(DefaultCallback):
         return self._default("v2_runner_on_async_failed", result)
 
     def v2_on_file_diff(self, result):
+        if getattr(_task(result), "diff", True) is False:
+            return  # the task's own diff: false (ansible-core 2.16-2.18 call this under --diff all the same)
         res = _result(result)
         super(CallbackModule, self).v2_on_file_diff(result)
         items = res["results"] if _task(result).loop and "results" in res else [res]
