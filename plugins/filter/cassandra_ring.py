@@ -5,8 +5,8 @@ readable lines for the status playbook: a header line (the cluster, the node
 the ring is seen from), the nodes per datacenter as nodetool status shows them
 (the ones not UN marked), a summary table of its racks and the datacenter,
 where the inventory and the ring differ, and last the verdict (the nodes down,
-joining, leaving or moving; a ring that differs). Blank lines between the
-blocks."""
+joining, leaving or moving; under it, a WARNING line if the ring and the
+inventory differ). Blank lines between the blocks."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -19,6 +19,7 @@ from ansible_collections.community.cassandra.plugins.module_utils import cassand
 
 _STATES = [("U", "up"), ("D", "down"), ("J", "joining"), ("L", "leaving"), ("M", "moving")]
 _IP = re.compile(r"^[0-9.]+$|:")
+_DIFFER = "WARNING - ring and inventory differ"  # the verdict's second line, when they do
 
 
 def _bytes(load):
@@ -105,11 +106,12 @@ def _header(cluster, seen_from, matches, members, total):
 
 
 def _verdict(nodes, differ, unreached=()):
-    """"ALL 3 NODES UP" or "1 NODE DOWN: node2 (dc1/rack_b)", then the nodes
-    joining, leaving or moving and a ring that differs from the inventory.
-    nodes: (name, datacenter, node) of each node of the ring. unreached: the
-    hosts Ansible did not reach: "1 NODE NOT REACHED: node3" (except the ones
-    down), never ALL UP then (the ring's view, gossip, can be late)."""
+    """The verdict lines: "ALL 3 NODES UP" or "1 NODE DOWN: node2 (dc1/rack_b)",
+    then the nodes joining, leaving or moving; under it, a ring that differs
+    from the inventory as a warning line of its own (_DIFFER). nodes: (name,
+    datacenter, node) of each node of the ring. unreached: the hosts Ansible
+    did not reach: "1 NODE NOT REACHED: node3" (except the ones down), never
+    ALL UP then (the ring's view, gossip, can be late)."""
     down = ["%s (%s/%s)" % (name, dc, n["rack"]) for name, dc, n in nodes if n["status"] == "D"]
     unreached = [h for h in unreached if h not in [name.rstrip("?") for name, dc, n in nodes if n["status"] == "D"]]
     parts = [("%s DOWN: %s" % (out.plural(len(down), "NODE", "NODES"), ", ".join(down)))] if down else []
@@ -120,9 +122,7 @@ def _verdict(nodes, differ, unreached=()):
         moving = [name for name, dc, n in nodes if n["status"] == "U" and n["state"] == letter]
         if moving:
             parts.append("%d %s: %s" % (len(moving), word.upper(), ", ".join(moving)))
-    if differ:
-        parts.append("RING AND INVENTORY DIFFER")
-    return u" \u2014 ".join(parts)
+    return [u" \u2014 ".join(parts)] + ([_DIFFER] if differ else [])
 
 
 def _taken_for(owner, elsewhere, nodes, inventory, unreachable, places):
@@ -226,7 +226,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
         lines.extend([""] + notes)
     if named:
         # a ring node that is another host of the inventory: expected under --limit or a sub-group, not a problem
-        lines.extend(["", _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable])])
+        lines.extend([""] + _verdict(named, bool(missing or stray or leaving), [h for h in inventory if h in unreachable]))
     return lines[1:] if lines[:1] == [""] else lines
 
 

@@ -518,16 +518,22 @@ def test_colours_by_line_start():
 
 def test_status_verdict_and_table_rows_coloured():
     from ansible import constants as C
-    from ansible_collections.community.cassandra.plugins.callback.ops import colour
+    from ansible_collections.community.cassandra.plugins.callback.ops import colour, WARNING_COLOR
     assert colour("ALL 5 NODES UP") == colour("ALL 1 NODE UP") == C.COLOR_OK
     assert colour(u"ALL 6 NODES UP \u2014 1 JOINING: node6") == C.COLOR_CHANGED
     assert colour("1 NODE DOWN: node1 (dc1/rack1)") == colour("2 NODES DOWN: node1 (dc1/r1), node4 (dc1/r2)") \
         == colour(u"1 NODE DOWN: node1 (dc1/r1) \u2014 1 LEAVING: node3") == C.COLOR_ERROR
-    assert colour(u"ALL 5 NODES UP \u2014 RING AND INVENTORY DIFFER") == C.COLOR_ERROR
-    assert colour(u"ALL 5 NODES UP \u2014 1 JOINING: node6 \u2014 RING AND INVENTORY DIFFER") == C.COLOR_ERROR
     assert colour("1 NODE NOT REACHED: node3") == colour("2 NODES NOT REACHED: node3, node4") == C.COLOR_ERROR
-    from ansible_collections.community.cassandra.plugins.callback.ops import _RING_VERDICT
-    assert _RING_VERDICT.match("1 NODE NOT REACHED: node3")  # the report's last line, framed as the verdict
+    # a ring that differs: a warning line of its own, under the nodes' line (coloured by the nodes alone)
+    assert colour("WARNING - ring and inventory differ") == WARNING_COLOR
+    from ansible_collections.community.cassandra.plugins.callback.ops import _RING_DIFFER, _ring_verdict
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _DIFFER
+    assert _RING_DIFFER.match(_DIFFER)  # the filter's line, the one the callback frames
+    verdict = ["ALL 5 NODES UP", "WARNING - ring and inventory differ"]
+    assert _ring_verdict(["c", "", "1 NODE NOT REACHED: node3", ""]) == (["c"], ["1 NODE NOT REACHED: node3"])
+    assert _ring_verdict(["c", "", "notes", ""] + verdict + [""]) == (["c", "", "notes"], verdict)
+    texts = ["c", "", "WARNING - ring and inventory differ"]  # no verdict above it: not the status report
+    assert _ring_verdict(texts) == (texts, [])
     # the table rows by their state, never by the line above (a UN row under a DN one stays plain)
     assert colour(u" DN  10.0.0.5  5.25 GiB  16  22.5%  1e96  r1  node1  \u2190 down") == C.COLOR_ERROR
     assert colour(" DL  10.0.0.5  ?  16  22.5%  1e96  r1  node1") == C.COLOR_ERROR
@@ -727,6 +733,30 @@ def test_the_status_report_is_a_screen_its_verdict_between_rules(tmp_path):
     assert shown(output) == ["====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "",
                              " --  Address   Rack", " DN  10.0.0.2  r1", "", "  dc1   3 nodes   2 up, 1 down", "",
                              "====", "", "1 NODE DOWN: node2 (dc1/r1)", "", "====", ""]
+
+
+def test_the_status_verdict_and_its_warning_between_rules(tmp_path):
+    playbook = u"""
+- hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Show the ring
+      ansible.builtin.debug:
+        msg: ["my_cluster  (ring and inventory differ, 4 nodes)", "", "Datacenter: dc1", "",
+              "In the ring, not in the inventory: 10.0.0.9 (dc1, UN)", "",
+              "ALL 4 NODES UP", "WARNING - ring and inventory differ"]
+      vars:
+        cassandra_output: true
+"""
+    rc, output = run(tmp_path, playbook)
+    assert rc == 0 and "\x1b" not in output, repr(output)
+    assert shown(output)[-9:] == ["In the ring, not in the inventory: 10.0.0.9 (dc1, UN)", "",
+                                  "====", "", "ALL 4 NODES UP", "WARNING - ring and inventory differ", "", "====", ""]
+    rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
+    assert rc == 0, output
+    # the nodes' line green, the warning in the warning colour
+    assert "\x1b[0;32mALL 4 NODES UP\x1b[0m\n\x1b[1;35mWARNING - ring and inventory differ\x1b[0m" in output, \
+        repr(output)
 
 
 def test_no_status_screen_without_a_verdict_last(tmp_path):

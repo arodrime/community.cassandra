@@ -43,13 +43,13 @@ description:
     of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  applied))). The rows of
     a C(FAILED) recap do not keep its colour (the nodes done stay plain). The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
-    as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) and a ring that differs from the inventory as an error; the
-    rows of its table (C( DN  10.0.0.5 ...)) by the node's state, down as an error, joining, leaving or moving as
-    a change. The messages themselves stay plain text.
+    as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) as an error; a ring that differs from the inventory, a
+    C(WARNING - ...) line under the verdict, as a warning; the rows of its table (C( DN  10.0.0.5 ...)) by the
+    node's state, down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
   - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
     C(REFUSED  ...), C(READY  ...), C(IMPORT <cluster> ...), or an operation's screen header) and around a recap (C(DONE  ...),
     C(FAILED  ...), C(CHECK  ...), C(NOTHING TO DO  ...), C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
-    verdict, its last line. A light one (C(-----)) for each empty line inside them (the blank lines of the status
+    verdict, its last line (and the warning under it). A light one (C(-----)) for each empty line inside them (the blank lines of the status
     report stay blank), under a plan's first line and above a question, and one naming the node above the first
     progress line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
@@ -154,7 +154,7 @@ _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|NOT HEALTHY|UNREACHABLE)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
-    (re.compile(r"\d+ NODES? (DOWN|NOT REACHED): |ALL \d+ NODES? UP\b.* DIFFER$"), "COLOR_ERROR"),  # the status verdict
+    (re.compile(r"\d+ NODES? (DOWN|NOT REACHED): "), "COLOR_ERROR"),  # the status verdict
     (re.compile(r"IMPORT \S+ .*\bFAILED\b|CHECK\b.*\bfailed\b"), "COLOR_ERROR"),
     (_WARNING, "WARNING"),
     (re.compile(r"ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),
@@ -181,13 +181,29 @@ _HEADED = re.compile(r"(PLAN|REFUSED|READY|NOTHING TO DO)  |IMPORT \S+ |(add_nod
                      r"remove_datacenter|create_cluster|upgrade|cleanup|topology|rolling_restart|rolling_reboot)( on cluster |: |$)")
 _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
-# the status playbook's verdict, its last line: heavy rules around it
+# the status playbook's verdict, its last line or the one above a ring that differs: heavy rules around them
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
+_RING_DIFFER = re.compile(r"WARNING - ring and inventory differ$")
 # a row of the status playbook's nodetool table: its colour by the node's state
 _RING_ROW = re.compile(r" ([UD])([NJLM])  \S")
 # the help playbook's text: a rule naming a section, an operation (its key), a command
 _HELP_RULE = re.compile(r"(====|----) (\S.*?) [=-]{4,}$")
 _HELP_COMMAND = re.compile(r"\s*\$ ")
+
+
+def _ring_verdict(texts):
+    """(the lines above, the verdict lines) of the status playbook's report, its verdict last (its warning
+    under it), the blank lines around them left out; (texts, []) for any other message."""
+    shown = list(texts)
+    while shown and not shown[-1].strip():
+        shown.pop()
+    size = 2 if len(shown) > 1 and _RING_DIFFER.match(shown[-1]) else 1
+    if not shown or not _RING_VERDICT.match(shown[-size]):
+        return texts, []
+    above = shown[:-size]
+    while above and not above[-1].strip():
+        above.pop()
+    return above, shown[-size:]
 
 
 def shade(name, progress=PROGRESS_COLOR, warning=None):
@@ -436,13 +452,9 @@ class CallbackModule(DefaultCallback):
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
-        last = next((t for t in reversed(texts) if t.strip()), "")
-        ring = _RING_VERDICT.match(last) is not None  # the status report: a screen, its verdict last
+        texts, ring = _ring_verdict(texts)  # the status report: a screen, its verdict last, printed between rules
         if ring:
             headed = recap = step = phase = None  # its first line is the cluster's name, whatever that name is
-            texts = texts[:max(i for i, t in enumerate(texts) if t.strip())]  # the verdict printed last, between rules
-            while texts and not texts[-1].strip():
-                texts.pop()
         if headed or recap or ring:
             self._rule(heavy=True)
         elif self._gap and step:
@@ -472,7 +484,8 @@ class CallbackModule(DefaultCallback):
                 shades = []
         if ring:
             self._rule(heavy=True)
-            self._line(last, color=color or colour(last, None, self._progress, self._warning))
+            for line in ring:
+                self._line(line, color=color or colour(line, None, self._progress, self._warning))
         if recap or ring:
             self._rule(heavy=True)
         elif phase:

@@ -74,12 +74,12 @@ def test_mismatches_both_ways():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.7", "D"), node("10.0.0.8", "D")),
                                   {"n1": ["10.0.0.1"], "n2": ["10.0.0.2"], "n3": ["n3"]}, unreachable=["n3"])
     assert " DN  10.0.0.7  1.0 GiB  16      33.3%  id-10.0.0.7  r1    -          \u2190 down" in lines
-    assert lines[-5:] == ["",
+    assert lines[-6:] == ["",
                           "In the inventory, not in the ring: n2, n3 (unreachable)",
                           "In the ring, not in the inventory: 10.0.0.7 (dc1, DN), 10.0.0.8 (dc1, DN)",
                           "",
-                          u"2 NODES DOWN: 10.0.0.7 (dc1/r1), 10.0.0.8 (dc1/r1) \u2014 1 NODE NOT REACHED: n3"
-                          u" \u2014 RING AND INVENTORY DIFFER"]
+                          u"2 NODES DOWN: 10.0.0.7 (dc1/r1), 10.0.0.8 (dc1/r1) \u2014 1 NODE NOT REACHED: n3",
+                          "WARNING - ring and inventory differ"]
 
 
 def test_an_unreachable_host_known_by_no_address_taken_for_the_one_ring_node_no_host_has():
@@ -98,9 +98,9 @@ def test_an_unreachable_host_known_by_no_address_taken_for_the_one_ring_node_no_
     assert cassandra_ring_report(down, inventory, unreachable=["h3"])[-1] == "1 NODE DOWN: h3? (dc1/r1)"
     # in another rack than that node, or two such hosts: no guess
     lines = cassandra_ring_report(status, inventory, unreachable=["h3"], places={"h3": ["dc1", "r2"]})
-    assert lines[-1] == u"1 NODE NOT REACHED: h3 \u2014 RING AND INVENTORY DIFFER"
+    assert lines[-2:] == ["1 NODE NOT REACHED: h3", "WARNING - ring and inventory differ"]
     lines = cassandra_ring_report(status, dict(inventory, h4=["h4"]), unreachable=["h3", "h4"])
-    assert lines[-1] == u"2 NODES NOT REACHED: h3, h4 \u2014 RING AND INVENTORY DIFFER"
+    assert lines[-2:] == ["2 NODES NOT REACHED: h3, h4", "WARNING - ring and inventory differ"]
     # known by its address (the import's ansible_host): matched, not reached
     lines = cassandra_ring_report(status, dict(inventory, h3=["h3", "10.0.0.4"]), unreachable=["h3"])
     assert " UN  10.0.0.4  1.0 GiB  16      33.3%  id-10.0.0.4  r1    h3" in lines
@@ -180,13 +180,13 @@ def test_no_dns_when_every_ring_address_is_known(monkeypatch):
         raise AssertionError("resolved " + name)
     monkeypatch.setattr(cassandra_ring.socket, "getaddrinfo", fail)
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["n1", "10.0.0.1"], "n2": ["n2"]})
-    assert lines[-3:] == ["In the inventory, not in the ring: n2", "", u"ALL 1 NODE UP \u2014 RING AND INVENTORY DIFFER"]
+    assert lines[-4:] == ["In the inventory, not in the ring: n2", "", "ALL 1 NODE UP", "WARNING - ring and inventory differ"]
 
 
 def test_limited_run_labels_the_other_ring_nodes():
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.2")), {"n1": ["10.0.0.1"]}, limited=True)
-    assert lines[-3:] == ["In the ring, not in this run (--limit): 10.0.0.2 (dc1, UN)", "",
-                          u"ALL 2 NODES UP \u2014 RING AND INVENTORY DIFFER"]
+    assert lines[-4:] == ["In the ring, not in this run (--limit): 10.0.0.2 (dc1, UN)", "",
+                          "ALL 2 NODES UP", "WARNING - ring and inventory differ"]
 
 
 def test_sub_group_named_and_other_inventory_hosts_told_apart():
@@ -195,9 +195,10 @@ def test_sub_group_named_and_other_inventory_hosts_told_apart():
         ring(node("10.0.0.1"), node("10.0.0.2"), node("10.0.0.9", "D")), {"n1": ["10.0.0.1"], "n3": ["10.0.0.3"]},
         group="group dc1_nodes", outside={"n2": ["n2", "10.0.0.2"], "other": ["other", ""]})
     assert " UN  10.0.0.2  1.0 GiB  16      33.3%  id-10.0.0.2  r1    -" in lines
-    assert lines[-5:-2] == ["In group dc1_nodes, not in the ring: n3",
+    assert lines[-6:-3] == ["In group dc1_nodes, not in the ring: n3",
                             "In the ring and the inventory, not in group dc1_nodes: 10.0.0.2 = n2 (dc1, UN)",
                             "In the ring, not in group dc1_nodes nor found elsewhere in the inventory: 10.0.0.9 (dc1, DN)"]
+    assert lines[-2:] == ["1 NODE DOWN: 10.0.0.9 (dc1/r1)", "WARNING - ring and inventory differ"]
     lines = cassandra_ring_report(ring(node("10.0.0.1")), {"n1": ["10.0.0.1"]}, group="group dc1_nodes", outside={})
     assert lines[-3] == "The ring and group dc1_nodes match (1 node)"
 
@@ -216,8 +217,8 @@ def test_hosts_marked_absent_still_in_the_ring():
     outside = {"n3": ["n3", "10.0.0.3"], "m1": ["m1", "10.0.0.9"]}
     lines = cassandra_ring_report(ring(node("10.0.0.1"), node("10.0.0.3", state="L"), node("10.0.0.9")),
                                   {"n1": ["10.0.0.1"]}, group="group prod", outside=outside, absent=["n3"])
-    assert lines[-1] == u"ALL 3 NODES UP \u2014 1 LEAVING: n3 \u2014 RING AND INVENTORY DIFFER"  # n3, absent
-    assert lines[-4:-2] == [
+    assert lines[-2:] == [u"ALL 3 NODES UP \u2014 1 LEAVING: n3", "WARNING - ring and inventory differ"]  # n3, absent
+    assert lines[-5:-3] == [
         "In the ring and the inventory, not in group prod: 10.0.0.9 = m1 (dc1, UN)",
         "Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): 10.0.0.3 = n3 (dc1, UL)"]
     # gone from the ring: the ring and the group match
@@ -261,6 +262,7 @@ def test_header_and_verdict_states_and_mismatch():
                                   seen_from="n1", limited=True)
     assert lines[0] == "prod  (seen from n1, ring and this run (--limit) differ, 3 nodes)"
     assert lines[5].endswith("← joining") and lines[6].endswith("← leaving")
-    assert lines[-5:] == ["", "In this run (--limit), not in the ring: n3",
+    assert lines[-6:] == ["", "In this run (--limit), not in the ring: n3",
                           "In the ring, not in this run (--limit): 10.0.0.9 (dc1, UN)", "",
-                          u"ALL 3 NODES UP \u2014 1 JOINING: n1 \u2014 1 LEAVING: n2 \u2014 RING AND INVENTORY DIFFER"]
+                          u"ALL 3 NODES UP \u2014 1 JOINING: n1 \u2014 1 LEAVING: n2",
+                          "WARNING - ring and inventory differ"]

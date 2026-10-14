@@ -1,0 +1,3 @@
+minor_changes:
+  - >-
+    status playbook - a ring that differs from the inventory is now a second verdict line, ``WARNING - ring and inventory differ``, in the warning colour, instead of ``— RING AND INVENTORY DIFFER`` at the end of the first line; the first line keeps the colour of the nodes' state (``ALL 4 NODES UP`` green). Under the ops callback, both lines are between the heavy rules.
