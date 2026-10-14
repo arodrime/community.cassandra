@@ -178,6 +178,15 @@ def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "2"
 
 
+def test_a_node_whose_read_fails_is_refused(tmp_path):
+    # the probe itself fails there (its Python gone): refused, named, not left out of the comparison
+    setup(tmp_path, {"node1": synced(), "node2": synced()})
+    (tmp_path / "bin" / "python-node2").write_text("#!/bin/sh\nexit 127\n")
+    rc, out = run(tmp_path, CHECK)
+    assert rc != 0, out
+    assert "  node2  NOT READ  its clock could not be read" in out
+
+
 def test_the_check_can_be_skipped(tmp_path):
     fake = setup(tmp_path, {"node1": synced(), "node2": {"installed": "chronyd\n"}})
     rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_check": False})

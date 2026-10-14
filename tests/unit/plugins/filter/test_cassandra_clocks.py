@@ -603,3 +603,21 @@ def test_old_systemd_timesyncd_kernel_only():
     assert p["kernel_only"] and p["kernel_synced"] is True
     v = cassandra_clock_verdicts([node("node1", probe_text()), node("node2", text, skew=0.01)])
     assert by_node(v)["node2"]["verdict"] == "ok" and "this systemd tells no offset" in by_node(v)["node2"]["text"]
+
+
+def test_a_daemon_disabled_on_a_node_left_alone_is_another_means():
+    # PTP: chronyd disabled, phc2sys sets the clock, cassandra_linux_timesync false: not a missing time sync
+    ptp = probe_text(active="", installed=("chronyd",), tracking_text=None, synced="yes").replace(
+        "chronyd|inactive|enabled|loaded", "chronyd|inactive|disabled|loaded")
+    v = cassandra_clock_verdicts([node("node0", probe_text()), node("node1", ptp, manage=False)])
+    assert by_node(v)["node1"]["verdict"] == "ok" and "another means" in by_node(v)["node1"]["text"]
+    managed = cassandra_clock_verdicts([node("node0", probe_text()), node("node1", ptp)])
+    assert by_node(managed)["node1"]["verdict"] == "no_sync"
+
+
+@pytest.mark.parametrize("did", [["start"], ["step"], ["start", "step"], ["slewing"], ["start", "slewing"],
+                                 ["step", "slewing"], ["start", "step", "slewing"], []])
+def test_every_live_result_has_its_words(did):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import DONE, PLAYBOOKS
+    action = "clock_" + ("_".join(did) or "slew")  # sync_clocks.yml's "Record the result"
+    assert action in DONE and PLAYBOOKS[action] == "sync_clocks"

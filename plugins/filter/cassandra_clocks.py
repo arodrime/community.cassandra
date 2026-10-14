@@ -391,8 +391,10 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
                 v["why"] = "%s has not synchronised to any of its sources" % p.get("service")
             v["action"] = "manual"
         else:  # no daemon running (or one the probe can only ask the kernel about)
-            # the kernel synchronised and no daemon of ours installed (one stopped leaves the flag set for hours)
-            other = not p.get("container") and p.get("kernel_synced") is True and not p.get("installed")
+            # the kernel synchronised and no daemon of ours installed, or one disabled on a node whose time sync is
+            # left alone (PTP: chronyd disabled, phc2sys sets the clock); one only stopped leaves the flag set for hours
+            other = (not p.get("container") and p.get("kernel_synced") is True
+                     and (not p.get("installed") or not p.get("enabled") and not n.get("manage", True)))
             other = other or p.get("kernel_only") and p.get("kernel_synced") is True
             if other:
                 # disciplined by a daemon the probe does not know (PTP, openntpd, the hypervisor's): compared coarsely
