@@ -1282,9 +1282,9 @@ IDLE_SHOWN = 60
 
 def progress_line(index, total_steps, node, operation, mode="", done=0, total=0, speed=None, now=0, start=None,
                   idle=0, limit=0, peers=None, status="going", warn=None, disk=0, frozen=0, width=None):
-    """One check of a long operation (Q2), as 2 lines:
+    """One check of a long operation (Q2), as its line:
     "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
-    then always the other ends, in columns (peer_lines, in width):
+    then always the other ends, in columns under it (peer_lines, in width):
     "      from node1  18.0/34.0 GiB  52%   from node3   4.2/17.0 GiB  24%".
     index/total_steps: the position in the run (no [i/n] when total_steps
     is 0); mode: netstats Mode; done/total: bytes; speed: bytes/s (None:
@@ -1336,9 +1336,11 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     return [line] + peer_lines(peers, width)
 
 
-# above this many other ends, the ok ones on one line, only the others detailed
+# above this many other ends, a line sums them up, only the ones behind detailed
 PEERS_SUMMED = 30
-PEER_WIDTH = 100  # the width peer_lines fits in when none is given: the ops callback's rules
+PEERS_DETAILED = 12  # under it, at most this many of them (stalled first, then the slowest), then "+N more"
+PEER_BEHIND = 10  # behind: below half the average of the ones still streaming, once that average is this many %
+PEER_WIDTH = 100  # the width peer_lines fits in when none is given (as the ops callback's rules, 100 at most)
 _PEER_INDENT = "      "  # the ops callback colours a peer line with STALLED by it
 _PEER_GAP = "   "
 
@@ -1348,38 +1350,65 @@ def _percent(peer):
     return int(100 * min(peer.get("done", 0), total) / total) if total else 0
 
 
+def _slowness(peer):
+    return (not peer.get("stalled"), _percent(peer), _natural(peer.get("name")))
+
+
+def _peer_state(peer):
+    """STALLED, else how long it moved nothing (from IDLE_SHOWN seconds, data left), else ''."""
+    if peer.get("stalled"):
+        return "STALLED"
+    if peer.get("idle", 0) >= IDLE_SHOWN and _percent(peer) < 100:
+        return "no progress for " + duration(peer["idle"], short=True)
+    return ""
+
+
 def peer_lines(peers, width=None):
     """The other ends of a stream, under its progress line, in aligned columns
     (as many as fit in width, 4 at most), by name, a stalled one in place:
     "      to node1  3.1/7.2 GiB  43%           to node2  0.0/7.2 GiB   0% STALLED".
-    peers: [{name, way ('from'/'to'), done, total, stalled}]. Above
-    PEERS_SUMMED of them, the ok ones on one line, "82 peers ok (avg 43%),
-    slowest: node5 0% STALLED, node31 12%, node44 15%" (the 3 lowest below
-    100%, stalled first), and only the stalled ones and those below half the average
-    detailed under it."""
+    peers: [{name, way ('from'/'to'), done, total, stalled, idle}] (idle: "no
+    progress for 1m" from IDLE_SHOWN seconds when not stalled). Above
+    PEERS_SUMMED of them (a node streaming both ways counts twice), one line
+    sums them up, "87 peers: 40 done, 44 ok (avg 44%), 1 STALLED, 2 behind; slowest:
+    node5 0% STALLED, node31 12%, node44 12%" (the ok ones' average; the 3
+    slowest not done, stalled first, as many as fit in width; a node named
+    with its way when it streams both ways), and only the stalled ones and
+    the ones behind (below half the average of all the ones not done, once
+    that is PEER_BEHIND%) are detailed under it, PEERS_DETAILED at most, then
+    "+13 more: 8 STALLED, 5 behind"."""
     peers = sorted(peers or [], key=lambda p: (_natural(p.get("name")), p.get("way") or "with"))
     if not peers:
         return []
     out = []
     if len(peers) > PEERS_SUMMED:
-        average = sum(_percent(p) for p in peers) / float(len(peers))
-        behind = [p for p in peers if p.get("stalled") or _percent(p) < average / 2]
-        fine = [p for p in peers if p not in behind]
-        summary = "%s ok" % plural(len(fine), "peer")
+        going = [p for p in peers if p.get("stalled") or _percent(p) < 100]
+        average = sum(_percent(p) for p in going) / float(len(going)) if going else 100
+        behind = [p for p in going if p.get("stalled") or (average >= PEER_BEHIND and _percent(p) < average / 2.0)]
+        late = set(id(p) for p in behind)
+        fine = [p for p in going if id(p) not in late]
+        both = len(set(str(p.get("name")) for p in peers)) < len(peers)
+        parts = ["%d done" % (len(peers) - len(going))] if len(going) < len(peers) else []
         if fine:
-            summary += " (avg %d%%)" % (sum(_percent(p) for p in fine) / float(len(fine)))
-        slowest = sorted([p for p in peers if p.get("stalled") or _percent(p) < 100],
-                         key=lambda p: (not p.get("stalled"), _percent(p), _natural(p.get("name"))))[:3]
-        if slowest:
-            summary += ", slowest: " + ", ".join("%s %d%%%s" % (p.get("name"), _percent(p),
-                                                                " STALLED" if p.get("stalled") else "")
-                                                 for p in slowest)
-        out.append(_PEER_INDENT + summary)
-        peers = behind
+            parts.append("%d ok (avg %d%%)" % (len(fine), sum(_percent(p) for p in fine) / float(len(fine))))
+        stalled = len([p for p in behind if p.get("stalled")])
+        parts += ["%d STALLED" % stalled] if stalled else []
+        parts += ["%d behind" % (len(behind) - stalled)] if len(behind) > stalled else []
+        summary = _PEER_INDENT + "%s: %s" % (plural(len(peers), "peer"), ", ".join(parts))
+        slowest = ["%s%s %d%%%s" % ((p.get("way") or "with") + " " if both else "", p.get("name"), _percent(p),
+                                    " STALLED" if p.get("stalled") else "") for p in sorted(going, key=_slowness)[:3]]
+        while slowest and len(summary + "; slowest: " + ", ".join(slowest)) > (width or PEER_WIDTH):
+            slowest.pop()  # as many as fit in the width
+        out += fit([summary + ("; slowest: " + ", ".join(slowest) if slowest else "")], width or PEER_WIDTH)
+        shown = set(id(p) for p in sorted(behind, key=_slowness)[:PEERS_DETAILED])
+        peers = [p for p in behind if id(p) in shown]  # by name
+        left = [p for p in behind if id(p) not in shown]
         if not peers:
             return out
+    else:
+        left = []
     cells = [(p.get("way") or "with", str(p.get("name")), amount(p.get("done", 0), p.get("total", 0)),
-              "%d%%" % _percent(p), "STALLED" if p.get("stalled") else "") for p in peers]
+              "%d%%" % _percent(p), _peer_state(p)) for p in peers]
     widths = [max(len(c[i]) for c in cells) for i in range(4)]
     texts = ["%s %s  %s  %s%s" % (way.ljust(widths[0]), name.ljust(widths[1]), size_text.rjust(widths[2]),
                                   pct.rjust(widths[3]), " " + state if state else "")
@@ -1389,6 +1418,11 @@ def peer_lines(peers, width=None):
     per_line = max(1, min(4, room // (cell + len(_PEER_GAP))))
     for at in range(0, len(texts), per_line):
         out.append((_PEER_INDENT + _PEER_GAP.join(t.ljust(cell) for t in texts[at:at + per_line])).rstrip())
+    if left:
+        stalled = len([p for p in left if p.get("stalled")])
+        counts = (["%d STALLED" % stalled] if stalled else []) + (["%d behind" % (len(left) - stalled)]
+                                                                  if len(left) > stalled else [])
+        out.append(_PEER_INDENT + "+%d more: %s" % (len(left), ", ".join(counts)))
     return out
 
 

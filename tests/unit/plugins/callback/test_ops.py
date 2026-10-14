@@ -527,11 +527,13 @@ def test_a_stalled_peer_line_red_the_others_as_the_progress_line():
     from ansible_collections.community.cassandra.plugins.callback.ops import CallbackModule, colour
 
     assert colour("      to node2  0.0/7.2 GiB   0% STALLED", above="cyan") == C.COLOR_ERROR
-    assert colour("      87 peers ok (avg 44%), slowest: node5 0% STALLED, node31 12%", above="cyan") == C.COLOR_ERROR
+    assert colour("      90 peers: 87 ok (avg 44%), 1 STALLED; slowest: node5 0% STALLED", above="cyan") == C.COLOR_ERROR
+    assert colour("      +13 more: 8 STALLED, 5 behind", above="cyan") == C.COLOR_ERROR
+    assert colour("      +3 more: 3 behind", above="cyan") == "cyan"
     assert colour("      to node1  2.7/7.2 GiB  37%", above="cyan") == "cyan"
     assert colour("      a STALLED word in another indented line", above="cyan") == "cyan"
     assert colour("      to do: something STALLED", above="cyan") == "cyan"
-    assert colour("      31 peers ok (avg 44%), slowest: node30 30%, node13 31%", above="cyan") == "cyan"
+    assert colour("      31 peers: 31 ok (avg 44%); slowest: node30 30%, node13 31%", above="cyan") == "cyan"
 
     class Display(object):
         columns = 100

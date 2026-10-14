@@ -174,7 +174,8 @@ _COLOURS = (
 _MARKS = (
     (re.compile(r"\u2190 down\b|^\s*\S.*?\S  (\w+ )?FAILED\b"), "COLOR_ERROR"),  # (a recap's failed node)
     # a line of the other ends under a progress line (cassandra_output.peer_lines, indented 6) with a stalled one
-    (re.compile(r"^ {6}(?:(?:to|from|with) +\S+ +[\d.]+(?: \w+)?/|\d+ peers? ok\b).*\bSTALLED\b"), "COLOR_ERROR"),
+    (re.compile(r"^ {6}(?:(?:to|from|with) +\S+ +[\d.]+(?: \w+)?/|\d+ peers?: |\+\d+ more: ).*\bSTALLED\b"),
+     "COLOR_ERROR"),
     (re.compile(r"\u2190 differs\b|\bwill be reset\b|\u2014 will be$|\bDELETED\b"
                 r"|^\S.*?\S  (would apply|will apply|applied)\b"), "COLOR_CHANGED"),  # (apply_config's outcomes)
 )
