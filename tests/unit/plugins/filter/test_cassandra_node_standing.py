@@ -175,6 +175,31 @@ def test_a_node_alone_in_its_ring(answers, blank, holding):
         assert "node1" not in out["ring"]["tried"] or answers[0]["status"]  # a stopped node is not said asked
 
 
+def test_a_ring_that_does_not_count_makes_a_lone_one_set_aside():
+    """node3 answers, but sees itself joining: its ring does not count, and node1 alone does not stand for the cluster
+    for a node holding data."""
+    joining = {"host": "node3", "addresses": ["10.0.0.3"],
+               "status": _ring(N1, {"address": "10.0.0.3", "status": "U", "state": "J", "host_id": "id-3"})}
+    out = _state(answers=LONE + [joining], **OURS)
+    assert out["state"] == "unknown"
+    assert out["ring"]["why"] == ("only node1 answered, alone in its ring, while node3 did not answer as up and normal"
+                                  " (or Cassandra is stopped there)")
+
+
+def test_several_lone_rings_can_not_be_told_apart():
+    """A one-node cluster and a stray instance at its own address, each alone: which is the cluster can't be told."""
+    out = _state(answers=LONE + [STRAY], **BLANK)
+    assert out["ring"]["known"] is False and out["ring"]["from"] == ""
+    assert out["ring"]["why"] == "node1, node8 answered, each alone in its ring: which one is the cluster can't be told"
+
+
+def test_the_members_found_stopped_are_named():
+    out = _state(answers=[{"host": "node3", "addresses": ["10.0.0.3"], "status": None, "asked": False}], **OURS)
+    assert out["ring"]["why"] == ("no other node of the cluster answered as up and normal (UN) (asked: none; Cassandra"
+                                  " stopped on node3)")
+    assert out["ring"]["problems"][0].startswith(out["ring"]["why"] + ": whether node7 (dc1/rack_b) is in the ring")
+
+
 def test_the_ring_add_node_plans_with_is_not_a_lone_one():
     assert _state(answers=[STRAY] + _answers(), **BLANK)["ring"]["from"] == "node1"
 
