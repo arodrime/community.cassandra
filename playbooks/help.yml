@@ -61,6 +61,7 @@
     - name: Say which cluster the help is for
       ansible.builtin.debug:
         msg: "{{ _cassandra_help_model.banner }}"
+      when: _cassandra_help_model.banner | length > 0  # none named on an inventory of several: the help of any
       vars:
         cassandra_output: true  # the run's first line (ops callback)
         cassandra_output_info: true  # in the progress colour

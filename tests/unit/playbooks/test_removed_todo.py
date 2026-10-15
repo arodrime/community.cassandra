@@ -61,7 +61,8 @@ def test_decommission_node_says_reset_then_reimport(tmp_path, monkeypatch):
     variables = dict(say["vars"], ansible_play_hosts_all=["node3"], ansible_inventory_sources=[str(inventories)],
                      hostvars={"node1": {"ansible_host": "10.0.0.1", "inventory_dir": str(inventories)}},
                      _stays="node1", _imported=True, cassandra_hosts="my_cluster",
-                     groups={"all": ["node1", "node3", "other1"], "my_cluster": ["node1", "node3"]})
+                     groups={"all": ["node1", "node3", "other1"], "my_cluster": ["node1", "node3"],
+                             "my_cluster_dc1": ["node1", "node3"]})
     msg = render(say["ansible.builtin.debug"]["msg"], **variables)
     assert msg.splitlines() == [
         "TO DO",
@@ -91,7 +92,8 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
     # the inventory's only cluster: the import takes it without -e cassandra_hosts
     variables = dict(say["vars"], ansible_play_hosts_all=["node1", "node2"], ansible_inventory_sources=[str(inventories)],
                      hostvars=hostvars, _imported=True, groups={"all": ["node1", "node2", "node3", "node9"],
-                                                                "my_cluster": ["node1", "node2", "node3", "node9"]})
+                                                                "my_cluster": ["node1", "node2", "node3", "node9"],
+                                                                "my_cluster_dc1": ["node1", "node2", "node3", "node9"]})
     msg = render(say["ansible.builtin.debug"]["msg"], **variables)
     assert msg.splitlines() == [
         "DONE  topology  my_cluster  ring = inventory: removed node3",
@@ -109,7 +111,7 @@ def test_reset_node_takes_a_host_marked_absent():
     with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "reset_node_plan.yml"), encoding="utf-8") as f:
         check = yaml.safe_load(f)[0]
     that = check["ansible.builtin.assert"]["that"]
-    groups = {"my_cluster": ["node1", "node2", "node3"]}
+    groups = {"my_cluster": ["node1", "node2", "node3"], "my_cluster_dc1": ["node1", "node2", "node3"]}
     for host, ok in (("node3", True), ("other", False)):
         variables = {"inventory_hostname": host, "groups": groups}
         templar = Templar(loader=DataLoader(), variables=variables)
@@ -134,7 +136,8 @@ def test_no_dash_i_when_the_inventory_is_ansible_cfgs(tmp_path, monkeypatch):
                               "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}}
         variables = dict(say["vars"], ansible_inventory_sources=[str(inventories)], hostvars=hostvars,
                          _imported=True, _ansible_cfg_inventory=[str(inventories)],
-                         groups={"all": ["node1", "node3"], "my_cluster": ["node1", "node3"]},
+                         groups={"all": ["node1", "node3"], "my_cluster": ["node1", "node3"],
+                                 "my_cluster_dc1": ["node1", "node3"]},
                          ansible_play_hosts_all=["node3"] if playbook == "decommission_node.yml" else ["node1"])
         if playbook == "decommission_node.yml":
             variables["_stays"] = "node1"  # (from the inventory: its lookup)
@@ -153,12 +156,13 @@ def test_the_reimport_reads_the_inventory():
         expr = say["vars"]["_reimport_hosts"].replace("lookup('community.cassandra.cassandra_hosts')", "'prod'")
 
         def hosts(env="", **variables):
-            variables.setdefault("groups", {"all": ["n1", "n2", "o1"], "prod": ["n1", "n2"]})
+            variables.setdefault("groups", {"all": ["n1", "n2", "o1"], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"]})
             variables.setdefault("ansible_inventory_sources", [TOP])  # a dir that exists
             return render(expr.replace("lookup('ansible.builtin.env', 'CASSANDRA_CLUSTER')", repr(env)), **variables)
 
         assert hosts() == "prod"  # another cluster in the inventory: named
-        assert hosts(groups={"all": ["n1", "n2"], "prod": ["n1", "n2"]}) == ""  # its only cluster
+        assert hosts(groups={"all": ["n1", "n2"], "prod": ["n1", "n2"],
+                             "prod_dc1": ["n1", "n2"]}) == ""  # its only cluster
         assert hosts(env="prod") == ""  # CASSANDRA_CLUSTER names it
         assert hosts(env="prod", ansible_inventory_sources=["n1,"]) == "prod"  # -i n1,: CASSANDRA_CLUSTER not read
         assert hosts(cassandra_hosts="prod") == "prod"

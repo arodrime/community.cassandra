@@ -231,7 +231,7 @@ UNRESOLVED_CHECKED = ("cassandra_cluster_name", "cassandra_version", "cassandra_
                       "cassandra_allocate_tokens_for_local_replication_factor", "cassandra_node_state")
 # the values only the operator knows, written in the commands as is
 PLACEHOLDERS = ("NEW_NODE", "DEAD_NODE_ADDRESS", "NODE", "NEW_DC_GROUP", "KEYSPACE", "DC_TO_REMOVE", "NEW_DIR",
-                "JMX_USER", "JMX_PASSWORD_FILE")
+                "JMX_USER", "JMX_PASSWORD_FILE", "CLUSTER_GROUP", "DC", "RACK")
 _PLACEHOLDER = re.compile(r"(?<![\w-])(%s)(?![\w-])" % "|".join(PLACEHOLDERS))
 
 
@@ -438,6 +438,9 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
                 user += options[i:i + 2]
             elif option == "-K":
                 user.append(option)
+        if not cluster.hosts:  # no cluster named: one of its nodes, a dir of its own
+            return " ".join(["ansible-playbook", "-i NODE,"] + user + ["community.cassandra.import_cluster",
+                                                                     "-e import_cluster_dir=NEW_DIR"])
         # the inventory's connection settings and JMX login: -i ADDRESS, reads none of them
         # (ansible_ssh_common_args, a bastion: from ansible.cfg only)
         host = (cluster.present or cluster.hosts)[0]
@@ -467,7 +470,8 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
     absent = [h["name"] for h in cluster.hosts if h["absent"]]
     # a real node only when the inventory marks it for removal (or to read from): never one nobody chose
     fill = {"dc": first_dc, "rack": sorted(cluster.dcs[first_dc])[-1],
-            "nodes": ",".join(absent) if absent else "NODE", "node": (cluster.present or cluster.hosts)[0]["name"]}
+            "nodes": ",".join(absent) if absent else "NODE",
+            "node": (cluster.present or cluster.hosts)[0]["name"] if cluster.hosts else "NODE"}
     # help needs no sudo password, nor the vault prompt help added for the operations
     drop = ("-K", "--ask-vault-pass") if model.get("vault_prompt_added") else ("-K",)
     options = [shlex.quote(o) for o in _options(model, cwd) if op["name"] != "help" or o not in drop]
@@ -592,10 +596,36 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
     return out
 
 
+class _AnyCluster(object):
+    """The cluster of the commands when none is named on an inventory of several (CLUSTER_GROUP, DC, RACK):
+    nothing known of its nodes."""
+
+    name = "CLUSTER_GROUP"
+    hosts = present = ()
+    dcs = {"DC": {"RACK": []}}
+
+    def num_tokens(self):
+        return 1  # (single_token operations: not said "not for this cluster")
+
+
 def _clusters(model):
+    if "unnamed" in model:
+        return [_AnyCluster()]
     defaults = _role_defaults()
     return [_Cluster(dict(c, hosts=[dict(h) for h in c.get("hosts") or []]), defaults)
             for c in model.get("clusters") or []]
+
+
+def _unnamed_lines(model):
+    """Section 1 when no cluster is named on an inventory of several: why, the clusters found, how to name one."""
+    lines = _paragraph("%s The operations below are for any cluster (CLUSTER_GROUP: its group), without what the"
+                       " inventory says of one (its nodes, datacenters, advice)." % model.get("unnamed", ""), "", "  ")
+    lines += [""] + _paragraph("Clusters found: %s" % (", ".join(model.get("found") or []) or "none"), "", "  ")
+    if model.get("others"):
+        lines += _paragraph("Other groups: %s" % ", ".join(model["others"]), "", "  ")
+    lines += [""] + _paragraph("The help of one cluster: -e cassandra_hosts=CLUSTER_GROUP, or"
+                               " CASSANDRA_CLUSTER=<group or cluster name> in your shell.", "", "  ")
+    return lines
 
 
 _KEY = 36  # the widest option on the line of its text (from column indent + _KEY + 2): a longer one has its own
@@ -703,14 +733,15 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
         return _topic(topic, header, model, clusters, cwd, flow, cut)
 
     sections = []  # (title, items): the cluster lines, (kind, title or operation), (advice, its command or "")
-    lines = []
-    for cluster in clusters:
+    unnamed = "unnamed" in model
+    lines = _unnamed_lines(model) if unnamed else []
+    for cluster in [] if unnamed else clusters:
         if lines:
             lines.append("")
         lines += _cluster_lines(cluster)
     several = len(clusters) > 1
-    sections.append(("1. The cluster%s as the inventory describes %s" % (("s", "them") if several else ("", "it")),
-                     lines))
+    sections.append(("1. The clusters of the inventory" if unnamed else
+                     "1. The cluster%s as the inventory describes %s" % (("s", "them") if several else ("", "it")), lines))
 
     ops = []
     for cluster in clusters:
@@ -729,11 +760,12 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
                        " shown above; the operations read them: vault_password_file in ansible.cfg, or the vault"
                        " option of the commands above."
                        % ", ".join(_path(p, _inventory_dir(model)) for p in model["vault_skipped"]), ""))
-    for cluster in clusters:
+    for cluster in [] if unnamed else clusters:
         for item in _advice(model, cluster, playbooks, cwd, known, markdown):
             prefix = "%s: " % cluster.name if len(clusters) > 1 else ""
             advice.append((prefix + item[0], item[1]) if isinstance(item, tuple) else (prefix + item, ""))
-    sections.append(("3. Advice", advice or [("Nothing to point out.", "")]))
+    sections.append(("3. Advice", advice or [("Name the cluster for the advice of its inventory." if unnamed
+                                              else "Nothing to point out.", "")]))
 
     if markdown:
         return _markdown(_header(model, cwd), sections, model, cwd, runbook_dir or _inventory_dir(model))
@@ -866,7 +898,8 @@ def _topic(topic, header, model, clusters, cwd, flow=False, cut=True):
     options = list(op.get("options") or [])
     options += _common(model, clusters, op) if op["theme"] in ("nodes", "cluster") else []
     lines = _rule(dict(THEMES)[op["theme"]]) + _op_lines(dict(op, options=options), len(op["name"]), cmds, examples)
-    shown = " ".join(c.split("community.cassandra.", 1)[-1] for c in raw)
+    # (the -i NODE, of a new cluster's import: a placeholder too)
+    shown = " ".join(c.split("community.cassandra.", 1)[-1] + (" NODE" if "-i NODE," in c else "") for c in raw)
     placeholders = sorted(set(_PLACEHOLDER.findall(shown)))
     if placeholders:
         plural = "s" if len(placeholders) > 1 else ""

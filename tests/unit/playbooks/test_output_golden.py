@@ -48,6 +48,9 @@ node1 ansible_host=10.100.100.3 cassandra_dc=dc1 cassandra_rack=rack_a
 node2 ansible_host=10.100.100.4 cassandra_dc=dc1 cassandra_rack=rack_b
 node3 ansible_host=10.100.100.5 cassandra_dc=dc1 cassandra_rack=rack_c
 
+[my_cluster_dc1:children]
+my_cluster
+
 [my_cluster:vars]
 ansible_connection=local
 cassandra_listen_address=127.0.0.1

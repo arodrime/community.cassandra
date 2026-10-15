@@ -22,9 +22,9 @@ description:
     cluster name), else the lookup fails, naming both.
   - Neither set, the cluster group when the inventory holds one cluster laid out as the import writes it
     (C(all) > C(<cluster>) > C(<cluster>_<dc>) > C(<cluster>_<dc>_<rack>)), that is the group whose
-    name starts every other group's (C(prod) for C(prod_dc1) and C(prod_dc1_rack1)) and holds
-    their hosts; or the inventory's only group with hosts. C(all), C(ungrouped) and the groups the playbooks
-    make while they run are left out.
+    name starts every other group's (C(prod) for C(prod_dc1) and C(prod_dc1_rack1)), holds
+    their hosts and has one at least (a lone group, C([linux]), is no cluster's). C(all), C(ungrouped) and the
+    groups the playbooks make while they run are left out.
   - Else fails, naming the top groups (one per cluster) and the two ways to name one. No group name is
     taken by default, not C(cassandra) either. Any other group (C(monitoring), C(linux), a second cluster)
     needs C(-e cassandra_hosts=<group>) or C(CASSANDRA_CLUSTER), rather than a guess that could run on other hosts.
@@ -154,14 +154,14 @@ def picked(given, groups, env=None, cluster_name=None):
     if not cands:
         raise ValueError(_block("no cluster: the inventory has no group with hosts",
                                 "Put the nodes in a group (all > <cluster> > <dc> > <rack>, as the import writes it)."))
-    # the import's layout: every other group is <cluster>_..., within <cluster>
+    # the import's layout: every other group is <cluster>_..., within <cluster>, and there is one at least (a
+    # lone [linux] or [web] group is no cluster's)
     heads = [name for name, hosts in sorted(cands.items())
-             if all(o == name or (o.startswith(name + "_") and h <= hosts) for o, h in cands.items())]
+             if all(o == name or (o.startswith(name + "_") and h <= hosts) for o, h in cands.items())] if len(cands) > 1 else []
     if len(heads) == 1:
         return heads[0], BY_ONLY
     found = clusters_found(groups)
-    # the groups that are no cluster's nor in one by name (monitoring, seeds, dc1): why the inventory is not one cluster
-    others = sorted(n for n in _candidates(groups) if n not in found and not any(n.startswith(c + "_") for c in found))
+    others = other_groups(groups, found)
     # a group named DEFAULT is no default any more (never a name to paste: an operation on a cluster not chosen)
     hint = (("A group %s is no longer taken by default: name it as any other." % DEFAULT,)
             if DEFAULT in _candidates(groups) else ())
@@ -180,6 +180,7 @@ def picked(given, groups, env=None, cluster_name=None):
 
 def _same(given, env, groups, cluster_name):
     """-e cassandra_hosts and CASSANDRA_CLUSTER both set: they name the same group, else ValueError naming both."""
+    why = ""
     try:
         other = _named(env, groups, cluster_name)
     except ValueError as exc:
@@ -246,24 +247,37 @@ def clusters_found(groups):
     return sorted(n for n, h in laid.items() if not any(n.startswith(o + "_") and h <= laid[o] for o in laid))
 
 
+def other_groups(groups, found):
+    """The groups that are no cluster's of found nor in one by name (monitoring, seeds, dc1), sorted: why the
+    inventory is not one cluster."""
+    return sorted(n for n in _candidates(groups) if n not in found and not any(n.startswith(c + "_") for c in found))
+
+
 def cluster_line(group, why, hosts, state, dc):
-    """banner() for these hosts of the group: state(host) its cassandra_node_state, dc(host) its cassandra_dc
-    (UNKNOWN when only the node knows it: dc?; none: the role's default, dc1)."""
+    """banner() for these hosts of the group (summary() alone when why is None): state(host) its
+    cassandra_node_state, dc(host) its cassandra_dc (UNKNOWN when only the node knows it: dc?; none: the
+    role's default, dc1)."""
     gone = [h for h in hosts if str(state(h) or "").strip().lower() == "absent"]
     dcs = [dc(h) for h in hosts if h not in gone]
     dcs = ["dc?" if d is UNKNOWN else (d if d not in (None, "") else "dc1") for d in dcs]
+    if why is None:
+        return summary(group, len(hosts) - len(gone), dcs, len(gone))
     return banner(group, why, len(hosts) - len(gone), dcs, len(gone))
 
 
-def banner(group, why, nodes, dcs, absent=0):
-    """The line the playbooks start with: "CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts".
-    nodes: how many hosts of the group are part of the cluster; dcs: their datacenters; absent: the hosts
-    marked cassandra_node_state=absent."""
+def summary(group, nodes, dcs, absent=0):
+    """"prod (5 nodes, dc1)": nodes, how many hosts of the group are part of the cluster; dcs: their datacenters;
+    absent: the hosts marked cassandra_node_state=absent."""
     parts = ["%d node%s" % (nodes, "" if nodes == 1 else "s")]
     if absent:
         parts[0] += " + %d marked absent" % absent
     parts += sorted(set(str(dc) for dc in dcs))
-    return "CLUSTER %s (%s) | chosen by: %s" % (group, ", ".join(parts), why)
+    return "%s (%s)" % (group, ", ".join(parts))
+
+
+def banner(group, why, nodes, dcs, absent=0):
+    """The line the playbooks start with: "CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts"."""
+    return "CLUSTER %s | chosen by: %s" % (summary(group, nodes, dcs, absent), why)
 
 
 def not_given(given, loader, inventory=False):

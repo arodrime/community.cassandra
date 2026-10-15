@@ -35,7 +35,8 @@ def load(*path):
 @pytest.mark.skipif(os.geteuid() == 0, reason="the run is root")
 def test_rolling_restart_without_become_stops_before_any_drain(tmp_path):
     inventory = tmp_path / "hosts.ini"
-    inventory.write_text("[cassandra]\nnode1 cassandra_dc=dc1 cassandra_rack=rack1 ansible_become=false\n")
+    inventory.write_text("[cassandra]\nnode1 cassandra_dc=dc1 cassandra_rack=rack1 ansible_become=false\n"
+                         "[cassandra_dc1]\nnode1\n")
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",
                ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_BECOME="False")
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", str(inventory), "-c", "local",

@@ -41,7 +41,7 @@ CHECK = next(t for t in load("roles", "cassandra_service", "tasks", "hosts_check
              if t["name"] == "The cluster is named, or the inventory holds one")
 SAY = next(t for t in load("roles", "cassandra_service", "tasks", "cluster_banner.yml")
            if t["name"] == "Say which cluster the run is on")
-GROUPS = {"all": ["n1", "n2"], "ungrouped": [], "prod": ["n1", "n2"], "empty": []}
+GROUPS = {"all": ["n1", "n2"], "ungrouped": [], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"], "empty": []}
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +63,7 @@ def test_missing_group_named_with_the_groups():
     passed, msg = check(cassandra_hosts="prd")
     assert passed is False
     assert msg == ("REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n\n"
-                   "Its groups: empty, prod\n"
+                   "Its groups: empty, prod, prod_dc1\n"
                    "Name the cluster's group: -e cassandra_hosts=<group>\n"
                    "Nothing was changed.")
 
@@ -108,7 +108,7 @@ def test_default_is_the_cluster_group():
 
 
 def test_several_clusters_refused():
-    passed, msg = check(groups=dict(GROUPS, prod_dc1=["n1", "n2"], other=["n3"], other_dc1=["n3"]))
+    passed, msg = check(groups=dict(GROUPS, other=["n3"], other_dc1=["n3"]))
     assert passed is False
     assert msg == ("REFUSED  no cluster named: this inventory has 2 clusters: other, prod\n\n"
                    "Name the one to run on:\n  export CASSANDRA_CLUSTER=<cluster>\n"
@@ -149,7 +149,7 @@ def test_the_cluster_line_once_per_run():
 
 def test_typo_refused_by_the_lookup_too():
     """Under --limit this play does not run: the lookup in the plays' hosts refuses the group."""
-    with pytest.raises(AnsibleError, match=r"REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n\nIts groups: empty, prod\n"):
+    with pytest.raises(AnsibleError, match=r"REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n\nIts groups: empty, prod, prod_dc1\n"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=GROUPS, cassandra_hosts="prd")
 
 

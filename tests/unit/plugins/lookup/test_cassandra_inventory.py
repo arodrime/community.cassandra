@@ -111,11 +111,17 @@ def test_given_group_missing(tmp_path):
 
 def test_several_clusters(tmp_path):
     hosts = HOSTS + "    billing:\n      hosts:\n        node9: {ansible_host: 192.0.2.19}\n"
-    # the playbooks' rule: none named, refused (help says it as a verdict), naming them
+    # none named: no cluster's model, the clusters found and the other groups (help: the help of any cluster)
     source = inventory(tmp_path, hosts=hosts)
-    assert read([source]) == {"refusal": (
-        "No cluster named, and the inventory is not the cluster orders alone (other groups: billing). Name one:"
-        " -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster name> in your shell.")}
+    model = read([source])
+    assert "refusal" not in model and model["clusters"] == [] and model["banner"] == ""
+    assert model["unnamed"] == ("No cluster named, and the inventory is not the cluster orders alone (other groups:"
+                                " billing). Name one: -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster"
+                                " name> in your shell.")
+    assert model["found"] == ["orders (2 nodes, dc1)"] and model["others"] == ["billing"]
+    assert model["options"] == [] and model["sources"] == [source]
+    # named, or refused when the name is wrong: as the playbooks
+    assert read([source], given="nope")["refusal"].startswith("cassandra_hosts: group 'nope' not found")
     model = read([source], given="billing")
     assert model["auto"] == ""
     assert [c["name"] for c in model["clusters"]] == ["billing"]
@@ -226,3 +232,12 @@ def test_empty_group(tmp_path):
 def test_random_value_not_taken_for_a_vaulted_one(tmp_path):
     source = inventory(tmp_path, orders='cassandra_cluster_name: "c{{ 1000000 | random }}"\n')
     assert host(read([source]), "node1")["vars"]["cassandra_cluster_name"].startswith("c")
+
+
+def test_a_lone_group_none_named(tmp_path):
+    """[prod] alone is no cluster's shape: no model of it, the playbooks' reason said (help shows it)."""
+    source = inventory(tmp_path, hosts="all:\n  children:\n    cassandra:\n      hosts:\n        node1: {}\n")
+    model = read([source])
+    assert model["clusters"] == [] and model["found"] == [] and model["others"] == ["cassandra"]
+    assert "holds no cluster laid out as the import writes it" in model["unnamed"]
+    assert model["unnamed"].endswith("A group cassandra is not taken by default: -e cassandra_hosts=cassandra names it.")

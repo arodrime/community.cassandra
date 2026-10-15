@@ -55,7 +55,7 @@ def run(tmp_path, inventory, *extra, cwd=None):
 def inventory_in(directory, extra=""):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "hosts.ini"
-    path.write_text("[cassandra]\nnode1\nnode2\n" + extra)
+    path.write_text("[cassandra]\nnode1\nnode2\n[cassandra_dc1]\nnode1\nnode2\n" + extra)  # a cluster's shape
     return str(path)
 
 
