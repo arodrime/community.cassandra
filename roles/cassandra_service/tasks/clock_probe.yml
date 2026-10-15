@@ -83,6 +83,14 @@
     cassandra_output_info: true  # in the progress colour
     _probe: "{{ _cassandra_clock_read.stdout | community.cassandra.cassandra_clock_probe }}"
 
+- name: Note when the wait starts
+  ansible.builtin.set_fact:
+    _cassandra_clock_wait_start: "{{ now().timestamp() | int }}"
+  when: *cassandra_clock_waits
+  vars:
+    _probe: "{{ _cassandra_clock_read.stdout | community.cassandra.cassandra_clock_probe }}"
+
+# every 5 s, until settled or the timeout reached (the reads' own time counted: the line says up to it)
 - name: Wait while the time sync daemon settles
   ansible.builtin.shell: *cassandra_clock_probe_script
   args:
@@ -97,6 +105,7 @@
   delay: 5
   until: >-
     _cassandra_clock_reread.unreachable | default(false)
+    or now().timestamp() | int - _cassandra_clock_wait_start | int >= _cassandra_clock_wait | int
     or _cassandra_clock_reread.stdout | default('') | community.cassandra.cassandra_clock_probe
        | community.cassandra.cassandra_clock_settled(cassandra_clock_max_offset_ms, _cassandra_clock_synchronised_only | default(false) | bool)
   when: *cassandra_clock_waits

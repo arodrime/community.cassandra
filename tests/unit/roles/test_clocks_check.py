@@ -178,6 +178,17 @@ def test_a_wait_that_runs_out_is_judged_not_failed(tmp_path):
     assert (fake / "node2" / "calls").read_text().strip() == "3"  # the first read, then the wait's two
 
 
+def test_the_wait_ends_at_its_timeout_whatever_its_reads_take(tmp_path):
+    # each read 4 s: the wait of 10 s stops at its second read (past 10 s), not at the third its retries allow
+    fake = setup(tmp_path, {"node1": synced(), "node2": {"active": "chronyd", "tracking": tracking(0, synced=False),
+                                                         "sources": UNREACHED}})
+    chronyc = tmp_path / "bin" / "chronyc"
+    chronyc.write_text(chronyc.read_text().replace('case "$*" in\n', 'case "$*" in\n  "-n tracking") sleep 4;;\nesac\ncase "$*" in\n', 1))
+    rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 10})
+    assert rc != 0 and "node2  NOT SYNCHRONISED" in out, out
+    assert (fake / "node2" / "calls").read_text().strip() == "3"
+
+
 def converging(dispersion):
     # a daemon just started: synchronised, its error bound still large (its skew from a few samples)
     return (tracking(0.0001, "fast").replace("Root dispersion : 0.000300000", "Root dispersion : %.9f" % dispersion)
