@@ -312,6 +312,10 @@ def test_disk_problems():
         "n2 gets about 50.0 GiB from moving n2, it has 60.0 GiB free of 100.0 GiB: less than 20% would be left free"
         " (cassandra_move_min_free_percent)"]
     assert cassandra_token_disk_problems(step, free, 5) == []
+    small = {"name": "n2", "gain_bytes": {"n2": 200 * 1024 ** 2}}
+    assert cassandra_token_disk_problems(small, {"n2": {"free": 305.1 * 1024 ** 2, "total": 329.8 * 1024 ** 2}}, 50) == [
+        "n2 gets about 200.0 MiB from moving n2, it has 305.1 MiB free of 329.8 MiB: less than 50% would be left free"
+        " (cassandra_move_min_free_percent)"]
     assert cassandra_token_disk_problems(step, {}, 20) == []
     mounts = [{"mount": "/", "size_available": 900 * 1024 ** 3, "size_total": 1000 * 1024 ** 3},
               {"mount": "/var/lib/cassandra", "size_available": 60 * 1024 ** 3, "size_total": 100 * 1024 ** 3},

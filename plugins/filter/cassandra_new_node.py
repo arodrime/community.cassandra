@@ -26,6 +26,7 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.module_utils.six.moves.urllib.parse import urlsplit, urlunsplit
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import size as _size, sizes as _sizes
 
 GIB = 1024 ** 3
 UNITS = {"bytes": 1, "b": 1, "kib": 1024, "kb": 1024, "mib": 1024 ** 2, "mb": 1024 ** 2,
@@ -36,10 +37,6 @@ UNIT_STATES = ("enabled", "enabled-runtime", "generated", "linked", "linked-runt
 
 def _result(problems=None, warnings=None, info=None):
     return {"problems": problems or [], "warnings": warnings or [], "info": info or []}
-
-
-def _gib(size):
-    return "%.1f GiB" % (float(size) / GIB)
 
 
 def _norm(path):
@@ -123,11 +120,17 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
             free = m.get("size_available")
             if kind == "data" and free is not None:
                 data_mounts[on] = free
-            space = ", %s free of %s" % (_gib(free), _gib(m.get("size_total", 0))) if free is not None else ""
+            total = m.get("size_total")
+            if free is None:
+                space = ""
+            elif total:
+                space = ", %s free of %s" % _sizes(free, total)
+            else:
+                space = ", %s free" % _size(free)
             info.append("%s %s: on %s (%s %s)%s" % (kind, path, on, m.get("fstype", "?"), m.get("device", "?"), space))
             if kind == "data" and float(min_free_gb or 0) > 0 and free is not None and free < float(min_free_gb) * GIB:
                 problems.append("data directory %s: %s free on %s, cassandra_new_node_min_free_gb asks for %s GiB"
-                                % (path, _gib(free), on, min_free_gb))
+                                % (path, _size(free), on, min_free_gb))
         # what the directory holds, besides the other Cassandra directories and a new file system's lost+found
         held = [p for p in found if os.path.dirname(p) == path and os.path.basename(p) != "lost+found"
                 and not any(_under(other, p) for other in paths if other != path)]
@@ -165,7 +168,7 @@ def cassandra_new_node_load(cluster_status, dc, rack, free, address=""):
     if not loads:
         return _result(info=["no load known for the nodes of %s" % where])
     avg = sum(loads) / len(loads)
-    line = "the nodes of %s hold %s on average (nodetool status), this host has %s free for data" % (where, _gib(avg), _gib(free))
+    line = "the nodes of %s hold %s on average (nodetool status), this host has %s free for data" % (where, _size(avg), _size(free))
     if avg > float(free) / 2:
         return _result(warnings=["%s: the new node gets about as much, and compactions need room on top "
                                  "(keep about half of the disk free)" % line])

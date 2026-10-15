@@ -2,6 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 import os
+import re
 import time
 
 import pytest
@@ -10,6 +11,7 @@ from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netst
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
     cassandra_add_node_plan, cassandra_cleanup_view, cassandra_compactionstats, cassandra_stream_progress,
     cassandra_stream_report, cassandra_host_addresses, cassandra_stream_progress_by_host, cassandra_cleanup_report)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_progress_line
 
 GIB = 1024 ** 3
 MIB = 1024 ** 2
@@ -71,7 +73,7 @@ def test_progress_and_report():
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 0, 100 * GIB), session("10.0.0.2", 0, 100 * GIB))],
                                   None, now=1000, operations=["Bootstrap"])
     assert s["progressed"] and not s["stalled"]
-    assert report(s).startswith("n4  bootstrap  [--------------------]   0%\n\n      data:      0.0 GiB / 200.0 GiB\n")
+    assert report(s).startswith("n4  bootstrap  [--------------------]   0%\n\n      data:      0.0 / 200.0 GiB\n")
     assert finish(s) == "unknown, no rate yet"
     files = [{"path": "/d/ks/t-%s/nb-1-big-Data.db" % ("0" * 32), "table": "ks.t", "done": 5, "total": 10}]
     s = cassandra_stream_progress([read("n4", session("10.0.0.1", 60 * GIB, 100 * GIB, files=files),
@@ -82,7 +84,7 @@ def test_progress_and_report():
     assert report(s, names={"10.0.0.1": "n1"}) == """\
 n4  bootstrap  [##########----------]  50%   341 MiB/s
 
-      data:      100.0 GiB / 200.0 GiB
+      data:      100.0 / 200.0 GiB
                  10 / 20 files
 
       from:      10.0.0.2   40% done  (40.0 / 100.0 GiB)
@@ -400,7 +402,7 @@ def test_real_40_41_bootstrap_progress_between_two_checks():
                                       s, now=300, operations=["Bootstrap"])
         assert s["progressed"] and s["idle_checks"] == 0 and not s["stalled"]
         assert header(s).startswith("n4  bootstrap  [#########-----------]  4") and header(s).endswith(" KiB/s")
-        assert "      data:      4" in report(s) and " MiB / 9" in report(s) and "      from:      192.168.0.2   4" in report(s)
+        assert re.search(r"\n      data:      4\d\.\d / 9\d\.\d MiB\n", report(s)) and "      from:      192.168.0.2   4" in report(s)
 
 
 def test_an_unreachable_node_keeps_its_cleanup_running():
@@ -446,14 +448,14 @@ Finish counts the cleanup tasks running now, not the ones queued after them.
 
 n1  cleanup  [###-----------------]  15%   61 KiB/s
 
-      data:      7.0 MiB / 44.2 MiB
+      data:      7.0 / 44.2 MiB
                  0 / 2 tasks
 
       Finish:    in 10m - 00:11 UTC
 
 n4  cleanup  [#######-------------]  39%   61 KiB/s
 
-      data:      7.9 MiB / 20.2 MiB
+      data:      7.9 / 20.2 MiB
                  0 / 2 tasks
 
       Finish:    in 3m - 00:05 UTC
@@ -521,7 +523,7 @@ def test_report_going():
     assert report(s, names=NAMES) == """\
 n4  bootstrap  [##########----------]  52%   89 MiB/s
 
-      data:      52.2 GiB / 100.0 GiB
+      data:      52.2 / 100.0 GiB
                  1 375 / 3 000 files
 
       from:      node1   62% done  (32.5 / 52.0 GiB)
@@ -538,7 +540,7 @@ def test_report_stalled_then_failed():
     assert s["stalled"] and report(s, status="stalled", names=NAMES) == """\
 n4  bootstrap  STALLED  [#######-------------]  37%
 
-      data:      37.5 GiB / 100.0 GiB
+      data:      37.5 / 100.0 GiB
                  1 125 / 3 000 files
 
       from:      node1   37% done  (19.5 / 52.0 GiB)
@@ -572,7 +574,7 @@ def test_report_very_large_and_very_small_rates():
     assert report(s) == """\
 n4  bootstrap  [#####---------------]  25%   25.6 GiB/s
 
-      data:      3.0 TiB / 12.0 TiB
+      data:      3.0 / 12.0 TiB
                  500 / 2 000 files
 
       from:      10.0.0.1   25% done  (2.0 / 8.0 TiB)
@@ -586,7 +588,7 @@ n4  bootstrap  [#####---------------]  25%   25.6 GiB/s
     assert report(s) == """\
 n4  bootstrap  [##########----------]  50%   1 B/s
 
-      data:      1.0 MiB / 2.0 MiB
+      data:      1.0 / 2.0 MiB
                  500 / 1 000 files
 
       from:      10.0.0.1   50% done  (1.0 / 2.0 MiB)
@@ -607,7 +609,7 @@ def test_report_long_names_narrow_the_bar_and_sum_up_the_peers():
     assert "\n".join(report(s, node="cass-node-17", what="removenode of 2001:db8::7334").split("\n")[:9]) == """\
 cass-node-17  removenode of 2001:db8::7334  [#####---------------]  25%   47 MiB/s
 
-      data:      27.8 GiB / 111.0 GiB
+      data:      27.8 / 111.0 GiB
                  1 500 / 6 000 files
 
       from:      2001:db8:85a3::8a2e:370:0005   25% done  (5.2 / 21.0 GiB)
@@ -680,3 +682,39 @@ def test_rate_over_the_last_90_seconds():
         done = (now // 10) * MIB if now <= 200 else 20 * MIB + (now - 200) // 10 * 10 * MIB
         s = cassandra_stream_progress([read("n4", session("10.0.0.1", done, GIB))], s, now=now)
     assert s["rate"] == 10 * MIB / 10.0 and len(s["samples"]) == 10
+
+
+def test_decommission_of_a_few_hundred_mib_golden_lines():
+    """node4 sends 329.8 MiB to node1 and node2: the progress line, its
+    sub-line, the report and the done line say done and total in one unit
+    (it said "0.3 GiB/329.8 MiB")."""
+    def views(to_node1, to_node2):
+        return [read("node4", session("10.0.0.1", to_node1, 200 * MIB, op="Unbootstrap", direction="sending"),
+                     session("10.0.0.2", to_node2, int(129.8 * MIB), op="Unbootstrap", direction="sending"),
+                     mode="LEAVING")]
+    names = {"10.0.0.1": "node1", "10.0.0.2": "node2"}
+    s = cassandra_stream_progress(views(100 * MIB, 50 * MIB), None, now=0, operations=["Unbootstrap"])
+    s = cassandra_stream_progress(views(190 * MIB, int(115.1 * MIB)), s, now=60, operations=["Unbootstrap"])
+    assert cassandra_progress_line(s, 2, 3, "node4", "decommission", "LEAVING", names=names) == [
+        "[2/3] node4 decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  2.6 MiB/s  ETA 00:01 (9s)  1m",
+        "      to node1 190.0/200.0 MiB ok   to node2 115.1/129.8 MiB ok"]
+    assert report(s, node="node4", what="decommission", names=names, clocks=False) == """\
+node4  decommission  [##################--]  92%   2.6 MiB/s
+
+      data:      305.1 / 329.8 MiB
+                 17 / 20 files
+
+      to:        node1   95% done  (190.0 / 200.0 MiB)
+                 node2   88% done  (115.1 / 129.8 MiB)
+
+      Finish:    in 9s - 00:01 UTC"""
+    assert report(s, node="node4", what="decommission", names=names, status="done") == \
+        "node4  decommission  done  155.1 MiB in 1m (305.1 MiB in all), 2.6 MiB/s on average"
+
+
+def test_netstats_counting_more_than_the_total_shows_done_at_the_total():
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 340 * MIB, int(329.8 * MIB)))], None, now=0,
+                                  operations=["Bootstrap"])
+    assert "      data:      329.8 / 329.8 MiB\n" in report(s)
+    assert "(329.8 / 329.8 MiB)" in report(s)
+    assert "329.8/329.8 MiB" in cassandra_progress_line(s, node="n4", operation="bootstrap")[0]

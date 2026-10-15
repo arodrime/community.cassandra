@@ -28,22 +28,18 @@ from functools import wraps
 
 from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _host_of, _ip
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import size as _size, sizes as _sizes
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
     TokenError, balanced_positions, dc_offset, move_order, ownership, parse_token, partitioner_range,
     plan_balanced, plan_bisect, position, rack_order, token_of, tolerance, transfer)
 
 DEFAULT_RF = 3
-GIB = 1024 ** 3
 # shares that differ by less than this many tolerances per replica count as even
 EVEN_TOLERANCES = 4
 
 
 def _pct(frac):
     return "%.2f%%" % (float(frac) * 100)
-
-
-def _gib(size):
-    return "%.1f GiB" % (float(size) / GIB)
 
 
 def _has_token(node):
@@ -538,7 +534,7 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
                                    " checked before their moves")
         out["lines"].append("Moves, one at a time, in this order:")
         for i, s in enumerate(out["steps"]):
-            sizes = dict((n, "" if b is None else " ~" + _gib(b)) for n, b in s["gain_bytes"].items())
+            sizes = dict((n, "" if b is None else " ~" + _size(b)) for n, b in s["gain_bytes"].items())
             receive = ", ".join("%s %s%s" % (n, _pct(g), sizes[n]) for n, g in sorted(s["gain"].items()))
             out["lines"].append("  %d. %s (%s): %s -> %s; streamed to %s" % (i + 1, s["name"], s["dc"], s["from"],
                                                                              s["to"], receive or "nobody"))
@@ -578,9 +574,10 @@ def cassandra_token_disk_problems(step, disks, min_free_percent=20):
             continue
         left = disk["free"] - size
         if left < disk["total"] * float(min_free_percent) / 100:
+            free, total = _sizes(disk["free"], disk["total"])
             problems.append("%s gets about %s from moving %s, it has %s free of %s: less than %s%% would be left free"
-                            " (cassandra_move_min_free_percent)" % (name, _gib(size), step["name"], _gib(disk["free"]),
-                                                                    _gib(disk["total"]), min_free_percent))
+                            " (cassandra_move_min_free_percent)" % (name, _size(size), step["name"], free, total,
+                                                                    min_free_percent))
     return problems
 
 
