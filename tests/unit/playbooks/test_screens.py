@@ -33,6 +33,13 @@ SESSION = ("this run is not inside tmux or screen: if the SSH session to this ma
            " (the operation itself goes on, unwatched). Run it inside tmux or screen.")
 
 
+@pytest.fixture(autouse=True)
+def wide_terminal(monkeypatch):
+    """The views laid out at the terminal's width (width='terminal'): a wide one here, whatever runs the tests."""
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_apply_config
+    monkeypatch.setattr(cassandra_apply_config, "_terminal_width", lambda: 200)
+
+
 def load(*path):
     with open(os.path.join(TOP, *path), encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -532,7 +539,7 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
     hostvars = dict((h, {"_cassandra_config_items": items[h], "cassandra_apply_config_live": {"results": [
         {"cassandra_apply_config_file": "cassandra.yaml", "content": base64.b64encode(live[h].encode()).decode()}]}})
         for h in items)
-    variables = {"ansible_play_hosts": list(items), "hostvars": hostvars}
+    variables = {"ansible_play_hosts": list(items), "hostvars": hostvars, "ansible_verbosity": 0}
     templar = Templar(loader=DataLoader(), variables=variables)
     assert templar.template(trust_as_template(listed["ansible.builtin.set_fact"]["_cassandra_apply_config_differ"])) == ["cassandra.yaml"]
     templar = Templar(loader=DataLoader(), variables=dict(variables, **trust(side["vars"])))

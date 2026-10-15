@@ -28,6 +28,8 @@ from ansible_collections.community.cassandra.plugins.module_utils import cassand
 
 NULLS = ("", "~", "null", "Null", "NULL")
 BOOLS = {"true": "true", "yes": "true", "on": "true", "false": "false", "no": "false", "off": "false"}
+# Top-level settings the role leaves out at Cassandra's default, which a node may write: {key: that value}
+DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
 
 
 class Plain(str):
@@ -107,6 +109,9 @@ def yaml_settings(text, storage_dir=""):
         if storage_dir and data.get(key) is None:
             path = "%s/%s" % (storage_dir.rstrip("/"), sub)
             data[key] = [path] if key == "data_file_directories" else path
+    for key, value in DEFAULT_WHEN_ABSENT.items():
+        if isinstance(data.get(key), str) and BOOLS.get(data[key].lower()) == value:
+            del data[key]  # (auto_bootstrap: true, the default, quoted or not; false stays: a node it would join without data)
     out = dict((k, v) for k, v in _flatten(data, "", {}).items() if k)
     for key, value in out.items():
         if re.match(r"^seed_provider\[\d+\]\.parameters\[\d+\]\.seeds$", key) and isinstance(value, str):

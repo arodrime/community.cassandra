@@ -89,6 +89,7 @@
         name: community.cassandra.cassandra_linux
         apply:
           check_mode: true
+          diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # said in the OS settings view (-v: the file diffs too)
       vars:
         cassandra_change_report_dir: ""  # the real run reports
         _cassandra_change_report_quiet: true
@@ -396,7 +397,9 @@
     # setting-centric, the nodes grouped: in the plan of a real run (before its question), in the recap under --check
     - name: Put the settings that differ side by side
       ansible.builtin.set_fact:
-        cassandra_apply_config_diff: "{{ _nodes | community.cassandra.cassandra_apply_config_diff }}"
+        # laid out at the terminal's width; with -v, a device-mapper device's dm-N too
+        cassandra_apply_config_diff: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', verbose=ansible_verbosity | int > 0) }}
       run_once: true
       vars:
         _nodes: >-
@@ -483,7 +486,7 @@
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:
             - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
-            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true) }}"
+            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, width='terminal') }}"
           # --check: said here too (the recap says it again), in case a later play stops the run first
           warnings:
             - label: refused
@@ -555,6 +558,8 @@
         - name: Apply the OS settings
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_linux
+            apply:
+              diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # said in the OS settings view before the question
           vars:
             _cassandra_change_report_quiet: true  # shown before the question
             _cassandra_linux_swap_said: true  # under the node
@@ -704,7 +709,7 @@
         msg: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
                                                                         seconds=(now().timestamp() | int - _start | int) if _start else none,
-                                                                        diff=_diff, refused=_refused) }}
+                                                                        diff=_diff, refused=_refused, width='terminal') }}
       run_once: true
       vars:
         cassandra_output: true

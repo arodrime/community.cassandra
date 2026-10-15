@@ -601,6 +601,8 @@ def _row_lines(first, blank, value, names, note, value_width, who, width):
     if note:
         last = len(names) - 1
         noted = lines[last] + " " * max(0, who - len(names[-1])) + "   " + note
+        if len(noted) > width and not names[-1]:  # no nodes (an inventory value no node is on): right after the value
+            noted = lines[last].rstrip() + "   " + note
         if len(noted) <= width and last == len(lines) - 1:
             lines[last] = noted
         else:
@@ -623,8 +625,8 @@ def wrap_value(text, room):
 def wrap_list(text, room):
     """A list of nodes or groups ("db11..db16, db21, G1 + db074") on lines of at
     most room characters: cut after a ", " (the comma kept), before a " + " or
-    after "all except", never inside a name (one longer than room has a line
-    of its own)."""
+    after "all except", a range longer than room after its "..", never inside
+    a name (one longer than room has a line of its own)."""
     text = str(text)
     if len(text) <= room:
         return [text]
@@ -637,13 +639,21 @@ def wrap_list(text, room):
             words.append(word)
         else:
             words.append("+ " + word)
-    lines, line = [], ""
+    pieces = []  # (word, glued: right after the one before it, no space: the end of a range)
     for word in words:
-        if line and len(line) + 1 + len(word) > room:
+        first, dots, rest = word.partition("..")
+        if len(word) > room and dots and rest:
+            pieces += [(first + dots, False), (rest, True)]
+        else:
+            pieces.append((word, False))
+    lines, line = [], ""
+    for word, glued in pieces:
+        joined = (line + ("" if glued else " ") + word) if line else word
+        if line and len(joined) > room:
             lines.append(line)
             line = word
         else:
-            line = (line + " " + word) if line else word
+            line = joined
     return lines + [line]
 
 

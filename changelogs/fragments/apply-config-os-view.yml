@@ -1,0 +1,18 @@
+bugfixes:
+  - >-
+    apply_config - under ``--diff``, the OS tuning tasks no longer show their raw file diffs (the tuned profile and
+    the udev rule hold the devices' ids): their changes are in the OS settings view, the raw diffs with ``-v`` only.
+    The same for the tuned profile and the udev rule of ``cassandra_linux`` in the other playbooks.
+  - >-
+    apply_config, rolling operations - under ``--diff``, the writes of the progress file (the run's bookkeeping, for a
+    resumed run) show no diff.
+  - >-
+    apply_config - the settings view, the plan and the recap are laid out at the terminal's width (node lists cut
+    between two nodes, the ``← differs`` marker after them), an LVM volume is one OS setting by its name whatever its
+    ``dm-N`` on each node (shown with ``-v``).
+  - >-
+    cassandra_config, import_cluster - a live ``auto_bootstrap: true`` (Cassandra's default, which the role leaves
+    out) is the same setting as none, not a difference.
+  - >-
+    cassandra_linux - the warning of a tuned profile switch left for later says what is pending, why, what it means
+    at the next boot, and the command to run.

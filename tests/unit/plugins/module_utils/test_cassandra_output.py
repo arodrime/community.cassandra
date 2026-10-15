@@ -992,3 +992,11 @@ def test_seeds_reload_todo():
     assert item["command"] == "cmd"
     assert item["text"].startswith("reload the seed list on n1, n3: nodetool reloadseeds failed")
     assert "fix the file before any restart" in item["text"]
+
+
+def test_a_node_range_longer_than_its_room_cut_after_its_dots():
+    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import wrap_list
+    text = "db-node-1.example.net..db-node-3.example.net, db-node-5.example.net"
+    assert wrap_list(text, 30) == ["db-node-1.example.net..", "db-node-3.example.net,", "db-node-5.example.net"]
+    assert wrap_list(text, 50) == ["db-node-1.example.net..db-node-3.example.net,", "db-node-5.example.net"]
+    assert wrap_list("node1..node3", 8) == ["node1..", "node3"]  # (no space added inside a range)

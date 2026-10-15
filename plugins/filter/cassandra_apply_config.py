@@ -26,7 +26,9 @@ import os
 import re
 from collections import OrderedDict
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import _terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import _stat
+from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 # the order of the files in the view (the role's own); any other after them
@@ -42,6 +44,9 @@ _HEAP = re.compile(r"^(-X(?:mx|ms|mn|ss))(.+)$")
 _PERMS = " (owner:group mode)"
 PERM_LABEL = "owner/group/mode"
 ABSENT = "absent"
+# a device-mapper device's kernel name after its stable one in an OS item ("read_ahead_kb vg-lv (dm-3)"): dm-N
+# differs from node to node, the item is the same setting (said with -v)
+_DM_KNAME = re.compile(r" \(dm-\d+\)$")
 
 # what follows the write, by cassandra_apply_config_then: (--check or the plan, real run)
 _THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
@@ -313,6 +318,14 @@ def _rows(records, shown_of, all_nodes):
     return rows
 
 
+def _default_when_absent(key, a, b):
+    """One side without the key, the other with Cassandra's default for it (DEFAULT_WHEN_ABSENT): the same setting."""
+    if key not in DEFAULT_WHEN_ABSENT or (a is None) == (b is None):
+        return False
+    value = (a if a is not None else b)[0]
+    return BOOLS.get(str(value).lower()) == DEFAULT_WHEN_ABSENT[key]
+
+
 def _file_entries(name, nodes, all_nodes):
     """The settings of one file that differ on a node -> (its settings_lines
     entries, the lines of the nodes whose live file no longer fits their
@@ -340,6 +353,7 @@ def _file_entries(name, nodes, all_nodes):
         per_node[node["name"]] = (before, after, (secrets, set(patched[0][i].strip(" \t") for i in secrets)))
     # the keys changed on some node, in the order of the new file
     keys, changed = [], {}
+    yaml_file = name.endswith((".yaml", ".yml"))
     for node_name in all_nodes:
         if node_name not in per_node:
             continue
@@ -351,6 +365,8 @@ def _file_entries(name, nodes, all_nodes):
             # **** on both sides
             # (a line written twice: by its text, its key gives its first line)
             secret = b is not None and a is not None and (b[1] in secrets or (b[2] is not None and b[2] in secret_lines))
+            if yaml_file and _default_when_absent(key, a, b):
+                continue  # (auto_bootstrap: true written or not: Cassandra's default either way)
             if (a is None) != (b is None) or (a is not None and (a[0], a[2]) != (b[0], b[2])) or secret:
                 mine.append(key)
                 if key not in keys:
@@ -419,7 +435,7 @@ def _perm_entry(key, nodes, all_nodes, field):
     return (PERM_LABEL, _rows(records, lambda v: ABSENT if v is None else str(v), all_nodes))
 
 
-def _prepare(node):
+def _prepare(node, verbose=False):
     """A node's compare data -> its diffs, owner/mode changes, directory
     changes and other items by name, its live files and stats."""
     diffs, perms, dirs, other = {}, {}, {}, []
@@ -436,11 +452,17 @@ def _prepare(node):
     return {"name": str(node.get("name")), "diffs": diffs, "perms": perms, "dirs": dirs, "other": other,
             "texts": _live_texts(node), "stats": _stats(node.get("stats"), _file_key),
             "dir_stats": _stats(node.get("dir_stats"), _dir_key),
-            "os": [(str(i.get("item") or ""), "(none)" if i.get("before") is None else str(i.get("before")),
+            "os": [(_os_item(i.get("item"), verbose), "(none)" if i.get("before") is None else str(i.get("before")),
                     str(i.get("after"))) for i in node.get("os") or []]}
 
 
-def cassandra_apply_config_diff(nodes, width=None):
+def _os_item(item, verbose=False):
+    """An OS item's name in the view: a device-mapper device by its stable name (its dm-N with verbose)."""
+    item = str(item or "")
+    return item if verbose else _DM_KNAME.sub("", item)
+
+
+def cassandra_apply_config_diff(nodes, width=None, verbose=False):
     """nodes: [{name, items, live, stats, dir_stats}] in inventory order, the
     nodes compared: items, cassandra_config's _cassandra_config_items (diffs
     masked, owner/mode changes, directory changes); live, the slurp results
@@ -453,8 +475,10 @@ def cassandra_apply_config_diff(nodes, width=None):
     differs"); the owner, group and mode as one setting; the directories
     after the files, then the OS settings. [] when nothing differs. From GROUPS_FROM nodes on
     (cassandra_output), the node lists by NODE GROUPS defined first. width:
-    the lines fit in it (None: as long as they are)."""
-    prepared = [_prepare(n) for n in nodes or []]
+    the lines fit in it (None: as long as they are; "terminal": the terminal's). verbose: a device-mapper
+    device's OS items with its kernel name (dm-N) too, which differs from node to node."""
+    width = _width(width)
+    prepared = [_prepare(n, verbose) for n in nodes or []]
     all_nodes = [n["name"] for n in prepared]
     files = set()
     for node in prepared:
@@ -541,9 +565,15 @@ def _outcome(node, check, plan):
 _RANK = {"would apply": 0, "applied": 0, "failed": 1}
 
 
-def _grouped(nodes, check=False, plan=False):
+def _width(width):
+    if str(width) == "terminal":
+        return _terminal_width()
+    return int(width) if width else None
+
+
+def _grouped(nodes, check=False, plan=False, width=None):
     """(the outcome lines, nodes with the same outcome and notes on one line;
-    {tally word: count})"""
+    {tally word: count}); width: the lines fit in it."""
     groups, order, counts, rank = {}, [], {}, {}
     for node in nodes or []:
         text, word = _outcome(node, check, plan)
@@ -556,21 +586,20 @@ def _grouped(nodes, check=False, plan=False):
         groups[key].append(str(node["name"]))
     lines = []
     for key in sorted(order, key=lambda k: rank[k]):  # the nodes changed first, then failed, then the others
-        lines.append("%s  %s" % (out.nodes(groups[key]), key[0]))
-        lines.extend(key[1])
+        lines += out.fit(["%s  %s" % (out.nodes(groups[key]), key[0])] + list(key[1]), _width(width))
     return lines, dict(sorted(counts.items(), key=lambda c: _RANK.get(c[0], len(_RANK))))
 
 
-def cassandra_apply_config_outcomes(nodes, check=False, plan=False):
+def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order ->
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
     before the run (every node to do would apply, with why it is not
-    restarted)."""
-    return _grouped(nodes, check, plan)[0]
+    restarted). width: the lines fit in it ("terminal": the terminal's)."""
+    return _grouped(nodes, check, plan, width)[0]
 
 
-def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None):
+def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, width=None):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order:
     todo, whether the node had config to apply; os, whether its OS settings
     differ; os_done, whether the OS play ran on it; done, whether its turn
@@ -585,8 +614,9 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     plan did not show them), a blank line, the outcomes; after a real run
     the outcomes only (its plan showed the settings before its question).
     refused: under check, [why a real run is refused, the way out] (a node not
-    running while others are to restart): said last, as a WARNING."""
-    lines, counts = _grouped(nodes, check)
+    running while others are to restart): said last, as a WARNING. width: the outcome lines fit in it
+    ("terminal": the terminal's; the diff is laid out already)."""
+    lines, counts = _grouped(nodes, check, width=width)
     verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
     said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
     if seconds is not None:
@@ -595,8 +625,8 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     if check and diff:
         shown += [""] + list(diff) + [""]
     if check and refused:
-        lines = lines + ["", "WARNING  a real run is refused, before changing anything: %s" % refused[0]]
-        lines += ["  %s" % line for line in refused[1:]]
+        lines = lines + [""] + out.fit(["WARNING  a real run is refused, before changing anything: %s" % refused[0]]
+                                       + ["  %s" % line for line in refused[1:]], _width(width))
     return shown + lines
 
 

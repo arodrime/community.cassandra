@@ -8,6 +8,7 @@ __metaclass__ = type
 import os
 import warnings
 
+import pytest
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
@@ -30,6 +31,13 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 with open(os.path.join(TOP, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
+
+
+@pytest.fixture(autouse=True)
+def wide_terminal(monkeypatch):
+    """The views laid out at the terminal's width (width='terminal'): a wide one here, whatever runs the tests."""
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_apply_config
+    monkeypatch.setattr(cassandra_apply_config, "_terminal_width", lambda: 200)
 
 
 def trust(value):

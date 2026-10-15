@@ -81,8 +81,8 @@ def test_deferred_switch_said_with_its_command():
     assert render(keep["vars"]["_tuned_deferred"], **variables) is True
     assert render(keep["vars"]["_tuned_failed"], **variables) is False
     warnings = " ".join(keep["ansible.builtin.set_fact"]["_cassandra_disk_summary"]["warnings"].split())
-    assert "': tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')" in warnings
-    assert "cassandra_linux_tuned_switch_running: true" in warnings
+    assert "'To do it: tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')" in warnings
+    assert "cassandra_linux_tuned_switch_running=true" in warnings
     assert "if _tuned_deferred | bool" in warnings
 
 
@@ -186,9 +186,17 @@ def test_summary_of_a_node_says_the_tuned_problems():
     deferred = summed(_cassandra_disk_tuned=TUNED, _cassandra_disk_tuned_deferred=True,
                       cassandra_data_tuned_file={"changed": True}, cassandra_data_tuned_switch={"skipped": True})
     assert deferred["warnings"] == [
-        "tuned: not switched to virtual-guest cassandra-disks under a running Cassandra (the switch applies the profiles"
-        " again, live); until then they set the read-ahead of the Cassandra devices again at boot: tuned-adm profile"
-        " virtual-guest cassandra-disks, or a run with Cassandra stopped (or cassandra_linux_tuned_switch_running: true)"]
+        "tuned profile switch pending (to virtual-guest cassandra-disks): not done while Cassandra runs (tuned applies"
+        " all its settings again, live). Until then, tuned sets the read-ahead of the Cassandra devices back at each"
+        " boot. To do it: tuned-adm profile virtual-guest cassandra-disks on the node at a quiet time, or run again"
+        " with -e cassandra_linux_tuned_switch_running=true."]
+    updated = summed(_cassandra_disk_tuned=dict(TUNED, active=TUNED["profiles"]), _cassandra_disk_tuned_deferred=True,
+                     cassandra_data_tuned_file={"changed": True}, cassandra_data_tuned_switch={"skipped": True})
+    assert updated["warnings"] == [
+        "tuned profile cassandra-disks updated, its reload pending: not done while Cassandra runs (tuned applies all"
+        " its settings again, live). Until then, tuned runs the profile it loaded (it reads the new one at the next"
+        " boot). To do it: tuned-adm profile virtual-guest cassandra-disks on the node at a quiet time, or run again"
+        " with -e cassandra_linux_tuned_switch_running=true."]
     failed = summed(_cassandra_disk_tuned=TUNED, cassandra_data_tuned_switch={"rc": 1, "stderr": "no such profile\nmore"})
     assert failed["warnings"] == ["tuned-adm profile virtual-guest cassandra-disks failed: no such profile"]
     ok = summed(_cassandra_disk_tuned=dict(TUNED, unmatched=["sdb"]), cassandra_data_tuned_switch={"rc": 0})

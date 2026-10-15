@@ -142,6 +142,7 @@
       vars:
         ansible_become: false  # an inventory ansible_become beats the become keyword
       when: cassandra_progress_file is defined and not ansible_check_mode  # --check made no file
+      diff: false  # the run's bookkeeping
 
     # --check did nothing: what a real run would do, never "done"; add_node run again: a node already in the ring
     - name: Record the result

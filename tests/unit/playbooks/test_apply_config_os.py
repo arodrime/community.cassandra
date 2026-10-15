@@ -81,7 +81,7 @@ def note(os_items=None, changes=(), running=True, clock=(), resume=False, full=F
 def test_compared_in_check_mode_with_the_config():
     compare = FIND["tasks"][TASKS.index("Compare the OS settings")]
     assert compare["ansible.builtin.include_role"] == {
-        "name": "community.cassandra.cassandra_linux", "apply": {"check_mode": True}}
+        "name": "community.cassandra.cassandra_linux", "apply": {"check_mode": True, "diff": "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"}}
     # nothing reported nor shown by the role: the view of the settings that differ says them
     # (check mode applied to the role: ansible_check_mode does not tell it, its own flag does)
     assert compare["vars"] == {"cassandra_change_report_dir": "", "_cassandra_change_report_quiet": True,
@@ -137,7 +137,12 @@ def test_applied_first_at_once_before_any_config_write():
     assert defaults["ansible.builtin.include_role"] == {
         "name": "community.cassandra.cassandra_config", "tasks_from": "defaults.yml", "public": True}
     assert names.index("Load the cassandra_config defaults") < names.index("Apply the OS settings")
-    assert apply_os["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_linux"}
+    # its file diffs (device ids in the tuned profile and the udev rule) not shown: the view said its changes (-v: shown)
+    assert apply_os["ansible.builtin.include_role"] == {
+        "name": "community.cassandra.cassandra_linux", "apply": {"diff": "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"}}
+    for verbosity, diff, shown in ((0, True, False), (1, True, True), (1, False, False)):
+        assert render(apply_os["ansible.builtin.include_role"]["apply"]["diff"],
+                      {"ansible_diff_mode": diff, "ansible_verbosity": verbosity}) is shown
     assert apply_os["vars"]["_cassandra_linux_swap_said"] is True  # under the node, not again by the role
     # a failure: the summary, then a stop saying no config was written
     rescue = [t.get("name") for t in block["rescue"]]

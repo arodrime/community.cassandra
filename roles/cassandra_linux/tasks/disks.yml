@@ -278,6 +278,7 @@
             path: "{{ _cassandra_disk_tuned_dir }}/{{ _cassandra_disk_tuned.name }}"
             state: directory
             mode: "0755"
+          diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # as the profile's
 
         - name: The tuned profile
           ansible.builtin.template:
@@ -285,6 +286,7 @@
             dest: "{{ _cassandra_disk_tuned_dir }}/{{ _cassandra_disk_tuned.name }}/tuned.conf"
             mode: "0644"
           register: cassandra_data_tuned_file
+          diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # device ids: said in the summary, the diff at -v
 
         # tuned rolls back what the profiles set and applies them again with
         # this one, live: the same settings (their scripts run again), none on
@@ -397,6 +399,7 @@
         mode: "0644"
       register: cassandra_data_disk_udev
       when: _cassandra_disk_udev_lines | length > 0
+      diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # device ids: said in the summary, the diff at -v
 
     - name: No udev rule needed (LVM keeps the read-ahead of all the devices)
       ansible.builtin.file:
@@ -471,13 +474,15 @@
            + (['tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | default([]) | join(' ') ~ ' failed: '
                ~ (cassandra_data_tuned_switch.stderr | default('') or cassandra_data_tuned_switch.stdout | default('')).splitlines()
                  | first | default('?')] if _tuned_failed | bool else [])
-           + (['tuned: ' ~ ('not switched to ' ~ _cassandra_disk_tuned.profiles | join(' ')
-               if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles else _cassandra_disk_tuned.name ~ ' updated, not reloaded')
-               ~ ' under a running Cassandra (the switch applies the profiles again, live)'
-               ~ ('; until then they set the read-ahead of the Cassandra devices again at boot'
-                  if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles else '')
-               ~ ': tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')
-               ~ ', or a run with Cassandra stopped (or cassandra_linux_tuned_switch_running: true)']
+           + ([('tuned profile switch pending (to ' ~ _cassandra_disk_tuned.profiles | join(' ') ~ ')'
+                if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles
+                else 'tuned profile ' ~ _cassandra_disk_tuned.name ~ ' updated, its reload pending')
+               ~ ': not done while Cassandra runs (tuned applies all its settings again, live). '
+               ~ ('Until then, tuned sets the read-ahead of the Cassandra devices back at each boot. '
+                  if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles
+                  else 'Until then, tuned runs the profile it loaded (it reads the new one at the next boot). ')
+               ~ 'To do it: tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')
+               ~ ' on the node at a quiet time, or run again with -e cassandra_linux_tuned_switch_running=true.']
               if _tuned_deferred | bool else [])
            + ([_tuned_warn | regex_replace('^WARNING: ', '')] if _tuned_warn and not _tuned_ok | bool and not _tuned_deferred | bool
               else []) }}

@@ -447,3 +447,79 @@ def test_an_os_value_unknown_before():
     change = {"item": "LVM read-ahead vg/lv (sectors)", "before": None, "after": "8"}
     lines = cassandra_apply_config_diff([{"name": "node1", "os": [change]}])
     assert lines[-1].split() == ["(none)", "node1", ARROW, "differs"]
+
+
+def test_a_key_added_by_hand_alone_is_a_difference_and_not_kept(tmp_path):
+    # a running node's cassandra.yaml with only an unknown key appended (lineinfile): not the same settings as the
+    # role's (cassandra_config keeps the file otherwise), shown as a key the inventory does not carry
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
+    live = YAML + "fake_option: 42\n"
+    assert not cassandra_same_settings(live, YAML, "cassandra.yaml")
+    assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live}), Node(tmp_path, "node2")) == [
+        "cassandra.yaml",
+        "  fake_option: 42   node1   %s differs (not in the inventory)" % ARROW]
+
+
+def os_nodes():
+    """Five nodes, all but node4 with their data disk sdb and their LVM volume (another dm-N on each) to tune."""
+    nodes = []
+    for i in range(1, 6):
+        items = [] if i == 4 else [
+            {"item": "read_ahead_kb sdb", "before": "4096", "after": "4"},
+            {"item": "read_ahead_kb vgdata-lvdata (dm-%d)" % (i + 2), "before": "4096", "after": "4"},
+            {"item": "/etc/udev/rules.d/64-cassandra-data-disk.rules", "before": "absent or different", "after": "present"}]
+        nodes.append({"name": "db-node-%d.example.net" % i, "items": [], "os": items})
+    return nodes
+
+
+def test_os_settings_by_the_stable_device_name_at_the_terminal_width():
+    # the inventory value alone on its line, the nodes on the line of their own value, wrapped between two nodes,
+    # the marker after them; an LVM volume one setting whatever its dm-N on each node
+    lines = cassandra_apply_config_diff(os_nodes(), width=100)
+    assert lines == [
+        "OS settings",
+        "  read_ahead_kb sdb:           4                                                      (inventory)",
+        "                               4096                  db-node-1.example.net..db-node-3.example.net,",
+        "                                                     db-node-5.example.net            %s differs" % ARROW,
+        "  read_ahead_kb vgdata-lvdata: 4                                                      (inventory)",
+        "                               4096                  db-node-1.example.net..db-node-3.example.net,",
+        "                                                     db-node-5.example.net            %s differs" % ARROW,
+        "  /etc/udev/rules.d/64-cassandra-data-disk.rules:",
+        "                               present                                                (inventory)",
+        "                               absent or different   db-node-1.example.net..db-node-3.example.net,",
+        "                                                     db-node-5.example.net            %s differs" % ARROW]
+    for width in (80, 100, 118):
+        lines = cassandra_apply_config_diff(os_nodes(), width=width)
+        assert all(len(line) <= width for line in lines), width
+        assert "%s differs" % ARROW in "\n".join(lines) and "(inventory)" in "\n".join(lines)
+        assert not [line for line in lines if line.strip() in ("differs", "(in", "ventory)")]
+
+
+def test_os_settings_with_the_dm_kernel_name_when_verbose():
+    lines = cassandra_apply_config_diff(os_nodes(), verbose=True)
+    assert [line.split(":")[0].strip() for line in lines if "vgdata" in line] == [
+        "read_ahead_kb vgdata-lvdata (dm-3)", "read_ahead_kb vgdata-lvdata (dm-4)", "read_ahead_kb vgdata-lvdata (dm-5)",
+        "read_ahead_kb vgdata-lvdata (dm-7)"]
+
+
+def test_the_outcome_lines_at_the_width_cut_between_words():
+    nodes = [{"name": "db-node-1.example.net", "todo": False, "os": True, "os_done": True, "then": "",
+              "notes": ["WARNING data disks: tuned profile switch pending (to virtual-guest cassandra-disks): not done"
+                        " while Cassandra runs (tuned applies all its settings again, live)."]}]
+    lines = cassandra_apply_config_outcomes(nodes, plan=True, width=70)
+    assert all(len(line) <= 70 for line in lines)
+    assert nodes[0]["notes"][0] in " ".join(line.strip() for line in lines)
+
+
+def test_auto_bootstrap_true_on_the_node_is_the_default_the_role_leaves_out(tmp_path):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings
+    for written in ("auto_bootstrap: true\n", "auto_bootstrap: True\n", "auto_bootstrap: 'true'\n", "auto_bootstrap: yes\n"):
+        assert cassandra_same_settings(YAML + written, YAML, "cassandra.yaml"), written
+    assert not cassandra_same_settings(YAML + "auto_bootstrap: false\n", YAML, "cassandra.yaml")
+    # rewritten for another key: auto_bootstrap: true not shown as a difference, false is
+    live = YAML + "auto_bootstrap: true\nfake_option: 42\n"
+    assert view(Node(tmp_path, "node1", files={"cassandra.yaml": live})) == [
+        "cassandra.yaml",
+        "  fake_option: 42   node1   %s differs (not in the inventory)" % ARROW]
+    live = YAML + "auto_bootstrap: false\n"
+    assert "auto_bootstrap" in "\n".join(view(Node(tmp_path, "node2", files={"cassandra.yaml": live})))

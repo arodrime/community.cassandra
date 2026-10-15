@@ -182,3 +182,21 @@ def test_check_diff_says_nothing_of_the_progress_dir(tmp_path):
     assert rc == 0, out
     assert not (tmp_path / "inv" / ".cassandra_progress").exists()
     assert "state: directory" not in out and "not a directory" not in out and "[WARNING]" not in out
+
+
+def test_the_progress_file_writes_show_no_diff():
+    # (--diff: the run's bookkeeping is not a change to show)
+    import yaml as _yaml
+
+    def walk(tasks):
+        for t in tasks:
+            yield t
+            for key in ("block", "rescue", "always"):
+                yield from walk(t.get(key) or [])
+
+    here = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+    for name, task_name in (("progress.yml", "Create the progress file"),
+                            ("node_operation.yml", "Add the node to the progress file")):
+        with open(os.path.join(here, name), encoding="utf-8") as f:
+            found = [t for t in walk(_yaml.safe_load(f)) if t.get("name") == task_name]
+        assert found and all(t.get("diff") is False for t in found), task_name
