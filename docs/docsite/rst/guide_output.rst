@@ -32,7 +32,8 @@ Conventions
   (``cassandra_extra_settings.sstable.selected_format``). A long value or node list goes on under its column (a
   name is never cut), the import screen fits the terminal.
 - **Sizes, rates, durations** in one format: ``41.2 GiB``, ``89 MiB/s``, ``9m20s`` (never ``0.0 GiB`` for a
-  non-zero size).
+  non-zero size). A done/total pair says the unit once, the one the total reads in: ``305.1/329.8 MiB``,
+  ``<0.1/100.0 GiB``; done is never shown above the total.
 - **Plans**: the header, the numbered steps (node and dc/rack), the facts, then the ``WARNING`` lines just above
   the question.
 - **Phases**: one line per major phase, ending with ``...`` (cyan under the ops callback: its option

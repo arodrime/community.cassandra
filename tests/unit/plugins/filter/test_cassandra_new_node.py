@@ -29,6 +29,19 @@ def test_dirs_on_their_mounted_disk():
     assert out["data_free"] == 900 * GIB
 
 
+def test_small_or_huge_disk_free_of_total_in_the_total_unit():
+    small = dict(DATA, size_available=305.1 * 1024 ** 2, size_total=329.8 * 1024 ** 2)
+    assert cassandra_new_node_dirs(DIRS, [ROOT, small])["info"][0].endswith(", 305.1 MiB free of 329.8 MiB")
+    huge = dict(DATA, size_available=700 * GIB, size_total=2 * 1024 * GIB)
+    assert cassandra_new_node_dirs(DIRS, [ROOT, huge])["info"][0].endswith(", 0.7 TiB free of 2.0 TiB")
+    # no total known: the free space alone, not "0 B free of 0 B"
+    unknown = dict(DATA, size_total=None)
+    assert cassandra_new_node_dirs(DIRS, [ROOT, unknown])["info"][0].endswith(", 900.0 GiB free")
+    out = cassandra_new_node_dirs(DIRS, [ROOT, small], min_free_gb=1)
+    assert out["problems"] == ["data directory /var/lib/cassandra/data: 305.1 MiB free on /var/lib/cassandra,"
+                               " cassandra_new_node_min_free_gb asks for 1 GiB"]
+
+
 def test_fstab_mount_not_mounted_lands_on_root():
     out = cassandra_new_node_dirs(DIRS, [ROOT], fstab=FSTAB)
     assert len(out["problems"]) == 4

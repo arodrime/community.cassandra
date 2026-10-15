@@ -33,7 +33,7 @@ _PEERS = 4
 # the word in the header when the wait stops (stream_wait.yml statuses), FAILED for the others
 _TROUBLE = {"stalled": "STALLED", "too_long": "TOO LONG", "stopped": "STOPPED", "still_running": "STILL RUNNING",
             "jmx_refused": "JMX LOGIN REFUSED"}
-# the report's item lines: "      data:      38.2 GiB / 93.1 GiB"
+# the report's item lines: "      data:      38.2 / 93.1 GiB"
 _ITEM = "      %-11s%s"
 
 
@@ -206,12 +206,13 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
             summary = ("in %s, " % _duration(elapsed) if elapsed > 0 else "") + "nothing seen in progress"
         elif moved <= 0 or elapsed <= 0:
             # streamed before the first check
-            summary = "%s, %s" % (_size(done, total), ("after %s" % _duration(elapsed)) if elapsed > 0 else "at the first check")
+            summary = "%s, %s" % (_size(done), ("after %s" % _duration(elapsed)) if elapsed > 0 else "at the first check")
         else:
+            moved_text, done_text = out.sizes(moved, done)
             summary = "%s in %s%s, %s on average" % (
-                _size(moved, total), _duration(elapsed),
+                moved_text, _duration(elapsed),
                 # part of it streamed before the first check (a resumed wait)
-                (" (%s in all)" % _size(done, total)) if moved != done else "", _rate(moved / float(elapsed)))
+                (" (%s in all)" % done_text) if moved != done else "", _rate(moved / float(elapsed)))
         return ["  ".join(x for x in [node, what, "done", summary] if x)]
     going = status == "going"
     lines = [_header([node, what] + ([] if going else [_TROUBLE.get(status, "FAILED")]), done, total, rate if going else None)]
@@ -225,7 +226,7 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
         data.append("no answer at this check, the figures are from the last answer")
     streams = [dict(s, other=(names or {}).get(s["other"], s["other"])) for s in (state.get("streams") or {}).values()]
     if total:
-        data.append("%s / %s" % (_size(done, total), _size(total, total)))
+        data.append(out.amount(done, total, " / "))
         files_total = sum(s["files_total"] for s in streams)
         if files_label and files_total:
             data.append("%s / %s %s" % (_count(sum(s["files_done"] for s in streams)), _count(files_total), files_label))

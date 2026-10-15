@@ -1,0 +1,2 @@
+bugfixes:
+  - stream progress (bootstrap, decommission, rebuild, removenode, cleanup) - a done/total size pair is printed in one unit, the one the total reads in (``305.1/329.8 MiB``, no longer ``0.3 GiB/329.8 MiB``), on the progress line and its per-node line, the report and the done line; done is never shown above the total. The disk sizes of the add_node and token move checks are in the unit each reads in (no longer ``0.0 GiB`` for a small one), free/total in the unit of the total.

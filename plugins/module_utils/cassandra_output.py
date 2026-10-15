@@ -6,7 +6,7 @@ Pure Python, no Ansible: the filters of plugins/filter/cassandra_output.py
 and the other filters call it. Conventions in
 docs/docsite/rst/guide_output.rst.
 
-- sizes, rates, durations, clocks: size, amount, parse_size, rate, duration, clock,
+- sizes, rates, durations, clocks: size, amount, sizes, parse_size, rate, duration, clock,
   count, plural;
 - node lists: nodes (node1..node5, node7), full_list; by groups on a large
   cluster: node_groups, who, group_lines;
@@ -40,37 +40,53 @@ ARROW = u"←"  # the marker of a line that needs a look: "<- down", "<- differs
 # this one stays blank there.
 PARAGRAPH = " "
 GIB = 1024.0 ** 3
-# each unit from this many bytes of scale on
-_UNITS = (("TiB", 1024.0 ** 4, 1024.0 ** 4), ("GiB", GIB, GIB / 10), ("MiB", 1024.0 ** 2, 1024.0 ** 2 / 10),
-          ("KiB", 1024.0, 1024.0))
+_UNITS = (("TiB", 1024.0 ** 4), ("GiB", GIB), ("MiB", 1024.0 ** 2), ("KiB", 1024.0))
 
 # --- sizes, rates, durations ---------------------------------------------------------------
 
 
+def _unit(count):
+    """The unit count reads at least 1 in: (name, factor), ("B", 1) under
+    1 KiB; the larger one when the smaller would round up to 1024.0."""
+    for unit, factor in _UNITS:
+        if count >= factor or float("%.1f" % (count * 1024 / factor)) >= 1024.0:
+            return unit, factor
+    return "B", 1
+
+
+def _figure(count, factor):
+    """count in a unit of factor bytes, without the unit: "305.1", "0.0",
+    "<0.1" for a non-zero count that would read 0.0, "512" in bytes."""
+    if factor == 1:
+        return "%d" % count
+    text = "%.1f" % (count / factor)
+    return "<0.1" if count > 0 and text == "0.0" else text
+
+
 def size(count, scale=None):
-    """count bytes, one decimal: "41.2 GiB", "260.6 MiB", "0 B". scale: the
-    bytes whose unit to use (the total next to it: from 0.1 GiB on, GiB); a
-    non-zero count never reads 0.0, it gets its own unit then ("52.0 KiB"
-    next to "100.0 GiB")."""
-    count = float(count or 0)
-    alone = scale is None
-    scale = count if alone else float(scale)
-    for unit, factor, least in _UNITS:
-        if scale >= (factor if alone else least) and (count == 0 or count / factor >= 0.1):
-            return "%.1f %s" % (count / factor, unit)
-    for unit, factor, least in _UNITS:
-        if count >= least:
-            return "%.1f %s" % (count / factor, unit)
-    return "%d B" % count
+    """count bytes, one decimal: "41.2 GiB", "260.6 MiB", "0 B", in the
+    unit it reads at least 1.0 in; scale: the bytes whose unit to use
+    instead (the larger size next to it). A non-zero count never reads
+    0.0: "<0.1 GiB". A done/total pair goes through amount or sizes."""
+    count = max(0.0, float(count or 0))
+    unit, factor = _unit(float(scale) if scale else count)
+    return "%s %s" % (_figure(count, factor), unit)
+
+
+def sizes(part, whole):
+    """part and whole bytes in whole's unit, as two strings: ("40.1 GiB",
+    "98.0 GiB"); part is never shown above whole ("12.0 GiB free of 98.0 GiB")."""
+    whole = float(whole or 0)
+    return size(min(float(part or 0), whole), whole), size(whole)
 
 
 def amount(done, total, sep="/"):
-    """done out of total bytes, the unit once: "52.2/100.0 GiB"; done in its
-    own unit when it would read 0.0 in total's: "52.0 KiB/100.0 GiB"."""
-    whole, part = size(total), size(done, total)
-    if part.split()[1] == whole.split()[1]:
-        return "%s%s%s" % (part.split()[0], sep, whole)
-    return "%s%s%s" % (part, sep, whole)
+    """done out of total bytes, the unit once, the one total reads naturally
+    in, the same precision for both: "305.1/329.8 MiB", "<0.1/100.0 GiB";
+    done is never shown above total (netstats can count a little more)."""
+    total = max(0.0, float(total or 0))
+    unit, factor = _unit(total)
+    return "%s%s%s %s" % (_figure(max(0.0, min(float(done or 0), total)), factor), sep, _figure(total, factor), unit)
 
 
 _SIZE = re.compile(r"^\s*([0-9]+(?:[.,][0-9]+)?)\s*(bytes|B|KiB|KB|MiB|MB|GiB|GB|TiB|TB)\s*$")

@@ -20,21 +20,59 @@ ARROW = u"←"
 @pytest.mark.parametrize("count, scale, text", [
     (0, None, "0 B"),
     (512, None, "512 B"),
+    (1023, None, "1023 B"),
+    (1024, None, "1.0 KiB"),
     (2048, None, "2.0 KiB"),
+    (1023.97 * 1024, None, "1.0 MiB"),  # not 1024.0 KiB
     (260.6 * MIB, None, "260.6 MiB"),  # alone: the unit it reads >= 1 in
+    (1000 * MIB, None, "1000.0 MiB"),
+    (1024 * MIB, None, "1.0 GiB"),
     (41.2 * GIB, None, "41.2 GiB"),
+    (1023.99 * GIB, None, "1.0 TiB"),
     (5 * 1024 * GIB, None, "5.0 TiB"),
     (0, 100 * GIB, "0.0 GiB"),
     (0.3 * GIB, 100 * GIB, "0.3 GiB"),  # the unit of the scale
-    (52 * 1024, 100 * GIB, "52.0 KiB"),  # never 0.0 GiB for bytes there
+    (52 * 1024, 100 * GIB, "<0.1 GiB"),  # never 0.0 for a non-zero size
+    (5 * GIB, 0, "5.0 GiB"),  # no scale: its own unit
+    (-5, None, "0 B"),
 ])
 def test_size(count, scale, text):
     assert out.size(count, scale) == text
 
 
-def test_amount_and_parse_size():
-    assert out.amount(52.2 * GIB, 100 * GIB) == "52.2/100.0 GiB"
-    assert out.amount(52 * 1024, 100 * GIB) == "52.0 KiB/100.0 GiB"
+@pytest.mark.parametrize("done, total, text", [
+    (305.1 * MIB, 329.8 * MIB, "305.1/329.8 MiB"),  # was "0.3 GiB/329.8 MiB": the unit total reads naturally in
+    (200 * MIB, 200 * MIB, "200.0/200.0 MiB"),  # done = total
+    (0, 329.8 * MIB, "0.0/329.8 MiB"),  # done = 0
+    (0, 512, "0/512 B"),
+    (300, 512, "300/512 B"),
+    (512, 900 * 1024, "0.5/900.0 KiB"),
+    (52.2 * GIB, 100 * GIB, "52.2/100.0 GiB"),
+    (52 * 1024, 100 * GIB, "<0.1/100.0 GiB"),
+    (900 * GIB, 1000 * GIB, "900.0/1000.0 GiB"),  # under 1 TiB: GiB
+    (0.5 * 1024 * GIB, 2.5 * 1024 * GIB, "0.5/2.5 TiB"),
+    (1023.96 * MIB, 1023.98 * MIB, "1.0/1.0 GiB"),  # 1024.0 MiB reads 1.0 GiB, done in that unit too
+    (329.79 * MIB, 329.8 * MIB, "329.8/329.8 MiB"),
+    (340 * MIB, 329.8 * MIB, "329.8/329.8 MiB"),  # netstats counted more than the total: never shown above it
+    (10, 0, "0/0 B"),
+    (-1, 100, "0/100 B"),
+])
+def test_amount(done, total, text):
+    assert out.amount(done, total) == text
+
+
+def test_amount_never_shows_done_above_total():
+    for total in [1, 999, 1024, 1500, 329.8 * MIB, 1023.99 * MIB, 99.95 * GIB, 3 * 1024 * GIB]:
+        for done in [0, 1, total * 0.5, total * 0.999, total - 1, total, total + 1, total * 1.5]:
+            done_text, total_text = out.amount(done, total).split()[0].split("/")
+            assert done_text == "<0.1" or float(done_text) <= float(total_text), (done, total)
+            assert out.amount(done, total).split()[1] == out.size(total).split()[1]  # the unit of the total alone
+
+
+def test_sizes_and_parse_size():
+    assert out.sizes(40.1 * GIB, 98 * GIB) == ("40.1 GiB", "98.0 GiB")
+    assert out.sizes(305.1 * MIB, 329.8 * MIB) == ("305.1 MiB", "329.8 MiB")
+    assert out.sizes(700 * MIB, 2 * 1024 * GIB) == ("<0.1 TiB", "2.0 TiB")
     assert out.amount(1 * GIB, 2 * GIB, " / ") == "1.0 / 2.0 GiB"
     assert out.parse_size("94.39 MiB") == 94.39 * MIB
     assert out.parse_size("1,5 GiB") == 1.5 * GIB
@@ -376,6 +414,18 @@ def test_progress_line_going_with_peers_always():
     assert lines == [
         "[1/2] node5 bootstrap  JOINING  [#####-----]  52%%  52.2/100.0 GiB  89 MiB/s  ETA %s (9m)  10m" % eta,
         "      from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled   from node2 3.0/3.0 GiB done"]
+
+
+def test_progress_line_small_totals_one_unit():
+    """A decommission of a few hundred MiB: done and total in the total's unit, on both lines."""
+    lines = out.progress_line(2, 3, "node4", "decommission", "LEAVING", done=305.1 * MIB, total=329.8 * MIB,
+                              now=NOW, start=NOW - 60,
+                              peers=[{"name": "node1", "way": "to", "done": 190 * MIB, "total": 200 * MIB},
+                                     {"name": "node2", "way": "to", "done": 115.1 * MIB, "total": 129.8 * MIB},
+                                     {"name": "node3", "way": "to", "done": 40 * 1024, "total": 900 * 1024}])
+    assert lines == [
+        "[2/3] node4 decommission  LEAVING  [#########-]  92%  305.1/329.8 MiB  1m",
+        "      to node1 190.0/200.0 MiB ok   to node2 115.1/129.8 MiB ok   to node3 40.0/900.0 KiB ok"]
 
 
 def test_progress_line_waiting_stalled_done():
