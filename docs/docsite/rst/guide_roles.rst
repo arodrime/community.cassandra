@@ -146,11 +146,11 @@ Use one group per cluster and one group per datacenter (the playbooks below take
 Without ``-e cassandra_hosts=<group>`` (nor ``CASSANDRA_CLUSTER``, below), the playbooks run on the inventory's
 cluster group when it holds one cluster laid out as the import writes it: the group
 whose name starts every other group's and that holds their hosts (``orders`` here, for ``orders_dc1`` and
-``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out), or its only group
-with hosts. No group name is taken by default, not ``cassandra`` either. Any other group
+``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out): a cluster's
+shape, ``<group>`` with its ``<group>_<dc>`` groups (a lone group, ``[linux]`` or ``[cassandra]``, is none). No group name is taken by default, not ``cassandra`` either. Any other group
 (a second cluster, ``monitoring``, ``linux``, a group of your own not named ``<cluster>_...``) makes them stop with the top groups listed rather
 than guess: give ``-e cassandra_hosts=<group>`` or ``CASSANDRA_CLUSTER=<group>`` then (``-e cassandra_hosts=cassandra``
-for a group ``cassandra`` next to groups of other names, ``dc1``, ``rack1``). With an inventory of one cluster only (``-i
+for a group ``cassandra`` alone or next to groups of other names, ``dc1``, ``rack1``). With an inventory of one cluster only (``-i
 inventories/orders.yml``, or a directory of your own per cluster) the playbooks need no ``cassandra_hosts``. The
 same rule is the lookup ``community.cassandra.cassandra_hosts``; the groups are read each time, so a group your own
 plays add earlier in the same run (``group_by``) makes it stop the same way.
@@ -301,14 +301,18 @@ Help and runbook
 ----------------
 
 ``help`` reads the inventory only (no node is contacted, nothing changes) and picks the cluster as the operation
-playbooks do (an inventory of several clusters: name one, else it stops, naming them). Its first line names the
-cluster, then three sections: the cluster as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
+playbooks do; its first line names the cluster, then three sections: the cluster as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
 other clusters too and ``CASSANDRA_CLUSTER`` does not name it, or the dir is shared with other clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
 user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know), its options one per line with their default, and an example where one helps; and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
+
+None named on an inventory that is not one cluster (a shared ``inventories`` directory), ``help`` shows the
+operations for any cluster, ``CLUSTER_GROUP`` (and ``DC``, ``RACK``, ``NODE``) in their commands, the clusters it
+found (``orders (3 nodes, dc1)``) and how to name one, and nothing of one cluster's inventory (its nodes, the
+advice).
 
 .. code-block:: console
 

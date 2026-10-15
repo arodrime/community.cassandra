@@ -1151,3 +1151,25 @@ def test_header_option_never_apart_from_its_value():
     header = "# Do it.\n#\n#   ansible-playbook community.cassandra.add_node\n#\n# " + "word " * 19 + "-e x=y.\n"
     text = cassandra_help(MODEL, PLAYBOOKS, topic="add_node", header=header, cwd=CWD)
     assert text.endswith("\n  -e x=y.")  # cut before the option, which there would end the line above
+
+
+def test_no_cluster_named_the_help_of_any():
+    """An inventory of several clusters, none named: the operations with CLUSTER_GROUP, DC, RACK, NODE; the clusters
+    found; nothing of one cluster's inventory."""
+    model = {"sources": ["inventories"], "auto": "", "env_cluster": "", "clusters": [], "imported": [], "options": [],
+             "vault_skipped": [], "unnamed": "No cluster named...", "found": ["orders (3 nodes, dc1)", "billing (2 nodes, eu)"],
+             "others": ["monitoring"], "banner": ""}
+    text = " ".join(cassandra_help(model, cwd="/").split())
+    assert "Clusters found: orders (3 nodes, dc1), billing (2 nodes, eu) Other groups: monitoring" in text
+    assert "community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in text
+    assert "community.cassandra.stop_rack -e cassandra_hosts=CLUSTER_GROUP -e cassandra_target_dc=DC -e cassandra_target_rack=RACK" in text
+    assert "ansible-playbook -i NODE, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR" in text
+    assert "Name the cluster for the advice of its inventory." in text
+    assert "Not for this cluster" not in text
+    topic = " ".join(cassandra_help(model, topic="decommission_node", cwd="/").split())
+    assert "community.cassandra.decommission_node -e cassandra_hosts=CLUSTER_GROUP" in topic
+    assert "CLUSTER_GROUP" in topic and "Replace" in topic
+    assert "No cluster named..." in text  # the playbooks' reason, as is
+    imported = " ".join(cassandra_help(model, topic="import_cluster", cwd="/").split())
+    assert "Replace NEW_DIR, NODE with your own values." in imported
+    assert "CLUSTER_GROUP" in cassandra_help(model, markdown=True, cwd="/", runbook_dir="/")

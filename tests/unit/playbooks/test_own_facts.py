@@ -151,7 +151,7 @@ def run(tmp_path, playbook, hosts, *args):
         python.write_text('#!/bin/sh\nOWN_FACTS_NODE=%s exec %s "$@"\n' % (host, sys.executable))
         python.chmod(0o755)
         lines.append("%s ansible_python_interpreter=%s cassandra_dc=dc1 cassandra_rack=rack1" % (host, python))
-    lines += ["[cassandra:vars]", "ansible_connection=local", "ansible_become=false"]
+    lines += ["[cassandra_dc1:children]", "cassandra", "[cassandra:vars]", "ansible_connection=local", "ansible_become=false"]
     (tmp_path / "hosts.ini").write_text("\n".join(lines) + "\n")
     out = tmp_path / "own_facts.json"
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="0",

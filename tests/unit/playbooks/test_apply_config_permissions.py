@@ -281,7 +281,7 @@ def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
     for h, t in then.items():
         hostvars[h].update(cassandra_apply_config_then=t, cassandra_apply_config_todo=h != "n5")
-    variables = {"groups": {"all": list(hostvars), "cassandra": list(hostvars)}, "hostvars": hostvars}
+    variables = {"groups": {"all": list(hostvars), "cassandra": list(hostvars), "cassandra_dc1": list(hostvars)}, "hostvars": hostvars}
     for check, host, expected in ((False, "n1", ["10.100.100.2", "10.100.100.3", "10.100.100.5"]),
                                   (False, "n2", ["10.100.100.3", "10.100.100.5"]),
                                   # n2, started before n3's turn, must be up again
@@ -313,7 +313,7 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
     for h, t in then.items():
         hostvars[h].update(cassandra_apply_config_then=t, cassandra_apply_config_todo=h != "n5")
-    variables = {"groups": {"all": list(hostvars), "cassandra": list(hostvars)}, "hostvars": hostvars}
+    variables = {"groups": {"all": list(hostvars), "cassandra": list(hostvars), "cassandra_dc1": list(hostvars)}, "hostvars": hostvars}
     # written before any start or restart: every start node is still down; --check also checks the restart node, which
     # needs every other node up but the ones it starts and, a real run refusing it (said in the recap), the ones left
     # stopped
@@ -371,7 +371,7 @@ def test_the_second_node_checked_from_is_not_one_expected_down():
     work = load("roles", "cassandra_service", "tasks", "cluster_health.yml")[0]
     hosts = ["n1", "n2", "n3"]
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in hosts)
-    variables = {"groups": {"all": hosts, "cassandra": hosts}, "hostvars": hostvars, "inventory_hostname": "n2"}
+    variables = {"groups": {"all": hosts, "cassandra": hosts, "cassandra_dc1": hosts}, "hostvars": hostvars, "inventory_hostname": "n2"}
     peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer"]
     assert render(peer, with_task_vars(work, variables)) == "n1"
     # n1 stopped (apply_config writes it, left stopped): the ring is read from n3
@@ -388,7 +388,7 @@ def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
     for batch, play, me, expected in ((True, ["n1", "n2"], "n1", "n3"), (True, ["n1", "n2"], "n2", "n3"),
                                       (True, hosts, "n2", "n1"),  # all in the batch: the same node for all
                                       (False, ["n1", "n2"], "n1", "n2")):  # one node at a time: another node
-        variables = {"groups": {"all": hosts, "cassandra": hosts}, "hostvars": hostvars, "inventory_hostname": me,
+        variables = {"groups": {"all": hosts, "cassandra": hosts, "cassandra_dc1": hosts}, "hostvars": hostvars, "inventory_hostname": me,
                      "ansible_play_hosts": play, "cassandra_service_health_batch": batch}
         assert render(peer, with_task_vars(work, variables)) == expected
     block = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]

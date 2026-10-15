@@ -74,9 +74,16 @@ def test_the_cassandra_group_named():
     assert picked(None, groups, "cassandra") == ("cassandra", BY_ENV)
 
 
-def test_the_cassandra_group_alone():
-    """The inventory's only group: its only cluster, whatever its name."""
-    assert picked(None, {"all": ["n1", "n2"], "ungrouped": [], "cassandra": ["n1", "n2"]}) == ("cassandra", BY_ONLY)
+@pytest.mark.parametrize("name", ["cassandra", "linux", "prod"])
+def test_a_lone_group_is_no_cluster(name):
+    """The only cluster has a cluster's shape (<group> with its <group>_<dc> groups): a lone group, whatever its
+    name, is not taken."""
+    with pytest.raises(ValueError, match=r"holds no cluster laid out as the import writes it .*; groups: %s\)" % name):
+        picked(None, {"all": ["n1", "n2"], "ungrouped": [], name: ["n1", "n2"]})
+
+
+def test_the_cassandra_group_laid_out_as_a_cluster():
+    """Named cassandra, laid out as the import writes it: the only cluster, as any other name."""
     assert picked(None, {"all": ["n1"], "cassandra": ["n1"], "cassandra_dc1": ["n1"]}) == ("cassandra", BY_ONLY)
 
 
@@ -98,7 +105,7 @@ def test_two_dcs():
 
 def test_runtime_groups_ignored():
     # group_by groups made by the playbooks hold every host at times
-    groups = {"all": ["n1", "n2"], "orders": ["n1", "n2"],
+    groups = {"all": ["n1", "n2"], "orders": ["n1", "n2"], "orders_dc1": ["n1", "n2"],
               "cassandra_apply_config_True": ["n1", "n2"], "cassandra_update_java_True": ["n1", "n2"],
               "cassandra_apply_config_os_True": ["n1", "n2"], "cassandra_apply_config_ts_True": ["n1", "n2"],
               "cassandra_apply_config_tsany_True": ["n1", "n2"], "cassandra_sync_clock_live_True": ["n1", "n2"],

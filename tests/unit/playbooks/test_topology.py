@@ -91,7 +91,8 @@ def test_operator_messages_marked_for_the_ops_callback():
     variables = dict(done["vars"], hostvars={"n1": {"cassandra_topology_plan": plan,
                                                     "_cassandra_preflight": {"cassandra_cluster_name": "my_cluster"}}},
                      ansible_play_hosts_all=["n1"], ansible_inventory_sources=[], _imported=True,
-                     groups={"all": ["n1", "n2", "n4"], "my_cluster": ["n1", "n2", "n4"]})
+                     groups={"all": ["n1", "n2", "n4"], "my_cluster": ["n1", "n2", "n4"],
+                             "my_cluster_dc1": ["n1", "n2", "n4"]})
     variables = dict((k, trust_as_template(v) if isinstance(v, str) else v) for k, v in variables.items())
     msg = Templar(loader=DataLoader(), variables=variables).template(trust_as_template(done["ansible.builtin.debug"]["msg"]))
     assert msg.split("\n") == [
@@ -131,7 +132,8 @@ def test_the_add_step_runs_no_cleanup():
 
 def left_out(limit=None, play_hosts=("n1", "n2", "n3"), absent=("n4",)):
     t = task("The run sees the whole group, and a cluster that runs")
-    variables = {"groups": {"all": ["n1", "n2", "n3", "n4"], "prod": ["n1", "n2", "n3", "n4"]}, "_tp_group": "prod",
+    variables = {"groups": {"all": ["n1", "n2", "n3", "n4"], "prod": ["n1", "n2", "n3", "n4"],
+                 "prod_dc1": ["n1", "n2", "n3", "n4"]}, "_tp_group": "prod",
                  "ansible_play_hosts_all": list(play_hosts), "_tp_absent": list(absent)}
     if limit is not None:
         variables["ansible_limit"] = limit

@@ -1234,17 +1234,22 @@ def test_the_help_playbook_under_the_ops_callback(tmp_path):
     assert said[0] == banner and said[-1] == banner, plain
 
 
-def test_the_help_playbook_refuses_several_clusters(tmp_path):
-    (tmp_path / "hosts.yml").write_text(HELP_INVENTORY + "other:\n  hosts:\n    node9:\n")
+def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
+    """The help of any cluster (CLUSTER_GROUP in the commands), the clusters found and how to name one; nothing of
+    one cluster's inventory, no CLUSTER line."""
+    (tmp_path / "hosts.yml").write_text(HELP_INVENTORY + "other:\n  children:\n    other_dc1:\n      hosts:\n        node9:\n")
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", INVENTORY=str(tmp_path / "hosts.yml"))
-    assert rc != 0
-    assert output.strip() == (
-        "No cluster named, and the inventory is not the cluster cassandra alone (other groups: other). Name one:"
-        " -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster name> in your shell. A group cassandra"
-        " is not taken by default: -e cassandra_hosts=cassandra names it."), output  # as is, not "localhost: ..."
+    assert rc == 0, output
+    plain = " ".join(output.split())
+    assert "Clusters found: cassandra (3 nodes, dc1), other (1 node, dc1)" in plain, output
+    assert "The help of one cluster: -e cassandra_hosts=CLUSTER_GROUP, or CASSANDRA_CLUSTER=<group or cluster name>" in plain
+    assert "$ ansible-playbook -i hosts.yml community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in plain, output
+    assert "Name the cluster for the advice of its inventory." in plain
+    assert "CLUSTER " not in output and "node1" not in output and "Traceback" not in output
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=other",
                      INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0 and output.split("\n")[0] == "CLUSTER other (1 node, dc1) | chosen by: -e cassandra_hosts", output
+    assert "CLUSTER_GROUP" not in output
 
 
 def test_the_help_playbook_under_the_default_callback(tmp_path):

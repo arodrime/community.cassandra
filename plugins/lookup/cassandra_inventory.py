@@ -22,7 +22,7 @@ description:
     the playbooks (C(playbook_dir)), not the ones of the current directory.
   - The cluster is picked as the operation playbooks pick it (lookup P(community.cassandra.cassandra_hosts#lookup)),
     C(cassandra_hosts) when it is set, the one C(CASSANDRA_CLUSTER) names (both set, the same one), else the
-    inventory's only cluster; else C(refusal) says why, naming the clusters found.
+    inventory's only cluster; else C(unnamed) says why, C(found) naming the clusters found.
 options:
   sources:
     description: The inventory sources to read. Default, the ones of the run (C(ansible_inventory_sources)).
@@ -41,8 +41,10 @@ RETURN = r"""
 _raw:
   description:
     - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters)
-      (a list of C(name), C(hosts): C(name), C(vars), C(names)); or C(refusal) alone, why no cluster is picked
-      (several clusters and none named, C(cassandra_hosts) and C(CASSANDRA_CLUSTER) naming two)."
+      (a list of C(name), C(hosts): C(name), C(vars), C(names)); or C(refusal) alone, why the cluster named is
+      refused (C(cassandra_hosts) and C(CASSANDRA_CLUSTER) naming two, a group not in the inventory)."
+    - "None named and the inventory not one cluster: C(clusters) empty, C(unnamed) why (the playbooks' refusal),
+      C(found) the clusters found, as C(prod (3 nodes, dc1)) each, C(others) the other groups."
     - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) nor C(CASSANDRA_CLUSTER) (empty when none);
       C(imported) the clusters import_cluster wrote there (their C(<cluster>.yml));
       C(options) is the list of the command line options the
@@ -76,7 +78,7 @@ from ansible.vars.manager import VariableManager
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import written_for
 from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import (
-    ENV, UNKNOWN, in_inventory, cluster_group, cluster_line, not_given, picked)
+    ENV, UNKNOWN, cluster_group, cluster_line, clusters_found, in_inventory, not_given, other_groups, picked)
 
 # the only variables templated and returned: none of them holds a secret
 SHOWN = ("ansible_host", "ansible_port", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
@@ -208,30 +210,49 @@ def read(sources, given=None, basedir=None, env=None):
         except Exception:  # pylint: disable=broad-except
             return UNKNOWN  # as the playbooks' lookup: not known from the inventory alone
 
-    try:  # the playbooks' rule: the cluster named (both names the same one), else the only one, else refused
-        name, chosen_by = picked(given, groups, env, cluster_name if env else None)
-    except ValueError as exc:
-        return {"refusal": str(exc)}  # help says it as a verdict
-    env_cluster = name if env and not given else ""
-    hosts, vaulted = [], False
-    for host in inventory.groups[name].get_hosts():  # picked() checked it has hosts
+    def read_host(host):
         raw = manager.get_vars(host=host, include_hostvars=False)
         variables, found = _masked(raw)
         other = _masked(raw, _OTHER_MASK)[0]
-        vaulted = vaulted or found
         templars = (Templar(loader=loader, variables=variables), Templar(loader=loader, variables=other))
         shown = dict((k, _value(templars, variables[k], other[k], found)) for k in SHOWN if k in variables)
         shown.update((k, bool(variables[k])) for k in SET if k in variables)
-        hosts.append({"name": host.name, "vars": shown,
-                      "names": sorted(k for k in variables if k.startswith("cassandra_"))})
-    clusters = [{"name": name, "hosts": hosts}]
-    by_name = dict((h["name"], h["vars"]) for h in hosts)
+        return {"name": host.name, "vars": shown, "names": sorted(k for k in variables if k.startswith("cassandra_"))}, found
 
-    def dc(host):  # a template help does not resolve, a vaulted value: not known here
-        value = by_name[host].get("cassandra_dc")
-        return UNKNOWN if value == VAULTED or "{{" in str(value or "") else value
+    def line(group, why, hosts):
+        by_name = dict((h["name"], h["vars"]) for h in hosts)
 
-    line = cluster_line(name, chosen_by, [h["name"] for h in hosts], lambda h: by_name[h].get("cassandra_node_state"), dc)
+        def dc(host):  # a template help does not resolve, a vaulted value: not known here
+            value = by_name[host].get("cassandra_dc")
+            return UNKNOWN if value == VAULTED or "{{" in str(value or "") else value
+
+        return cluster_line(group, why, [h["name"] for h in hosts], lambda h: by_name[h].get("cassandra_node_state"), dc)
+
+    model = {"sources": list(sources), "auto": auto, "env_cluster": "", "default_sources": [str(s) for s in C.DEFAULT_HOST_LIST or []],
+             "default_sources_origin": _origin("DEFAULT_HOST_LIST"), "all_hosts": sorted(groups.get("all", []))}
+    vaulted = False
+    try:  # the playbooks' rule: the cluster named (both names the same one), else the only one, else refused
+        name, chosen_by = picked(given, groups, env, cluster_name if env else None)
+    except ValueError as exc:
+        if given or env:
+            return {"refusal": str(exc)}  # help says it as a verdict
+        # none named, not one cluster: the help of every cluster (CLUSTER_GROUP), the clusters found listed
+        listed, clusters = [], clusters_found(groups)
+        for group in clusters:
+            read_hosts = [read_host(h) for h in inventory.groups[group].get_hosts()]
+            vaulted = vaulted or any(masked for dummy, masked in read_hosts)
+            listed.append(line(group, None, [h for h, dummy in read_hosts]))
+        model.update(unnamed=str(exc), found=listed, others=other_groups(groups, clusters), clusters=[], imported=[],
+                     banner="")
+    else:
+        model["env_cluster"] = name if env and not given else ""
+        hosts = []
+        for host in inventory.groups[name].get_hosts():  # picked() checked it has hosts
+            read_one, masked = read_host(host)
+            vaulted = vaulted or masked
+            hosts.append(read_one)
+        model.update(clusters=[{"name": name, "hosts": hosts}], imported=_imported(sources, [name]),
+                     banner=line(name, chosen_by, hosts))
     options = _options()  # no -b: the playbooks ask for root on the nodes themselves
     prompt_added = False
     vault_given = C.DEFAULT_VAULT_PASSWORD_FILE or C.DEFAULT_VAULT_IDENTITY_LIST or any(
@@ -239,11 +260,8 @@ def read(sources, given=None, basedir=None, env=None):
     if (loader.skipped or vaulted) and not vault_given:
         options.append("--ask-vault-pass")  # the operations read the vaulted values help skipped
         prompt_added = True
-    return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
-            "options": options, "imported": _imported(sources, [c["name"] for c in clusters]),
-            "vault_prompt_added": prompt_added, "env_cluster": env_cluster, "banner": line,
-            "default_sources": [str(s) for s in C.DEFAULT_HOST_LIST or []],
-            "default_sources_origin": _origin("DEFAULT_HOST_LIST"), "all_hosts": sorted(groups.get("all", []))}
+    model.update(vault_skipped=sorted(loader.skipped), options=options, vault_prompt_added=prompt_added)
+    return model
 
 
 def _origin(name):

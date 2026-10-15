@@ -55,7 +55,8 @@ def variables(inventory, running, reset=False, task=IDENTITY, others=None, play=
     hosts = play or list(hostvars)
     v = dict(PLAY["vars"], **task.get("vars", {}))
     v.update(inventory, hostvars=hostvars, inventory_hostname="n1", ansible_play_hosts_all=hosts, ansible_play_hosts=hosts,
-             groups={"cassandra": group or list(hostvars)}, cassandra_create_cluster_reset=reset)
+             groups={"cassandra": group or list(hostvars), "cassandra_dc1": group or list(hostvars)},
+             cassandra_create_cluster_reset=reset)
     return v
 
 
