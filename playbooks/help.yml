@@ -49,6 +49,24 @@
       ansible.builtin.set_fact:
         _cassandra_help_model: "{{ _model }}"
 
+    - name: The cluster is named, or the inventory holds one
+      ansible.builtin.assert:
+        that: _cassandra_help_model.refusal is not defined
+        fail_msg: "{{ _cassandra_help_model.refusal | default('') }}"
+        quiet: true
+      run_once: true  # its msg as is, not "localhost: ..." (ops callback)
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+
+    - name: Say which cluster the help is for
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_help_model.banner }}"
+      vars:
+        cassandra_output: true  # the run's first line (ops callback)
+        cassandra_output_info: true  # in the progress colour
+        cassandra_output_gap: true  # a line of its own
+
+
     # 1. each cluster group of the inventory: cluster name, Cassandra series and
     #    package version, install method, Java, datacenters, racks and their nodes,
     #    seeds, the nodes marked cassandra_node_state: absent;

@@ -1578,13 +1578,18 @@ def test_hosts_file_of_an_import_into_a_dir_of_its_own():
     assert cassandra_inventory_leftovers(list(found), found, WRITTEN_A, "cluster_a", inventory=NEW_A)["conflicts"] == []
 
 
-@pytest.mark.parametrize("group", ["all", "ungrouped", "cassandra"])
+@pytest.mark.parametrize("group", ["all", "ungrouped"])
 def test_ansible_groups(group):
-    """cassandra: the playbooks would take it without -e cassandra_hosts, whatever the other clusters."""
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
     out = cassandra_inventory_leftovers([], {}, [group + ".yml"], group)
-    assert out["conflicts"] == ["cluster group %s (from the cluster name): a group the playbooks or Ansible take on"
-                                " their own, not one cluster's of an inventory dir" % group]
+    assert out["conflicts"] == ["cluster group %s (from the cluster name): a group Ansible takes on its own,"
+                                " not one cluster's of an inventory dir" % group]
+
+
+def test_a_cluster_named_cassandra():
+    """No group name is the playbooks' own any more: a cluster Cassandra is imported as any other."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_leftovers
+    assert cassandra_inventory_leftovers([], {}, ["cassandra.yml"], "cassandra")["conflicts"] == []
 
 
 @pytest.mark.parametrize("path, text", [

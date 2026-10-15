@@ -28,8 +28,9 @@ the hosts: apply them in a play with `become: true`.
 
 #### Playbooks
 
-Operations on a cluster, described by one inventory group (`cassandra_hosts`,
-by default the cluster the environment variable `CASSANDRA_CLUSTER` names, else the group `cassandra`, else the inventory's cluster group as the import lays it out; per-cluster
+Operations on a cluster, described by one inventory group (`-e cassandra_hosts=<group>`, or the cluster the
+environment variable `CASSANDRA_CLUSTER` names, both set: the same one; neither: the inventory's only cluster,
+as the import lays it out, else the run stops naming the clusters; no group name is a default; per-cluster
 settings such as `cassandra_seeds` in its group_vars). Run them with
 `ansible-playbook community.cassandra.<name>`: they ask for root on the nodes themselves where they need it
 (no `-b`, no `become` in `ansible.cfg`). With `stdout_callback = community.cassandra.ops` in `ansible.cfg`
@@ -40,7 +41,7 @@ to do, the questions and the failures (`-v` for everything); with the default ca
 An operation that targets particular nodes takes them in `cassandra_target_nodes` (hosts or groups of the inventory,
 comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a datacenter and a rack.
 
-- `help`- Read-only, from the inventory alone (no node contacted): the clusters it describes, every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
+- `help`- Read-only, from the inventory alone (no node contacted): the cluster it describes (picked as the operations pick it), every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables and about sensitive or suspicious settings: `auto_bootstrap` false, a replace flag left on a member of the ring, the heap size, `AllowAllAuthenticator` on an rpc address other hosts reach, a failure policy `ignore`; `cassandra_suspicious_ack` silences one a node keeps on purpose).
 - `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
 - `add_node`- Adds the nodes in `cassandra_target_nodes` to a running cluster: all prepared at once (nothing started), then started and bootstrapped one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.

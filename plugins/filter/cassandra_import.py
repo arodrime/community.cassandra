@@ -2859,8 +2859,8 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
     headers = dict((p, header(p)) for p in found)
     # the clusters' hosts files (the import's), by cluster, and the user's own inventory files
     clusters, own, conflicts = {}, {}, []
-    if cluster in ("all", "ungrouped", "cassandra"):
-        conflicts.append("cluster group %s (from the cluster name): a group the playbooks or Ansible take on their own,"
+    if cluster in ("all", "ungrouped"):
+        conflicts.append("cluster group %s (from the cluster name): a group Ansible takes on its own,"
                          " not one cluster's of an inventory dir" % cluster)
     for path, name in sorted(headers.items()):
         if any(p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)

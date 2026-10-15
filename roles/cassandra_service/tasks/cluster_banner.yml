@@ -1,0 +1,31 @@
+---
+# The run's first line, once per run and cluster (a playbook that imports
+# another says it once): the cluster, its nodes and datacenters, and how it
+# was picked
+#   CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts
+# (CASSANDRA_CLUSTER (environment), the only cluster in the inventory). On
+# localhost (hosts_check.yml), or on the nodes' first play when --limit left
+# localhost out. The ops callback says it again as the run's last line.
+- name: Say which cluster the run is on
+  ansible.builtin.debug:
+    msg: "{{ lookup('community.cassandra.cassandra_hosts', banner=true) }}"
+  run_once: true
+  when: hostvars['localhost']['_cassandra_cluster_shown'] | default('') != _group
+  tags: [always]  # under --tags too
+  vars:
+    cassandra_output: true  # an operator message (ops callback)
+    cassandra_output_info: true  # in the progress colour
+    cassandra_output_gap: true  # a line of its own
+    _group: &group "{{ lookup('community.cassandra.cassandra_hosts') }}"
+
+- name: Say it once per run
+  ansible.builtin.set_fact:
+    _cassandra_cluster_shown: "{{ _group }}"
+  run_once: true
+  delegate_to: localhost
+  delegate_facts: true
+  become: false  # on the controller
+  tags: [always]
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+    _group: *group

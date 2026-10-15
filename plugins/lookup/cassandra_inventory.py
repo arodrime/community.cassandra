@@ -20,9 +20,9 @@ description:
     variable of a skipped file) or would run a lookup is returned as its raw text. The C(-e) variables are not read.
   - Like the operation playbooks, it reads the C(group_vars) and C(host_vars) next to the inventory and next to
     the playbooks (C(playbook_dir)), not the ones of the current directory.
-  - The cluster groups are C(cassandra_hosts) when it is set, else the one C(CASSANDRA_CLUSTER) names, else the group found by
-    the lookup P(community.cassandra.cassandra_hosts#lookup), else every top group of the inventory
-    (one per cluster when the inventory holds several, as C(all) > C(<cluster>) > C(<cluster>_<dc>)).
+  - The cluster is picked as the operation playbooks pick it (lookup P(community.cassandra.cassandra_hosts#lookup)),
+    C(cassandra_hosts) when it is set, the one C(CASSANDRA_CLUSTER) names (both set, the same one), else the
+    inventory's only cluster; else C(refusal) says why, naming the clusters found.
 options:
   sources:
     description: The inventory sources to read. Default, the ones of the run (C(ansible_inventory_sources)).
@@ -41,8 +41,9 @@ RETURN = r"""
 _raw:
   description:
     - "A dict: C(sources), C(vault_skipped), C(auto), C(options), C(imported), C(clusters)
-      (a list of C(name), C(hosts): C(name), C(vars), C(names))."
-    - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) (empty when none);
+      (a list of C(name), C(hosts): C(name), C(vars), C(names)); or C(refusal) alone, why no cluster is picked
+      (several clusters and none named, C(cassandra_hosts) and C(CASSANDRA_CLUSTER) naming two)."
+    - C(auto) is the group the operation playbooks take without C(-e cassandra_hosts) nor C(CASSANDRA_CLUSTER) (empty when none);
       C(imported) the clusters import_cluster wrote there (their C(<cluster>.yml));
       C(options) is the list of the command line options the
       printed commands need (the vault and user options of this run; no C(-b), the playbooks become root
@@ -51,6 +52,7 @@ _raw:
       C(CASSANDRA_CLUSTER) picked (empty when it is not set, or C(cassandra_hosts) is);
       C(default_sources) the inventory of the configuration (C(ansible.cfg), C(ANSIBLE_INVENTORY)), used without C(-i);
       C(default_sources_origin) where it comes from (C(cfg), C(env), C(default));
+      C(banner) the line naming the cluster and how it was picked ('CLUSTER prod (5 nodes, dc1) | chosen by ...');
       C(all_hosts) every host of the inventory (import_cluster reads them all without C(-e cassandra_hosts)).
   type: list
   elements: dict
@@ -63,7 +65,7 @@ from collections.abc import Mapping
 
 from ansible import constants as C
 from ansible import context
-from ansible.errors import AnsibleError, AnsibleLookupError
+from ansible.errors import AnsibleError
 from ansible.inventory.manager import InventoryManager
 from ansible.parsing.dataloader import DataLoader
 from ansible.parsing.vault import is_encrypted_file
@@ -73,7 +75,8 @@ from ansible.utils.unsafe_proxy import wrap_var
 from ansible.vars.manager import VariableManager
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import written_for
-from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import ENV, UNKNOWN, cluster_group, top_groups
+from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import (
+    ENV, UNKNOWN, in_inventory, cluster_group, cluster_line, not_given, picked)
 
 # the only variables templated and returned: none of them holds a secret
 SHOWN = ("ansible_host", "ansible_port", "ansible_user", "ansible_ssh_private_key_file", "cassandra_jmx_username",
@@ -194,42 +197,41 @@ def read(sources, given=None, basedir=None, env=None):
     manager._extra_vars = {}  # pylint: disable=protected-access
     groups = dict((name, [h.name for h in group.get_hosts()]) for name, group in inventory.groups.items())
     try:
-        auto = cluster_group(None, groups)
+        auto = cluster_group(None, groups)  # the inventory's only cluster, whatever CASSANDRA_CLUSTER names
     except ValueError:
         auto = ""
-    env_cluster = ""
-    if not given and env:
 
-        def cluster_name(name):
-            raw = manager.get_vars(host=inventory.get_host(name), include_hostvars=False)
-            try:
-                return Templar(loader=loader, variables=_masked(raw)[0]).template(raw.get("cassandra_cluster_name"))
-            except Exception:  # pylint: disable=broad-except
-                return UNKNOWN  # as the playbooks' lookup: not known from the inventory alone
-
+    def cluster_name(name):
+        raw = manager.get_vars(host=inventory.get_host(name), include_hostvars=False)
         try:
-            given = env_cluster = cluster_group(None, groups, env, cluster_name)
-        except ValueError as exc:
-            raise AnsibleLookupError(str(exc))
-    names = [given] if given else ([auto] if auto else top_groups(groups))
-    clusters, vaulted = [], False
-    for name in names:
-        if name not in inventory.groups:
-            raise AnsibleLookupError("cassandra_hosts: group '%s' not found in the inventory" % name)
-        if not inventory.groups[name].get_hosts():
-            raise AnsibleLookupError("cassandra_hosts: group '%s' has no host" % name)
-        hosts = []
-        for host in inventory.groups[name].get_hosts():
-            raw = manager.get_vars(host=host, include_hostvars=False)
-            variables, found = _masked(raw)
-            other = _masked(raw, _OTHER_MASK)[0]
-            vaulted = vaulted or found
-            templars = (Templar(loader=loader, variables=variables), Templar(loader=loader, variables=other))
-            shown = dict((k, _value(templars, variables[k], other[k], found)) for k in SHOWN if k in variables)
-            shown.update((k, bool(variables[k])) for k in SET if k in variables)
-            hosts.append({"name": host.name, "vars": shown,
-                          "names": sorted(k for k in variables if k.startswith("cassandra_"))})
-        clusters.append({"name": name, "hosts": hosts})
+            return Templar(loader=loader, variables=_masked(raw)[0]).template(raw.get("cassandra_cluster_name"))
+        except Exception:  # pylint: disable=broad-except
+            return UNKNOWN  # as the playbooks' lookup: not known from the inventory alone
+
+    try:  # the playbooks' rule: the cluster named (both names the same one), else the only one, else refused
+        name, chosen_by = picked(given, groups, env, cluster_name if env else None)
+    except ValueError as exc:
+        return {"refusal": str(exc)}  # help says it as a verdict
+    env_cluster = name if env and not given else ""
+    hosts, vaulted = [], False
+    for host in inventory.groups[name].get_hosts():  # picked() checked it has hosts
+        raw = manager.get_vars(host=host, include_hostvars=False)
+        variables, found = _masked(raw)
+        other = _masked(raw, _OTHER_MASK)[0]
+        vaulted = vaulted or found
+        templars = (Templar(loader=loader, variables=variables), Templar(loader=loader, variables=other))
+        shown = dict((k, _value(templars, variables[k], other[k], found)) for k in SHOWN if k in variables)
+        shown.update((k, bool(variables[k])) for k in SET if k in variables)
+        hosts.append({"name": host.name, "vars": shown,
+                      "names": sorted(k for k in variables if k.startswith("cassandra_"))})
+    clusters = [{"name": name, "hosts": hosts}]
+    by_name = dict((h["name"], h["vars"]) for h in hosts)
+
+    def dc(host):  # a template help does not resolve, a vaulted value: not known here
+        value = by_name[host].get("cassandra_dc")
+        return UNKNOWN if value == VAULTED or "{{" in str(value or "") else value
+
+    line = cluster_line(name, chosen_by, [h["name"] for h in hosts], lambda h: by_name[h].get("cassandra_node_state"), dc)
     options = _options()  # no -b: the playbooks ask for root on the nodes themselves
     prompt_added = False
     vault_given = C.DEFAULT_VAULT_PASSWORD_FILE or C.DEFAULT_VAULT_IDENTITY_LIST or any(
@@ -239,7 +241,7 @@ def read(sources, given=None, basedir=None, env=None):
         prompt_added = True
     return {"sources": list(sources), "vault_skipped": sorted(loader.skipped), "auto": auto, "clusters": clusters,
             "options": options, "imported": _imported(sources, [c["name"] for c in clusters]),
-            "vault_prompt_added": prompt_added, "env_cluster": env_cluster,
+            "vault_prompt_added": prompt_added, "env_cluster": env_cluster, "banner": line,
             "default_sources": [str(s) for s in C.DEFAULT_HOST_LIST or []],
             "default_sources_origin": _origin("DEFAULT_HOST_LIST"), "all_hosts": sorted(groups.get("all", []))}
 
@@ -280,4 +282,8 @@ class LookupModule(LookupBase):
         given = variables.get("cassandra_hosts")
         if isinstance(given, str):
             given = self._templar.template(given)
+        # as the playbooks' lookup: not one of the inventory, not an empty -e one
+        refused = not_given(given, self._loader, in_inventory(variables.get("hostvars") or {}, variables.get("inventory_hostname")))
+        if refused:
+            return [{"refusal": refused}]
         return [read(sources, given or None, variables.get("playbook_dir"), os.environ.get(ENV))]

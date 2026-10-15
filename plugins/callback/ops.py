@@ -67,6 +67,8 @@ description:
     next operator message after a task with the task variable C(cassandra_output_gap) set to C(true) (a literal,
     like C(cassandra_output); on an operator message itself, before its own lines; on a question, a
     M(ansible.builtin.pause), above it), and after the answer to a question (the answer stays shown).
+  - "The line naming the cluster a run is on ('CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts'), its
+    first, is printed again as its last line, after its recap, whether it ended well or not."
   - With C(-v) or more, everything is printed as the default callback does.
   - Set it in C(ansible.cfg) (C([defaults]) C(stdout_callback = community.cassandra.ops)) or with
     C(ANSIBLE_STDOUT_CALLBACK=community.cassandra.ops).
@@ -191,6 +193,8 @@ _RECAP = re.compile(r"(DONE|FAILED|CHECK|HEALTHY|NOT HEALTHY|NOTHING TO DO)  ")
 # a verdict block without rules, coloured by its lines (its blank lines blank): import_cluster's failed self-check
 _BLOCK = re.compile(r"SELF-CHECK FAILED  ")
 _STEP = re.compile(r"(\[\d+/\d+\] \S+ \S+)")
+# the run's first line, the cluster it is on: said again as its last line
+_CLUSTER = re.compile(r"CLUSTER \S+ \(.*\) \| chosen by: ")
 # the status playbook's verdict, its last line or the one above a ring that differs: heavy rules around them
 _RING_VERDICT = re.compile(r"ALL \d+ NODES? UP\b|\d+ NODES? (DOWN|NOT REACHED): ")
 _RING_DIFFER = re.compile(r"WARNING - ring and inventory differ$")
@@ -419,6 +423,7 @@ class CallbackModule(DefaultCallback):
         self._looping = False  # the items of a loop with a gap: one blank line, before the first
         self._verdicts = set()  # the run_once verdicts printed: (task, lines)
         self._ruled = ""  # the rule just printed, if any
+        self._cluster = ""  # the line naming the run's cluster, said again at the end
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
 
@@ -494,6 +499,8 @@ class CallbackModule(DefaultCallback):
         texts = lines(msg)
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
+        if _CLUSTER.match(first):
+            self._cluster = first
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
         texts, ring = _ring_verdict(apart(texts))  # the status report: a screen, its verdict last, printed between rules
         if ring:
@@ -741,4 +748,7 @@ class CallbackModule(DefaultCallback):
         drop_typeahead()  # the run is over: the shell reads the terminal next
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_stats(stats)
+        if self._cluster:  # the last line: the cluster the run was on
+            self._line("")
+            self._line(self._cluster, color=self._progress)
         return None

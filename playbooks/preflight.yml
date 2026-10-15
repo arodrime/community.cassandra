@@ -73,6 +73,13 @@
         tasks_from: target_nodes_check.yml
       tags: [always]  # its variables check under --tags too
 
+    # the run's first line, here when --limit left the first play (localhost) out
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: cluster_banner.yml
+      tags: [always]  # under --tags too
+
     # the cluster's members (not the hosts being added or reset, nor those marked absent) and the change
     - name: Say what the run does
       ansible.builtin.debug:
