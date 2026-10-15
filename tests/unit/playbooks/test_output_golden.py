@@ -102,10 +102,16 @@ RING = [
 ]
 
 
+# the run's first line and its last (the ops callback)
+CLUSTER = "CLUSTER my_cluster (3 nodes, dc1) | chosen by: the only cluster in the inventory"
+
+
 def test_status_with_a_node_down(tmp_path):
     rc, output = run(tmp_path, "status")
     assert rc == 0, output
     assert ruled(output) == [
+        CLUSTER,
+        "",
         "====",  # a screen: a heavy rule above, blank lines between its blocks
         "",
         "my_cluster  (seen from node1, ring = inventory, 3 nodes)",
@@ -123,6 +129,7 @@ def test_status_with_a_node_down(tmp_path):
         "",
         "====",
         "",
+        CLUSTER,
     ]
 
 
@@ -130,8 +137,9 @@ def test_status_all_up(tmp_path):
     rc, output = run(tmp_path, "status", False)
     assert rc == 0, output
     lines = ruled(output)
-    assert lines[:3] == ["====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)"]
-    assert lines[-8:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "====", ""]
+    assert lines[:5] == [CLUSTER, "", "====", "", "my_cluster  (seen from node1, ring = inventory, 3 nodes)"]
+    assert lines[-9:] == ["  dc1      3 nodes   3 up   load 260.6 MiB", "", "====", "", "ALL 3 NODES UP", "", "====", "",
+                          CLUSTER]
 
 
 def ruled(output):
@@ -144,6 +152,8 @@ def test_health_check_a_node_down(tmp_path, port):
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc != 0, output  # for scheduling
     assert ruled(output) == [
+        CLUSTER,
+        "",
         "====",  # a recap: heavy rules around it, a blank line each side of a rule
         "",
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
@@ -153,6 +163,7 @@ def test_health_check_a_node_down(tmp_path, port):
         "",
         "====",
         "",
+        CLUSTER,
     ]
 
 
@@ -160,5 +171,5 @@ def test_health_check_healthy(tmp_path, port):
     rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
                      "-e", "cassandra_native_transport_port=%d" % port)
     assert rc == 0, output
-    assert ruled(output) == ["====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open", "", "====",
-                             ""]
+    assert ruled(output) == [CLUSTER, "", "====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open",
+                             "", "====", "", CLUSTER]

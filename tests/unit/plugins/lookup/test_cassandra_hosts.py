@@ -1,8 +1,9 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The group the operation playbooks run on without -e cassandra_hosts: the
-# inventory's only cluster group, as the import writes it or by hand.
+# The group the operation playbooks run on: -e cassandra_hosts, or the one
+# CASSANDRA_CLUSTER names (both set: the same one), else the inventory's only
+# cluster group, as the import writes it or by hand; no group name by default.
 
 import os
 import re
@@ -13,7 +14,8 @@ from ansible.errors import AnsibleError
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
-from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import ENV, RUNTIME, cluster_group, picked
+from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import (
+    BY_ENV, BY_GIVEN, BY_ONLY, ENV, RUNTIME, UNKNOWN, banner, cluster_group, picked)
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -50,8 +52,32 @@ def test_given_unknown_fails():
         picked("prdo", TWO, "cluster_b", NAMES.get)  # before CASSANDRA_CLUSTER, like a good one
 
 
-def test_the_cassandra_group_first():
-    assert cluster_group(None, dict(IMPORTED, cassandra=["n1"])) == "cassandra"
+@pytest.mark.parametrize("groups", [
+    dict(IMPORTED, cassandra=["n1"]),  # next to a cluster
+    {"all": ["n1", "n2"], "cassandra": ["n1", "n2"], "dc1": ["n1"], "dc2": ["n2"]},  # hand-made, dc groups of other names
+    {"all": ["n1", "n2"], "cassandra": ["n1", "n2"], "monitoring": ["n1", "n2", "m1"]},
+])
+def test_the_cassandra_group_is_not_picked(groups):
+    """No group name is a default: a group cassandra is a group as any other."""
+    with pytest.raises(ValueError, match="^REFUSED  no cluster named"):
+        cluster_group(None, groups)
+
+
+def test_the_cassandra_group_named():
+    """The way to adapt: name it."""
+    groups = {"all": ["n1", "n2"], "cassandra": ["n1", "n2"], "dc1": ["n1"], "dc2": ["n2"]}
+    with pytest.raises(ValueError, match=r"holds no cluster laid out as the import writes it .*; groups: cassandra, dc1, dc2\)\."
+                                         r" Name one: -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster name>"
+                                         r" in your shell\. A group cassandra is not taken by default: -e cassandra_hosts=cassandra names it\.$"):
+        cluster_group(None, groups)
+    assert picked("cassandra", groups) == ("cassandra", BY_GIVEN)
+    assert picked(None, groups, "cassandra") == ("cassandra", BY_ENV)
+
+
+def test_the_cassandra_group_alone():
+    """The inventory's only group: its only cluster, whatever its name."""
+    assert picked(None, {"all": ["n1", "n2"], "ungrouped": [], "cassandra": ["n1", "n2"]}) == ("cassandra", BY_ONLY)
+    assert picked(None, {"all": ["n1"], "cassandra": ["n1"], "cassandra_dc1": ["n1"]}) == ("cassandra", BY_ONLY)
 
 
 def test_imported_one_dc_one_rack():
@@ -86,7 +112,7 @@ def test_runtime_groups_ignored():
 
 def test_same_hosts_without_a_common_name():
     groups = {"all": ["n1"], "orders": ["n1"], "eu": ["n1"]}
-    with pytest.raises(ValueError, match="top groups of this inventory: eu, orders\n"):
+    with pytest.raises(ValueError, match="holds no cluster laid out .*; groups: eu, orders[)]"):
         cluster_group(None, groups)
 
 
@@ -97,15 +123,36 @@ def test_same_hosts_without_a_common_name():
     {"prod_extra": ["n1", "x9"]},                   # named like the cluster's, other hosts
 ])
 def test_other_groups_refused(other):
+    """No group named in the message either: monitoring, the top group, holds every node and more."""
     groups = dict({"all": ["n1", "n2", "m1", "b1", "x9"], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"]}, **other)
     with pytest.raises(ValueError, match="^REFUSED  no cluster named: .*\n\nName the one to run on:\n"):
         cluster_group(None, groups)
 
 
 def test_several_clusters():
-    groups = {"all": ["n1", "n2"], "orders": ["n1"], "orders_dc1": ["n1"], "users": ["n2"]}
-    with pytest.raises(ValueError, match=r"top groups of this inventory: orders, users\n\nName the one to run on:\n  export CASSANDRA_CLUSTER=<cluster>\n"):
+    """The clusters found named (laid out as a cluster's: not their dc groups), the other groups apart."""
+    groups = {"all": ["n1", "n2", "m1"], "orders": ["n1"], "orders_dc1": ["n1"], "users": ["n2"], "users_dc1": ["n2"],
+              "monitoring": ["n1", "n2", "m1"]}
+    with pytest.raises(ValueError, match=r"^REFUSED  no cluster named: this inventory has 2 clusters: orders, users"
+                                         r" \(other groups: monitoring\)\n\nName the one to run on:\n  export CASSANDRA_CLUSTER=<cluster>\n"):
         cluster_group(None, groups)
+    # a group of its own next to a cluster: not named a cluster
+    groups = {"all": ["n1", "n2"], "orders": ["n1"], "orders_dc1": ["n1"], "users": ["n2"]}
+    with pytest.raises(ValueError, match=r"is not the cluster orders alone \(other groups: users\)\n"):
+        cluster_group(None, groups)
+
+
+def test_clusters_named_like_each_other():
+    """prod and prod_eu, two clusters of a shared dir: both named."""
+    groups = {"all": ["a", "b"], "prod": ["a"], "prod_dc1": ["a"], "prod_eu": ["b"], "prod_eu_dc1": ["b"]}
+    with pytest.raises(ValueError, match="2 clusters: prod, prod_eu\n"):
+        cluster_group(None, groups)
+
+
+def test_a_group_holding_every_node_is_not_named_a_cluster():
+    """monitoring holds both clusters: listed apart, never as a cluster to pick."""
+    with pytest.raises(ValueError, match=r"2 clusters: cluster_a, cluster_b \(other groups: monitoring\)"):
+        cluster_group(None, dict(TWO, monitoring=["a1", "a2", "b1", "m1"]))
 
 
 def test_no_group():
@@ -125,6 +172,8 @@ def test_lookup():
     assert render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED) == "prod"
     assert render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED,
                   cassandra_hosts="prod_dc1") == "prod_dc1"
+    assert render("{{ lookup('community.cassandra.cassandra_hosts', explain=true) }}", groups=IMPORTED,
+                  cassandra_hosts="prod") == "prod (-e cassandra_hosts)"
 
 
 # two clusters in one inventory (a shared dir), and their cassandra_cluster_name
@@ -134,7 +183,7 @@ NAMES = {"a1": "Cluster A", "a2": "Cluster A", "b1": "CLUSTER_B"}
 
 
 def test_env_names_the_group():
-    assert picked(None, TWO, "cluster_b", NAMES.get) == ("cluster_b", "CASSANDRA_CLUSTER=cluster_b")
+    assert picked(None, TWO, "cluster_b", NAMES.get) == ("cluster_b", "CASSANDRA_CLUSTER (environment)")
 
 
 def test_env_names_the_cluster():
@@ -145,8 +194,30 @@ def test_env_names_the_cluster():
         cluster_group(None, TWO, "cluster a", NAMES.get)
 
 
-def test_given_wins_over_env():
-    assert picked("cluster_a", TWO, "cluster_b", NAMES.get) == ("cluster_a", "cassandra_hosts")
+def test_given_and_env_that_agree():
+    """The same group, or the env the cluster name of the group given."""
+    assert picked("cluster_a", TWO, "cluster_a", NAMES.get) == ("cluster_a", BY_GIVEN)
+    assert picked("cluster_a", TWO, "Cluster A", NAMES.get) == ("cluster_a", BY_GIVEN)
+
+
+@pytest.mark.parametrize("env, said", [
+    ("cluster_b", "it names the group cluster_b"),
+    ("CLUSTER_B", "it is the cluster of the group cluster_b"),
+    ("nope", "it names no cluster of the inventory (CASSANDRA_CLUSTER=nope: no group of that name"),
+])
+def test_given_and_env_that_disagree(env, said):
+    """A shell left with another cluster's CASSANDRA_CLUSTER: refused, naming both and where each comes from."""
+    with pytest.raises(ValueError) as err:
+        picked("cluster_a", TWO, env, NAMES.get)
+    msg = str(err.value)
+    assert msg.startswith("REFUSED  -e cassandra_hosts=cluster_a and CASSANDRA_CLUSTER=%s (from your shell) disagree: %s" % (env, said))
+    assert msg.endswith("Name one: unset CASSANDRA_CLUSTER (or set it to cluster_a), or run without -e cassandra_hosts.")
+
+
+def test_given_and_env_a_dc_group():
+    """A datacenter group of the cluster the env names is another group: refused too."""
+    with pytest.raises(ValueError, match="disagree: it names the group cluster_a"):
+        picked("cluster_a_dc1", TWO, "cluster_a", NAMES.get)
 
 
 def test_env_unknown():
@@ -183,14 +254,23 @@ def test_env_name_not_known_for_some_hosts():
 
 
 def test_env_unset_or_empty():
-    assert picked(None, IMPORTED, None, NAMES.get) == ("prod", "the inventory's cluster group")
-    assert picked(None, IMPORTED, "", NAMES.get) == ("prod", "the inventory's cluster group")
-    with pytest.raises(ValueError, match="top groups of this inventory: cluster_a, monitoring"):
+    assert picked(None, IMPORTED, None, NAMES.get) == ("prod", "the only cluster in the inventory")
+    assert picked(None, IMPORTED, "", NAMES.get) == ("prod", "the only cluster in the inventory")
+    with pytest.raises(ValueError, match="2 clusters: cluster_a, cluster_b .other groups: monitoring"):
         cluster_group(None, TWO, None, NAMES.get)
 
 
-def test_env_before_the_cassandra_group():
+def test_env_next_to_a_cassandra_group():
     assert cluster_group(None, dict(TWO, cassandra=["a1"]), "cluster_b", NAMES.get) == "cluster_b"
+
+
+def test_env_cluster_name_of_a_cassandra_group_alone():
+    """A cluster name stands for a group laid out as a cluster's (<group>_... groups): a group cassandra without any
+    is no exception any more, CASSANDRA_CLUSTER=cassandra names it."""
+    groups = {"all": ["n1", "n2", "m1"], "cassandra": ["n1", "n2"], "dc1": ["n1", "n2"], "monitoring": ["n1", "m1"]}
+    with pytest.raises(ValueError, match="not one group's"):
+        cluster_group(None, groups, "Prod", {"n1": "Prod", "n2": "Prod"}.get)
+    assert cluster_group(None, groups, "cassandra", {"n1": "Prod", "n2": "Prod"}.get) == "cassandra"
 
 
 def test_lookup_env(monkeypatch):
@@ -200,18 +280,20 @@ def test_lookup_env(monkeypatch):
     lookup = "{{ lookup('community.cassandra.cassandra_hosts') }}"
     assert render(lookup, groups=TWO, hostvars=hostvars, the_name="Cluster A") == "cluster_a"
     assert render("{{ lookup('community.cassandra.cassandra_hosts', explain=true) }}", groups=TWO, hostvars=hostvars,
-                  the_name="Cluster A") == "cluster_a (CASSANDRA_CLUSTER=Cluster A)"
-    assert render(lookup, groups=TWO, hostvars=hostvars, cassandra_hosts="cluster_b") == "cluster_b"
+                  the_name="Cluster A") == "cluster_a (CASSANDRA_CLUSTER (environment))"
+    assert render(lookup, groups=TWO, hostvars=hostvars, the_name="Cluster A", cassandra_hosts="cluster_a") == "cluster_a"
+    with pytest.raises(AnsibleError, match="-e cassandra_hosts=cluster_b and CASSANDRA_CLUSTER=Cluster A .from your shell. disagree"):
+        render(lookup, groups=TWO, hostvars=hostvars, the_name="Cluster A", cassandra_hosts="cluster_b")
     monkeypatch.setenv(ENV, "nope")
     with pytest.raises(AnsibleError, match="CASSANDRA_CLUSTER=nope: no group"):
         render(lookup, groups=TWO, hostvars=hostvars)
     monkeypatch.delenv(ENV)
     assert render("{{ lookup('community.cassandra.cassandra_hosts', explain=true) }}", groups=IMPORTED) == \
-        "prod (the inventory's cluster group)"
+        "prod (the only cluster in the inventory)"
 
 
 def test_lookup_error():
-    with pytest.raises(AnsibleError, match="REFUSED  no cluster named: top groups of this inventory: a, b"):
+    with pytest.raises(AnsibleError, match="holds no cluster laid out .*; groups: a, b[)]"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups={"a": ["n1"], "b": ["n2"]})
     with pytest.raises(AnsibleError, match="cassandra_hosts=prdo: no group of that name in the inventory"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED, cassandra_hosts="prdo")
@@ -278,3 +360,73 @@ def test_runtime_groups_of_the_playbooks_are_known():
 def test_a_cluster_named_like_a_runtime_group():
     groups = {"all": ["n1"], "cassandra_seed_cluster": ["n1"], "cassandra_seed_cluster_dc1": ["n1"]}
     assert cluster_group(None, groups) == "cassandra_seed_cluster"
+
+
+def test_lookup_refusal(monkeypatch):
+    """refusal=true: the reason, '' when the lookup would not fail (hosts_check.yml's verdict)."""
+    lookup = "{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}"
+    assert render(lookup, groups=IMPORTED) == ""
+    assert render(lookup, groups=TWO).startswith("REFUSED  no cluster named: this inventory has 2 clusters: cluster_a, cluster_b")
+    assert render(lookup, groups=IMPORTED, cassandra_hosts="prdo").startswith("REFUSED  cassandra_hosts=prdo: no group of that name")
+    monkeypatch.setenv(ENV, "cluster_b")
+    assert render(lookup, groups=TWO, cassandra_hosts="cluster_b") == ""
+    assert render(lookup, groups=TWO, cassandra_hosts="cluster_a").startswith(
+        "REFUSED  -e cassandra_hosts=cluster_a and CASSANDRA_CLUSTER=cluster_b (from your shell) disagree")
+
+
+def test_banner():
+    assert banner("prod", BY_GIVEN, 5, ["dc1"] * 5) == "CLUSTER prod (5 nodes, dc1) | chosen by: -e cassandra_hosts"
+    assert banner("prod", BY_ONLY, 1, ["dc2", "dc1"], absent=1) == \
+        "CLUSTER prod (1 node + 1 marked absent, dc1, dc2) | chosen by: the only cluster in the inventory"
+    assert banner("prod", BY_ENV, 3, []) == "CLUSTER prod (3 nodes) | chosen by: CASSANDRA_CLUSTER (environment)"
+
+
+def test_lookup_banner(monkeypatch):
+    """The group's nodes without the ones marked absent, their datacenters (the role's dc1 when the inventory sets
+    none; a fact of the node is not shown), how the group was picked."""
+    hostvars = {"n1": {"cassandra_dc": "dc1"}, "n2": {"cassandra_dc": trust_as_template("{{ the_dc }}")},
+                "n3": {"cassandra_dc": "dc2", "cassandra_node_state": "absent"}}
+    groups = {"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"], "prod_dc1": ["n1", "n2"], "prod_dc2": ["n3"]}
+    lookup = "{{ lookup('community.cassandra.cassandra_hosts', banner=true) }}"
+    assert render(lookup, groups=groups, hostvars=hostvars, the_dc="eu") == \
+        "CLUSTER prod (2 nodes + 1 marked absent, dc1, eu) | chosen by: the only cluster in the inventory"
+    assert render(lookup, groups=groups, hostvars={}, cassandra_hosts="prod_dc1") == \
+        "CLUSTER prod_dc1 (2 nodes, dc1) | chosen by: -e cassandra_hosts"
+    hostvars["n2"]["cassandra_dc"] = trust_as_template("{{ ansible_facts.nope }}")  # only the node knows it
+    assert render(lookup, groups=groups, hostvars=hostvars, ansible_facts={}) == \
+        "CLUSTER prod (2 nodes + 1 marked absent, dc1, dc?) | chosen by: the only cluster in the inventory"
+    monkeypatch.setenv(ENV, "prod")
+    assert render(lookup, groups=groups, hostvars={}).endswith("| chosen by: CASSANDRA_CLUSTER (environment)")
+
+
+def test_env_cluster_name_only_the_nodes_know():
+    """Every host's name a fact of the node: said so, and to give the group."""
+    with pytest.raises(ValueError, match=r"no host with that cassandra_cluster_name \(4 hosts have one only the node knows:"
+                                         r" give the group instead\)"):
+        cluster_group(None, TWO, "Cluster A", lambda h: UNKNOWN)
+
+
+class _Loader(object):
+    """What load_extra_vars reads the -e variables with (memoized by ansible-core, here a stub)."""
+
+
+@pytest.mark.parametrize("extra, given, inventory, refused", [
+    ({"cassandra_hosts": "prod"}, "prod", False, None),
+    ({"cassandra_hosts": "prod"}, "prod", True, None),  # -e beats the inventory's: the plays see it
+    ({}, None, False, None),
+    ({}, "prod", False, None),  # a playbook's vars (import_playbook ... vars:): the plays' hosts see them
+    ({}, "prod", True, "cassandra_hosts is set in the inventory (prod, group_vars or host_vars): the plays' hosts do"
+                       " not see it. Give it on the command line, -e cassandra_hosts=prod, or CASSANDRA_CLUSTER=prod in"
+                       " your shell."),
+    ({"cassandra_hosts": ""}, "", False, "cassandra_hosts is empty (-e cassandra_hosts=): give a group, or leave it out."),
+])
+def test_cassandra_hosts_not_from_the_inventory(monkeypatch, extra, given, inventory, refused):
+    """Under ansible-playbook: a cassandra_hosts of the inventory (group_vars/all) would name the cluster to the tasks,
+    not to the plays' hosts (they never see it); an empty -e one would leave the cluster unsaid."""
+    from ansible import context
+    from ansible_collections.community.cassandra.plugins.lookup import cassandra_hosts
+    monkeypatch.setattr(context, "CLIARGS", {"args": ["site.yml"]})
+    monkeypatch.setattr(cassandra_hosts, "load_extra_vars", lambda loader: extra)
+    assert cassandra_hosts.not_given(given, _Loader(), inventory) == refused
+    monkeypatch.setattr(context, "CLIARGS", {})  # no command line (the Python API, these tests): not checked
+    assert cassandra_hosts.not_given(given, _Loader(), inventory) is None

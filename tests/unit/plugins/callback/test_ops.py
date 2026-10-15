@@ -1077,11 +1077,11 @@ def test_a_failed_self_check_is_red_on_its_verdict_line_only():
 HELP_INVENTORY = """
 cassandra:
   children:
-    rack1:
+    cassandra_rack1:
       hosts:
         node1: {ansible_host: 192.0.2.11}
         node2: {ansible_host: 192.0.2.12}
-    rack2:
+    cassandra_rack2:
       hosts:
         node3: {ansible_host: 192.0.2.13}
   vars:
@@ -1224,9 +1224,27 @@ def test_the_help_playbook_under_the_ops_callback(tmp_path):
     assert "\x1f" not in output and u"\xa0" not in output
     plain = re.sub("\x1b\\[[0-9;]*m", "", output)
     assert "\n==== Nodes " + "=" * 67 + "\n" in plain
-    assert not [line for line in plain.splitlines() if len(line) > 78]  # the commands cut too
+    # (the cluster's line is one line, whatever its length: not help text; the commands cut too)
+    assert not [line for line in plain.splitlines() if len(line) > 78 and not line.startswith("CLUSTER ")]
     rc, output = help_run(tmp_path)  # ANSIBLE_NOCOLOR: the same text, plain
     assert rc == 0 and output == plain, output
+    # its first line and its last: the cluster, and how it was picked
+    said = [line for line in plain.splitlines() if line.strip()]
+    banner = "CLUSTER cassandra (3 nodes, dc1) | chosen by: the only cluster in the inventory"
+    assert said[0] == banner and said[-1] == banner, plain
+
+
+def test_the_help_playbook_refuses_several_clusters(tmp_path):
+    (tmp_path / "hosts.yml").write_text(HELP_INVENTORY + "other:\n  hosts:\n    node9:\n")
+    rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc != 0
+    assert output.strip() == (
+        "No cluster named, and the inventory is not the cluster cassandra alone (other groups: other). Name one:"
+        " -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster name> in your shell. A group cassandra"
+        " is not taken by default: -e cassandra_hosts=cassandra names it."), output  # as is, not "localhost: ..."
+    rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=other",
+                     INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc == 0 and output.split("\n")[0] == "CLUSTER other (1 node, dc1) | chosen by: -e cassandra_hosts", output
 
 
 def test_the_help_playbook_under_the_default_callback(tmp_path):
@@ -1313,3 +1331,89 @@ def test_a_task_with_diff_false_shows_no_diff():
     result._result = {"changed": True, "diff": {"before": "state: absent\n", "after": "state: directory\n"}}
     callback.v2_on_file_diff(result)
     assert shown == []
+
+
+CLUSTER_LINE = "CLUSTER prod (2 nodes, dc1) | chosen by: -e cassandra_hosts"
+CLUSTER_PLAYBOOK = """
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Say which cluster the run is on
+      ansible.builtin.debug:
+        msg: "%s"
+      vars:
+        cassandra_output: true
+        cassandra_output_info: true
+        cassandra_output_gap: true
+    - name: Recap
+      ansible.builtin.debug:
+        msg: "DONE  op  prod  2 restarted"
+      vars:
+        cassandra_output: true
+    - name: Stop
+      ansible.builtin.fail:
+        msg: "FAILED  op  prod  1 failed"
+      when: stop | default(false) | bool
+      vars:
+        cassandra_output: true
+""" % CLUSTER_LINE
+
+
+@pytest.mark.parametrize("stop", ["false", "true"])
+def test_the_cluster_line_first_and_last(tmp_path, stop):
+    """The run's first line names its cluster: said again as its last, whether the run ended well or not."""
+    rc, output = run(tmp_path, CLUSTER_PLAYBOOK, "-e", "stop=" + stop)
+    assert (rc == 0) == (stop == "false"), output
+    said = [line for line in output.splitlines() if line.strip()]
+    assert said[0] == CLUSTER_LINE and said[-1] == CLUSTER_LINE, output
+    assert output.count(CLUSTER_LINE) == 2
+
+
+def test_no_cluster_line_no_last_line(tmp_path):
+    rc, output = run(tmp_path, CLUSTER_PLAYBOOK.replace(CLUSTER_LINE, "NOTE  something else"))
+    assert rc == 0 and "CLUSTER" not in output and output.rstrip().endswith("====")
+
+
+def test_the_cluster_line_with_a_datacenter_only_the_node_knows(tmp_path):
+    """A cassandra_dc templated from the node's facts: dc? on the line, not a failed run (an undefined marker)."""
+    (tmp_path / "hosts.yml").write_text(
+        "prod:\n  children:\n    prod_dc1:\n      hosts:\n        p1: {cassandra_dc: dc1}\n"
+        "        p2: {cassandra_dc: \"{{ ansible_facts['hostname'][:3] }}\"}\n"
+        "        p3: {cassandra_dc: \"{{ undefined_thing }}\", cassandra_node_state: absent}\n")
+    rc, output = run(tmp_path, "- hosts: localhost\n  gather_facts: false\n  tasks:\n"
+                     "    - ansible.builtin.include_role:\n        name: community.cassandra.cassandra_service\n"
+                     "        tasks_from: cluster_banner.yml\n", INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc == 0, output
+    banner = "CLUSTER prod (2 nodes + 1 marked absent, dc1, dc?) | chosen by: the only cluster in the inventory"
+    assert [line for line in output.splitlines() if line.strip()] == [banner, banner], output
+
+
+TWO_CLUSTERS = """
+prod:
+  children:
+    prod_dc1:
+      hosts:
+        p1: {}
+dev:
+  children:
+    dev_dc1:
+      hosts:
+        d1: {}
+"""
+
+
+def test_cassandra_hosts_of_a_playbook_taken_of_the_inventory_refused(tmp_path):
+    """A wrapper playbook's vars reach the plays' hosts: taken. The inventory's (group_vars) do not: refused."""
+    (tmp_path / "hosts.yml").write_text(TWO_CLUSTERS)
+    wrapper = "- import_playbook: community.cassandra.help\n  vars:\n    cassandra_hosts: dev\n"
+    rc, output = run(tmp_path, wrapper, INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc == 0 and output.split("\n")[0] == "CLUSTER dev (1 node, dc1) | chosen by: -e cassandra_hosts", output
+    (tmp_path / "group_vars").mkdir()
+    (tmp_path / "group_vars" / "all.yml").write_text("cassandra_hosts: dev\n")
+    rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc != 0 and output.strip() == (
+        "cassandra_hosts is set in the inventory (dev, group_vars or host_vars): the plays' hosts do not see it."
+        " Give it on the command line, -e cassandra_hosts=dev, or CASSANDRA_CLUSTER=dev in your shell."), output
+    rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=prod",
+                     INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc == 0 and output.split("\n")[0].startswith("CLUSTER prod (1 node, dc1)"), output

@@ -63,7 +63,11 @@ def test_lookup_cluster_from_the_environment(monkeypatch):
     assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, cassandra_hosts=None) == ["n1", "n2"]
     monkeypatch.setenv("CASSANDRA_CLUSTER", "monitoring")
     assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, cassandra_hosts=None) == ["m1"]
-    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars) == ["n1", "n2"]  # -e cassandra_hosts=prod
+    # -e cassandra_hosts=prod: another cluster than CASSANDRA_CLUSTER's, refused
+    with pytest.raises(AnsibleError, match="-e cassandra_hosts=prod and CASSANDRA_CLUSTER=monitoring .from your shell. disagree"):
+        render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars)
+    monkeypatch.setenv("CASSANDRA_CLUSTER", "Prod")
+    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars) == ["n1", "n2"]  # the same one
 
 
 def test_lookup_templated_state():

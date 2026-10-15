@@ -143,21 +143,37 @@ Use one group per cluster and one group per datacenter (the playbooks below take
                 node5:
                 node6:
 
-Without ``-e cassandra_hosts=<group>`` (nor ``CASSANDRA_CLUSTER``, below), the playbooks run on the group
-``cassandra`` when the inventory has one with hosts, else on the inventory's cluster group when it holds one cluster laid out as the import writes it: the group
+Without ``-e cassandra_hosts=<group>`` (nor ``CASSANDRA_CLUSTER``, below), the playbooks run on the inventory's
+cluster group when it holds one cluster laid out as the import writes it: the group
 whose name starts every other group's and that holds their hosts (``orders`` here, for ``orders_dc1`` and
-``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out). Any other group
+``orders_dc2``; ``all``, ``ungrouped`` and the groups the playbooks make while they run left out), or its only group
+with hosts. No group name is taken by default, not ``cassandra`` either. Any other group
 (a second cluster, ``monitoring``, ``linux``, a group of your own not named ``<cluster>_...``) makes them stop with the top groups listed rather
-than guess: give ``-e cassandra_hosts=<group>`` then. With an inventory of one cluster only (``-i
+than guess: give ``-e cassandra_hosts=<group>`` or ``CASSANDRA_CLUSTER=<group>`` then (``-e cassandra_hosts=cassandra``
+for a group ``cassandra`` next to groups of other names, ``dc1``, ``rack1``). With an inventory of one cluster only (``-i
 inventories/orders.yml``, or a directory of your own per cluster) the playbooks need no ``cassandra_hosts``. The
 same rule is the lookup ``community.cassandra.cassandra_hosts``; the groups are read each time, so a group your own
 plays add earlier in the same run (``group_by``) makes it stop the same way.
 
-The environment variable ``CASSANDRA_CLUSTER`` names the cluster too, when ``cassandra_hosts`` is not set (which wins
-over it): a group of the inventory, or a ``cassandra_cluster_name`` (exact, case included), which stands for the
-group whose hosts are the ones with that name (a group laid out as a cluster's: ``cassandra``, or one with its
-``<group>_...`` groups). A value that matches nothing, a cluster name several groups have, or one some hosts may have
-without the inventory telling (a fact of the node), stops the run before anything is done. The first task of each operation shows the group and where it comes from.
+The environment variable ``CASSANDRA_CLUSTER`` names the cluster too: a group of the inventory, or a
+``cassandra_cluster_name`` (exact, case included), which stands for the group whose hosts are the ones with that name
+(a group laid out as a cluster's, one with its ``<group>_...`` groups). A value that matches nothing, a cluster name
+several groups have, or one some hosts may have without the inventory telling (a fact of the node), stops the run
+before anything is done. When ``cassandra_hosts`` is set too, both must name the same group (``CASSANDRA_CLUSTER`` the
+group or its cluster name), else the run stops, naming both: a shell left with another cluster's
+``CASSANDRA_CLUSTER`` never runs on the wrong one. ``cassandra_hosts`` set in the inventory (``group_vars``,
+``host_vars``) stops the run (the plays' hosts do not see it: give it with ``-e``), so does an empty ``-e`` one. The same rule holds for every playbook, the read-only ones
+(``help``, ``status``, ``health_check``, ``preflight``) included.
+
+The first line of each run names the cluster, its nodes and datacenters, and how it was picked; under the
+``community.cassandra.ops`` callback it is the run's last line too:
+
+.. code-block:: text
+
+    CLUSTER orders (6 nodes, dc1, dc2) | chosen by: CASSANDRA_CLUSTER (environment)
+
+``chosen by`` is ``-e cassandra_hosts``, ``CASSANDRA_CLUSTER (environment)`` or ``the only cluster in the
+inventory``.
 
 .. code-block:: console
 
@@ -284,11 +300,12 @@ files are written as the user running Ansible, never as root: add ``.cassandra_p
 Help and runbook
 ----------------
 
-``help`` reads the inventory only (no node is contacted, nothing changes) and prints three sections: each cluster
-as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
+``help`` reads the inventory only (no node is contacted, nothing changes) and picks the cluster as the operation
+playbooks do (an inventory of several clusters: name one, else it stops, naming them). Its first line names the
+cluster, then three sections: the cluster as the inventory describes it (name, Cassandra series and package version, install method, Java, datacenters, racks
 and their nodes, seeds, the nodes marked ``cassandra_node_state: absent``); every operation playbook by theme, with
 its command filled for this inventory (the inventory's path, ``-e cassandra_hosts`` when the inventory holds
-several clusters, ``CASSANDRA_CLUSTER`` names another group or the dir is shared with other clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
+other clusters too and ``CASSANDRA_CLUSTER`` does not name it, or the dir is shared with other clusters, a datacenter and rack of it, the nodes marked absent, and the vault and
 user options the run was given; placeholders such as ``NEW_NODE`` or ``NODE`` are values only you know), its options one per line with their default, and an example where one helps; and advice from the inventory (nodes
 marked absent, authentication on without ``cassandra_cql_username``, a variable close to one the collection reads,
 seeds not one per rack, racks against ``allocate_tokens_for_local_replication_factor``, mixed versions).
@@ -1357,9 +1374,8 @@ already, a group your own inventory files there give hosts, children or vars, an
 same group (``Prod A`` and ``prod-a``), or a hosts file of an earlier import into a directory of its own
 (``hosts.yml`` at the top, or any in a subdirectory: Ansible reads those too) stops the import, before anything is written
 (``import_cluster_host_names: fqdn`` or ``ip`` for host names). To bring such a directory in, import the cluster again
-with the defaults after moving the old directory out of ``inventories``. A cluster whose group would be ``cassandra``,
-``all`` or ``ungrouped`` (cluster name ``Cassandra``) cannot be imported: the playbooks or Ansible take those groups
-on their own. A file from an
+with the defaults after moving the old directory out of ``inventories``. A cluster whose group would be ``all`` or
+``ungrouped`` (cluster name ``All``) cannot be imported: Ansible takes those groups on its own. A file from an
 earlier release, whose first line names no cluster, is this cluster's when this cluster's hosts file alone names its
 group or host; otherwise it is kept as it is and listed in the report. A ``<cluster group>.yml`` without that first
 line that holds this cluster's group alone (an old ``hosts.yml`` moved there by hand, or one edited by hand) is its

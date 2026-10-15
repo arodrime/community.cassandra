@@ -1,11 +1,15 @@
 ---
 # Run on localhost before any play on the cluster's group: a group name that
 # is not in the inventory would otherwise run on no host, or stop later on a
-# raw template error. Without cassandra_hosts, the group is the one the
-# CASSANDRA_CLUSTER environment variable names, else the inventory's cluster
-# group (lookup community.cassandra.cassandra_hosts), and a name close
-# to a playbook variable (-e cassandra_host=...) is pointed out. A run with
-# --limit skips localhost, so this check too.
+# raw template error. The cluster is the group -e cassandra_hosts names, or
+# the one the CASSANDRA_CLUSTER environment variable names (both: the same
+# one, else refused), else the inventory's only cluster (lookup
+# community.cassandra.cassandra_hosts); several clusters and none named:
+# refused. A name close to a playbook variable (-e cassandra_host=...) is
+# pointed out. Then the run's first line names the cluster and how it was
+# picked (cluster_banner.yml). A run with --limit skips localhost, so this
+# check too: the lookup in the plays' hosts refuses the same, and the first
+# play on the nodes says the cluster.
 - name: Check cassandra_target_nodes
   ansible.builtin.include_tasks: target_nodes_check.yml
   tags: [always]  # its variables check under --tags too
@@ -29,12 +33,10 @@
     fail_msg: "{{ _refusal }}"
     quiet: true
   run_once: true  # its msg as is, not "localhost: ..." (ops callback)
+  tags: [always]  # under --tags too
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
     _refusal: "{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}"
-  tags: [always]  # under --tags too, else the next play's hosts fail on it
 
-# the default callback's line (the ops callback prints only the failure above)
-- name: Say which group is the cluster's
-  ansible.builtin.debug:
-    msg: "Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) }}"
+- name: Say which cluster the run is on
+  ansible.builtin.import_tasks: cluster_banner.yml

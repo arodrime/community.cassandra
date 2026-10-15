@@ -106,15 +106,22 @@ def test_no_b_with_or_without_become(tmp_path):
 
 
 def test_given_group_missing(tmp_path):
-    with pytest.raises(AnsibleError, match="group 'prod' not found"):
-        read([inventory(tmp_path)], given="prod")
+    assert read([inventory(tmp_path)], given="prod")["refusal"].startswith("cassandra_hosts: group 'prod' not found")
 
 
 def test_several_clusters(tmp_path):
     hosts = HOSTS + "    billing:\n      hosts:\n        node9: {ansible_host: 192.0.2.19}\n"
-    model = read([inventory(tmp_path, hosts=hosts)])
+    # the playbooks' rule: none named, refused (help says it as a verdict), naming them
+    source = inventory(tmp_path, hosts=hosts)
+    assert read([source]) == {"refusal": (
+        "No cluster named, and the inventory is not the cluster orders alone (other groups: billing). Name one:"
+        " -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster name> in your shell.")}
+    model = read([source], given="billing")
     assert model["auto"] == ""
-    assert [c["name"] for c in model["clusters"]] == ["billing", "orders"]
+    assert [c["name"] for c in model["clusters"]] == ["billing"]
+    assert model["banner"] == "CLUSTER billing (1 node, dc1) | chosen by: -e cassandra_hosts"
+    assert read([source], env="orders")["banner"].endswith(
+        "| chosen by: CASSANDRA_CLUSTER (environment)")
 
 
 def test_cluster_from_the_environment(tmp_path):
@@ -125,14 +132,16 @@ def test_cluster_from_the_environment(tmp_path):
     assert [c["name"] for c in read([source], env="Orders")["clusters"]] == ["orders"]
     assert [c["name"] for c in read([source], env="Billing")["clusters"]] == ["billing"]
     assert [c["name"] for c in read([source], env="billing")["clusters"]] == ["billing"]
-    assert [c["name"] for c in read([source], given="orders", env="Billing")["clusters"]] == ["orders"]
+    assert read([source], given="orders", env="Billing")["refusal"].startswith(
+        "-e cassandra_hosts=orders and CASSANDRA_CLUSTER=Billing (from your shell) disagree")
+    assert [c["name"] for c in read([source], given="orders", env="Orders")["clusters"]] == ["orders"]
     assert read([source], env="Billing")["auto"] == ""  # RUNBOOK.md's commands still name the group
     # the screen's do not: the playbooks take it from CASSANDRA_CLUSTER
     assert read([source], env="Billing")["env_cluster"] == "billing"
-    assert read([source], given="orders", env="Billing")["env_cluster"] == "" and read([source])["env_cluster"] == ""
-    assert isinstance(read([source])["default_sources"], list)  # the configuration's inventory: no -i
-    with pytest.raises(AnsibleError, match="CASSANDRA_CLUSTER=Nope: no group"):
-        read([source], env="Nope")
+    assert read([source], given="orders", env="Orders")["env_cluster"] == ""
+    assert read([source], given="orders")["env_cluster"] == ""
+    assert isinstance(read([source], env="Orders")["default_sources"], list)  # the configuration's inventory: no -i
+    assert read([source], env="Nope")["refusal"].startswith("CASSANDRA_CLUSTER=Nope: no group")
 
 
 def test_current_dir_group_vars_not_read(tmp_path, monkeypatch):
@@ -152,7 +161,7 @@ def test_imported(tmp_path):
     for line in (GENERATED % "orders", GENERATED_UNNAMED):
         (inv / "orders.yml").write_text(line + "\n" + HOSTS)
         (inv / "billing.yml").write_text("all:\n  children:\n    billing:\n      hosts:\n        node9: {}\n")
-        assert read([str(inv)])["imported"] == ["orders"]
+        assert read([str(inv)], given="orders")["imported"] == ["orders"]
         assert read([str(inv / "orders.yml")])["imported"] == ["orders"]
         # the hosts file alone, named after another group: not the file of a cluster
         assert read([str(inv / "billing.yml")])["imported"] == []
@@ -211,8 +220,7 @@ def test_transformed_vault_value_masked(tmp_path):
 
 def test_empty_group(tmp_path):
     hosts = HOSTS + "    empty:\n      hosts: {}\n"
-    with pytest.raises(AnsibleError, match="group 'empty' has no host"):
-        read([inventory(tmp_path, hosts=hosts)], given="empty")
+    assert read([inventory(tmp_path, hosts=hosts)], given="empty")["refusal"].startswith("cassandra_hosts: group 'empty' has no host")
 
 
 def test_random_value_not_taken_for_a_vaulted_one(tmp_path):
