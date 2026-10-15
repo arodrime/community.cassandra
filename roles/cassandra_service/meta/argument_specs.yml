@@ -138,6 +138,18 @@ argument_specs:
         default: {}
         description:
           - "Extra environment variables for the unit, for example C({JAVA_HOME: /usr/lib/jvm/java-17})."
+      cassandra_suspicious_ack:
+        type: list
+        elements: str
+        default: []
+        description:
+          - The sensitive or suspicious settings a node keeps on purpose, by the id of their row, whose WARNING the
+            C(preflight) playbook and the C(import_cluster) report leave out for it (per host or group).
+          - V(auto_bootstrap_false), V(replace_address) (a replace flag left on a member of the ring), V(heap_size)
+            (not set on a 4.x host with 64G of RAM, whose auto-sizing stops at 8G; under 2G, 32G or more, over half
+            the RAM), V(allow_all_authenticator) (with an rpc address other hosts reach), V(failure_policy_ignore).
+          - Each WARNING names the id that silences it; an id no check has gets a WARNING of its own.
+          - The RAM-based heap checks need the host's facts, read by C(preflight), not by C(import_cluster).
       cassandra_service_wait_for_normal:
         type: bool
         default: true

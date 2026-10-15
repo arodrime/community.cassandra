@@ -41,7 +41,7 @@ An operation that targets particular nodes takes them in `cassandra_target_nodes
 comma-separated), as `cassandra_target_dc` and `cassandra_target_rack` name a datacenter and a rack.
 
 - `help`- Read-only, from the inventory alone (no node contacted): the clusters it describes, every operation with its command filled for this inventory, and advice; `-e help_topic=<operation>` details one operation, `-e help_write=true` writes it as `RUNBOOK.md` next to the inventory.
-- `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables).
+- `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables and about sensitive or suspicious settings: `auto_bootstrap` false, a replace flag left on a member of the ring, the heap size, `AllowAllAuthenticator` on an rpc address other hosts reach, a failure policy `ignore`; `cassandra_suspicious_ack` silences one a node keeps on purpose).
 - `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
 - `add_node`- Adds the nodes in `cassandra_target_nodes` to a running cluster: all prepared at once (nothing started), then started and bootstrapped one at a time; with one token per node, `cassandra_token_auto` shows and picks where they go.
 - `move_node`- One token per node: moves nodes to new tokens one at a time (by default, the fewest moves that even out each datacenter), then cleans up.

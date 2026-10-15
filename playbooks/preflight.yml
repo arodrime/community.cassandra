@@ -271,18 +271,6 @@
           {{ out | join(_nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | length > 0
 
-    # Settings that are risky or likely a leftover (cassandra_suspicious_settings' table, e.g. auto_bootstrap
-    # false): a WARNING, nothing refused
-    - name: Warn about sensitive or suspicious settings
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
-        tasks_from: note.yml
-      vars:
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _found: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars))) | community.cassandra.cassandra_suspicious_settings }}"
-        _note: "{{ _found | join(_nl) }}"
-      when: _found | length > 0
-
     # cassandra_seed_True / cassandra_seed_False, used by the other playbooks
     - name: Group seeds and other nodes
       ansible.builtin.group_by:
@@ -453,6 +441,29 @@
         _un: >-
           {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
              | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}
+
+    # Settings that are risky or likely a leftover (cassandra_suspicious_settings' table: auto_bootstrap false, a
+    # replace flag left on a member of the ring, the heap, ...): a WARNING, nothing refused; a row a node keeps on
+    # purpose is silenced by cassandra_suspicious_ack. After the ring is read: who is a member
+    - name: Warn about sensitive or suspicious settings
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: note.yml
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        # the up nodes of the ring (a node down at its address may be a replacement of the same address)
+        _ring: >-
+          {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
+             | selectattr('status', 'equalto', 'U') | map(attribute='address') | list
+             if (cassandra_preflight_status | default({})).cluster_status is defined else [] }}
+        _members: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight', 'defined')
+             | selectattr('_cassandra_preflight.ring_address', 'in', _ring) | map(attribute='inventory_hostname') | list }}
+        _found: >-
+          {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars)))
+             | community.cassandra.cassandra_suspicious_settings(_members) }}
+        _note: "{{ _found | join(_nl) }}"
+      when: _found | length > 0
 
     # The token allocator refuses a node that joins a rack already in the ring
     # when the datacenter's ring has more than 1 rack but fewer than its

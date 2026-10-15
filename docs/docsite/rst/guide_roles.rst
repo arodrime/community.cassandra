@@ -1125,6 +1125,23 @@ heap dump directory has one variable, ``cassandra_heap_dump_dir``, taken from ``
 ``-XX:HeapDumpPath`` comes from; Cassandra 5.0 uses that before ``heap_dump_path`` in ``cassandra.yaml``, which is
 not compared (a node's other value there is noted, and stays until the file is rewritten).
 
+The report's TO DO, then every ``preflight`` run, warn about sensitive or suspicious settings, one WARNING per setting
+with its nodes and what to do; nothing is refused:
+
+- ``auto_bootstrap`` false (``auto_bootstrap_false``);
+- a ``-Dcassandra.replace_address`` or ``replace_address_first_boot`` flag left on a member of the ring, in the JVM
+  options, ``cassandra_service_environment`` or a line of its config, not a commented one (``replace_address``): the
+  first makes its next start fail, the second would replace a node again after a wipe; the WARNING says what to remove;
+- the heap (``heap_size``, ``cassandra_heap_size``, a ``-Xmx`` of the extra JVM options or the unit's
+  ``MAX_HEAP_SIZE``): not set on a 4.x host with 64G of RAM or more (4.x's auto-sizing stops at 8G), under 2G, 32G or
+  more (the JVM's compressed pointers are lost: 31G at most), or over half the RAM; with the range to set. The RAM
+  comes from the host's facts: ``preflight`` only;
+- ``AllowAllAuthenticator`` with an rpc address other hosts reach (``allow_all_authenticator``);
+- ``disk_failure_policy`` or ``commit_failure_policy`` ``ignore`` (``failure_policy_ignore``).
+
+A node that keeps one on purpose lists its id in ``cassandra_suspicious_ack`` (``host_vars`` or a group), e.g.
+``cassandra_suspicious_ack: [heap_size]``; each WARNING says so, and an id no check has gets a WARNING.
+
 Medusa's ``fqdn`` is the node's folder in the backups: a new one means full backups. When every node has
 ``<short hostname>.<domain>``, the same domain everywhere, the import keeps ``cassandra_medusa_fqdn_domain`` (new
 nodes get the same form); otherwise each node keeps its value in ``host_vars``. The ``cassandra_medusa`` role refuses to

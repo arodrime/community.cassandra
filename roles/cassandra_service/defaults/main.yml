@@ -38,6 +38,10 @@ cassandra_service_limit_memlock: infinity
 cassandra_service_limit_as: infinity
 cassandra_service_timeout_stop: 180  # seconds, let a busy node flush
 cassandra_service_environment: {}  # extra Environment= lines, e.g. {JAVA_HOME: /usr/lib/jvm/java-17}
+# The rows of the preflight's sensitive or suspicious settings a node keeps on
+# purpose (their WARNING silenced), e.g. [heap_size]: auto_bootstrap_false,
+# replace_address, heap_size, allow_all_authenticator, failure_policy_ignore
+cassandra_suspicious_ack: []
 # Tasks (threads) the service may create. systemd's default is 15% of
 # pid_max (can be ~4900): too low for a busy node ("unable to create native thread").
 cassandra_service_tasks_max: infinity

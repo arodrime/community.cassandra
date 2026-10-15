@@ -245,7 +245,8 @@ def test_preflight_warns_about_auto_bootstrap_false(hostvars, warned):
     assert SUSPICIOUS["ansible.builtin.include_role"]["tasks_from"] == "note.yml"
     variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=list(hostvars), hostvars=hostvars)
     found = render(SUSPICIOUS["vars"]["_found"], **variables)
-    assert found == (["WARNING  %s: auto_bootstrap: false \u2014 %s" % (warned, WHY)] if warned else [])
+    assert found == (["WARNING  %s: auto_bootstrap: false \u2014 %s (kept on purpose? add auto_bootstrap_false to"
+                      " cassandra_suspicious_ack)" % (warned, WHY)] if warned else [])
     assert render("{{ %s }}" % SUSPICIOUS["when"], **variables) is bool(warned)
     assert not [t for t in PREFLIGHT["tasks"] if "auto_bootstrap" in str(t.get("ansible.builtin.assert", ""))]
 
@@ -318,3 +319,24 @@ def test_auto_bootstrap_written_false_whatever_its_spelling():
         text = render(open(os.path.join(ROLE, "templates", "5.0", "cassandra.yaml.j2")).read().split("{% set _extra")[0][-400:],
                       cassandra_auto_bootstrap=value, cassandra_disk_access_mode="")
         assert "auto_bootstrap: false" in text, value
+
+
+@pytest.mark.parametrize("ring, members_warned", [
+    (None, ""),  # the ring not read: a replace flag is not judged
+    ([("10.0.0.1", "U"), ("10.0.0.2", "U")], "n1"),  # n2 holds the flag but is not in the ring yet (replace_node's own)
+    ([("10.0.0.1", "U"), ("10.0.0.3", "D")], "n1"),  # n2 down at its address: maybe a replacement of it
+])
+def test_preflight_judges_a_replace_flag_on_the_ring_members(ring, members_warned):
+    hostvars = {"n1": {"_cassandra_preflight": {"ring_address": "10.0.0.1"}, "inventory_hostname": "n1",
+                       "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]},
+                "n2": {"_cassandra_preflight": {"ring_address": "10.0.0.3"}, "inventory_hostname": "n2",
+                       "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]}}
+    variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars)
+    if ring is not None:
+        variables["cassandra_preflight_status"] = {"cluster_status": {"dc1": {"nodes": [
+            {"address": a, "status": st} for a, st in ring]}}}
+    found = render(SUSPICIOUS["vars"]["_found"], **variables)
+    assert [line.split(":")[0] for line in found] == (["WARNING  " + members_warned] if members_warned else [])
+    # after the ring is read
+    names = [t.get("name") for t in PREFLIGHT["tasks"]]
+    assert names.index("Warn about sensitive or suspicious settings") > names.index("Check the running cluster")
