@@ -210,7 +210,9 @@ def test_a_bound_that_stays_large_is_refused_once_the_wait_runs_out(tmp_path):
                                                          "sources": SOURCES}})
     rc, out = run(tmp_path, CHECK, extra={"cassandra_clock_sync_timeout": 5})
     assert rc != 0, out
-    assert "REFUSED  clocks  nothing was started" in out and "node2  OFF" in out and "error bound alone is 62.04 s" in out
+    assert "REFUSED  clocks  nothing was started" in out and "node2  OFF" in out
+    assert "chronyd still converging (just started: error bound 62.04 s)" in out, out
+    assert "raise cassandra_clock_sync_timeout" in out and "closer or better source" not in out
     assert (fake / "node2" / "calls").read_text().strip() == "3"
 
 

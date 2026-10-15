@@ -48,9 +48,10 @@ COARSE_MS = 1000
 # an error bound over this (and over 10 times the threshold): a daemon just started, its skew still estimated
 # from a few samples, not a far source; it shrinks with the next samples (chrony: its first polls, ~64 s apart)
 CONVERGING_S = 1.0
-# chrony's own word for it: a skew over its maxupdateskew default (ppm; 1000000 with no drift file yet), its
-# error bound then a sawtooth from ~0 at each update (1 s more per second since it)
-CONVERGING_SKEW_PPM = 1000.0
+# chrony's skew still over this (ppm): its frequency still estimated from its first samples (1000000 with no
+# drift file yet, its error bound then a sawtooth from ~0 at each update, 1 s more per second since it; then
+# down to a few ppm over its next polls); a daemon settled says a few ppm at most
+CONVERGING_SKEW_PPM = 100.0
 # what chronyc tracking says of a clock that follows no source: no reference, or its own (local stratum N)
 _NO_REFERENCE = ("00000000", "7F7F0101")
 _DAEMONS = {"chronyd": "chrony", "chrony": "chrony", "systemd-timesyncd": "timesyncd", "ntpd": "ntp", "ntp": "ntp",
@@ -397,7 +398,12 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
         elif why == "off":
             v["verdict"] = "off"
             v["ahead"] = p["offset"] > 0
-            if (p.get("bound") or 0.0) > max_s:
+            if (p.get("bound") or 0.0) > max_s and _converging(p, max_s):
+                v["why"] = ("%s still converging (just started: error bound %s): run again in a few minutes, or"
+                            " raise cassandra_clock_sync_timeout"
+                            % (p.get("service") or "its time sync", ms(p["bound"], False)))
+                v["action"] = "manual"
+            elif (p.get("bound") or 0.0) > max_s:
                 v["why"] = ("its daemon's error bound alone is %s (root delay and dispersion): a closer or better"
                             " source is needed" % ms(p["bound"], False))
                 v["action"] = "manual"

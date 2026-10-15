@@ -446,6 +446,25 @@ def test_verdicts_error_bound_alone_over_the_threshold():
     assert "error bound alone" in v["nodes"][0]["why"]
 
 
+def test_verdicts_a_daemon_still_converging_is_said_so():
+    young = probe_text(tracking_text=tracking(0.0001, "fast", dispersion="62.040000000", skew="1000000.000"))
+    v = cassandra_clock_verdicts([node("node1", young)])
+    assert v["nodes"][0]["verdict"] == "off" and v["nodes"][0]["action"] == "manual"
+    assert "still converging" in v["nodes"][0]["why"] and "cassandra_clock_sync_timeout" in v["nodes"][0]["why"]
+    assert "closer or better" not in v["nodes"][0]["why"]
+
+
+@pytest.mark.parametrize("skew, bound, settled", [
+    ("150.000", "0.060000000", False),  # its skew still over 100 ppm: converging, waited for
+    ("90.000", "0.060000000", True),  # a settled skew, a bound over half the threshold: a far source, at once
+    ("0.012", "0.900000000", True),  # a bound under a second: a far source
+    ("0.012", "1.100000000", False),  # a bound over a second (and ten times the threshold): converging
+])
+def test_converging_thresholds(skew, bound, settled):
+    probe = cassandra_clock_probe(probe_text(tracking_text=tracking(0.0001, "fast", dispersion=bound, skew=skew)))
+    assert cassandra_clock_settled(probe, 50) is settled
+
+
 def test_verdicts_coarse_skew_takes_the_least_delayed_sample():
     samples = ["%f %f" % (T0, T0 + 0.300), "%f %f" % (T0 + 1, T0 + 1.020), "garbage"]
     v = cassandra_clock_verdicts([dict(node("node1", probe_text()), samples=samples)])
