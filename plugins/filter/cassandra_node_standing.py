@@ -160,7 +160,7 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
     # cluster adding its second node, a stock instance on 127.0.0.1 elsewhere in the group (never usable), do not
     # stop it. Several nodes each alone (a one-node cluster and a stray instance at a real address): unknown for any.
     silent = [a for a in answers or [] if not a.get("status")
-              or (len(_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, _ in out["usable"]])]
+              or (len(_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, dummy in out["usable"]])]
     out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
     alone = [h for h, nodes in out["usable"] if len(nodes) <= 1]
     if (_true(has_data) and silent) or (len(alone) > 1 and len(alone) == len(out["usable"])):
@@ -349,7 +349,7 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
             # why it is unknown, when it is (the operator's words)
             "why": "" if ring_known else _unread_ring(view),
             # the first node of the cluster that answered UN, one not alone in its ring first: the ring add_node plans with
-            "from": ([h for h, nodes in view["usable"] if len(nodes) > 1] + [h for h, _ in view["usable"]] + [""])[0],
+            "from": ([h for h, nodes in view["usable"] if len(nodes) > 1] + [h for h, dummy in view["usable"]] + [""])[0],
             "problems": ring_problems(view, addresses, name, replace_address, jvm, own) if ring_read else []}
     # at one of its addresses first: another host ID there is a conflict, wherever its own host ID shows
     me = mine(addresses)
