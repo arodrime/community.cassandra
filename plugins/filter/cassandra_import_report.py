@@ -28,7 +28,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     KEEP, NOT_READ, _chains, _hand_edits_kept, _secret, _sort_key, _values_hidden)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import HEAP_FILE
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE
-from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import suspicious
+from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
+    LINES as SUSPICIOUS_LINES, how_to_keep, suspicious)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 # shown in the header, or the ring's (dc and rack): not among the settings
@@ -810,8 +811,12 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
             _who(members, None, groups, full), ", ".join(keys), release,
             "it" if len(keys) == 1 else "them"))
     # sensitive or suspicious settings found on the nodes (kept as they are)
-    for names, setting, why in suspicious(dict((n["name"], n.get("vars") or {}) for n in read)):
-        todo.append("WARNING %s: %s, kept as found %s %s" % (_who(names, None, groups, full), setting, DASH, why))
+    # (every node read is a member of the ring; its hand edits are checked too: a replace flag in cassandra-env.sh)
+    found = suspicious(dict((n["name"], dict(n.get("vars") or {}, **{SUSPICIOUS_LINES: [
+        e[4:] for e in n.get("hand_edits") or [] if e.startswith("  + ")]})) for n in read), [n["name"] for n in read])
+    for row, names, setting, why in found:
+        todo.append("WARNING %s: %s, kept as found %s %s (%s)"
+                    % (_who(names, None, groups, full), setting, DASH, why, how_to_keep(row)))
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
