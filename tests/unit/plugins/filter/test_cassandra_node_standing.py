@@ -42,6 +42,13 @@ def _state(**kwargs):
     return cassandra_node_standing(**args)
 
 
+def _with(base, **kwargs):
+    """base with some facts changed (dict(base, key=...) when base has the key too)."""
+    out = dict(base)
+    out.update(kwargs)
+    return out
+
+
 BLANK = dict(held=[], system=[], keyspaces=[], live="absent", live_cluster=None)
 RUNNING_ALONE = dict(running=True, own=_ring(_me("U", "N")), host_id="id-7")
 OURS = dict(live_cluster="my_cluster", keyspaces=["system", "shop"], cluster_keyspaces={"shop": {}})
@@ -136,11 +143,11 @@ def test_blank_and_evidence():
     """blank: what cassandra_config's question and create_cluster's new cluster read."""
     assert _state(**BLANK)["blank"] is True
     assert _state(**BLANK)["evidence"] == []
-    assert _state(**dict(BLANK, held=["/var/lib/cassandra/commitlog/CommitLog-7-1.log"]))["evidence"] == [
+    assert _state(**_with(BLANK, held=["/var/lib/cassandra/commitlog/CommitLog-7-1.log"]))["evidence"] == [
         "/var/lib/cassandra/commitlog/CommitLog-7-1.log in its Cassandra directories"]
     assert _state()["evidence"] == [SYSTEM]
     assert _state(**dict(BLANK, running=True))["evidence"] == ["Cassandra is running"]
-    assert _state(**dict(BLANK, live="unreadable"))["evidence"] == ["the live cassandra.yaml can not be read"]
+    assert _state(**_with(BLANK, live="unreadable"))["evidence"] == ["the live cassandra.yaml can not be read"]
     # an old system keyspace elsewhere: not its own, said apart (the caller decides)
     out = _state(**dict(BLANK, elsewhere=["/var/lib/cassandra/data/system"]))
     assert out["blank"] and out["elsewhere"] == ["/var/lib/cassandra/data/system"]
