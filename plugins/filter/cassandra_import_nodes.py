@@ -21,7 +21,7 @@ import re
 
 from ansible.errors import AnsibleFilterError
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import _values_hidden
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import CARRIED, _values_hidden
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 
@@ -234,6 +234,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
 
     notes = ["%s, %s, config in %s" % (versions, install, hv.get("import_cluster_conf_dir", "?")), started]
     notes += list(perms.get("notes", [])) + list(medusa.get("notes", []))
+    notes += [CARRIED + line for line in (config.get("carried", []) if read else [])]
     if host != address and hv.get("ansible_host", address) != address and set_ansible_host:
         notes.append("reached at %s, its hosts file has its ring address %s (import_cluster_set_ansible_host: false"
                      " leaves ansible_host out)" % (hv.get("ansible_host"), address))
@@ -272,6 +273,8 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "hand_edits": config.get("hand_edits", []),
         "normalized": config.get("normalized", []),
         "comments": config.get("comments", []),
+        # its lines the import made that refer to a secret's variable (written as templates)
+        "trusted": config.get("trusted", []) if read else [],
         # cassandra.yaml keys its Cassandra rejects: not imported, the node would not restart with them
         "not_settings": config.get("not_settings") or {},
         "notes": notes,

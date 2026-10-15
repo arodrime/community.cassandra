@@ -58,6 +58,33 @@
       above zero
   when: cassandra_commitlog_sync == 'group'
 
+# Your own template for a file the role writes (not one it keeps as it is): a file on the controller
+- name: Refuse template overrides the role cannot use
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "cassandra_config_template_overrides: {{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _files: "{{ _cassandra_config_files[_cassandra_config_series] }}"
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- if cassandra_config_template_overrides is not mapping -%}
+      {%-   set _ = out.append('a dict of {file name: template path} is expected') -%}
+      {%- else -%}
+      {%-   for f, path in cassandra_config_template_overrides.items() -%}
+      {%-     if f not in _files -%}
+      {%-       set _ = out.append(f ~ ' is not a file the role writes (' ~ _files | join(', ') ~ ')') -%}
+      {%-     elif path is not string or path is not match('/') -%}
+      {%-       set _ = out.append(f ~ ': an absolute path on the controller is expected (e.g. under inventory_dir)') -%}
+      {%-     elif path is not file -%}
+      {%-       set _ = out.append(f ~ ': ' ~ path ~ ' not found on the controller') -%}
+      {%-     elif f in cassandra_config_keep_files -%}
+      {%-       set _ = out.append(f ~ ' is also in cassandra_config_keep_files (left as the node has it): one or the other') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
 - name: Refuse extra settings the template already has
   ansible.builtin.assert:
     that: _taken | length == 0
@@ -65,7 +92,10 @@
       cassandra_extra_settings: {{ _named | join(', ') }} already in cassandra.yaml, or the former name of a key
       whose variable is set (Cassandra refuses both names): set them with their variable
   vars:
-    _template: "{{ lookup('ansible.builtin.file', role_path ~ '/templates/' ~ _cassandra_config_series ~ '/cassandra.yaml.j2') }}"
+    # (the one written: cassandra_config_template_overrides' when set)
+    _template: >-
+      {{ lookup('ansible.builtin.file', ('' if _cassandra_config_templates['cassandra.yaml'] is match('/') else role_path ~ '/templates/')
+                                        ~ _cassandra_config_templates['cassandra.yaml']) }}
     _keys: >-
       {{ _template | regex_findall('(?m)^(?:\{\{[^}]*\}\})?([a-z0-9_]+):') }}
     # a section of _cassandra_config_extra_sections: a dict of other sub-keys than its variables'; a dotted key
@@ -330,6 +360,21 @@
         - _cassandra_config_installed != ''
         - _cassandra_config_installed is version(_templates, '>')
 
+    # (the upgrade playbook's preview: the same template for the series it moves to)
+    - name: Say which files your own templates render for another series than the one installed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ cassandra_config_template_overrides | list | join(', ') }} rendered from your own
+          template (cassandra_config_template_overrides) for Cassandra {{ _cassandra_config_series }}, while
+          {{ _cassandra_config_installed }} is installed: check it suits {{ _cassandra_config_series }} (the role's
+          templates follow each series, yours do not).
+      vars:
+        cassandra_output: true
+      when:
+        - cassandra_config_template_overrides | length > 0
+        - _cassandra_config_installed != ''
+        - not (_cassandra_config_installed ~ '.').startswith(_cassandra_config_series ~ '.')
+
     # A disk in /etc/fstab that did not mount (e.g. nofail, after a reboot)
     # leaves an empty mount point: the dirs made there would land on the root
     # filesystem, and the node would start on empty dirs. Checked for every
@@ -545,7 +590,7 @@
         _cassandra_config_new: >-
           {{ dict(_cassandra_config_files[_cassandra_config_series]
                   | zip(query('ansible.builtin.template', *_cassandra_config_files[_cassandra_config_series]
-                                                           | map('regex_replace', '^(.*)$', _cassandra_config_series ~ '/\1.j2')))) }}
+                                                           | map('extract', _cassandra_config_templates)))) }}
       no_log: true  # passwords
 
     # On a node that is not blank, a file with the same settings is left as it is: the live ones that
@@ -876,7 +921,7 @@
     # preview found the same, with the right owner and mode, are left as they are
     - name: Template Cassandra config files
       ansible.builtin.template:
-        src: "{{ _cassandra_config_series }}/{{ cassandra_config_file }}.j2"
+        src: "{{ _cassandra_config_templates[cassandra_config_file] }}"
         dest: "{{ cassandra_conf_dir }}/{{ cassandra_config_file }}"
         owner: "{{ _cassandra_config_perm.owner }}"
         group: "{{ _cassandra_config_perm.group }}"

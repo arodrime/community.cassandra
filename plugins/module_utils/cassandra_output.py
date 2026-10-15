@@ -229,7 +229,9 @@ MASK = "****"
 # the name and the colon (JSON, Python), then its value
 _HIDDEN_NAME = (r"(?<![\w.-])[\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
                 r"|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*(?<![._-]file)(?<![._-]path)[\"']?")
-_HIDDEN_KEY = (r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)"
+# (its name and the = or : after it: import_cluster takes the value out of a line)
+SECRET_NAME = r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)"
+_HIDDEN_KEY = (SECRET_NAME +
                r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
 # an unquoted value runs to the end of the line (a comment aside), as a YAML plain scalar or a JVM option may hold
 # a comma; inside a flow mapping or JSON ({...} before it) it ends at the next comma or brace
@@ -250,6 +252,7 @@ _HIDDEN_KEY_ONLY = re.compile(r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)")
 # a line without any of these words holds no secret setting (looked for first: the patterns above are slow)
 _HIDDEN_WORD = re.compile(r"(?i)password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
                           r"|ca_key|_kspw|_tspw|_pw|_pass")
+SECRET_WORD = _HIDDEN_WORD
 
 
 def _in_flow(before):
