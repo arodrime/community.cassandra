@@ -73,7 +73,7 @@ SCREEN = u"""
   tasks:
     - name: Plan
       ansible.builtin.debug:
-        msg: ["PLAN  op  my_cluster  2 steps", "  1. node1  dc1/rack_a  first", "", "WARNING  careful"]
+        msg: ["PLAN  op  my_cluster  2 steps", "  1. node1  dc1/rack_a  first", "", "WARNING - careful"]
       vars:
         cassandra_output: true
     - name: Recap
@@ -116,7 +116,7 @@ def test_the_screen_colours(tmp_path, env, warning):
     codes = _codes(output)
     assert codes["PLAN  op  my_cluster  2 steps"] == "0;36", repr(output)  # the plan's first line: as progress
     assert codes["  1. node1  dc1/rack_a  first"] is None, repr(output)  # its steps: plain
-    assert codes["WARNING  careful"] == warning, repr(output)
+    assert codes["WARNING - careful"] == warning, repr(output)
     assert codes["CHECK  apply_config  my_cluster  1 would apply"] == "0;33", repr(output)
     assert codes["cassandra.yaml"] is None and codes["  concurrent_reads: 8     node1   (inventory)"] is None
     assert codes[u"                    48    node2   ← differs"] == "0;33", repr(output)
@@ -128,7 +128,7 @@ def test_the_screen_colours(tmp_path, env, warning):
 
 def test_no_colour_with_nocolor(tmp_path):
     rc, output = run(tmp_path, SCREEN, ANSIBLE_CALLBACK_CASSANDRA_OPS_WARNING_COLOR="bright yellow")  # ANSIBLE_NOCOLOR
-    assert rc == 0 and "\x1b" not in output and "WARNING  careful" in output, repr(output)
+    assert rc == 0 and "\x1b" not in output and "WARNING - careful" in output, repr(output)
 
 
 def test_a_plan_fact_that_says_would_is_not_an_outcome():
@@ -198,6 +198,6 @@ def test_nothing_to_do_is_a_recap_between_rules(tmp_path):
 def test_an_indented_warning_is_a_warning():
     # under a plan, a red row or an informative summary: still the WARNING colour, the configured one
     for above in (None, C.COLOR_ERROR, "cyan"):
-        assert colour("  WARNING: x", above=above) == C.COLOR_WARN
+        assert colour("  WARNING - x", above=above) == C.COLOR_WARN
     assert colour("    WARNING - lvchange failed", above="cyan", warning="bright yellow") == "bright yellow"
     assert colour("  not a WARNING", above=C.COLOR_ERROR) == C.COLOR_ERROR  # only at the start of the line

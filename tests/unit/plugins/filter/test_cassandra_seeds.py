@@ -25,7 +25,7 @@ def test_seeds_sharing_a_rack():
     nodes = [node("n1", "r1", True), node("n2", "r1", True), node("n3", "r2"), node("n4", "r3"), node("n5", "r1", True)]
     out = cassandra_seed_layout(nodes)
     assert out["problems"] == ["dc1: 3 seeds on r1, none on r2, r3: put them on different racks"]
-    assert out["lines"] == ["WARNING  Seeds  dc1  n1 (r1), n2 (r1), n5 (r1)  3 seeds on r1, none on r2, r3: put them on"
+    assert out["lines"] == ["WARNING - Seeds  dc1  n1 (r1), n2 (r1), n5 (r1)  3 seeds on r1, none on r2, r3: put them on"
                             " different racks"]
     assert out["suggested"] == ["ip-n1", "ip-n3", "ip-n4"]
 
@@ -40,7 +40,7 @@ def test_one_seed_is_a_warning_current_seed_kept_first():
 def test_no_seed_in_a_datacenter():
     nodes = [node("a1", "r1", True), node("a2", "r2", True), node("b1", "r1", dc="dc2"), node("b2", "r2", dc="dc2")]
     out = cassandra_seed_layout(nodes)
-    assert out["lines"] == ["Seeds  dc1  a1 (r1), a2 (r2)  ok", "WARNING  Seeds  dc2  none  no seed"]
+    assert out["lines"] == ["Seeds  dc1  a1 (r1), a2 (r2)  ok", "WARNING - Seeds  dc2  none  no seed"]
     assert out["suggested"] == ["ip-a1", "ip-a2", "ip-b1", "ip-b2"]
 
 

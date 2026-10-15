@@ -229,7 +229,7 @@
     - name: Free space on the data disk
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ _mount.mount }} has {{ (100 * _mount.size_available / _mount.size_total) | round | int }}% free:
+          WARNING - {{ _mount.mount }} has {{ (100 * _mount.size_available / _mount.size_total) | round | int }}% free:
           the snapshot shares files at first, but sstables rewritten after the upgrade need room.
       vars:
         # the mount point holding cassandra_data_dir: the longest one that is a prefix of it

@@ -16,11 +16,19 @@
 - name: Warn about a variable under its former name
   ansible.builtin.debug:
     msg: >-
-      DEPRECATION WARNING: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
+      WARNING - deprecated name: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
       (the former name still wins while it is set).
-  when: cassandra_config_owner is defined
+  when:
+    - cassandra_config_owner is defined
+    - not _cassandra_config_owner_said | default(false) | bool  # once a run (apply_config includes the role twice)
   vars:
     cassandra_output: true
+    cassandra_output_gap: true  # a block of its own: one per node
+
+- name: Note the former name said
+  ansible.builtin.set_fact:
+    _cassandra_config_owner_said: true
+  when: cassandra_config_owner is defined
 
 # Cassandra refuses to start without a period above zero in periodic mode
 # (4.1+: a duration in ms or a larger unit)
@@ -650,7 +658,7 @@
         _cassandra_config_dir_notes: >-
           {%- set out = [] -%}
           {%- for r in cassandra_config_dir_foreign.results | default([]) if r.stdout_lines | default([]) -%}
-          {%-   set _ = out.append('WARNING data dir ' ~ r.item.item.1 ~ ': not owned by ' ~ _cassandra_config_perm_settings.user ~ ': '
+          {%-   set _ = out.append('WARNING - data dir ' ~ r.item.item.1 ~ ': not owned by ' ~ _cassandra_config_perm_settings.user ~ ': '
                                    ~ r.stdout_lines[:3] | join(', ') ~ (', ...' if r.stdout_lines | length > 3 else '')
                                    ~ ' (left as they are: chown -R them if Cassandra cannot read them)') -%}
           {%- endfor -%}
@@ -861,7 +869,7 @@
     - name: Say the seed reload failed
       ansible.builtin.debug:
         msg: >-
-          WARNING  {{ inventory_hostname }}: the new seed list is written in cassandra.yaml but nodetool reloadseeds
+          WARNING - {{ inventory_hostname }}: the new seed list is written in cassandra.yaml but nodetool reloadseeds
           failed: {{ _error }}{{
           '. The running node cannot load its cassandra.yaml again (system.log: Error while getting seed node list
           says why, e.g. a key it does not know): fix the file before any restart, or the node will not start; then
@@ -873,6 +881,7 @@
         - cassandra_config_seeds_reload.msg | default('') != 'nodetool reloadseeds executed successfully'
       vars:
         cassandra_output: true
+        cassandra_output_gap: true  # a block of its own: one per node
         _error: "{{ cassandra_config_seeds_reload.error | default(cassandra_config_seeds_reload.msg, true) }}"
 
     - name: Warn that a restart is needed

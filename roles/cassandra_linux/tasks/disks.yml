@@ -484,7 +484,7 @@
                ~ 'To do it: tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')
                ~ ' on the node at a quiet time, or run again with -e cassandra_linux_tuned_switch_running=true.']
               if _tuned_deferred | bool else [])
-           + ([_tuned_warn | regex_replace('^WARNING: ', '')] if _tuned_warn and not _tuned_ok | bool and not _tuned_deferred | bool
+           + ([_tuned_warn | regex_replace('^WARNING - ', '')] if _tuned_warn and not _tuned_ok | bool and not _tuned_deferred | bool
               else []) }}
       # (Cassandra not looked for, both *_running true: taken as running, the restart said; not when
       # apply_config restarts it next: _cassandra_linux_restart_follows)

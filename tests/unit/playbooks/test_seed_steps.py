@@ -487,9 +487,9 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
                   _new_seeds=["n2"], ansible_inventory_sources=["/work/inventories"], cassandra_hosts="prod", _nl="\n")
     lines = text.splitlines()
     # nothing said as applied: not the filter's "made its seed, live only"
-    assert lines[:2] == ["WARNING  seed lists left as they are: dc2 has no node in cassandra_seeds: change_seeds would pick"
+    assert lines[:2] == ["WARNING - seed lists left as they are: dc2 has no node in cassandra_seeds: change_seeds would pick"
                          " its seeds",
-                         "WARNING  n2 not in the seed lists of the other nodes yet: run change_seeds, its plan (the seeds"
+                         "WARNING - n2 not in the seed lists of the other nodes yet: run change_seeds, its plan (the seeds"
                          " it picks too) comes before its question:"]
     assert "made its seed" not in text
     assert lines[2].startswith("     ansible-playbook ") and lines[2].endswith("community.cassandra.change_seeds -e cassandra_hosts=prod")
@@ -497,15 +497,15 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
                   _cassandra_add_seeds_hold=True, _new_seeds=["n2"], ansible_inventory_sources=["/work/inventories"],
                   cassandra_hosts="prod", _nl="\n")
     lines = text.splitlines()
-    assert lines[0] == "WARNING  seed lists left as they are: dc2 x"
-    assert lines[1] == "WARNING  n2 not in the seed lists of the other nodes yet: fix cassandra_seeds, then run change_seeds:"
+    assert lines[0] == "WARNING - seed lists left as they are: dc2 x"
+    assert lines[1] == "WARNING - n2 not in the seed lists of the other nodes yet: fix cassandra_seeds, then run change_seeds:"
     assert lines[2].startswith("     ansible-playbook ") and len(lines) == 3
     # said when held back, or with the filter's warnings (seeds kept, applied); else skipped
     for held, warnings, said in ((True, [], True), (False, ["w"], True), (False, [], False)):
         assert render("{{ %s }}" % say["when"], _new_seeds=["n2"], ansible_check_mode=False, _cassandra_add_seeds_hold=held,
                       _cassandra_add_seeds=dict(kept, warnings=warnings)) is said
     assert render(say["ansible.builtin.debug"]["msg"], _cassandra_add_seeds=kept, _cassandra_add_seeds_hold=False,
-                  _nl="\n") == "WARNING  " + kept["warnings"][0]
+                  _nl="\n") == "WARNING - " + kept["warnings"][0]
 
 
 # A failed nodetool reloadseeds after the list is written: a WARNING and the run goes on (the list applies at the
@@ -563,7 +563,7 @@ def test_a_failed_reload_warns_and_goes_on_except_for_change_seeds():
     variables = dict(inventory_hostname="n1", ansible_inventory_sources=["/w/inventories"], cassandra_hosts="prod")
     text = render(say["ansible.builtin.debug"]["msg"], _seeds_yaml_bad=True,
                   _cassandra_seeds_reload_failed="Failed to reload the seed node list", **variables)
-    assert text.startswith("WARNING  n1: the new seed list is written in cassandra.yaml but nodetool reloadseeds failed:"
+    assert text.startswith("WARNING - n1: the new seed list is written in cassandra.yaml but nodetool reloadseeds failed:"
                            " Failed to reload the seed node list. The running node cannot load its cassandra.yaml again"
                            " (system.log: Error while getting seed node list says why, e.g. a key it does not know): fix"
                            " the file before any restart, or the node will not start; then run: ansible-playbook")

@@ -120,7 +120,7 @@
         tasks_from: note.yml
       vars:
         _note: >-
-          WARNING  {{ ansible_play_hosts_all | difference(ansible_play_hosts) | community.cassandra.cassandra_node_list }}
+          WARNING - {{ ansible_play_hosts_all | difference(ansible_play_hosts) | community.cassandra.cassandra_node_list }}
           did not answer, going on without them (cassandra_allow_down_nodes). Fewer replicas are up: QUORUM reads and
           writes may fail.
       when: ansible_play_hosts_all | difference(ansible_play_hosts) | length > 0
@@ -228,7 +228,7 @@
           {%-   set hosts = [] -%}
           {%-   for h in ansible_play_hosts if v in hostvars[h]._cassandra_preflight_unknown -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
           {%-   set close = hostvars[hosts | first]._cassandra_preflight_unknown[v] -%}
-          {%-   set _ = out.append('WARNING  ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') is not known to this'
+          {%-   set _ = out.append('WARNING - ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list ~ ') is not known to this'
                                    ~ ' collection: its roles and playbooks do not read it' ~ ((' (did you mean ' ~ close ~ '?)') if close else '')) -%}
           {%- endfor -%}
           {{ out | join(_nl) }}

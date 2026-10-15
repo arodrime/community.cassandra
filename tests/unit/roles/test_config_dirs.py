@@ -117,9 +117,9 @@ def test_dirs_another_account_owns_in_a_data_dir_sampled(tmp_path):
                          {"item": {"item": ["data dir", "/d3"]}, "stdout_lines": ["/d3/a", "/d3/b", "/d3/c"]},
                          {"item": {"item": ["data dir", "/d2"]}, "stdout_lines": []}, {"skipped": True}]}
     assert render(notes, cassandra_config_dir_foreign=found, _cassandra_config_perm_settings={"user": "cassandra"}) == [
-        "WARNING data dir /d1: not owned by cassandra: /d1/ks1, /d1/ks1/t1-1, /d1/ks2, ... (left as they are: chown -R them"
+        "WARNING - data dir /d1: not owned by cassandra: /d1/ks1, /d1/ks1/t1-1, /d1/ks2, ... (left as they are: chown -R them"
         " if Cassandra cannot read them)",
-        "WARNING data dir /d3: not owned by cassandra: /d3/a, /d3/b, /d3/c (left as they are: chown -R them"
+        "WARNING - data dir /d3: not owned by cassandra: /d3/a, /d3/b, /d3/c (left as they are: chown -R them"
         " if Cassandra cannot read them)"]
 
 
@@ -149,7 +149,7 @@ def test_a_failed_seed_reload_is_a_warning():
         assert render("{{ %s }}" % when, cassandra_config_seeds_reload=result) is expected, result
     text = render(say["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_config_seeds_reload=failed,
                   _error=render(say["vars"]["_error"], cassandra_config_seeds_reload=failed))
-    assert text.startswith("WARNING  n1: the new seed list is written in cassandra.yaml but nodetool reloadseeds failed:"
+    assert text.startswith("WARNING - n1: the new seed list is written in cassandra.yaml but nodetool reloadseeds failed:"
                            " Failed to reload the seed node list. The running node cannot load its cassandra.yaml again")
     assert "fix the file before any restart, or the node will not start" in text
     text = render(say["ansible.builtin.debug"]["msg"], inventory_hostname="n1", _error="error: Authentication failed",

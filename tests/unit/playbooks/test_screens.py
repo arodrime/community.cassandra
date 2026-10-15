@@ -324,7 +324,7 @@ APPLY_HOSTVARS = {
     "node1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "restart"},
     "node2": {"cassandra_apply_config_todo": False, "cassandra_op_result": "nothing to apply"},
     "node3": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "none",
-              "cassandra_apply_config_notes": ["WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1"]},
+              "cassandra_apply_config_notes": ["WARNING - data dir /srv/data: not owned by cassandra: /srv/data/ks1"]},
     "node4": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "start"},
     "node5": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write"}}
 # the group "Group the nodes to do" puts them in
@@ -344,11 +344,11 @@ def test_apply_config_and_update_java_screens():
                     "or starting it as said below; the settings that differ are in the recap at the end.\n\n"
                     "node1  would apply, then restart\n"
                     "node3  would apply, no restart (an owner, group or mode only: Cassandra reads them when it starts)\n"
-                    "  WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1\n"
                     "node4  would apply, then start (its Cassandra is not running: started once written (down over"
                     " max_hint_window? repair it))\n"
                     "node5  would apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)\n"
                     "node2  nothing to apply\n\n"
+                    "WARNING - node3: data dir /srv/data: not owned by cassandra: /srv/data/ks1\n\n"
                     "--check: nothing will be changed (the plan only, no question).")
     # a real run: the settings that differ, then the outcomes, before its question
     text = screen({"ansible_play_hosts": ["node1", "node2"], "hostvars": APPLY_HOSTVARS, "groups": APPLY_GROUPS,

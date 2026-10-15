@@ -9,7 +9,10 @@ cassandra_apply_config_diff: the nodes' compare data -> the settings that
     group and mode of a file or of a directory one setting. Secrets masked.
     Then the OS settings (cassandra_linux's) the same way.
 cassandra_apply_config_outcomes: the nodes -> what each one gets, grouped
-    ("node2, node4  would apply, then restart").
+    ("node2, node4  would apply, then restart"), their notes under them but
+    the warnings.
+cassandra_apply_config_warnings: the nodes -> their warnings, for the plan
+    (each one once, with the nodes it is for).
 cassandra_apply_config_recap: the end of apply_config: a verdict line, then
     under --check the settings that differ and the outcomes, after a real run
     the outcomes (its plan showed the settings, before its question).
@@ -578,7 +581,7 @@ def _grouped(nodes, check=False, plan=False, width=None):
     for node in nodes or []:
         text, word = _outcome(node, check, plan)
         counts[word] = counts.get(word, 0) + 1
-        key = (text, tuple("  " + str(n) for n in node.get("notes") or []))
+        key = (text, tuple("  " + str(n) for n in node.get("notes") or [] if not out.is_warning(n)))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -599,7 +602,24 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None):
     return _grouped(nodes, check, plan, width)[0]
 
 
-def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, width=None):
+def cassandra_apply_config_warnings(nodes):
+    """The WARNING notes of the nodes, for the plan's warnings (said there
+    only, not under each node): [{label: the nodes, text}], one per text,
+    the nodes with it together, in the order they come."""
+    by_text, order = {}, []
+    for node in nodes or []:
+        for note in node.get("notes") or []:
+            if out.is_warning(note):
+                text = out.warning_text(note)
+                if text not in by_text:
+                    by_text[text] = []
+                    order.append(text)
+                if str(node["name"]) not in by_text[text]:
+                    by_text[text].append(str(node["name"]))
+    return [{"label": out.nodes(by_text[t]), "text": t} for t in order]
+
+
+def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, planned=None, width=None):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order:
     todo, whether the node had config to apply; os, whether its OS settings
     differ; os_done, whether the OS play ran on it; done, whether its turn
@@ -614,7 +634,10 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     plan did not show them), a blank line, the outcomes; after a real run
     the outcomes only (its plan showed the settings before its question).
     refused: under check, [why a real run is refused, the way out] (a node not
-    running while others are to restart): said last, as a WARNING. width: the outcome lines fit in it
+    running while others are to restart). planned: the nodes whose warnings
+    the plan showed (None: no plan): a line says how many are above, and for
+    which nodes; the others' warnings (no plan: all of them, refused too) are
+    said here, last. width: the outcome lines and the warnings fit in it
     ("terminal": the terminal's; the diff is laid out already)."""
     lines, counts = _grouped(nodes, check, width=width)
     verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
@@ -624,9 +647,17 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     shown = ["  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)]
     if check and diff:
         shown += [""] + list(diff) + [""]
-    if check and refused:
-        lines = lines + [""] + out.fit(["WARNING  a real run is refused, before changing anything: %s" % refused[0]]
-                                       + ["  %s" % line for line in refused[1:]], _width(width))
+    planned = [str(n) for n in planned] if planned else None  # (none: no plan; a template renders it "" or None)
+    seen = [n for n in nodes or [] if planned is not None and str(n["name"]) in planned]  # their warnings in the plan
+    others = [n for n in nodes or [] if n not in seen]
+    count = len(cassandra_apply_config_warnings(seen)) + (1 if check and refused and planned is not None else 0)
+    warned = [n["name"] for n in seen if any(out.is_warning(x) for x in n.get("notes") or [])]
+    also = "the refusal" if check and refused and planned is not None else ""
+    lines = lines + ([""] + out.warnings_above(count, names=warned, also=also) if count else [])
+    texts = ["%s: %s" % (w["label"], w["text"]) for w in cassandra_apply_config_warnings(others)]
+    if check and refused and planned is None:
+        texts.append(["a real run is refused, before changing anything: %s" % refused[0]] + list(refused[1:]))
+    lines = lines + ([""] + out.fit(out.warning_lines(texts), _width(width)) if texts else [])
     return shown + lines
 
 
@@ -636,4 +667,5 @@ class FilterModule(object):
             "cassandra_apply_config_diff": cassandra_apply_config_diff,
             "cassandra_apply_config_outcomes": cassandra_apply_config_outcomes,
             "cassandra_apply_config_recap": cassandra_apply_config_recap,
+            "cassandra_apply_config_warnings": cassandra_apply_config_warnings,
         }

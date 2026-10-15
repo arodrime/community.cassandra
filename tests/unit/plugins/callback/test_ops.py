@@ -502,8 +502,8 @@ def test_never_two_blank_lines_around_pauses_diffs_loops_and_failures(tmp_path):
 def test_colours_by_line_start():
     from ansible import constants as C
     from ansible_collections.community.cassandra.plugins.callback.ops import colour
-    assert colour("WARNING  seeds: dc1 has one seed") == C.COLOR_WARN  # Ansible's own (option warning_color)
-    assert colour("WARNING  x", warning="bright yellow") == "bright yellow"
+    assert colour("WARNING - seeds: dc1 has one seed") == C.COLOR_WARN  # Ansible's own (option warning_color)
+    assert colour("WARNING - x", warning="bright yellow") == "bright yellow"
     assert colour("         its next line", above=C.COLOR_CHANGED) == C.COLOR_CHANGED  # indented: as the line above
     assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
     assert colour("NOT HEALTHY  my_cluster") == colour("REFUSED  topology") == C.COLOR_ERROR
@@ -554,13 +554,13 @@ def test_colours_on_a_terminal_only(tmp_path):
   tasks:
     - name: Lines
       ansible.builtin.debug:
-        msg: ["WARNING  w", "plain"]
+        msg: ["WARNING - w", "plain"]
       vars:
         cassandra_output: true
 """
     rc, output = run(tmp_path, playbook, ANSIBLE_NOCOLOR="0", ANSIBLE_FORCE_COLOR="1")
     assert rc == 0, output
-    assert re.search("\x1b\\[[0-9;]+mWARNING  w\x1b\\[0m", output) and "\nplain" in output, repr(output)
+    assert re.search("\x1b\\[[0-9;]+mWARNING - w\x1b\\[0m", output) and "\nplain" in output, repr(output)
     rc, output = run(tmp_path, playbook)  # ANSIBLE_NOCOLOR
     assert rc == 0 and "\x1b" not in output, repr(output)
 

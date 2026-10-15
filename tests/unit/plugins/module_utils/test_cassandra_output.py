@@ -244,7 +244,7 @@ def test_plan_order_warnings_above_the_question():
         P,
         "a plain fact",
         "",
-        "WARNING  not inside tmux/screen",
+        "WARNING - not inside tmux/screen",
         "",
         "Decommission node7, node8? (yes/no)",
     ]
@@ -257,9 +257,9 @@ def test_plan_check_and_refused():
         ["REFUSED  decommission_node  c1", "", "dc1 after: 2 nodes"]
     # an empty block: no blank line for it, never two in a row
     assert out.plan("cleanup", "c1", steps=["node1"], warnings=["w", " "], question="Go?") == \
-        ["PLAN  cleanup  c1", "  1.  node1", "", "WARNING  w", "", "Go?"]
+        ["PLAN  cleanup  c1", "  1.  node1", "", "WARNING - w", "", "Go?"]
     assert out.plan("cleanup", "c1", facts=["f"], warnings=["w"], check=True) == \
-        ["PLAN  cleanup  c1", "", "f", "", "WARNING  w", "", "--check: nothing will be changed"]
+        ["PLAN  cleanup  c1", "", "f", "", "WARNING - w", "", "--check: nothing will be changed"]
 
 
 # --- the prepare of new nodes ---
@@ -384,7 +384,7 @@ def test_left_system_warning_once_with_its_nodes():
     assert max(len(line) for line in lines[1:]) <= 110  # wrapped, under the WARNING line (its colour)
     assert all(line.startswith("  ") for line in lines[1:])
     text = " ".join(line.strip() for line in lines[1:])
-    assert lines[0] == ("WARNING: node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data"
+    assert lines[0] == ("WARNING - node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data"
                         " directories the config uses (/data/cassandra)")
     assert text.startswith("Cassandra does not read it: the node starts empty")  # why: ignored for the run
     # the way out: its keyspace directories, not the whole directory; never another instance's

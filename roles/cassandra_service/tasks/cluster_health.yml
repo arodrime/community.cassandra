@@ -161,7 +161,7 @@
 - name: Go on despite the problems (cassandra_service_health_force)
   ansible.builtin.debug:
     msg: >-
-      {{ (['WARNING  cassandra_service_health_force is set, going on with an unhealthy cluster: taking this node down'
+      {{ (['WARNING - cassandra_service_health_force is set, going on with an unhealthy cluster: taking this node down'
            ~ ' now can make data unavailable (reads/writes failing at QUORUM) or lose writes:']
           + cassandra_health_problems | map('regex_replace', '^', '  ') | list) | join(_nl) }}
   when:

@@ -126,11 +126,18 @@ def test_the_check_recap_ends_with_the_refusal():
                     for h, v in HOSTVARS.items())
     variables = dict(trust(t["vars"]), hostvars=hostvars, groups={"prod": HOSTS}, cassandra_hosts="prod",
                      ansible_play_hosts_all=HOSTS, cassandra_cluster_name="c", ansible_check_mode=True)
+    # no plan shown (a later play stopped first): the recap says it, last
     lines = render(t["ansible.builtin.debug"]["msg"], variables)
     assert lines[0] == "CHECK  apply_config  c  3 would apply, 1 nothing to apply"
-    assert lines[-3:] == ["", "WARNING  a real run is refused, before changing anything: " + REASON, "  " + WAY]
+    assert lines[-3:] == ["", "WARNING - a real run is refused, before changing anything: " + REASON, "  " + WAY]
     # the nodes' outcomes are all there, before it
     assert "node1, node2  would apply, then restart" in lines
+    # the plan said it: said once, the recap points at it
+    for h in hostvars:
+        hostvars[h]["_cassandra_apply_config_planned"] = HOSTS
+    lines = render(t["ansible.builtin.debug"]["msg"], variables)
+    assert lines[-2:] == ["", "1 warning in the plan above (the refusal)."]
+    assert not [line for line in lines if line.startswith("WARNING")]
 
 
 def test_the_recap_says_no_refusal_after_a_real_run():
@@ -139,14 +146,18 @@ def test_the_recap_says_no_refusal_after_a_real_run():
 
 
 def test_the_check_plan_says_it_too():
-    # in case a later play stops the --check run before its recap
+    # once, in the plan: the recap only points at it
     t = next(x for x in PLAYS[1]["tasks"] if x.get("name") == "Show the plan and confirm the run")
-    warning = t["vars"]["cassandra_screen"]["warnings"][0]
+    warnings = t["vars"]["cassandra_screen"]["warnings"]  # the nodes' warnings, then the refusal
+
+    def refusal(variables):
+        return render(warnings, dict(variables, _nodes=[]))[-1]
+
     variables = {"_cassandra_apply_config_refused": [REASON, WAY]}
-    assert render(warning["text"], dict(variables, ansible_check_mode=True)) == (
-        "a real run is refused, before changing anything: " + REASON + " " + WAY)
-    assert render(warning["text"], dict(variables, ansible_check_mode=False)) == ""
-    assert render(warning["text"], {"ansible_check_mode": True}) == ""
+    assert refusal(dict(variables, ansible_check_mode=True)) == {
+        "label": "refused", "text": "a real run is refused, before changing anything: " + REASON + " " + WAY}
+    assert refusal(dict(variables, ansible_check_mode=False))["text"] == ""
+    assert refusal({"ansible_check_mode": True})["text"] == ""
 
 
 def test_the_owner_and_mode_changes_are_not_shown_twice():

@@ -36,6 +36,9 @@ Conventions
   ``<0.1/100.0 GiB``; done is never shown above the total.
 - **Plans**: the header, the numbered steps (node and dc/rack), the facts, then the ``WARNING`` lines just above
   the question.
+- **Warnings**: one style, ``WARNING - what``, the lines of a longer one indented under it; two warnings a blank
+  line apart; each one said once per run, where it is decided (a plan's warnings not again in its recap, which
+  says how many are above: ``3 warnings in the plan above (node2, node3).``).
 - **Phases**: one line per major phase, ending with ``...`` (cyan under the ops callback: its option
   ``progress_color``), e.g. ``Checking the cluster (3 nodes; adding node4, node5)...`` (the members: not the nodes
   being added or reset, nor those marked absent), ``Preparing the new nodes (node5, node6)...``, ``Starting node5 and waiting for its

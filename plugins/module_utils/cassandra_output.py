@@ -867,6 +867,63 @@ def _table(rows, indent=""):
             for r in rows]
 
 
+# --- warnings --------------------------------------------------------------------------------
+
+# The one mark of a warning, everywhere: "WARNING - what"; the lines of a
+# longer one under it, indented
+WARNING = "WARNING - "
+_MARKED = re.compile(r"^\s*WARNING(?:\s+-\s+|:\s*|\s+)")
+
+
+def is_warning(line):
+    """Whether line is a warning (WARNING - ..., its older spellings too)."""
+    return bool(_MARKED.match(str(line)))
+
+
+def warning_text(line):
+    """A warning without its mark ("WARNING - x" -> "x"); another line as is."""
+    return _MARKED.sub("", str(line), count=1) if is_warning(line) else str(line)
+
+
+def warning(text, indent="  ", under=False):
+    """A warning's lines: "WARNING - text", its next lines (text a list, or
+    lines in it) indented; under: every next line under its text (a plan's,
+    their own indent kept after it)."""
+    lines = [str(t) for t in text] if isinstance(text, (list, tuple)) else str(text).split("\n")
+    lines = [line.rstrip() for line in lines if line.strip()]
+    if not lines:
+        return []
+    if under:
+        rest = [" " * len(WARNING) + line for line in lines[1:]]
+    else:
+        rest = [line if line[:1] in (" ", "\t") else indent + line for line in lines[1:]]
+    return [WARNING + warning_text(lines[0]).strip()] + rest
+
+
+def warning_lines(texts, seen=None, under=False):
+    """Several warnings: each one once (seen: the texts already shown, kept
+    up to date), a blank line (PARAGRAPH) between two; under: see warning()."""
+    seen = set() if seen is None else seen
+    blocks = []
+    for text in texts or []:
+        lines = warning(text, under=under)
+        key = "\n".join(lines)
+        if lines and key not in seen:
+            seen.add(key)
+            blocks.append(lines)
+    return spaced(blocks)
+
+
+def warnings_above(count, where="the plan", names=None, also=""):
+    """The recap's pointer to warnings printed earlier: "2 warnings in the plan
+    above (node2, node3)." (none: empty); names: the nodes they are for;
+    also: the others ("the refusal")."""
+    if not count:
+        return []
+    said = "; ".join(x for x in (nodes(names) if names else "", also) if x)
+    return ["%s in %s above%s." % (plural(count, "warning"), where, " (%s)" % said if said else "")]
+
+
 def spaced(paragraphs):
     """Paragraphs (each a list of lines) as one block, a PARAGRAPH line
     between two, the empty ones left out."""
@@ -906,7 +963,7 @@ def plan(operation, cluster="", summary="", steps=None, facts=None, warnings=Non
         elif str(fact).strip():
             block.append(str(fact).split("\n"))
     block = spaced(block)
-    warned = spaced([["WARNING  %s" % w] for w in warnings or [] if str(w).strip()])
+    warned = warning_lines(warnings, under=True)  # a longer one's lines under its text
     asked = ["--check: nothing will be changed"] if check else [question] if question else []
     for section in (block, warned, asked):
         if section:
@@ -1184,7 +1241,7 @@ def left_system_warning(hosts):
     for (left, dirs), names in said:
         where, shown = ", ".join(d.rstrip("/") or "/" for d in left), who(names, counted=False)
         inside = [d for d in dirs if any(d.startswith(x.rstrip("/") + "/") for x in left)]
-        lines.append("WARNING: %s: an old system keyspace in %s, not one of the data directories the config uses (%s)"
+        lines.append(WARNING + "%s: an old system keyspace in %s, not one of the data directories the config uses (%s)"
                      % (shown, where, ", ".join(dirs) or "?"))
         lines += _wrapped(
             "Cassandra does not read it: the node starts empty in its own data directories, the run goes on. It is"
@@ -1640,7 +1697,7 @@ def seed_layout(nodes):
     datacenter of more than one node) or none is a warning, more than 3 a
     note. nodes: [{name, address, dc, rack, seed}] in inventory order.
     Returns {lines: one per datacenter ("Seeds  dc1  node1 (rack_a), node3
-    (rack_b)  ok", a warning's "WARNING  Seeds  dc2  ..."), dcs: [{dc, level
+    (rack_b)  ok", a warning's "WARNING - Seeds  dc2  ..."), dcs: [{dc, level
     ok|note|warning, text}], problems: the warnings' texts, notes, suggested: a seed list that follows the rule
     (addresses, every datacenter; empty without a warning)}."""
     dcs = {}
@@ -1670,7 +1727,7 @@ def seed_layout(nodes):
             level, text = "note", "%d seeds: %d to %d are enough" % (len(seeds), SEEDS_MIN, SEEDS_MAX)
         listed = ", ".join("%s (%s)" % (n["name"], n["rack"]) for n in seeds) or "none"
         line = "Seeds  %s  %s  %s" % (str(dc).ljust(width), listed, {"ok": "ok", "note": "note: " + text}.get(level, text))
-        result["lines"].append("WARNING  " + line if level == "warning" else line)
+        result["lines"].append(WARNING + line if level == "warning" else line)
         result["dcs"].append({"dc": dc, "level": level, "text": text})
         if level == "warning":
             result["problems"].append("%s: %s" % (dc, text))

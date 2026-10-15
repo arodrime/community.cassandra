@@ -11,7 +11,7 @@
 - name: Say which receiving nodes are not checked
   ansible.builtin.debug:
     msg: >-
-      WARNING: {{ _unchecked | join(', ') }} {{ 'receives' if _unchecked | length == 1 else 'receive' }} data from this
+      WARNING - {{ _unchecked | join(', ') }} {{ 'receives' if _unchecked | length == 1 else 'receive' }} data from this
       move but {{ 'is' if _unchecked | length == 1 else 'are' }} not in this run (--limit): disk space not checked.
   when: _unchecked | length > 0
   vars:

@@ -255,7 +255,7 @@
           ansible.builtin.debug:
             msg: >-
               {{ (_cassandra_new_node_check.info | map('regex_replace', '^', inventory_hostname ~ ': ') | list
-                  + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING  ' ~ inventory_hostname ~ ': ') | list)
+                  + _cassandra_new_node_check.warnings | map('regex_replace', '^', 'WARNING - ' ~ inventory_hostname ~ ': ') | list)
                  | join(_nl) }}
           when:
             - not _cassandra_notes_deferred | default(false) | bool

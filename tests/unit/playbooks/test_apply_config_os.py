@@ -194,7 +194,7 @@ def test_the_disk_warnings_said_under_the_node():
                  "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]},
                  "_stopped": False, "_timesync": False, "_no_unit": []}
-    assert render(notes, variables) == ["WARNING data disks: tuned: not switched"]
+    assert render(notes, variables) == ["WARNING - data disks: tuned: not switched"]
 
 
 # the role, run again and again by apply_config on running nodes: what it reports must be what it does
@@ -250,7 +250,7 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
                  "_stopped": False, "_timesync": False, "_no_unit": []}
     if live is not None:  # (not set on a node with cassandra_linux_manage false)
         variables.update({"_cassandra_linux_live": live, "_cassandra_linux_swapoff": swapoff})
-    warned = [n for n in render(notes, variables) if n.startswith("WARNING swap left on")]
+    warned = [n for n in render(notes, variables) if n.startswith("WARNING - swap left on")]
     assert bool(warned) is said
     tasks = load("roles", "cassandra_linux", "tasks", "os.yml")
     role_says = [t for t in tasks if t.get("name") == "Say swap is left on"][0]
@@ -290,7 +290,7 @@ def test_time_sync_under_a_running_cassandra_is_a_restart():
     assert facts["cassandra_apply_config_notes"] == ["clock 0.250 s behind its time source (chronyd -Q)"]
     # its clock ahead: writes with future timestamps
     notes = note([TIMESYNC], clock=["ahead=1.5", "source=chrony"])[3]
-    assert notes[0] == "clock 1.500 s ahead of its time source (chrony)" and notes[1].startswith("WARNING clock ahead")
+    assert notes[0] == "clock 1.500 s ahead of its time source (chrony)" and notes[1].startswith("WARNING - clock ahead")
     # a normal skew: no warning
     assert note([TIMESYNC], clock=["ahead=0.004", "source=chrony"])[3] == ["clock 0.004 s ahead of its time source (chrony)"]
     assert note([TIMESYNC])[3] == ["clock offset to its time source not readable"]
@@ -308,7 +308,7 @@ def test_a_node_stopped_for_its_time_sync_is_started_by_the_resumed_run():
     assert note([], running=False, clock=["mark=yes"])[:2] == (False, "write")
     # ... but said, with the way to start it
     assert note([], running=False, clock=["mark=yes"])[3] == [
-        "WARNING stopped by an interrupted run for its time sync: left stopped; to start it, run again with"
+        "WARNING - stopped by an interrupted run for its time sync: left stopped; to start it, run again with"
         " -e cassandra_rolling_resume=true"]
     assert note([], clock=["mark=yes"], resume=True)[:2] == (False, "none")
 

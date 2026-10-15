@@ -4,7 +4,7 @@
 - name: Warn about variables under their former names
   ansible.builtin.debug:
     msg: >-
-      DEPRECATION WARNING ({{ inventory_hostname }}): {{ _former | join(', ') }} set: cassandra_medusa_config_owner
+      WARNING - deprecated names ({{ inventory_hostname }}): {{ _former | join(', ') }} set: cassandra_medusa_config_owner
       is now cassandra_medusa_config_user, cassandra_medusa_key_file_owner cassandra_medusa_key_file_user. Rename them
       (the former names still win while they are set).
   vars:

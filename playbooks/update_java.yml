@@ -85,7 +85,7 @@
     - name: Settings that only apply to another Java
       ansible.builtin.debug:
         msg: >-
-          {{ ['WARNING: ' ~ inventory_hostname ~ ' sets ' ~ _other | join(', ') ~ ', which only apply to another Java.'
+          {{ ['WARNING - ' ~ inventory_hostname ~ ' sets ' ~ _other | join(', ') ~ ', which only apply to another Java.'
               ~ ' Java ' ~ cassandra_java_version ~ ' reads the cassandra_jvm' ~ cassandra_java_version ~ '_* ones'
               ~ ' (e.g. in group_vars):']
              + (_other | map('regex_replace', '^cassandra_jvm[0-9]+_', 'cassandra_jvm' ~ cassandra_java_version ~ '_')
@@ -100,7 +100,7 @@
     - name: No CMS on Java 17
       ansible.builtin.debug:
         msg: >-
-          WARNING: cassandra_jvm_gc is CMS, which Java 17 does not have: on Java 17 the node runs G1
+          WARNING - cassandra_jvm_gc is CMS, which Java 17 does not have: on Java 17 the node runs G1
           (jvm17-server.options). Check the heap settings for G1.
       when:
         - cassandra_java_version | string == '17'

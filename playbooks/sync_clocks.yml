@@ -25,7 +25,7 @@
 # time: cluster checked, drained, stopped, time sync up and synchronised, the
 # clock stepped (chronyc makestep; systemd-timesyncd steps at its sync), started,
 # cluster checked again (a window an interrupted run left open first). A node
-# whose clock is ahead is said in a WARNING: what it stamped meanwhile carries
+# whose clock is ahead is said in a warning: what it stamped meanwhile carries
 # future timestamps. A source that is unreachable or
 # missing, a container's clock (the host's), a time sync left alone: said, to fix
 # by hand, the run ends failed. Not monitoring: it schedules and alerts nothing.

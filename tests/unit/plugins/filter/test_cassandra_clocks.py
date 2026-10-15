@@ -496,7 +496,7 @@ def test_refusal():
     assert not any(line.startswith("  node1 ") for line in lines)
     text = "\n".join(lines)
     assert "within 50.0 ms of each other (cassandra_clock_max_offset_ms)" in text
-    assert "WARNING  node3's clock is AHEAD" in text
+    assert "WARNING - node3's clock is AHEAD" in text
     assert "     ansible-playbook -i inv.yml community.cassandra.sync_clocks" in lines
     assert "then run create_cluster again" in text and "-e cassandra_clock_check=false" in text
     assert cassandra_clock_refusal(cassandra_clock_verdicts([node("node1", probe_text())])) == []

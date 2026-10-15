@@ -528,12 +528,12 @@ example (replacing the seed ``node2`` by ``node5``):
     then:       empty node2 (reset_node) before reusing the host, re-import the cluster to drop it from the inventory: the commands at the end
     cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
 
-    WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
+    WARNING - the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
     Run these 3 steps?
 
 It asks once; each step then shows its own screen as it starts, without a question. ``--check`` shows the same plan,
 the same warnings, and asks nothing. The warnings: the seeds changing on every node (the seed step, with or without
-nodes added or removed), more than half of a datacenter removed (``WARNING  3 of 5 nodes of dc1 removed``), racks
+nodes added or removed), more than half of a datacenter removed (``WARNING - 3 of 5 nodes of dc1 removed``), racks
 of different sizes once done, ring nodes no host has, a node down, the data a reset deletes. No cap on the number
 of removals: the guards are the replicas and the seeds. Refused before anything changes: a ``--limit`` that leaves
 out a host of the group (the plan needs them all), a datacenter that still has nodes after the run left with no seed

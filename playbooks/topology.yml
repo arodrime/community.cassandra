@@ -372,8 +372,8 @@
                  ~ ('it' if cassandra_topology_plan.gone | length == 1 else 'them')] if cassandra_topology_plan.gone else [])
              + (['  not answering: ' ~ cassandra_topology_plan.silent | community.cassandra.cassandra_node_list
                  ~ ' (marked absent, out of the ring)'] if cassandra_topology_plan.silent else [])
-             + ((cassandra_topology_plan.seeds | default({})).warnings | default([]) | map('regex_replace', '^', 'WARNING  ') | list)
-             + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING  ')
+             + ((cassandra_topology_plan.seeds | default({})).warnings | default([]) | map('regex_replace', '^', 'WARNING - ') | list)
+             + (cassandra_topology_plan.unknown | map('regex_replace', '^', 'WARNING - ')
                 | map('regex_replace', '$', ' is in the ring but in no host of the inventory: never touched') | list)
              + (hostvars[ansible_play_hosts_all[0]]._cassandra_notes | default([])
                 | map('regex_replace', '^(?!WARNING)', 'NOTE  ') | list)

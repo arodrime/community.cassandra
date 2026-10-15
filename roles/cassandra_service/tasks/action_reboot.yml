@@ -31,7 +31,7 @@
 - name: Say the drain did not work
   ansible.builtin.debug:
     msg: >-
-      WARNING: {{ inventory_hostname }} was not drained ({{ cassandra_service_drain.error | default('', true)
+      WARNING - {{ inventory_hostname }} was not drained ({{ cassandra_service_drain.error | default('', true)
       or ('rc ' ~ cassandra_service_drain.rc if cassandra_service_drain.rc is defined else cassandra_service_drain.msg) }}):
       rebooted all the same.
   when:

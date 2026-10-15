@@ -16,7 +16,7 @@ P = PARAGRAPH  # a blank line between two paragraphs of a block
 
 
 def warnings_of(lines):
-    return [line for line in lines if line.startswith("WARNING  ")]
+    return [line for line in lines if line.startswith("WARNING - ")]
 
 
 def entry(i, rack="r1", status="U", state="N", load="40.1 GiB", owns="25.0%"):
@@ -124,7 +124,7 @@ def test_more_than_half_a_datacenter_a_warning():
     assert plan["large_removals"] == ["2 of 3 nodes of dc1 removed (node2, node3): 1 node left to hold their data"]
     for check in (False, True):
         assert warnings_of(cassandra_topology_screen(plan, hosts, check=check)) == [
-            "WARNING  2 of 3 nodes of dc1 removed (node2, node3): 1 node left to hold their data"]
+            "WARNING - 2 of 3 nodes of dc1 removed (node2, node3): 1 node left to hold their data"]
     # 3 of 5, a range of names
     hosts = [host(1), host(2)] + [host(i, absent=True) for i in (3, 4, 5)]
     plan = cassandra_topology_plan(hosts, ring(*[entry(i) for i in range(1, 6)]))
@@ -215,15 +215,15 @@ def test_screen_warnings_last_and_the_session_on_a_real_run_only():
     plan["problems"] = []  # the unknown node stops a real plan: the screen only here
     lines = cassandra_topology_screen(plan, hosts, ring=r, session="not inside tmux or screen", confirm=False)
     warned = warnings_of(lines)
-    assert warned[0] == "WARNING  2 of 5 nodes of dc1 removed (node3, node4): 3 nodes left to hold their data" or \
-        warned[0].startswith("WARNING  10.0.0.9")
-    assert warned[-1] == "WARNING  not inside tmux or screen"
+    assert warned[0] == "WARNING - 2 of 5 nodes of dc1 removed (node3, node4): 3 nodes left to hold their data" or \
+        warned[0].startswith("WARNING - 10.0.0.9")
+    assert warned[-1] == "WARNING - not inside tmux or screen"
     # the WARNING lines together, a blank line apart, then the question's place
     first = lines.index(warned[0])
     spaced = [line for w in warned for line in (P, w)][1:]
     assert lines[first:] == spaced + ["", "cassandra_operation_confirm is false: no question, the run goes on."]
     check = cassandra_topology_screen(plan, hosts, ring=r, session="not inside tmux or screen", check=True)
-    assert "WARNING  not inside tmux or screen" not in check
+    assert "WARNING - not inside tmux or screen" not in check
     assert [line for line in check if line.startswith("real run:")] == [
         "real run:   would also warn about: not inside tmux or screen"]
 
@@ -240,12 +240,12 @@ def test_screen_reset_and_unknown_warnings():
     lines = cassandra_topology_screen(plan, hosts, ring=r)
     assert lines[1].endswith("); has data (1.0 GiB, cluster 'Test Cluster', not in any ring, down) \u2014 will be"
                              " reset")
-    assert ("WARNING  data loss: node4: Cassandra stopped, kept from starting at boot, then 1 entries DELETED for good"
+    assert ("WARNING - data loss: node4: Cassandra stopped, kept from starting at boot, then 1 entries DELETED for good"
             " (no snapshot, no backup), in:") in lines
-    assert lines[lines.index("WARNING  10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never"
+    assert lines[lines.index("WARNING - 10.0.0.9 (dc1 / r1, UN) is in the ring but in no host of the inventory: never"
                              " touched (an address mistyped, a host missing, or a dead node: remove_dead_node -e"
-                             " cassandra_target_nodes=10.0.0.9)") + 2].startswith("WARNING  data loss")
-    assert "           /d/data: 1 entries: system" in lines  # under its warning's text
+                             " cassandra_target_nodes=10.0.0.9)") + 2].startswith("WARNING - data loss")
+    assert " " * len("WARNING - ") + "  /d/data: 1 entries: system" in lines  # under its warning's text
     check = cassandra_topology_screen(plan, hosts, ring=r, check=True)
     assert not [line for line in check if "data loss:" in line]
     assert [line for line in check if line.endswith("would also warn about: data loss")]
@@ -255,7 +255,7 @@ def test_screen_racks_once_done():
     hosts = [host(1), host(2, rack="r2"), host(3, rack="r2"), host(4, absent=True, state="normal")]
     r = ring(entry(1), entry(2, rack="r2"), entry(3, rack="r2"), entry(4))
     lines = cassandra_topology_screen(cassandra_topology_plan(hosts, r), hosts, ring=r)
-    assert ("WARNING  dc1 once done: r1 1, r2 2 nodes per rack: with as many replicas as racks, a node of a smaller"
+    assert ("WARNING - dc1 once done: r1 1, r2 2 nodes per rack: with as many replicas as racks, a node of a smaller"
             " rack holds a bigger share (1/1 against 1/2)") in lines
 
 
@@ -414,7 +414,7 @@ def test_plan_replaces_a_seed_in_one_run():
         "  2.  seeds                       10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5  written and reloaded live on every"
         " node, no restart",
         "  3.  decommission node2  dc1/r1  load 40.1 GiB, owns 25.0% -> node1, node3..node5"]
-    assert warnings_of(lines)[0] == ("WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5"
+    assert warnings_of(lines)[0] == ("WARNING - the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5"
                                      " (from cassandra_seeds in the inventory)")
     # the seed still in cassandra_seeds: refused, whatever the rest
     hosts[1]["seed"] = True
@@ -437,7 +437,7 @@ def test_plan_seed_change_alone_and_its_refusal():
     for check in (False, True):
         lines = cassandra_topology_screen(plan, hosts, ring=r, check=check)
         assert lines[0] == "PLAN  topology  1 step, one node at a time"
-        assert warnings_of(lines) == ["WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2,10.0.0.3 ->"
+        assert warnings_of(lines) == ["WARNING - the seeds will change on every node: 10.0.0.1,10.0.0.2,10.0.0.3 ->"
                                       " 10.0.0.1,10.0.0.2,10.0.0.4 (from cassandra_seeds in the inventory)"]
     # dc2 left with no seed: its nodes up in the ring made its seeds, in the seed step, with a warning
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1", "10.0.0.2"])
@@ -446,7 +446,7 @@ def test_plan_seed_change_alone_and_its_refusal():
     assert cassandra_topology_steps(plan, hosts) == [
         {"node": "seeds", "text": "10.0.0.1,10.0.0.2,10.0.0.3 -> 10.0.0.1,10.0.0.2,10.0.0.3,10.0.0.4; dc2 gets"
                                   " node3 (dc2/r1), node4 (dc2/r1)"}]
-    assert "WARNING  cassandra_seeds has no node of dc2: node3 (dc2/r1) kept as its seed; node4 (dc2/r1) made its seed," \
+    assert "WARNING - cassandra_seeds has no node of dc2: node3 (dc2/r1) kept as its seed; node4 (dc2/r1) made its seed," \
         " live only: put them in cassandra_seeds (apply_config would put the inventory's list back)" \
         in warnings_of(cassandra_topology_screen(plan, hosts, ring=r))
     # nothing given (an old caller): no seed step
@@ -492,7 +492,7 @@ def test_a_datacenter_removed_whole_needs_no_seed():
     lines = cassandra_topology_screen(plan, hosts, ring=r)
     assert "dc2 after:  no node left" in lines
     assert lines[3].endswith("decommission node4  dc2/r1  load 40.1 GiB, owns 25.0% -> none (no node left in dc2)")
-    assert "WARNING  dc2 removed whole (node3, node4): no node left there" in lines
+    assert "WARNING - dc2 removed whole (node3, node4): no node left there" in lines
     # node4 stays in dc2: dc2 still in use, node4 made its seed (live)
     hosts[3]["absent"] = False
     plan = cassandra_topology_plan(hosts, r, seeds=["10.0.0.1"])
@@ -521,12 +521,12 @@ def test_screen_notes_one_line_each_once():
              host(4, state="new", info=["java: installed", "port 9042 reached"], checks=["could not list the listening ports (ss)"]),
              host(5, state="new", info=["java: installed"], checks=["could not list the listening ports (ss)"])]
     r = ring(entry(1), entry(2), entry(3))
-    notes = ["WARNING  seeds: dc1 has one seed", "WARNING  seeds: dc1 has one seed", "cassandra_foo is not read"]
+    notes = ["WARNING - seeds: dc1 has one seed", "WARNING - seeds: dc1 has one seed", "cassandra_foo is not read"]
     lines = cassandra_topology_screen(cassandra_topology_plan(hosts, r), hosts, ring=r, notes=notes, confirm=False)
     assert "NOTE  node4, node5: java: installed" in lines and "NOTE  node4: port 9042 reached" in lines
     assert "NOTE  cassandra_foo is not read" in lines
-    assert warnings_of(lines) == ["WARNING  seeds: dc1 has one seed",
-                                  "WARNING  node4, node5: could not list the listening ports (ss)"]
+    assert warnings_of(lines) == ["WARNING - seeds: dc1 has one seed",
+                                  "WARNING - node4, node5: could not list the listening ports (ss)"]
     # NOTE lines with the facts, before the WARNING block; every line plain text
     assert lines.index("NOTE  node4, node5: java: installed") < lines.index(warnings_of(lines)[0])
     assert all("\n" not in line for line in lines)

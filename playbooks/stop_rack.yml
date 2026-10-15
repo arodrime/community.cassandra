@@ -192,7 +192,7 @@
     - name: Say the drain did not work
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.error | default('', true)
+          WARNING - {{ inventory_hostname }} was not drained ({{ cassandra_rack_drain.error | default('', true)
                                                                  or cassandra_rack_drain.msg | default('no answer', true) }}): stopped all the same.
       vars:
         cassandra_output: true

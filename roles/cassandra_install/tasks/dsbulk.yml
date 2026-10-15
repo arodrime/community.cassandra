@@ -49,7 +49,7 @@
     - name: Say dsbulk is not downloaded (offline)
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} has no dsbulk {{ cassandra_dsbulk_version }}, and cassandra_offline downloads
+          WARNING - {{ inventory_hostname }} has no dsbulk {{ cassandra_dsbulk_version }}, and cassandra_offline downloads
           nothing: Cassandra runs, dsbulk is left as it is. Set cassandra_dsbulk_url to a copy on the node
           (file:///path/to/dsbulk-{{ cassandra_dsbulk_version }}.tar.gz), or cassandra_dsbulk_install to false.
       when:

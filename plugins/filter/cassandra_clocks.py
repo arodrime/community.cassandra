@@ -43,6 +43,7 @@ import re
 from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
 
+
 # a node no daemon reports on: the dates collected over SSH, only this coarse
 COARSE_MS = 1000
 # an error bound over this (and over 10 times the threshold): a daemon just started, its skew still estimated
@@ -627,7 +628,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     lines += cassandra_clock_lines({"nodes": bad}, actions=False)
     lines += ["", "Cassandra needs the clocks of its nodes within %s of each other (cassandra_clock_max_offset_ms):"
                   " each write carries a timestamp, the latest wins." % limit]
-    lines += ["WARNING  %s" % w for w in verdicts.get("warnings", [])]
+    lines += cassandra_output.warning_lines(verdicts.get("warnings", []))
     if later:
         lines += ["NOTE  time sync would be started on %s (cassandra_linux), its clock checked by the real run"
                   % ", ".join(later)]

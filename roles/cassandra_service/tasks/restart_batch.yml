@@ -60,7 +60,7 @@
     - name: Say the drains that did not work
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ item }} was not drained ({{ _said.error | default('', true) or _said.msg | default('no answer', true) }}): restarted
+          WARNING - {{ item }} was not drained ({{ _said.error | default('', true) or _said.msg | default('no answer', true) }}): restarted
           all the same.
       loop: "{{ _tried | reject('changed') | map(attribute='item') | list }}"  # (names: not the results' timedout.frame, deprecated)
       vars:

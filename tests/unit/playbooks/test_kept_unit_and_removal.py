@@ -84,7 +84,7 @@ def test_stop_rack_warning_keeps_the_error_only():
     result = dict(drain_failure("error: Some failure\n-- StackTrace --\n"), failed=False)  # (failed_when: false)
     assert true(STOP_WARN["when"], cassandra_rack_drain=result)
     assert render(STOP_WARN["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_rack_drain=result) == (
-        "WARNING: n1 was not drained (error: Some failure): stopped all the same.")
+        "WARNING - n1 was not drained (error: Some failure): stopped all the same.")
     assert STOP_WARN["vars"]["cassandra_output"] is True  # shown under the ops callback
 
 
@@ -156,9 +156,9 @@ def test_rack_drain_failures_are_warned_each():
     items = render(RACK_WARN["loop"], **variables)
     assert items == ["n2", "n4", "n5"]
     assert [render(RACK_WARN["ansible.builtin.debug"]["msg"], item=i, **variables) for i in items] == [
-        "WARNING: n2 was not drained (error: x): restarted all the same.",
-        "WARNING: n4 was not drained (Unable to reach JMX at 10.0.0.4:7199): restarted all the same.",
-        "WARNING: n5 was not drained (The cassandra_drain action failed to execute in the expected time frame (120)"
+        "WARNING - n2 was not drained (error: x): restarted all the same.",
+        "WARNING - n4 was not drained (Unable to reach JMX at 10.0.0.4:7199): restarted all the same.",
+        "WARNING - n5 was not drained (The cassandra_drain action failed to execute in the expected time frame (120)"
         " and was terminated): restarted all the same."]
     assert RACK_WARN["vars"]["cassandra_output"] is True
 

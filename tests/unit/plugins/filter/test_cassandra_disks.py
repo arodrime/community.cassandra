@@ -107,7 +107,7 @@ def warn(lines, kb=4, devices=None, state=None, udev=None, managed=False, live=T
 
 def test_tuned_conflict():
     assert warn(RHEL_TUNED).startswith(
-        "WARNING: the active tuned profile (virtual-guest: [disk] readahead=>4096) sets vg1-cassandra (dm-2), and the"
+        "WARNING - the active tuned profile (virtual-guest: [disk] readahead=>4096) sets vg1-cassandra (dm-2), and the"
         " other devices its [disk] section takes, to a read-ahead of 4096 KB when tuned starts (at boot)")
     assert warn(RHEL_TUNED).endswith("cassandra_linux_tuned_manage: true keeps them off the Cassandra devices.")
     assert warn(RHEL_TUNED, kb=8192) == ""  # only raises, to less than what is set here

@@ -68,7 +68,9 @@ Role Variables
 * `cassandra_service_environment`: extra `Environment=` entries, e.g.
   `{JAVA_HOME: /usr/lib/jvm/java-17-openjdk}`.
 * `cassandra_service_wait_for_normal` (default `true`) and
-  `cassandra_service_wait_timeout` (seconds, default 600).
+  `cassandra_service_wait_timeout` (seconds, default 600). While the node is
+  not NORMAL, a progress line at each read of its mode, as the other waits
+  (`node2 restart  waiting for NORMAL (mode STARTING)  40s/10m`).
 * Streaming operations (the bootstrap of `add_node` and `replace_node`,
   `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`,
   `move_node`, `topology`) and cleanups are waited for as long as they make

@@ -29,7 +29,10 @@
 # prepare_lines.yml).
 - name: Say how the data disks are tuned
   ansible.builtin.debug:
-    msg: "{{ _nodes | community.cassandra.cassandra_disk_summary(check=_cassandra_linux_check, verbose=ansible_verbosity | int > 0) }}"
+    # (_cassandra_disk_warned: {node: [warnings]} said already, apply_config's plan)
+    msg: >-
+      {{ _nodes | community.cassandra.cassandra_disk_summary(check=_cassandra_linux_check, verbose=ansible_verbosity | int > 0,
+                                                              said=_cassandra_disk_warned | default({})) }}
   run_once: true
   when:
     - _nodes | length > 0

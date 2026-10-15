@@ -420,7 +420,7 @@
     - name: Say python3.11 is missing (cqlsh only)
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }} has no python3.11, which cqlsh needs here (its python3 is outside the
+          WARNING - {{ inventory_hostname }} has no python3.11, which cqlsh needs here (its python3 is outside the
           versions cqlsh supports): Cassandra runs, cqlsh won't until python3.11 is installed from your image or mirror.
           cqlsh is left as it is (not pointed at the missing python3.11).
       when:

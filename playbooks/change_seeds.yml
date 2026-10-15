@@ -112,7 +112,7 @@
     # the same seeds already live (an earlier run picked them): said, nothing to confirm
     - name: Say the seeds kept for a datacenter
       ansible.builtin.debug:
-        msg: "{{ _cassandra_change_seeds.warnings | map('regex_replace', '^', 'WARNING  ') | join(_nl) }}"
+        msg: "{{ _cassandra_change_seeds.warnings | map('regex_replace', '^', 'WARNING - ') | join(_nl) }}"
       run_once: true
       when: _changed | length == 0 and _cassandra_change_seeds.warnings | length > 0
       vars:
@@ -145,7 +145,7 @@
     - name: Say how to apply the other differences
       ansible.builtin.debug:
         msg: >-
-          WARNING  the config of {{ _drift | community.cassandra.cassandra_node_list }} differs from the inventory beyond the seeds
+          WARNING - the config of {{ _drift | community.cassandra.cassandra_node_list }} differs from the inventory beyond the seeds
           (apply_config --check shows it), not applied by change_seeds. Apply it with the cassandra_config role, e.g.
           {{ 'create_cluster' | community.cassandra.cassandra_command(
                inventory=ansible_inventory_sources,

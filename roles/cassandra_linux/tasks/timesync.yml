@@ -59,7 +59,7 @@
 - name: Say the time sync service is missing (offline)
   ansible.builtin.debug:
     msg: >-
-      WARNING: {{ _cassandra_timesync_pkg }} is not installed on {{ inventory_hostname }} and cassandra_offline
+      WARNING - {{ _cassandra_timesync_pkg }} is not installed on {{ inventory_hostname }} and cassandra_offline
       downloads nothing: install it from your image or mirror (Cassandra needs synchronized clocks), or set
       cassandra_linux_timesync to false if the host's time sync is managed another way.
   when:

@@ -359,12 +359,12 @@ def cassandra_disk_tuned_conflict(lines, kb, devices=None, state=None, udev_info
     else:
         hint = t["why"] + ": the role can't keep them off."
     instead = "the %d KB set here" % int(kb) if what.startswith("a read-ahead") else "none"
-    return ("WARNING: the active tuned profile (%s: [%s] %s) sets %s, and the other devices its [%s] section"
+    return ("WARNING - the active tuned profile (%s: [%s] %s) sets %s, and the other devices its [%s] section"
             " takes, to %s when tuned starts (at boot) or sees a new device, instead of %s. %s"
             % (" ".join(t["active"]), section, value, device, section, what, instead, hint))
 
 
-def cassandra_disk_summary(nodes, check=False, verbose=False):
+def cassandra_disk_summary(nodes, check=False, verbose=False, said=None):
     """How the data disks are tuned, one summary for the run (a run_once
     task, from what each node kept: _cassandra_disk_summary). nodes: [{name,
     kb (the read-ahead set), changed (something set, or to set under
@@ -372,7 +372,8 @@ def cassandra_disk_summary(nodes, check=False, verbose=False):
     with the same lines are grouped; verbose (-v): the stacks in full (dm-N,
     what is worth knowing about each) and the notes. Then the lines to act
     on, each once with its nodes: what is not tuned yet (indented), and the
-    problems (WARNING - ...)."""
+    problems (WARNING - ..., a blank line apart). said: {node: [warnings
+    said already]}, left out (apply_config's plan said them)."""
     nodes = [n for n in nodes or [] if isinstance(n, dict) and n.get("name")]
     if not nodes:
         return []
@@ -407,12 +408,14 @@ def cassandra_disk_summary(nodes, check=False, verbose=False):
             lines += ["    " + x for x in shown]
         else:
             lines.append("  %s: nothing to tune" % who)
-    for key, prefix in (("info", "  "), ("warnings", "WARNING - ")):
-        said = OrderedDict()
+    for key in ("info", "warnings"):
+        grouped = OrderedDict()
         for n in nodes:
             for text in n.get(key) or []:
-                said.setdefault(text, []).append(n["name"])
-        lines += ["%s%s (%s)" % (prefix, text, out.nodes(names)) for text, names in said.items()]
+                if text not in (said or {}).get(n["name"], []):  # said already (apply_config: in its plan)
+                    grouped.setdefault(text, []).append(n["name"])
+        texts = ["%s (%s)" % (text, out.nodes(names)) for text, names in grouped.items()]
+        lines += ["  " + t for t in texts] if key == "info" else out.warning_lines(texts)
     return lines
 
 

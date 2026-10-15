@@ -305,7 +305,7 @@ def outcome_nodes():
     return [{"name": "node1", "todo": False, "result": "nothing to apply"},
             {"name": "node2", "todo": True, "then": "restart", "done": True},
             {"name": "node3", "todo": True, "then": "none", "done": True,
-             "notes": ["WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)"]},
+             "notes": ["WARNING - data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)"]},
             {"name": "node4", "todo": True, "then": "restart", "done": True},
             {"name": "node5", "todo": False, "result": "nothing to apply"}]
 
@@ -315,7 +315,6 @@ def test_the_outcomes_grouped_in_the_plan():
     assert cassandra_apply_config_outcomes(outcome_nodes(), plan=True) == [
         "node2, node4  would apply, then restart",
         "node3  would apply, no restart (an owner, group or mode only: Cassandra reads them when it starts)",
-        "  WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)",
         "node1, node5  nothing to apply"]
     nodes = [{"name": "node1", "todo": True, "then": "start"}, {"name": "node2", "todo": True, "then": "write"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
@@ -330,7 +329,8 @@ def test_the_outcomes_grouped_in_the_plan():
 
 def test_the_check_recap_shows_the_settings_then_the_outcomes():
     diff = ["cassandra.yaml", "  max_hint_window:  3h   node1   (inventory)"]
-    assert cassandra_apply_config_recap(outcome_nodes(), check=True, cluster="my_cluster", seconds=75, diff=diff) == [
+    assert cassandra_apply_config_recap(outcome_nodes(), check=True, cluster="my_cluster", seconds=75, diff=diff,
+                                        planned=["node1", "node2", "node3", "node4", "node5"]) == [
         "CHECK  apply_config  my_cluster  3 would apply, 2 nothing to apply (1m15s)",
         "",
         "cassandra.yaml",
@@ -338,8 +338,9 @@ def test_the_check_recap_shows_the_settings_then_the_outcomes():
         "",
         "node2, node4  would apply, then restart",
         "node3  would apply, no restart",
-        "  WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)",
-        "node1, node5  nothing to apply"]
+        "node1, node5  nothing to apply",
+        "",
+        "1 warning in the plan above (node3)."]  # said there, not under node3 again
 
 
 def test_the_real_run_recap_says_the_outcomes_only():
@@ -347,15 +348,17 @@ def test_the_real_run_recap_says_the_outcomes_only():
     nodes[3] = {"name": "node4", "todo": True, "done": False, "result": "apply_config FAILED after 30s: no answer"}
     nodes.append({"name": "node6", "todo": True, "result": "not reached"})
     nodes.append({"name": "node7", "result": "not in this run (--limit)"})
-    assert cassandra_apply_config_recap(nodes, cluster="my_cluster", diff=["cassandra.yaml", "  x"]) == [
+    assert cassandra_apply_config_recap(nodes, cluster="my_cluster", diff=["cassandra.yaml", "  x"],
+                                        planned=["node%d" % i for i in range(1, 8)]) == [
         "FAILED  apply_config  my_cluster  2 applied, 1 failed, 2 nothing to apply, 1 not reached, 1 not in this run",
         "node2  applied, restarted",
         "node3  applied, no restart",
-        "  WARNING data dir /srv/data: not owned by cassandra: /srv/data/ks1 (left as they are)",
         "node4  apply_config FAILED after 30s: no answer",
         "node1, node5  nothing to apply",
         "node6  not reached",
-        "node7  not in this run (--limit)"]
+        "node7  not in this run (--limit)",
+        "",
+        "1 warning in the plan above (node3)."]
 
 
 def test_nothing_to_apply_recap():
@@ -504,7 +507,7 @@ def test_os_settings_with_the_dm_kernel_name_when_verbose():
 
 def test_the_outcome_lines_at_the_width_cut_between_words():
     nodes = [{"name": "db-node-1.example.net", "todo": False, "os": True, "os_done": True, "then": "",
-              "notes": ["WARNING data disks: tuned profile switch pending (to virtual-guest cassandra-disks): not done"
+              "notes": ["read-ahead set live: tuned profile switch pending (to virtual-guest cassandra-disks): not done"
                         " while Cassandra runs (tuned applies all its settings again, live)."]}]
     lines = cassandra_apply_config_outcomes(nodes, plan=True, width=70)
     assert all(len(line) <= 70 for line in lines)

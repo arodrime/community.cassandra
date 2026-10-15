@@ -448,7 +448,9 @@
 
     - name: Go on despite the problems (removenode_force, cassandra_service_health_force)
       ansible.builtin.debug:
-        msg: "{{ ['WARNING: cassandra_service_health_force is set, going on with an unhealthy cluster:'] + _problems }}"
+        msg: >-
+          {{ ['WARNING - cassandra_service_health_force is set, going on with an unhealthy cluster:']
+             + _problems | map('regex_replace', '^', '  ') | list }}
       vars:
         _problems: "{{ cassandra_health_problems | reject('match', 'streams in progress on ') | list }}"
       run_once: true

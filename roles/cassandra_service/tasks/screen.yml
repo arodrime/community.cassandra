@@ -56,7 +56,7 @@
           {%- set l = [] -%}
           {%- for i in cassandra_screen.intro | default([]) if i is mapping -%}{%- set _ = l.extend(i.pre | default([])) -%}{%- endfor -%}
           {%- for w in cassandra_screen.warnings | default([]) if w.label | default('') == 'tokens' -%}
-          {%-   for t in w.each | default([w.text | default('')]) if t -%}{%- set _ = l.append('WARNING  tokens: ' ~ t) -%}{%- endfor -%}
+          {%-   for t in w.each | default([w.text | default('')]) if t -%}{%- set _ = l.append('WARNING - tokens: ' ~ t) -%}{%- endfor -%}
           {%- endfor -%}
           {{ l }}
 

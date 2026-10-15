@@ -117,7 +117,7 @@
         - name: Say the reload failed
           ansible.builtin.debug:
             msg: >-
-              WARNING  {{ inventory_hostname }}: the new seed list is written in cassandra.yaml but nodetool reloadseeds
+              WARNING - {{ inventory_hostname }}: the new seed list is written in cassandra.yaml but nodetool reloadseeds
               failed: {{ _cassandra_seeds_reload_failed }}{{
               '. The running node cannot load its cassandra.yaml again (system.log: Error while getting seed node list
               says why, e.g. a key it does not know): fix the file before any restart, or the node will not start; then run:'

@@ -222,7 +222,7 @@ def test_the_old_system_keyspace_warning_once_for_its_nodes():
         hostvars[h]["_cassandra_prepare_done"] = kept(hostvars[h], hosts)
     lines = said(WARN, hostvars, hosts)
     assert [line for line in lines if line.startswith("WARNING")] == [
-        "WARNING: node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data directories the"
+        "WARNING - node4, node5: an old system keyspace in /var/lib/cassandra/data, not one of the data directories the"
         " config uses (/data/cassandra)"]
     hostvars["node4"]["_cassandra_prepare_done"]["left"] = hostvars["node5"]["_cassandra_prepare_done"]["left"] = []
     assert said(WARN, hostvars, hosts) is None
@@ -236,7 +236,7 @@ def test_the_roles_hold_back_what_the_lines_say():
     # outside a prepare: the same WARNING, for its node
     msg = render(config["ansible.builtin.debug"]["msg"], inventory_hostname="node4",
                  _cassandra_config_left=["/var/lib/cassandra/data"], _cassandra_config_own_dirs=["/data/cassandra"])
-    assert msg[0].startswith("WARNING: node4: an old system keyspace in /var/lib/cassandra/data")
+    assert msg[0].startswith("WARNING - node4: an old system keyspace in /var/lib/cassandra/data")
 
 
 def test_every_prepare_says_its_lines():

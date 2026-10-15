@@ -726,7 +726,7 @@ def test_seeds_layout():
             "  per datacenter, on different racks when there are several): set cassandra_seeds, then change_seeds\n"
             "  applies it live.") in text
     full = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
-    assert ("  WARNING  Seeds  dc1  node1 (rack1), node2 (rack1)  2 seeds on rack1, none on rack2, rack3: put\n"
+    assert ("  WARNING - Seeds  dc1  node1 (rack1), node2 (rack1)  2 seeds on rack1, none on rack2, rack3: put\n"
             "    them on different racks\n") in full
 
 

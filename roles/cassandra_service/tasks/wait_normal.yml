@@ -1,47 +1,57 @@
 ---
 # Waits for this node to be NORMAL, until _cassandra_service_wait_deadline (an
-# epoch the caller sets: now + cassandra_service_wait_timeout): rounds of
-# netstats tries 10 s apart, the service read before each round, so a
-# Cassandra that stopped (it failed to start: no java, a bad setting...) fails
-# within a round, with the end of its journal, rather
-# than after the whole timeout. Includes itself for the next round: one include
-# level per round, at most about 30 rounds whatever the timeout.
-# (A kept SysV init script's unit stays "active (exited)": waited for as before.)
-- name: Read the service
-  ansible.builtin.systemd_service:
-    name: cassandra
-  register: cassandra_service_wait_unit
+# epoch the caller sets: now + cassandra_service_wait_timeout): reads of its
+# mode (netstats) through wait_loop.yml, the service read before each one, so
+# a Cassandra that stopped (it failed to start: no java, a bad setting...)
+# fails at the next read, with the end of its journal, rather than after the
+# whole timeout. While it is not NORMAL, a progress line per read
+# ("node2 restart  waiting for NORMAL (mode STARTING)  40s/10m"), every
+# cassandra_stream_early_check_interval seconds, every
+# cassandra_stream_check_interval seconds after cassandra_stream_early_time
+# (as the health wait). (A kept SysV init script's unit stays "active
+# (exited)": waited for as before.)
+- name: Note what is waited for
+  ansible.builtin.set_fact:
+    _cassandra_normal_start: "{{ now().timestamp() | int }}"
+    _cassandra_normal_going: true
+    _cassandra_normal_said: false
+    # the head of its progress lines: [2/5] node2 restart in a rolling operation, else this node and what it does
+    _cassandra_normal_head:
+      index: "{{ ansible_play_hosts_all.index(inventory_hostname) + 1 if _rolling | bool else 0 }}"
+      steps: "{{ ansible_play_hosts_all | length if _rolling | bool else 0 }}"
+      node: "{{ inventory_hostname }}"
+      operation: >-
+        {{ {'apply_config': 'write_config'}.get(cassandra_service_node_action, cassandra_service_node_action)
+           if cassandra_service_node_action is defined
+           else 'restart' if cassandra_service_state | default('') == 'restarted'
+                             or (cassandra_service_restart_on_change | default(false) | bool and cassandra_service_unit is changed)
+           else 'start' }}
+  vars:
+    _rolling: "{{ cassandra_service_node_action is defined and not cassandra_service_node_batch | default(false) | bool }}"
 
-- name: Stop when the service is not running
-  when: >-
-    cassandra_service_wait_unit.status.ActiveState | default('') in ['failed', 'inactive']
-    or cassandra_service_wait_unit.status.SubState | default('') == 'auto-restart'
-  block:
-    - name: Read the end of its journal
-      ansible.builtin.command:
-        argv: [journalctl, --unit, cassandra, --lines, "40", --no-pager, --quiet]
-      register: cassandra_service_wait_journal
-      changed_when: false
-      failed_when: false
-
-    - name: Cassandra is not running
-      ansible.builtin.fail:
-        msg: >-
-          {{ ['cassandra on ' ~ inventory_hostname ~ ' is ' ~ _unit.ActiveState ~ ' (' ~ _unit.SubState | default('?')
-              ~ ', ' ~ _unit.Result | default('?') ~ '): it stopped instead of joining. journalctl -u cassandra:']
-             + (cassandra_service_wait_journal.stdout_lines | default([]) or ['(empty)']) }}
-      vars:
-        _unit: "{{ cassandra_service_wait_unit.status }}"
+# read once first: a node NORMAL at once (most restarts take seconds) does not go through the loop
+- name: Read its mode
+  ansible.builtin.include_tasks: wait_normal_check.yml
 
 - name: Wait for the node to be joined (Mode NORMAL)
-  community.cassandra.cassandra_netstats:
-  module_defaults:
-    community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
-  register: cassandra_service_netstats
-  until: cassandra_service_netstats.mode | default('') == 'NORMAL'
-  retries: "{{ [2, cassandra_service_wait_timeout | int // 300] | max }}"
-  delay: 10
-  failed_when: false
+  ansible.builtin.include_tasks: wait_loop.yml
+  when: _cassandra_normal_going | bool
+  vars:
+    _cassandra_wait_check: wait_normal_check.yml
+    _cassandra_wait_going: "{{ _cassandra_normal_going | bool }}"
+
+- name: Say it is NORMAL
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'NORMAL' | community.cassandra.cassandra_normal_wait_line(
+           done=true, waited=now().timestamp() | int - _cassandra_normal_start | int,
+           index=_head.index, steps=_head.steps, node=_head.node, operation=_head.operation) }}
+  when:
+    - _cassandra_normal_said | bool  # after its progress lines
+    - cassandra_service_netstats.mode | default('') == 'NORMAL'
+  vars:
+    cassandra_output: true  # a progress line (ops callback)
+    _head: "{{ _cassandra_normal_head }}"
 
 - name: Give up after cassandra_service_wait_timeout
   ansible.builtin.fail:
@@ -49,10 +59,4 @@
       {{ inventory_hostname }} is not NORMAL after {{ cassandra_service_wait_timeout }}s (cassandra_service_wait_timeout):
       {{ ('mode ' ~ cassandra_service_netstats.mode) if cassandra_service_netstats.mode | default('')
          else (cassandra_service_netstats.msg | default('no answer on JMX')) }}
-  when:
-    - cassandra_service_netstats.mode | default('') != 'NORMAL'
-    - now().timestamp() | int >= _cassandra_service_wait_deadline | int
-
-- name: Next round
-  ansible.builtin.include_tasks: wait_normal.yml
   when: cassandra_service_netstats.mode | default('') != 'NORMAL'

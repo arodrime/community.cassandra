@@ -72,7 +72,7 @@
 
     - name: Say what is to know about the clocks
       ansible.builtin.debug:
-        msg: "{{ _cassandra_clock_verdicts.warnings | map('regex_replace', '^', 'WARNING  clocks: ') | join(_nl) }}"
+        msg: "{{ _cassandra_clock_verdicts.warnings | map('regex_replace', '^', 'WARNING - clocks: ') | join(_nl) }}"
       run_once: true
       when:
         - _cassandra_clock_refusal | length == 0

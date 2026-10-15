@@ -59,14 +59,14 @@
 - name: Say swap is left on
   ansible.builtin.debug:
     msg: >-
-      WARNING: {{ inventory_hostname }}: swap left on, {{ _cassandra_linux_before['swap|used'] | int // 1024 }} MB in use
+      WARNING - {{ inventory_hostname }}: swap left on, {{ _cassandra_linux_before['swap|used'] | int // 1024 }} MB in use
       for {{ _cassandra_linux_before['mem|available'] | int // 1024 }} MB of memory available: swapoff would read it back
       into memory. Free some memory, then run again (or swapoff -a by hand).
   when:
     - _cassandra_linux_live
     - _cassandra_linux_before['swap|active'] | int > 0
     - not _cassandra_linux_swapoff | bool
-    - not _cassandra_linux_swap_said | default(false) | bool  # (apply_config: under the node)
+    - not _cassandra_linux_swap_said | default(false) | bool  # (apply_config: in its plan)
   vars:
     cassandra_output: true
 

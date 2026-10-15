@@ -354,7 +354,7 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     datacenters left with fewer nodes than replicas (shown when force:
     cassandra_decommission_force); names: {address: host} of the ring's
     nodes; session: the tmux/screen warning (a real run only); notes: the
-    lines the checks kept for the plan (note.yml, "WARNING  ..." or a note).
+    lines the checks kept for the plan (note.yml, "WARNING - ..." or a note).
     The checks of the hosts to add (hosts' info, checks: new_node_checks.yml)
     are NOTE and WARNING lines too, one per text, with the hosts it is about.
     Every note is on one line, said once."""
@@ -466,10 +466,10 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     for text, names_of in grouped("info"):
         facts.append("NOTE  %s: %s" % (out.nodes(names_of), text))
     kept = [str(n).strip() for n in notes or [] if str(n).strip()]
-    facts.extend("NOTE  " + n for n in kept if not n.startswith("WARNING"))
+    facts.extend("NOTE  " + n for n in kept if not out.is_warning(n))
 
     # the warnings, just above the question
-    warnings = [n[len("WARNING"):].strip() for n in kept if n.startswith("WARNING")]
+    warnings = [out.warning_text(n) for n in kept if out.is_warning(n)]
     warnings.extend("%s: %s" % (out.nodes(names_of), text) for text, names_of in grouped("checks"))
     if seeds.get("removed") or seeds.get("added"):  # a seed change topology applies on its own
         warnings.append("the seeds will change on every node: %s -> %s (from cassandra_seeds in the inventory%s)"
@@ -508,9 +508,7 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     lines = out.plan("topology", cluster=cluster, version=version,
                      summary="%s, one node at a time" % out.plural(len(steps), "step"),
                      steps=steps, facts=facts, warnings=warnings, question=question, check=check)
-    # a warning on several lines: the next ones under its text
-    return [part if i == 0 else " " * len("WARNING  ") + part
-            for line in lines for i, part in enumerate(str(line).split("\n"))]
+    return lines  # (a warning on several lines: plan() puts the next ones under its text)
 
 
 class FilterModule(object):

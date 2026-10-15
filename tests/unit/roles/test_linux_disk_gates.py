@@ -203,7 +203,7 @@ def test_summary_of_a_node_says_the_tuned_problems():
     assert ok["warnings"] == ["tuned: no stable id for sdb: its profile still sets them"]
     assert ok["notes"] == ["tuned: runs virtual-guest cassandra-disks (cassandra-disks: nothing set on the Cassandra devices)"]
     # the conflict warning of the filter: one WARNING prefix, the summary's
-    conflict = summed(_tuned_warn="WARNING: the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb")
+    conflict = summed(_tuned_warn="WARNING - the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb")
     assert conflict["warnings"] == ["the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb"]
 
 

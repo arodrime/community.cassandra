@@ -68,7 +68,7 @@
     - name: Say the clock is not synced yet
       ansible.builtin.debug:
         msg: >-
-          WARNING: {{ inventory_hostname }}: its clock not synced after 2 minutes: Cassandra started all the same; its
+          WARNING - {{ inventory_hostname }}: its clock not synced after 2 minutes: Cassandra started all the same; its
           clock may still be stepped when its time source answers. Check it (chronyc sources, timedatectl
           timesync-status).
       when: cassandra_service_clock_sync.rc != 0

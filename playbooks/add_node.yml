@@ -818,7 +818,7 @@
                   ~ ('fix cassandra_seeds, then run change_seeds:' if _cassandra_add_seeds.problems
                      else 'run change_seeds, its plan (the seeds it picks too) comes before its question:')])
               if _cassandra_add_seeds_hold | bool else _cassandra_add_seeds.warnings)
-             | map('regex_replace', '^', 'WARNING  ') | list
+             | map('regex_replace', '^', 'WARNING - ') | list
              + (['     ' ~ 'change_seeds' | community.cassandra.cassandra_command(
                     inventory=ansible_inventory_sources,
                     default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),

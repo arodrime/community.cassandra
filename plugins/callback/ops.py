@@ -33,7 +33,7 @@ description:
     says what a real run C(would) do as a change; C(REFUSED), C(FAILED), C(NOT HEALTHY), C(IMPORT ... FAILED),
     C(SELF-CHECK FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
-    progress lines (C([1/2] node5 ...), and the health check's wait for nodes down, C(... waiting for ...  1m30s/10m)),
+    progress lines (C([1/2] node5 ...), and the waits for nodes down or a node to be NORMAL, C(... waiting for ...  1m30s/10m)),
     the phase lines (ending with C(...)) and the first line of a plan or a screen (C(PLAN  ...), C(add_node on cluster ...))
     in O(progress_color). The lines of an informative summary
     (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
@@ -55,7 +55,8 @@ description:
     report stay blank), under a plan's first line and above a question, and one naming the node above the first
     progress line of each node (C(---- [1/2] node5 bootstrap ----)). As wide as the terminal, 100 columns at most, a
     blank line above and under each one. A line with only a space inside them separates two paragraphs of a block,
-    printed blank (not as a rule).
+    printed blank (not as a rule). Two warnings in a row (a C(WARNING - ...) line right under another one or its
+    indented lines) are a blank line apart, but for the rows of a table (columns two spaces apart).
   - The text of the C(help) playbook (a message with the task variable C(cassandra_output_help) set to C(true) too)
     is laid out at the terminal's width (100 columns at most), its sections between rules, each operation's
     name as ok, its commands (C($ ansible-playbook ...)) and the options of its commands in O(progress_color), what
@@ -118,7 +119,7 @@ from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 from ansible import constants as C
 from ansible.utils.color import parsecolor, stringc
 
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import BULLET, FLOW, laid_out
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import BULLET, FLOW, PARAGRAPH, laid_out
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
@@ -164,8 +165,8 @@ _COLOURS = (
     (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
     (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\bPASSED\b"), "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s" % _PHASE.pattern), "PROGRESS"),
-    # the health check's wait for nodes down, outside a rolling operation (no [i/n])
-    (re.compile(r"\S.*  (waiting for .*  \d+[smhd]\S*/\d+[smhd]\S*|all back after \d\S*)$"), "PROGRESS"),
+    # the waits for nodes down, for a node to be NORMAL, outside a rolling operation (no [i/n])
+    (re.compile(r"\S.*  (waiting for .*  \d+[smhd]\S*/\d+[smhd]\S*|(all back|NORMAL) after \d\S*)$"), "PROGRESS"),
 )
 # a mark anywhere in a line, its own colour over the one of the line it is indented under (that line only):
 # a node down, a setting that differs, what a node would get or got, what a reset deletes
@@ -249,6 +250,30 @@ def _under(shades, line):
     last line less indented than it)."""
     indent = _indent(line)
     return [s for s in shades if s[0] < indent] if line[:1] in (" ", "\t") and line.strip() else []
+
+
+_OUR_WARNING = re.compile(r"\s*WARNING - ")
+_ROW = re.compile(r"\s*WARNING - \S.*\S  +\S")  # a table's row (its columns two spaces apart): "WARNING - Seeds  dc2  ..."
+
+
+def apart(texts):
+    """The lines of a message, two warnings in a row a blank line (PARAGRAPH)
+    apart: a WARNING - line right under another one, or under its indented
+    lines (its continuation); not two rows of a table."""
+    shown, warned, row = [], None, False  # the indent of the warning the line above is part of; that line a row
+    for line in texts:
+        indent = _indent(line)
+        if _OUR_WARNING.match(line):
+            is_row = bool(_ROW.match(line))
+            if warned is not None and not (row and is_row):
+                shown.append(PARAGRAPH)
+            warned, row = indent, is_row
+        elif not line.strip() or warned is None or indent <= warned:
+            warned, row = None, False
+        else:
+            row = False  # a continuation: the warning above is not a row
+        shown.append(line)
+    return shown
 
 
 def _known(given):
@@ -456,7 +481,7 @@ class CallbackModule(DefaultCallback):
         first = next((t for t in texts if t.strip()), "")
         headed, recap, step = _HEADED.match(first), _RECAP.match(first), _STEP.match(first)
         phase = sum(1 for t in texts if t.strip()) == 1 and _PHASE.match(first)  # a blank line above and under it
-        texts, ring = _ring_verdict(texts)  # the status report: a screen, its verdict last, printed between rules
+        texts, ring = _ring_verdict(apart(texts))  # the status report: a screen, its verdict last, printed between rules
         if ring:
             headed = recap = step = phase = None  # its first line is the cluster's name, whatever that name is
         if headed or recap or ring:
