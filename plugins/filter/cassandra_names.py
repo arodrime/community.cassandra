@@ -38,6 +38,10 @@ RENAMED = dict((name, "cassandra_target_nodes") for name in (
     "cassandra_upgrade_canary", "cassandra_status_from"))
 
 
+# the secrets import_cluster moves out of a config file's lines, which refer to them (cassandra_env_extra_lines...)
+SECRET_VARS = "cassandra_secret_"
+
+
 @functools.lru_cache(maxsize=None)
 def _role_variables():
     """The variables of the collection's roles: their argument specs and defaults."""
@@ -61,7 +65,7 @@ def cassandra_close_names(names, known, cutoff=0.9):
     close = {}
     ours = _role_variables()
     for name in names or []:
-        if name in known or name in ours:
+        if name in known or name in ours or name.startswith(SECRET_VARS):
             continue
         match = difflib.get_close_matches(name, known, n=1, cutoff=cutoff)
         if match:
@@ -92,7 +96,7 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
     used = _used_names()
     out = {}
     for name in names or []:
-        if name in documented or name in used:
+        if name in documented or name in used or name.startswith(SECRET_VARS):
             continue
         low = name.lower()  # CASSANDRA_HOSTS: cassandra_hosts
         match = ([RENAMED[low]] if low in RENAMED else [low] if low in documented

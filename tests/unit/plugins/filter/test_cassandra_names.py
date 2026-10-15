@@ -107,3 +107,11 @@ def test_no_file_read_without_a_name_of_ours(monkeypatch):
     monkeypatch.setattr(cassandra_names, "_used_names", read)
     assert cassandra_names.cassandra_unknown_extra_vars(["cassandra_hosts", "ansible_user", "cassandra_new_nodes"],
                                                         PLAYBOOK_VARIABLES) == {}
+
+
+def test_the_secrets_import_cluster_moved_are_known():
+    # cassandra_secret_<name>: a secret import_cluster took out of a config file's line, which refers to it
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_names
+    names = ["cassandra_secret_keystore_password", "cassandra_secret_javax_net_ssl_truststorepassword_2"]
+    assert cassandra_unknown_names(names, []) == {}
+    assert cassandra_close_names(names, ["cassandra_secrets"]) == {}

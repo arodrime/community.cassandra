@@ -74,6 +74,16 @@ argument_specs:
             warning that the hand edits of a file deleted are lost).
           - C(import_cluster) sets it with C(import_cluster_keep_hand_edits) for the files with hand edits no
             variable covers.
+      cassandra_config_template_overrides:
+        type: dict
+        default: {}
+        description:
+          - 'Your own template for a config file, instead of the role''s, e.g. C({cassandra-env.sh:
+            "{{ inventory_dir }}/templates/cassandra-env.sh.j2"}). Keys are the names of
+            O(cassandra_config_keep_files); values the absolute path of a template on the controller.'
+          - Rendered with the same variables, then written, compared, shown (secrets masked) and reported as the
+            role's own file, with the same owner and mode, in C(--check) too. A name the role does not write, a
+            relative or missing path, or a file also in O(cassandra_config_keep_files) is refused.
       cassandra_data_dir:
         type: path
         default: /var/lib/cassandra/data
@@ -1255,6 +1265,14 @@ argument_specs:
         default: ''
         description:
         - C(java.rmi.server.hostname) for remote JMX. Left commented out when empty.
+      cassandra_env_extra_lines:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Lines added at the end of C(cassandra-env.sh), as they are, e.g. C(export X=1) or
+          C(JVM_OPTS="$JVM_OPTS -Dname=value") for an option no variable covers.
+        - C(import_cluster) carries there the lines a node has after the file's last one.
       cassandra_jvm_gc:
         type: str
         choices:
@@ -1379,6 +1397,14 @@ argument_specs:
         default: true
         description:
         - Write C(debug.log).
+      cassandra_logback_extra_lines:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Lines added at the end of C(logback.xml)'s C(<configuration>), after the C(org.apache.cassandra) logger, as
+          they are, e.g. C(<logger name="com.example" level="WARN"/>).
+        - C(import_cluster) carries there the lines a node has at that place.
       cassandra_log_console:
         type: bool
         default: false
