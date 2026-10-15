@@ -121,5 +121,5 @@ appender reference in the root level section below.
     -->
   </root>
 
-  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>
+  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>{{ ('\n' ~ (cassandra_logback_extra_lines | join('\n'))) if cassandra_logback_extra_lines else '' }}
 </configuration>

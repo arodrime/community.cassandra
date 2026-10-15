@@ -283,11 +283,31 @@ def _render(variables, facts, live, conf_dir=""):
         raise AnsibleFilterError("cassandra_import_self_check: unsupported cassandra_version")
     # the files cassandra_config keeps as the node has them (cassandra_config_keep_files) are not written
     keep = value("cassandra_config_keep_files") or []
-    wanted = [(f, "cassandra_config/templates/%s/%s.j2" % (series, f)) for f in ctx["_cassandra_config_files"][series]
+    # your own templates (cassandra_config_template_overrides: absolute paths), else the role's; what
+    # cassandra_config refuses, a difference
+    errors = []
+    try:
+        overrides = value("cassandra_config_template_overrides") or {}
+    except Exception as exc:  # pylint: disable=broad-except
+        overrides = {}
+        errors.append("cassandra_config_template_overrides: cannot be read with these variables (%s)" % type(exc).__name__)
+    if not isinstance(overrides, dict):
+        errors.append("cassandra_config_template_overrides: not a dict, cassandra_config would refuse it")
+        overrides = {}
+    for f, path in sorted(overrides.items()):
+        if f not in ctx["_cassandra_config_files"][series]:
+            errors.append("cassandra_config_template_overrides: %s is not a file cassandra_config writes" % f)
+        elif not isinstance(path, str) or not path.startswith("/") or not os.path.isfile(path):
+            errors.append("cassandra_config_template_overrides: %s: not an absolute path to a file on the controller,"
+                          " cassandra_config would refuse it" % f)
+        elif f in keep:
+            errors.append("cassandra_config_template_overrides: %s is also in cassandra_config_keep_files,"
+                          " cassandra_config would refuse it" % f)
+    wanted = [(f, overrides[f] if isinstance(overrides.get(f), str) and overrides[f].startswith("/")
+               else "cassandra_config/templates/%s/%s.j2" % (series, f)) for f in ctx["_cassandra_config_files"][series]
               if not (f in keep and f in live)]
     if value("cassandra_jmx_users"):
         wanted += [(f, "cassandra_config/templates/%s.j2" % f) for f in ("jmxremote.password", "jmxremote.access")]
-    errors = []
     if conf_dir and str(value("cassandra_conf_dir")).rstrip("/") != conf_dir.rstrip("/"):
         errors.append("config dir: node reads %s, the roles would write to %s" % (conf_dir, value("cassandra_conf_dir")))
     unit_managed = str(value("cassandra_service_unit_manage | bool")) == "True"
@@ -324,7 +344,7 @@ def _render(variables, facts, live, conf_dir=""):
 
 @_values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
-                                conf_dir="", permissions=None, release=""):
+                                conf_dir="", permissions=None, release="", inventory_dir=""):
     """files, hosts, name: the inventory files, the hosts file's data and the node's
     name there (the variables it gets: cassandra_inventory_host_vars); facts: its ansible_facts;
     live: {file: text the node has}; node_environment: what the node's unit
@@ -335,15 +355,16 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     reads its config; permissions: {file: {owner, group, mode, uid, gid}} the
     node's files have (cassandra_permissions_import's files), None: not read;
     release: its Cassandra version (4.1.5; '': its series'), the cassandra.yaml
-    keys it rejects are notes, not differences (the import leaves them out).
+    keys it rejects are notes, not differences (the import leaves them out); inventory_dir: where the
+    inventory is (a value may follow it: {{ inventory_dir }}/templates/...).
     -> {'differences', 'notes'}."""
     return _self_check(_read_files(files), hosts, name, facts, live, node_environment, storage_dir, java, conf_dir,
-                       permissions, release)
+                       permissions, release, inventory_dir)
 
 
 @_values_hidden
-def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
-    """cassandra_import_self_check of each node read: files, hosts as for it;
+def cassandra_import_self_check_nodes(files, hosts, nodes, names, data, inventory_dir=""):
+    """cassandra_import_self_check of each node read: files, hosts, inventory_dir as for it;
     nodes: cassandra_import_nodes; names: {address: its name in the hosts
     file}; data: cassandra_import_host_vars of the nodes' hosts (what was read
     on them). The files are read once for all the nodes.
@@ -353,7 +374,7 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
     for node in nodes:
         error = None
         try:
-            checked = _self_check_node(files_data, hosts, node, names, data)
+            checked = _self_check_node(files_data, hosts, node, names, data, inventory_dir)
         except Exception as exc:  # pylint: disable=broad-except
             # ours (their message shows no value) or a missing variable; not another filter's
             # error (2.19+: Ansible's wrapper is an AnsibleFilterError too)
@@ -370,7 +391,7 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data):
     return out
 
 
-def _self_check_node(files_data, hosts, node, names, data):
+def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
     """One node of cassandra_import_self_check_nodes: (its name, its check), None when not read."""
     if not boolean(node["read"], strict=False):
         return None
@@ -385,14 +406,17 @@ def _self_check_node(files_data, hosts, node, names, data):
     return name, _self_check(
         files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
-        (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""))
+        (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""),
+        inventory_dir)
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
-                release=""):
+                release="", inventory_dir=""):
     # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
     variables = dict(_host_vars(files_data, hosts, name), inventory_hostname=name,
                      inventory_hostname_short=name.split(".")[0])
+    if inventory_dir:
+        variables["inventory_dir"] = inventory_dir
     rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment

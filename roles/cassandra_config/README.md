@@ -209,6 +209,9 @@ Role Variables
   `cassandra_jvm_extra_options` (jvm-server.options),
   `cassandra_jvm8_extra_options`, `cassandra_jvm11_extra_options` and
   `cassandra_jvm17_extra_options` append extra lines.
+* `cassandra-env.sh`: `cassandra_env_extra_lines` adds lines at its end,
+  as they are (an `export`, or `JVM_OPTS="$JVM_OPTS -D..."` for an option no
+  variable covers).
 * TLS / mTLS (`cassandra.yaml`): `cassandra_internode_encryption`,
   `cassandra_server_keystore`, `cassandra_server_keystore_password`,
   `cassandra_truststore`, `cassandra_truststore_password`,
@@ -231,6 +234,20 @@ Role Variables
   `cassandra_debug_log_enabled`, `cassandra_log_console` (default `false`:
   no stdout copy of the logs, which under systemd would be a second copy of
   `system.log` in journald; JVM errors before logback starts still go there).
+  `cassandra_logback_extra_lines` adds lines at the end of its
+  `<configuration>` (e.g. `<logger name="com.example" level="WARN"/>`).
+* Your own template for a file: `cassandra_config_template_overrides`, e.g.
+  `{cassandra-env.sh: "{{ inventory_dir }}/templates/cassandra-env.sh.j2"}`
+  (an absolute path on the controller). The role renders it instead of its
+  own, with the same variables, and handles the file as its own: owner and
+  mode, the diff (masked) and the question, `--check`, the report, and the
+  restart `apply_config` does for a changed file. Prefer the variables, which
+  follow the role's templates when they change; an override is yours to keep
+  up with new Cassandra releases (the `upgrade` playbook renders it for the
+  new series too, and says so: update it first). The playbooks read the
+  variables, not your files: a cluster name, port, seeds or token count
+  written in your template rather than taken from its variable leaves them
+  acting on the variable's value.
 
 Testing
 -------

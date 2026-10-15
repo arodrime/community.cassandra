@@ -36,6 +36,13 @@ cassandra_config_storage_dir: ""
 # jvm<N>-server.options, cassandra-rackdc.properties, logback.xml).
 # import_cluster sets it with import_cluster_keep_hand_edits.
 cassandra_config_keep_files: []
+# Your own template for a config file, instead of the role's: {file name:
+# absolute path of a template on the controller}, e.g. {cassandra-env.sh:
+# "{{ inventory_dir }}/templates/cassandra-env.sh.j2"}. Rendered with the
+# same variables, written, compared and reported as the role's own (owner,
+# mode, --check, diff, the restart that applies it). Names as above; a file
+# cannot be both kept and overridden.
+cassandra_config_template_overrides: {}
 
 # Cassandra's data directory (cassandra_linux uses it to find the data disk).
 cassandra_data_dir: /var/lib/cassandra/data
@@ -267,6 +274,10 @@ cassandra_heap_dump_dir: "$CASSANDRA_LOG_DIR"
 cassandra_local_jmx: true  # false = remote JMX, with authentication
 cassandra_jmx_port: 7199
 cassandra_jmx_rmi_hostname: ""
+# Lines added at the end of cassandra-env.sh, as they are (e.g. an export, or
+# JVM_OPTS="$JVM_OPTS -D..." for an option no variable covers). import_cluster
+# carries there the lines a node has after the file's last one.
+cassandra_env_extra_lines: []
 
 # ---- jvm8/jvm11/jvm17-server.options ----
 # Each cassandra_jvm_<option> applies to every jvm<N>-server.options file;
@@ -309,6 +320,9 @@ cassandra_debug_log_enabled: true
 # system.log. Off: logs go to system.log only (JVM errors before logback starts
 # still reach stdout).
 cassandra_log_console: false
+# Lines added at the end of logback.xml's <configuration>, after the
+# org.apache.cassandra logger, as they are (e.g. <logger name="com.example" level="WARN"/>).
+cassandra_logback_extra_lines: []
 
 # The account Cassandra runs as (cassandra_service's unit runs it so): it gets
 # the directories the role creates and the JMX users' files

@@ -1196,10 +1196,27 @@ path are imported. Files written another way (other keys or names, other signing
 the role's header, another series' file, or any file when the package came from a file) get
 ``cassandra_repository_manage: false`` on that node, and the report says why.
 
-Hand edits no variable covers (an extra logback appender, a ``-javaagent`` line in ``cassandra-env.sh``) fail the
-self-check. With ``-e import_cluster_keep_hand_edits=true`` the files that have them are left as they are on their
-node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither writes nor compares
-them); nodes added later get the role's files.
+The lines a node has at the end of ``cassandra-env.sh`` (an ``export``, a ``JVM_OPTS="$JVM_OPTS -javaagent:..."``)
+or of ``logback.xml``'s ``<configuration>`` (a ``<logger>``) are carried as ``cassandra_env_extra_lines`` and
+``cassandra_logback_extra_lines`` (the role writes them there), the JVM options a node adds as
+``cassandra_jvm*_extra_options`` (written at the end of their file). A secret in one of those lines, named as the output masks one (``password``, ``secret``, ``_pass``...:
+``export KEYSTORE_PASSWORD=...``, ``-Djavax.net.ssl.keyStorePassword=...``) goes to ``secrets.yml`` (vaulted, as the passwords) in a variable of its own,
+``cassandra_secret_<file>_<name>`` (e.g. ``cassandra_secret_env_keystore_password``), which the line refers to; the
+report names it, its value masked. A secret the import cannot take out of its line alone (a ``$(...)`` in it, a word
+the masking reads as part of its value) keeps its whole list in ``secrets.yml``. A secret that differs between nodes is in each node's
+``host_vars``: a node added later needs its own. Lines that set what a variable or the role's files already set
+(``MAX_HEAP_SIZE=``, ``-Xmx``, the JMX port, a GC), or that do not make a whole (an ``if`` without its ``fi``), are not carried: none of the end lines
+then is.
+
+Other hand edits no variable covers (an extra logback appender, a line in the middle of ``cassandra-env.sh``, or one
+that sets what a variable does) fail the self-check. Carry them in the inventory (the variables above, if their place
+does not matter), or give the file your own template, ``cassandra_config_template_overrides`` (e.g.
+``{logback.xml: "{{ inventory_dir }}/templates/logback.xml.j2"}``), which ``cassandra_config`` and the self-check
+render instead of the role's (in its path the self-check resolves the inventory's variables and ``{{ inventory_dir }}``, no other magic
+variable); a re-import does not carry the end lines your template has itself. With
+``-e import_cluster_keep_hand_edits=true`` the files that have them are left as
+they are on their node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither
+writes nor compares them); nodes added later get the role's files.
 
 Before writing anything, the import checks itself: for each node read, the files the roles would write with the
 imported variables (``cassandra.yaml``, ``cassandra-env.sh``, the JVM options, rackdc, logback, the JMX users' files,

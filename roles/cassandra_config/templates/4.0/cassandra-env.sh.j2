@@ -304,5 +304,5 @@ if [ "x$MX4J_PORT" != "x" ]; then
     fi
 fi
 
-JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"
+JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"{{ ('\n' ~ (cassandra_env_extra_lines | join('\n'))) if cassandra_env_extra_lines else '' }}
 

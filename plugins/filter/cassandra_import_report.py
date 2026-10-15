@@ -550,10 +550,12 @@ def _hints(layout, items, read, unread, who, error="", report=False, report_file
             hand[f] += [n for n in _item_nodes(item) if n not in hand[f]]
     if hand:
         hints.append(("hand edits", "to keep them as they are: import again with %s; these files are then NOT"
-                      " managed by Ansible (kept as the node has them): %s. To bring them under Ansible later: carry"
-                      " the edit in the inventory (cassandra_jvm*_extra_options, cassandra_extra_settings, ...),"
-                      " remove the file from cassandra_config_keep_files, import again. To drop them instead: undo"
-                      " them on the node, then import again" % (
+                      " managed by Ansible (kept as the node has them): %s. To bring them under Ansible: carry the"
+                      " edit in the inventory (cassandra_jvm*_extra_options, cassandra_env_extra_lines and"
+                      " cassandra_logback_extra_lines for lines at the end of the file, cassandra_extra_settings, ...)"
+                      " or give the file your own template (cassandra_config_template_overrides), remove the file"
+                      " from cassandra_config_keep_files, import again. To drop them instead: undo them on the node,"
+                      " then import again" % (
                           _whole("-e import_cluster_keep_hand_edits=true"),
                           "; ".join("%s on %s" % (f, who(m)) for f, m in sorted(hand.items())))))
     yours = {}  # (the file of yours, its variable): the nodes' values

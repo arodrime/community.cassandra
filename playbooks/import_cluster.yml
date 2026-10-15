@@ -95,7 +95,11 @@
 # places, else in the PATH of a login shell of cassandra, then of root, and
 # last in any virtualenv under /opt.
 # A host marked cassandra_node_state: absent (an inventory given back) is not read.
-# Hand edits no variable covers fail the self-check:
+# Lines a node has at the end of cassandra-env.sh or of logback.xml's
+# <configuration> are carried as cassandra_env_extra_lines and
+# cassandra_logback_extra_lines; a secret in them (or in a JVM option) goes to
+# secrets.yml as a cassandra_secret_<file>_<name> variable the line refers to.
+# Other hand edits no variable covers fail the self-check:
 # import_cluster_keep_hand_edits=true leaves those files as they are on their
 # node (cassandra_config_keep_files) instead.
 # A ring node it could not read (down, unreachable, nodetool not found, its
@@ -1667,7 +1671,7 @@
     - name: Lay out again over your own variables
       no_log: "{{ not import_cluster_debug | default(false) | bool }}"
       ansible.builtin.set_fact:
-        _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout_over(_layout.cluster_name, _theirs) }}"
+        _layout: "{{ _nodes | community.cassandra.cassandra_inventory_layout_over(_layout.cluster_name, _theirs, _dir) }}"
         _user_files: "{{ _theirs }}"
       vars:
         _theirs: >-
@@ -1700,7 +1704,8 @@
             _self_check: >-
               {{ (_user_files | default([]) + _files) | community.cassandra.cassandra_import_self_check_nodes(
                    _layout.hosts, _nodes, _layout.names,
-                   hostvars | community.cassandra.cassandra_import_host_vars(_nodes | selectattr('read') | map(attribute='host') | list)) }}
+                   hostvars | community.cassandra.cassandra_import_host_vars(_nodes | selectattr('read') | map(attribute='host') | list),
+                   inventory_dir=_dir) }}
       rescue:
         - name: Keep why for the report
           ansible.builtin.set_fact:

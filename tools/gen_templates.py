@@ -130,7 +130,8 @@ COMMON = {
          '<appender-ref ref="ASYNCDEBUGLOG" />'
          "{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->"),
         ('  <logger name="org.apache.cassandra" level="DEBUG"/>',
-         '  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>'),
+         '  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>'
+         + append_list("cassandra_logback_extra_lines")),
         # off by default: under systemd a second copy of system.log in the journal
         ('    <appender-ref ref="STDOUT" />',
          "    {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref=\"STDOUT\" />"
@@ -150,6 +151,8 @@ ENV_COMMON = [
     ('#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"',
      "{{ '' if cassandra_jmx_users else '#' }}"
      'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"'),
+    # the file's last line: the lines cassandra_env_extra_lines adds after it
+    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_list("cassandra_env_extra_lines")),
 ]
 
 
