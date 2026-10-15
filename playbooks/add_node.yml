@@ -863,6 +863,22 @@
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
         cassandra_service_summary_operation: add_node
 
+    - name: Say which seed lists are left to reload
+      ansible.builtin.debug:
+        msg: "{{ [_reload_failed | community.cassandra.cassandra_seeds_reload_todo(_reload_command)] | community.cassandra.cassandra_todo | join(_nl) }}"
+      run_once: true
+      when: _reload_failed | length > 0
+      vars:
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
+        # the nodes whose seed list is written but not reloaded (seeds_apply.yml)
+        _reload_failed: "{{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_seeds_reload_failed', 'defined') | selectattr('_cassandra_seeds_reload_failed') | map(attribute='inventory_hostname') | list }}"
+        _reload_command: >-
+          {{ 'change_seeds' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+
     - name: Say which nodes to move (one token per node, balanced)
       ansible.builtin.debug:
         msg: >-

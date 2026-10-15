@@ -133,3 +133,26 @@ def test_dirs_the_account_can_use_through_its_other_groups_are_left():
     changes = task("List the owner, group and mode changes of the directories")["ansible.builtin.set_fact"]["_cassandra_config_dir_changes"]
     assert render(changes, cassandra_config_dir_try={"results": results}) == [b, c]
     assert render(changes, cassandra_config_dir_try={"results": []}) == []
+
+
+def test_a_failed_seed_reload_is_a_warning():
+    # past failed_when: false the result is never "failed": the module's msg tells
+    assert task("Reload the seed list on the running node")["failed_when"] is False
+    say = task("Say the seed reload failed")
+    when = " and ".join("(%s)" % w for w in say["when"])
+    failed = {"changed": False, "failed": False, "rc": 0, "error": "Failed to reload the seed node list",
+              "stdout": "Failed to reload the seed node list.",
+              "msg": "nodetool reloadseeds did not execute successfully (rc 0): Failed to reload the seed node list. ..."}
+    ok = {"changed": True, "msg": "nodetool reloadseeds executed successfully"}
+    skipped = {"skipped": True, "changed": False}
+    for result, expected in ((failed, True), (ok, False), (skipped, False)):
+        assert render("{{ %s }}" % when, cassandra_config_seeds_reload=result) is expected, result
+    text = render(say["ansible.builtin.debug"]["msg"], inventory_hostname="n1", cassandra_config_seeds_reload=failed,
+                  _error=render(say["vars"]["_error"], cassandra_config_seeds_reload=failed))
+    assert text.startswith("WARNING  n1: the new seed list is written in cassandra.yaml but nodetool reloadseeds failed:"
+                           " Failed to reload the seed node list. The running node cannot load its cassandra.yaml again")
+    assert "fix the file before any restart, or the node will not start" in text
+    text = render(say["ansible.builtin.debug"]["msg"], inventory_hostname="n1", _error="error: Authentication failed",
+                  cassandra_config_seeds_reload={"stdout": ""})
+    assert text.endswith("Authentication failed. The list applies at the next restart of the node, or fix the cause and run"
+                         " community.cassandra.change_seeds.")

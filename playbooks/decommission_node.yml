@@ -202,8 +202,8 @@
               {%- endfor -%}
               {{ out }}
 
-    # a leaving seed: cassandra_seeds applied first; the files already right: reloaded only (a run that
-    # stopped between the write and the reload); else the seeds are left as they are
+    # a leaving seed: cassandra_seeds applied first; the files already right: reloaded only where a reload is
+    # owed (a run that stopped between the write and the reload, or whose reload failed); else left as they are
     - name: Note whether the seeds are applied first
       ansible.builtin.set_fact:
         _cassandra_decommission_seeds_apply: "{{ _dn_seed_step | length > 0 or not _dn_seeds.step }}"
@@ -256,7 +256,7 @@
        if not _cassandra_screen_asked_by | default('') else 'localhost:!localhost' }}
   gather_facts: false
   become: true
-  any_errors_fatal: true  # no removal while a node still lists it
+  any_errors_fatal: true  # no removal unless every node wrote the list (a failed reload: a WARNING, seeds_apply.yml)
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -373,7 +373,8 @@
         msg: >-
           {{ ansible_play_hosts_all | community.cassandra.cassandra_removed_todo(
                first=[hostvars[ansible_play_hosts_all[0]]._cassandra_decommission_seeds_todo | default({})
-                      | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts'))],
+                      | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts')),
+                      _reload_failed | community.cassandra.cassandra_seeds_reload_todo(_reload_command)],
                reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
@@ -386,6 +387,12 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
+        # the nodes whose seed list is written but not reloaded (seeds_apply.yml)
+        _reload_failed: "{{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_seeds_reload_failed', 'defined') | selectattr('_cassandra_seeds_reload_failed') | map(attribute='inventory_hostname') | list }}"
+        _reload_command: >-
+          {{ 'change_seeds' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
         # the re-import reads the cluster from the inventory: -e cassandra_hosts unless it takes it without
         _reimport_hosts: >-
           {{ lookup('community.cassandra.cassandra_hosts') | community.cassandra.cassandra_reimport_hosts(

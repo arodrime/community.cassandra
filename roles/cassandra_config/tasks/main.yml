@@ -855,6 +855,25 @@
           | default('') == 'running'
         - cassandra_config_preview.results | selectattr('cassandra_config_file', 'equalto', 'cassandra.yaml')
           | map(attribute='stdout') | first | default('') is search('^\+\s*- seeds:', multiline=True)
+      register: cassandra_config_seeds_reload
+      failed_when: false  # the file is written: said below, the list applies at the next restart
+
+    - name: Say the seed reload failed
+      ansible.builtin.debug:
+        msg: >-
+          WARNING  {{ inventory_hostname }}: the new seed list is written in cassandra.yaml but nodetool reloadseeds
+          failed: {{ _error }}{{
+          '. The running node cannot load its cassandra.yaml again (system.log: Error while getting seed node list
+          says why, e.g. a key it does not know): fix the file before any restart, or the node will not start; then
+          run community.cassandra.change_seeds.'
+          if cassandra_config_seeds_reload.stdout | default('') is search('Failed to reload the seed node list') else
+          '. The list applies at the next restart of the node, or fix the cause and run community.cassandra.change_seeds.' }}
+      when:  # its result is never "failed" past its failed_when: the module's msg says
+        - cassandra_config_seeds_reload is not skipped
+        - cassandra_config_seeds_reload.msg | default('') != 'nodetool reloadseeds executed successfully'
+      vars:
+        cassandra_output: true
+        _error: "{{ cassandra_config_seeds_reload.error | default(cassandra_config_seeds_reload.msg, true) }}"
 
     - name: Warn that a restart is needed
       ansible.builtin.debug:

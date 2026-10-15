@@ -115,9 +115,12 @@ def main():
         result['stdout'] = out
         result['stderr'] = err
         result['msg'] = ("nodetool {0} did not execute successfully (rc {1}){2}. "
-                         "The node keeps what it had loaded before: check its system.log, fix the cause, then reload "
+                         "The node keeps what it had loaded before: check its system.log{3}, fix the cause, then reload "
                          "again"
-                         .format(cmd, rc, ": " + error if error else ""))
+                         .format(cmd, rc, ": " + error if error else "",
+                                 " (Error while getting seed node list: why cassandra.yaml could not be read again)"
+                                 if module.params['reload'] == 'seeds' and 'Failed to reload the seed node list' in out
+                                 else ""))
         module.fail_json(**result)
 
 

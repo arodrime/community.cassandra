@@ -150,6 +150,12 @@ def cassandra_seeds_todo(change, group=""):
     return out.seeds_todo(change, group=group)
 
 
+def cassandra_seeds_reload_todo(failed, command_line):
+    """The nodes whose nodetool reloadseeds failed -> the TO DO item (None
+    when none)."""
+    return out.seeds_reload_todo(failed, command_line)
+
+
 def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others=0):
     """The -e cassandra_hosts of a re-import (import_cluster reading the
     cluster from the inventory), '' when it takes the cluster without it:
@@ -227,6 +233,7 @@ class FilterModule(object):
             "cassandra_diff_lines": cassandra_diff_lines,
             "cassandra_changed_lines": cassandra_changed_lines,
             "cassandra_command": cassandra_command,
+            "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,
             "cassandra_todo": cassandra_todo,
             "cassandra_phase": cassandra_phase,
             "cassandra_check_what": cassandra_check_what,

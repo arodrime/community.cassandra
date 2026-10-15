@@ -128,6 +128,7 @@
         tasks_from: seeds_apply.yml
       vars:
         cassandra_seeds: "{{ _new }}"
+        _cassandra_seeds_reload_required: true  # the reload is this playbook's job: every running node, a failure fails
 
     # Nothing is written here: cassandra_config shows its diffs
     - name: Look for other config differences

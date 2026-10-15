@@ -1543,6 +1543,19 @@ def seeds_todo(change, group=""):
             "command": "cassandra_seeds: [%s]" % ", ".join('"%s"' % e for e in entries)}
 
 
+def seeds_reload_todo(failed, command_line):
+    """The TO DO item when nodetool reloadseeds failed on nodes after their
+    seed list was written (seeds_apply.yml): command_line (change_seeds)
+    reloads it once the cause is fixed. None when none failed."""
+    failed = list(failed or [])
+    if not failed:
+        return None
+    return {"text": "reload the seed list on %s: nodetool reloadseeds failed (the WARNING above says why; a node that"
+                    " cannot load its cassandra.yaml again will not start either: fix the file before any restart),"
+                    " then" % nodes(failed, keep_order=True),
+            "command": command_line}
+
+
 def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_dir=None, cwd=None, in_git=None,
                  unreachable=None, imported=True, reimport_hosts=None, first=None):
     """The TO DO once nodes left the ring (decommission_node, topology):

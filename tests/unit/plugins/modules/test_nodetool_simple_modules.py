@@ -146,12 +146,19 @@ def test_reload_failure_names_the_reload():
     assert exc.args[0]["msg"].startswith("nodetool reloadssl did not execute successfully (rc 1): error: keystore. ")
 
 
+def test_reloadseeds_jmx_failure_has_no_yaml_hint():
+    exc = run_main(cassandra_reload, {"reload": "seeds"}, 1, err="error: Authentication failed")[0]
+    assert "Error while getting seed node list" not in exc.args[0]["msg"]
+
+
 def test_reloadseeds_failure_with_rc_0():
     """reloadseeds returns 0 when the seed provider fails: its output says so."""
     exc = run_main(cassandra_reload, {"reload": "seeds"}, 0, out="Failed to reload the seed node list.\n")[0]
     assert isinstance(exc, FailJson)
     assert exc.args[0]["msg"].startswith(
         "nodetool reloadseeds did not execute successfully (rc 0): Failed to reload the seed node list. ")
+    assert "system.log (Error while getting seed node list: why cassandra.yaml could not be read again)" \
+        in exc.args[0]["msg"]
 
 
 @pytest.mark.parametrize("out", ["Updated seed node IP list, excluding the current node's IP: 10.0.0.2",

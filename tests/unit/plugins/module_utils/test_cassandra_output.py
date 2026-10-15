@@ -984,3 +984,11 @@ def test_mask_a_line_of_many_secrets_is_quick():
     assert out.mask("<password>" + "<![CDATA[" * 30000).startswith("<password>****")  # (unclosed: to the end)
     assert "LEAK" not in out.mask("{" + ", ".join('"password%d": "LEAK"' % i for i in range(2000)) + "}")
     assert time.time() - start < 5
+
+
+def test_seeds_reload_todo():
+    assert out.seeds_reload_todo([], "cmd") is None
+    item = out.seeds_reload_todo(["n1", "n3"], "cmd")
+    assert item["command"] == "cmd"
+    assert item["text"].startswith("reload the seed list on n1, n3: nodetool reloadseeds failed")
+    assert "fix the file before any restart" in item["text"]

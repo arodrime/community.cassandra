@@ -472,7 +472,7 @@
   hosts: "{{ groups['cassandra_topology_seeds'] | default([]) }}"
   gather_facts: false
   become: true
-  any_errors_fatal: true  # no removal while a node still lists a leaving seed
+  any_errors_fatal: true  # no removal unless every node wrote the list (a failed reload: a WARNING, seeds_apply.yml)
   tasks:
     # first: each node its own facts before any run_once task (ansible/ansible#87148)
     - name: Give each node its own facts
@@ -527,13 +527,14 @@
                                                      ('removed ' ~ _plan.remove | community.cassandra.cassandra_node_list(keep_order=true)) if _plan.remove else '']
                                                     | select | join('; '))]
              + (([''] + _done | community.cassandra.cassandra_removed_todo(
-                    first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts'))],
+                    first=[_plan.seeds | community.cassandra.cassandra_seeds_todo(lookup('community.cassandra.cassandra_hosts')),
+                           _reload_failed | community.cassandra.cassandra_seeds_reload_todo(_reload_command)],
                     reimport_from=hostvars[_stays].ansible_host | default(_stays) if _stays else '', imported=_imported | bool,
                     inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
                     hosts=cassandra_hosts | default(''), inventory_dir=hostvars[_stays].inventory_dir | default('') if _stays else '',
                     cwd=lookup('ansible.builtin.env', 'PWD'), unreachable=_plan.silent,
                     reimport_hosts=_reimport_hosts))
-                if _done | length > 0 or _plan.seeds.auto | default([]) else [])) | join(_nl) }}
+                if _done | length > 0 or _plan.seeds.auto | default([]) or _reload_failed else [])) | join(_nl) }}
       run_once: true
       when:
         - not ansible_check_mode
@@ -545,6 +546,12 @@
         _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_topology_plan }}"
         _plan_cluster: "{{ (hostvars[ansible_play_hosts_all[0]]._cassandra_preflight | default({})).cassandra_cluster_name | default('') }}"
         _done: "{{ _plan.remove + _plan.gone + _plan.silent }}"
+        # the nodes whose seed list is written but not reloaded (seeds_apply.yml)
+        _reload_failed: "{{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_seeds_reload_failed', 'defined') | selectattr('_cassandra_seeds_reload_failed') | map(attribute='inventory_hostname') | list }}"
+        _reload_command: >-
+          {{ 'change_seeds' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
         # the re-import reads the cluster from the inventory: -e cassandra_hosts unless it takes it without
         _reimport_hosts: >-
           {{ lookup('community.cassandra.cassandra_hosts') | community.cassandra.cassandra_reimport_hosts(

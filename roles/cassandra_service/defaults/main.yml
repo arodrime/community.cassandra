@@ -199,6 +199,9 @@ _cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.
 # add_node's mark of a bootstrap it started on a node, removed once the node
 # joined: data of this cluster without it is a former member's (reset_node_plan.yml)
 _cassandra_service_bootstrap_mark: /var/lib/cassandra/.ansible_bootstrap_started
+# seeds_apply's mark of a seed list written while the node runs, removed once reloaded:
+# a rerun reloads it (an earlier run stopped before the reload, or its reload failed)
+_cassandra_service_seeds_reload_mark: /var/lib/cassandra/.ansible_seeds_reload_owed
 # sync_clocks' mark of a restart window open on a node (Cassandra stopped for its clock)
 _cassandra_clock_window_mark: /var/lib/cassandra/.ansible_clock_window
 # Where a node that started once keeps its system keyspace (system/): a data dir
