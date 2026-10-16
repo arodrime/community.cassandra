@@ -1,0 +1,3 @@
+minor_changes:
+  - "apply_config - the plan of a real run says ``will apply`` (``would apply`` under ``--check``); the recap no longer says ``restart pending`` for a node this run restarted or started, and ends with an optional TO DO, the ``rolling_restart`` command limited to the nodes whose read-ahead was set live."
+  - "cassandra_linux - the disk summary says in plain words that the udev rule keeps the read-ahead of the LVM volumes until LVM stores it at a run with Cassandra stopped (nothing to do), and that the restart for the read-ahead of the open files is optional."

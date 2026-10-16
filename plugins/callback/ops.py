@@ -42,7 +42,7 @@ description:
     (C(← down)) and a recap's failed node (C(node5  FAILED)) as an error, a setting that differs
     (C(← differs)), a reset (C(will be reset)) and what it
     deletes (C(DELETED)) as a change, wherever they are; what a node would get or got as a change too, on a line
-    of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  applied))). The rows of
+    of its own, not indented (apply_config's C(node1  would apply, then restart), C(node1  will apply), C(node1  applied))). The rows of
     a C(FAILED) recap do not keep its colour (the nodes done stay plain). The C(status)
     playbook's verdict, C(ALL 5 NODES UP), as ok, followed by nodes joining, leaving or moving (C(1 JOINING))
     as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) as an error; a ring that differs from the inventory, a
@@ -173,7 +173,7 @@ _COLOURS = (
 _MARKS = (
     (re.compile(r"\u2190 down\b|^\s*\S.*?\S  (\w+ )?FAILED\b"), "COLOR_ERROR"),  # (a recap's failed node)
     (re.compile(r"\u2190 differs\b|\bwill be reset\b|\u2014 will be$|\bDELETED\b"
-                r"|^\S.*?\S  (would apply|applied)\b"), "COLOR_CHANGED"),  # (apply_config's outcomes)
+                r"|^\S.*?\S  (would apply|will apply|applied)\b"), "COLOR_CHANGED"),  # (apply_config's outcomes)
 )
 PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_color)
 

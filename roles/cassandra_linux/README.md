@@ -107,7 +107,7 @@ same filesystems and devices grouped, e.g.
 Data disks: read-ahead 4 KB, set now on 2 nodes
   node1, node2:
     /data/c/{data,commitlog} → vg_data-lv_cass → md0 → sdb1, sdc1 → sdb, sdc
-  restart Cassandra to read the files it has open with the new read-ahead (node1, node2)
+  optional: restart Cassandra to read the files it has open with the new read-ahead (node1, node2)
 ```
 
 then a `WARNING - ...` line for what should be looked at (a filesystem on

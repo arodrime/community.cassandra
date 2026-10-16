@@ -27,6 +27,7 @@ import hashlib
 import importlib.util
 import os
 import re
+import shlex
 from collections import OrderedDict
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import _terminal_width
@@ -61,6 +62,10 @@ _WHY = {"start": "its Cassandra is not running: started once written (down over 
         "none": "an owner, group or mode only: Cassandra reads them when it starts",
         "os": "OS settings only: applied live"}
 _WRITTEN_BACK = " written back as the running Cassandra started with "  # (apply_config's note)
+# apply_config's notes: a restart pending (said before the run: not after a restart or start of this run), the
+# read-ahead set live with no restart (the recap's TO DO says how to take it)
+_PENDING = "restart pending ("
+READ_AHEAD_LIVE = "read-ahead set live: the files Cassandra has open keep the old one until it restarts"
 
 
 def _lines(text):
@@ -544,7 +549,8 @@ def _outcome(node, check, plan):
     todo_done = bool(node.get("todo") or os_only) and bool(plan or node.get(done_key))
     if todo_done:
         then = "os" if os_only else node.get("then")
-        text = ("would apply" if check or plan else "applied")
+        word = "would apply" if check else "will apply" if plan else "applied"  # (plan: before a real run's question)
+        text = word
         said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
         if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
@@ -553,7 +559,7 @@ def _outcome(node, check, plan):
         written_back = any(_WRITTEN_BACK in str(n) for n in node.get("notes") or [])
         if plan and then in _WHY and not (then == "none" and written_back):
             text += " (%s)" % _WHY[then]
-        return text, ("would apply" if check or plan else "applied")
+        return text, word
     result = str(node.get("result") or "nothing to apply")
     if node.get("os_done") and not check and "OS settings" not in result:  # its config not done: its OS settings were
         result += ", its OS settings applied"
@@ -565,7 +571,7 @@ def _outcome(node, check, plan):
     return result, "not touched"
 
 
-_RANK = {"would apply": 0, "applied": 0, "failed": 1}
+_RANK = {"would apply": 0, "will apply": 0, "applied": 0, "failed": 1}
 
 
 def _width(width):
@@ -597,8 +603,8 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order ->
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
-    before the run (every node to do would apply, with why it is not
-    restarted). width: the lines fit in it ("terminal": the terminal's)."""
+    before the run (every node to do "will apply", "would apply" under check,
+    with why it is not restarted). width: the lines fit in it ("terminal": the terminal's)."""
     return _grouped(nodes, check, plan, width)[0]
 
 
@@ -619,7 +625,30 @@ def cassandra_apply_config_warnings(nodes):
     return [{"label": out.nodes(by_text[t]), "text": t} for t in order]
 
 
-def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, planned=None, width=None):
+def _after_run(node):
+    """The node as the recap tells it: no "restart pending" note once this run restarted or started it."""
+    if not (node.get("done") and node.get("then") in ("restart", "start")):
+        return node
+    return dict(node, notes=[n for n in node.get("notes") or [] if not str(n).startswith(_PENDING)])
+
+
+def _read_ahead_todo(nodes, restart_command, width=None):
+    """The TO DO of the nodes whose read-ahead was set live (their OS settings
+    applied, Cassandra not restarted): the rolling restart that lets Cassandra
+    read its open files with it, optional. [] when none, or no command. Its
+    text fits in width, the command stays on one line (to paste)."""
+    live = [str(n["name"]) for n in nodes if n.get("os_done") and READ_AHEAD_LIVE in (n.get("notes") or [])]
+    if not live or not restart_command:
+        return []
+    lines = out.todo([{
+        "text": "optional, when convenient: restart %s so that Cassandra reads the files it has open with the new"
+                " read-ahead (one node at a time; the new files use it already)" % out.nodes(live),
+        "command": "%s --limit %s" % (restart_command, shlex.quote(",".join(live)))}])
+    return [""] + out.fit(lines[:-1], width) + lines[-1:]
+
+
+def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, planned=None, width=None,
+                                 restart_command=""):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order:
     todo, whether the node had config to apply; os, whether its OS settings
     differ; os_done, whether the OS play ran on it; done, whether its turn
@@ -638,7 +667,11 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     the plan showed (None: no plan): a line says how many are above, and for
     which nodes; the others' warnings (no plan: all of them, refused too) are
     said here, last. width: the outcome lines and the warnings fit in it
-    ("terminal": the terminal's; the diff is laid out already)."""
+    ("terminal": the terminal's; the diff is laid out already).
+    restart_command: the rolling_restart command of this cluster (as the run
+    named it, no --limit): after a real run, a TO DO with it, for the nodes
+    whose read-ahead was set live."""
+    nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
     lines, counts = _grouped(nodes, check, width=width)
     verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
     said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
@@ -658,7 +691,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     if check and refused and planned is None:
         texts.append(["a real run is refused, before changing anything: %s" % refused[0]] + list(refused[1:]))
     lines = lines + ([""] + out.fit(out.warning_lines(texts), _width(width)) if texts else [])
-    return shown + lines
+    return shown + lines + ([] if check else _read_ahead_todo(nodes, restart_command, _width(width)))
 
 
 class FilterModule(object):

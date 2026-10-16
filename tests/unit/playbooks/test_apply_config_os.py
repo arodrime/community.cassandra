@@ -168,7 +168,7 @@ def test_the_role_s_restart_hint_left_to_the_restart_that_follows():
     variables = {"_cassandra_disk_plan": {}, "_cassandra_data_lvm_here": False, "_lvm_by_udev": [],
                  "_cassandra_disk_changes_seen": [{"what": "ra"}], "_cassandra_linux_check": False,
                  "cassandra_data_running": {"stdout": "running"}}
-    hint = "restart Cassandra to read the files it has open with the new read-ahead"
+    hint = "optional: restart Cassandra to read the files it has open with the new read-ahead"
     assert render(info, dict(variables, _cassandra_linux_restart_follows=False)) == [hint]
     assert render(info, dict(variables, _cassandra_linux_restart_follows=True)) == []
 
@@ -454,7 +454,9 @@ def test_the_reason_of_the_restart_is_said():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_outcomes
     nodes = [{"name": "n1", "todo": True, "then": "restart", "why": "time sync"}, {"name": "n2", "todo": True, "then": "restart"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "n1  would apply, then restart (time sync)", "n2  would apply, then restart"]
+        "n1  will apply, then restart (time sync)", "n2  will apply, then restart"]
+    # under --check: would
+    assert cassandra_apply_config_outcomes(nodes, plan=True, check=True)[0] == "n1  would apply, then restart (time sync)"
 
 
 def test_the_jvm_check_does_not_find_its_own_shell():

@@ -357,7 +357,7 @@ def test_apply_config_and_update_java_screens():
                     "Writes the config on the nodes not restarted at once, then on the others one node at a time,\n"
                     "restarting or starting each as said below.\n\n"
                     + "\n".join(APPLY_DIFF) + "\n\n"
-                    "node1  would apply, then restart\nnode2  nothing to apply")
+                    "node1  will apply, then restart\nnode2  nothing to apply")
     question = Templar(loader=DataLoader(), variables=dict(trust(t["vars"]), **trust(play["vars"]), ansible_play_hosts=hosts,
                                                            hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS))
     assert question.template(trust_as_template(t["vars"]["cassandra_screen_question"])) == \
@@ -508,18 +508,32 @@ def test_apply_config_recap():
         "node3  nothing to apply",
         "node4  not reached",
         "node5  not in this run (--limit)"]
-    # a real run showed the settings in its plan, before its question: the outcomes here
+    # a real run showed the settings in its plan, before its question: the outcomes here (node2 restarted by
+    # this run: no restart pending left)
     assert recap(False) == [
         "DONE  apply_config  my_cluster  2 applied, 1 nothing to apply, 1 not reached, 1 not in this run",
         "node1  applied, no restart",
         "node2  applied, restarted",
-        "  restart pending (jvm11-server.options changed since the running Cassandra started)",
         "node3  nothing to apply",
         "node4  not reached",
         "node5  not in this run (--limit)"]
     # how long the run took, from its start (the first play)
     hostvars["node3"]["_cassandra_apply_config_start"] = 1000  # an epoch (0 would read as no start)
     assert re.match(r"^DONE  apply_config  my_cluster  2 applied, .* not in this run [(][0-9dhms]+[)]$", recap(False)[0])
+    # the read-ahead set live on node1, node3 (no restart): the rolling restart to take it, optional, for the cluster
+    # as the run named it
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import READ_AHEAD_LIVE
+    for h in ("node1", "node3"):
+        hostvars[h].update(cassandra_apply_config_os=[{"item": "read_ahead_kb sdb"}], cassandra_apply_config_os_done=True,
+                           cassandra_apply_config_notes=[READ_AHEAD_LIVE])
+    lines = recap(False)
+    assert lines[-4:] == [
+        "",
+        "TO DO",
+        "  1. optional, when convenient: restart node1, node3 so that Cassandra reads the files it has open with the new"
+        " read-ahead (one node at a time; the new files use it already):",
+        "     ansible-playbook community.cassandra.rolling_restart -e cassandra_hosts=prod --limit node1,node3"]
+    assert "TO DO" not in recap(True)
 
 
 def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():

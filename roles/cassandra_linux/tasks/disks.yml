@@ -490,10 +490,10 @@
       # apply_config restarts it next: _cassandra_linux_restart_follows)
       info: >-
         {{ _cassandra_disk_plan.info | default([])
-           + (['LVM keeps the read-ahead of its volumes from a run with Cassandra stopped (or'
-               ' cassandra_data_lvchange_running: true), the udev rule meanwhile']
+           + (['the read-ahead of the LVM volumes is kept by the udev rule for now; LVM itself stores it at the'
+               ' next run with Cassandra stopped — nothing to do']
               if _lvm_by_udev | length > 0 and _cassandra_data_lvm_here | bool else [])
-           + (['restart Cassandra to read the files it has open with the new read-ahead']
+           + (['optional: restart Cassandra to read the files it has open with the new read-ahead']
               if _cassandra_disk_changes_seen | selectattr('what', 'in', ['ra', 'lvm']) | list | length > 0
                  and not _cassandra_linux_check and 'running' in cassandra_data_running.stdout | default('running')
                  and not _cassandra_linux_restart_follows | default(false) | bool

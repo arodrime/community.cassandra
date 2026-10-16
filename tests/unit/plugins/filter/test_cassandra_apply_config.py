@@ -4,8 +4,8 @@ __metaclass__ = type
 import base64
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
-    _line_settings, _masked, _patched, _yaml_settings, cassandra_apply_config_diff, cassandra_apply_config_outcomes,
-    cassandra_apply_config_recap)
+    READ_AHEAD_LIVE, _line_settings, _masked, _patched, _yaml_settings, cassandra_apply_config_diff,
+    cassandra_apply_config_outcomes, cassandra_apply_config_recap)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
 
@@ -313,18 +313,18 @@ def outcome_nodes():
 def test_the_outcomes_grouped_in_the_plan():
     # the nodes changed first, in inventory order of their first node
     assert cassandra_apply_config_outcomes(outcome_nodes(), plan=True) == [
-        "node2, node4  would apply, then restart",
-        "node3  would apply, no restart (an owner, group or mode only: Cassandra reads them when it starts)",
+        "node2, node4  will apply, then restart",
+        "node3  will apply, no restart (an owner, group or mode only: Cassandra reads them when it starts)",
         "node1, node5  nothing to apply"]
     nodes = [{"name": "node1", "todo": True, "then": "start"}, {"name": "node2", "todo": True, "then": "write"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "node1  would apply, then start (its Cassandra is not running: started once written (down over"
+        "node1  will apply, then start (its Cassandra is not running: started once written (down over"
         " max_hint_window? repair it))",
-        "node2  would apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)"]
+        "node2  will apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)"]
     # a file written back as the running Cassandra started with it: its note says why (not "an owner... only")
     note = "jvm-server.options written back as the running Cassandra started with it: no restart for it"
     nodes = [{"name": "node1", "todo": True, "then": "none", "notes": [note]}]
-    assert cassandra_apply_config_outcomes(nodes, plan=True) == ["node1  would apply, no restart", "  " + note]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == ["node1  will apply, no restart", "  " + note]
 
 
 def test_the_check_recap_shows_the_settings_then_the_outcomes():
@@ -430,9 +430,9 @@ def test_the_os_settings_alone_no_restart():
              {"name": "node2", "todo": True, "os": True, "then": "restart", "done": True},
              {"name": "node3", "todo": False, "result": "nothing to apply"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
-        "node1  would apply, no restart (OS settings only: applied live)",
+        "node1  will apply, no restart (OS settings only: applied live)",
         "  read-ahead set live: the files Cassandra has open keep the old one until it restarts",
-        "node2  would apply, then restart",
+        "node2  will apply, then restart",
         "node3  nothing to apply"]
     nodes[0]["os_done"] = True
     assert cassandra_apply_config_recap(nodes, check=True)[0] == "CHECK  apply_config  2 would apply, 1 nothing to apply"
@@ -526,3 +526,42 @@ def test_auto_bootstrap_true_on_the_node_is_the_default_the_role_leaves_out(tmp_
         "  fake_option: 42   node1   %s differs (not in the inventory)" % ARROW]
     live = YAML + "auto_bootstrap: false\n"
     assert "auto_bootstrap" in "\n".join(view(Node(tmp_path, "node2", files={"cassandra.yaml": live})))
+
+
+PENDING = "restart pending (cassandra-env.sh changed since the running Cassandra started)"
+
+
+def test_the_recap_drops_the_restart_pending_of_a_node_this_run_restarted():
+    """It was computed before the restart: "node4  applied, restarted" then "restart pending" was wrong."""
+    nodes = [{"name": "node4", "todo": True, "then": "restart", "done": True, "notes": [PENDING]},
+             {"name": "node5", "todo": True, "then": "start", "done": True, "notes": [PENDING]},
+             {"name": "node6", "todo": True, "then": "restart", "result": "not reached", "notes": [PENDING]}]
+    lines = cassandra_apply_config_recap(nodes)
+    assert lines[1:] == ["node4  applied, restarted", "node5  applied, started", "node6  not reached", "  " + PENDING]
+    # under --check nothing was restarted: still pending; the plan says it too
+    assert "  " + PENDING in cassandra_apply_config_recap(nodes, check=True)
+    assert cassandra_apply_config_outcomes(nodes[:1], plan=True) == ["node4  will apply, then restart", "  " + PENDING]
+    assert nodes[0]["notes"] == [PENDING]  # (the nodes given are left as they are)
+
+
+def test_the_recap_ends_with_the_optional_restart_for_the_read_ahead_set_live():
+    command = "ansible-playbook -i inv.yml community.cassandra.rolling_restart -e cassandra_hosts=prod"
+    nodes = [{"name": "node%d" % i, "todo": False, "os": True, "os_done": True, "notes": [READ_AHEAD_LIVE]}
+             for i in (2, 3, 5)] + [{"name": "node1", "todo": True, "then": "restart", "done": True}]
+    lines = cassandra_apply_config_recap(nodes, restart_command=command)
+    assert lines[-4:] == [
+        "", "TO DO",
+        "  1. optional, when convenient: restart node2, node3, node5 so that Cassandra reads the files it has open"
+        " with the new read-ahead (one node at a time; the new files use it already):",
+        "     " + command + " --limit node2,node3,node5"]
+    # at a terminal's width: the text wrapped under its number, the command whole (to paste)
+    narrow = cassandra_apply_config_recap(nodes, restart_command=command, width=60)
+    todo = narrow[narrow.index("TO DO") + 1:]
+    assert todo[-1] == "     " + command + " --limit node2,node3,node5"
+    assert all(len(line) <= 60 for line in todo[:-1]) and todo[1].startswith("     ")
+    # none under --check (nothing was set), nor without the command, nor for a node whose OS settings were not applied
+    assert "TO DO" not in cassandra_apply_config_recap(nodes, check=True, restart_command=command)
+    assert "TO DO" not in cassandra_apply_config_recap(nodes)
+    for n in nodes:
+        n["os_done"] = False
+    assert "TO DO" not in cassandra_apply_config_recap(nodes, restart_command=command)

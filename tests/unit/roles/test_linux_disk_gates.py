@@ -124,7 +124,7 @@ def test_summary_of_a_node_says_the_problems_and_the_restart():
                cassandra_data_running={"stdout": "running"})
     assert s["changed"] is True
     assert s["warnings"] == ["lvchange failed on vg/data: its read-ahead is set now, kept by the udev rule"]
-    assert s["info"] == ["restart Cassandra to read the files it has open with the new read-ahead"]
+    assert s["info"] == ["optional: restart Cassandra to read the files it has open with the new read-ahead"]
     # not running (a new node), or under --check: no restart to ask for
     assert summed(_cassandra_disk_changes_seen=changes)["info"] == []
     assert summed(_cassandra_disk_changes_seen=changes, _cassandra_linux_check=True,
@@ -134,8 +134,8 @@ def test_summary_of_a_node_says_the_problems_and_the_restart():
 def test_summary_of_a_node_with_lvm_kept_by_udev_under_a_running_cassandra():
     lv = [{"kname": "dm-2", "kind": "lvm", "os": False, "lv_read_ahead": "auto"}]
     s = summed(_cassandra_disk_devices=lv, _cassandra_data_lvchange_now=False)
-    assert s["info"] == ["LVM keeps the read-ahead of its volumes from a run with Cassandra stopped (or"
-                         " cassandra_data_lvchange_running: true), the udev rule meanwhile"]
+    assert s["info"] == [u"the read-ahead of the LVM volumes is kept by the udev rule for now; LVM itself stores it"
+                         u" at the next run with Cassandra stopped \u2014 nothing to do"]
     s = summed(_cassandra_disk_devices=lv, _cassandra_data_lvchange_now=False, _cassandra_data_lvm_here=False)
     assert s["info"] == [] and "LVM may set them back" in s["notes"][0]
 

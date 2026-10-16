@@ -494,7 +494,7 @@
           # a real run: the settings that differ before its question (--check: in the recap, no question)
           sections:
             - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
-            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, width='terminal') }}"
+            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode, width='terminal') }}"
           # the nodes' warnings, each one once, then (--check) why a real run is refused; the recap says how many
           warnings: >-
             {{ _nodes | community.cassandra.cassandra_apply_config_warnings
@@ -726,7 +726,8 @@
         msg: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
                                                                         seconds=(now().timestamp() | int - _start | int) if _start else none,
-                                                                        diff=_diff, refused=_refused, planned=_planned, width='terminal') }}
+                                                                        diff=_diff, refused=_refused, planned=_planned, width='terminal',
+                                                                        restart_command=_restart_command) }}
       run_once: true
       vars:
         cassandra_output: true
@@ -742,6 +743,11 @@
         _refused: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_refused', 'defined')
              | map(attribute='_cassandra_apply_config_refused') | first | default([]) }}
+        # (the TO DO of the nodes whose read-ahead was set live: the cluster named as this run named it)
+        _restart_command: >-
+          {{ 'rolling_restart' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources | default([]), default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
         # the settings that differ (said under --check only: a real run showed them before its question)
         _diff: >-
           {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_diff', 'defined')
