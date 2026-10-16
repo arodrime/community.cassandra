@@ -213,7 +213,7 @@ def test_the_warnings_go_to_the_todo_once_for_all_the_nodes():
     layout = cassandra_inventory_layout(nodes, "c")
     lines = cassandra_import_report(layout, ["c.yml", "."], "report.txt", {}, True, width=400, in_git=False)
     todo = [line for line in lines if ". WARNING" in line]
-    assert todo == ["  1. WARNING  node1, node2: " + config["jvm_warnings"][0]]
+    assert todo == ["  1. WARNING - node1, node2: " + config["jvm_warnings"][0]]
 
 
 def test_self_check_names_the_file_a_41_on_java_17_reads():

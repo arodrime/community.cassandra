@@ -85,7 +85,7 @@ def test_preflight_one_line_per_warning_with_its_nodes():
                 "node3": {"_cassandra_preflight_jvm": []}}
     variables = dict(WARN["vars"], ansible_play_hosts=["node1", "node2", "node3"], hostvars=hostvars)
     assert render("{{ %s }}" % WARN["when"], **variables) is True
-    assert render(WARN["vars"]["_note"], **variables) == "WARNING  node1, node2: " + stack[0]
+    assert render(WARN["vars"]["_note"], **variables) == "WARNING - node1, node2: " + stack[0]
     hostvars = dict((h, {"_cassandra_preflight_jvm": []}) for h in hostvars)
     assert render("{{ %s }}" % WARN["when"], **dict(variables, hostvars=hostvars)) is False
 

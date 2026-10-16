@@ -209,11 +209,11 @@ def unknown_acks(nodes):
 
 
 def cassandra_suspicious_settings(nodes, members=None):
-    """Filter: a "WARNING  node4: auto_bootstrap: false - ..." line per row of suspicious(nodes, members), then
+    """Filter: a "WARNING - node4: auto_bootstrap: false - ..." line per row of suspicious(nodes, members), then
     one per id of cassandra_suspicious_ack no row has."""
-    return (["WARNING  %s: %s %s %s (%s)" % (out.nodes(names), setting, DASH, why, how_to_keep(row))
+    return (["WARNING - %s: %s %s %s (%s)" % (out.nodes(names), setting, DASH, why, how_to_keep(row))
              for row, names, setting, why in suspicious(nodes, members)]
-            + ["WARNING  %s: %s has %s, which no check has (%s): it silences nothing" % (
+            + ["WARNING - %s: %s has %s, which no check has (%s): it silences nothing" % (
                 out.nodes(names), ACK, a, ", ".join(row for row, dummy in SUSPICIOUS)) for a, names in unknown_acks(nodes)])
 
 

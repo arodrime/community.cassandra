@@ -816,10 +816,10 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     found = suspicious(dict((n["name"], dict(n.get("vars") or {}, **{SUSPICIOUS_LINES: [
         e[4:] for e in n.get("hand_edits") or [] if e.startswith("  + ")]})) for n in read), [n["name"] for n in read])
     for row, names, setting, why in found:
-        todo.append("WARNING %s: %s, kept as found %s %s (%s)"
+        todo.append("WARNING - %s: %s, kept as found %s %s (%s)"
                     % (_who(names, None, groups, full), setting, DASH, why, how_to_keep(row)))
     for text, members in _jvm_warnings(read):
-        todo.append("WARNING  %s: %s" % (_who(members, None, groups, full), text))
+        todo.append("WARNING - %s: %s" % (_who(members, None, groups, full), text))
     moves = sorted({f for n in read for f in n.get("rewritten") or []})
     if moves:
         todo.append("cassandra-env.sh hand edits moved to variables (see MOVED%s): apply_config rewrites %s and"

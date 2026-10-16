@@ -288,11 +288,11 @@ def test_preflight_notes_render_one_line_each():
     assert sorted(found) == ["Going on without the nodes that did not answer", "Seed layout",
                              "Warn about sensitive or suspicious settings", "Warn about the JVM options", "Warn about them"]
     t = found["Warn about sensitive or suspicious settings"]
-    note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], _nl="\n", _found=t["vars"]["_found"],
-                  _ring=t["vars"]["_ring"], _members=t["vars"]["_members"],
+    note = render(t["vars"]["_note"], ansible_play_hosts=["n1", "n2"], _nl="\n", _found=trust_as_template(t["vars"]["_found"]),
+                  _ring=trust_as_template(t["vars"]["_ring"]), _members=trust_as_template(t["vars"]["_members"]),
                   hostvars={"n1": {"cassandra_auto_bootstrap": False}, "n2": {}})
     assert note.split("\n") == [
-        u"WARNING  n1: auto_bootstrap: false \u2014 a node that loses its data restarts empty without streaming it back;"
+        u"WARNING - n1: auto_bootstrap: false \u2014 a node that loses its data restarts empty without streaming it back;"
         u" remove the setting (default true) unless you know why it is there (kept on purpose? add auto_bootstrap_false"
         u" to cassandra_suspicious_ack)"]
     hostvars = {"n1": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds", "cassandra_x": ""}},
