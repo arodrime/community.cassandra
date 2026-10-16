@@ -21,7 +21,8 @@ import re
 
 from ansible.errors import AnsibleFilterError
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import import CARRIED, _values_hidden
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
+    CARRIED, CONFIG_FILE, _keep_files, _values_hidden)  # (CONFIG_FILE: the report's too)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 
@@ -29,14 +30,13 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_nod
 KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_cluster_config",
         "import_cluster_conf_dir", "import_cluster_dsbulk", "import_cluster_error", "import_cluster_held",
         "import_cluster_java", "import_cluster_java_bin", "import_cluster_java_home", "import_cluster_java_package",
-        "import_cluster_jmx_slurp", "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
+        "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
+        "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
         "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_package",
         "import_cluster_package_from_file", "import_cluster_packages", "import_cluster_perms", "import_cluster_repo",
         "import_cluster_repos_answer", "import_cluster_running", "import_cluster_series", "import_cluster_slurp",
         "import_cluster_storage_dir", "import_cluster_system_java", "import_cluster_unit",
         "import_cluster_unit_slurp", "import_cluster_version")
-CONFIG_FILE = re.compile(r"^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties"
-                         r"|logback[.]xml|jmxremote[.](?:password|access))$")
 DSBULK = re.compile(r"^/usr/share/dsbulk-([0-9]+(?:[.][0-9]+)*)/bin/dsbulk$")
 NOT_READ_KEEP = {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                  "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,
@@ -139,7 +139,8 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         f = re.sub(r"[:,].*$", "", str(line))
         if CONFIG_FILE.match(f) and f not in hand_kept:
             hand_kept.append(f)
-    hand_kept = hand_kept if keep_hand_edits else []
+    # keep_hand_edits: all the files with hand edits (True), or the ones named
+    hand_kept = [f for f in hand_kept if keep_hand_edits is True or f in (keep_hand_edits or [])]
     # a jvm<N> file its Java does not read, whose options are not imported: left as it is on the node
     if read:
         hand_kept += [f for f in config.get("keep_files") or [] if f not in hand_kept]
@@ -285,6 +286,11 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         "not_settings": config.get("not_settings") or {},
         # JVM options worth a look (why, the way out): in the report's TO DO
         "jvm_warnings": list(config.get("jvm_warnings") or []) if read else [],
+        # cassandra-env.sh's hand edits moved to variables, the files rewritten then, the options the JVM does not use
+        "moved": config.get("moved", []),
+        "rewritten": config.get("rewritten", []),
+        "cleanup": config.get("cleanup", []),
+        "not_moved": config.get("not_moved", ""),
         "notes": notes,
     }
 
@@ -297,15 +303,17 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     the given hosts, the ones found in the ring; jmx: the JMX login given for
     the import; java_default: {series: the Java the roles default to};
     host_names: hostname, fqdn or ip; set_ansible_host, keep_hand_edits: the
-    import_cluster_ options -> [node] for cassandra_inventory_layout."""
+    import_cluster_ options (keep_hand_edits: a bool, or the config
+    files to keep) -> [node] for cassandra_inventory_layout."""
     ordered = list(given) + list(found or [])
+    keep_files = _keep_files(keep_hand_edits)
     out = []
     for item in ring:
         host = _match(item["address"], data, ordered)
         error = None
         try:
             out.append(_node(item, host, data.get(host, {}), given, jmx or {}, java_default or {}, host_names,
-                             _bool(set_ansible_host), _bool(keep_hand_edits)))
+                             _bool(set_ansible_host), keep_files))
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             error = AnsibleFilterError("cassandra_import_nodes: %s: %s" % (item.get("address"), type(exc).__name__))
         if error:

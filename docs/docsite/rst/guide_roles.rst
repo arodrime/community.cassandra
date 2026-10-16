@@ -1242,6 +1242,23 @@ the masking reads as part of its value) keeps its whole list in ``secrets.yml``.
 (``MAX_HEAP_SIZE=``, ``-Xmx``, the JMX port, a GC), or that do not make a whole (an ``if`` without its ``fi``), are not carried: none of the end lines
 then is.
 
+Hand edits of ``cassandra-env.sh`` that add plain options to ``JVM_OPTS`` (``JVM_OPTS="$JVM_OPTS -Xms8G -Xmx8G
+-XX:+AlwaysPreTouch"``, outside any ``if``), and the heap (``MAX_HEAP_SIZE``, ``HEAP_NEWSIZE``,
+``MAX_DIRECT_MEMORY_SIZE``) set elsewhere in the file, are moved to the variables that write them where the role does:
+``-Xms`` and ``-Xmx`` alike to ``cassandra_heap_size`` (with ``cassandra_heap_newsize`` the young generation the JVM
+runs with, which ``MAX_HEAP_SIZE`` needs without G1), the other options to ``cassandra_jvm<N>_extra_options`` of the
+Java the node runs (that Java's only: after ``update_java``, move them to the new Java's). Only when the JVM
+gets the same arguments from the role's files: worked out from the running JVM's
+arguments (``/proc/<pid>/cmdline``), what ``cassandra-env.sh`` adds by itself from what it finds in the options (the
+heap, the GC log, the GC threads) included, the last option of a name counting; an option set again later is left out.
+Not when Cassandra is not running or its files changed since it started, when JMX authenticates by JAAS, nor in the
+files ``import_cluster_keep_hand_edits`` keeps. An ``-javaagent`` added at the end stays a hand edit (moved, the JVM would
+get it before the agent ``cassandra-env.sh`` adds). ``apply_config`` then rewrites those files in
+the role's layout (and restarts the nodes): the report says so (``MOVED``). The options the running JVM does not use
+(in the options file of another Java, set again later, ignored by its Java version) are listed under ``CLEANUP``.
+``logback.xml`` is read as logback reads it: its root level, the ``org.apache.cassandra`` level, ``debug.log`` and the
+console, however written.
+
 Other hand edits no variable covers (an extra logback appender, a line in the middle of ``cassandra-env.sh``, or one
 that sets what a variable does) fail the self-check. Carry them in the inventory (the variables above, if their place
 does not matter), or give the file your own template, ``cassandra_config_template_overrides`` (e.g.
@@ -1250,7 +1267,7 @@ render instead of the role's (in its path the self-check resolves the inventory'
 variable); a re-import does not carry the end lines your template has itself. With
 ``-e import_cluster_keep_hand_edits=true`` the files that have them are left as
 they are on their node instead (``cassandra_config_keep_files`` in its ``host_vars``: ``cassandra_config`` neither
-writes nor compares them); nodes added later get the role's files.
+writes nor compares them); or only the files named (``-e import_cluster_keep_hand_edits=logback.xml``); nodes added later get the role's files.
 
 The JVM options are imported as the running Java reads them: ``bin/cassandra`` passes on ``jvm-server.options`` and
 one ``jvm<N>-server.options`` (4.x: ``jvm8`` on Java 8, else ``jvm11``; 5.0: ``jvm11`` on Java 11, else ``jvm17``).

@@ -52,6 +52,7 @@ except ImportError:  # before, any string not marked unsafe
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
     Unsafe, _hidden, _mask, _secret, _undefined, _values_hidden)
+from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
@@ -345,7 +346,7 @@ def _render(variables, facts, live, conf_dir=""):
 
 @_values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
-                                conf_dir="", permissions=None, release="", inventory_dir=""):
+                                conf_dir="", permissions=None, release="", inventory_dir="", jvm=None):
     """files, hosts, name: the inventory files, the hosts file's data and the node's
     name there (the variables it gets: cassandra_inventory_host_vars); facts: its ansible_facts;
     live: {file: text the node has}; node_environment: what the node's unit
@@ -357,10 +358,12 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
     node's files have (cassandra_permissions_import's files), None: not read;
     release: its Cassandra version (4.1.5; '': its series'), the cassandra.yaml
     keys it rejects are notes, not differences (the import leaves them out); inventory_dir: where the
-    inventory is (a value may follow it: {{ inventory_dir }}/templates/...).
+    inventory is (a value may follow it: {{ inventory_dir }}/templates/...); jvm: {cmdline: the running
+    JVM's /proc/<pid>/cmdline, newer: the config files written since it started}: the JVM's files the roles
+    would rewrite pass when the JVM gets the same arguments from them (a note).
     -> {'differences', 'notes'}."""
     return _self_check(_read_files(files), hosts, name, facts, live, node_environment, storage_dir, java, conf_dir,
-                       permissions, release, inventory_dir)
+                       permissions, release, inventory_dir, jvm)
 
 
 @_values_hidden
@@ -404,15 +407,17 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
     live = dict((r["item"], b64decode(r["content"])) for r in slurped if "content" in r)
     unit = hv.get("import_cluster_unit") or {}
     name = names[node["address"]]
+    cmdline = (hv.get("import_cluster_jvm_cmdline") or {}).get("content")
+    running = {"cmdline": b64decode(cmdline) if cmdline else "", "newer": hv.get("import_cluster_newer_files") or []}
     return name, _self_check(
         files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
         hv.get("import_cluster_storage_dir", ""), hv.get("import_cluster_java", ""), hv["import_cluster_conf_dir"],
         (hv.get("import_cluster_perms") or {}).get("files"), (hv.get("import_cluster_config") or {}).get("release", ""),
-        inventory_dir)
+        inventory_dir, running)
 
 
 def _self_check(files_data, hosts, name, facts, live, node_environment, storage_dir, java, conf_dir, permissions,
-                release="", inventory_dir=""):
+                release="", inventory_dir="", running=None):
     # the names Ansible gives the host, which a value of the import may follow ({{ inventory_hostname }}.x)
     variables = dict(_host_vars(files_data, hosts, name), inventory_hostname=name,
                      inventory_hostname_short=name.split(".")[0])
@@ -421,9 +426,9 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
     rendered, errors, role_environment, wanted = _render(variables, facts, live, conf_dir)
     if role_environment is None:  # the unit stays as it is
         role_environment = node_environment
+    running = dict(running or {}, series=str(dict(_defaults(), **variables).get("cassandra_version")))
     out = _compare_files(rendered, live, node_environment, role_environment, storage_dir, java,
-                         release or SERIES.get(str(variables.get("cassandra_version")), ""),
-                         str(variables.get("cassandra_version")))
+                         release or SERIES.get(str(variables.get("cassandra_version")), ""), running=running)
     if permissions is None:
         out["differences"].append("owner, group and mode: not read on the node, the roles may change them")
     else:
@@ -442,8 +447,10 @@ def _rejected(live, rendered, release):
 
 
 def _compare_files(rendered, live, node_environment=None, role_environment=None, storage_dir="", java="", release="",
-                   series=""):
-    differences, notes, heap = [], [], []
+                   series="", running=None):
+    """running: {cmdline, newer, series} (cassandra_import_self_check's jvm); series: cassandra_version, else running's."""
+    differences, notes, heap, by_file = [], [], [], {}
+    series = series or (running or {}).get("series", "")
     if "cassandra-env.sh" in rendered and "cassandra-env.sh" in live:
         node_heap = _heap(live["cassandra-env.sh"], node_environment)
         role_heap = _heap(rendered["cassandra-env.sh"], role_environment)
@@ -463,7 +470,7 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                          " restart with %s)" % (", ".join(left_out), release, "it" if len(left_out) == 1 else "them"))
         try:
             found = _compare(name, live[name], rendered[name], storage_dir, left_out)
-        except (yaml.YAMLError, ET.ParseError, configparser.Error):
+        except (yaml.YAMLError, ET.ParseError, configparser.Error, RecursionError):
             found = ["%s: cannot be read as its program reads it (node's or the roles' version)" % name]
         # cassandra_config keeps a file only with the same settings by its own test: else it rewrites it
         # (a key left out: it rewrites it, as it should)
@@ -471,8 +478,30 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                 and not same_settings(name, live[name], rendered[name], storage_dir):
             found = ["%s: the same settings, written in a way cassandra_config does not keep (it would rewrite the file,"
                      " e.g. the heap moved between the unit and cassandra-env.sh, or a line going on to the next)" % name]
+        by_file[name] = found
         differences += found
+    rewritten = _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running or {})
+    if rewritten:
+        differences = [d for d in differences if not any(d in by_file.get(name, []) for name in rewritten)]
+        notes.append("%s: cassandra_config rewrites %s in its own layout; the JVM gets the same arguments from them at"
+                     " its next restart (worked out from the running JVM's)" % (
+                         ", ".join(rewritten), "it" if len(rewritten) == 1 else "them"))
+        heap = []
     return {"differences": differences + heap, "notes": notes}
+
+
+def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environment, java, running):
+    """The JVM's files (cassandra-env.sh, the options files the running Java reads) that differ when the JVM gets
+    the same arguments from the roles' ones (the heap is among them); [] otherwise."""
+    series = running.get("series")
+    group = [jvm_args.ENV, jvm_args.COMMON, jvm_args.options_file(series, java)]
+    differing = [name for name in group if by_file.get(name)]
+    if not running.get("cmdline") or set(running.get("newer") or []) & set(group) or not (differing or heap) \
+            or not all(f in rendered and f in live for f in group):
+        return []
+    same, dummy = jvm_args.cassandra_jvm_args_same(running["cmdline"], live, rendered, series, java, node_environment,
+                                                   role_environment)
+    return (differing or [jvm_args.ENV]) if same else []
 
 
 class FilterModule(object):
