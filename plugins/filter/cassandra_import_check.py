@@ -285,8 +285,8 @@ def _render(variables, facts, live, conf_dir=""):
     keep = value("cassandra_config_keep_files") or []
     wanted = [(f, "cassandra_config/templates/%s/%s.j2" % (series, f)) for f in ctx["_cassandra_config_files"][series]
               if not (f in keep and f in live)]
-    if value("cassandra_jmx_users"):
-        wanted += [(f, "cassandra_config/templates/%s.j2" % f) for f in ("jmxremote.password", "jmxremote.access")]
+    jmx = ("jmxremote.password", "jmxremote.access") if value("cassandra_jmx_users") else ()
+    wanted += [(f, "cassandra_config/templates/%s.j2" % f) for f in jmx if not (f in keep and f in live)]
     errors = []
     if conf_dir and str(value("cassandra_conf_dir")).rstrip("/") != conf_dir.rstrip("/"):
         errors.append("config dir: node reads %s, the roles would write to %s" % (conf_dir, value("cassandra_conf_dir")))
@@ -301,12 +301,12 @@ def _render(variables, facts, live, conf_dir=""):
     rendered = {}
     for name, path in wanted:
         try:
-            rendered[name] = lookup.run([os.path.join(ROLES, path)], variables=ctx)[0]
+            rendered[name] = lookup.run([os.path.join(ROLES, path)], variables=ctx)[0] or ""  # (2.19+: None when empty)
         except Exception as exc:  # pylint: disable=broad-except
             errors.append("%s: the roles could not write it with these variables (%s)" % (name, type(exc).__name__))
     # owner, group and mode cassandra_config gives its files (not the unit's nor medusa.ini's), the ones it keeps
     # as they are too
-    kept = [f for f in ctx["_cassandra_config_files"][series] if f in keep and f in live]
+    kept = [f for f in list(ctx["_cassandra_config_files"][series]) + list(jmx) if f in keep and f in live]
     permissions = {}
     try:
         settings = value("_cassandra_config_perm_settings")

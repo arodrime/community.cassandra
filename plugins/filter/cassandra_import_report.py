@@ -623,9 +623,13 @@ def _self_check_lines(layout, self_check, who, width, report_file="", error="", 
         differs += _fill("%s:" % title, width, "  ", "  ")
         for item in mine:
             differs += _item_lines(item, who, width, room)
-            if report:
+            if report:  # each node's line, the same line once for its nodes
+                same = {}
                 for name, d in item["lines"]:
-                    differs += _fill("%s: %s" % (name, d), width, "          ", "  ")
+                    if name not in same.setdefault(d, []):
+                        same[d].append(name)
+                for d, names in same.items():
+                    differs += _fill("%s: %s" % (who(names), d), width, "          ", "  ")
     if unread:
         differs += _fill("Not read, so not checked: %s" % ", ".join(
             "%s (%s)" % (n["name"], n.get("reason") or "unreachable") for n in unread), width, "  ")
@@ -683,7 +687,7 @@ def _sections(layout, self_check):
         for k, v in sorted((n.get("keep") or {}).items(),
                            key=lambda kv: (order.index(kv[0]) if kv[0] in order else 99, kv[0])):
             if k == "cassandra_config_keep_files":
-                kept.append((n["name"], "config files with hand edits", ", ".join(v)))
+                kept.append((n["name"], "kept as is (hand edits the collection's variables cannot express yet)", ", ".join(v)))
             elif k in KEEP:
                 left_groups.setdefault(KEEP_SHORT.get(k, k), []).append(n["name"])
             else:

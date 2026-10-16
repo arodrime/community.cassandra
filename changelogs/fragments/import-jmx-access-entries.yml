@@ -1,0 +1,4 @@
+bugfixes:
+  - import_cluster playbook - a node's jmxremote.access is carried whole (the roles it gives rights without a password entry, e.g. the JDK's stock ``controlRole`` and ``monitorRole``, and rights other than ``readwrite`` or ``readonly`` go to ``cassandra_jmx_users``), so the self-check no longer fails on every node with the JDK's stock entries; what the variables still cannot express in the JMX files is a hand edit of that file, kept as it is with ``import_cluster_keep_hand_edits=true``; the report's SELF-CHECK section gives a line the nodes share once, with its nodes.
+minor_changes:
+  - cassandra_config role - ``cassandra_jmx_users`` items without ``password`` (rights only, no password line) and with other rights (``access`` written as it is, e.g. ``readwrite unregister``); ``cassandra_config_keep_files`` can name ``jmxremote.password`` and ``jmxremote.access``.

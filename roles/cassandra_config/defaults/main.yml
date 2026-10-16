@@ -33,7 +33,8 @@ cassandra_config_storage_dir: ""
 # Config files left as they are on a node already initialized that has them
 # (not written nor compared), e.g. a logback.xml with appenders no variable covers: names of
 # the conf dir's files (cassandra.yaml, cassandra-env.sh, jvm-server.options,
-# jvm<N>-server.options, cassandra-rackdc.properties, logback.xml).
+# jvm<N>-server.options, cassandra-rackdc.properties, logback.xml), or
+# jmxremote.password and jmxremote.access (the files of cassandra_jmx_users).
 # import_cluster sets it with import_cluster_keep_hand_edits.
 cassandra_config_keep_files: []
 
@@ -343,7 +344,9 @@ cassandra_config_force_identity_change: false
 # cassandra_jmx_remote_password_file and _access_file, readable by cassandra only:
 # [{name: ..., password: ..., access: readwrite|readonly}]; a readwrite user
 # also gets the create (monitor, timer MBeans) and unregister rights, unless
-# create_unregister: false. Keep the passwords in a vault.
+# create_unregister: false. Other rights are written as they are (readwrite
+# then create <classes> and unregister, e.g. "readwrite unregister"); an entry without password gets rights only (like
+# the JDK's stock controlRole). Keep the passwords in a vault.
 cassandra_jmx_users: []
 # Where cassandra-env.sh points the JVM for them (and the role writes them):
 # their password and access files (import_cluster reads the node's paths)

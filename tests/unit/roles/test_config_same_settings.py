@@ -232,8 +232,55 @@ def test_jmx_access_rights(create_unregister, access):
     assert render(ACCESS, cassandra_jmx_users=users) == access
 
 
-def jmx_same(tmp_path, password, access, users):
-    """What the JMX compare finds the same on a node with these files."""
+def test_jmx_rights_only_and_rights_of_their_own():
+    # an entry without a password (the JDK's stock controlRole): its rights, no password line; other rights as they are
+    users = [{"name": "ops", "password": "s3cret", "access": "readwrite unregister"},
+             {"name": "controlRole", "access": "readwrite"}, {"name": "monitorRole", "access": "readonly"}]
+    assert render(ACCESS, cassandra_jmx_users=users) == (
+        "ops readwrite unregister\ncontrolRole readwrite \\\n    create javax.management.monitor.*,"
+        "javax.management.timer.* \\\n    unregister\nmonitorRole readonly\n")
+    assert render(PASSWORD, cassandra_jmx_users=users) == "ops s3cret\n"
+
+
+@pytest.mark.parametrize("users, bad", [
+    ([{"name": "ops", "password": "s3cret"}, {"name": "mon", "access": "readonly"},
+      {"name": "controlRole", "access": "readwrite create javax.management.monitor.*,javax.management.timer.* unregister"}], []),
+    # rights the JVM refuses (it then opens no remote JMX): readonly with more, another word, a line break
+    ([{"name": "a", "access": "readonly unregister"}, {"name": "b", "access": "ReadOnly"},
+      {"name": "c", "access": "readwrite\nd readwrite"}, {"access": "readonly"}, {"name": "e", "access": "readwrite unregistr"},
+      {"name": "f", "access": "readwrite x\rmon readwrite"}, {"name": "g", "access": "readwrite \\"},
+      {"name": "h", "access": "readwrite create"}], ["a", "b", "c", "an item without name", "e", "f", "g", "h"]),
+    ([{"name": "a", "access": "readwrite unregister create a.*, b.C"}, {"name": "b", "access": "readwrite\tunregister"}], []),
+])
+def test_jmx_rights_the_jvm_refuses_are_refused(users, bad):
+    check = task("Check the JMX users' rights", "access.yml")
+    assert render(check["vars"]["_bad"], cassandra_jmx_users=users) == bad
+
+
+@pytest.mark.parametrize("access", [
+    "readonly", "readwrite", "readwrite unregister", "readwrite create a.*, b.C", "readwrite\tunregister",
+    "readwrite create javax.management.monitor.*,javax.management.timer.* unregister", "readwrite unregister unregister",
+    "readonly unregister", "ReadOnly", "readwrite unregistr", "readwrite create", "readwrite create a..b",
+    "readwrite create a\\.b", "readwrite create a.,b", "readwrite create a-b",
+])
+def test_jmx_rights_the_import_carries_are_the_ones_the_role_takes(access):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import JMX_RIGHTS
+    check = task("Check the JMX users' rights", "access.yml")
+    refused = render(check["vars"]["_bad"], cassandra_jmx_users=[{"name": "x", "access": access}]) == ["x"]
+    assert refused == (JMX_RIGHTS.match(access) is None)
+
+
+@pytest.mark.parametrize("same, keep, kept", [
+    ('["password", "access"]', ["jmxremote.access"], ["jmxremote.access"]),
+    ('["password"]', ["jmxremote.access"], []),
+])
+def test_jmx_files_kept_said(same, keep, kept):
+    say = task("Say which JMX files are kept as they are (cassandra_config_keep_files)", "access.yml")
+    assert render(say["vars"]["_kept"], cassandra_config_jmx_same={"stdout": same}, cassandra_config_keep_files=keep) == kept
+
+
+def jmx_same(tmp_path, password, access, users, keep=(), normalize=False):
+    """What the JMX compare finds the same (or kept: cassandra_config_keep_files) on a node with these files."""
     root = tmp_path / "etc" / "cassandra"
     root.mkdir(parents=True)
     for name, text in (("password", password), ("access", access)):
@@ -242,7 +289,8 @@ def jmx_same(tmp_path, password, access, users):
     # (at their paths, cassandra_jmx_remote_password_file and _access_file)
     wanted = {"password": render(PASSWORD, cassandra_jmx_users=users),
               "access": render(ACCESS, cassandra_jmx_users=users),
-              "paths": {"password": str(root / "jmxremote.password"), "access": str(root / "jmxremote.access")}}
+              "paths": {"password": str(root / "jmxremote.password"), "access": str(root / "jmxremote.access")},
+              "keep": list(keep), "normalize": normalize}
     script = JMX_SCRIPT
     out = subprocess.run([sys.executable, "-c", script], input=json.dumps(wanted).encode(),
                          stdout=subprocess.PIPE, check=True).stdout
@@ -260,6 +308,17 @@ def test_jmx_files_with_the_same_users_are_kept(tmp_path, password, access, same
     users = [{"name": "ops", "password": "s3cret", "access": "readwrite"},
              {"name": "mon", "password": "m0n", "access": "readonly"}]
     assert jmx_same(tmp_path, password, access, users) == same
+
+
+@pytest.mark.parametrize("keep, normalize, same", [
+    # a JMX file in cassandra_config_keep_files: left as the node has it, whatever the users; normalize too
+    (["jmxremote.access"], False, ["access"]),
+    (["jmxremote.access", "jmxremote.password"], True, ["password", "access"]),
+    ([], True, []),
+])
+def test_jmx_files_kept(tmp_path, keep, normalize, same):
+    users = [{"name": "ops", "password": "s3cret", "access": "readwrite"}]
+    assert jmx_same(tmp_path, "ops other\n", "ops readwrite\ncontrolRole=readwrite\n", users, keep, normalize) == same
 
 
 @pytest.mark.parametrize("live, new, changes", [

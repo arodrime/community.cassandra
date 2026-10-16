@@ -163,7 +163,10 @@ Role Variables
 * `cassandra_jmx_users`: remote JMX users (with `cassandra_local_jmx: false`),
   as `{name, password, access}` (`readwrite`, the default, or
   `readonly`; a `readwrite` user also gets the `create` and `unregister`
-  rights of the JDK's controlRole, unless `create_unregister: false`),
+  rights of the JDK's controlRole, unless `create_unregister: false`; other
+  rights are written as they are, `readwrite` then `create <classes>` and
+  `unregister` as the JDK takes them, e.g. `readwrite unregister`; an entry
+  without `password` gets rights only, like the JDK's stock controlRole),
   written to `cassandra_jmx_remote_password_file` and `cassandra_jmx_remote_access_file`
   (default `/etc/cassandra/jmxremote.password` and `.access`, the files
   `cassandra-env.sh` points the JVM at), mode `0400`

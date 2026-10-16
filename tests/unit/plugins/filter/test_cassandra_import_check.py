@@ -376,6 +376,33 @@ def test_jmx_files_masked_and_rights_in_any_order():
     assert out == ["jmxremote.password: ops: node has ****, import would write ****"]
 
 
+# the JDK's stock jmxremote.access, which deployments keep: controlRole has no password entry
+JDK_ACCESS = ("monitorRole   readonly\ncontrolRole   readwrite \\\n"
+              "              create javax.management.monitor.*,javax.management.timer.* \\\n              unregister\n")
+
+
+@pytest.mark.parametrize("access", [
+    JDK_ACCESS + "cassandra readwrite\nops readonly\n",
+    # rights of its own on several lines, a role with a password and the JDK's controlRole rights
+    "cassandra readwrite \\\n  unregister\nops readwrite \\\n create javax.management.monitor.*,javax.management.timer.*"
+    " \\\n unregister\nadmin readwrite create javax.management.timer.* unregister\n",
+])
+def test_jmx_access_entries_without_a_password_pass(access):
+    files = seeded(stock("50x"))
+    files["cassandra-env.sh"] = edit(edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    LOCAL_JMX=no"),
+                                     "#JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.access.file",
+                                     "JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.access.file")
+    files["jmxremote.password"] = "cassandra s3cret\nops 0ps\n"
+    files["jmxremote.access"] = access
+    assert check(files, "50x")["differences"] == []
+    # the inventory without the last role's entry: caught
+    users = cassandra_config_import(files, "50x", FACTS)["vars"]["cassandra_jmx_users"]
+    last = users[-1]["name"]
+    out = check(files, "50x", tamper={"cassandra_jmx_users": users[:-1]})["differences"]
+    assert len(out) == 1 and out[0].startswith("jmxremote.access: %s: node has " % last)
+    assert out[0].endswith(", import would write nothing")
+
+
 def test_a_file_the_node_lacks_is_a_difference():
     out = _compare_files({"logback.xml": "<configuration/>\n"}, {})
     assert out == {"differences": ["logback.xml: not on the node, the roles would create it"], "notes": []}

@@ -35,7 +35,7 @@ KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_clust
         "import_cluster_storage_dir", "import_cluster_system_java", "import_cluster_unit",
         "import_cluster_unit_slurp", "import_cluster_version")
 CONFIG_FILE = re.compile(r"^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties"
-                         r"|logback[.]xml)$")
+                         r"|logback[.]xml|jmxremote[.](?:password|access))$")
 DSBULK = re.compile(r"^/usr/share/dsbulk-([0-9]+(?:[.][0-9]+)*)/bin/dsbulk$")
 NOT_READ_KEEP = {"cassandra_repository_manage": False, "cassandra_linux_manage": False,
                  "cassandra_cqlsh_python_manage": False, "cassandra_service_unit_manage": False,

@@ -350,6 +350,13 @@ def test_a_secret_value_on_several_lines_of_a_hand_edit_is_never_shown():
     assert "c2VjcmV0" not in cassandra_inventory_layout([node(1, hand=[head])], "c")["report"]
 
 
+def test_kept_files_said_kept_as_is():
+    # a file with hand edits kept (import_cluster_keep_hand_edits): why, in the rows of what is kept
+    hand = ["jmxremote.access: auditRole=readonly", "  + auditRole=readonly"]
+    text = "\n".join(report([node(1, hand=hand, keep={"cassandra_config_keep_files": ["jmxremote.access"]}), node(2)]))
+    assert re.search(r"kept as is \(hand edits the collection's variables cannot express yet\):?\s+jmxremote\.access", text)
+
+
 def test_the_screen_width_is_ansibles(monkeypatch):
     from ansible_collections.community.cassandra.plugins.filter import cassandra_import_report as module
 
@@ -593,15 +600,14 @@ def test_self_check_report_section():
     at = lines.index(u"SELF-CHECK — FAILED: the inventory would change 7 settings on 4 nodes; 1 node not read")
     end = lines.index("", lines.index("HOW TO MAKE IT PASS", at))
     section = lines[at:end]
-    assert section[1:13] == [
+    assert section[1:12] == [
         "  Hand edits no variable covers (cassandra_config would revert them):",
         "    - cassandra-env.sh, on node1:",
         "        export KEYSTORE_PASSWORD=****",
         "          node1: cassandra-env.sh: node has export KEYSTORE_PASSWORD=****",  # (masked to the end of the line)
         "    - jvm17-server.options, on node2, node5:",
         "        -XX:+UseFoo (not in the inventory)",
-        "          node2: jvm17-server.options: UseFoo: node has '-XX:+UseFoo', import would write nothing",
-        "          node5: jvm17-server.options: UseFoo: node has '-XX:+UseFoo', import would write nothing",
+        "          node2, node5: jvm17-server.options: UseFoo: node has '-XX:+UseFoo', import would write nothing",
         "  Your inventory files override the import (Ansible will apply your value):",
         "    - cassandra.yaml concurrent_reads, on node3:",
         "        node 64, inventory 16 (set in host_vars/node3/local.yml)",
@@ -618,6 +624,23 @@ def test_self_check_report_section():
     assert not [line for line in screen if line.startswith("SELF-CHECK")]
     # passed: no section
     assert not [line for line in report(failed_nodes()[:1]) if line.startswith("SELF-CHECK")]
+
+
+def test_self_check_report_same_line_once_for_its_nodes():
+    # a large cluster: the line every node has once, by the node groups; a value of its own on its own line
+    nodes = [node(i) for i in range(1, 21)]
+    line = ("jmxremote.access: controlRole: node has 'create javax.management.monitor.*,javax.management.timer.*"
+            " readwrite unregister', import would write nothing")
+    checks = dict(("node%d" % i, {"differences": [line]}) for i in range(1, 21))
+    checks["node7"] = {"differences": [line.replace("readwrite unregister", "readwrite")]}
+    checks["node1"] = {"differences": [line, line]}  # (twice: named once)
+    lines = report(nodes, ok=False, self_check=checks)
+    at = lines.index(u"SELF-CHECK — FAILED: the inventory would change 1 setting on 20 nodes")
+    section = lines[at:lines.index("HOW TO MAKE IT PASS", at)]
+    assert " ".join(section).count("node has") == 2
+    assert [x for x in section if x.strip().startswith("node7: jmxremote.access: controlRole: node has")]
+    assert not [x for x in section if x.strip().startswith("node1: ")]
+    assert "node1, node1" not in " ".join(section)
 
 
 def test_self_check_stop_owner_of_a_hand_edited_file_is_not_a_hand_edit():

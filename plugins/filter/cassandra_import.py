@@ -84,6 +84,10 @@ RACKDC = ("cassandra_rackdc_dc", "cassandra_rackdc_rack")
 PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn", "cassandra_rackdc_rack"]
 # The rights the role gives a readwrite JMX user besides readwrite
 JMX_CREATE_UNREGISTER = ["create", "javax.management.monitor.*,javax.management.timer.*", "unregister"]
+# The rights of an access file line the role writes, as the JVM takes them (readonly alone; the role's own check)
+_JMX_CLASS = r"[A-Za-z0-9_$*]+([.][A-Za-z0-9_$*]+)*"
+JMX_RIGHTS = re.compile(r"^(readonly|readwrite([ \t]+(unregister|create[ \t]+%s([ \t]*,[ \t]*%s)*))*)[ \t]*$"
+                        % (_JMX_CLASS, _JMX_CLASS))
 # What the roles leave as it is on a node set up another way (host_vars only:
 # a node added later gets it from the roles)
 # Written next to the switches below when one of those a blank host would miss
@@ -133,6 +137,7 @@ def _load_role(series, facts):
     ctx["_cassandra_config_extra_sections"] = role_vars["_cassandra_config_extra_sections"]
     env = jinja2.Environment(keep_trailing_newline=True, trim_blocks=True)
     env.filters["regex_replace"] = regex_replace
+    env.filters["bool"] = lambda value: boolean(value, strict=False)  # (Ansible's, the JMX users' templates)
     env.filters["to_nice_yaml"] = lambda data, indent=2: yaml.safe_dump(data, default_flow_style=False, indent=indent)
     for dummy in range(5):  # defaults referencing other defaults
         for k, v in ctx.items():
@@ -767,22 +772,45 @@ def _jmx_lines(text):
 
 
 def _jmx_users(password_file, access_file):
-    """cassandra_jmx_users from jmxremote.password and jmxremote.access, None
-    when they can't be read back as the role writes them (e.g. hashed passwords)."""
+    """cassandra_jmx_users from jmxremote.password and jmxremote.access (None: no user with rights): the users of
+    the password file with a plain password, then the roles with rights only (no password the role can write back:
+    none, e.g. the JDK's stock controlRole, or hashed); rights other than the role's readwrite or readonly lines
+    kept whole in access. What is left out (a user without rights, rights the JVM refuses): hand edits of the
+    files (_jmx_leftovers)."""
     rights = dict((words[0], words[1:]) for words in _jmx_lines(access_file) if len(words) >= 2)
-    access = dict((name, words[0]) for name, words in rights.items())
-    users = []
-    for words in _jmx_lines(password_file):
-        if len(words) != 2 or access.get(words[0]) not in ("readwrite", "readonly"):
-            return None
-        user = {"name": words[0], "password": words[1], "access": access[words[0]]}
-        extra = rights[words[0]][1:]
-        if user["access"] == "readwrite" and not extra:
-            user["create_unregister"] = False  # the role's readwrite line adds them
-        elif user["access"] == "readwrite" and extra != JMX_CREATE_UNREGISTER:
-            return None  # other rights: the role would change them
-        users.append(user)
-    return users
+    rights = dict((k, v) for k, v in rights.items() if JMX_RIGHTS.match(" ".join(v)))  # (a key's last line: the JVM's)
+    passwords = dict((words[0], words[1:]) for words in _jmx_lines(password_file))
+    users = [{"name": name, "password": words[0]} for name, words in passwords.items()
+             if len(words) == 1 and name in rights]
+    users += [{"name": name} for name in rights if name not in [u["name"] for u in users]]
+    for user in users:
+        spec = rights[user["name"]]
+        if spec in (["readonly"], ["readwrite"] + JMX_CREATE_UNREGISTER):
+            user["access"] = spec[0]
+        elif spec == ["readwrite"]:
+            user.update(access="readwrite", create_unregister=False)  # the role's readwrite line adds them
+        else:
+            user["access"] = " ".join(spec)  # written as it is (e.g. other create classes)
+    return users or None
+
+
+def _jmx_leftovers(env, users, live_files):
+    """What the role's JMX files would change on the node with these users (entries as the JVM reads them:
+    comments, spacing, line continuations and the order of the rights aside), as hand edits of the file:
+    "jmxremote.access: <role>", its line "  - " (the role's) and "  + " (the node's); passwords masked."""
+    hand = []
+    for name in ("jmxremote.password", "jmxremote.access"):
+        with open(os.path.join(ROLE, "templates", name + ".j2")) as f:
+            role = env.from_string(f.read()).render(cassandra_jmx_users=users)
+        mine, node = [dict((w[0], w[1:]) for w in _jmx_lines(text)) for text in (role, live_files.get(name, ""))]
+        for key in [k for k in list(node) + [k for k in mine if k not in node]
+                    if sorted(mine.get(k, ["?"])) != sorted(node.get(k, ["?"]))]:
+            hand.append("%s: %s" % (name, _mask(key)))
+            for sign, entry in (("-", mine), ("+", node)):
+                if key in entry:
+                    words = [out.MASK] if name.endswith(".password") else entry[key]
+                    hand.append("  %s %s" % (sign, _mask(" ".join([key] + words))))
+    return hand
 
 
 # the JVM options naming the remote JMX files, and the ones of a JMX authentication by JAAS
@@ -1026,9 +1054,10 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
         users = _jmx_users(live_files["jmxremote.password"], live_files.get("jmxremote.access"))
         if users and "jmxremote.access" in live_files and jmx_files["access"]:
             changed["cassandra_jmx_users"] = users
+            jmx_note += _jmx_leftovers(env, users, live_files)
         else:
-            jmx_note.append("jmxremote.password (%s): its users NOT imported (not every user has a plain password"
-                            " and readwrite/readonly rights in the access file the JVM reads%s): set"
+            jmx_note.append("jmxremote.password (%s): its users NOT imported (no user with rights the role"
+                            " writes in the access file the JVM reads%s): set"
                             " cassandra_jmx_users by hand" % (
                                 jmx_files["password"] or JMX_FILE_DEFAULTS["password"],
                                 (", " + jmx_files["access"]) if jmx_files["access"] else ", none given to the JVM"))

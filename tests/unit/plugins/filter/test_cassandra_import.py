@@ -26,6 +26,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     _same_setting,
 )
 from ansible_collections.community.cassandra.plugins.filter import cassandra_import
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _jmx_entries
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
@@ -467,18 +468,49 @@ def test_encryption_optional_read_back(optional):
     assert out["vars"].get("cassandra_server_encryption_optional", True) is optional
 
 
+# the JDK's own jmxremote.access (conf/management), which deployments keep
+STOCK_ACCESS = """######################################################################
+#     Default Access Control File for Remote JMX(TM) Monitoring
+######################################################################
+#
+# Access entries for the roles of jmxremote.password.
+#
+# "controlRole" readwrite with create and unregister.
+#
+monitorRole   readonly
+controlRole   readwrite \\
+              create javax.management.monitor.*,javax.management.timer.* \\
+              unregister
+"""
+
+
 @pytest.mark.parametrize("password_file, access_file, users", [
     # a # inside a password is part of it; comment lines are skipped
     # (a readwrite line without the create and unregister rights the role adds: kept so)
     ("# comment\nops Pa#ss\n", "ops readwrite\n",
      [{"name": "ops", "password": "Pa#ss", "access": "readwrite", "create_unregister": False}]),
     # hashed passwords (jmxremote.password.toHashes): not read back
-    ("ops c2FsdA== aGFzaA== SHA3-512\n", "ops readwrite\n", None),
+    # (rights only: the password file a hand edit, kept with import_cluster_keep_hand_edits)
+    ("ops c2FsdA== aGFzaA== SHA3-512\n", "ops readwrite\n", [{"name": "ops", "access": "readwrite", "create_unregister": False}]),
     # a user without rights in the file
     ("ops s3cret\n", "", None),
-    # rights the role can't write back (it would widen them): not imported
-    ("ops s3cret\n", "ops readwrite unregister\n", None),
-    ("ops s3cret\n", "ops readwrite create javax.management.monitor.* unregister\n", None),
+    # other rights: kept whole (the role's readwrite line would widen them)
+    ("ops s3cret\n", "ops readwrite unregister\n", [{"name": "ops", "password": "s3cret", "access": "readwrite unregister"}]),
+    ("ops s3cret\n", "ops readwrite create javax.management.monitor.* unregister\n",
+     [{"name": "ops", "password": "s3cret", "access": "readwrite create javax.management.monitor.* unregister"}]),
+    # several users, rights of all forms; rights the JVM refuses (readonly with more) and a user without rights
+    # left out (hand edits of the files)
+    ("ops s3cret\nmon m0n\nrep r3p\nbad b4d\nnone n0ne\n",
+     "ops readwrite\nmon readonly\nrep readwrite create javax.management.monitor.*,javax.management.timer.* unregister\n"
+     "bad readonly create a.*\n",
+     [{"name": "ops", "password": "s3cret", "access": "readwrite", "create_unregister": False},
+      {"name": "mon", "password": "m0n", "access": "readonly"}, {"name": "rep", "password": "r3p", "access": "readwrite"}]),
+    # a key's last line is the one the JVM reads: rights it refuses, the user left out
+    ("ops s3cret\n", "ops readwrite\nops readonly unregister\n", None),
+    # the JDK's stock access file: its roles without a password entry kept (rights only), after the users
+    ("ops s3cret\n", STOCK_ACCESS + "ops readwrite\n",
+     [{"name": "ops", "password": "s3cret", "access": "readwrite", "create_unregister": False},
+      {"name": "monitorRole", "access": "readonly"}, {"name": "controlRole", "access": "readwrite"}]),
 ])
 def test_jmx_users_parsed(password_file, access_file, users):
     assert _jmx_users(password_file, access_file) == users
@@ -828,13 +860,18 @@ ACCESS_TEMPLATE = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."
                                "jmxremote.access.j2")
 
 
-@pytest.mark.parametrize("access", [
+@pytest.mark.parametrize("access, exact", [
     # the role's own lines
-    "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n    unregister\nmon readonly\n",
+    ("ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n    unregister\nmon readonly\n",
+     True),
     # plain readwrite, written by hand: written back so
-    "ops readwrite\nmon readonly\n",
+    ("ops readwrite\nmon readonly\n", True),
+    # the JDK's stock roles (no password entry) and rights of their own: the same rights (as the JVM reads them)
+    (STOCK_ACCESS + "ops readwrite unregister\nmon readonly\n", False),
+    ("ops readwrite create javax.management.timer.*,javax.management.monitor.* unregister\nmon readonly\n"
+     "admin readwrite\\\n  create a.B \\\n  unregister\n", False),
 ])
-def test_jmx_access_written_back_as_imported(access):
+def test_jmx_access_written_back_as_imported(access, exact):
     from ansible.parsing.dataloader import DataLoader
     from ansible.template import Templar
     try:
@@ -842,10 +879,17 @@ def test_jmx_access_written_back_as_imported(access):
     except ImportError:
         def trust_as_template(template):
             return template
-    with open(ACCESS_TEMPLATE) as f:
-        content = f.read()
     users = _jmx_users("ops s3cret\nmon m0n\n", access)
-    assert Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(trust_as_template(content)) == access
+    files = {}
+    for name in ("access", "password"):
+        with open(ACCESS_TEMPLATE.replace("access", name)) as f:
+            content = f.read()
+        files[name] = Templar(loader=DataLoader(), variables={"cassandra_jmx_users": users}).template(
+            trust_as_template(content))
+    assert _jmx_entries(files["access"]) == _jmx_entries(access)
+    assert files["access"] == access or not exact
+    # the roles without a password entry: none written for them
+    assert files["password"] == "ops s3cret\nmon m0n\n"
 
 
 STOCK = {"40x": "stock-4.0.21", "41x": "stock-4.1.12", "50x": "stock-5.0.9"}

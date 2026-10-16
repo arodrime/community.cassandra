@@ -69,7 +69,8 @@ argument_specs:
           - Config files left as they are on a node already initialized that has them, neither written nor compared, e.g. a
             C(logback.xml) with appenders no variable covers. Names of the conf dir's files (C(cassandra.yaml),
             C(cassandra-env.sh), C(jvm-server.options), C(jvm<N>-server.options), C(cassandra-rackdc.properties),
-            C(logback.xml)). A node without the file, or a new one, gets the role's.
+            C(logback.xml)), or C(jmxremote.password) and C(jmxremote.access) (the files of
+            O(cassandra_jmx_users)). A node without the file, or a new one, gets the role's.
           - C(import_cluster) sets it with C(import_cluster_keep_hand_edits) for the files with hand edits no
             variable covers.
       cassandra_data_dir:
@@ -1234,8 +1235,10 @@ argument_specs:
           O(cassandra_jmx_remote_password_file) and O(cassandra_jmx_remote_access_file), readable
           by cassandra only. Each item has C(name), C(password) and C(access)
           (C(readwrite), the default, or C(readonly)). A C(readwrite) user also gets the C(create) and
-          C(unregister) rights of the JDK's controlRole, unless C(create_unregister) is false. Keep the passwords
-          in a vault.
+          C(unregister) rights of the JDK's controlRole, unless C(create_unregister) is false. Other rights
+          are written as they are (C(readwrite) then C(create <classes>) and C(unregister), as the JDK takes them, e.g.
+          C(readwrite unregister)). An item without C(password) gets rights
+          only, no password line (like the JDK's stock controlRole). Keep the passwords in a vault.
       cassandra_jmx_remote_password_file:
         type: path
         default: /etc/cassandra/jmxremote.password

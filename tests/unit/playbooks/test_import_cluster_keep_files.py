@@ -40,7 +40,8 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-HAND = ["logback.xml, line 12:", "  - <x/>", "  + <y/>", "cassandra-env.sh: JMX_PORT", "jmxremote.password: its users NOT imported"]
+NOT_IMPORTED = "jmxremote.password (/etc/cassandra/jmxremote.password): its users NOT imported"
+HAND = ["logback.xml, line 12:", "  - <x/>", "  + <y/>", "cassandra-env.sh: JMX_PORT", NOT_IMPORTED]
 
 
 def test_files_with_hand_edits_kept_on_request():
@@ -87,7 +88,7 @@ def test_report_names_the_edits_left_and_the_others():
                         " (cassandra_config_keep_files; nodes added later get the role's):")
     other = report.index("  HAND EDITS no variable covers (cassandra_config would revert them):")
     assert report[kept + 1:kept + 4] == ["    logback.xml, line 12:", "      - <x/>", "      + <y/>"]
-    assert report[other + 1:other + 3] == ["    cassandra-env.sh: JMX_PORT", "    jmxremote.password: ****"]  # (masked)
+    assert report[other + 1:other + 3] == ["    cassandra-env.sh: JMX_PORT", "    " + NOT_IMPORTED]
 
 
 def test_self_check_leaves_out_the_kept_files():
@@ -180,3 +181,118 @@ def test_self_check_of_every_node_names_the_one_that_failed():
         cassandra_import_self_check_nodes([], {}, nodes, {"10.0.0.7": "n7"}, {"h7": {"import_cluster_slurp": {"results": [
             {"item": "cassandra.yaml", "content": "hunter2 is not base64"}]}}})
     assert str(err.value).startswith("cassandra_import_self_check_nodes: 10.0.0.7, ") and "hunter2" not in str(err.value)
+
+
+def jmx_files(access):
+    """The stock files with remote JMX: cassandra-env.sh reads the password and access files."""
+    files = stock()
+    env = files["cassandra-env.sh"].replace("    LOCAL_JMX=yes", "    LOCAL_JMX=no")
+    files["cassandra-env.sh"] = env.replace("#JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.access.file",
+                                            "JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.access.file")
+    files["jmxremote.password"] = JDK_PASSWORD + "cassandra s3cret\n"
+    files["jmxremote.access"] = access
+    permissions = role_permissions(files)
+    for name in ("jmxremote.password", "jmxremote.access"):
+        permissions[name] = {"owner": "cassandra", "group": "cassandra", "uid": 990, "gid": 990, "mode": "0400"}
+    return files, permissions
+
+
+# the JDK's stock comments of jmxremote.password, hashed examples of its roles commented out
+JDK_PASSWORD = """# ----------------------------------------------------------------------
+#           Template for jmxremote.password
+#
+# o Copy this template to jmxremote.password
+# o Set the user/password entries in jmxremote.password
+# ----------------------------------------------------------------------
+#
+#   monitorRole  QED
+#   controlRole   R&D
+#
+# monitorRole  sNnHasH/hl8bKGlA0Ul8H8WTAbxRIRfuOdrKo3fC7q8= Ml3f/GxjrbiI5IyfbCg9ug== SHA3-512
+# controlRole  Wd8oL5JGFfm8VXtIr5Ag2ts8c0twZtAqZDQ1+KFXUGQ= ifTokq7CXZPwW+IPhE5Yfw== SHA3-512
+#
+"""
+JDK_ACCESS = ("#####################################################################\n"
+              "#     Default Access Control File for Remote JMX(TM) Monitoring\n"
+              "#####################################################################\n#\n"
+              "# monitorRole readonly, controlRole readwrite (see the JDK's docs)\n#\n"
+              "monitorRole   readonly\ncontrolRole   readwrite \\\n"
+              "              create javax.management.monitor.*,javax.management.timer.* \\\n              unregister\n")
+
+
+@pytest.mark.parametrize("keep_hand_edits", [False, True])
+def test_jdk_stock_access_entries_imported(keep_hand_edits):
+    # the JDK's stock controlRole and monitorRole (no password entry): carried, nothing kept, the self-check passes
+    files, permissions = jmx_files(JDK_ACCESS + "cassandra readwrite\n")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert imported["vars"]["cassandra_jmx_users"] == [
+        {"name": "cassandra", "password": "s3cret", "access": "readwrite", "create_unregister": False},
+        {"name": "monitorRole", "access": "readonly"}, {"name": "controlRole", "access": "readwrite"}]
+    keep = node({"import_cluster_config": imported}, keep_hand_edits=keep_hand_edits)["keep"]
+    assert "cassandra_config_keep_files" not in keep
+    assert check(files, {}, permissions)[0]["differences"] == []
+
+
+def test_jmx_entry_no_variable_expresses_is_a_hand_edit_kept_on_request():
+    # an access entry the import cannot carry ("role=rights", which the JVM reads as a properties line): a hand
+    # edit of jmxremote.access, so the self-check sorts it with the hand edits; kept, the self-check passes
+    files, permissions = jmx_files(JDK_ACCESS + "cassandra readwrite\nauditRole=readonly\n")
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == ["jmxremote.access: auditRole=readonly", "  + auditRole=readonly"]
+    out, layout = check(files, {}, permissions)
+    assert out["differences"] == ["jmxremote.access: auditRole=readonly: node has '', import would write nothing"]
+    lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=160)
+    at = lines.index("  Hand edits no variable covers (cassandra_config would revert them):")
+    assert lines[at + 1] == "    - jmxremote.access auditRole=readonly, on n1:"
+    assert "Other differences:" not in "\n".join(lines)
+    keep = node({"import_cluster_config": imported}, keep_hand_edits=True)["keep"]
+    assert keep["cassandra_config_keep_files"] == ["jmxremote.access"]
+    out, layout = check(files, {"cassandra_config_keep_files": ["jmxremote.access"]}, permissions)
+    assert out["differences"] == []
+    assert "in files LEFT AS THEY ARE on this node" in layout["report"]
+
+
+def test_three_users_and_the_stock_roles_imported_passwords_in_secrets_only():
+    files, permissions = jmx_files(JDK_ACCESS + "cassandra readwrite\nrepair readwrite \\\n  create"
+                                   " javax.management.monitor.*,javax.management.timer.* \\\n  unregister\nmonitor readonly\n")
+    files["jmxremote.password"] = JDK_PASSWORD + "cassandra Pw-One1\nrepair Pw-Two2\nmonitor Pw-Three3\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == []
+    assert [(u["name"], u.get("password"), u["access"]) for u in imported["vars"]["cassandra_jmx_users"]] == [
+        ("cassandra", "Pw-One1", "readwrite"), ("repair", "Pw-Two2", "readwrite"), ("monitor", "Pw-Three3", "readonly"),
+        ("monitorRole", None, "readonly"), ("controlRole", None, "readwrite")]
+    out, layout = check(files, {}, permissions)
+    assert out["differences"] == []
+    written = dict((f["path"], f["content"]) for f in cassandra_inventory_files(layout))
+    for path, content in written.items():
+        assert ("Pw-" in content) == path.endswith("secrets.yml"), path
+    assert not re.search("Pw-", layout["report"])
+
+
+def test_hashed_passwords_a_hand_edit_of_the_password_file_kept_on_request():
+    # Java 14+ rewrites a password file it can write with hashes: no password to carry, the users' rights carried;
+    # the password file a hand edit (never a failure of the whole import), kept as it is on request
+    files, permissions = jmx_files(JDK_ACCESS + "cassandra readwrite\n")
+    files["jmxremote.password"] = JDK_PASSWORD + "cassandra c2FsdA== aGFzaGVkUGFzcw== SHA3-512\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == ["jmxremote.password: cassandra", "  + cassandra ****"]
+    out, layout = check(files, {}, permissions)
+    assert out["differences"] == ["jmxremote.password: cassandra: node has ****, import would write nothing"]
+    lines = cassandra_import_self_check_advice(layout, {"n1": out}, width=160)
+    assert lines[lines.index("  Hand edits no variable covers (cassandra_config would revert them):") + 1] == \
+        "    - jmxremote.password cassandra, on n1:"
+    assert "aGFzaGVk" not in "\n".join(lines) + layout["report"]
+    keep = node({"import_cluster_config": imported}, keep_hand_edits=True)["keep"]
+    assert keep["cassandra_config_keep_files"] == ["jmxremote.password"]
+    assert check(files, {"cassandra_config_keep_files": ["jmxremote.password"]}, permissions)[0]["differences"] == []
+
+
+def test_users_left_out_are_hand_edits_of_the_files():
+    # a user without rights, rights the JVM refuses: hand edits of their file, the password masked
+    files, permissions = jmx_files("cassandra readwrite\nbad readonly create a.*\n")
+    files["jmxremote.password"] = "cassandra s3cret\nnone n0ne-secret\n"
+    imported = cassandra_config_import(files, "50x", FACTS, "", "/var/lib/cassandra")
+    assert imported["hand_edits"] == ["jmxremote.password: none", "  + none ****",
+                                      "jmxremote.access: bad", "  + bad readonly create a.*"]
+    assert "n0ne-secret" not in str(check(files, {}, permissions))
