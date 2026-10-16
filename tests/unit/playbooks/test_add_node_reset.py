@@ -301,7 +301,7 @@ def test_its_own_ring_only_when_its_jvm_runs():
     """The unit active, no JVM yet: no own ring (its preflight read, if any, is not this Cassandra's answer)."""
     ring = {"cluster_status": {"dc1": {"nodes": [N1, SEEN]}}}
     v = facts(found=STOCK, active="active", own_view=ring)
-    assert v["_cassandra_node_standing_read"]["own"] is None
+    assert not v["_cassandra_node_standing_read"]["own"]  # (none; ansible-core 2.16 renders it empty)
     assert v["cassandra_node_standing"]["state"] == "running_outside_ring"
     v = facts(found=STOCK, running=True, active="active", own_view=ring)
     assert v["_cassandra_node_standing_read"]["own"] == ring["cluster_status"]
