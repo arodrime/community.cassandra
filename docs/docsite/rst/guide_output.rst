@@ -189,7 +189,8 @@ Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an outpu
 - **green** (ok): ``DONE``, ``HEALTHY``, ``NOTHING TO DO``, ``READY``, ``IMPORT ... PASSED``, a ``CHECK`` with
   nothing left to do, ``ALL 5 NODES UP``, the help's operation names;
 - **yellow** (change): a ``CHECK`` that says what a real run would do, ``← differs``, ``will be reset``,
-  ``DELETED``, what a node would get or got (``node1  would apply, then restart``, ``node1  applied``), the nodes
+  ``DELETED``, what a node would get, will get or got (``node1  would apply, then restart``, ``node1  will apply``,
+  ``node1  applied``), the nodes
   joining, leaving or moving;
 - **red** (error): ``REFUSED``, ``FAILED``, ``NOT HEALTHY``, ``IMPORT ... FAILED``, a progress line that stalled
   or failed, ``← down``, a recap's failed node, ``1 NODE DOWN: ...``, ``1 NODE NOT REACHED: ...``;

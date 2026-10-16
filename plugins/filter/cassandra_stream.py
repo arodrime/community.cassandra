@@ -22,8 +22,9 @@ _GIB = out.GIB
 # the rate is measured over the checks of this many seconds (at least the last 3): long enough for an ETA
 # that does not jump with a file sent whole (a stream counts its bytes in bursts)
 _WINDOW = 300
-# the growth of the space used on a receiving node, bytes, that counts as progress (not a small flush)
-_DISK_GROWTH = 1024 * 1024
+# the growth of the space used on a receiving node, bytes per check, that counts as progress: not a small
+# flush, a log, nor a commitlog segment (32 MiB) of the writes a joining node takes meanwhile
+_DISK_GROWTH = 64 * 1024 * 1024
 # beyond this, the end is shown as unknown
 _ETA_MAX = 30 * 86400
 # the longest report line: the default stdout callback prints a msg list
@@ -57,7 +58,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     early_interval: the one of the first early_time seconds (a short
     operation ends in seconds). stall_time: seconds without progress before
     it counts as stalled (quiet_factor times more while nothing is left to
-    transfer); warn_time: seconds without progress before the progress line
+    transfer; 1, the same, by default); warn_time: seconds without progress before the progress line
     says STALLED. disk: {host: bytes used} of the filesystems a receiving
     node writes the streams to (bootstrap, replace, rebuild: the node itself,
     otherwise quiet), at this check (none: not read): while bytes are left
@@ -123,7 +124,8 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     # the space used on the receiving node grew while bytes were left: a file is being written (netstats
     # shows a whole SSTable's bytes once it is over)
     counted = progressed
-    disk_before = dict(state.get("disk") or {})
+    # (a baseline from consecutive checks while bytes were left only: not one read before a quiet phase)
+    disk_before = dict(state.get("disk") or {}) if state.get("transferring") else {}
     disk_now = dict((str(h), int(b)) for h, b in (disk or {}).items() if b is not None and str(b).strip().isdigit())
     grown = sum(max(0, b - disk_before[h]) for h, b in disk_now.items() if h in disk_before)
     disk_at = state.get("disk_at")
@@ -140,7 +142,7 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     # Nothing left to transfer in netstats (no session yet, or every one at 100%): phases
     # that show no bytes (ring delay, schema, the write path of tables with views or CDC,
     # index builds, hints of a decommission, a task queued behind other compactions) get
-    # quiet_factor times more checks before counting as stalled.
+    # quiet_factor times more checks before counting as stalled (1 by default: the same limit).
     transferring = any(streams[k]["done"] < streams[k]["total"] for k in current)
     limit = int(stall_time) * (1 if transferring else int(quiet_factor))
     total = sum(s["total"] for s in streams.values())

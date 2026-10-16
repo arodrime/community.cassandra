@@ -40,6 +40,7 @@ def disk_task():
 def test_read_only_on_a_receiving_node_while_bytes_are_left():
     task = disk_task()
     assert task["check_mode"] is False and task["changed_when"] is False and task["failed_when"] is False
+    assert task["ignore_unreachable"] is True  # one SSH glitch is a check without it, not the end of the wait
     assert "delegate_to" not in task  # the node itself
     when = task["when"]
     assert "_cassandra_stream_disk | default(false) | bool" in when
@@ -73,7 +74,8 @@ def test_the_operations_that_receive_ask_for_it_the_others_not():
 
 def run(command, path=None):
     env = dict(os.environ, PATH=path + os.pathsep + os.environ["PATH"]) if path else None
-    return subprocess.run(["sh", "-c", command], stdout=subprocess.PIPE, universal_newlines=True, env=env).stdout.strip()
+    return subprocess.run(["sh", "-c", command], stdout=subprocess.PIPE, universal_newlines=True, env=env,
+                          check=False).stdout.strip()
 
 
 def test_the_command_sums_each_filesystem_once(tmp_path):

@@ -96,11 +96,12 @@
     - name: Read the space used where this node writes
       ansible.builtin.shell: >-
         df -P -B1 -- {{ _dirs | map('quote') | join(' ') }} 2>/dev/null
-        | awk 'NR > 1 && !seen[$6]++ {s += $3} END {if (s > 0) print s}'
+        | awk 'NR > 1 && !seen[$6]++ {s += $3} END {if (s > 0) printf "%.0f\n", s}'
       register: cassandra_stream_disk
       changed_when: false
       failed_when: false  # a check without it
       check_mode: false  # read-only
+      ignore_unreachable: true  # a node not answering once is a check without an answer
       when:
         - _cassandra_stream_disk | default(false) | bool
         - _cassandra_stream_state.transferring | default(false) | bool

@@ -97,7 +97,9 @@ Role Variables
   file only once whole: on a node that receives (bootstrap, replace,
   rebuild), each check while bytes are left also reads the space used on
   its data and commitlog filesystems (`df`), and its growth is progress too
-  (`receiving (disk +3.2 GiB in 5m)` while netstats stays still). A
+  (`receiving (disk +3.2 GiB in 5m)` while netstats stays still), from 64 MiB
+  a check (heavy writes on that node meanwhile can hide a stall:
+  `cassandra_stream_max_time` bounds the wait). A
   decommission or a move goes by netstats only (the nodes that receive take
   client load, their disk says little): with very big SSTables, raise
   `cassandra_stream_stall_warn_time` and `cassandra_stream_stall_time`. No overall limit unless

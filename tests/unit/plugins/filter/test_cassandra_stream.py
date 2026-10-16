@@ -708,8 +708,8 @@ def test_disk_growth_is_progress_while_bytes_are_left():
     assert s["netstats_at"] == 0 and s["disk_grown"] == 12 * GIB and s["disk_at"] == 390
     line = cassandra_progress_line(s, 1, 1, "n4", "bootstrap", "JOINING")[0]
     assert "receiving (disk +12.0 GiB in 6m)" in line and "STALLED" not in line and "no progress" not in line
-    # a flush-sized growth is not
-    s = cassandra_stream_progress(views, s, now=420, disk={"n4": s["disk"]["n4"] + 1000})
+    # a flush or a commitlog segment (the writes a joining node takes meanwhile) is not
+    s = cassandra_stream_progress(views, s, now=420, disk={"n4": s["disk"]["n4"] + 32 * MIB})
     assert not s["progressed"]
     # the disk quiet too: no progress, then STALLED from the warning threshold, the stop at the limit
     for now in range(450, 690 + 300, 30):
@@ -725,6 +725,12 @@ def test_disk_growth_is_progress_while_bytes_are_left():
     s = cassandra_stream_progress(done, s, now=30, disk={"n4": GIB})
     s = cassandra_stream_progress(done, s, now=60, disk={"n4": 2 * GIB})
     assert not s["progressed"]
+    # a reading from before a phase with no bytes left is no baseline once bytes are left again
+    s = cassandra_stream_progress(views, None, now=0, disk={"n4": GIB})
+    s = cassandra_stream_progress(done, s, now=30)
+    s = cassandra_stream_progress(views, s, now=60, disk={"n4": 9 * GIB})
+    s = cassandra_stream_progress(views, s, now=90, disk={"n4": 9 * GIB})
+    assert not s["progressed"] and s["disk"] == {"n4": 9 * GIB}
     # not read at a check (df failed): left out, no growth counted against nothing
     s = cassandra_stream_progress(views, None, now=0)
     s = cassandra_stream_progress(views, s, now=30, disk={"n4": 5 * GIB})

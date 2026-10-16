@@ -315,7 +315,9 @@ argument_specs:
             C(nodetool netstats) (no byte or file streamed, no session started or ended). On a node that
             receives (bootstrap, replace, rebuild), the growth of the space used on its data and commitlog
             filesystems counts too, while bytes are left (a stream of whole SSTables, zero-copy, counts a
-            file's bytes only once it is over; the line then says C(receiving (disk +3.2 GiB in 5m))). A
+            file's bytes only once it is over; the line then says C(receiving (disk +3.2 GiB in 5m))), from
+            64 MiB a check (heavy writes on that node meanwhile can hide a stall, C(cassandra_stream_max_time)
+            bounds the wait). A
             decommission or a move goes by C(nodetool netstats) only (the nodes that receive take client
             load, so their disk says little); with very big SSTables, raise this and
             C(cassandra_stream_stall_warn_time). Nothing is stopped then; the node stays as it is.
