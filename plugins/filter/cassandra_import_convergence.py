@@ -231,6 +231,8 @@ def _blocks(lines):
 
 _EXPR = re.compile(r"\{\{.*?\}\}")
 _TOGGLE = re.compile(r"^\{\{[^}]*\}\}")  # a line written commented out or not: {{ '' if x else '# ' }}line
+# the lines a list adds after a line (cassandra_env_extra_lines, cassandra_logback_extra_lines): not that line's value
+_APPENDED = re.compile(r"\{\{[^{}]*\| join\([^{}]*\}\}$")
 _LINES = {}
 
 
@@ -245,7 +247,7 @@ def _template_lines(name):
                 continue
             with open(path) as f:
                 for line in f.read().split("\n"):
-                    line = _TOGGLE.sub("", line).strip()
+                    line = _APPENDED.sub("", _TOGGLE.sub("", line).strip())
                     first = _EXPR.search(line)
                     used = re.search(r"\b(cassandra_\w+)", first.group(0)) if first else None
                     if used and len(line[:first.start()].strip()) >= 3:
