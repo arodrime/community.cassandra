@@ -508,6 +508,12 @@ def test_colours_by_line_start():
     assert colour("DONE  topology  my_cluster") == colour("HEALTHY  my_cluster") == C.COLOR_OK
     assert colour("NOT HEALTHY  my_cluster") == colour("REFUSED  topology") == C.COLOR_ERROR
     assert colour("[1/2] node5 bootstrap  JOINING  STALLED 2/12 checks  35s") == C.COLOR_ERROR
+    # a while without progress, before the warning threshold: as progress, its peer line too (indented under it)
+    assert colour("[1/1] node4 bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  no progress for 1m  2m") == "cyan"
+    assert colour("[1/1] node4 bootstrap  JOINING  STALLED 5m/30m  8%  0.2/2.3 GiB  7m") == C.COLOR_ERROR
+    assert colour("[1/1] node4 bootstrap  JOINING  [----------]  8%  0.2/2.3 GiB  receiving (disk +3.2 GiB in 5m)  7m") \
+        == "cyan"
+    assert colour("      from node1 0.2/2.3 GiB no progress for 1m", above="cyan") == "cyan"
     # the progress, phase and NOTE lines: cyan (Ansible's dark blue is hard to read on a dark background)
     assert colour("[1/2] node5 bootstrap  JOINING  52%") == colour("Checking the cluster (5 nodes)...") == "cyan"
     assert colour("NOTE  cassandra_foo is not read") == "cyan"

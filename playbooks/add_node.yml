@@ -36,7 +36,7 @@
 # outside tmux/screen).
 # A bootstrap can take hours: its progress printed every cassandra_stream_check_interval
 # seconds (30, every 10 s for the first 5 minutes); the run stops only after
-# cassandra_stream_stall_time seconds (900) with nothing streamed. Afterwards the cleanup command is printed, or
+# cassandra_stream_stall_time seconds (1800) with nothing streamed. Afterwards the cleanup command is printed, or
 # run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
 # all (default none), the words of cassandra_cleanup_mode.
 # One token per node (cassandra_num_tokens: 1): each new node needs

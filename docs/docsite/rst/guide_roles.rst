@@ -395,8 +395,9 @@ every ``cassandra_stream_early_check_interval`` seconds (10) during the first ``
 (300), so a short operation ends in seconds, then every ``cassandra_stream_check_interval`` seconds (30): one line with
 the node, a bar, the percentage, the bytes streamed, the rate, the expected end on the controller's clock and the time
 so far, then one line with each node it streams from and its own progress; a single line with the total time once
-done. It waits as long as the streams make progress: it stops only after ``cassandra_stream_stall_time`` seconds (900)
-with nothing streamed (4 times as long while nothing is left to transfer). If the run stops before the node has joined (a stall, a lost SSH session),
+done. It waits as long as the streams make progress: it says ``STALLED`` after ``cassandra_stream_stall_warn_time``
+seconds (300) and stops only after ``cassandra_stream_stall_time`` seconds (1800) with nothing streamed and the node's
+used disk space not growing (a whole SSTable counts in netstats once sent). If the run stops before the node has joined (a stall, a lost SSH session),
 the node goes on bootstrapping: run ``add_node`` again with the same nodes, it waits for the bootstrap in progress.
 The wait also stops when Cassandra stops or, on 5.0, when the bootstrap fails (``Mode: JOINING_FAILED``). To start a
 failed bootstrap over, stop Cassandra on the node, wait until it is gone from ``nodetool status``, and run ``add_node``

@@ -36,7 +36,7 @@
       (nodetool: {{ (_cassandra_cleanup_refused | first).error }}). Nothing was stopped: the cleanups go on by themselves.
       {% else %}
       no cleanup progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
-      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s, 4 times as long while no task runs; nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
+      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s; nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
       {% endif %}
       Last progress: {{ (_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
                           status=_cassandra_cleanup_status) | first) }}

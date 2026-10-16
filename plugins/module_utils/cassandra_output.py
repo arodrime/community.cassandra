@@ -1277,7 +1277,7 @@ IDLE_SHOWN = 60
 
 
 def progress_line(index, total_steps, node, operation, mode="", done=0, total=0, speed=None, now=0, start=None,
-                  idle=0, limit=0, peers=None, status="going"):
+                  idle=0, limit=0, peers=None, status="going", warn=None, disk=0, frozen=0):
     """One check of a long operation (Q2), as 2 lines:
     "[1/2] node5 bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m"
     then always the other ends: "      from node1 18.0/34.0 GiB ok   from node3 4.2/17.0 GiB stalled".
@@ -1285,10 +1285,17 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     is 0); mode: netstats Mode; done/total: bytes; speed: bytes/s (None:
     not known yet); now/start: epoch seconds; idle/limit: the seconds
     without progress and the stall limit (said from IDLE_SHOWN seconds:
-    "STALLED 6m/15m" while data is left, "no progress 6m/1h" before the
-    streams or once all is sent); peers: [{name, way ('from'/'to'), done,
-    total, stalled}]; status: going, or stalled / failed / done (said in the
-    line). Before any data flows: "waiting for streams" and the elapsed time."""
+    while data is left "no progress for 1m", from warn seconds (the warning
+    threshold; None: limit) "STALLED 6m/30m"; "no progress 6m/30m" before
+    the streams or once all is sent); disk, frozen: the bytes the receiving
+    node's disk grew by since netstats last showed progress, frozen seconds
+    ago (a file sent whole counts its bytes once it is over; that growth is
+    progress): "receiving (disk +3.2 GiB in 5m)" once frozen for IDLE_SHOWN
+    seconds; peers:
+    [{name, way ('from'/'to'), done, total, stalled, idle (the seconds it
+    moved nothing)}]: "stalled", else "no progress for 1m" from IDLE_SHOWN
+    seconds; status: going, or stalled / failed / done (said in the line).
+    Before any data flows: "waiting for streams" and the elapsed time."""
     start = now if start is None else start
     head = "  ".join(x for x in [("[%d/%d] %s %s" % (index, total_steps, node, operation)) if total_steps
                                  else "%s %s" % (node, operation), mode] if x)
@@ -1297,9 +1304,12 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     done_total = amount(done, total) if total else ""
     idle_text = ("%s/%s" % (duration(idle, short=True), duration(limit, short=True))) if idle >= IDLE_SHOWN and limit else ""
     quiet = ("no progress " + idle_text) if idle_text else ""
+    # data left, quiet for a while but not that long yet: said as progress (a big file on its way)
+    warn = limit if warn is None else min(int(warn), int(limit or 0))
+    pause = ("no progress for " + duration(idle, short=True)) if idle_text and idle < warn else ""
     if status == "done":
         line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
-    elif status != "going" or (idle_text and total and done < total):  # before any stream: still waiting for them
+    elif status != "going" or (idle_text and not pause and total and done < total):  # before any stream: waiting
         word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED",
                 "jmx_refused": "JMX LOGIN REFUSED"}.get(
             status, "STALLED" if status == "going" else status.upper())
@@ -1314,14 +1324,17 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
             eta = "ETA %s (%s)" % (_hhmm(now + left, now), duration(left, short=True))
         elif total <= done:
             eta = "all sent, finishing"
+        on_disk = ("receiving (disk +%s in %s)" % (size(disk), duration(frozen, short=True))
+                   if disk > 0 and frozen >= IDLE_SHOWN and not idle_text and total > done else "")
         line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta,
-                                     quiet if total <= done else "", elapsed] if x)
+                                     on_disk, quiet if total <= done else pause, elapsed] if x)
     out = [line]
     if peers:
         parts = []
         for peer in sorted(peers, key=lambda p: (-p.get("total", 0), str(p.get("name")))):
             state = "done" if peer.get("total") and peer.get("done", 0) >= peer["total"] else (
-                "stalled" if peer.get("stalled") else "ok")
+                "stalled" if peer.get("stalled") else
+                ("no progress for " + duration(peer["idle"], short=True)) if peer.get("idle", 0) >= IDLE_SHOWN else "ok")
             parts.append("%s %s %s %s" % (peer.get("way") or "with", peer.get("name"),
                                           amount(peer.get("done", 0), peer.get("total", 0)), state))
         out.append("      " + "   ".join(parts))

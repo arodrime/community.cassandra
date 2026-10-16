@@ -536,7 +536,7 @@ n4  bootstrap  [##########----------]  52%   89 MiB/s
 
 
 def test_report_stalled_then_failed():
-    s = bootstrap([0.125, 0.25, 0.375, 0.375, 0.375, 0.375])
+    s = bootstrap([0.125, 0.25, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375])
     assert s["stalled"] and report(s, status="stalled", names=NAMES) == """\
 n4  bootstrap  STALLED  [#######-------------]  37%
 
@@ -547,10 +547,10 @@ n4  bootstrap  STALLED  [#######-------------]  37%
                  node2   37% done  (11.6 / 31.0 GiB)
                  node5   37% done  (6.4 / 17.0 GiB)
 
-      Now:       current - 13:39 UTC
-      Started:   25m ago - 13:14 UTC
+      Now:       current - 14:09 UTC
+      Started:   55m ago - 13:14 UTC
 
-      Progress:  none for 15m"""
+      Progress:  none for 45m"""
     for status, label in (("join_failed", "FAILED"), ("job_lost", "FAILED"), ("too_long", "TOO LONG"), ("stopped", "STOPPED")):
         assert header(s, status=status) == "n4  bootstrap  %s  [#######-------------]  37%%" % label
 
@@ -666,22 +666,98 @@ def test_checks_every_10s_for_5_minutes_then_every_30s():
         waits.append(s["wait"])
         now += s["wait"]
     assert waits == [10] * 30 + [30] * 4 and s["checks"] == 34
-    # nothing moved since the first check: 15 minutes make a stall, whatever the number of checks
+    # nothing moved since the first check: 30 minutes make a stall, whatever the number of checks
     assert s["idle"] == 390 and not s["stalled"]
-    s = cassandra_stream_progress(views, s, now=900)
-    assert s["stalled"]
+    assert not cassandra_stream_progress(views, s, now=1799)["stalled"]
+    s = cassandra_stream_progress(views, s, now=1800)
+    assert s["stalled"] and s["limit"] == 1800 and s["warn"] == 300
     # the settings (a check interval shorter than the early one caps it)
     s = cassandra_stream_progress(views, None, now=0, interval=60, early_interval=5, early_time=20)
     assert s["wait"] == 5 and cassandra_stream_progress(views, s, now=20, interval=60, early_interval=5, early_time=20)["wait"] == 60
     assert cassandra_stream_progress(views, None, now=0, interval=4)["wait"] == 4
 
 
-def test_rate_over_the_last_90_seconds():
+def test_rate_over_the_last_5_minutes():
+    """The rate (and the ETA) over 5 minutes: a file counted whole at one check does not make it jump."""
     s = None
-    for now in range(0, 310, 10):  # 1 MiB every 10 s, then 10 MiB every 10 s from 200 s
+    for now in range(0, 610, 10):  # 1 MiB every 10 s, then 10 MiB every 10 s from 200 s
         done = (now // 10) * MIB if now <= 200 else 20 * MIB + (now - 200) // 10 * 10 * MIB
         s = cassandra_stream_progress([read("n4", session("10.0.0.1", done, GIB))], s, now=now)
-    assert s["rate"] == 10 * MIB / 10.0 and len(s["samples"]) == 10
+    assert s["rate"] == 10 * MIB / 10.0 and len(s["samples"]) == 31
+    # 30 MiB/s steady, checks 30 s apart, then a 600 MiB file counted at one check: the ETA moves a little
+    s, done = None, 0
+    for now in range(0, 630, 30):
+        s = cassandra_stream_progress([read("n4", session("10.0.0.1", done, 100 * GIB))], s, now=now)
+        done += 30 * 30 * MIB
+    before = (s["bytes_total"] - s["bytes_done"]) / s["rate"]
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", s["bytes_done"] + 600 * MIB, 100 * GIB))], s, now=630)
+    after = (s["bytes_total"] - s["bytes_done"]) / s["rate"]
+    assert abs(after - before) / before < 0.1
+
+
+def test_disk_growth_is_progress_while_bytes_are_left():
+    """A whole SSTable (zero-copy) counts in netstats once sent: the receiving node's used space growing
+    meanwhile is progress, its line says so; nothing else then (a quiet disk, no bytes left) is not."""
+    views = [read("n4", session("10.0.0.1", GIB, 10 * GIB))]
+    s = cassandra_stream_progress(views, None, now=0, disk={"n4": 100 * GIB})
+    s = cassandra_stream_progress(views, s, now=30, disk={"n4": 100 * GIB})
+    assert not s["progressed"] and s["idle"] == 30 and s["disk_grown"] == 0
+    for now in range(60, 400, 30):  # 1 GiB more on disk at each check, netstats frozen
+        s = cassandra_stream_progress(views, s, now=now, disk={"n4": 100 * GIB + (now - 30) // 30 * GIB})
+        assert s["progressed"] and s["idle"] == 0 and not s["stalled"]
+    assert s["netstats_at"] == 0 and s["disk_grown"] == 12 * GIB and s["disk_at"] == 390
+    line = cassandra_progress_line(s, 1, 1, "n4", "bootstrap", "JOINING")[0]
+    assert "receiving (disk +12.0 GiB in 6m)" in line and "STALLED" not in line and "no progress" not in line
+    # a flush-sized growth is not
+    s = cassandra_stream_progress(views, s, now=420, disk={"n4": s["disk"]["n4"] + 1000})
+    assert not s["progressed"]
+    # the disk quiet too: no progress, then STALLED from the warning threshold, the stop at the limit
+    for now in range(450, 690 + 300, 30):
+        s = cassandra_stream_progress(views, s, now=now, disk=dict(s["disk"]))
+    assert s["idle"] == s["now"] - 390 and "STALLED" in cassandra_progress_line(s, 1, 1, "n4", "bootstrap")[0]
+    # netstats moves again: the disk growth counted since then starts over
+    s = cassandra_stream_progress([read("n4", session("10.0.0.1", 2 * GIB, 10 * GIB))], s, now=1000,
+                                  disk=dict(s["disk"]))
+    assert s["progressed"] and s["disk_grown"] == 0 and s["netstats_at"] == 1000
+    # no bytes left (all sent, index builds): the disk growing is not progress
+    done = [read("n4", session("10.0.0.1", 10 * GIB, 10 * GIB))]
+    s = cassandra_stream_progress(done, None, now=0, disk={"n4": GIB})
+    s = cassandra_stream_progress(done, s, now=30, disk={"n4": GIB})
+    s = cassandra_stream_progress(done, s, now=60, disk={"n4": 2 * GIB})
+    assert not s["progressed"]
+    # not read at a check (df failed): left out, no growth counted against nothing
+    s = cassandra_stream_progress(views, None, now=0)
+    s = cassandra_stream_progress(views, s, now=30, disk={"n4": 5 * GIB})
+    s = cassandra_stream_progress(views, s, now=60, disk={"n4": ""})
+    assert not s["progressed"] and s["disk"] == {"n4": 5 * GIB}
+
+
+def test_peer_lines_stalled_only_from_the_warning_threshold():
+    views = [read("n4", session("10.0.0.1", GIB, 3 * GIB), session("10.0.0.2", GIB, 3 * GIB, plan="p2"))]
+    names = {"10.0.0.1": "node1", "10.0.0.2": "node2"}
+    s = cassandra_stream_progress(views, None, now=0)
+    s = cassandra_stream_progress(views, s, now=60)
+    assert cassandra_progress_line(s, 1, 1, "n4", "bootstrap", names=names) == [
+        "[1/1] n4 bootstrap  [###-------]  33%  2.0/6.0 GiB  no progress for 1m  1m",
+        "      from node1 1.0/3.0 GiB no progress for 1m   from node2 1.0/3.0 GiB no progress for 1m"]
+    s = cassandra_stream_progress(views, s, now=299)
+    assert "STALLED" not in cassandra_progress_line(s, names=names)[0]
+    assert "stalled" not in cassandra_progress_line(s, names=names)[1]
+    s = cassandra_stream_progress(views, s, now=300)
+    assert cassandra_progress_line(s, 1, 1, "n4", "bootstrap", names=names) == [
+        "[1/1] n4 bootstrap  STALLED 5m/30m  33%  2.0/6.0 GiB  5m",
+        "      from node1 1.0/3.0 GiB stalled   from node2 1.0/3.0 GiB stalled"]
+    # one peer moves: the other one alone stalled, the line moves on
+    moved = [read("n4", session("10.0.0.1", 2 * GIB, 3 * GIB), session("10.0.0.2", GIB, 3 * GIB, plan="p2"))]
+    s = cassandra_stream_progress(moved, s, now=330)
+    assert cassandra_progress_line(s, names=names)[1] == \
+        "      from node1 2.0/3.0 GiB ok   from node2 1.0/3.0 GiB stalled"
+    # the warning threshold set: STALLED from it
+    s = cassandra_stream_progress(views, None, now=0, warn_time=900, stall_time=3600)
+    s = cassandra_stream_progress(views, s, now=899, warn_time=900, stall_time=3600)
+    assert "no progress for 14m" in cassandra_progress_line(s, names=names)[0]
+    s = cassandra_stream_progress(views, s, now=900, warn_time=900, stall_time=3600)
+    assert "STALLED 15m/1h00m" in cassandra_progress_line(s, names=names)[0]
 
 
 def test_decommission_of_a_few_hundred_mib_golden_lines():

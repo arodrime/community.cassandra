@@ -30,7 +30,8 @@ from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
-# a peer with data left is called stalled once it has moved nothing for this long, seconds
+# a peer with data left is called stalled once it has moved nothing for as long as the main line says STALLED
+# (the state's warn), this long at least, seconds
 _PEER_STALL = 60
 
 
@@ -75,26 +76,33 @@ def cassandra_plan(spec, check=False):
 def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode="", names=None, status="going"):
     """state: a cassandra_stream_progress state; names: {address: inventory
     name} for the other ends. The other ends: their progress summed per node,
-    stalled when they have bytes left and moved nothing at this check."""
+    with the time a stream with bytes left moved nothing (the longest),
+    stalled from the time the main line says STALLED (the state's warn)."""
     state = state or {}
     peers = {}
+    warn = state.get("warn", state.get("limit", 0))
+    stall = max(_PEER_STALL, warn)
+    # the receiving node's disk grew meanwhile: a file on its way, from one of them
+    writing = state.get("disk_at") is not None and state.get("now", 0) - state["disk_at"] < stall
     for stream in (state.get("streams") or {}).values():
         name = (names or {}).get(stream["other"], stream["other"])
         if name == node:  # a node's own tasks (cleanup)
             continue
         peer = peers.setdefault((stream.get("way", "with"), name), {"name": name, "way": stream.get("way", "with"),
-                                                                    "done": 0, "total": 0, "stalled": False})
+                                                                    "done": 0, "total": 0, "stalled": False,
+                                                                    "idle": 0})
         peer["done"] += stream.get("done", 0)
         peer["total"] += stream.get("total", 0)
-        # still to send, and nothing moved for a while (a single quiet check is no stall)
-        if stream.get("done", 0) < stream.get("total", 0) and not stream.get("moved", True) \
-                and state.get("now", 0) - stream.get("since", 0) >= _PEER_STALL:
-            peer["stalled"] = True
+        # still to send, and nothing moved for a while (a single quiet check is no news)
+        if stream.get("done", 0) < stream.get("total", 0) and not stream.get("moved", True):
+            peer["idle"] = max(peer["idle"], state.get("now", 0) - stream.get("since", 0))
+            peer["stalled"] = peer["stalled"] or (peer["idle"] >= stall and not writing)
     return out.progress_line(index, steps, node, operation, mode=mode, done=state.get("bytes_done", 0),
                              total=state.get("bytes_total", 0), speed=state.get("rate"), now=state.get("now", 0),
                              start=state.get("start"), idle=state.get("idle", 0) if state.get("idle_checks") else 0,
                              limit=state.get("limit", 0), peers=[p for p in peers.values() if p["total"]],
-                             status=status)
+                             status=status, warn=warn, disk=state.get("disk_grown", 0),
+                             frozen=state.get("now", 0) - state.get("netstats_at", state.get("now", 0)))
 
 
 def cassandra_recap(outcomes, operation="", cluster="", check=False, seconds=None, extra=None, full=False):

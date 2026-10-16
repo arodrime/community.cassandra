@@ -1,0 +1,6 @@
+breaking_changes:
+  - "add_node, replace_node, decommission_node, remove_dead_node, add_datacenter, move_node, cleanup - a stream wait or cleanup now stops after 30 minutes without progress (``cassandra_stream_stall_time`` default 1800, was 900, and the same limit while nothing is left to transfer, was 4 times as long); set it in the inventory to keep the earlier stop time."
+minor_changes:
+  - "add_node, replace_node, decommission_node, remove_dead_node, add_datacenter, move_node - a progress line says STALLED (in the error colour) only after ``cassandra_stream_stall_warn_time`` (new, default 300 seconds) without progress, before it ``no progress for 1m`` in the progress colour; a node at the other end is said ``stalled`` from the same time."
+  - "add_node, replace_node, add_datacenter - while bytes are left to receive, the growth of the space used on the receiving node's data and commitlog filesystems counts as progress (a stream of whole SSTables counts a file in netstats only once it is sent), the line saying ``receiving (disk +3.2 GiB in 5m)``; a decommission or a move goes by netstats only."
+  - "add_node, replace_node, decommission_node, remove_dead_node, add_datacenter, move_node - the rate and the expected end of a stream are measured over the last 5 minutes (was 90 seconds): the ETA no longer jumps when a big file is counted at once."

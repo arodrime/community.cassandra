@@ -3,7 +3,7 @@
 # cassandra_stream_check_interval seconds (sooner at first), reads nodetool netstats where the
 # data streams, prints the progress (cassandra_progress_line), and fails only after
 # cassandra_stream_stall_time seconds without any byte or file
-# streamed (or after cassandra_stream_max_time,
+# streamed nor, on a receiving node (_cassandra_stream_disk), growth of its used space (or after cassandra_stream_max_time,
 # when set). The checks (stream_check.yml) run in wait_loop.yml, which stops
 # right after the one that ends it.
 # The caller sets:
@@ -19,6 +19,8 @@
 #   _cassandra_stream_peers: hosts to read instead, from the other side, when this
 #     node's nodetool can't answer during its bootstrap (5.0.0 to 5.0.4, CASSANDRA-19902)
 #   _cassandra_stream_advice: what to check when it stalls
+#   _cassandra_stream_disk: true: this node receives (bootstrap, replace, rebuild): the growth of the space used
+#     on its data and commitlog filesystems is progress too (a whole SSTable counts in netstats once sent)
 # and resets _cassandra_stream_state to {} before the include.
 - name: Start following it
   ansible.builtin.set_fact:
@@ -55,7 +57,7 @@
       by itself; once fixed, run the playbook again to follow it.
       {%- elif _cassandra_stream_status == 'stalled' %}
       no streaming progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
-      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s, 4 times as long while nothing is left to transfer). Nothing was
+      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s). Nothing was
       stopped: {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
       {%- else %}
       still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:

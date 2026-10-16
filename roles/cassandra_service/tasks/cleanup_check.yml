@@ -35,11 +35,13 @@
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
                now=now().timestamp() | int, operations=['Cleanup'], stall_time=cassandra_stream_stall_time | int,
+               warn_time=cassandra_stream_stall_warn_time | int,
                interval=cassandra_stream_check_interval | int, early_interval=cassandra_stream_early_check_interval | int,
                early_time=cassandra_stream_early_time | int) }}
         _cassandra_cleanup_states: >-
           {{ _views | community.cassandra.cassandra_stream_progress_by_host(_cassandra_cleanup_states | default({}),
                now=now().timestamp() | int, operations=['Cleanup'], stall_time=cassandra_stream_stall_time | int,
+               warn_time=cassandra_stream_stall_warn_time | int,
                interval=cassandra_stream_check_interval | int, early_interval=cassandra_stream_early_check_interval | int,
                early_time=cassandra_stream_early_time | int) }}
       vars:

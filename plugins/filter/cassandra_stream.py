@@ -19,8 +19,11 @@ from ansible_collections.community.cassandra.plugins.module_utils.cassandra_outp
     clock as _clock, count as _count, rate as _rate, size as _size)
 
 _GIB = out.GIB
-# the rate is measured over the checks of this many seconds (at least the last 3)
-_WINDOW = 90
+# the rate is measured over the checks of this many seconds (at least the last 3): long enough for an ETA
+# that does not jump with a file sent whole (a stream counts its bytes in bursts)
+_WINDOW = 300
+# the growth of the space used on a receiving node, bytes, that counts as progress (not a small flush)
+_DISK_GROWTH = 1024 * 1024
 # beyond this, the end is shown as unknown
 _ETA_MAX = 30 * 86400
 # the longest report line: the default stdout callback prints a msg list
@@ -42,8 +45,8 @@ def _duration(seconds):
     return out.duration(seconds, short=True)
 
 
-def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_time=900, quiet_factor=4,
-                              interval=30, early_interval=10, early_time=300):
+def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_time=1800, quiet_factor=1,
+                              interval=30, early_interval=10, early_time=300, warn_time=300, disk=None):
     """views: the results of cassandra_netstats looped over hosts (item: the
     host, then the module's return values); state: what
     the previous call returned (None the first time); now: epoch seconds.
@@ -54,7 +57,13 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     early_interval: the one of the first early_time seconds (a short
     operation ends in seconds). stall_time: seconds without progress before
     it counts as stalled (quiet_factor times more while nothing is left to
-    transfer). Returns the new state, for the next call and for
+    transfer); warn_time: seconds without progress before the progress line
+    says STALLED. disk: {host: bytes used} of the filesystems a receiving
+    node writes the streams to (bootstrap, replace, rebuild: the node itself,
+    otherwise quiet), at this check (none: not read): while bytes are left
+    to transfer, a growth of _DISK_GROWTH bytes at least is progress too (a
+    stream of whole SSTables, zero-copy, counts a file's bytes only once it
+    is over; a file of hundreds of GB takes hours). Returns the new state, for the next call and for
     cassandra_stream_report: streams (per session: total, done, files_total,
     files_done, other: the node at the other end, way: 'from' when the data
     comes from it, 'to' when it goes to it, 'on' for a local task, gone, moved:
@@ -62,8 +71,10 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     progressed (since the previous call), start, now, last_progress,
     idle_checks (calls in a row without progress), idle (seconds since the
     last progress), limit and stalled (idle reached limit: stall_time while
-    some session has bytes left, stall_time * quiet_factor otherwise),
-    transferring, sessions
+    some session has bytes left, stall_time * quiet_factor otherwise), warn
+    (warn_time, limit at most), disk (the last bytes read per host), disk_at
+    (when they last grew), netstats_at (when netstats last showed progress),
+    disk_grown (bytes the disk grew by since then), transferring, sessions
     (sessions in netstats now), answered (at least one view answered),
     answered_hosts (the hosts that answered at least once in this wait),
     bytes_done/bytes_total, first_done (bytes done at the first answer),
@@ -109,6 +120,18 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
                 # host did not answer this time)
                 stream.update(gone=True, done=stream["total"], files_done=stream["files_total"], moved=True, since=now)
                 progressed = True
+    # the space used on the receiving node grew while bytes were left: a file is being written (netstats
+    # shows a whole SSTable's bytes once it is over)
+    counted = progressed
+    disk_before = dict(state.get("disk") or {})
+    disk_now = dict((str(h), int(b)) for h, b in (disk or {}).items() if b is not None and str(b).strip().isdigit())
+    grown = sum(max(0, b - disk_before[h]) for h, b in disk_now.items() if h in disk_before)
+    disk_at = state.get("disk_at")
+    if state.get("transferring") and grown >= _DISK_GROWTH:
+        progressed, disk_at = True, now
+    disk_grown = 0 if counted else state.get("disk_grown", 0) + (grown if state.get("transferring") else 0)
+    disk_before.update(disk_now)
+    netstats_at = now if counted or "netstats_at" not in state else state["netstats_at"]
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
     idle_checks = 0 if progressed or first else state.get("idle_checks", 0) + 1
@@ -134,6 +157,8 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     return {
         "start": start, "now": now, "streams": streams, "progressed": progressed, "last_progress": last_progress,
         "idle_checks": idle_checks, "idle": idle, "limit": limit, "stalled": idle >= limit, "sessions": len(current),
+        "warn": min(int(warn_time), limit), "disk": disk_before, "disk_at": disk_at, "disk_grown": disk_grown,
+        "netstats_at": netstats_at,
         "transferring": transferring, "answered": bool(answered), "bytes_done": done, "bytes_total": total,
         "answered_hosts": sorted(set(state.get("answered_hosts") or []) | answered),
         "first_done": state["first_done"] if state.get("samples") else done, "samples": samples, "rate": rate,

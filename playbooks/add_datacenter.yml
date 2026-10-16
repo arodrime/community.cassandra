@@ -289,6 +289,7 @@
         _cassandra_stream_operations: [Rebuild]
         _cassandra_stream_from: ["{{ inventory_hostname }}"]
         _cassandra_stream_job: {jid: "{{ cassandra_rebuild_job.ansible_job_id }}", host: "{{ inventory_hostname }}"}
+        _cassandra_stream_disk: true  # it receives, a new datacenter: no client load yet
         _cassandra_stream_advice: >-
           if nodetool netstats on it still shows streams, wait for the rebuild to end (nodetool netstats), then run
           nodetool rebuild again for the keyspaces it did not finish, if any (see its system.log).

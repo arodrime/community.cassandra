@@ -86,15 +86,21 @@ Role Variables
   ```
 
   The times are the controller's. After a minute without progress the line
-  says it (`STALLED 6m/15m`: the time without progress and the limit); once
-  done, a single line with the total time.
+  says it, as progress (`no progress for 3m`); after
+  `cassandra_stream_stall_warn_time` seconds (default 300) it says
+  `STALLED 6m/30m` (the time without progress and the limit); once done, a
+  single line with the total time.
 
   The run fails only after `cassandra_stream_stall_time` seconds (default
-  900) with nothing streamed: no byte or file, no session started or
-  ended; 4 times as long while nothing is left to transfer (before the first
-  session, index or view builds after the streams). Nothing is stopped then.
-  Entire-SSTable streaming (4.0+) counts a file only once whole: with very
-  big SSTables, raise `cassandra_stream_stall_time`. No overall limit unless
+  1800) with nothing streamed: no byte or file, no session started or
+  ended. Nothing is stopped then. Entire-SSTable streaming (4.0+) counts a
+  file only once whole: on a node that receives (bootstrap, replace,
+  rebuild), each check while bytes are left also reads the space used on
+  its data and commitlog filesystems (`df`), and its growth is progress too
+  (`receiving (disk +3.2 GiB in 5m)` while netstats stays still). A
+  decommission or a move goes by netstats only (the nodes that receive take
+  client load, their disk says little): with very big SSTables, raise
+  `cassandra_stream_stall_warn_time` and `cassandra_stream_stall_time`. No overall limit unless
   `cassandra_stream_max_time` (seconds) is set. A JMX login or permission
   refused stops the wait at once, naming the node (on a node being added,
   Cassandra's own JMX authenticator refuses every login until it has joined:

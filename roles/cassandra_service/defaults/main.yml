@@ -71,17 +71,20 @@ cassandra_service_wait_timeout: 600  # seconds
 # (compactionstats) is read and the progress printed every
 # cassandra_stream_early_check_interval seconds during the first
 # cassandra_stream_early_time seconds (a short operation ends in seconds),
-# then every cassandra_stream_check_interval seconds; the run fails only
-# after cassandra_stream_stall_time seconds with nothing streamed (no byte,
-# no file, no session started or ended), 4 times as long while nothing is
-# left to transfer (before the first session, index or view builds after
-# the streams, hints of a decommission, a cleanup queued behind
-# compactions). No overall limit unless cassandra_stream_max_time is set
-# (seconds, 0: none).
+# then every cassandra_stream_check_interval seconds. After
+# cassandra_stream_stall_warn_time seconds with nothing streamed (no byte,
+# no file, no session started or ended; on a node that receives, a
+# bootstrap, replace or rebuild, the space used on its data and commitlog
+# filesystems not growing either: a stream of whole SSTables counts a file's
+# bytes once it is over) the progress line says STALLED, and the run fails
+# only after cassandra_stream_stall_time seconds (a decommission or a move
+# goes by netstats only: raise both for very big SSTables). No overall limit
+# unless cassandra_stream_max_time is set (seconds, 0: none).
 cassandra_stream_check_interval: 30  # seconds
 cassandra_stream_early_check_interval: 10  # seconds
 cassandra_stream_early_time: 300  # seconds
-cassandra_stream_stall_time: 900  # seconds
+cassandra_stream_stall_warn_time: 300  # seconds
+cassandra_stream_stall_time: 1800  # seconds
 cassandra_stream_max_time: 0  # seconds, 0: no limit
 # add_node: the cleanup of the nodes that handed data over. none: print the
 # command; sequential: run it one node at a time (one: the same); rack, dc: a

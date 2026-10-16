@@ -78,6 +78,7 @@
         _cassandra_stream_operations: [Bootstrap]
         _cassandra_stream_from: ["{{ inventory_hostname }}"]
         _cassandra_stream_join: true
+        _cassandra_stream_disk: true  # it receives, and takes no other load yet
         _cassandra_stream_peers: >-
           {{ query('community.cassandra.cassandra_nodes')
              | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes | default(inventory_hostname)))

@@ -90,15 +90,40 @@
         _pwf: "{{ _h.cassandra_jmx_password_file | default(cassandra_jmx_password_file) }}"
         _pw: "{{ _h.cassandra_jmx_password | default(cassandra_jmx_password) }}"
 
+    # A node that receives (bootstrap, replace, rebuild: quiet otherwise), while bytes are left: the space used on
+    # the filesystems it writes the streams to (a stream of whole SSTables, zero-copy, counts a file's bytes only
+    # once it is over: a big file is being written meanwhile). Each filesystem once (its mount point)
+    - name: Read the space used where this node writes
+      ansible.builtin.shell: >-
+        df -P -B1 -- {{ _dirs | map('quote') | join(' ') }} 2>/dev/null
+        | awk 'NR > 1 && !seen[$6]++ {s += $3} END {if (s > 0) print s}'
+      register: cassandra_stream_disk
+      changed_when: false
+      failed_when: false  # a check without it
+      check_mode: false  # read-only
+      when:
+        - _cassandra_stream_disk | default(false) | bool
+        - _cassandra_stream_state.transferring | default(false) | bool
+        - _dirs | length > 0
+      vars:
+        _dirs: >-
+          {{ ([_cassandra_preflight.cassandra_data_file_directories | default(cassandra_data_file_directories
+                                                                              | default(['/var/lib/cassandra/data']))] | flatten
+              + [cassandra_commitlog_dir | default('/var/lib/cassandra/commitlog')]) | select | unique | list }}
+
     - name: Work out the progress
       ansible.builtin.set_fact:
         _cassandra_stream_state: >-
           {{ _views | community.cassandra.cassandra_stream_progress(_cassandra_stream_state | default({}),
                now=now().timestamp() | int, operations=_cassandra_stream_operations,
                peer=(_address if _blind else None), stall_time=cassandra_stream_stall_time | int,
+               warn_time=cassandra_stream_stall_warn_time | int, disk=_disk,
                interval=cassandra_stream_check_interval | int, early_interval=cassandra_stream_early_check_interval | int,
                early_time=cassandra_stream_early_time | int) }}
       vars:
+        # {this node: bytes used} when read at this check
+        _disk: >-
+          {{ {inventory_hostname: cassandra_stream_disk.stdout} if cassandra_stream_disk.stdout | default('') | length > 0 else {} }}
         _blind: "{{ _cassandra_stream_blind | bool }}"
         # the address the other nodes see this node by in their netstats
         _address: >-
