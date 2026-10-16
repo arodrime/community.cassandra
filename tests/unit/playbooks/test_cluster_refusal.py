@@ -26,19 +26,23 @@ b1
 [billing_dc1]
 b1
 """
+# the verdict line alone (red under the ops callback), then what to do: never a cluster to paste
 WAY_OUT = [
-    "  Name the one to run on:",
-    "    export CASSANDRA_CLUSTER=billing",
-    "  or add -e cassandra_hosts=billing to the command.",
+    "Name the one to run on:",
+    "  export CASSANDRA_CLUSTER=<cluster>",
+    "or add -e cassandra_hosts=<cluster> to the command.",
+    "Nothing was changed.",
 ]
-NONE_NAMED = ["====", "", "REFUSED  no cluster named: this inventory has 2 clusters: billing, orders"] + WAY_OUT
+GAP = ["", "----", ""]
+NONE_NAMED = ["====", "", "REFUSED  no cluster named: this inventory has 2 clusters: billing, orders"] + GAP + WAY_OUT
 
 
 def run(tmp_path, playbook, *args, **env_vars):
     (tmp_path / "inventory").write_text(INVENTORY)
     env = dict(os.environ, ANSIBLE_COLLECTIONS_PATH=COLLECTIONS, ANSIBLE_STDOUT_CALLBACK="community.cassandra.ops",
                ANSIBLE_NOCOLOR="1", ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_LOCALHOST_WARNING="0",
-               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_FORCE_COLOR="0", PWD=str(tmp_path), COLUMNS="80", **env_vars)
+               ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_FORCE_COLOR="0", PWD=str(tmp_path), COLUMNS="80")
+    env.update(env_vars)
     for name in ("ANSIBLE_CONFIG", "ANSIBLE_INVENTORY") + (() if "CASSANDRA_CLUSTER" in env_vars else ("CASSANDRA_CLUSTER",)):
         env.pop(name, None)
     argv = [sys.executable, "-c", "from ansible.cli.playbook import main; main()", "-i", "inventory", "-c", "local",
@@ -67,22 +71,31 @@ def test_empty_cassandra_hosts(tmp_path):
     rc, lines = run(tmp_path, "status", "-e", "cassandra_hosts=")
     assert rc != 0
     assert lines == ["====", "", "REFUSED  no cluster named (-e cassandra_hosts is empty): this inventory has 2 clusters:"
-                     " billing, orders"] + WAY_OUT
+                     " billing, orders"] + GAP + WAY_OUT
 
 
 def test_typo_in_cassandra_hosts(tmp_path):
     rc, lines = run(tmp_path, "status", "-e", "cassandra_hosts=ordrs")
     assert rc != 0
-    assert lines == ["====", "", "REFUSED  cassandra_hosts=ordrs: no group of that name in the inventory",
-                     "  Its groups: billing, billing_dc1, orders, orders_dc1",
-                     "  Name the cluster's group: -e cassandra_hosts=<group>"]
+    assert lines == ["====", "", "REFUSED  cassandra_hosts=ordrs: no group of that name in the inventory"] + GAP + [
+        "Its groups: billing, billing_dc1, orders, orders_dc1",
+        "Name the cluster's group: -e cassandra_hosts=<group>",
+        "Nothing was changed."]
 
 
 def test_unknown_cassandra_cluster(tmp_path):
     rc, lines = run(tmp_path, "status", CASSANDRA_CLUSTER="ordrs")
     assert rc != 0
     assert lines == ["====", "", "REFUSED  CASSANDRA_CLUSTER=ordrs: no group of that name with hosts, and no host with"
-                     " that cassandra_cluster_name", "  This inventory has 2 clusters: billing, orders"] + WAY_OUT
+                     " that cassandra_cluster_name"] + GAP + ["This inventory has 2 clusters: billing, orders."] + WAY_OUT
+
+
+def test_only_the_verdict_line_is_red(tmp_path):
+    rc, lines = run(tmp_path, "status", ANSIBLE_FORCE_COLOR="1", ANSIBLE_NOCOLOR="0")
+    assert rc != 0
+    red = [line for line in lines if "\x1b[0;31m" in line]
+    assert red == ["\x1b[0;31mREFUSED  no cluster named: this inventory has 2 clusters: billing, orders\x1b[0m"]
+    assert any("export CASSANDRA_CLUSTER=<cluster>" in line for line in lines)  # shown, not red
 
 
 def test_under_limit_the_hosts_fail_on_it(tmp_path):

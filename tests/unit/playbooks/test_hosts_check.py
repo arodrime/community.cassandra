@@ -58,9 +58,10 @@ def test_existing_group_passes():
 def test_missing_group_named_with_the_groups():
     passed, msg = check(cassandra_hosts="prd")
     assert passed is False
-    assert msg == ("REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n"
-                   "  Its groups: empty, prod\n"
-                   "  Name the cluster's group: -e cassandra_hosts=<group>")
+    assert msg == ("REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n\n"
+                   "Its groups: empty, prod\n"
+                   "Name the cluster's group: -e cassandra_hosts=<group>\n"
+                   "Nothing was changed.")
 
 
 def test_several_clusters_refused_with_the_way_out():
@@ -69,10 +70,11 @@ def test_several_clusters_refused_with_the_way_out():
               "billing": ["b1"], "billing_dc1": ["b1"]}
     passed, msg = check(groups=groups)
     assert passed is False
-    assert msg == ("REFUSED  no cluster named: this inventory has 2 clusters: billing, orders\n"
-                   "  Name the one to run on:\n"
-                   "    export CASSANDRA_CLUSTER=billing\n"
-                   "  or add -e cassandra_hosts=billing to the command.")
+    assert msg == ("REFUSED  no cluster named: this inventory has 2 clusters: billing, orders\n\n"
+                   "Name the one to run on:\n"
+                   "  export CASSANDRA_CLUSTER=<cluster>\n"
+                   "or add -e cassandra_hosts=<cluster> to the command.\n"
+                   "Nothing was changed.")
     assert check(groups=groups, cassandra_hosts="")[1].startswith(
         "REFUSED  no cluster named (-e cassandra_hosts is empty): this inventory has 2 clusters")
     assert check(groups=groups, cassandra_hosts="orders")[0] is True
@@ -109,14 +111,15 @@ def test_shows_the_group_and_where_it_comes_from(monkeypatch):
 
 def test_typo_refused_by_the_lookup_too():
     """Under --limit this play does not run: the lookup in the plays' hosts refuses the group."""
-    with pytest.raises(AnsibleError, match=r"REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n  Its groups: empty, prod\n"):
+    with pytest.raises(AnsibleError, match=r"REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n\nIts groups: empty, prod\n"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=GROUPS, cassandra_hosts="prd")
 
 
 def test_empty_group():
     passed, msg = check(cassandra_hosts="empty")
     assert passed is False and msg.startswith("REFUSED  cassandra_hosts=empty: that group has no host\n")
-    assert msg.endswith("\n  Add its hosts to the inventory, or name the cluster's group: -e cassandra_hosts=<group>")
+    assert msg.endswith("\nAdd its hosts to the inventory, or name the cluster's group: -e cassandra_hosts=<group>\n"
+                        "Nothing was changed.")
 
 
 @pytest.mark.parametrize("playbook", ["preflight.yml", "health_check.yml", "start_rack.yml", "status.yml"])

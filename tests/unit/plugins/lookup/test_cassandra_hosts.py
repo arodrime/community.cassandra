@@ -40,9 +40,9 @@ def test_given_wins():
 
 def test_given_unknown_fails():
     """A typo matches no host: under --limit the localhost check is skipped, every play would be too."""
-    with pytest.raises(ValueError, match=r"^REFUSED  cassandra_hosts=prdo: no group of that name in the inventory\n"
-                       r"  Its groups: prod, prod_dc1, prod_dc1_r1, prod_dc1_r2\n"
-                       r"  Name the cluster's group: -e cassandra_hosts=<group>$"):
+    with pytest.raises(ValueError, match=r"^REFUSED  cassandra_hosts=prdo: no group of that name in the inventory\n\n"
+                       r"Its groups: prod, prod_dc1, prod_dc1_r1, prod_dc1_r2\n"
+                       r"Name the cluster's group: -e cassandra_hosts=<group>\nNothing was changed\.$"):
         cluster_group("prdo", IMPORTED)
     with pytest.raises(ValueError, match="cassandra_hosts=ungrouped: that group has no host"):
         cluster_group("ungrouped", IMPORTED)
@@ -98,13 +98,13 @@ def test_same_hosts_without_a_common_name():
 ])
 def test_other_groups_refused(other):
     groups = dict({"all": ["n1", "n2", "m1", "b1", "x9"], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"]}, **other)
-    with pytest.raises(ValueError, match="^REFUSED  no cluster named: .*\n  Name the one to run on:\n"):
+    with pytest.raises(ValueError, match="^REFUSED  no cluster named: .*\n\nName the one to run on:\n"):
         cluster_group(None, groups)
 
 
 def test_several_clusters():
     groups = {"all": ["n1", "n2"], "orders": ["n1"], "orders_dc1": ["n1"], "users": ["n2"]}
-    with pytest.raises(ValueError, match=r"top groups of this inventory: orders, users\n  Name the one to run on:\n    export CASSANDRA_CLUSTER=orders\n"):
+    with pytest.raises(ValueError, match=r"top groups of this inventory: orders, users\n\nName the one to run on:\n  export CASSANDRA_CLUSTER=<cluster>\n"):
         cluster_group(None, groups)
 
 
@@ -150,13 +150,13 @@ def test_given_wins_over_env():
 
 
 def test_env_unknown():
-    with pytest.raises(ValueError, match=r"^REFUSED  CASSANDRA_CLUSTER=nope: no group .*\n  Top groups of this inventory: cluster_a, monitoring\n"):
+    with pytest.raises(ValueError, match=r"^REFUSED  CASSANDRA_CLUSTER=nope: no group .*\n\nTop groups of this inventory: cluster_a, monitoring\.\n"):
         cluster_group(None, TWO, "nope", NAMES.get)
 
 
 def test_env_cluster_name_of_several_groups():
     names = dict(NAMES, b1="Cluster A")  # two clusters with the same name
-    with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_a, cluster_b\)\n  Name the group instead:\n"):
+    with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_a, cluster_b\)\n\nName the group instead:\n"):
         cluster_group(None, TWO, "Cluster A", names.get)
     # its hosts in no group of their own
     with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_b\)"):
@@ -219,8 +219,8 @@ def test_lookup_error():
 
 TWO_CLUSTERS = {"all": ["o1", "b1"], "ungrouped": [], "orders": ["o1"], "orders_dc1": ["o1"], "orders_dc1_r1": ["o1"],
                 "billing": ["b1"], "billing_dc1": ["b1"]}
-WAY_OUT = ("  Name the one to run on:\n    export CASSANDRA_CLUSTER=billing\n"
-           "  or add -e cassandra_hosts=billing to the command.")
+WAY_OUT = ("\nName the one to run on:\n  export CASSANDRA_CLUSTER=<cluster>\n"
+           "or add -e cassandra_hosts=<cluster> to the command.\nNothing was changed.")
 
 
 @pytest.mark.parametrize("variables,env,refusal", [
@@ -228,18 +228,19 @@ WAY_OUT = ("  Name the one to run on:\n    export CASSANDRA_CLUSTER=billing\n"
     ({"cassandra_hosts": ""}, None,
      "REFUSED  no cluster named (-e cassandra_hosts is empty): this inventory has 2 clusters: billing, orders\n" + WAY_OUT),
     ({"cassandra_hosts": "ordres"}, None,
-     "REFUSED  cassandra_hosts=ordres: no group of that name in the inventory\n"
-     "  Its groups: billing, billing_dc1, orders, orders_dc1, orders_dc1_r1\n"
-     "  Name the cluster's group: -e cassandra_hosts=<group>"),
+     "REFUSED  cassandra_hosts=ordres: no group of that name in the inventory\n\n"
+     "Its groups: billing, billing_dc1, orders, orders_dc1, orders_dc1_r1\n"
+     "Name the cluster's group: -e cassandra_hosts=<group>\nNothing was changed."),
     ({"cassandra_hosts": ["orders"]}, None,
-     "REFUSED  cassandra_hosts must be a group name, not ['orders']\n  Name the cluster's group: -e cassandra_hosts=<group>"),
+     "REFUSED  cassandra_hosts must be a group name, not ['orders']\n\nName the cluster's group: -e cassandra_hosts=<group>\n"
+     "Nothing was changed."),
     ({}, "ordres",
      "REFUSED  CASSANDRA_CLUSTER=ordres: no group of that name with hosts, and no host with that cassandra_cluster_name\n"
-     "  This inventory has 2 clusters: billing, orders\n" + WAY_OUT),
+     "\nThis inventory has 2 clusters: billing, orders." + WAY_OUT),
     ({"hostvars": {"o1": {"cassandra_cluster_name": "Shop"}, "b1": {"cassandra_cluster_name": "Shop"}}}, "Shop",
      "REFUSED  CASSANDRA_CLUSTER=Shop: the hosts with that cassandra_cluster_name are not one group's"
-     " (groups: billing, orders)\n  Name the group instead:\n    export CASSANDRA_CLUSTER=<group>\n"
-     "  or add -e cassandra_hosts=<group> to the command."),
+     " (groups: billing, orders)\n\nName the group instead:\n  export CASSANDRA_CLUSTER=<group>\n"
+     "or add -e cassandra_hosts=<group> to the command.\nNothing was changed."),
 ])
 def test_refusal_returned_not_raised(monkeypatch, variables, env, refusal):
     """refusal=true: the block the lookup fails with, as its value (the localhost check stops on it)."""
