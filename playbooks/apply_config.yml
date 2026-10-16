@@ -213,8 +213,12 @@
         # the disk settings done in its restart window (cassandra_linux's disk tuning, Cassandra stopped)
         cassandra_apply_config_disks_window: "{{ _disks_window }}"
         # why it is restarted when not for its config alone (said with the restart, in the plan and the recap)
-        cassandra_apply_config_why: >-
-          {{ ((['time sync'] if _timesync | bool else []) + _disks_window | map(attribute='restart') | unique | list) | join(', ') }}
+        cassandra_apply_config_why: "{{ _os_why }}"
+        # (said in the plan and the recap: that, else the JMX access file alone, read at start)
+        cassandra_apply_config_restart_why: >-
+          {{ _os_why or ('jmxremote.access: read at start'
+             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
+                and not _pending | bool else '') }}
         cassandra_apply_config_os_window_only: >-
           {{ (_timesync | bool or _disks_window | length > 0)
              and not ((_files + _perms + _dirs + _jmx) | length > 0 or _pending | bool or _stopped | bool) }}
@@ -311,6 +315,8 @@
         # what the role leaves to the restart of a running Cassandra (its tuned profile, the LVM read-ahead): in its
         # restart window
         _disks_window: "{{ _os | selectattr('restart', 'defined') | list if _running | bool else [] }}"
+        _os_why: >-
+          {{ ((['time sync'] if _timesync | bool else []) + _disks_window | map(attribute='restart') | unique | list) | join(', ') }}
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         # Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone: read at
@@ -492,7 +498,7 @@
           {%-   set v = hostvars[h] -%}
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                    'why': v.cassandra_apply_config_why | default(''),
+                                    'why': v.cassandra_apply_config_restart_why | default(''),
                                     'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('nothing to apply'),
                                     'notes': v.cassandra_apply_config_notes | default([]),
@@ -846,7 +852,7 @@
           {%-   set v = hostvars[h] -%}
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                    'why': v.cassandra_apply_config_why | default(''),
+                                    'why': v.cassandra_apply_config_restart_why | default(''),
                                     'os_done': v.cassandra_apply_config_os_done | default(false),
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all

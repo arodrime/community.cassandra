@@ -287,7 +287,8 @@ def jmx_apply(role):
     facts = set_facts(find(FIND["tasks"], "Note what this node needs"), note)
     nodes = [{"name": "n1", "todo": False, "then": "none", "result": "nothing to apply", "notes": []},
              {"name": "n2", "todo": facts["cassandra_apply_config_todo"] in (True, "True"), "then": facts["cassandra_apply_config_then"],
-              "result": "nothing to apply", "notes": facts["cassandra_apply_config_notes"], "kept_running": facts["cassandra_apply_config_kept_running"]}]
+              "result": "nothing to apply", "notes": facts["cassandra_apply_config_notes"], "kept_running": facts["cassandra_apply_config_kept_running"],
+              "why": facts["cassandra_apply_config_restart_why"]}]
     view = cassandra_apply_config_diff([
         {"name": "n1", "items": [], "live": [], "stats": [], "dir_stats": []},
         {"name": "n2", "items": role["_cassandra_config_items"], "live": [], "stats": role["cassandra_config_live_stat"]["results"],
@@ -312,7 +313,7 @@ def test_a_deleted_jmx_file_is_shown_and_written_back(tmp_path, deleted, initial
     # Cassandra has are not known to be these
     assert facts["cassandra_apply_config_then"] == {"password": "none", "access": "restart"}[deleted]
     assert plan == ["n2  will apply, %s" % {"password": "no restart (jmxremote.password: read at each JMX login)",
-                                             "access": "then restart"}[deleted], "n1  nothing to apply"]
+                                             "access": "then restart (jmxremote.access: read at start)"}[deleted], "n1  nothing to apply"]
     # the view: the file, absent on n2, written whole (never its content)
     assert view == ["jmxremote." + deleted, "  file: absent   n2   %s differs (written whole)" % "←"]
     if deleted == "access":  # local JMX logs in no one: its rights change nothing
@@ -386,7 +387,7 @@ def test_other_jmx_rights_restart_the_node(tmp_path):
     assert role["written"] == ["password", "access"]
     facts, plan, view = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "restart"
-    assert plan == ["n2  will apply, then restart", "n1  nothing to apply"]
+    assert plan == ["n2  will apply, then restart (jmxremote.access: read at start)", "n1  nothing to apply"]
     assert view == ["jmxremote.password", "  file: other users or rights   n2   %s differs (written whole)" % "←",
                     "jmxremote.access", "  file: other users or rights   n2   %s differs (written whole)" % "←"]
     assert not [line for line in view if "s3cret" in line or "ops " in line]  # no content shown

@@ -35,9 +35,8 @@
         _cassandra_variables_check_renamed: false  # it reads neither the former names nor their name now
       tags: [always]  # under --tags too
 
-    # Without -e cassandra_hosts=<group> (nor CASSANDRA_CLUSTER, nor the group
-    # the lookup cassandra_hosts finds: cassandra, else the inventory's only
-    # cluster group): every top group, one per cluster.
+    # The cluster as the operations pick it (-e cassandra_hosts, CASSANDRA_CLUSTER, else the inventory's only
+    # cluster); none named on an inventory of several: the operations for any cluster (CLUSTER_GROUP).
     # -e help_inventory=<path> reads that inventory instead of the run's.
     # Nothing decrypted, even with the vault password: vault-encrypted vars
     # files skipped (named in the advice), inline vaulted values shown as

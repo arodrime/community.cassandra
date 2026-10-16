@@ -615,7 +615,7 @@ def test_the_restart_reasons_named_in_the_plan_and_the_recap():
     assert "n1  applied, restarted (LVM read-ahead, tuned profile)" in "\n".join(cassandra_apply_config_recap(done))
     for play in ("Find what each node needs", "Summary"):
         text = str(PLAYS[NAMES.index(play)])
-        assert "'why': v.cassandra_apply_config_why | default('')" in text, play
+        assert "'why': v.cassandra_apply_config_restart_why | default('')" in text, play
 
 
 def test_a_refusal_for_a_node_down_names_the_opt_outs_for_a_disk_restart():
