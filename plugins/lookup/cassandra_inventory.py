@@ -242,7 +242,8 @@ def read(sources, given=None, basedir=None, env=None):
             read_hosts = [read_host(h) for h in inventory.groups[group].get_hosts()]
             vaulted = vaulted or any(masked for dummy, masked in read_hosts)
             listed.append(line(group, None, [h for h, dummy in read_hosts]))
-        model.update(unnamed=str(exc), found=listed, others=other_groups(groups, clusters), clusters=[], imported=[],
+        verdict = str(exc).split("\n")[0].replace("REFUSED  ", "", 1)  # (its way out: help's own words)
+        model.update(unnamed=verdict[:1].upper() + verdict[1:] + ".", found=listed, others=other_groups(groups, clusters), clusters=[], imported=[],
                      banner="")
     else:
         model["env_cluster"] = name if env and not given else ""

@@ -91,6 +91,8 @@ DEFAULT = "cassandra"
 BY_GIVEN = "-e cassandra_hosts"
 BY_ENV = "%s (environment)" % ENV
 BY_ONLY = "the only cluster in the inventory"
+# an empty -e cassandra_hosts=: refused, even on an inventory of one cluster
+EMPTY = "Give the cluster's group, -e cassandra_hosts=<group>, or leave -e cassandra_hosts out"
 NAME_ONE = "-e cassandra_hosts=<group>, or %s=<group or cluster name> in your shell" % ENV
 
 # groups the playbooks make with group_by/add_host while they run: never the
@@ -282,8 +284,8 @@ def banner(group, why, nodes, dcs, absent=0):
 def not_given(given, loader, inventory=False):
     """Why a cassandra_hosts is refused (None when it is not): from the inventory (group_vars, host_vars:
     inventory, not -e), the plays' hosts would not see it, the play running on another group than its tasks
-    name (a playbook's vars, an import_playbook's, reach them: taken); an empty -e one would leave the cluster
-    to CASSANDRA_CLUSTER or the inventory unsaid. Only under ansible-playbook (its command line known)."""
+    name (a playbook's vars, an import_playbook's, reach them: taken). Only under ansible-playbook (its command
+    line known); an empty -e one (EMPTY) would leave the cluster to CASSANDRA_CLUSTER or the inventory unsaid."""
     if given is None or not context.CLIARGS.get("args"):
         return None
     extra = load_extra_vars(loader)
@@ -291,7 +293,7 @@ def not_given(given, loader, inventory=False):
         return ("cassandra_hosts is set in the inventory (%s, group_vars or host_vars): the plays' hosts do not see it."
                 " Give it on the command line, -e cassandra_hosts=%s, or %s=%s in your shell." % (given, given, ENV, given))
     if not given and "cassandra_hosts" in extra:
-        return "cassandra_hosts is empty (-e cassandra_hosts=): give a group, or leave it out."
+        return EMPTY
     return None
 
 
@@ -333,6 +335,9 @@ class LookupModule(LookupBase):
 
         groups = dict(variables.get("groups") or {})
         try:
+            if refused == EMPTY:  # said with the clusters found, as when none is named
+                picked("", groups, None, None)  # (several: refused, "(-e cassandra_hosts is empty)" in it)
+                raise ValueError(_block("no cluster named (-e cassandra_hosts is empty)", EMPTY + "."))
             if refused:
                 raise ValueError(_block(refused))
             group, why = picked(given, groups, os.environ.get(ENV), lambda host: read(host, "cassandra_cluster_name"))

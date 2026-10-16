@@ -106,7 +106,7 @@ def test_no_b_with_or_without_become(tmp_path):
 
 
 def test_given_group_missing(tmp_path):
-    assert read([inventory(tmp_path)], given="prod")["refusal"].startswith("cassandra_hosts: group 'prod' not found")
+    assert read([inventory(tmp_path)], given="prod")["refusal"].startswith("REFUSED  cassandra_hosts=prod: no group of that name")
 
 
 def test_several_clusters(tmp_path):
@@ -115,13 +115,11 @@ def test_several_clusters(tmp_path):
     source = inventory(tmp_path, hosts=hosts)
     model = read([source])
     assert "refusal" not in model and model["clusters"] == [] and model["banner"] == ""
-    assert model["unnamed"] == ("No cluster named, and the inventory is not the cluster orders alone (other groups:"
-                                " billing). Name one: -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster"
-                                " name> in your shell.")
+    assert model["unnamed"] == "No cluster named: the inventory is not the cluster orders alone (other groups: billing)."
     assert model["found"] == ["orders (2 nodes, dc1)"] and model["others"] == ["billing"]
     assert model["options"] == [] and model["sources"] == [source]
     # named, or refused when the name is wrong: as the playbooks
-    assert read([source], given="nope")["refusal"].startswith("cassandra_hosts: group 'nope' not found")
+    assert read([source], given="nope")["refusal"].startswith("REFUSED  cassandra_hosts=nope: no group of that name")
     model = read([source], given="billing")
     assert model["auto"] == ""
     assert [c["name"] for c in model["clusters"]] == ["billing"]
@@ -139,7 +137,7 @@ def test_cluster_from_the_environment(tmp_path):
     assert [c["name"] for c in read([source], env="Billing")["clusters"]] == ["billing"]
     assert [c["name"] for c in read([source], env="billing")["clusters"]] == ["billing"]
     assert read([source], given="orders", env="Billing")["refusal"].startswith(
-        "-e cassandra_hosts=orders and CASSANDRA_CLUSTER=Billing (from your shell) disagree")
+        "REFUSED  -e cassandra_hosts=orders and CASSANDRA_CLUSTER=Billing (from your shell) disagree")
     assert [c["name"] for c in read([source], given="orders", env="Orders")["clusters"]] == ["orders"]
     assert read([source], env="Billing")["auto"] == ""  # RUNBOOK.md's commands still name the group
     # the screen's do not: the playbooks take it from CASSANDRA_CLUSTER
@@ -147,7 +145,7 @@ def test_cluster_from_the_environment(tmp_path):
     assert read([source], given="orders", env="Orders")["env_cluster"] == ""
     assert read([source], given="orders")["env_cluster"] == ""
     assert isinstance(read([source], env="Orders")["default_sources"], list)  # the configuration's inventory: no -i
-    assert read([source], env="Nope")["refusal"].startswith("CASSANDRA_CLUSTER=Nope: no group")
+    assert read([source], env="Nope")["refusal"].startswith("REFUSED  CASSANDRA_CLUSTER=Nope: no group")
 
 
 def test_current_dir_group_vars_not_read(tmp_path, monkeypatch):
@@ -226,7 +224,7 @@ def test_transformed_vault_value_masked(tmp_path):
 
 def test_empty_group(tmp_path):
     hosts = HOSTS + "    empty:\n      hosts: {}\n"
-    assert read([inventory(tmp_path, hosts=hosts)], given="empty")["refusal"].startswith("cassandra_hosts: group 'empty' has no host")
+    assert read([inventory(tmp_path, hosts=hosts)], given="empty")["refusal"].startswith("REFUSED  cassandra_hosts=empty: that group has no host")
 
 
 def test_random_value_not_taken_for_a_vaulted_one(tmp_path):
@@ -240,4 +238,4 @@ def test_a_lone_group_none_named(tmp_path):
     model = read([source])
     assert model["clusters"] == [] and model["found"] == [] and model["others"] == ["cassandra"]
     assert "holds no cluster laid out as the import writes it" in model["unnamed"]
-    assert model["unnamed"].endswith("A group cassandra is not taken by default: -e cassandra_hosts=cassandra names it.")
+    assert model["unnamed"].startswith("No cluster named: the inventory holds no cluster laid out as the import writes it")

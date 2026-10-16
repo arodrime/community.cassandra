@@ -27,7 +27,7 @@
 # the lookup's own refusal (a group not in the inventory, several clusters and none named, an unknown
 # CASSANDRA_CLUSTER...), the plays after never reached: in their hosts, the lookup can only fail with a
 # raw Ansible error (under --limit, where this play does not run)
-- name: The cluster's group is in the inventory
+- name: The cluster is named, or the inventory holds one
   ansible.builtin.assert:
     that: _refusal | length == 0
     fail_msg: "{{ _refusal }}"
