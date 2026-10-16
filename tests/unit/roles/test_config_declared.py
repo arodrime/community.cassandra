@@ -293,6 +293,15 @@ def test_reset_node_empties_the_cdc_raw_dir(changes, cdc_raw):
     assert [d for kind, d in dirs if kind == "cdc_raw"] == cdc_raw
 
 
+def test_the_data_dirs_the_node_uses_rendered_whole():
+    # the list of the inventory's dirs is the filter's input as a whole (a filter binds tighter than +)
+    task = next(t for t in RESET_PLAN if t.get("name") == "Work out its Cassandra directories")
+    variables = dict(series_vars("50x"), cassandra_data_file_directories=["/srv/a", "/srv/b"], _live="",
+                     _extra={"local_system_data_file_directory": "/srv/sys"}, cassandra_conf_dir="/etc/cassandra")
+    dirs = render(task["ansible.builtin.set_fact"]["_cassandra_node_standing_data_dirs"], **variables)
+    assert dirs["own"] == ["/srv/a", "/srv/b", "/srv/sys"] and "/var/lib/cassandra/data" in dirs["elsewhere"]
+
+
 def test_add_datacenter_rewrites_the_config_without_auto_bootstrap():
     # the last write rewrites the files: no auto_bootstrap false left
     plays = load("playbooks", "add_datacenter.yml")

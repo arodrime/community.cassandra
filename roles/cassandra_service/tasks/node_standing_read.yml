@@ -70,7 +70,7 @@
     _cassandra_node_reset_listed: "{{ _inventory | community.cassandra.cassandra_node_reset_dirs(_live, _mounts, _protected) }}"
     # the data directories its config uses, and the usual ones it does not (a system keyspace left there)
     _cassandra_node_standing_data_dirs: >-
-      {{ [cassandra_data_file_directories] | flatten + [_extra.local_system_data_file_directory | default('', true) | string]
+      {{ ([cassandra_data_file_directories] | flatten + [_extra.local_system_data_file_directory | default('', true) | string])
          | community.cassandra.cassandra_node_data_dirs(_live, usual=[cassandra_data_dir | default('/var/lib/cassandra/data'),
              (cassandra_conf_dir | regex_replace('(?<=.)/+$', '') | dirname) ~ '/data/data']) }}
   no_log: true  # the live file's text is in the vars
