@@ -1240,7 +1240,7 @@ def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
     (tmp_path / "hosts.yml").write_text(HELP_INVENTORY + "other:\n  children:\n    other_dc1:\n      hosts:\n        node9:\n")
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0, output
-    plain = " ".join(output.split())
+    plain = " ".join(output.replace(" \\\n", " ").split())  # (a command cut between its arguments: joined)
     assert "Clusters found: cassandra (3 nodes, dc1), other (1 node, dc1)" in plain, output
     assert "The help of one cluster: -e cassandra_hosts=CLUSTER_GROUP, or CASSANDRA_CLUSTER=<group or cluster name>" in plain
     assert "$ ansible-playbook -i hosts.yml community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in plain, output

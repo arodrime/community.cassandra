@@ -215,8 +215,8 @@ OPERATIONS = [
                  ("-e import_cluster_force=true", "re-import over this cluster's files", "false"),
                  ("-e import_cluster_adopt=true", "adopts an earlier import's files", "false"),
                  ("-e import_cluster_allow_unread=true", "accepts unread ring nodes", "false"),
-                 ("-e import_cluster_keep_hand_edits=true", "keeps hand-edited config files (or =<names>)", "false"),
-                 ("-e import_cluster_keep_unread_jvm_options=true", "imports the options of a jvm<N> file its Java skips",
+                 ("-e import_cluster_keep_hand_edits=true", "keeps hand-edited files (=<names>)", "false"),
+                 ("-e import_cluster_keep_unread_jvm_options=true", "imports unread jvm<N> options",
                   "false")]},
 ]
 # an option's text and its default on one line from column 46 at 98 columns (a terminal of 100)

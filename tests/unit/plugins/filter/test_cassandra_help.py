@@ -340,9 +340,9 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
         -e import_cluster_adopt=true          adopts an earlier import's files (default: false)
         -e import_cluster_allow_unread=true   accepts unread ring nodes (default: false)
         -e import_cluster_keep_hand_edits=true
-                                              keeps hand-edited config files (or =<names>) (default: false)
+                                              keeps hand-edited files (=<names>) (default: false)
         -e import_cluster_keep_unread_jvm_options=true
-                                              imports the options of a jvm<N> file its Java skips (default: false)
+                                              imports unread jvm<N> options (default: false)
 
 ==== Advice ========================================================================================
 
@@ -1159,17 +1159,17 @@ def test_no_cluster_named_the_help_of_any():
     model = {"sources": ["inventories"], "auto": "", "env_cluster": "", "clusters": [], "imported": [], "options": [],
              "vault_skipped": [], "unnamed": "No cluster named...", "found": ["orders (3 nodes, dc1)", "billing (2 nodes, eu)"],
              "others": ["monitoring"], "banner": ""}
-    text = " ".join(cassandra_help(model, cwd="/").split())
+    text = " ".join(cassandra_help(model, cwd="/", cut=False).split())
     assert "Clusters found: orders (3 nodes, dc1), billing (2 nodes, eu) Other groups: monitoring" in text
     assert "community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in text
     assert "community.cassandra.stop_rack -e cassandra_hosts=CLUSTER_GROUP -e cassandra_target_dc=DC -e cassandra_target_rack=RACK" in text
     assert "ansible-playbook -i NODE, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR" in text
     assert "Name the cluster for the advice of its inventory." in text
     assert "Not for this cluster" not in text
-    topic = " ".join(cassandra_help(model, topic="decommission_node", cwd="/").split())
+    topic = " ".join(cassandra_help(model, topic="decommission_node", cwd="/", cut=False).split())
     assert "community.cassandra.decommission_node -e cassandra_hosts=CLUSTER_GROUP" in topic
     assert "CLUSTER_GROUP" in topic and "Replace" in topic
     assert "No cluster named..." in text  # the playbooks' reason, as is
-    imported = " ".join(cassandra_help(model, topic="import_cluster", cwd="/").split())
+    imported = " ".join(cassandra_help(model, topic="import_cluster", cwd="/", cut=False).split())
     assert "Replace NEW_DIR, NODE with your own values." in imported
     assert "CLUSTER_GROUP" in cassandra_help(model, markdown=True, cwd="/", runbook_dir="/")
