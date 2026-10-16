@@ -58,6 +58,20 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
 
+    # RUNBOOK.md is one cluster's: the help of any cluster written there would replace it (a shared dir)
+    - name: RUNBOOK.md for a cluster named
+      ansible.builtin.assert:
+        that: not help_write | default(false) | bool or _cassandra_help_model.unnamed is not defined
+        fail_msg: >-
+          help_write: no cluster named, and the inventory is not one cluster: RUNBOOK.md is one cluster's (in a dir
+          shared by several, the help of any cluster would replace a cluster's RUNBOOK.md). Name the cluster:
+          -e cassandra_hosts=<group> -e help_write=true (-e help_runbook_dir=<dir> for a dir of its own), or run help
+          without help_write for the help of any cluster. Nothing was written.
+        quiet: true
+      run_once: true  # its msg as is, not "localhost: ..." (ops callback)
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+
     - name: Say which cluster the help is for
       ansible.builtin.debug:
         msg: "{{ _cassandra_help_model.banner }}"

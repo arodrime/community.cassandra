@@ -312,7 +312,7 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
 None named on an inventory that is not one cluster (a shared ``inventories`` directory), ``help`` shows the
 operations for any cluster, ``CLUSTER_GROUP`` (and ``DC``, ``RACK``, ``NODE``) in their commands, the clusters it
 found (``orders (3 nodes, dc1)``) and how to name one, and nothing of one cluster's inventory (its nodes, the
-advice).
+advice). ``-e help_write=true`` is refused then: ``RUNBOOK.md`` is one cluster's (name it).
 
 .. code-block:: console
 
