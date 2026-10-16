@@ -220,8 +220,10 @@ def test_help_picks_the_cluster_by_the_same_rule():
     said = tasks[names.index("Say which cluster the help is for")]
     assert refusal["ansible.builtin.assert"]["that"] == "_cassandra_help_model.refusal is not defined"
     assert refusal["vars"]["cassandra_output"] is True and said["vars"]["cassandra_output"] is True
-    assert names.index("Read the inventory") < names.index(refusal["name"]) < names.index(said["name"]) \
-        < names.index("Show the help")
+    written = tasks[names.index("RUNBOOK.md for a cluster named")]
+    assert names.index("Read the inventory") < names.index(refusal["name"]) < names.index(written["name"]) \
+        < names.index(said["name"]) < names.index("Show the help") < names.index("Write RUNBOOK.md next to the inventory")
+    assert written["run_once"] is True and written["vars"]["cassandra_output"] is True
 
 
 def test_import_cluster_refuses_two_names(monkeypatch, tmp_path):

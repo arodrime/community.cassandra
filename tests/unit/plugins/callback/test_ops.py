@@ -1246,6 +1246,14 @@ def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
     assert "$ ansible-playbook -i hosts.yml community.cassandra.rolling_restart -e cassandra_hosts=CLUSTER_GROUP" in plain, output
     assert "Name the cluster for the advice of its inventory." in plain
     assert "CLUSTER " not in output and "node1" not in output and "Traceback" not in output
+    # RUNBOOK.md is one cluster's: refused, nothing written
+    rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "help_write=true",
+                     INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc != 0 and output.strip().startswith("help_write: no cluster named, and the inventory is not one cluster:"), output
+    assert output.strip().endswith("Nothing was written.") and not (tmp_path / "RUNBOOK.md").exists()
+    rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "help_write=true",
+                     "-e", "cassandra_hosts=other", INVENTORY=str(tmp_path / "hosts.yml"))
+    assert rc == 0 and (tmp_path / "RUNBOOK.md").exists(), output
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=other",
                      INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0 and output.split("\n")[0] == "CLUSTER other (1 node, dc1) | chosen by: -e cassandra_hosts", output
