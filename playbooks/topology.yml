@@ -1,53 +1,18 @@
 ---
-# Makes the ring match the inventory, which is the desired state:
-#   ansible-playbook -i inventory community.cassandra.topology --check   (the plan only)
-#   ansible-playbook -i inventory community.cassandra.topology
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# - A host of the cluster's group (its rack group) that is not in the ring is
-#   added, as add_node adds it (its checks, cassandra_add_node_reset, one
-#   token per node: cassandra_initial_token or cassandra_token_auto=bisect or
-#   balanced).
-#   A host to add listed in cassandra_seeds joins as a regular node (a seed
-#   does not bootstrap), and becomes a seed at the seed step.
-# - The seeds: when cassandra_seeds differs from the seed lists the nodes run
-#   with, it is applied on every node, live (as change_seeds does: the seeds
-#   line of cassandra.yaml written and reloaded, no restart), once the adds are
-#   done and before the removals.
-# - A host marked cassandra_node_state: absent (a host var, or a group var)
-#   that is still in the ring is removed, as decommission_node removes it
-#   (refused: one still in cassandra_seeds, take it out of the list, the seed
-#   step then drops it before it leaves; a datacenter left with fewer nodes than
-#   a keyspace has replicas there, unless cassandra_decommission_force). Once it
-#   is out, every playbook leaves it out: delete its lines from the inventory,
-#   or leave them. A host marked absent, out of the ring and stopped: nothing to do.
-# - A node of the ring no host of the inventory has is never touched: it is
-#   reported (a mistyped address, a host missing, a dead node to remove with
-#   remove_dead_node), and stops a plan with something to do.
-# One node at a time, the adds first (the cluster never has fewer nodes than
-# it ends with), then the seeds, then the removals; the cluster is checked
-# before and after each node, the run stops at the first problem. One plan
-# screen (the steps in that order, each node with its dc/rack; each
-# datacenter once done; the WARNING lines right above the question: the seeds
-# changing on every node, more than half of a datacenter removed...), one
-# question; --check shows the same plan and changes nothing; nothing to do:
-# says so, changes nothing.
-# Refused before anything changes: a --limit that leaves out a host of the
-# group (the plan needs them all), a datacenter that still has nodes after the
-# run left with no seed and none of them up (with nodes up, it gets seeds of
-# its own in the seed step, with a WARNING, and the end gives the
-# cassandra_seeds line to put in the inventory), an add while a decommission
-# is still running, two hosts with one address (absent or not), a node that does not answer, one
-# token per node with adds and removals in one run, cassandra_target_nodes
-# given (the plan says which nodes). No cap on the number of removals. The
-# cleanup of the nodes that handed data over to the new ones is left to you
-# (its command is printed).
-# Interrupted: run it again (cassandra_rolling_resume=true or not), the plan is
-# worked out again from the ring: a bootstrap or a decommission still running
-# is waited for, a node done is no longer in the plan.
+# Make the ring match the inventory: the inventory is the desired state.
+#
+#   ansible-playbook community.cassandra.topology --check
+#   ansible-playbook community.cassandra.topology
+#
+# Hosts of the cluster's group not in the ring are added (as add_node does),
+# cassandra_seeds is applied live, hosts marked cassandra_node_state: absent
+# are removed (as decommission_node does). A ring node the inventory lacks is
+# reported, never touched.
+#
+# One plan screen, one question; one node at a time, adds first, then seeds,
+# then removals; --check shows the plan only. Re-running is safe.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=topology
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -122,6 +87,9 @@
       when: not _cassandra_topology_reachable | bool
       ignore_errors: true  # an address templated from facts it does not have: unknown, the plan says so
 
+# Interrupted: run it again (cassandra_rolling_resume=true or not), the plan is
+# worked out again from the ring: a bootstrap or a decommission still running
+# is waited for, a node done is no longer in the plan.
 - name: Work out the plan and confirm it
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
@@ -279,6 +247,9 @@
           vars:
             _msg: "{{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}"
 
+    # A node of the ring no host of the inventory has is never touched: it is
+    # reported (a mistyped address, a host missing, a dead node to remove with
+    # remove_dead_node), and stops a plan with something to do.
     - name: Work out the plan
       ansible.builtin.set_fact:
         cassandra_topology_plan: >-
@@ -342,6 +313,15 @@
       run_once: true
       when: _tp_todo | bool
 
+    # Refused before anything changes (here and in the checks above): a --limit that
+    # leaves out a host of the group (the plan needs them all), a datacenter that
+    # still has nodes after the run left with no seed and none of them up (with
+    # nodes up, it gets seeds of its own in the seed step, with a WARNING, and the
+    # end gives the cassandra_seeds line to put in the inventory), an add while a
+    # decommission is still running, two hosts with one address (absent or not), a
+    # node that does not answer, one token per node with adds and removals in one
+    # run, cassandra_target_nodes given (the plan says which nodes). No cap on the
+    # number of removals.
     - name: Refuse a plan that can't be done
       ansible.builtin.assert:
         that: _tp_problems | length == 0
@@ -392,6 +372,13 @@
         cassandra_output: true
         cassandra_output_gap: true  # a block of its own (ops callback)
 
+    # One node at a time, the adds first (the cluster never has fewer nodes than it
+    # ends with), then the seeds, then the removals; the cluster is checked before
+    # and after each node, the run stops at the first problem. One plan screen (the
+    # steps in that order, each node with its dc/rack; each datacenter once done;
+    # the WARNING lines right above the question: the seeds changing on every node,
+    # more than half of a datacenter removed...), one question; --check shows the
+    # same plan and changes nothing; nothing to do: says so, changes nothing.
     - name: Show the plan
       ansible.builtin.debug:
         msg: >-
@@ -457,7 +444,12 @@
 
 # Each step as its playbook does it, without its preflight (done above) nor its
 # question (asked above); the plan showed its details (a step prints only its
-# own tables: the tokens of the new nodes)
+# own tables: the tokens of the new nodes).
+# A host of the cluster's group (its rack group) that is not in the ring is
+# added as add_node adds it (its checks, cassandra_add_node_reset, one token
+# per node: cassandra_initial_token or cassandra_token_auto=bisect or balanced).
+# A host to add listed in cassandra_seeds joins as a regular node (a seed does
+# not bootstrap), and becomes a seed at the seed step.
 - name: Add the nodes
   ansible.builtin.import_playbook: community.cassandra.add_node
   vars:
@@ -473,7 +465,9 @@
     cassandra_service_resume_hint: "Once fixed, run topology again: it works out what is left to do."
 
 # cassandra_seeds on every node, as change_seeds applies it: after the adds (a
-# new seed is up now), before the removals (the nodes stop listing a leaving seed)
+# new seed is up now), before the removals (the nodes stop listing a leaving seed).
+# When cassandra_seeds differs from the seed lists the nodes run with: the seeds
+# line of cassandra.yaml written and reloaded, live, no restart.
 - name: Change the seeds
   hosts: "{{ groups['cassandra_topology_seeds'] | default([]) }}"
   gather_facts: false
@@ -503,6 +497,13 @@
         # with the seeds picked for a datacenter cassandra_seeds leaves with none
         cassandra_seeds: "{{ cassandra_topology_plan.seeds.new }}"
 
+# A host marked cassandra_node_state: absent (a host var, or a group var) that is
+# still in the ring is removed as decommission_node removes it (refused: one still
+# in cassandra_seeds, take it out of the list, the seed step then drops it before
+# it leaves; a datacenter left with fewer nodes than a keyspace has replicas
+# there, unless cassandra_decommission_force). Once it is out, every playbook
+# leaves it out: delete its lines from the inventory, or leave them. A host
+# marked absent, out of the ring and stopped: nothing to do.
 - name: Remove the nodes
   ansible.builtin.import_playbook: community.cassandra.decommission_node
   vars:
@@ -513,6 +514,8 @@
     _cassandra_progress_resume: false  # the plan is worked out again at each run
     cassandra_service_resume_hint: "Once fixed, run topology again: it works out what is left to do."
 
+# The cleanup of the nodes that handed data over to the new ones is left to you:
+# its command is printed.
 - name: Say what is left to do
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false

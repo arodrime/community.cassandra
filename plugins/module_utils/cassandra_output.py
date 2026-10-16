@@ -14,7 +14,7 @@ docs/docsite/rst/guide_output.rst.
 - a setting and its value per node: setting_lines, settings_lines (several,
   aligned, wrapped in a width: wrap_value, wrap_list), setting_rows, by_nodes;
   lines fit in a terminal's width: fit; laid out at the width where they are
-  printed: flow, laid_out (the help text);
+  printed: flow, command_flow, laid_out (the help text);
 - before a change: plan; while new nodes are prepared: prepare_lines,
   left_system_warning; during it: progress_line,
   peer_lines; at the end: recap,
@@ -703,13 +703,80 @@ def flow(hang, text, key=None):
     return u"%s%d%s%s%s%s" % (FLOW, hang, FLOW, one(key), FLOW, one(text))
 
 
+# a command to paste, "\x1f$<indent>\x1f<command>": "<indent>$ <command>", cut between its arguments
+_COMMAND = re.compile(u"\x1f\\$(\\d+)\x1f(.*)$", re.S)
+# the options that take the next word as their value: never cut between the two
+_VALUED = ("-i", "--inventory", "-e", "--extra-vars", "-u", "--user", "-l", "--limit", "--vault-id",
+           "--vault-password-file", "--private-key", "-t", "--tags", "--skip-tags", "-f", "--forks", "-c",
+           "--connection", "-T", "--timeout", "--become-user", "--start-at-task", "--ssh-common-args")
+
+
+def command_flow(indent, text):
+    """A command line that laid_out lays out at the width of the screen:
+    "<indent>$ <text>" on one line when it fits, else cut between two
+    arguments (an option and its value kept together), each line but the last
+    ending with " \\" (the shell's continuation: it pastes as one command),
+    the next ones 4 columns further in."""
+    return u"%s$%d%s%s" % (FLOW, len(indent), FLOW, re.sub(u"[\x1f\r\n]", " ", text))
+
+
+def command_words(text):
+    """The arguments of a command as written (its quotes kept), an option and
+    its value as one: "-e x=y", "-i inventory.yml"."""
+    words, word, quote, escaped = [], "", "", False
+    for char in text:
+        if escaped:  # a character after a backslash: as it is
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char in " \t":
+            if word:
+                words.append(word)
+            word = ""
+            continue
+        word += char
+    words += [word] if word else []
+    out = []
+    for word in words:
+        if out and out[-1] in _VALUED and not word.startswith("-"):
+            out[-1] += " " + word
+        else:
+            out.append(word)
+    return out
+
+
+def is_command(line):
+    """Whether a line is a command of command_flow (each of its lines printed as a command)."""
+    return _COMMAND.match(line) is not None
+
+
+def _command_lines(indent, text, width):
+    first, rest = " " * indent + "$ ", " " * (indent + 4)
+    lines, line = [], first
+    words = command_words(text)
+    for i, word in enumerate(words):
+        # room for " \\" after it, but after the last one
+        if line not in (first, rest) and len(line) + 1 + len(word) + (2 if i < len(words) - 1 else 0) > width:
+            lines.append(line + " \\")
+            line = rest
+        line += ("" if line in (first, rest) else " ") + word
+    return lines + [line]
+
+
 def laid_out(line, width):
     """(lines, key): a line of flow wrapped at width, between words only (a
     word longer than the room stays whole); key: the key starting its first
     line ("" for none). A key longer than its column has a line of its own;
     with less than NARROW columns right of the column (or than a word of the
-    text), the text goes under the key, 4 columns in. Any other line as it
-    is."""
+    text), the text goes under the key, 4 columns in. A command of
+    command_flow cut between its arguments. Any other line as it is."""
+    command = _COMMAND.match(line)
+    if command:
+        return _command_lines(int(command.group(1)), command.group(2), width), ""
     found = _FLOWED.match(line)
     if not found:
         return [line], ""

@@ -120,7 +120,8 @@ from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 from ansible import constants as C
 from ansible.utils.color import parsecolor, stringc
 
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import BULLET, FLOW, PARAGRAPH, laid_out
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+    BULLET, FLOW, PARAGRAPH, is_command, laid_out)
 
 MARKER = "cassandra_output"
 GAP = "cassandra_output_gap"  # a blank line before the next operator message
@@ -313,6 +314,12 @@ def help_line(line, key, progress=PROGRESS_COLOR, laid=False):
     return line
 
 
+def help_command(line, progress=PROGRESS_COLOR):
+    """A line of a command of the help text (its first, "$ ...", or a continuation) coloured as progress."""
+    at = len(line) - len(line.lstrip())
+    return line[:at] + stringc(line[at:], progress)
+
+
 def rule_width(columns):
     """The width of the rules and the help text for Ansible's columns (one
     less than the terminal's; 79 when unknown): one less, 40 to 100."""
@@ -478,6 +485,9 @@ class CallbackModule(DefaultCallback):
                 continue
             laid, key = laid_out(text, room)
             for i, line in enumerate(laid):
+                if is_command(text):  # each of its lines, continuations too
+                    self._line(help_command(line, self._progress), plain=line)
+                    continue
                 self._line(help_line(line, key if i == 0 else "", self._progress, text.startswith(FLOW)), plain=line)
 
     def _print(self, msg, color=None, info=False):

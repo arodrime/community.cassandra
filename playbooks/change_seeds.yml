@@ -1,19 +1,15 @@
 ---
-# Applies a new cassandra_seeds list to every node of a cluster, live (no
-# restart): only the seeds line of cassandra.yaml changes. Other differences
-# between the inventory and the nodes' config are shown, not applied.
-#   ansible-playbook -i inventory community.cassandra.change_seeds
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
+# Apply the inventory's cassandra_seeds to every node, live (no restart).
+#
+#   ansible-playbook community.cassandra.change_seeds
+#
+# Only the seeds line of cassandra.yaml changes; other config differences are
+# shown, not applied. A datacenter the list leaves without a seed gets seeds
+# of its own (said in a warning). One question; re-running is safe.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=change_seeds
+
 # The preflight check refuses seeds that are not up members of the cluster.
-# A list that leaves a datacenter with no seed (none of its nodes in it): seeds
-# of its own are added there (2 or 3 of its nodes up, on different racks; the
-# ones it runs with first), shown with a WARNING and covered by the question;
-# applied live only, the end says the cassandra_seeds line to put in the
-# inventory. None of its nodes up, or an empty list: refused, nothing changed.
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
@@ -44,7 +40,10 @@
         public: true
 
     # cassandra_seeds, with seeds of its own for a datacenter it leaves with none (filter cassandra_seed_change,
-    # as topology and decommission_node)
+    # as topology and decommission_node): 2 or 3 of its nodes up, on different racks, the ones it runs with
+    # first; shown with a WARNING and covered by the question, applied live only (the end says the
+    # cassandra_seeds line to put in the inventory). None of its nodes up, or an empty list: refused, nothing
+    # changed.
     - name: Work out the seed list
       ansible.builtin.set_fact:
         _cassandra_change_seeds: "{{ _hosts | community.cassandra.cassandra_seed_change(cassandra_seeds) }}"
@@ -130,7 +129,8 @@
         cassandra_seeds: "{{ _new }}"
         _cassandra_seeds_reload_required: true  # the reload is this playbook's job: every running node, a failure fails
 
-    # Nothing is written here: cassandra_config shows its diffs
+    # Nothing is written here: cassandra_config shows its diffs (the other differences between the inventory
+    # and the nodes' config are shown, not applied)
     - name: Look for other config differences
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config

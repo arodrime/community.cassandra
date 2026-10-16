@@ -32,7 +32,8 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import WIDTH
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
-    BULLET, NBSP, command as _full_command, extra_var as _e, flow as _flow, laid_out, path_from as _path, seed_layout)
+    BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
+    path_from as _path, seed_layout)
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -45,214 +46,182 @@ THEMES = (("read-only", "Read-only (change nothing)"), ("nodes", "Nodes"), ("clu
 # needed ones of the same name). cql: reads the replication with cassandra_cql_username/_password when
 # authentication is on ("plan": plans without it, as if every keyspace had replicas everywhere);
 # single_token: only for num_tokens 1. confirm False: asks no question (no cassandra_operation_confirm).
-RESUME = ("-e cassandra_rolling_resume=true", "resumes an interrupted run, skipping the nodes already done", "false")
+RESUME = ("-e cassandra_rolling_resume=true", "resumes an interrupted run", "false")
 CHECK = ("changing nothing", ["--check"])
+# the words of a cleanup's batches (cassandra_cleanup_mode)
+BATCHES = "sequential/rack/dc/all"
 OPERATIONS = [
-    {"name": "help", "theme": "read-only",
+    {"name": "help", "theme": "read-only", "guide": "Help and runbook",
      "summary": "This overview, from the inventory alone (no node contacted).",
-     "options": [("-e help_topic=<operation>", "one operation in detail: its options, an example, its documentation",
-                  "the overview"),
-                 ("-e help_write=true", "also writes RUNBOOK.md next to the inventory (changed only when its content"
-                                        " changes; --check --diff shows the difference)", "false"),
-                 ("-e help_runbook_dir=<dir>", "writes RUNBOOK.md in that existing dir instead", "the inventory's dir"),
-                 ("-e help_inventory=<path>", "reads that inventory instead of the run's", "the -i one")],
+     "options": [("-e help_topic=<operation>", "one operation in detail", "the overview"),
+                 ("-e help_write=true", "also writes RUNBOOK.md", "false"),
+                 ("-e help_runbook_dir=<dir>", "where RUNBOOK.md goes", "the inventory's dir"),
+                 ("-e help_inventory=<path>", "reads that inventory instead", "the -i one")],
      "example": ("one operation in detail", ["-e help_topic=rolling_restart"])},
-    {"name": "status", "theme": "read-only",
+    {"name": "status", "theme": "read-only", "guide": "Operation playbooks",
      "summary": "The ring as nodetool status shows it from one node, per datacenter; a down node is shown, not an"
                 " error.",
-     "options": [("-e cassandra_target_nodes=<nodes>", "reads the ring from the first of them that answers",
-                  "the first node that answers"),
+     "options": [("-e cassandra_target_nodes=<nodes>", "nodes to read from", "the first that answers"),
                  ("-e cassandra_status_raw=true", "also prints nodetool's own output", "false")],
      "example": ("from one node", ["-e cassandra_target_nodes=<node>"])},
-    {"name": "health_check", "theme": "read-only",
+    {"name": "health_check", "theme": "read-only", "guide": "Operation playbooks",
      "summary": "Checks the cluster from every node (ring, gossip, native transport, streams, schema, ports); fails"
                 " on a problem, so it can be scheduled."},
-    {"name": "preflight", "theme": "read-only",
+    {"name": "preflight", "theme": "read-only", "guide": "Operation playbooks",
      "summary": "Checks the nodes against the inventory before a change: settings that must match, racks for the"
                 " token allocator, versions, seeds."},
-    {"name": "add_node", "theme": "nodes", "cql": "plan",
+    {"name": "add_node", "theme": "nodes", "cql": "plan", "guide": "Adding a node",
      "summary": "Adds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in"
                 " turn. Put them in their rack's group first; one in cassandra_seeds joins as a regular node, then"
                 " becomes a seed.",
-     "options": [("-e cassandra_target_nodes=NEW_NODE", "the hosts to add (comma-separated), already in the inventory",
-                  None),
-                 ("-e cassandra_add_node_reset=false", "refuses a new node that has data instead of emptying it (only"
-                                                       " when down, in no ring, of this cluster or 'Test Cluster',"
-                                                       " without user keyspaces but a failed bootstrap's); true also"
-                                                       " empties a former member of this cluster (the writes only it"
-                                                       " holds are lost)",
-                  "auto"),
-                 ("-e cassandra_add_node_cleanup=sequential", "runs the cleanup afterwards: sequential, rack, dc or"
-                                                              " all; none prints its command", "none"),
-                 ("-e cassandra_token_auto=bisect", "one token per node: how the new nodes get their tokens, bisect,"
-                                                    " balanced or true (shows both, asks)", "false"),
-                 ("-e cassandra_clock_check=false", "starts the nodes without checking their clocks first (kept in"
-                                                    " sync by other means)", "true")],
+     "options": [("-e cassandra_target_nodes=NEW_NODE", "the hosts to add (in the inventory)", None),
+                 ("-e cassandra_add_node_reset=false", "false: refuses any node with data", "auto"),
+                 ("-e cassandra_add_node_cleanup=sequential", "then cleanup: " + BATCHES, "none"),
+                 ("-e cassandra_token_auto=bisect", "num_tokens 1: bisect/balanced/true", "false"),
+                 ("-e cassandra_clock_check=false", "starts without checking the clocks", "true")],
      "example": ("then the cleanup, one node at a time", ["-e cassandra_add_node_cleanup=sequential"])},
     {"name": "topology", "theme": "nodes", "cql": True, "cql_when": "to remove nodes",
+     "guide": "The inventory as the desired state",
      "summary": "Makes the ring match the inventory: adds the hosts of the cluster's group not in the ring, applies"
                 " cassandra_seeds, removes the hosts marked cassandra_node_state: absent; one node at a time,"
                 " --check shows the plan and its warnings.",
-     "options": [("-e cassandra_add_node_reset=false", "refuses a host to add that has data instead of emptying it;"
-                                                       " true also empties a former member of this cluster",
-                  "auto"),
-                 ("-e cassandra_token_auto=bisect", "one token per node: bisect or balanced for the hosts to add",
-                  "false"),
-                 ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
-                                                          " replicas (nodetool decommission --force)", "false")],
+     "options": [("-e cassandra_add_node_reset=false", "false: refuses any host with data", "auto"),
+                 ("-e cassandra_token_auto=bisect", "num_tokens 1: bisect/balanced", "false"),
+                 ("-e cassandra_decommission_force=true", "allows fewer nodes than replicas", "false")],
      "example": ("the plan only", ["--check"])},
-    {"name": "decommission_node", "theme": "nodes", "cql": True,
+    {"name": "decommission_node", "theme": "nodes", "cql": True, "guide": "Removing a node",
      "summary": "Removes nodes from the running cluster, one at a time, their data streamed to the others;"
                 " a node no longer in cassandra_seeds is first dropped from the other nodes' seed lists; refuses a"
                 " datacenter left with nodes but no seed, or fewer nodes than replicas.",
-     "options": [("-e cassandra_target_nodes=<nodes>", "the nodes to remove (comma-separated)", None),
-                 ("-e cassandra_decommission_force=true", "goes on when a datacenter would keep fewer nodes than"
-                                                          " replicas (nodetool decommission --force)", "false"),
+     "options": [("-e cassandra_target_nodes=<nodes>", "the nodes to remove", None),
+                 ("-e cassandra_decommission_force=true", "allows fewer nodes than replicas", "false"),
                  RESUME],
      "example": CHECK},
-    {"name": "replace_node", "theme": "nodes",
+    {"name": "replace_node", "theme": "nodes", "guide": "Replacing a dead node",
      "summary": "Replaces a dead node by a blank host, which takes over its tokens and data. In the inventory, the"
-                " new host in, the dead one out.",
+                " new host put in first, the dead one taken out.",
      "options": [("-e cassandra_target_nodes=NEW_NODE", "the new host", None),
                  ("-e cassandra_replace_address=DEAD_NODE_ADDRESS", "the address of the dead node", None),
-                 ("-e cassandra_replace_node_reset=true", "first empties the new host (a node replacing itself)",
-                  "false")],
+                 ("-e cassandra_replace_node_reset=true", "first empties the new host", "false")],
      "example": ("a node replacing itself", ["-e cassandra_replace_node_reset=true"])},
-    {"name": "remove_dead_node", "theme": "nodes", "cql": True,
+    {"name": "remove_dead_node", "theme": "nodes", "cql": True, "guide": "Removing a dead node",
      "summary": "Last resort for a dead node that will not be replaced: removenode (or assassinate). Take it out of"
                 " the inventory (or mark it absent) first.",
-     "options": [("-e cassandra_target_nodes=DEAD_NODE_ADDRESS", "the dead node: its address (or its host ID, or"
-                                                                 " its inventory name when marked absent)", None),
-                 ("-e cassandra_dead_node_method=removenode_force", "removenode, removenode_force (finishes a stuck"
-                                                                    " removenode) or assassinate", "removenode"),
-                 ("-e cassandra_dead_node_new_removal=true", "starts a removenode when one seems to be running",
-                  "false")],
+     "options": [("-e cassandra_target_nodes=DEAD_NODE_ADDRESS", "the dead node: address, host ID or name", None),
+                 ("-e cassandra_dead_node_method=removenode_force", "removenode_force/assassinate", "removenode"),
+                 ("-e cassandra_dead_node_new_removal=true", "restarts a removal stuck elsewhere", "false"),
+                 ("-e cassandra_decommission_force=true", "allows fewer nodes than replicas", "false")],
      "example": CHECK},
-    {"name": "reset_node", "theme": "nodes",
+    {"name": "reset_node", "theme": "nodes", "guide": "Resetting a node",
      "summary": "Empties nodes that are not members of the ring (started once by mistake, a failed bootstrap) for a"
                 " fresh start.",
-     "options": [("-e cassandra_target_nodes=NODE", "the nodes to empty (comma-separated)", None)],
+     "options": [("-e cassandra_target_nodes=NODE", "the nodes to empty", None)],
      "example": CHECK},
-    {"name": "move_node", "theme": "nodes", "single_token": True, "cql": "plan",
+    {"name": "move_node", "theme": "nodes", "single_token": True, "cql": "plan", "guide": "One token per node",
      "summary": "One token per node: moves nodes to new tokens, one at a time (by default the fewest moves that even"
                 " out each datacenter).",
      "options": [("-e '{\"cassandra_move_tokens\": {\"NODE\": \"TOKEN\"}}'", "only those nodes move, to those tokens",
                   "{}"),
-                 ("-e cassandra_move_cleanup=sequential", "runs the cleanup afterwards: sequential, rack, dc or all;"
-                                                          " none prints its commands", "none"),
-                 ("-e cassandra_move_force_disk=true", "goes on when a node would keep less free disk than"
-                                                       " cassandra_move_min_free_percent (20)", "false")],
+                 ("-e cassandra_move_cleanup=sequential", "then cleanup: " + BATCHES, "none"),
+                 ("-e cassandra_move_force_disk=true", "goes on with little free disk left", "false")],
      "example": ("the plan only", ["--check"])},
-    {"name": "create_cluster", "theme": "cluster",
+    {"name": "create_cluster", "theme": "cluster", "guide": "Creating a cluster",
      "summary": "Builds the cluster from blank hosts: prepared in parallel, then started one at a time, seeds first."
                 " Starts nothing on a running cluster.",
-     "options": [("-e cassandra_accept_default_identity=true", "goes on with identity settings left to the defaults",
-                  "false"),
-                 ("-e cassandra_create_cluster_reset=true", "rebuilds a running cluster, ALL ITS DATA LOST", "false"),
+     "options": [("-e cassandra_accept_default_identity=true", "accepts default identity settings", "false"),
+                 ("-e cassandra_create_cluster_reset=true", "wipes a running cluster: DATA LOST", "false"),
                  ("-e '{\"cassandra_create_cluster_reset_confirm\": \"<cluster name>\"}'",
-                  "the reset without a terminal (with cassandra_operation_confirm=false): the cluster's name, the answer"
-                  " to its question", ""),
-                 ("-e cassandra_clock_check=false", "starts the nodes without checking their clocks first (kept in"
-                                                    " sync by other means)", "true")],
+                  "the reset without a terminal: the cluster's name", ""),
+                 ("-e cassandra_clock_check=false", "starts without checking the clocks", "true")],
      "example": ("the plan only", ["--check"])},
-    {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode",
+    {"name": "rolling_restart", "theme": "cluster", "cql": True, "cql_when": "rack mode", "guide": "Restarting",
      "summary": "Drains and restarts the nodes one at a time, the cluster checked before and after each one.",
-     "options": [("-e cassandra_rolling_mode=rack", "the nodes of a rack together, rack by rack", "node"),
-                 ("-e cassandra_rack_force=true", "rack mode: goes on although keyspaces would lose more than one"
-                                                  " replica", "false"),
+     "options": [("-e cassandra_rolling_mode=rack", "the nodes of a rack together", "node"),
+                 ("-e cassandra_rack_force=true", "rack mode: allows 2+ replicas down", "false"),
                  RESUME],
      "example": ("a rack at a time", ["-e cassandra_rolling_mode=rack"])},
-    {"name": "rolling_reboot", "theme": "cluster",
+    {"name": "rolling_reboot", "theme": "cluster", "guide": "Restarting",
      "summary": "Same as rolling_restart, rebooting the hosts (OS patching).",
-     "options": [("-e cassandra_reboot_timeout=3600", "seconds to wait for a host to come back", "1800"), RESUME],
+     "options": [("-e cassandra_reboot_timeout=3600", "seconds for a host to come back", "1800"), RESUME],
      "example": ("an interrupted run resumed", [RESUME[0]])},
-    {"name": "stop_rack", "theme": "cluster", "cql": True,
+    {"name": "stop_rack", "theme": "cluster", "cql": True, "guide": "Rack maintenance",
      "summary": "Stops every node of one rack at once (maintenance), when the replication allows losing that rack.",
      "options": [("-e cassandra_target_dc=<dc>", "the rack's datacenter", None),
                  ("-e cassandra_target_rack=<rack>", "the rack to stop", None),
-                 ("-e cassandra_rack_force=true", "goes on although keyspaces would lose more than one replica",
-                  "false")],
+                 ("-e cassandra_rack_force=true", "allows 2+ replicas down", "false")],
      "example": CHECK},
-    {"name": "start_rack", "theme": "cluster", "confirm": False,
+    {"name": "start_rack", "theme": "cluster", "confirm": False, "guide": "Rack maintenance",
      "summary": "Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.",
      "options": [("-e cassandra_target_dc=<dc>", "the rack's datacenter", None),
                  ("-e cassandra_target_rack=<rack>", "the rack to start", None),
-                 ("-e cassandra_accept_default_identity=true", "goes on when no node of another rack answers and the"
-                                                               " cluster name is the default 'Test Cluster'", "false")],
+                 ("-e cassandra_accept_default_identity=true", "accepts the name 'Test Cluster'", "false")],
      "example": CHECK},
-    {"name": "apply_config", "theme": "cluster",
+    {"name": "apply_config", "theme": "cluster", "guide": "Changing the configuration",
      "summary": "Applies the inventory's config: shows the settings that differ (the inventory's value, then each"
                 " other value with its nodes), asks once, then writes the nodes that need it, one at a time,"
                 " restarting only those that need it.",
      "options": [RESUME],
      "example": ("the settings that differ, changing nothing", ["--check"])},
-    {"name": "change_seeds", "theme": "cluster",
+    {"name": "change_seeds", "theme": "cluster", "guide": "Changing the seeds",
      "summary": "Applies a new cassandra_seeds list to every node, live (no restart); topology, add_node and"
                 " decommission_node apply it too when nodes come and go.",
      "example": CHECK},
-    {"name": "update_java", "theme": "cluster",
+    {"name": "update_java", "theme": "cluster", "guide": "Restarting",
      "summary": "Moves the cluster to the Java in cassandra_java_version, one node at a time.",
      "options": [RESUME],
      "example": ("an interrupted run resumed", [RESUME[0]])},
-    {"name": "sync_clocks", "theme": "cluster",
+    {"name": "sync_clocks", "theme": "cluster", "guide": "Clocks",
      "summary": "Shows each node's clock as its time sync daemon reports it (synchronised, source, offset) with a"
                 " verdict, then brings time sync up where it is missing; a running node whose clock needs a step"
                 " gets a restart window, one node at a time.",
-     "options": [("-e cassandra_clock_max_offset_ms=50", "a node is in sync within this many milliseconds of its"
-                                                         " source (offset plus the daemon's error bound)", "50"),
-                 ("-e cassandra_clock_step_ms=400", "a correction above it steps the clock: on a running node, in a"
-                                                    " restart window", "400"),
-                 ("-e cassandra_clock_sync_timeout=180", "seconds to wait for a time sync to synchronise", "180")],
+     "options": [("-e cassandra_clock_max_offset_ms=50", "in sync within this many ms", "50"),
+                 ("-e cassandra_clock_step_ms=400", "steps the clock above this many ms", "400"),
+                 ("-e cassandra_clock_sync_timeout=180", "seconds to wait for a sync", "180")],
      "example": ("the clocks, changing nothing", ["--check"])},
-    {"name": "upgrade", "theme": "cluster",
+    {"name": "upgrade", "theme": "cluster", "guide": "Upgrading",
      "summary": "Upgrades the cluster to the version in the inventory, one phase per run: preflight, prepare,"
                 " canary, rolling, sstables, cleanup.",
-     "options": [("-e cassandra_upgrade_phase=preflight", "preflight, prepare, canary, rolling, sstables or cleanup,"
-                                                          " in that order", None),
-                 ("-e cassandra_target_nodes=<node>", "canary phase: the node it upgrades",
-                  "the first non-seed by datacenter, rack and name (else the first node)"),
-                 ("-e cassandra_rolling_resume=true", "sstables phase: resumes an interrupted run, skipping the nodes"
-                                                      " already done", "false")],
+     "options": [("-e cassandra_upgrade_phase=preflight", "the phase to run, in the order above", None),
+                 ("-e cassandra_target_nodes=<node>", "canary: the node to upgrade", "a non-seed"),
+                 ("-e cassandra_rolling_resume=true", "resumes the sstables phase", "false")],
      "example": ("the next phase", ["-e cassandra_upgrade_phase=prepare"])},
-    {"name": "cleanup", "theme": "cluster", "confirm": False,
+    {"name": "cleanup", "theme": "cluster", "confirm": False, "guide": "Adding a node",
      "summary": "Runs nodetool cleanup (the data a node no longer owns, after nodes were added), the cluster checked"
                 " before each batch.",
-     "options": [("-e cassandra_cleanup_mode=rack", "sequential (one node at a time), rack, dc or all (every node at"
-                                                    " once)", "sequential"),
-                 ("-e cassandra_cleanup_jobs=4", "compaction threads per node (0: all of them)", "2"),
+     "options": [("-e cassandra_cleanup_mode=rack", BATCHES, "sequential"),
+                 ("-e cassandra_cleanup_jobs=4", "cleanup jobs per node, 0: all", "2"),
                  RESUME],
      "example": ("a rack at a time", ["-e cassandra_cleanup_mode=rack"])},
-    {"name": "add_datacenter", "theme": "cluster", "cql": True,
+    {"name": "add_datacenter", "theme": "cluster", "cql": True, "guide": "Datacenters",
      "summary": "Adds a datacenter: its nodes join without streaming, the keyspaces get replicas there, then each"
                 " node rebuilds from another datacenter.",
-     "options": [("-e cassandra_target_nodes=NEW_DC_GROUP", "the new datacenter's nodes (a group or a comma-separated"
-                                                            " list)", None),
+     "options": [("-e cassandra_target_nodes=NEW_DC_GROUP", "the new datacenter's nodes", None),
                  ("-e cassandra_rebuild_source_dc=<dc>", "the datacenter they stream from", None),
                  ("-e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'",
-                  "the replicas of each keyspace in the new datacenter", None)],
+                  "each keyspace's replicas there", None)],
      "example": CHECK},
-    {"name": "remove_datacenter", "theme": "cluster", "cql": True,
+    {"name": "remove_datacenter", "theme": "cluster", "cql": True, "guide": "Datacenters",
      "summary": "Removes a datacenter: the keyspaces stop keeping replicas there, then its nodes leave one at a"
                 " time. Move its clients first.",
      "options": [("-e cassandra_target_dc=DC_TO_REMOVE", "the datacenter to remove", None)],
      "example": CHECK},
-    {"name": "import_cluster", "theme": "takeover",
+    {"name": "import_cluster", "theme": "takeover", "guide": "Taking over an existing cluster",
      "summary": "Reads a running cluster into an inventory, changing nothing on the nodes. A new cluster: give"
                 " one of its nodes (-i <node>,), the others are found in the ring. A re-import reads the cluster from"
                 " the inventory (its logins too), keeps the files it did not write, --check --diff shows its changes"
                 " first.",
-     "options": [("-e import_cluster_dir=<dir>", "the inventory dir, every cluster's", "inventories"),
-                 ("-e import_cluster_report_dir=<dir>", "where to write report.txt",
-                  "reports/<cluster group> next to import_cluster_dir"),
-                 ("-e import_cluster_force=true", "a re-import, over this cluster's files", "false"),
-                 ("-e import_cluster_adopt=true", "takes over the files of an earlier import that do not say whose"
-                                                  " they are (each replaced one kept as <file>.<date>~)", "false"),
-                 ("-e import_cluster_allow_unread=true", "accepts a ring node it could not read (else the import"
-                                                         " fails)", "false"),
-                 ("-e import_cluster_keep_hand_edits=true", "leaves the config files with hand edits as they are on"
-                                                            " their node (or the ones named: =logback.xml)",
+     "options": [("-e import_cluster_dir=<dir>", "the inventory dir", "inventories"),
+                 ("-e import_cluster_report_dir=<dir>", "report.txt dir", "next to the inventory dir"),
+                 ("-e import_cluster_force=true", "re-import over this cluster's files", "false"),
+                 ("-e import_cluster_adopt=true", "adopts an earlier import's files", "false"),
+                 ("-e import_cluster_allow_unread=true", "accepts unread ring nodes", "false"),
+                 ("-e import_cluster_keep_hand_edits=true", "keeps hand-edited config files (or =<names>)", "false"),
+                 ("-e import_cluster_keep_unread_jvm_options=true", "imports the options of a jvm<N> file its Java skips",
                   "false")]},
 ]
+# an option's text and its default on one line from column 46 at 98 columns (a terminal of 100)
+OPTION_ROOM = 52
+GUIDE = "docs/docsite/rst/guide_roles.rst"
 
 BY_NAME = dict((op["name"], op) for op in OPERATIONS)
 # shown in section 1 or used in the commands: said when their template could not be resolved
@@ -649,12 +618,14 @@ def _rule(title, heavy=True):
     return ["", line + ("=" if heavy else "-") * max(4, WIDTH - len(line)), ""]
 
 
-def _lines(lines, flow=False):
-    """The text: its lines laid out at WIDTH, or as they are for the ops callback (flow), which lays them out at
-    the terminal's width; one blank line at most between two lines, none first or last."""
+def _lines(lines, flow=False, cut=True):
+    """The text: its lines laid out at WIDTH (cut false: the commands whole, on one line each), or as they are for
+    the ops callback (flow), which lays them out at the terminal's width; one blank line at most between two lines,
+    none first or last."""
     out = []
     for line in lines:
-        for item in [line] if flow else laid_out(line, WIDTH)[0]:
+        width = WIDTH if cut or not is_command(line) else 10 ** 6
+        for item in [line] if flow else laid_out(line, width)[0]:
             if item.strip():
                 out.append(item)
             elif out and out[-1]:
@@ -714,12 +685,14 @@ def _header(model, cwd):
     return "Cassandra help for the inventory %s (read from the inventory only: no node contacted)" % sources
 
 
-def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None, runbook_dir="", flow=False):
+def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, cwd=None, runbook_dir="", flow=False,
+                   cut=True):
     """model: lookup community.cassandra.cassandra_inventory; playbooks: the
     names of the playbooks there are; topic: one operation in detail, with
     header the comment that starts its playbook; markdown: RUNBOOK.md, in
     runbook_dir (default the inventory's dir); flow: the lines for the ops
-    callback (laid out at the terminal's width there), else laid out at WIDTH."""
+    callback (laid out at the terminal's width there), else laid out at WIDTH;
+    cut false: each command whole on one line (a list of lines to copy from)."""
     model = model or {}
     cwd = os.getcwd() if cwd is None else cwd
     playbooks = list(playbooks or [op["name"] for op in OPERATIONS])
@@ -727,7 +700,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
     if not clusters:
         raise AnsibleFilterError("no cluster group in the inventory %s" % ", ".join(model.get("sources") or []))
     if topic:
-        return _topic(topic, header, model, clusters, cwd, flow)
+        return _topic(topic, header, model, clusters, cwd, flow, cut)
 
     sections = []  # (title, items): the cluster lines, (kind, title or operation), (advice, its command or "")
     lines = []
@@ -764,7 +737,7 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
 
     if markdown:
         return _markdown(_header(model, cwd), sections, model, cwd, runbook_dir or _inventory_dir(model))
-    return _text(_header(model, cwd), sections, _common(model, clusters), flow)
+    return _text(_header(model, cwd), sections, _common(model, clusters), flow, cut)
 
 
 _INTRO = ("Run the commands from the directory help was run from (the one with ansible.cfg, if any). Each"
@@ -787,10 +760,8 @@ def _common(model, clusters, op=None, markdown=False):
     """The options of every operation that changes something (of op: without the question it does not ask)."""
     given = any(_hosts_given(model, cluster, markdown) for cluster in clusters)
     return [o for o in [("-e cassandra_hosts=<group>", "the cluster to run on",
-                         "the one in the commands" if given else model["auto"]),
-                        ("-e cassandra_operation_confirm=false", "skips the question (of the operations that ask one),"
-                         " for runs without a terminal",
-                         "true"),
+                         "as in the commands" if given else model["auto"]),
+                        ("-e cassandra_operation_confirm=false", "asks nothing (no terminal)", "true"),
                         ("--check", "shows the plan, changing nothing", "")]
             if op is None or op.get("confirm", True) or "confirm" not in o[0]]
 
@@ -817,7 +788,7 @@ def _op_lines(op, width, commands, examples):
     return out
 
 
-def _text(header, sections, common, flow=False):
+def _text(header, sections, common, flow=False, cut=True):
     lines = _paragraph(header, "", "  ") + [""] + _paragraph(_INTRO, "", "") + [""]
     lines += _paragraph("Options of every operation that changes something:", "", "  ") + _option_lines(common, "        ")
     for title, items in sections:
@@ -826,7 +797,7 @@ def _text(header, sections, common, flow=False):
         elif title.startswith("3."):
             lines += _rule(title.split(" ", 1)[1])
             for text, command in items:
-                lines += [""] + _paragraph(text, "- ", "  ") + (["    $ " + command] if command else [])
+                lines += [""] + _paragraph(text, "- ", "  ") + ([command_flow("    ", command)] if command else [])
         else:
             width = max([len(item["name"]) for kind, item in items if kind == "op"] or [0])
             cluster = ""
@@ -836,9 +807,9 @@ def _text(header, sections, common, flow=False):
                 elif kind == "theme":
                     lines += _rule(cluster + item)
                 else:
-                    examples = ["      $ " + item["example"][1]] if item["example"] else []
-                    lines += [""] + _op_lines(item, width, ["      $ " + item["command"]], examples)
-    return _lines(lines, flow)
+                    examples = [command_flow("      ", item["example"][1])] if item["example"] else []
+                    lines += [""] + _op_lines(item, width, [command_flow("      ", item["command"])], examples)
+    return _lines(lines, flow, cut)
 
 
 def _markdown_options(options):
@@ -877,24 +848,25 @@ def _markdown(header, sections, model, cwd, runbook_dir):
     return "\n".join(out).rstrip("\n") + "\n"
 
 
-def _topic(topic, header, model, clusters, cwd, flow=False):
+def _topic(topic, header, model, clusters, cwd, flow=False, cut=True):
     if topic not in BY_NAME:
         raise AnsibleFilterError("help_topic: no operation %s (operations: %s)"
                                  % (topic, ", ".join(op["name"] for op in OPERATIONS)))
     op = BY_NAME[topic]
-    cmds, examples = [], []
+    cmds, examples, raw = [], [], []
     for cluster in clusters:
         item = _op(op, model, cluster, cwd)
+        raw += [item["command"]] + ([item["example"][1]] if item["example"] else [])
         named = _paragraph("Cluster %s:" % cluster.name, "      ") if len(clusters) > 1 else []
-        cmds += named + ["      $ " + item["command"]]
+        cmds += named + [command_flow("      ", item["command"])]
         if op.get("single_token") and cluster.num_tokens() != 1:
             cmds.append("      (not for this cluster: num_tokens %s)" % (cluster.num_tokens() or "mixed"))
         if item["example"]:
-            examples += named + ["      $ " + item["example"][1]]
+            examples += named + [command_flow("      ", item["example"][1])]
     options = list(op.get("options") or [])
     options += _common(model, clusters, op) if op["theme"] in ("nodes", "cluster") else []
     lines = _rule(dict(THEMES)[op["theme"]]) + _op_lines(dict(op, options=options), len(op["name"]), cmds, examples)
-    shown = " ".join(c.split("community.cassandra.", 1)[-1] for c in cmds + examples)
+    shown = " ".join(c.split("community.cassandra.", 1)[-1] for c in raw)
     placeholders = sorted(set(_PLACEHOLDER.findall(shown)))
     if placeholders:
         plural = "s" if len(placeholders) > 1 else ""
@@ -902,17 +874,33 @@ def _topic(topic, header, model, clusters, cwd, flow=False):
     if op.get("cql"):
         lines += [""] + _paragraph("With authentication on: cassandra_cql_username and cassandra_cql_password (in a"
                                    " vaulted file of the cluster's group_vars).", "      ", "      ")
-    doc = []
+    if op.get("guide"):
+        lines += [""] + _paragraph('More: "%s" in the collection\'s %s.' % (op["guide"], GUIDE), "      ", "        ")
+    paragraphs = header_paragraphs(header)
+    if paragraphs:
+        lines += _rule("What it does (playbooks/%s.yml)" % op["name"], heavy=False)
+        for text in paragraphs:
+            # an option and its value on one line
+            lines += _paragraph(re.sub(r"(?<!\S)(-e|--check) (?=\S)", "\\1" + NBSP, text), "  ", "  ") + [""]
+    return _lines(lines, flow, cut)
+
+
+def header_paragraphs(header):
+    """The paragraphs of the comment that starts a playbook, each on one line: what it does, then the ones after
+    its command (shown filled in above) but where its options are (shown above too)."""
+    paragraphs, current = [], []
     for line in str(header or "").splitlines():
-        if line.startswith("#"):
-            doc.append("  " + line[1:].strip(" ") if not line[1:].startswith("   ") else "  " + line[2:])
-        elif line.strip() in ("---", ""):
+        if line.strip() in ("---", "") and not paragraphs and not current:
             continue
-        else:
+        if not line.startswith("#"):
             break
-    if doc:
-        lines += _rule("What it does and checks (playbooks/%s.yml)" % op["name"], heavy=False) + doc
-    return _lines(lines, flow)
+        text = line[1:]
+        if not text.strip():
+            paragraphs, current = paragraphs + ([" ".join(current)] if current else []), []
+        elif not text.startswith("   "):  # a command, indented: not shown
+            current.append(text.strip())
+    paragraphs += [" ".join(current)] if current else []
+    return [p for p in paragraphs if not p.startswith("Options and defaults:")]
 
 
 def cassandra_help_runbook(model, runbook_dir=""):

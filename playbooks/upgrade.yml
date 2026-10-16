@@ -1,27 +1,16 @@
 ---
-# Upgrades a running cluster to the version in the inventory, one phase per run:
-#   ansible-playbook -i inventory community.cassandra.upgrade -e cassandra_upgrade_phase=<phase>
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# Set the target first, in the cluster's group_vars: cassandra_version (series,
-# e.g. 50x), cassandra_package_version (e.g. 5.0.4) and cassandra_java_version
-# (the Java to run: keep the current one, or change it in the same pass).
-# Phases, in order:
-#   preflight  checks everything and shows the target config; changes nothing
-#   prepare    snapshot + config copy on every node, target repository; asks you
-#              (not under --check) to confirm backups and repairs are paused and the schema frozen
-#   canary     upgrades one node (-e cassandra_target_nodes=<node>, default: the
-#              first non-seed of the first datacenter), then stops: watch it
-#   rolling    upgrades the others, datacenter by datacenter, rack by rack, one
-#              node at a time (nodes already upgraded are skipped: re-run it to resume)
-#   sstables   rewrites the sstables in the new format, node by node
-#   cleanup    removes the pre-upgrade snapshots
-# 4.x -> 5.0: keep cassandra_storage_compatibility_mode: CASSANDRA_4 until the
-# rolling phase is done, then move to UPGRADING, then NONE, each time in the
-# inventory then with apply_config. NONE is the point of no return.
+# Upgrade a running cluster to the version in the inventory, one phase per run.
+#
+#   ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=preflight
+#
+# Set the target in the cluster's group_vars first, then run the phases in
+# order: preflight, prepare, canary, rolling, sstables, cleanup. Each one says
+# the next; preflight changes nothing.
+#
+# The canary and rolling phases upgrade one node at a time, the cluster checked
+# around each one; a node already upgraded is skipped, so re-running resumes.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=upgrade
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -150,6 +139,15 @@
              | rejectattr('skipped', 'defined') | rejectattr('status', 'in', [200, 206]) | map(attribute='status') | unique | list }}
       run_once: true
 
+    # the phases, in order:
+    #   preflight  checks everything and shows the target config; changes nothing
+    #   prepare    snapshot + config copy on every node, target repository; asks
+    #              (not under --check) to confirm backups and repairs are paused
+    #              and the schema frozen
+    #   canary     upgrades one node, then stops: watch it
+    #   rolling    upgrades the others, one node at a time
+    #   sstables   rewrites the sstables in the new format, node by node
+    #   cleanup    removes the pre-upgrade snapshots
     - name: Check the phase
       ansible.builtin.assert:
         that: _phase in ['preflight', 'prepare', 'canary', 'rolling', 'sstables', 'cleanup']
@@ -170,6 +168,9 @@
       vars:
         _running: "{{ cassandra_upgrade_running.stdout | regex_search('ReleaseVersion: (\\S+)', '\\1') | first }}"
 
+    # the target, in the cluster's group_vars: cassandra_version (series, e.g.
+    # 50x), cassandra_package_version (e.g. 5.0.4) and cassandra_java_version (the
+    # Java to run: keep the current one, or change it in the same pass)
     - name: Check the target
       ansible.builtin.assert:
         that:
@@ -209,6 +210,9 @@
       run_once: true
       when: _phase in ['preflight', 'prepare', 'canary']
 
+    # 4.x -> 5.0: cassandra_storage_compatibility_mode: CASSANDRA_4 until the
+    # rolling phase is done, then UPGRADING, then NONE, each time in the inventory
+    # then with apply_config. NONE is the point of no return.
     - name: 4.x to 5.0 keeps the 4.x formats until every node is upgraded
       ansible.builtin.assert:
         that: hostvars[inventory_hostname].cassandra_storage_compatibility_mode | default('') == 'CASSANDRA_4'
@@ -339,6 +343,10 @@
         cassandra_output: true
         cassandra_output_gap: true
 
+# canary: -e cassandra_target_nodes=<node>, by default the first non-seed by
+# datacenter, rack and name (else the first node). rolling: the others, by
+# datacenter, rack and name (datacenter by datacenter, rack by rack), the
+# canary last (already upgraded: skipped, re-run it to resume)
 - name: Pick the nodes and their order
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
   gather_facts: false

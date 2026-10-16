@@ -48,9 +48,16 @@ def test_every_node_play_asks_for_root(name, play):
         assert var not in play_vars  # would beat the keyword, or not be root
 
 
+def test_the_guide_says_no_become_is_needed():
+    # said once, in the guide (the playbooks' headers are short)
+    with open(os.path.join(TOP, "docs", "docsite", "rst", "guide_roles.rst"), encoding="utf-8") as f:
+        guide = " ".join(f.read().split())
+    assert ("No ``become`` in ``ansible.cfg`` (nor ``-b``): the collection's playbooks ask for root on the nodes"
+            " themselves") in guide
+
+
 @pytest.mark.parametrize("name", sorted(os.path.basename(p) for p in glob.glob(os.path.join(TOP, "playbooks", "*.yml"))))
-def test_every_header_says_what_it_needs(name):
+def test_no_header_asks_for_become(name):
     with open(os.path.join(TOP, "playbooks", name), encoding="utf-8") as f:
         header = " ".join(line.lstrip("#").strip() for line in f.read().split("\n- ")[0].splitlines())
-    assert "no -b needed" in header or "No root anywhere" in header, name
-    assert " -b community.cassandra." not in header
+    assert " -b " not in header + " " and " --become" not in header, name

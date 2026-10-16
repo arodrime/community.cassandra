@@ -1,47 +1,20 @@
 ---
-# What the inventory describes and what can be done with it, read from the
-# inventory alone (no node contacted, changing nothing):
-#   ansible-playbook -i inventory community.cassandra.help
-# 1. each cluster group of the inventory: cluster name, Cassandra series and
-#    package version, install method, Java, datacenters, racks and their nodes,
-#    seeds, the nodes marked cassandra_node_state: absent;
-# 2. every operation playbook, by theme, with its command for this inventory
-#    (its path when it is not the configuration's, ansible.cfg's; the cluster's
-#    group when the playbooks would not take it alone; a datacenter and rack, the
-#    -e variables it needs; NEW_NODE, NODE...: a value only you know);
-# 3. advice from the inventory: nodes marked absent, authentication on without
-#    cassandra_cql_username, a variable close to one the collection reads,
-#    seeds not one per rack, racks vs allocate_tokens_for_local_replication_factor,
-#    mixed versions.
-# Each operation with its command, its options one per line with their
-# defaults, and an example where one helps; under the community.cassandra.ops
-# callback, laid out at the terminal's width and coloured.
-# -e help_topic=<operation>: one operation in detail (the same, and its
-# documentation).
-# Shown as plain text with callback_result_format = yaml in ansible.cfg
-# ([defaults]) or ANSIBLE_CALLBACK_RESULT_FORMAT=yaml; else as a list of quoted lines.
-# -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir
-# (changed only when its content changes; --check --diff shows the difference),
-# to commit with the inventory (-e help_runbook_dir=<dir>: in that dir
-# instead). -e help_inventory=<path> reads that inventory instead of the run's.
-# help decrypts nothing, even with the vault password: vault-encrypted vars
-# files are skipped (named in the advice), inline vaulted values shown as
-# (vaulted), lookups not run, -e variables not read (their names only, checked),
-# so no secret reaches the output or RUNBOOK.md. The commands carry the vault and connection options
-# help was run with (no -b: the playbooks ask for root on the nodes themselves;
-# --ask-vault-pass when the inventory has vaulted values and the run no vault
-# password). A vault-encrypted file in group_vars/all is read by Ansible for
-# localhost too: then help needs the vault password as well (and still shows
-# nothing from it).
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts), else every top
-# group (one per cluster).
-# No root anywhere (no node contacted).
+# Show what the inventory describes and the command of every operation.
+#
+#   ansible-playbook community.cassandra.help -e help_topic=add_node
+#
+# Read from the inventory alone: no node contacted, nothing changed, nothing
+# decrypted. Each cluster as the inventory describes it, every operation by
+# theme with its command for this inventory, then advice.
+#
+# -e help_topic=<operation> shows one operation in detail; -e help_write=true
+# also writes it all as RUNBOOK.md next to the inventory.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=help
 - name: Help
   hosts: localhost
   gather_facts: false
+  # no root anywhere (no node contacted)
   become: false
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
@@ -62,13 +35,44 @@
         _cassandra_variables_check_renamed: false  # it reads neither the former names nor their name now
       tags: [always]  # under --tags too
 
+    # Without -e cassandra_hosts=<group> (nor CASSANDRA_CLUSTER, nor the group
+    # the lookup cassandra_hosts finds: cassandra, else the inventory's only
+    # cluster group): every top group, one per cluster.
+    # -e help_inventory=<path> reads that inventory instead of the run's.
+    # Nothing decrypted, even with the vault password: vault-encrypted vars
+    # files skipped (named in the advice), inline vaulted values shown as
+    # (vaulted), lookups not run, -e variables not read (their names only,
+    # checked), so no secret reaches the output or RUNBOOK.md. A vault-encrypted
+    # file in group_vars/all is read by Ansible for localhost too: then help
+    # needs the vault password as well (and still shows nothing from it).
     - name: Read the inventory
       ansible.builtin.set_fact:
         _cassandra_help_model: "{{ _model }}"
 
-    # one string under the default callback's yaml result format (plain text, not
-    # wrapped), else a list of lines (not one line with \n in it), the default
-    # callback's json one saying how to get plain text
+    # 1. each cluster group of the inventory: cluster name, Cassandra series and
+    #    package version, install method, Java, datacenters, racks and their nodes,
+    #    seeds, the nodes marked cassandra_node_state: absent;
+    # 2. every operation playbook, by theme, with its command for this inventory
+    #    (its path when it is not the configuration's, ansible.cfg's; the cluster's
+    #    group when the playbooks would not take it alone; a datacenter and rack,
+    #    the -e variables it needs; NEW_NODE, NODE...: a value only you know), its
+    #    options one per line with their defaults, and an example where one helps;
+    # 3. advice from the inventory: nodes marked absent, authentication on without
+    #    cassandra_cql_username, a variable close to one the collection reads, seeds
+    #    not one per rack, racks vs allocate_tokens_for_local_replication_factor,
+    #    mixed versions.
+    # -e help_topic=<operation>: one operation in detail (the same, the section
+    # of the roles guide that tells more, and the paragraphs of its playbook's
+    # header). The commands carry the vault and
+    # connection options help was run with (no -b: the playbooks ask for root on
+    # the nodes themselves; --ask-vault-pass when the inventory has vaulted values
+    # and the run no vault password).
+    # Under the community.cassandra.ops callback, laid out at the terminal's width
+    # and coloured. Under the default callback: one string of plain text with
+    # callback_result_format = yaml in ansible.cfg ([defaults]) or
+    # ANSIBLE_CALLBACK_RESULT_FORMAT=yaml (laid out at 100 columns, the commands
+    # cut between their arguments); else a list of lines (not one line with \n
+    # in it, each command whole), the json one saying how to get plain text.
     - name: Show the help
       ansible.builtin.debug:
         msg: "{{ _text if _yaml | bool else ([_plain, ''] if _default | bool else []) + _text.split('\n') }}"
@@ -87,10 +91,14 @@
         _plain: "Plain text, without the quotes: callback_result_format = yaml in ansible.cfg ([defaults])"
         _text: >-
           {{ _cassandra_help_model | community.cassandra.cassandra_help(
-               _playbooks, topic=help_topic | default(''), flow=_flow | bool,
+               _playbooks, topic=help_topic | default(''), flow=_flow | bool, cut=_flow | bool or _yaml | bool,
                header=lookup('ansible.builtin.file', playbook_dir ~ '/' ~ help_topic ~ '.yml')
                       if help_topic | default('') in _playbooks else '') }}
 
+    # -e help_write=true: also writes it as RUNBOOK.md in the inventory's dir (the
+    # first -i one), to commit with the inventory; -e help_runbook_dir=<dir>: in
+    # that existing dir instead. Changed only when its content changes; --check
+    # --diff shows the difference.
     - name: Write RUNBOOK.md next to the inventory
       ansible.builtin.copy:
         content: >-

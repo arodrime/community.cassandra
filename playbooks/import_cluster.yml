@@ -1,128 +1,36 @@
-# Reads a running cluster into an inventory for the roles, changing nothing
-# on the nodes. A new cluster: give one of its nodes (or more) with -i:
-#   ansible-playbook -i node1, community.cassandra.import_cluster
-# Any reachable nodes will do: the others are found with nodetool status.
-# Without -i <node>, (a re-import), the inventory (ansible.cfg's, or -i <inventory
-# file or dir>): every host there is given (with its variables), or the hosts
-# of the cluster -e cassandra_hosts=<cluster group> or the environment variable
-# CASSANDRA_CLUSTER names when it holds other clusters (a name that is not in
-# the inventory stops the import at once: a new cluster is given by a node,
-# -i <node>,; CASSANDRA_CLUSTER is left out with -i <node>,). --limit is
-# refused: it would leave out the nodes found and the controller, which writes
-# the inventory. Nodes of two rings stop the import.
-# One inventory dir for every cluster (ansible.cfg inventory = that dir, the
-# playbooks run with -e cassandra_hosts=<cluster group>): the hosts go to
-# <cluster group>.yml there, the variables to group_vars/ and host_vars/, side
-# by side with the other clusters'; a host or group name another cluster has
-# already stops the import.
-# Options (-e), with their default:
-#   import_cluster_dir: the inventory dir (default inventories; a relative path
-#     is from the current dir).
-#   import_cluster_report_dir: where report.txt goes (default reports/<cluster
-#     group> next to import_cluster_dir: ./reports/<cluster group> for the
-#     default).
-#   import_cluster_force: false; true imports a cluster whose <cluster group>.yml
-#     is there already (a re-import).
-#   import_cluster_host_names: hostname (default, the short one as the node
-#     reports it), fqdn or ip: the name of each node.
-#   import_cluster_set_ansible_host: true; false leaves ansible_host out. Not
-#     given, a re-import leaves it out of the hosts the inventory there
-#     reaches without it (the earlier choice kept).
-#   import_cluster_vault_password_file, import_cluster_vault_id: none, default
-#     (see the passwords below).
-#   import_cluster_medusa_path: none (see Medusa below).
-#   import_cluster_keep_hand_edits: false, true or file names (see the hand edits below).
-#   import_cluster_keep_unread_jvm_options: false (see the JVM options below).
-#   import_cluster_allow_unread: false (see the nodes not read below).
-#   import_cluster_adopt: false; true takes the files of an earlier import of
-#     this cluster that do not say whose they are (no first line naming it,
-#     and no hosts file there naming their group or host) as this cluster's:
-#     replaced or removed, each replaced one kept as <file>.<date>~.
-#   import_cluster_strict: true; false writes an inventory that fails the
-#     self-check without failing the run (to inspect it: not safe to apply).
-#   import_cluster_debug: false; true shows an error while writing the
-#     inventory, hidden otherwise (the variables hold passwords).
-# A re-import reads the cluster from the inventory (its connection variables,
-# its JMX and CQL logins, vaulted ones too), not from -i <node>, (which reads
-# none of them). Review it before it writes anything: --check --diff shows the
-# changes of each file it would write or remove (secrets.yml hidden), and
-# writes nothing in the inventory (its report only: report.check.txt):
-#   ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=<cluster group> -e import_cluster_force=true --check --diff
-# then the same without --check --diff (-e cassandra_hosts left out when
-# CASSANDRA_CLUSTER names the cluster or the inventory holds it alone).
-# Each file it writes starts with a "# Written by ...import_cluster for
-# <cluster group>" line: a re-import replaces those, removes the ones of this
-# cluster it no longer writes (a node gone), and keeps every other file
-# (group_vars/all/*.yml, the other clusters', notes). A file from an earlier
-# release, whose line names no cluster, is this cluster's only when this
-# cluster's hosts file alone names its group or host (else it is kept, and
-# listed in the report). A <cluster group>.yml without that line holding this
-# cluster's group alone (moved from an earlier layout, or edited by hand) is
-# its hosts file: replaced, the old one kept as <file>.<date>~. So is a file
-# without that line laid out as the import writes it (its first comment a block
-# title: # Cluster & topology...), from an import before that line.
-# Passwords found in the config go to secrets.yml files next to the other
-# variables: encrypted with ansible-vault with the vault password file of
-# Ansible (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not
-# --vault-password-file, which is not used) or
-# import_cluster_vault_password_file (and optionally import_cluster_vault_id),
-# else written 0600 for you to encrypt.
-# CQL authentication on: cassandra_cql_username and cassandra_cql_password set
-# in the inventory (or -e) are checked with a CQL login on a node; else asked
-# on the terminal (not under --check, nor with cassandra_operation_confirm
-# false), checked, and written (the password in secrets.yml).
-# JMX access: the cassandra_service variables (cassandra_jmx_port,
-# cassandra_jmx_username, cassandra_jmx_password_file...), written to the
-# inventory too.
-# Root on the nodes (sudo; nodetool reads the JMX password file, the service
-# account's): the playbook asks for it itself, no -b needed. None on the
-# controller: the files are written as the user running Ansible.
-# Each node is named by import_cluster_host_names, with ansible_host set to its
-# address in the ring; a node without facts keeps the name it was given, or
-# its address.
-# The nodes found in the ring are reached as the given node is: by the name it
-# knows them by (getent hosts there; short, or the fqdn when the given name has
-# a domain) when the controller can reach that name (it resolves it, or the ssh
-# config gives it a HostName or a jump host; always with a connection by name,
-# docker...), else by
-# their address; with its connection variables (ansible_user, port, key, ssh
-# args, become...), at their ring address when the given node has an
-# ansible_host; one not reached is named by its address, and listed as not read.
-# The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
-# time sync, firewall) is listed in the report, and what a variable covers is
-# carried into the inventory for the nodes added later.
-# Medusa is looked for at import_cluster_medusa_path (its virtualenv or its
-# medusa script, a full path on the nodes), else in the PATH, else in the usual
-# places, else in the PATH of a login shell of cassandra, then of root, and
-# last in any virtualenv under /opt.
-# A host marked cassandra_node_state: absent (an inventory given back) is not read.
-# Lines a node has at the end of cassandra-env.sh or of logback.xml's
-# <configuration> are carried as cassandra_env_extra_lines and
-# cassandra_logback_extra_lines; a secret in them (or in a JVM option) goes to
-# secrets.yml as a cassandra_secret_<file>_<name> variable the line refers to.
-# cassandra-env.sh's JVM_OPTS lines of plain options and its heap set elsewhere
-# move to the variables (the heap ones, cassandra_jvm<N>_extra_options) when the
-# running JVM gets the same arguments from the role's files (MOVED in the
-# report; apply_config then rewrites them); the options it does not use are
-# listed (CLEANUP).
-# Other hand edits no variable covers fail the self-check:
-# import_cluster_keep_hand_edits=true leaves those files as they are on their
-# node (cassandra_config_keep_files) instead, or the files named (a list, or
-# import_cluster_keep_hand_edits=logback.xml).
-# JVM options: the extra options of a jvm<N>-server.options the running Java
-# does not read (bin/cassandra reads jvm-server.options and the one of its
-# Java: on 4.x jvm8 on Java 8, else jvm11; on 5.0 jvm11 on Java 11, else
-# jvm17) are not imported, a heap there included (the report says where the
-# heap the JVM runs with comes from), and that file is left as it is on its
-# node (cassandra_config_keep_files): import_cluster_keep_unread_jvm_options=true
-# imports them all the same. An option worth a look (-Xss far from the usual
-# range, -XX:-UseBiasedLocking on Java 17) is imported as it is, with a
-# WARNING in the report (why, which variable to change).
-# A ring node it could not read (down, unreachable, nodetool not found, its
-# running Java removed by an update) fails the import, as its settings are
-# unknown: import_cluster_allow_unread=true accepts it.
-# (a play first: the hosts of the first play can't be picked by a cluster name)
+# Read a running cluster into an inventory, changing nothing on the nodes.
+#
+#   ansible-playbook community.cassandra.import_cluster -i node1,
+#   ansible-playbook community.cassandra.import_cluster -e import_cluster_force=true --check --diff
+#
+# Give one node of a new cluster: the others are found in its ring. It checks
+# that the roles would write each node's files as they are, then writes the
+# hosts file, group_vars and host_vars to import_cluster_dir (passwords in
+# secrets.yml, vaulted when a vault password file is set) and a report.
+#
+# A re-import reads the cluster from the inventory and keeps the files it did
+# not write; --check --diff shows its changes first.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=import_cluster
+
 - name: Check the cluster asked for
+  # A new cluster: give one of its nodes (or more) with -i <node>,. Any reachable
+  # nodes will do: the others are found with nodetool status. Without -i <node>,
+  # (a re-import), the inventory (ansible.cfg's, or -i <inventory file or dir>):
+  # every host there is given (with its variables), or the hosts of the cluster
+  # -e cassandra_hosts=<cluster group> or the environment variable
+  # CASSANDRA_CLUSTER names when it holds other clusters (a name that is not in
+  # the inventory stops the import at once: a new cluster is given by a node,
+  # -i <node>,; CASSANDRA_CLUSTER is left out with -i <node>,).
+  # A re-import reads the cluster from the inventory (its connection variables,
+  # its JMX and CQL logins, vaulted ones too), not from -i <node>, (which reads
+  # none of them). Review it before it writes anything: --check --diff shows the
+  # changes of each file it would write or remove (secrets.yml hidden), and
+  # writes nothing in the inventory (its report only: report.check.txt):
+  #   ansible-playbook community.cassandra.import_cluster -e cassandra_hosts=<cluster group> -e import_cluster_force=true --check --diff
+  # then the same without --check --diff (-e cassandra_hosts left out when
+  # CASSANDRA_CLUSTER names the cluster or the inventory holds it alone).
+  # (a play first: the hosts of the first play can't be picked by a cluster name)
   hosts: localhost
   connection: local
   gather_facts: false
@@ -207,6 +115,8 @@
           {%- endfor -%}
           {{ out }}
 
+    # import_cluster_host_names: hostname (default, the short one as the node
+    # reports it), fqdn or ip: the name of each node.
     - name: Check the options
       ansible.builtin.assert:
         that: import_cluster_host_names | default('hostname') in ['hostname', 'fqdn', 'ip']
@@ -216,7 +126,8 @@
       vars:
         cassandra_output: true
 
-    # --limit would leave out the nodes found in the ring, and localhost, whose play writes the inventory
+    # --limit is refused: it would leave out the nodes found in the ring, and localhost, whose play writes the
+    # inventory
     - name: Stop on --limit
       ansible.builtin.assert:
         that: ansible_limit is not defined
@@ -240,6 +151,9 @@
       ansible.builtin.setup:
         gather_subset: [network]
 
+    # JMX access: the cassandra_service variables (cassandra_jmx_port,
+    # cassandra_jmx_username, cassandra_jmx_password_file...), written to the
+    # inventory too.
     - name: Load the cassandra_service defaults (JMX access)
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -259,7 +173,8 @@
       register: import_cluster_ring
       failed_when: false
 
-    # without -i <node>, (the inventory of ansible.cfg) every host there is given: one cluster's only
+    # without -i <node>, (the inventory of ansible.cfg) every host there is given: one cluster's only; nodes of
+    # two rings stop the import
     - name: Stop on nodes of several clusters
       ansible.builtin.assert:
         that: _apart | length == 0
@@ -312,9 +227,12 @@
           {%- endfor -%}
           {{ out | select | unique | list }}
 
-    # reached as the given node is: by the name it knows them by (ssh config and known_hosts entries match
-    # names), with its connection variables; at their ring address when the given node has an address of its
-    # own (ansible_host), or when nothing on the controller knows that name (no address, no ssh config entry)
+    # reached as the given node is: by the name it knows them by (getent hosts there; short, or the fqdn when the
+    # given name has a domain; ssh config and known_hosts entries match names) when the controller can reach that
+    # name (it resolves it, or the ssh config gives it a HostName or a jump host; always with a connection by
+    # name, docker...), else by their address; with its connection variables (ansible_user, port, key, ssh args,
+    # become...); at their ring address when the given node has an address of its own (ansible_host). One not
+    # reached is named by its address, and listed as not read.
     - name: Find the names of the nodes found in the ring, as the given node knows them
       ansible.builtin.command:
         argv: "{{ ['getent', 'hosts'] + import_cluster_new }}"
@@ -445,7 +363,8 @@
         ansible_become: false  # an inventory ansible_become beats the become keyword
 
 
-# the given nodes and the ones found in the ring (not the inventory's other hosts)
+# the given nodes and the ones found in the ring (not the inventory's other hosts); a host marked
+# cassandra_node_state: absent (an inventory given back) is not read (cassandra_nodes leaves it out above)
 - name: Read every node
   hosts: >-
     {{ (groups['all'] | map('extract', hostvars) | selectattr('import_cluster_given', 'defined')
@@ -928,6 +847,10 @@
       vars:
         cassandra_output: true
 
+    # Medusa is looked for at import_cluster_medusa_path (default none: its
+    # virtualenv or its medusa script, a full path on the nodes), else in the PATH,
+    # else in the usual places, else in the PATH of a login shell of cassandra, then
+    # of root, and last in any virtualenv under /opt.
     - name: Look for Medusa
       ansible.builtin.shell: |
         ini=/etc/medusa/medusa.ini
@@ -1115,6 +1038,9 @@
              | items2dict }}
       when: import_cluster_config is defined
 
+    # The OS tuning found on the nodes (sysctl, limits, THP, disks, tuned, swap,
+    # time sync, firewall) is listed in the report, and what a variable covers is
+    # carried into the inventory for the nodes added later.
     - name: Read the OS tuning
       ansible.builtin.shell: |
         set -- {{ _dirs | map('quote') | join(' ') }}  # the data and commitlog dirs
@@ -1319,7 +1245,7 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  become: false  # the files are the user's, written without root
+  become: false  # the files are the user's, written without root (none on the controller)
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
     # reads files in one go (see the script)
@@ -1403,8 +1329,10 @@
                                   | reject('equalto', _hosts_file) | list else '' }}
     _files: "{{ _layout | community.cassandra.cassandra_inventory_files }}"
     _secrets: "{{ _files | selectattr('secret') | map(attribute='path') | list }}"
-    # not one node read: nothing checked, nothing valid; a ring node not read (down, unreachable): not
-    # checked, the roles would give it the group variables (and start it), unless import_cluster_allow_unread
+    # not one node read: nothing checked, nothing valid; a ring node not read (down, unreachable, nodetool not
+    # found, its running Java removed by an update): not checked, its settings unknown, the roles would give it
+    # the group variables (and start it): it fails the import, unless import_cluster_allow_unread=true
+    # (default false) accepts it
     _self_check_ok: >-
       {{ _self_check_error is not defined and _self_check | default({}) | length > 0
          and _self_check | dict2items | map(attribute='value.differences') | select | list | length == 0
@@ -1475,7 +1403,17 @@
       vars:
         cassandra_output: true
 
-    # no_log: the variables hold the passwords read from the config
+    # no_log: the variables hold the passwords read from the config; import_cluster_debug: true (default
+    # false) shows an error while writing the inventory, hidden otherwise.
+    # Each node is named by import_cluster_host_names, with ansible_host set to its address in the ring; a node
+    # without facts keeps the name it was given, or its address. The lines at the end of cassandra-env.sh and
+    # logback.xml are carried as cassandra_env_extra_lines and cassandra_logback_extra_lines (a secret in them to
+    # secrets.yml as a cassandra_secret_<file>_<name> variable); cassandra-env.sh's JVM_OPTS lines and heap move
+    # to variables when the running JVM gets the same arguments (MOVED in the report); the options of a
+    # jvm<N>-server.options its Java does not read are not imported, that file left as it is
+    # (import_cluster_keep_unread_jvm_options=true imports them). Other hand edits no variable covers fail the
+    # self-check: import_cluster_keep_hand_edits=true (default false) leaves those files as they are on their
+    # node (cassandra_config_keep_files) instead, or the files named (=logback.xml).
     - name: Build the inventory
       block:
         # in Python: in a template, hostvars[host] works out the host's variables anew at each use (per node and
@@ -1511,6 +1449,13 @@
             # the ring nodes it failed on, and what of the error shows no value
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
+    # import_cluster_dir: the inventory dir (default inventories; a relative path is from the current dir);
+    # import_cluster_report_dir: where report.txt goes (default reports/<cluster group> next to
+    # import_cluster_dir: ./reports/<cluster group> for the default).
+    # One inventory dir for every cluster (ansible.cfg inventory = that dir, the playbooks run with
+    # -e cassandra_hosts=<cluster group>): the hosts go to <cluster group>.yml there, the variables to
+    # group_vars/ and host_vars/, side by side with the other clusters'; a host or group name another cluster
+    # has already stops the import (Stop rather than write over another cluster's files).
     # made absolute here, on the controller: the modules would take a relative
     # path from their own working directory, not the one the playbook was run from
     - name: Pick the output dirs
@@ -1535,6 +1480,8 @@
         path: "{{ _dir }}/{{ _hosts_file }}"
       register: import_cluster_hosts_stat
 
+    # import_cluster_force: false; true imports a cluster whose <cluster group>.yml
+    # is there already (a re-import).
     - name: Stop rather than overwrite an inventory
       ansible.builtin.assert:
         that: import_cluster_force | default(false) | bool or not import_cluster_hosts_stat.stat.exists
@@ -1545,9 +1492,10 @@
       vars:
         cassandra_output: true
 
-    # The vault password: import_cluster_vault_password_file, else Ansible's own
-    # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE); a
-    # password file that is executable is run, as Ansible does
+    # The vault password: import_cluster_vault_password_file (default none), else Ansible's own
+    # (vault_password_file in ansible.cfg, ANSIBLE_VAULT_PASSWORD_FILE; not --vault-password-file, which is
+    # not used), with import_cluster_vault_id (default: default); a password file that is executable is run,
+    # as Ansible does
     - name: Read the vault password
       when: _vault | bool
       block:
@@ -1641,8 +1589,9 @@
         _results: >-
           {{ (import_cluster_existing_read.stdout | from_json).vars if import_cluster_existing_read is not skipped else [] }}
 
-    # a re-import keeps how the inventory there reaches its hosts: one it reaches without ansible_host (imported
-    # with import_cluster_set_ansible_host=false, or taken out by hand) gets none again, unless the option is given
+    # import_cluster_set_ansible_host: true; false leaves ansible_host out. Not given, a re-import keeps how the
+    # inventory there reaches its hosts: one it reaches without ansible_host (imported with
+    # import_cluster_set_ansible_host=false, or taken out by hand) gets none again (the earlier choice kept)
     - name: Leave ansible_host out where the inventory there has none
       no_log: "{{ not import_cluster_debug | default(false) | bool }}"
       ansible.builtin.set_fact:
@@ -1750,6 +1699,21 @@
           vars:
             _why: "{{ ansible_failed_result | default({}) | community.cassandra.cassandra_import_error }}"
 
+    # Each file it writes starts with a "# Written by ...import_cluster for
+    # <cluster group>" line: a re-import replaces those, removes the ones of this
+    # cluster it no longer writes (a node gone), and keeps every other file
+    # (group_vars/all/*.yml, the other clusters', notes). A file from an earlier
+    # release, whose line names no cluster, is this cluster's only when this
+    # cluster's hosts file alone names its group or host (else it is kept, and
+    # listed in the report). A <cluster group>.yml without that line holding this
+    # cluster's group alone (moved from an earlier layout, or edited by hand) is
+    # its hosts file: replaced, the old one kept as <file>.<date>~. So is a file
+    # without that line laid out as the import writes it (its first comment a block
+    # title: # Cluster & topology...), from an import before that line.
+    # import_cluster_adopt: false; true takes the files of an earlier import of
+    # this cluster that do not say whose they are (no first line naming it, and no
+    # hosts file there naming their group or host) as this cluster's: replaced or
+    # removed, each replaced one kept as <file>.<date>~.
     - name: Sort out the files an earlier import wrote
       ansible.builtin.set_fact:
         _leftovers: >-
@@ -1882,7 +1846,9 @@
                        ~ _layout.hosts | to_nice_yaml(indent=2, sort_keys=false))
                       | community.cassandra.cassandra_inventory_generated(_layout.cluster_group) }}"
 
-    # secrets.yml: encrypted as a whole (Ansible reads vaulted vars files), or 0600 in clear
+    # Passwords found in the config go to secrets.yml files next to the other variables: encrypted as a whole
+    # with ansible-vault (Ansible reads vaulted vars files) with the vault password above, else written 0600
+    # for you to encrypt
     - name: Write group_vars and host_vars
       ansible.builtin.copy:
         content: >-
@@ -1940,6 +1906,8 @@
         cassandra_output: true  # printed as is by the ops callback
         cassandra_output_gap: true  # a block of its own (ops callback)
 
+    # import_cluster_strict: true; false writes an inventory that fails the self-check without failing the run
+    # (to inspect it: not safe to apply).
     # what differs, grouped by what makes the self-check pass, and how (report.txt: the same, each node's lines);
     # one text: plain under the default callback too (ansible-core 2.19+ prints it as is, before its result)
     - name: Stop on a failed self-check

@@ -1,17 +1,15 @@
 ---
-# Reboots every host of a cluster, one at a time: checks the cluster, drains
-# the node, reboots the host, waits until Cassandra has joined, checks the cluster again.
-# Stops at the first problem, without touching the next node. Asks once first
-# (cassandra_operation_confirm: false, or --check, asks nothing).
-#   ansible-playbook -i inventory community.cassandra.rolling_reboot
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
-# cassandra_reboot_timeout (default 1800 s), cassandra_reboot_command and
-# cassandra_reboot_boot_time_command pass through to ansible.builtin.reboot.
+# Reboot the hosts of a cluster, one at a time (OS patching).
+#
+#   ansible-playbook community.cassandra.rolling_reboot
+#
+# Each node drained and its host rebooted, the cluster checked before and
+# after it; the run stops at the first problem, before the next node. One
+# question.
+#
+# -e cassandra_rolling_resume=true resumes an interrupted run.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=rolling_reboot
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
@@ -30,6 +28,7 @@
       tags: [always]  # under --tags too
 
     # before the progress file: a run stopped here leaves none (a resume takes the latest)
+    # asks once (cassandra_operation_confirm: false, or --check, asks nothing)
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -48,6 +47,7 @@
                 ' The nodes the interrupted run finished are skipped (cassandra_rolling_resume).'
                 if cassandra_rolling_resume | default(false) | bool else '' }}
 
+    # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
     - name: Set up the progress file
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -66,6 +66,11 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # the cluster checked, the node drained, its host rebooted, waited for until
+    # Cassandra has joined, the cluster checked again; the run stops at the first
+    # problem, without touching the next node. cassandra_reboot_timeout (seconds),
+    # cassandra_reboot_command and cassandra_reboot_boot_time_command pass through
+    # to ansible.builtin.reboot (action_reboot.yml)
     - name: Reboot this host
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
