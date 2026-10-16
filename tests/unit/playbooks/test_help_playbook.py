@@ -83,6 +83,12 @@ def recap(output):
     return dict(re.findall(r"^(\S+)\s+: ok=\d+\s+changed=(\d+)", output, re.M))
 
 
+def joined(out):
+    """The output, each command cut over lines (" \\" at their end) on one line again: in a list of lines (the
+    json result format) or a text (yaml)."""
+    return re.sub(r' \\\\",\n +" +', " ", re.sub(r" \\\n +", " ", out))
+
+
 def test_help_reads_the_inventory_only(tmp_path):
     inv = inventory(tmp_path, vault_password="pw")
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml")
@@ -95,6 +101,7 @@ def test_help_reads_the_inventory_only(tmp_path):
     assert "rack2: node3 192.0.2.13 (seed), node4 192.0.2.14 (absent)" in out
     assert ("$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass"
             " community.cassandra.decommission_node -e cassandra_target_nodes=node4") in out
+    assert ' \\\\",' not in out  # a list of lines: each command whole, to copy from
     assert "Vault-encrypted files not read (help decrypts nothing): group_vars/orders/secrets.yml." in out
     # the CQL user is in the file not read
     assert "cassandra_cql_username is not set in the files\",\n        \"  read (a vaulted one may set it)" in out
@@ -117,7 +124,7 @@ def test_help_decrypts_nothing_even_with_the_vault_password(tmp_path):
     assert SECRET not in out and SECRET not in runbook
     assert "Vault-encrypted files not read (help decrypts nothing)" in out
     assert "cassandra_rack could not be read from the inventory alone" in out
-    assert "--vault-password-file vault_pass community.cassandra.status" in out  # no --ask-vault-pass added
+    assert "--vault-password-file vault_pass community.cassandra.status" in joined(out)  # no --ask-vault-pass added
     assert "--ask-vault-pass" not in out
 
 
@@ -149,7 +156,7 @@ def test_inline_vault_without_password_asks_for_it(tmp_path):
     (inv / "group_vars" / "orders" / "secrets.yml").write_text("cassandra_cql_password: !vault |\n%s\n" % secret)
     rc, out = run(tmp_path, "-i", "inventories/orders/hosts.yml")
     assert rc == 0, out
-    assert "--ask-vault-pass community.cassandra.status" in out
+    assert "--ask-vault-pass community.cassandra.status" in joined(out)
 
 
 def test_help_topic_under_the_yaml_result_format(tmp_path):
@@ -159,10 +166,10 @@ def test_help_topic_under_the_yaml_result_format(tmp_path):
     assert "    msg: |-\n        ==== Cluster ====" in out
     assert "\n          \u25cf stop_rack  Stops every node of one rack at once (maintenance), when the replication" in out
     assert rc == 0, out
-    assert ("$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack"
-            " -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3") in out
-    assert "---- What it does and checks (playbooks/stop_rack.yml) ----" in out
-    assert "  Stops every node of one rack at once (maintenance of the rack's hosts,\n" in out
+    assert ("$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack \\\n"
+            "                  -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3\n") in out  # cut, not wrapped
+    assert "---- What it does (playbooks/stop_rack.yml) ----" in out
+    assert "\n          Stop every node of one rack at once, for maintenance.\n" in out
     # plain text: the options one per line, unquoted
     assert "\n                -e cassandra_target_dc=<dc>           the rack's datacenter (required)\n" in out
     assert "Plain text, without the quotes" not in out
@@ -177,6 +184,8 @@ def test_help_under_another_callback(tmp_path):
     assert rc == 0, out
     assert '"  \u25cf stop_rack  Stops every node of one rack at once (maintenance), when the replication allows",' in out
     assert "Plain text, without the quotes" not in out
+    assert ('"      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack'
+            ' -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3",') in out and ' \\\\",' not in out
 
 
 def test_help_unknown_topic(tmp_path):

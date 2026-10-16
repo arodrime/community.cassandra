@@ -1,29 +1,17 @@
 ---
-# Removes nodes from a running cluster, one at a time: each one streams its
-# data to the others (nodetool decommission), then Cassandra is stopped and
-# disabled on it. The cluster is checked before and after each node; the run
-# stops at the first problem.
-#   ansible-playbook -i inventory community.cassandra.decommission_node -e cassandra_target_nodes=node7
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# A seed: take it out of cassandra_seeds in the inventory (still in it: refused);
-# the seed lists of the other nodes then drop it first, cassandra_seeds applied
-# live on each of them (change_seeds' way, no restart). A datacenter that
-# still has nodes afterwards but no seed in cassandra_seeds gets seeds of its
-# own (2 or 3 of its nodes up, on different racks), shown in the plan with a
-# WARNING and applied with the others, live only: the end says the
-# cassandra_seeds line to put in the inventory (none of its nodes up:
-# refused; one removed whole needs none). Refused too: a datacenter left with
-# fewer nodes than a keyspace has replicas there (cassandra_decommission_force:
-# true goes on, at the cost of those replicas).
-# CQL credentials, when authentication is on: cassandra_cql_username/_password.
-# Resume an interrupted run (skips the nodes already done): add -e cassandra_rolling_resume=true
-# A node still leaving from an earlier run is waited for again, one already
-# decommissioned is only stopped and disabled; a failed decommission is refused
-# (the operator decides: resume it with nodetool decommission, or cancel it).
+# Remove nodes from a running cluster.
+#
+#   ansible-playbook community.cassandra.decommission_node -e cassandra_target_nodes=node7
+#
+# One at a time, each node streams its data to the others (nodetool
+# decommission), then Cassandra is stopped and disabled on it.
+#
+# Take a seed out of cassandra_seeds first. Refused: a datacenter left with
+# fewer nodes than a keyspace's replicas there. One screen, one question; the
+# cluster is checked before and after each node, the run stops at the first
+# problem. Re-running is safe.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=decommission_node
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -90,6 +78,18 @@
         tasks_from: defaults.yml
         public: true
 
+    # A seed still in cassandra_seeds is refused. A datacenter that still has nodes
+    # afterwards but no seed in cassandra_seeds gets seeds of its own (2 or 3 of its
+    # nodes up, on different racks), shown in the plan with a WARNING and applied
+    # with the others, live only: the end says the cassandra_seeds line to put in
+    # the inventory (none of its nodes up: refused; one removed whole needs none).
+    # Refused too: a datacenter left with fewer nodes than a keyspace has replicas
+    # there (-e cassandra_decommission_force=true goes on, at the cost of those
+    # replicas); the replication is read over CQL (cassandra_cql_username and
+    # cassandra_cql_password when authentication is on). A node still leaving from
+    # an earlier run is waited for again, one already decommissioned is only stopped
+    # and disabled; a failed decommission is refused (the operator decides: resume
+    # it with nodetool decommission, or cancel it).
     # each refusal before any change: one REFUSED block, its reason and the way out (the rescue)
     - name: Check this node
       vars:
@@ -249,7 +249,8 @@
           {{ (hostvars[_leaving[0]].cassandra_leaving_ring | default({})).cluster_status
              | default((cassandra_preflight_status | default({})).cluster_status | default({}), true) }}
 
-# Before the first one leaves: the other nodes stop listing it as a seed
+# Before the first one leaves: the other nodes stop listing it as a seed,
+# cassandra_seeds applied live on each of them (change_seeds' way, no restart)
 - name: Take the nodes to remove out of the seed lists
   hosts: >-
     {{ query('community.cassandra.cassandra_nodes') | reject('in', query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) | list
@@ -276,6 +277,8 @@
         - hostvars[query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) | first]._cassandra_decommission_seeds_apply | default(false) | bool
         - not ansible_check_mode
 
+# Resume an interrupted run (skips the nodes already done):
+# -e cassandra_rolling_resume=true
 - name: Set up the progress file
   hosts: "{{ cassandra_target_nodes }}"
   gather_facts: false

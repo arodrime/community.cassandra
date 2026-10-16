@@ -1,29 +1,16 @@
 ---
-# Read-only view of the ring as nodetool status shows it from one node (the
-# first of the group that answers): a header line (the node it is seen from,
-# whether the ring and the group match), then per datacenter the nodetool
-# table (a node not UN marked "<- down", "<- joining"...) and a summary table
-# per rack and datacenter (nodes up, down, joining, leaving, moving, total
-# load), where the group and the ring differ (a ring node that is another
-# host of the inventory is named), and last the verdict (ALL 5 NODES UP,
-# 1 NODE DOWN: node1 (dc1/rack1), 1 NODE NOT REACHED: node3 (by Ansible: never
-# ALL UP then), the nodes joining, leaving or moving; under it "WARNING - ring
-# and inventory differ" when they do).
-# A host Ansible does not reach and no address of the ring matches is taken
-# for the one ring node no host has in its datacenter and rack (node3?). A
-# down node is shown, not an error (the check is health_check): fails only
-# when no node answers (of cassandra_target_nodes, when given).
-#   ansible-playbook -i inventory community.cassandra.status
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo) only to read cassandra_jmx_password_file when it is
-# set (the playbook then asks for it itself, no -b needed); none otherwise.
-# -e cassandra_target_nodes=<hosts> reads the ring from the first of them that
-# answers (in their order),
-# -e cassandra_status_raw=true prints nodetool's own output too.
-# JMX access: cassandra_jmx_port, cassandra_jmx_username, cassandra_jmx_password_file or _password.
+# Show the ring as nodetool status sees it from one node, changing nothing.
+#
+#   ansible-playbook community.cassandra.status
+#
+# Read from the first node that answers: each datacenter's nodes with their
+# state and load, where the inventory and the ring differ, then the verdict
+# (ALL 5 NODES UP, 1 NODE DOWN: node1...).
+#
+# A down node is shown, not an error (health_check is the check): it fails
+# only when no node answers.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=status
 - name: Check the cluster's group
   hosts: localhost
   gather_facts: false
@@ -42,8 +29,9 @@
 - name: Cluster status
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
-  # root only to read the JMX password file (the service account's, 0400);
-  # nodetool needs no root otherwise
+  # root (sudo) only to read the JMX password file when cassandra_jmx_password_file
+  # is set (the service account's, 0400): the play asks for it itself, no -b
+  # needed; nodetool needs no root otherwise
   become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
   ignore_unreachable: true  # a down server is part of the view
   vars:
@@ -60,7 +48,8 @@
     _answers: >-
       {{ cassandra_status_views | selectattr('result.cluster_status', 'defined') | selectattr('result.cluster_status') | list }}
     _view: "{{ _answers | first }}"
-    # cassandra_target_nodes: the nodes to read it from, in their order; else any node
+    # -e cassandra_target_nodes=<hosts>: the ring read from the first of them that
+    # answers, in their order; else from the first node of the group that answers
     _targets: >-
       {{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
          if cassandra_target_nodes | default('', true) | length > 0 else [] }}
@@ -183,6 +172,9 @@
           {{ out }}
       run_once: true
 
+    # a down node is part of the view; the run fails only when no node answered
+    # (of cassandra_target_nodes, when given). JMX access: cassandra_jmx_port,
+    # cassandra_jmx_username, cassandra_jmx_password_file or _password
     - name: Stop if no node answered
       ansible.builtin.assert:
         that: _answers | length > 0
@@ -203,6 +195,7 @@
           {{ out }}
       run_once: true
 
+    # -e cassandra_status_raw=true prints nodetool's own output too
     - name: Show nodetool's output
       ansible.builtin.debug:
         msg: "{{ (_view.result.stdout_list | default([''], true) | last).splitlines() }}"
@@ -211,6 +204,15 @@
       when: cassandra_status_raw | default(false) | bool
       run_once: true
 
+    # a header line (the node it is seen from, whether the ring and the group
+    # match), then per datacenter the nodetool table (a node not UN marked
+    # "<- down", "<- joining"...) and a summary per rack and datacenter (nodes
+    # up, down, joining, leaving, moving, total load), where the group and the
+    # ring differ (a ring node that is another host of the inventory is named),
+    # and last the verdict (ALL 5 NODES UP, 1 NODE DOWN: node1 (dc1/rack1),
+    # 1 NODE NOT REACHED: node3 (by Ansible: never ALL UP then), the nodes
+    # joining, leaving or moving; under it "WARNING - ring and inventory
+    # differ" when they do)
     - name: Show the ring
       ansible.builtin.debug:
         msg: >-
@@ -238,8 +240,8 @@
                                        | default(known | dict2items | selectattr('value', 'equalto', h) | map(attribute='key') | list)}) -%}
           {%- endfor -%}
           {{ out }}
-        # where the inventory puts each host: an unreachable one matched by no address is paired with the
-        # one ring node no host has there
+        # where the inventory puts each host: a host Ansible does not reach and no address of the ring
+        # matches is taken for the one ring node no host has in its datacenter and rack (shown "node3?")
         _places: >-
           {%- set out = {} -%}
           {%- for h in ansible_play_hosts_all if hostvars[h].cassandra_dc | default('') and hostvars[h].cassandra_rack | default('') -%}

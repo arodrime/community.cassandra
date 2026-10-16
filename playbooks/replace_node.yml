@@ -1,23 +1,18 @@
 ---
-# Replaces a dead node by a blank host, which takes over its tokens and
-# streams their data from the replicas (replace_address_first_boot):
-#   ansible-playbook -i inventory community.cassandra.replace_node \
+# Replace a dead node by a blank host, which takes over its tokens and data.
+#
+#   ansible-playbook community.cassandra.replace_node \
 #     -e cassandra_target_nodes=node9 -e cassandra_replace_address=10.0.0.14
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
+#
 # In the inventory, put the new host in the cluster's group and take the dead
 # one out (the new host may reuse its address). The dead node must be down
-# (DN) in the ring and the new host blank. A dead seed: take it out of
-# cassandra_seeds with change_seeds first, replace it, then make the new node
-# a seed with change_seeds.
-# The new host must be blank (where it stands: node_standing.yml). One that still holds data, typically
-# one replacing itself (same address, e.g. a lost disk or a reinstall): -e cassandra_replace_node_reset=true stops Cassandra
-# and empties its directories first (reset_node.yml: refused unless every node
-# that lists this host's address sees it down, as the node being replaced;
-# what it deletes is on the screen, the one question covers it).
+# (DN) and the new host blank; it streams the data from the replicas
+# (replace_address_first_boot).
+#
+# A dead seed: take it out of cassandra_seeds with change_seeds first. One
+# screen, one question.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=replace_node
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -84,6 +79,8 @@
               cassandra_replace_address.
             quiet: true
 
+        # A dead seed: take it out of cassandra_seeds with change_seeds first,
+        # replace it, then make the new node a seed with change_seeds.
         - name: The replacement can't be a seed
           ansible.builtin.assert:
             that: not _cassandra_service_is_seed | bool
@@ -150,6 +147,11 @@
           ansible.builtin.fail:
             msg: Nothing was replaced.
 
+    # A new host that still holds data, typically one replacing itself (same
+    # address, e.g. a lost disk or a reinstall): -e cassandra_replace_node_reset=true
+    # stops Cassandra and empties its directories first (reset_node.yml: refused
+    # unless every node that lists this host's address sees it down, as the node
+    # being replaced; what it deletes is on the screen, the one question covers it).
     # Read-only: what the reset deletes goes on the screen, refused before any question
     - name: Work out the reset of the host (cassandra_replace_node_reset)
       ansible.builtin.include_role:

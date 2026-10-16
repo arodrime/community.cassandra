@@ -1,0 +1,3 @@
+minor_changes:
+  - help playbook - ``help_topic`` shows each option on one line with a short description and its default, points to the section of the roles guide that tells more, and shows what the operation does as the short paragraphs of its playbook's header instead of the whole comment; the commands of the help text are cut between their arguments (at the terminal's width under the ops callback, at 100 columns as plain text; whole in the json list of lines and in ``RUNBOOK.md``), each line but the last ending with ``\`` so that it pastes as one command.
+  - operation playbooks - each one starts with a short header (what it does, its command, a few paragraphs, where its options are); the detailed rules are next to the tasks they describe, and in the roles guide.

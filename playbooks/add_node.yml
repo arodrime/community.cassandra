@@ -1,48 +1,13 @@
 ---
-# Adds nodes to a running cluster: all of them prepared at once (repository,
-# install, OS, config, firewall, Medusa; nothing started), then started and
-# bootstrapped one at a time. Add them to the cluster's inventory group
-# first, then:
-#   ansible-playbook -i inventory community.cassandra.add_node -e cassandra_target_nodes=node7,node8
-# A new node listed in cassandra_seeds too joins as a regular node (a seed does
-# not bootstrap: its cassandra.yaml lists the other seeds while it joins), then,
-# once the adds are done, cassandra_seeds is applied live on every node
-# (change_seeds' way, no restart); left to change_seeds when a datacenter would
-# need seeds picked, or has none of its nodes up to be one.
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# The cluster is checked before and after each node; the run stops at the
-# first problem. Nodes already in the ring are only checked (re-running is safe),
-# a node still bootstrapping (an earlier run that stopped waiting) is waited for
-# again; a node half added (in the ring without data, data without ring) is refused.
-# A new node that has data but is not in the ring (started once by mistake, a
-# failed bootstrap) starts over empty (cassandra_add_node_reset, on by default:
-# -e cassandra_add_node_reset=false refuses it instead): its directories emptied
-# (reset_node.yml), only when Cassandra is down there, no up node of the cluster
-# sees it in its ring, its cluster is this one or the stock 'Test Cluster' and it
-# has no user keyspace but a failed bootstrap's of this cluster; else refused with
-# what it holds. The screen says it ("node7 (dc1/rack_b): has data (...) — will be
-# reset", what it deletes in a warning), the one question covers it.
-# Before the first start, the clocks of the new nodes and the running ones are
-# checked (sync_clocks: each synchronised, within cassandra_clock_max_offset_ms
-# of its source; else refused, nothing started; -e cassandra_clock_check=false
-# skips it).
-# One screen first, one confirmation (cassandra_operation_confirm: false or
-# --check skips it): cluster, version, Java, Medusa, each new node (address, dc, rack, data
-# to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
-# outside tmux/screen).
-# A bootstrap can take hours: its progress printed every cassandra_stream_check_interval
-# seconds (30, every 10 s for the first 5 minutes); the run stops only after
-# cassandra_stream_stall_time seconds (1800) with nothing streamed. Afterwards the cleanup command is printed, or
-# run with cassandra_add_node_cleanup: sequential (one: the same), rack, dc or
-# all (default none), the words of cassandra_cleanup_mode.
-# One token per node (cassandra_num_tokens: 1): each new node needs
-# cassandra_initial_token, or -e cassandra_token_auto=bisect (each one splits
-# the largest range, nothing moves), balanced (an even ring: move_node then
-# moves the nodes the screen marks) or true (shows both, asks which).
+# Add nodes to a running cluster.
+#
+#   ansible-playbook community.cassandra.add_node -e cassandra_target_nodes=node7,node8
+#
+# Put the new hosts in their rack's group first. One screen, one question;
+# all new nodes prepared at once, then started and bootstrapped one at a time.
+# Re-running is safe.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=add_node
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -131,6 +96,9 @@
         public: true
       loop: [cassandra_service, cassandra_install]
 
+    # The nodes already in the ring are only checked (re-running is safe), a node
+    # still bootstrapping (an earlier run that stopped waiting) is waited for again;
+    # a node half added (in the ring without data, data without ring) is refused.
     - name: Check this node
       block:
         - name: Find which ones already joined (an interrupted run)
@@ -259,7 +227,11 @@
           {{ dict(_existing | map('extract', hostvars, ['_cassandra_preflight', 'address']) | zip(_existing)) }}
       run_once: true
 
-    # One token per node: where the new nodes go (plugins/filter/cassandra_tokens.py)
+    # One token per node: where the new nodes go (plugins/filter/cassandra_tokens.py).
+    # cassandra_num_tokens: 1: each new node needs cassandra_initial_token, or
+    # -e cassandra_token_auto=bisect (each one splits the largest range, nothing
+    # moves), balanced (an even ring: move_node then moves the nodes the screen
+    # marks) or true (shows both, asks which).
     - name: Plan the tokens of the new nodes (one token per node)
       when: _single | bool
       run_once: true
@@ -317,6 +289,15 @@
             fail_msg: "{{ cassandra_add_node_tokens.problems + (cassandra_add_node_tokens.balanced_problems if _auto == 'balanced' else []) }}"
             quiet: true
 
+    # A new node that has data but is not in the ring (started once by mistake, a
+    # failed bootstrap) starts over empty: its directories emptied (reset_node.yml),
+    # only when Cassandra is down there, no up node of the cluster sees it in its
+    # ring, its cluster is this one or the stock 'Test Cluster' and it has no user
+    # keyspace but a failed bootstrap's of this cluster; else refused with what it
+    # holds. cassandra_add_node_reset: auto (default) also refuses a former member
+    # of this cluster, true resets it, -e cassandra_add_node_reset=false refuses
+    # every node with data. The screen says it ("node7 (dc1/rack_b): has data (...)
+    # — will be reset", what it deletes in a warning), the one question covers it.
     # Read-only: what each reset deletes goes on the screen, refused before any question
     # (topology worked it out already and showed it on its own screen: kept as shown)
     - name: Work out the reset of the new nodes (cassandra_add_node_reset)
@@ -380,7 +361,10 @@
       run_once: true
 
     # One screen (screen.yml): what will be done, with what, the warnings; then
-    # one confirmation (not under --check nor with cassandra_operation_confirm false)
+    # one confirmation (not under --check nor with cassandra_operation_confirm false).
+    # On it: cluster, version, Java, Medusa, each new node (address, dc, rack, data
+    # to stream, Medusa fqdn), the cleanup choice, and warnings (uneven racks, a run
+    # outside tmux/screen).
     - name: Show the plan and confirm the add
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -669,6 +653,8 @@
 
 # Before the first start: the clocks of the new nodes (time sync started by
 # cassandra_linux, waited for) and of the running ones, none started when apart
+# (sync_clocks' checks: each synchronised, within cassandra_clock_max_offset_ms of
+# its source; -e cassandra_clock_check=false skips it).
 - name: Check the clocks
   hosts: "{{ query('community.cassandra.cassandra_nodes') | union(query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)) }}"
   any_errors_fatal: true
@@ -693,7 +679,13 @@
         | selectattr('cassandra_new_node_state', 'defined') | selectattr('cassandra_new_node_state', 'equalto', 'new')
         | list | length > 0
 
-# Then the starts, one at a time: each one bootstraps, waited for
+# Then the starts, one at a time: each one bootstraps, waited for; the cluster is
+# checked before and after each node, the run stops at the first problem. A
+# bootstrap can take hours: its progress printed every
+# cassandra_stream_early_check_interval seconds for the first
+# cassandra_stream_early_time seconds, then every cassandra_stream_check_interval
+# seconds; the run stops only after cassandra_stream_stall_time seconds with
+# nothing streamed (cassandra_service defaults).
 - name: Add the new nodes, one at a time
   hosts: "{{ cassandra_target_nodes }}"
   serial: 1
@@ -745,8 +737,10 @@
         cassandra_service_joining_before: "{{ _joining }}"
         cassandra_service_joining_after: "{{ _joining | reject('equalto', cassandra_new_node_address) | list }}"
 
-# A new node in cassandra_seeds joined as a regular node (join_seeds.yml): now
-# that it is up, cassandra_seeds goes live on every node (held back for
+# A new node in cassandra_seeds joined as a regular node (join_seeds.yml; a seed
+# does not bootstrap: its cassandra.yaml lists the other seeds while it joins): now
+# that it is up, cassandra_seeds goes live on every node, change_seeds' way, no
+# restart (held back for
 # change_seeds when a datacenter would need seeds picked, or has none of its
 # nodes up). In topology, its own step does it (between the adds and the removals).
 - name: Apply cassandra_seeds now that the new seeds are up
@@ -913,7 +907,7 @@
 # many replicas there as racks. cassandra_add_node_cleanup: none (default)
 # prints the command; sequential (or one), rack, dc or all runs it here, by
 # batches (one node, the nodes of a rack, of a datacenter, or all of them at
-# once), the cluster checked before each batch.
+# once), the cluster checked before each batch: the words of cassandra_cleanup_mode.
 - name: Clean up the nodes that handed data over
   hosts: >-
     {{ query('community.cassandra.cassandra_nodes') if query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
