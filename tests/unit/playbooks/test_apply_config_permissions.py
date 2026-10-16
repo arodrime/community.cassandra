@@ -187,7 +187,7 @@ def test_the_action_restarts_starts_or_only_writes():
                      "Start the node and wait until it has joined", "Forget the restart in progress"]
     # (a file written back with no restart: test_apply_config_written_back.py)
     tasks = [t for t in tasks if t["name"] not in ("Check the JVM a file is written back for still runs", "Check the files written back")]
-    tasks.pop()  # the mark of a stop for its time sync (timesync_window.yml), removed once up again
+    tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
     tasks.pop(5)  # its time sync before a start (test_apply_config_os.py)
     phase = tasks.pop(3)  # a phase line, only before a restart
     assert "cassandra_apply_config_then | default('restart') == 'restart'" in phase["when"]

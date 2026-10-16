@@ -881,9 +881,16 @@ its question and ends with what each node got; ``--check`` shows them in the rec
 swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:
 false`` (its OS settings kept as they are, e.g. set by ``import_cluster``). The ones that differ come after the config's,
 under ``OS settings``, each value with the nodes that differ; a real run applies them first, on their nodes at once, live: no restart for them.
-The files a running Cassandra has open keep their read-ahead until it restarts (said under the node); ``lvchange`` and
-a ``tuned`` profile switch wait for a run with Cassandra stopped (see the role), the udev rule keeping the read-ahead
-meanwhile.
+The files a running Cassandra has open keep their read-ahead until it restarts (said under the node).
+What is not done under a running Cassandra is a restart of that node, its reason named in the plan and the recap, one
+node at a time with the config restarts (drained, Cassandra stopped, done, Cassandra started): a ``tuned`` profile
+switch or the reload of the role's profile (``would apply, then restart (tuned profile)``; tuned applies all its
+settings again, live), the read-ahead LVM keeps in a volume's metadata (``(LVM read-ahead)``; ``lvchange`` reloads the
+volume, the udev rule keeping the read-ahead until then), a time sync to install or start (below). A node with only
+live changes is not restarted. ``cassandra_linux_tuned_switch_restart: false`` and ``cassandra_data_lvchange_restart:
+false`` leave the first two for later, as the role does outside ``apply_config`` (a WARNING gives the ``tuned-adm``
+command; LVM: the udev rule keeps the read-ahead). What ``tuned-adm`` or ``lvchange`` refuses in the window (a missing
+PV, a shared VG) is said, and does not cause another restart before the next boot.
 A time sync (chrony, systemd-timesyncd) to install or start on a node where Cassandra runs is not done live: it is a
 restart of that node (``would apply, then restart (time sync)``), one node at a time with the config restarts: drained,
 Cassandra stopped, the time sync started and the clock let sync, Cassandra started. The plan says the node's clock

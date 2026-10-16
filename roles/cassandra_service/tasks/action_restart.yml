@@ -43,11 +43,11 @@
   vars:
     cassandra_output: true
 
-# apply_config: its time sync started with Cassandra stopped (timesync_window.yml)
-- name: Start the time sync with Cassandra stopped
-  ansible.builtin.include_tasks: timesync_window.yml
+# apply_config: its OS settings done with Cassandra stopped (os_window.yml): its time sync, its disk settings
+- name: Apply the OS settings with Cassandra stopped
+  ansible.builtin.include_tasks: os_window.yml
   when:
-    - _cassandra_restart_timesync | default(false) | bool
+    - _cassandra_restart_timesync | default(false) | bool or _cassandra_restart_disks | default(false) | bool
     - not ansible_check_mode
 
 # a restart with something done while Cassandra is stopped (sync_clocks steps the clock: action_sync_clock.yml)

@@ -3,6 +3,8 @@ __metaclass__ = type
 
 import os
 
+import pytest
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import (
     cassandra_disk_changes,
     cassandra_disk_lv_read_ahead,
@@ -256,6 +258,29 @@ def test_tuned_already_running_the_profile():
     p = cassandra_disk_tuned_profile(ON_IT, [LV, SDB, md], TUNED_STATE, udev, 4)
     assert p["profiles"] == ["virtual-guest", "cassandra-disks"] and p["active"] == ["virtual-guest", "cassandra-disks"]
     assert p["lines"][-1] == r"devices_udev_regex=^(DM_UUID=LVM-AbC\.d|ID_SERIAL=36000c29a|MD_UUID=1a:2b)$"
+
+
+@pytest.mark.parametrize("times, reload", [
+    (["now|300", "loaded|100", "file|200"], True), (["now|300", "loaded|200", "file|200"], False),
+    (["now|300", "loaded|300", "file|200"], False), (["now|300", "loaded|100"], False), ([], False),
+    # a profile dated ahead of the clock (written before it was stepped back): not taken for a change
+    (["now|150", "loaded|100", "file|200"], False)])
+def test_tuned_running_the_profile_it_loaded_before_the_role_changed_it(times, reload):
+    # the role's profile changed since tuned loaded the profiles (an earlier run under a running Cassandra): what
+    # tuned runs is not the file, a reload to do
+    p = cassandra_disk_tuned_profile(ON_IT + times, [LV, SDB], TUNED_STATE, TUNED_UDEV, 4)
+    if reload:
+        assert p["reload"] is True and p["active"] == p["profiles"] == ["virtual-guest", "cassandra-disks"]
+    else:
+        assert p == {}
+    # a profile to add: its reload said either way
+    assert cassandra_disk_tuned_profile(RHEL_TUNED + times, [LV, SDB], TUNED_STATE, TUNED_UDEV, 4)["reload"] is reload
+
+
+def test_tuned_a_section_of_the_admin_before_the_role_s_found_also_when_the_profile_changed():
+    # (a reload would not help: said, no profile)
+    lines = ON_IT + ["opt|throughput-performance|disk|priority|-200", "now|300", "loaded|100", "file|200"]
+    assert cassandra_disk_tuned_profile(lines, [LV, SDB], TUNED_STATE, TUNED_UDEV, 4) == {}
 
 
 def test_tuned_a_section_of_the_admin_before_the_role_s():

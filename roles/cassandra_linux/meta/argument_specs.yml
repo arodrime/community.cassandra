@@ -46,6 +46,16 @@ argument_specs:
             volume (its I/O suspended a moment). By default it is done at a run with Cassandra stopped (a new node,
             before it starts); meanwhile the read-ahead is set live and kept by the udev rule.
           - V(true) also runs it under a running Cassandra.
+      cassandra_data_lvchange_restart:
+        type: bool
+        default: true
+        description:
+          - The playbook C(apply_config) runs the C(lvchange) left for later under a running Cassandra in that
+            node's restart window (drained, Cassandra stopped, C(lvchange), started), a restart for it alone if
+            need be, said as the reason of the restart.
+          - V(false) leaves it for later, the udev rule keeping the read-ahead meanwhile.
+          - An C(lvchange) refused there does not cause another restart before the next boot (a WARNING with the
+            command instead).
       cassandra_data_tune_os_volumes:
         type: bool
         default: true
@@ -77,9 +87,18 @@ argument_specs:
           - Switching tuned to the C(cassandra-disks) profile applies the active profiles again, live (kernel
             settings, CPU, disks, their scripts). By default it is done at a run with Cassandra stopped (a new node,
             before it starts); under a running Cassandra the profile is only written and the role says how to switch
-            (C(tuned-adm profile ...)). Until then tuned sets its read-ahead on the Cassandra devices again when it
-            starts.
+            (C(tuned-adm profile ...)), the playbook C(apply_config) switching in the node's restart window. Until
+            then tuned sets its read-ahead on the Cassandra devices again when it starts.
           - V(true) also switches under a running Cassandra.
+      cassandra_linux_tuned_switch_restart:
+        type: bool
+        default: true
+        description:
+          - The playbook C(apply_config) does the switch left for later under a running Cassandra (or the reload of
+            the profile once changed) in that node's restart window (drained, Cassandra stopped, C(tuned-adm profile
+            ...), started), a restart for it alone if need be, said as the reason of the restart.
+          - V(false) leaves it for later, with a warning giving the command. A C(tuned-adm) that failed there does not
+            cause another restart before the next boot (the same warning).
       cassandra_sysfs_block_root:
         type: path
         default: /sys/block

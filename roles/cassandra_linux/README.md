@@ -36,6 +36,12 @@ Role Variables
 * `cassandra_data_lvchange_running`: run `lvchange --readahead`, which
   reloads the volume, also under a running Cassandra. Default `false`: at a
   run with Cassandra stopped (see below).
+* `cassandra_data_lvchange_restart`: the playbook `apply_config` runs that
+  `lvchange` in the node's restart window (drained, Cassandra stopped,
+  `lvchange`, started), a restart for it alone if need be. Default `true`;
+  `false` leaves it for later (the udev rule keeps the read-ahead meanwhile).
+  An `lvchange` refused there (a missing PV, a shared VG) does not cause
+  another restart before the next boot: a WARNING gives the command instead.
 * `cassandra_data_tune_os_volumes`: tune the filesystem Cassandra's data
   directories are on also when it is one of the OS, and a disk under them
   that also holds one (see below). Default `true`; `false` leaves them
@@ -52,8 +58,18 @@ Role Variables
 * `cassandra_linux_tuned_switch_running`: switching tuned to that profile
   applies the profiles again, live. Default `false`: done at a run with
   Cassandra stopped (a new node, before it starts); under a running
-  Cassandra the profile is only written, and the role says how to switch.
+  Cassandra the profile is only written, and the role says how to switch
+  (`apply_config` switches in the node's restart window).
   `true`: switched under a running Cassandra too.
+* `cassandra_linux_tuned_switch_restart`: the playbook `apply_config` does
+  that switch (or the reload of the profile once changed) in the node's
+  restart window (drained, Cassandra stopped, `tuned-adm profile ...`,
+  started), a restart for it alone if need be. Default `true`; `false` leaves
+  it for later, with a warning giving the command. A `tuned-adm` that failed
+  there does not cause another restart before the next boot (the same
+  warning). A profile the role wrote since tuned loaded it (by a run under a
+  running Cassandra) counts as a reload to do. Either variable `false` still
+  lets the other's restart do it (Cassandra stopped then).
 * `cassandra_linux_apply_live`: apply the kernel settings (sysctl, swapoff,
   THP, disk tuning) live, not only persist them (swapoff only when what swap
   holds fits twice in the memory available, else a warning). Defaults to `auto`: live
@@ -157,9 +173,10 @@ Both are applied immediately through sysfs, and kept across reboots:
   reloads the volume (at boot, after `lvextend`...), after the kernel, which
   may set it back then. `lvchange` reloads the volume, its I/O suspended a
   moment: it is done at a run with Cassandra stopped (a new node, before it
-  starts), once; with Cassandra running, the read-ahead is set live and the
-  udev rule keeps it meanwhile (`cassandra_data_lvchange_running: true` runs
-  `lvchange` all the same). When LVM refuses (a missing PV, a shared VG),
+  starts), once, or by `apply_config` in the node's restart window; with
+  Cassandra running, the read-ahead is set live and the udev rule keeps it
+  meanwhile (`cassandra_data_lvchange_running: true` runs `lvchange` all the
+  same). When LVM refuses (a missing PV, a shared VG),
   when the role does not apply settings live, or with
   `activation/readahead = "none"` in `lvm.conf`, the volume is kept by the
   udev rule too, and LVM may set it back when it activates the volume.
@@ -212,16 +229,19 @@ is done once, and again only when the Cassandra devices change, and only at
 a run with Cassandra stopped (a new node, before it starts): under a
 running Cassandra, the profile is written but not switched to (the role
 says so, with the `tuned-adm profile` command), unless
-`cassandra_linux_tuned_switch_running: true`. No playbook of the
-collection stops Cassandra around this role on an existing node: there,
-switch by hand or set that variable for one run. Until it is switched to,
+`cassandra_linux_tuned_switch_running: true`. The playbook `apply_config`
+does it in the node's restart window (drained, Cassandra stopped, switched,
+started: a restart for it alone if need be, its reason said), unless
+`cassandra_linux_tuned_switch_restart: false`. Until it is switched to,
 tuned sets its read-ahead and scheduler on the Cassandra devices again when
 it starts (at boot); the role sets them back at its next run. A disk
 matched by its `ID_WWN` alone (no extension) shares it with the other LUNs
 of its array: they leave tuned's `[disk]` too. `tuned-ppd` (power profiles
-daemon) switching profiles takes it off. `cassandra_linux_tuned_manage:
-false` leaves tuned alone, and the role only warns; back to the profiles
-before: that, and `tuned-adm profile <them>`.
+daemon) switching profiles takes it off: `apply_config` then restarts the
+node to switch back (`cassandra_linux_tuned_switch_restart: false` on hosts
+where tuned-ppd runs). `cassandra_linux_tuned_manage: false` leaves tuned alone, and
+the role only warns; back to the profiles before: that, and
+`tuned-adm profile <them>`.
 
 In containers, the devices are not tuned (they are the host's).
 

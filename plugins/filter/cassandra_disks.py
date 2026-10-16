@@ -127,12 +127,17 @@ TUNED_TRUE = ("True", "true", "1")   # tuned's own (profiles/unit.py)
 
 def _tuned_read(lines):
     """What the role read of tuned: "state|active", "version|<tuned-adm
-    --version>", "active|<profiles>", "opt|<profile>|<section>|<key>|<value>"
-    -> (state, version, active, opts)."""
-    state, version, active, opts = "", (), [], {}
+    --version>", "active|<profiles>", "opt|<profile>|<section>|<key>|<value>",
+    and "now|", "loaded|" (when tuned last loaded its profiles), "file|" (when
+    the role's profile last changed), in seconds -> (state, version, active,
+    opts, stale: the role's profile changed since tuned loaded it, not dated
+    ahead of the clock)."""
+    state, version, active, opts, times = "", (), [], {}, {}
     for line in lines or []:
         kind, dummy, rest = line.partition("|")
-        if kind == "state":
+        if kind in ("now", "loaded", "file") and rest.strip().isdigit():
+            times[kind] = int(rest)
+        elif kind == "state":
             state = rest.strip()
         elif kind == "version":
             m = re.search(r"tuned-adm\s+(\d+)\.(\d+)", rest)
@@ -143,7 +148,8 @@ def _tuned_read(lines):
             parts = rest.split("|", 3)
             if len(parts) == 4:
                 opts.setdefault(parts[0], {}).setdefault(parts[1], {})[parts[2]] = parts[3]
-    return state, version, active, opts
+    stale = times.get("loaded", 0) < times.get("file", 0) <= times.get("now", 0)
+    return state, version, active, opts, stale
 
 
 def _tuned_unit(section, kv):
@@ -276,10 +282,11 @@ def _tuned(lines, devices, state, udev_info, kb):
     profile section, value, what) of a device its active profiles set, or
     None; profile: the one to add (see cassandra_disk_tuned_profile), why:
     why there is none though a conflict, active, base}."""
-    st, version, active, opts = _tuned_read(lines)
+    st, version, active, opts, stale = _tuned_read(lines)
     base = [p for p in active if p != TUNED_PROFILE]
     props = _tuned_props(devices, state, udev_info)
-    units = _tuned_units(active, opts)
+    # the role's profile changed since tuned loaded it: what tuned runs is not known, taken as without it (a reload)
+    units = _tuned_units(base if stale else active, opts)
     conflict, first = None, False
     for d in devices or []:
         s = state.get(d["kname"]) or {}
@@ -288,9 +295,11 @@ def _tuned(lines, devices, state, udev_info, kb):
                                      and (d.get("kind") == "disk" or _has_scheduler(s)))
         if found:
             conflict = (d.get("label") or d["kname"], unit["name"]) + found
-            ours = units.get("cassandra_disks")
-            # the role's profile matches it, yet another section takes it first
-            first = bool(ours and ours["devices_udev_regex"] and _tuned_takes({"x": ours}, d, props.get(d["kname"]) or {}))
+            # the role's profile matches it, yet another section takes it first (the profiles as they are now)
+            now = _tuned_units(active, opts) if stale else units
+            ours, taken = now.get("cassandra_disks"), _tuned_takes(now, d, props.get(d["kname"]) or {})
+            first = bool(ours and ours["devices_udev_regex"] and _tuned_takes({"x": ours}, d, props.get(d["kname"]) or {})
+                         and taken is not ours)
             break
     out = {"conflict": conflict, "profile": {}, "why": "", "active": active, "base": base}
     if not conflict:
@@ -312,7 +321,7 @@ def _tuned(lines, devices, state, udev_info, kb):
     else:
         # tuned's regex, escaping what a regex reads, nothing else (tuned keeps the backslashes)
         regex = "^(%s)$" % "|".join(re.sub(r"([.^$*+?()\[\]{}|\\])", r"\\\1", i) for i in ids)
-        out["profile"] = {"name": TUNED_PROFILE, "base": base, "active": active, "unmatched": unmatched,
+        out["profile"] = {"name": TUNED_PROFILE, "base": base, "active": active, "unmatched": unmatched, "reload": stale,
                           "profiles": base + [TUNED_PROFILE], "lines": [
                               "# %s: change the role variables, not this file." % TUNED_MARK,
                               "# Run after the other profiles: tuned-adm profile <them> %s" % TUNED_PROFILE,
@@ -333,7 +342,8 @@ def cassandra_disk_tuned_profile(lines, devices, state, udev_info, kb):
     """The tuned profile the role adds after the active one(s) when they would
     set the read-ahead (or scheduler) of the Cassandra devices: {} when not
     needed or not possible, else {name, base, active, profiles (what tuned is
-    to run), unmatched, lines}. tuned merges the profiles it runs; this one
+    to run), unmatched, reload (the role's profile changed since tuned loaded
+    it), lines}. tuned merges the profiles it runs; this one
     adds a [disk] instance of a lower priority number (tuned gives each
     device to the first instance that matches it) that takes the Cassandra
     devices, matched by their stable udev ids, and sets nothing on them."""

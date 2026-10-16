@@ -71,7 +71,7 @@ def test_a_restart_writes_the_unit_before_draining():
     tasks = load("roles", "cassandra_service", "tasks", "action_restart.yml")
     assert [t["name"] for t in tasks] == ["Install the cassandra systemd unit", "Drain the node",
                                           "Stop when the node did not answer", "Say the drain did not work",
-                                          "Start the time sync with Cassandra stopped",  # (apply_config's only)
+                                          "Apply the OS settings with Cassandra stopped",  # (apply_config's only)
                                           "Do what is done while it is stopped", "Restart it and wait until it has joined"]
     assert tasks[0]["ansible.builtin.include_tasks"] == "unit.yml"
     assert tasks[6]["vars"]["_cassandra_service_unit_written"] is True
