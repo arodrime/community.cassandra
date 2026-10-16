@@ -66,9 +66,9 @@ def test_the_cassandra_group_is_not_picked(groups):
 def test_the_cassandra_group_named():
     """The way to adapt: name it."""
     groups = {"all": ["n1", "n2"], "cassandra": ["n1", "n2"], "dc1": ["n1"], "dc2": ["n2"]}
-    with pytest.raises(ValueError, match=r"holds no cluster laid out as the import writes it .*; groups: cassandra, dc1, dc2\)\."
-                                         r" Name one: -e cassandra_hosts=<group>, or CASSANDRA_CLUSTER=<group or cluster name>"
-                                         r" in your shell\. A group cassandra is not taken by default: -e cassandra_hosts=cassandra names it\.$"):
+    with pytest.raises(ValueError, match=r"holds no cluster laid out as the import writes it .*; groups: cassandra, dc1, dc2\)\n\n"
+                                         r"Name the one to run on:\n(.*\n){2}A group cassandra is no longer taken by default: name it as"
+                                         r" any other\.\nNothing was changed\.$"):
         cluster_group(None, groups)
     assert picked("cassandra", groups) == ("cassandra", BY_GIVEN)
     assert picked(None, groups, "cassandra") == ("cassandra", BY_ENV)
@@ -218,7 +218,7 @@ def test_given_and_env_that_disagree(env, said):
         picked("cluster_a", TWO, env, NAMES.get)
     msg = str(err.value)
     assert msg.startswith("REFUSED  -e cassandra_hosts=cluster_a and CASSANDRA_CLUSTER=%s (from your shell) disagree: %s" % (env, said))
-    assert msg.endswith("Name one: unset CASSANDRA_CLUSTER (or set it to cluster_a), or run without -e cassandra_hosts.")
+    assert msg.endswith("Name one: unset CASSANDRA_CLUSTER, or run without -e cassandra_hosts.\nNothing was changed.")
 
 
 def test_given_and_env_a_dc_group():
@@ -425,7 +425,7 @@ class _Loader(object):
     ({}, "prod", True, "cassandra_hosts is set in the inventory (prod, group_vars or host_vars): the plays' hosts do"
                        " not see it. Give it on the command line, -e cassandra_hosts=prod, or CASSANDRA_CLUSTER=prod in"
                        " your shell."),
-    ({"cassandra_hosts": ""}, "", False, "cassandra_hosts is empty (-e cassandra_hosts=): give a group, or leave it out."),
+    ({"cassandra_hosts": ""}, "", False, "Give the cluster's group, -e cassandra_hosts=<group>, or leave -e cassandra_hosts out"),
 ])
 def test_cassandra_hosts_not_from_the_inventory(monkeypatch, extra, given, inventory, refused):
     """Under ansible-playbook: a cassandra_hosts of the inventory (group_vars/all) would name the cluster to the tasks,
