@@ -69,6 +69,7 @@ def facts(found=(), running=False, active="inactive", du="12884901888\ttotal", p
         "inventory_hostname": "node7", "cassandra_cluster_name": "my_cluster", "_cassandra_node_reset_auto": auto,
         "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "rack_b", "address": "10.0.0.7"},
         "groups": {"cassandra": ["node1", "node7", "node3"]},
+        "cassandra_hosts": "cassandra",  # named: a lone group cassandra is no cluster by default (cluster selection)
         "hostvars": {"node1": {"_cassandra_preflight": {"address": "10.0.0.1"}},
                      "node3": {"_cassandra_preflight": {"address": "10.0.0.3"}},
                      "node7": {"_cassandra_preflight": {"address": "10.0.0.7"}}},

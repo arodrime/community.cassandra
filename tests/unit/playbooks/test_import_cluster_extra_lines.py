@@ -134,7 +134,6 @@ def test_loggers_at_the_end_of_logback_carried():
 
 
 @pytest.mark.parametrize("text", [
-    "</configuration>\n<!-- after the root element -->",  # outside <configuration>: not where the role writes them
     '  <logger name="org.apache.cassandra" level="INFO"/>\n</configuration>',  # cassandra_log_level_cassandra's
     "  <logger level='INFO'  name='org.apache.cassandra'/>\n</configuration>",  # (written another way)
     '  <root level="WARN">\n    <appender-ref ref="SYSTEMLOG"/>\n  </root>\n</configuration>',
@@ -145,6 +144,14 @@ def test_logback_lines_not_carried(text):
     out, dummy = imported(logback(text))
     assert "cassandra_logback_extra_lines" not in out["vars"]
     assert [line for line in out["hand_edits"] if line.startswith("logback.xml")]
+
+
+def test_logback_comment_after_the_root_element_neither_carried_nor_a_hand_edit():
+    # logback.xml is read as XML: a comment outside <configuration> sets nothing (same settings, layout rewritten)
+    out, dummy = imported(logback("</configuration>\n<!-- after the root element -->"))
+    assert "cassandra_logback_extra_lines" not in out["vars"]
+    assert not [line for line in out["hand_edits"] if line.startswith("logback.xml")]
+    assert [n for n in out["normalized"] if n.startswith("logback.xml")]
 
 
 def secret_files():

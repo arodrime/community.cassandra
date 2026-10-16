@@ -132,9 +132,12 @@ def test_extra_settings_checked_against_the_override(tmp_path):
     t = task("Refuse extra settings the template already has")
     variables = role_vars(cassandra_config_template_overrides={"cassandra.yaml": str(tmp_path / "y.j2")},
                           role_path=ROLE, cassandra_extra_settings={"my_own_key": 2, "num_tokens": 8},
-                          _cassandra_config_extra_sections={})
+                          _cassandra_config_extra_sections={}, cassandra_version="50x",
+                          _cassandra_config_old_names=ROLE_VARS["_cassandra_config_old_names"],
+                          _cassandra_config_old_names_of=ROLE_VARS["_cassandra_config_old_names_of"])
     # (outside a play only the lookup's short name resolves)
-    variables["_keys"] = trust_as_template(t["vars"]["_keys"].replace("lookup('ansible.builtin.file'", "lookup('file'"))
+    for name in ("_template", "_keys", "_old"):  # the task's own vars (the template read: the override)
+        variables[name] = trust_as_template(t["vars"][name].replace("lookup('ansible.builtin.file'", "lookup('file'"))
     assert render(t["vars"]["_taken"], **variables) == ["my_own_key"]  # num_tokens: not in that template
 
 

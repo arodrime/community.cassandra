@@ -738,26 +738,28 @@ def test_disk_growth_is_progress_while_bytes_are_left():
     assert not s["progressed"] and s["disk"] == {"n4": 5 * GIB}
 
 
-def test_peer_lines_stalled_only_from_the_warning_threshold():
+def test_peer_lines_stalled_only_from_the_warning_threshold(monkeypatch):
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_output
+    monkeypatch.setattr(cassandra_output, "terminal_width", lambda: 160)  # the peers' columns side by side
     views = [read("n4", session("10.0.0.1", GIB, 3 * GIB), session("10.0.0.2", GIB, 3 * GIB, plan="p2"))]
     names = {"10.0.0.1": "node1", "10.0.0.2": "node2"}
     s = cassandra_stream_progress(views, None, now=0)
     s = cassandra_stream_progress(views, s, now=60)
     assert cassandra_progress_line(s, 1, 1, "n4", "bootstrap", names=names) == [
         "[1/1] n4 bootstrap  [###-------]  33%  2.0/6.0 GiB  no progress for 1m  1m",
-        "      from node1 1.0/3.0 GiB no progress for 1m   from node2 1.0/3.0 GiB no progress for 1m"]
+        "      from node1  1.0/3.0 GiB  33% no progress for 1m   from node2  1.0/3.0 GiB  33% no progress for 1m"]
     s = cassandra_stream_progress(views, s, now=299)
     assert "STALLED" not in cassandra_progress_line(s, names=names)[0]
-    assert "stalled" not in cassandra_progress_line(s, names=names)[1]
+    assert "STALLED" not in cassandra_progress_line(s, names=names)[1]
     s = cassandra_stream_progress(views, s, now=300)
     assert cassandra_progress_line(s, 1, 1, "n4", "bootstrap", names=names) == [
         "[1/1] n4 bootstrap  STALLED 5m/30m  33%  2.0/6.0 GiB  5m",
-        "      from node1 1.0/3.0 GiB stalled   from node2 1.0/3.0 GiB stalled"]
+        "      from node1  1.0/3.0 GiB  33% STALLED   from node2  1.0/3.0 GiB  33% STALLED"]
     # one peer moves: the other one alone stalled, the line moves on
     moved = [read("n4", session("10.0.0.1", 2 * GIB, 3 * GIB), session("10.0.0.2", GIB, 3 * GIB, plan="p2"))]
     s = cassandra_stream_progress(moved, s, now=330)
     assert cassandra_progress_line(s, names=names)[1] == \
-        "      from node1 2.0/3.0 GiB ok   from node2 1.0/3.0 GiB stalled"
+        "      from node1  2.0/3.0 GiB  66%           from node2  1.0/3.0 GiB  33% STALLED"
     # the warning threshold set: STALLED from it
     s = cassandra_stream_progress(views, None, now=0, warn_time=900, stall_time=3600)
     s = cassandra_stream_progress(views, s, now=899, warn_time=900, stall_time=3600)
