@@ -37,7 +37,7 @@ SESSION = ("this run is not inside tmux or screen: if the SSH session to this ma
 def wide_terminal(monkeypatch):
     """The views laid out at the terminal's width (width='terminal'): a wide one here, whatever runs the tests."""
     from ansible_collections.community.cassandra.plugins.filter import cassandra_apply_config
-    monkeypatch.setattr(cassandra_apply_config, "_terminal_width", lambda: 200)
+    monkeypatch.setattr(cassandra_apply_config, "terminal_width", lambda: 200)
 
 
 def load(*path):
