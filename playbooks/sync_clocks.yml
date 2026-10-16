@@ -1,37 +1,16 @@
 ---
-# Shows the clock of every node as its time sync daemon reports it (chrony,
-# systemd-timesyncd, ntpd: synchronised, source, offset and error bound), a
-# verdict per node, and brings time sync up where it is missing:
-#   ansible-playbook -i inventory community.cassandra.sync_clocks --check   (shows, changes nothing)
-#   ansible-playbook -i inventory community.cassandra.sync_clocks
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# In sync: synchronised to a source, the offset plus the daemon's error bound
-# within -e cassandra_clock_max_offset_ms=50 (milliseconds). The sources of the
-# nodes are compared: unrelated ones, a WARNING. A node with no daemon to ask
-# (a container: the host's clock) is compared with the others by dates collected
-# over SSH, coarsely (a gap over a second counts). The reads run on every node
-# at once.
-# Time sync is set up the cassandra_linux way: installed unless cassandra_offline,
-# enabled, started; no NTP server is configured (the site's chrony.conf stays),
-# and cassandra_linux_timesync: false leaves a node alone. Where Cassandra does
-# not run, and on a running node where the correction is small (within
-# -e cassandra_clock_step_ms=400: the daemon slews it), that is done live, on
-# those nodes at once. A running node that needs a step (more, or unknown: a step
-# moves the timestamps Cassandra writes) gets a restart window, one node at a
-# time: cluster checked, drained, stopped, time sync up and synchronised, the
-# clock stepped (chronyc makestep; systemd-timesyncd steps at its sync), started,
-# cluster checked again (a window an interrupted run left open first). A node
-# whose clock is ahead is said in a warning: what it stamped meanwhile carries
-# future timestamps. A source that is unreachable or
-# missing, a container's clock (the host's), a time sync left alone: said, to fix
-# by hand, the run ends failed. Not monitoring: it schedules and alerts nothing.
-# -e cassandra_clock_sync_timeout=180: seconds to wait for a time sync to synchronise.
-# An interrupted run: run it again, the same command (the clocks read again say
-# what is left; a node it left drained or stopped gets its window again, started).
+# Check the clock of every node and bring time sync up where it is missing.
+#
+#   ansible-playbook community.cassandra.sync_clocks --check
+#
+# Each node's clock as its time sync daemon reports it, with a verdict; --check
+# changes nothing. One screen, one question; small corrections are made live,
+# a running node whose clock needs a step gets a restart window, one node at a
+# time. What it cannot fix is said, to fix by hand; it schedules nothing.
+#
+# Re-running is safe: the clocks are read again, a window left open first.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=sync_clocks
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -67,6 +46,12 @@
       ansible.builtin.set_fact:
         _cassandra_clock_running: "{{ cassandra_jvm.pid is defined }}"
 
+    # chrony, systemd-timesyncd or ntpd: synchronised, source, offset and error
+    # bound, read on every node at once. In sync: synchronised to a source, the
+    # offset plus the daemon's error bound within -e cassandra_clock_max_offset_ms=<ms>.
+    # The sources of the nodes are compared: unrelated ones, a WARNING. A node
+    # with no daemon to ask (a container: the host's clock) is compared with the
+    # others by dates collected over SSH, coarsely (a gap over a second counts).
     - name: Read and compare the clocks
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -102,6 +87,15 @@
           {{ _unread | map('extract', hostvars, ['_cassandra_clock_last', 'msg']) | map('default', '') | map('string')
              | map('regex_replace', '\s+', ' ') | map('trim') | select | list }}
 
+    # live, on those nodes at once: where Cassandra does not run, and on a
+    # running node whose correction is small (within -e cassandra_clock_step_ms=<ms>,
+    # and within what its daemon slews by itself: the daemon slews it). A running
+    # node that needs a step (more, or unknown: a step moves the timestamps
+    # Cassandra writes) gets a restart window instead; ntpd is never stepped
+    # here (to fix by hand: its own start with -g, or chrony). A source that is
+    # unreachable or missing, a container's clock (the host's), a time sync left
+    # alone: said, to fix by hand, the run ends failed. Not monitoring: it
+    # schedules and alerts nothing.
     - name: Group the nodes set live
       ansible.builtin.group_by:
         key: "cassandra_sync_clock_live_{{ _cassandra_clock_action in ['start', 'step', 'slew'] }}"
@@ -134,6 +128,8 @@
           slew: wait while its daemon corrects the offset
           window: set the clock in a restart window
 
+    # a node whose clock is ahead is said in a warning: what it stamped meanwhile
+    # carries future timestamps
     - name: Show the clocks and confirm the run
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_service
@@ -180,6 +176,10 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # time sync set up the cassandra_linux way: installed unless cassandra_offline,
+    # enabled, started; no NTP server configured (the site's chrony.conf stays);
+    # cassandra_linux_timesync: false leaves a node alone.
+    # -e cassandra_clock_sync_timeout=<seconds>: how long to wait for a time sync to synchronise
     - name: Set the clock of this node
       when: not ansible_check_mode
       block:
@@ -222,7 +222,13 @@
         tasks_from: progress.yml
       when: not ansible_check_mode
 
-# a window an interrupted run left open first: node_operation lets that one be down (drained or stopped)
+# cluster checked, drained, stopped, time sync up and synchronised, the clock
+# stepped (chronyc makestep; systemd-timesyncd steps at its sync), started,
+# cluster checked again.
+# A window an interrupted run left open first: node_operation lets that one be
+# down (drained or stopped). An interrupted run: run it again, the same command
+# (the clocks read again say what is left; a node it left drained or stopped
+# gets its window again, started).
 - name: Set the clocks in a restart window, one node at a time
   hosts: >-
     {{ (groups['cassandra_window_left_True'] | default([]) | select('in', query('community.cassandra.cassandra_nodes')) | list)

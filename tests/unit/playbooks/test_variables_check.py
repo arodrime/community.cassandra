@@ -185,11 +185,11 @@ def test_every_documented_extra_var_is_known():
 
 
 def test_import_cluster_options_are_suggested():
-    # each option import_cluster documents (#   import_cluster_xxx: ...) is a playbook variable, so the one
+    # each import_cluster_* name in import_cluster's comments (its options) is a playbook variable, so the one
     # suggested for a typo (not an internal fact or register of the import)
     with open(os.path.join(TOP, "playbooks", "import_cluster.yml"), encoding="utf-8") as f:
-        options = set(name for names in re.findall(r"(?m)^#   (import_cluster_\w+(?:, import_cluster_\w+)*)", f.read())
-                      for name in names.split(", "))
+        comments = "\n".join(line for line in f if line.lstrip().startswith("#"))
+    options = set(re.findall(r"\b(import_cluster_\w+)", comments))
     assert "import_cluster_vault_id" in options and "import_cluster_keep_hand_edits" in options
     assert options - set(PLAYBOOK_VARIABLES) == set()
     # never an internal one (import_cluster_vault_stat, import_cluster_repo_files are registers of the import)

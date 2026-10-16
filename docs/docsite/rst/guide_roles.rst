@@ -300,7 +300,12 @@ seeds not one per rack, racks against ``allocate_tokens_for_local_replication_fa
     $ ansible-playbook -i inventories/orders.yml community.cassandra.help -e help_write=true
 
 ``-e help_topic=<operation>`` shows one operation in detail: its command, options and example as in the overview,
-the options of every operation, and its documentation (the comment that starts the playbook). Under the ``community.cassandra.ops`` callback, the help is
+the options of every operation, the section of this guide that tells more, and what it does (the paragraphs of the
+comment that starts the playbook); each option on one line, its commands cut between their arguments (each line but
+the last ending with ``\``: they paste as one command; so are the overview's, at the terminal's width under the
+``community.cassandra.ops`` callback, at 100 columns as plain text, whole in the json list of lines and in
+``RUNBOOK.md``). ``-e help_inventory=<path>`` reads that inventory instead of
+the run's. Under the ``community.cassandra.ops`` callback, the help is
 laid out at the terminal's width, the operation names, the commands and their options coloured. The default
 callback shows it as plain text under its yaml result format, as a list of quoted lines under its json one (the
 default): set it in ``ansible.cfg`` (or ``ANSIBLE_CALLBACK_RESULT_FORMAT=yaml``):
@@ -409,7 +414,7 @@ command for the nodes concerned (the datacenter's nodes, or only the new nodes' 
 replicas as racks there), or runs it with ``cassandra_add_node_cleanup``: ``sequential`` (a node at a time, ``one`` is
 the same), ``rack``, ``dc`` or ``all`` (nodes cleaned together), the cluster checked before each batch. The ``cleanup`` playbook removes that data, with
 ``cassandra_cleanup_mode`` ``sequential`` (default, one node at a time), ``rack``, ``dc`` or ``all`` (every node at
-once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node.
+once, heavy disk I/O everywhere), and ``cassandra_cleanup_jobs`` threads per node (``0``: all the compaction threads).
 
 
 One token per node
@@ -442,7 +447,8 @@ playbooks work them out:
   datacenter is evened out with the fewest moves. The plan comes first (the rings before and after, the order, the
   data each move streams and where), then one confirmation; ``--check`` stops after the plan. Before each move the
   cluster is checked, and the nodes that receive data must keep ``cassandra_move_min_free_percent`` (20) of their data
-  disk free (the nodes that give data away keep it until a cleanup). Each move is followed like a bootstrap. Run it
+  disk free (the nodes that give data away keep it until a cleanup; ``-e cassandra_move_force_disk=true`` goes on
+  anyway). Each move is followed like a bootstrap. Run it
   again to resume: the plan is worked out again from the ring, and a move left going is waited for. The nodes that
   lost ranges are cleaned up afterwards with ``cassandra_move_cleanup`` (``sequential``, ``rack``, ``dc``, ``all``), or the
   command is printed; they stay listed next to the progress files (``<cassandra_hosts>-move.cleanup``) until a ``move_node``
@@ -624,6 +630,9 @@ false`` skips the question); ``--check`` shows it and changes nothing. A second 
 before their screen, show what it deletes there (a ``data loss`` warning per node), and their one question covers it.
 
 
+Removing a dead node
+--------------------
+
 When a node is dead for good and will not be replaced, take it out of the inventory (or mark it
 ``cassandra_node_state: absent``) and run ``remove_dead_node`` with it in ``cassandra_target_nodes``: its address, its
 host ID, or its inventory name when marked absent. ``removenode`` streams its ranges from the other replicas.
@@ -660,16 +669,20 @@ Rack maintenance
 ``stop_rack`` stops every node of one rack at once (``-e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2``),
 each one drained with ``nodetool drain`` (a node that does not answer is stopped all the same) then stopped. With at least as many racks as replicas in the datacenter, one rack down is one
 replica down: it refuses a keyspace with more replicas in the datacenter than racks, a SimpleStrategy keyspace with
-RF above 1 (it ignores racks), and a node already down elsewhere in the datacenter. With RF 2 it warns that
+RF above 1 (it ignores racks), and a node already down elsewhere in the datacenter; ``-e cassandra_rack_force=true``
+goes on despite any of them (``rolling_restart`` in rack mode too). With RF 2 it warns that
 (LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster; repair the
-rack's nodes if they were down longer than ``max_hint_window``.
+rack's nodes if they were down longer than ``max_hint_window``. It first checks the cluster name on a node of
+another rack; when none answers (or the rack is the whole cluster) and ``cassandra_cluster_name`` is the role default
+``Test Cluster``, it stops (``-e cassandra_accept_default_identity=true`` goes on).
 
 
 Restarting
 ----------
 
 ``rolling_restart`` drains each node, restarts it and waits until it and the cluster are healthy again before the
-next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching). Both show their screen and ask
+next one. ``rolling_reboot`` does the same with a reboot of the host (OS patching), waiting up to
+``cassandra_reboot_timeout`` seconds for it to come back. Both show their screen and ask
 once first. On a big cluster,
 ``-e cassandra_rolling_mode=rack`` restarts all the nodes of a rack together, rack by rack, when the replication
 allows losing a rack (see `Rack maintenance`_).
@@ -821,13 +834,15 @@ pass). Then run ``upgrade`` once per phase, with ``-e cassandra_upgrade_phase=``
     After you confirm that backups and repairs are paused and the schema frozen: a snapshot and a copy of the
     configuration on every node.
 ``canary``
-    Upgrades one node (``-e cassandra_target_nodes=<node>``, default the first non-seed of the first datacenter).
+    Upgrades one node (``-e cassandra_target_nodes=<node>``, default the first non-seed by datacenter, rack and name,
+    else the first node).
     Watch it.
 ``rolling``
     Upgrades the others, datacenter by datacenter, rack by rack, one node at a time. Re-run it to resume: upgraded
     nodes are skipped.
 ``sstables``
-    Rewrites the sstables in the new format, node by node.
+    Rewrites the sstables in the new format, node by node (``-e cassandra_rolling_resume=true`` resumes an
+    interrupted run).
 ``cleanup``
     Removes the pre-upgrade snapshots.
 
@@ -1216,7 +1231,8 @@ hand edits (those files are then left as they are on their nodes), the value to 
 remove), ``-e import_cluster_allow_unread=true`` for the nodes not read, and for a change you want, a planned change:
 ``-e import_cluster_strict=false`` only to write the inventory, then ``apply_config --check --diff`` before applying.
 The report's ``SELF-CHECK`` section has the same, each node's differences under each line. The OS tuning, ``/etc/default/cassandra``, ``cassandra-topology.properties`` and the owner and mode of the unit
-and ``medusa.ini`` are not compared.
+and ``medusa.ini`` are not compared. An error while the inventory is written is not shown (the variables hold passwords):
+``-e import_cluster_debug=true`` shows it.
 
 When a node has Cassandra Medusa and ``/etc/medusa/medusa.ini``, its version and settings are imported and
 ``cassandra_medusa_enabled`` is set, so nodes added later get the same Medusa, in the same virtualenv path

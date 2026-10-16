@@ -9,15 +9,18 @@ import copy
 import glob
 import os
 import re
+import shlex
 
 import pytest
 import yaml
 
 from ansible.errors import AnsibleFilterError
 
+from ansible_collections.community.cassandra.plugins.callback.ops import rule_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_help import (
-    OPERATIONS, cassandra_help, cassandra_help_runbook)
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import FLOW, NBSP, laid_out
+    GUIDE, OPERATIONS, OPTION_ROOM, _common, _option_text, cassandra_help, cassandra_help_runbook)
+from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+    FLOW, NBSP, command_words, is_command, laid_out)
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 CWD = "/work"
@@ -45,8 +48,7 @@ PLAYBOOKS = [op["name"] for op in OPERATIONS]
 # the cluster as import_cluster writes it: inventories/orders.yml
 IMPORTED = {"sources": ["/work/inventories/orders.yml"], "imported": ["orders"]}
 
-# $PLAY, $C. and $REP stand for the start of the commands, the collection and add_datacenter's replication
-# (lines kept under 160)
+# the whole overview, as printed (commands cut between their arguments at 100 columns)
 GOLDEN = u"""\
 Cassandra help for the inventory inventories/orders/hosts.yml (read from the inventory only: no node
   contacted)
@@ -57,8 +59,7 @@ operation shows its plan first; --check runs it without changing anything. One o
 
 Options of every operation that changes something:
         -e cassandra_hosts=<group>            the cluster to run on (default: orders)
-        -e cassandra_operation_confirm=false  skips the question (of the operations that ask one),
-                                              for runs without a terminal (default: true)
+        -e cassandra_operation_confirm=false  asks nothing (no terminal) (default: true)
         --check                               shows the plan, changing nothing
 
 ==== The cluster as the inventory describes it =====================================================
@@ -77,281 +78,253 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
 ==== Read-only (change nothing) ====================================================================
 
   ● help               This overview, from the inventory alone (no node contacted).
-      $ $PLAY $C.help
-        -e help_topic=<operation>             one operation in detail: its options, an example, its
-                                              documentation (default: the overview)
-        -e help_write=true                    also writes RUNBOOK.md next to the inventory (changed
-                                              only when its content changes; --check --diff shows
-                                              the difference) (default: false)
-        -e help_runbook_dir=<dir>             writes RUNBOOK.md in that existing dir instead
-                                              (default: the inventory's dir)
-        -e help_inventory=<path>              reads that inventory instead of the run's
-                                              (default: the -i one)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help
+        -e help_topic=<operation>             one operation in detail (default: the overview)
+        -e help_write=true                    also writes RUNBOOK.md (default: false)
+        -e help_runbook_dir=<dir>             where RUNBOOK.md goes (default: the inventory's dir)
+        -e help_inventory=<path>              reads that inventory instead (default: the -i one)
       Example (one operation in detail):
-      $ $PLAY $C.help -e help_topic=rolling_restart
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help \\
+          -e help_topic=rolling_restart
 
   ● status             The ring as nodetool status shows it from one node, per datacenter; a down
                        node is shown, not an error.
-      $ $PLAY $C.status
-        -e cassandra_target_nodes=<nodes>     reads the ring from the first of them that answers
-                                              (default: the first node that answers)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.status
+        -e cassandra_target_nodes=<nodes>     nodes to read from (default: the first that answers)
         -e cassandra_status_raw=true          also prints nodetool's own output (default: false)
       Example (from one node):
-      $ $PLAY $C.status -e cassandra_target_nodes=node1
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.status \\
+          -e cassandra_target_nodes=node1
 
   ● health_check       Checks the cluster from every node (ring, gossip, native transport, streams,
                        schema, ports); fails on a problem, so it can be scheduled.
-      $ $PLAY $C.health_check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.health_check
 
   ● preflight          Checks the nodes against the inventory before a change: settings that must
                        match, racks for the token allocator, versions, seeds.
-      $ $PLAY $C.preflight
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.preflight
 
 ==== Nodes =========================================================================================
 
   ● add_node           Adds new hosts to the running cluster: all prepared at once, then each
                        started and bootstrapped in turn. Put them in their rack's group first; one
                        in cassandra_seeds joins as a regular node, then becomes a seed.
-      $ $PLAY $C.add_node -e cassandra_target_nodes=NEW_NODE
-        -e cassandra_target_nodes=NEW_NODE    the hosts to add (comma-separated), already in the
-                                              inventory (required)
-        -e cassandra_add_node_reset=false     refuses a new node that has data instead of emptying
-                                              it (only when down, in no ring, of this cluster or
-                                              'Test Cluster', without user keyspaces but a failed
-                                              bootstrap's); true also empties a former member of
-                                              this cluster (the writes only it holds are lost)
-                                              (default: auto)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \\
+          -e cassandra_target_nodes=NEW_NODE
+        -e cassandra_target_nodes=NEW_NODE    the hosts to add (in the inventory) (required)
+        -e cassandra_add_node_reset=false     false: refuses any node with data (default: auto)
         -e cassandra_add_node_cleanup=sequential
-                                              runs the cleanup afterwards: sequential, rack, dc or
-                                              all; none prints its command (default: none)
-        -e cassandra_token_auto=bisect        one token per node: how the new nodes get their
-                                              tokens, bisect, balanced or true (shows both, asks)
-                                              (default: false)
-        -e cassandra_clock_check=false        starts the nodes without checking their clocks first
-                                              (kept in sync by other means) (default: true)
+                                              then cleanup: sequential/rack/dc/all (default: none)
+        -e cassandra_token_auto=bisect        num_tokens 1: bisect/balanced/true (default: false)
+        -e cassandra_clock_check=false        starts without checking the clocks (default: true)
       Example (then the cleanup, one node at a time):
-      $ $PLAY $C.add_node -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \\
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential
 
   ● topology           Makes the ring match the inventory: adds the hosts of the cluster's group not
                        in the ring, applies cassandra_seeds, removes the hosts marked
                        cassandra_node_state: absent; one node at a time, --check shows the plan and
                        its warnings.
-      $ $PLAY $C.topology
-        -e cassandra_add_node_reset=false     refuses a host to add that has data instead of
-                                              emptying it; true also empties a former member of this
-                                              cluster (default: auto)
-        -e cassandra_token_auto=bisect        one token per node: bisect or balanced for the hosts
-                                              to add (default: false)
-        -e cassandra_decommission_force=true  goes on when a datacenter would keep fewer nodes than
-                                              replicas (nodetool decommission --force)
-                                              (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology
+        -e cassandra_add_node_reset=false     false: refuses any host with data (default: auto)
+        -e cassandra_token_auto=bisect        num_tokens 1: bisect/balanced (default: false)
+        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
       Example (the plan only):
-      $ $PLAY $C.topology --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology --check
 
   ● decommission_node  Removes nodes from the running cluster, one at a time, their data streamed to
                        the others; a node no longer in cassandra_seeds is first dropped from the
                        other nodes' seed lists; refuses a datacenter left with nodes but no seed, or
                        fewer nodes than replicas.
-      $ $PLAY $C.decommission_node -e cassandra_target_nodes=node4
-        -e cassandra_target_nodes=<nodes>     the nodes to remove (comma-separated) (required)
-        -e cassandra_decommission_force=true  goes on when a datacenter would keep fewer nodes than
-                                              replicas (nodetool decommission --force)
-                                              (default: false)
-        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
-                                              done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node \\
+          -e cassandra_target_nodes=node4
+        -e cassandra_target_nodes=<nodes>     the nodes to remove (required)
+        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
       Example (changing nothing):
-      $ $PLAY $C.decommission_node -e cassandra_target_nodes=node4 --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node \\
+          -e cassandra_target_nodes=node4 --check
 
   ● replace_node       Replaces a dead node by a blank host, which takes over its tokens and data.
-                       In the inventory, the new host in, the dead one out.
-      $ $PLAY $C.replace_node -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
+                       In the inventory, the new host put in first, the dead one taken out.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.replace_node \\
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS
         -e cassandra_target_nodes=NEW_NODE    the new host (required)
         -e cassandra_replace_address=DEAD_NODE_ADDRESS
                                               the address of the dead node (required)
-        -e cassandra_replace_node_reset=true  first empties the new host (a node replacing itself)
-                                              (default: false)
+        -e cassandra_replace_node_reset=true  first empties the new host (default: false)
       Example (a node replacing itself):
-      $ $PLAY $C.replace_node -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS -e cassandra_replace_node_reset=true
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.replace_node \\
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_replace_address=DEAD_NODE_ADDRESS \\
+          -e cassandra_replace_node_reset=true
 
   ● remove_dead_node   Last resort for a dead node that will not be replaced: removenode (or
                        assassinate). Take it out of the inventory (or mark it absent) first.
-      $ $PLAY $C.remove_dead_node -e cassandra_target_nodes=DEAD_NODE_ADDRESS
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_dead_node \\
+          -e cassandra_target_nodes=DEAD_NODE_ADDRESS
         -e cassandra_target_nodes=DEAD_NODE_ADDRESS
-                                              the dead node: its address (or its host ID, or its
-                                              inventory name when marked absent) (required)
+                                              the dead node: address, host ID or name (required)
         -e cassandra_dead_node_method=removenode_force
-                                              removenode, removenode_force (finishes a stuck
-                                              removenode) or assassinate (default: removenode)
+                                              removenode_force/assassinate (default: removenode)
         -e cassandra_dead_node_new_removal=true
-                                              starts a removenode when one seems to be running
-                                              (default: false)
+                                              restarts a removal stuck elsewhere (default: false)
+        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)
       Example (changing nothing):
-      $ $PLAY $C.remove_dead_node -e cassandra_target_nodes=DEAD_NODE_ADDRESS --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_dead_node \\
+          -e cassandra_target_nodes=DEAD_NODE_ADDRESS --check
 
   ● reset_node         Empties nodes that are not members of the ring (started once by mistake, a
                        failed bootstrap) for a fresh start.
-      $ $PLAY $C.reset_node -e cassandra_target_nodes=NODE
-        -e cassandra_target_nodes=NODE        the nodes to empty (comma-separated) (required)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.reset_node \\
+          -e cassandra_target_nodes=NODE
+        -e cassandra_target_nodes=NODE        the nodes to empty (required)
       Example (changing nothing):
-      $ $PLAY $C.reset_node -e cassandra_target_nodes=NODE --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.reset_node \\
+          -e cassandra_target_nodes=NODE --check
 
   ● move_node          One token per node: moves nodes to new tokens, one at a time (by default the
                        fewest moves that even out each datacenter). Not for this cluster (num_tokens
                        16).
-      $ $PLAY $C.move_node
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.move_node
         -e '{"cassandra_move_tokens": {"NODE": "TOKEN"}}'
                                               only those nodes move, to those tokens (default: {})
-        -e cassandra_move_cleanup=sequential  runs the cleanup afterwards: sequential, rack, dc or
-                                              all; none prints its commands (default: none)
-        -e cassandra_move_force_disk=true     goes on when a node would keep less free disk than
-                                              cassandra_move_min_free_percent (20) (default: false)
+        -e cassandra_move_cleanup=sequential  then cleanup: sequential/rack/dc/all (default: none)
+        -e cassandra_move_force_disk=true     goes on with little free disk left (default: false)
       Example (the plan only):
-      $ $PLAY $C.move_node --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.move_node --check
 
 ==== Cluster =======================================================================================
 
   ● create_cluster     Builds the cluster from blank hosts: prepared in parallel, then started one
                        at a time, seeds first. Starts nothing on a running cluster.
-      $ $PLAY $C.create_cluster
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.create_cluster
         -e cassandra_accept_default_identity=true
-                                              goes on with identity settings left to the defaults
-                                              (default: false)
+                                              accepts default identity settings (default: false)
         -e cassandra_create_cluster_reset=true
-                                              rebuilds a running cluster, ALL ITS DATA LOST
-                                              (default: false)
+                                              wipes a running cluster: DATA LOST (default: false)
         -e '{"cassandra_create_cluster_reset_confirm": "<cluster name>"}'
-                                              the reset without a terminal (with
-                                              cassandra_operation_confirm=false): the cluster's
-                                              name, the answer to its question
-        -e cassandra_clock_check=false        starts the nodes without checking their clocks first
-                                              (kept in sync by other means) (default: true)
+                                              the reset without a terminal: the cluster's name
+        -e cassandra_clock_check=false        starts without checking the clocks (default: true)
       Example (the plan only):
-      $ $PLAY $C.create_cluster --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.create_cluster --check
 
   ● rolling_restart    Drains and restarts the nodes one at a time, the cluster checked before and
                        after each one.
-      $ $PLAY $C.rolling_restart
-        -e cassandra_rolling_mode=rack        the nodes of a rack together, rack by rack
-                                              (default: node)
-        -e cassandra_rack_force=true          rack mode: goes on although keyspaces would lose more
-                                              than one replica (default: false)
-        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
-                                              done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_restart
+        -e cassandra_rolling_mode=rack        the nodes of a rack together (default: node)
+        -e cassandra_rack_force=true          rack mode: allows 2+ replicas down (default: false)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
       Example (a rack at a time):
-      $ $PLAY $C.rolling_restart -e cassandra_rolling_mode=rack
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_restart \\
+          -e cassandra_rolling_mode=rack
 
   ● rolling_reboot     Same as rolling_restart, rebooting the hosts (OS patching).
-      $ $PLAY $C.rolling_reboot
-        -e cassandra_reboot_timeout=3600      seconds to wait for a host to come back
-                                              (default: 1800)
-        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
-                                              done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_reboot
+        -e cassandra_reboot_timeout=3600      seconds for a host to come back (default: 1800)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
       Example (an interrupted run resumed):
-      $ $PLAY $C.rolling_reboot -e cassandra_rolling_resume=true
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.rolling_reboot \\
+          -e cassandra_rolling_resume=true
 
   ● stop_rack          Stops every node of one rack at once (maintenance), when the replication
                        allows losing that rack.
-      $ $PLAY $C.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack \\
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
         -e cassandra_target_dc=<dc>           the rack's datacenter (required)
         -e cassandra_target_rack=<rack>       the rack to stop (required)
-        -e cassandra_rack_force=true          goes on although keyspaces would lose more than one
-                                              replica (default: false)
+        -e cassandra_rack_force=true          allows 2+ replicas down (default: false)
       Example (changing nothing):
-      $ $PLAY $C.stop_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.stop_rack \\
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
 
   ● start_rack         Starts the nodes of a rack stop_rack stopped, then checks the whole cluster.
-      $ $PLAY $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.start_rack \\
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3
         -e cassandra_target_dc=<dc>           the rack's datacenter (required)
         -e cassandra_target_rack=<rack>       the rack to start (required)
         -e cassandra_accept_default_identity=true
-                                              goes on when no node of another rack answers and the
-                                              cluster name is the default 'Test Cluster'
-                                              (default: false)
+                                              accepts the name 'Test Cluster' (default: false)
       Example (changing nothing):
-      $ $PLAY $C.start_rack -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.start_rack \\
+          -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack3 --check
 
   ● apply_config       Applies the inventory's config: shows the settings that differ (the
                        inventory's value, then each other value with its nodes), asks once, then
                        writes the nodes that need it, one at a time, restarting only those that need
                        it.
-      $ $PLAY $C.apply_config
-        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
-                                              done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
       Example (the settings that differ, changing nothing):
-      $ $PLAY $C.apply_config --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config --check
 
   ● change_seeds       Applies a new cassandra_seeds list to every node, live (no restart);
                        topology, add_node and decommission_node apply it too when nodes come and go.
-      $ $PLAY $C.change_seeds
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.change_seeds
       Example (changing nothing):
-      $ $PLAY $C.change_seeds --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.change_seeds --check
 
   ● update_java        Moves the cluster to the Java in cassandra_java_version, one node at a time.
-      $ $PLAY $C.update_java
-        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
-                                              done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.update_java
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
       Example (an interrupted run resumed):
-      $ $PLAY $C.update_java -e cassandra_rolling_resume=true
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.update_java \\
+          -e cassandra_rolling_resume=true
 
   ● sync_clocks        Shows each node's clock as its time sync daemon reports it (synchronised,
                        source, offset) with a verdict, then brings time sync up where it is missing;
                        a running node whose clock needs a step gets a restart window, one node at a
                        time.
-      $ $PLAY $C.sync_clocks
-        -e cassandra_clock_max_offset_ms=50   a node is in sync within this many milliseconds of its
-                                              source (offset plus the daemon's error bound)
-                                              (default: 50)
-        -e cassandra_clock_step_ms=400        a correction above it steps the clock: on a running
-                                              node, in a restart window (default: 400)
-        -e cassandra_clock_sync_timeout=180   seconds to wait for a time sync to synchronise
-                                              (default: 180)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.sync_clocks
+        -e cassandra_clock_max_offset_ms=50   in sync within this many ms (default: 50)
+        -e cassandra_clock_step_ms=400        steps the clock above this many ms (default: 400)
+        -e cassandra_clock_sync_timeout=180   seconds to wait for a sync (default: 180)
       Example (the clocks, changing nothing):
-      $ $PLAY $C.sync_clocks --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.sync_clocks --check
 
   ● upgrade            Upgrades the cluster to the version in the inventory, one phase per run:
                        preflight, prepare, canary, rolling, sstables, cleanup.
-      $ $PLAY $C.upgrade -e cassandra_upgrade_phase=preflight
-        -e cassandra_upgrade_phase=preflight  preflight, prepare, canary, rolling, sstables or
-                                              cleanup, in that order (required)
-        -e cassandra_target_nodes=<node>      canary phase: the node it upgrades (default: the first
-                                              non-seed by datacenter, rack and name (else the first
-                                              node))
-        -e cassandra_rolling_resume=true      sstables phase: resumes an interrupted run, skipping
-                                              the nodes already done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.upgrade \\
+          -e cassandra_upgrade_phase=preflight
+        -e cassandra_upgrade_phase=preflight  the phase to run, in the order above (required)
+        -e cassandra_target_nodes=<node>      canary: the node to upgrade (default: a non-seed)
+        -e cassandra_rolling_resume=true      resumes the sstables phase (default: false)
       Example (the next phase):
-      $ $PLAY $C.upgrade -e cassandra_upgrade_phase=prepare
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.upgrade \\
+          -e cassandra_upgrade_phase=prepare
 
   ● cleanup            Runs nodetool cleanup (the data a node no longer owns, after nodes were
                        added), the cluster checked before each batch.
-      $ $PLAY $C.cleanup
-        -e cassandra_cleanup_mode=rack        sequential (one node at a time), rack, dc or all
-                                              (every node at once) (default: sequential)
-        -e cassandra_cleanup_jobs=4           compaction threads per node (0: all of them)
-                                              (default: 2)
-        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already
-                                              done (default: false)
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.cleanup
+        -e cassandra_cleanup_mode=rack        sequential/rack/dc/all (default: sequential)
+        -e cassandra_cleanup_jobs=4           cleanup jobs per node, 0: all (default: 2)
+        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
       Example (a rack at a time):
-      $ $PLAY $C.cleanup -e cassandra_cleanup_mode=rack
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.cleanup \\
+          -e cassandra_cleanup_mode=rack
 
   ● add_datacenter     Adds a datacenter: its nodes join without streaming, the keyspaces get
                        replicas there, then each node rebuilds from another datacenter.
-      $ $PLAY $C.add_datacenter -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 $REP
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_datacenter \\
+          -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 \\
+          -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
         -e cassandra_target_nodes=NEW_DC_GROUP
-                                              the new datacenter's nodes (a group or a
-                                              comma-separated list) (required)
+                                              the new datacenter's nodes (required)
         -e cassandra_rebuild_source_dc=<dc>   the datacenter they stream from (required)
-        $REP
-                                              the replicas of each keyspace in the new datacenter
-                                              (required)
+        -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'
+                                              each keyspace's replicas there (required)
       Example (changing nothing):
-      $ $PLAY $C.add_datacenter -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 $REP --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_datacenter \\
+          -e cassandra_target_nodes=NEW_DC_GROUP -e cassandra_rebuild_source_dc=dc1 \\
+          -e '{cassandra_datacenter_replication: {KEYSPACE: 3}}' --check
 
   ● remove_datacenter  Removes a datacenter: the keyspaces stop keeping replicas there, then its
                        nodes leave one at a time. Move its clients first.
-      $ $PLAY $C.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_datacenter \\
+          -e cassandra_target_dc=DC_TO_REMOVE
         -e cassandra_target_dc=DC_TO_REMOVE   the datacenter to remove (required)
       Example (changing nothing):
-      $ $PLAY $C.remove_datacenter -e cassandra_target_dc=DC_TO_REMOVE --check
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.remove_datacenter \\
+          -e cassandra_target_dc=DC_TO_REMOVE --check
 
 ==== Takeover ======================================================================================
 
@@ -359,32 +332,24 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
                        new cluster: give one of its nodes (-i <node>,), the others are found in the
                        ring. A re-import reads the cluster from the inventory (its logins too),
                        keeps the files it did not write, --check --diff shows its changes first.
-      $ ansible-playbook -i 192.0.2.11, $C.import_cluster -e import_cluster_dir=NEW_DIR
-        -e import_cluster_dir=<dir>           the inventory dir, every cluster's
-                                              (default: inventories)
-        -e import_cluster_report_dir=<dir>    where to write report.txt
-                                              (default: reports/<cluster group> next to
-                                              import_cluster_dir)
-        -e import_cluster_force=true          a re-import, over this cluster's files
-                                              (default: false)
-        -e import_cluster_adopt=true          takes over the files of an earlier import that do not
-                                              say whose they are (each replaced one kept as
-                                              <file>.<date>~) (default: false)
-        -e import_cluster_allow_unread=true   accepts a ring node it could not read (else the import
-                                              fails) (default: false)
+      $ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster \\
+          -e import_cluster_dir=NEW_DIR
+        -e import_cluster_dir=<dir>           the inventory dir (default: inventories)
+        -e import_cluster_report_dir=<dir>    report.txt dir (default: next to the inventory dir)
+        -e import_cluster_force=true          re-import over this cluster's files (default: false)
+        -e import_cluster_adopt=true          adopts an earlier import's files (default: false)
+        -e import_cluster_allow_unread=true   accepts unread ring nodes (default: false)
         -e import_cluster_keep_hand_edits=true
-                                              leaves the config files with hand edits as they are on
-                                              their node (default: false)
+                                              keeps hand-edited config files (default: false)
 
 ==== Advice ========================================================================================
 
 - Marked cassandra_node_state: absent: node4. topology --check shows the plan to remove them, then
   topology without --check does it:
-    $ $PLAY $C.topology --check
+    $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology --check
 
 - dc1: racks of different sizes (1, 1, 2 nodes): the data is not shared evenly; add or remove nodes
-  rack by rack.""".replace("$PLAY", "ansible-playbook -i inventories/orders/hosts.yml").replace("$C.", "community.cassandra.").replace(
-    "$REP", "-e '{cassandra_datacenter_replication: {KEYSPACE: 3}}'")
+  rack by rack."""
 
 
 def model(**changes):
@@ -395,6 +360,16 @@ def model(**changes):
         else:
             out[name] = value
     return out
+
+
+def unwrapped(text):
+    """The text, each command on one line again (its continuation lines, after " \\", joined)."""
+    return re.sub(r" \\\n +", " ", text)
+
+
+def help_(*args, **kwargs):
+    """The help text, its commands unwrapped."""
+    return unwrapped(cassandra_help(*args, **kwargs))
 
 
 def commands(text):
@@ -453,15 +428,10 @@ def reads(name, variable):
 
 
 def documented(name):
-    """The variables the comment that starts the playbook gives with -e."""
-    header = []
+    """The variables the playbook's comments (its header, the ones next to its tasks) give with -e."""
     with open(os.path.join(TOP, "playbooks", name + ".yml"), encoding="utf-8") as f:
-        for line in f:
-            if line.startswith("#"):
-                header.append(line)
-            elif line.strip() not in ("---", ""):
-                break
-    return set(re.findall(r"-e +'?\{?\"?(\w+)", "".join(header)))
+        comments = [line.split("#", 1)[1] for line in f if "#" in line and line.lstrip().startswith("#")]
+    return set(re.findall(r"-e +'?\{?\"?((?:cassandra|import_cluster|help)_\w+)", "".join(comments)))
 
 
 def test_operation_variables_are_the_playbooks_own():
@@ -522,8 +492,8 @@ def test_examples_set_their_operation_s_options():
 
 
 def test_markdown_has_the_same_commands():
-    text = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD)
-    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    text = help_(MODEL, PLAYBOOKS, cwd=CWD)
+    runbook = help_(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
     commands = [line.split("$ ", 1)[1] for line in text.splitlines() if line.lstrip().startswith("$ ")]
     assert runbook.startswith("# RUNBOOK\n")
     assert runbook.endswith(".\n") and not runbook.endswith("\n\n")
@@ -534,26 +504,24 @@ def test_markdown_has_the_same_commands():
 
 def test_markdown_operation_layout():
     # the command, the options one per line with their default, an example: in code blocks
-    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    runbook = help_(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
     play = "ansible-playbook -i inventories/orders/hosts.yml community.cassandra."
     section = runbook.split("**rolling_restart**", 1)[1].split("**rolling_reboot**", 1)[0]
     assert section == (
         " - Drains and restarts the nodes one at a time, the cluster checked before and after each one.\n\n"
         "```sh\n" + play + "rolling_restart\n```\n\n"
         "Options:\n\n"
-        "- `-e cassandra_rolling_mode=rack`: the nodes of a rack together, rack by rack (default: node)\n"
-        "- `-e cassandra_rack_force=true`: rack mode: goes on although keyspaces would lose more than one replica"
-        " (default: false)\n"
-        "- `-e cassandra_rolling_resume=true`: resumes an interrupted run, skipping the nodes already done"
-        " (default: false)\n\n"
+        "- `-e cassandra_rolling_mode=rack`: the nodes of a rack together (default: node)\n"
+        "- `-e cassandra_rack_force=true`: rack mode: allows 2+ replicas down (default: false)\n"
+        "- `-e cassandra_rolling_resume=true`: resumes an interrupted run (default: false)\n\n"
         "Example (a rack at a time):\n\n"
         "```sh\n" + play + "rolling_restart -e cassandra_rolling_mode=rack\n```\n\n")
     # the options of every operation once, at the top
-    assert "- `-e cassandra_operation_confirm=false`: skips the question (of the operations that ask one)" in runbook.split("## 1.", 1)[0]
+    assert "- `-e cassandra_operation_confirm=false`: asks nothing (no terminal)" in runbook.split("## 1.", 1)[0]
 
 
 def test_every_operation_and_its_example_in_the_runbook():
-    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    runbook = help_(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
     sections = dict(re.findall(r"\n\*\*(\w+)\*\* - (.*?)(?=\n\*\*\w+\*\* - |\n## )", runbook, re.S))
     assert sorted(sections) == sorted(op["name"] for op in OPERATIONS)
     for op in OPERATIONS:
@@ -562,13 +530,12 @@ def test_every_operation_and_its_example_in_the_runbook():
 
 
 def test_lines_within_the_width():
-    # every line of the text fits in 100 columns but the commands (copied whole) and the playbooks' comments;
-    # no layout mark left in it
+    # every line of the text fits in 100 columns, the commands cut between their arguments; no layout mark left in it
     texts = [cassandra_help(MODEL, PLAYBOOKS, cwd=CWD)]
     texts += [cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD) for op in OPERATIONS]
     for text in texts:
         assert FLOW not in text and NBSP not in text
-        assert not [line for line in text.splitlines() if len(line) > 100 and not line.lstrip().startswith("$ ")]
+        assert not [line for line in text.splitlines() if len(line) > 100]  # the commands too, cut
 
 
 def test_flow_is_the_same_text_laid_out_by_the_callback():
@@ -594,14 +561,12 @@ def test_operations_aligned_with_their_commands_options_and_example():
         "            Runs nodetool cleanup (the data a node no longer owns, after nodes were",
         "                       added), the cluster checked before each batch.",
         "      $ " + play,
-        "        -e cassandra_cleanup_mode=rack        sequential (one node at a time), rack, dc or all",
-        "                                              (every node at once) (default: sequential)",
-        "        -e cassandra_cleanup_jobs=4           compaction threads per node (0: all of them)",
-        "                                              (default: 2)",
-        "        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already",
-        "                                              done (default: false)",
+        "        -e cassandra_cleanup_mode=rack        sequential/rack/dc/all (default: sequential)",
+        "        -e cassandra_cleanup_jobs=4           cleanup jobs per node, 0: all (default: 2)",
+        "        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)",
         "      Example (a rack at a time):",
-        "      $ " + play + " -e cassandra_cleanup_mode=rack"]
+        "      $ " + play + " \\",
+        "          -e cassandra_cleanup_mode=rack"]
     columns = set(line.index("\u25cf") for line in text.splitlines() if "\u25cf" in line)
     summaries = set(len(re.match(r"  \u25cf \w+ +", line).group(0)) for line in text.splitlines() if "\u25cf" in line)
     assert columns == {2} and summaries == {23}  # decommission_node, the longest name, and 2 spaces
@@ -620,90 +585,127 @@ def test_no_trailing_space():
 
 
 def test_example_replaces_the_needed_argument():
-    text = cassandra_help(MODEL, PLAYBOOKS, topic="upgrade", cwd=CWD)
+    text = help_(MODEL, PLAYBOOKS, topic="upgrade", cwd=CWD)
     example = text.split("Example (the next phase):\n", 1)[1].splitlines()[0]
     assert example == ("      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.upgrade"
                        " -e cassandra_upgrade_phase=prepare")
 
 
 def test_long_option_on_its_own_line():
-    lines = cassandra_help(MODEL, PLAYBOOKS, topic="remove_dead_node", cwd=CWD).splitlines()
+    lines = help_(MODEL, PLAYBOOKS, topic="remove_dead_node", cwd=CWD).splitlines()
     at = lines.index("        -e cassandra_dead_node_method=removenode_force")
-    assert lines[at + 1] == " " * 46 + "removenode, removenode_force (finishes a stuck"
+    assert lines[at + 1] == " " * 46 + "removenode_force/assassinate (default: removenode)"
 
 
 def test_common_options_only_for_the_operations_that_change_something():
     for op in OPERATIONS:
-        text = cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD)
+        text = help_(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD)
         assert ("-e cassandra_hosts=<group>" in text) == (op["theme"] in ("nodes", "cluster")), op["name"]
         # cassandra_operation_confirm: only for the operations that ask (their screen or question)
         asks = bool(re.search(r"tasks_from: (confirm|screen)\.yml|cassandra_operation_confirm", playbook(op["name"])))
         assert ("-e cassandra_operation_confirm=false" in text) == (asks and op["theme"] in ("nodes", "cluster")), \
             op["name"]
-    text = cassandra_help(MODEL, PLAYBOOKS, topic="cleanup", cwd=CWD)
+    text = help_(MODEL, PLAYBOOKS, topic="cleanup", cwd=CWD)
     assert re.search(r"\n        -e cassandra_hosts=<group> +the cluster to run on \(default: orders\)\n", text)
     # the commands give the group: when the inventory has several, or CASSANDRA_CLUSTER named another
-    text = cassandra_help(model(auto=""), PLAYBOOKS, topic="cleanup", cwd=CWD)
-    assert re.search(r"\n        -e cassandra_hosts=<group> +the cluster to run on \(default: the one in the\n +commands\)\n",
-                     text)
+    text = help_(model(auto=""), PLAYBOOKS, topic="cleanup", cwd=CWD)
+    assert re.search(r"\n        -e cassandra_hosts=<group> +the cluster to run on \(default: as in the commands\)\n", text)
     assert "community.cassandra.cleanup -e cassandra_hosts=orders" in text
 
 
+# one operation in detail, as printed at 100 columns (a terminal of 120): each option on one line, the commands
+# cut between their arguments, the paragraphs of the playbook's header
+TOPIC_GOLDEN = u"""\
+==== Nodes =========================================================================================
+
+  ● add_node  Adds new hosts to the running cluster: all prepared at once, then each started and
+              bootstrapped in turn. Put them in their rack's group first; one in cassandra_seeds
+              joins as a regular node, then becomes a seed.
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \\
+          -e cassandra_target_nodes=NEW_NODE
+        -e cassandra_target_nodes=NEW_NODE    the hosts to add (in the inventory) (required)
+        -e cassandra_add_node_reset=false     false: refuses any node with data (default: auto)
+        -e cassandra_add_node_cleanup=sequential
+                                              then cleanup: sequential/rack/dc/all (default: none)
+        -e cassandra_token_auto=bisect        num_tokens 1: bisect/balanced/true (default: false)
+        -e cassandra_clock_check=false        starts without checking the clocks (default: true)
+        -e cassandra_hosts=<group>            the cluster to run on (default: orders)
+        -e cassandra_operation_confirm=false  asks nothing (no terminal) (default: true)
+        --check                               shows the plan, changing nothing
+      Example (then the cleanup, one node at a time):
+      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node \\
+          -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential
+
+      Replace NEW_NODE with your own value.
+
+      With authentication on: cassandra_cql_username and cassandra_cql_password (in a vaulted file
+      of the cluster's group_vars).
+
+      More: "Adding a node" in the collection's docs/docsite/rst/guide_roles.rst.
+
+---- What it does (playbooks/add_node.yml) ---------------------------------------------------------
+
+  Add nodes to a running cluster.
+
+  Put the new hosts in their rack's group first. One screen, one question; all new nodes prepared at
+  once, then started and bootstrapped one at a time. Re-running is safe."""
+
+
 def test_topic():
+    with open(os.path.join(TOP, "playbooks", "add_node.yml"), encoding="utf-8") as f:
+        header = f.read()
+    assert cassandra_help(MODEL, PLAYBOOKS, topic="add_node", header=header, cwd=CWD) == TOPIC_GOLDEN
+
+
+def test_topic_order():
     with open(os.path.join(TOP, "playbooks", "decommission_node.yml"), encoding="utf-8") as f:
         header = f.read()
-    text = cassandra_help(MODEL, PLAYBOOKS, topic="decommission_node", header=header, cwd=CWD)
+    text = help_(MODEL, PLAYBOOKS, topic="decommission_node", header=header, cwd=CWD)
     lines = text.splitlines()
     assert lines[:3] == ["==== Nodes " + "=" * 89, "",
                          "  \u25cf decommission_node  Removes nodes from the running cluster, one at a time, their data"
                          " streamed to"]
-    assert ("      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
-            " -e cassandra_target_nodes=node4") in lines
-    assert "  Removes nodes from a running cluster, one at a time: each one streams its" in lines
-    assert "- name: Preflight" not in text  # the comment only
-    # the command, the options one per line with their default, an example, in that order
+    assert "- name: Preflight" not in text and "Options and defaults:" not in text  # the comment's paragraphs only
+    # the command, the options one per line with their default, an example, the guide, what it does, in that order
     options = [i for i, line in enumerate(lines) if line.startswith("        -e ")][0]
-    assert lines[options - 1].startswith("      $ ansible-playbook ")  # under its command
-    assert lines[options:options + 12] == [
-        "        -e cassandra_target_nodes=<nodes>     the nodes to remove (comma-separated) (required)",
-        "        -e cassandra_decommission_force=true  goes on when a datacenter would keep fewer nodes than",
-        "                                              replicas (nodetool decommission --force)",
-        "                                              (default: false)",
-        "        -e cassandra_rolling_resume=true      resumes an interrupted run, skipping the nodes already",
-        "                                              done (default: false)",
+    assert lines[options - 1] == ("      $ ansible-playbook -i inventories/orders/hosts.yml"
+                                  " community.cassandra.decommission_node -e cassandra_target_nodes=node4")
+    assert lines[options:options + 8] == [
+        "        -e cassandra_target_nodes=<nodes>     the nodes to remove (required)",
+        "        -e cassandra_decommission_force=true  allows fewer nodes than replicas (default: false)",
+        "        -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)",
         "        -e cassandra_hosts=<group>            the cluster to run on (default: orders)",
-        "        -e cassandra_operation_confirm=false  skips the question (of the operations that ask one),",
-        "                                              for runs without a terminal (default: true)",
+        "        -e cassandra_operation_confirm=false  asks nothing (no terminal) (default: true)",
         "        --check                               shows the plan, changing nothing",
         "      Example (changing nothing):",
         "      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
         " -e cassandra_target_nodes=node4 --check"]
-    assert lines.index("---- What it does and checks (playbooks/decommission_node.yml) " + "-" * 37) > options
-    assert ("      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.decommission_node"
-            " -e cassandra_target_nodes=node4 --check") in lines
+    more = lines.index('      More: "Removing a node" in the collection\'s docs/docsite/rst/guide_roles.rst.')
+    rule = lines.index("---- What it does (playbooks/decommission_node.yml) " + "-" * 48)
+    assert options < more < rule and lines[rule + 2] == "  Remove nodes from a running cluster."
     assert "cassandra_cql_username and cassandra_cql_password" in text
 
 
 def test_topic_placeholders_named():
-    text = cassandra_help(MODEL, PLAYBOOKS, topic="replace_node", cwd=CWD)
+    text = help_(MODEL, PLAYBOOKS, topic="replace_node", cwd=CWD)
     assert "Replace DEAD_NODE_ADDRESS, NEW_NODE with your own values." in text
 
 
 def test_unknown_topic():
     with pytest.raises(AnsibleFilterError, match="no operation decomission_node"):
-        cassandra_help(MODEL, PLAYBOOKS, topic="decomission_node", cwd=CWD)
+        help_(MODEL, PLAYBOOKS, topic="decomission_node", cwd=CWD)
 
 
 def test_no_cluster():
     with pytest.raises(AnsibleFilterError, match="no cluster group"):
-        cassandra_help(model(clusters=[]), PLAYBOOKS, cwd=CWD)
+        help_(model(clusters=[]), PLAYBOOKS, cwd=CWD)
 
 
 def test_password_authenticator_without_cql_user():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         del host["vars"]["cassandra_cql_username"]
-    text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
+    text = advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert ("- Authentication is on (PasswordAuthenticator) but cassandra_cql_username is not set: topology (to\n"
             "  remove nodes), decommission_node, remove_dead_node, rolling_restart (rack mode), stop_rack,\n"
             "  add_datacenter, remove_datacenter read the replication over CQL") in text
@@ -712,7 +714,7 @@ def test_password_authenticator_without_cql_user():
 def test_close_variable_name():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[1]["names"].append("cassandra_heap_sise")
-    text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
+    text = advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert "- cassandra_heap_sise is set (node2) but no role or playbook reads it: did you mean\n  cassandra_heap_size?" in text
 
 
@@ -720,12 +722,12 @@ def test_seeds_layout():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"]["cassandra_seeds"] = "192.0.2.11:7000,192.0.2.12:7000,192.0.2.99"
-    text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
+    text = advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert "- Seeds that are no node of the inventory: 192.0.2.99." in text
     assert ("- dc1: 2 seeds on rack1, none on rack2, rack3: put them on different racks (the rule: 2 or 3 seeds\n"
             "  per datacenter, on different racks when there are several): set cassandra_seeds, then change_seeds\n"
             "  applies it live.") in text
-    full = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    full = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert ("  WARNING - Seeds  dc1  node1 (rack1), node2 (rack1)  2 seeds on rack1, none on rack2, rack3: put\n"
             "    them on different racks\n") in full
 
@@ -733,7 +735,7 @@ def test_seeds_layout():
 def test_absent_seed():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[3]["vars"]["cassandra_seeds"] = hosts[3]["vars"]["cassandra_seeds"] + ["192.0.2.14"]
-    text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
+    text = advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert "- Seed and marked absent: node4. Take it out of cassandra_seeds in the inventory: topology then\n" \
            "  drops it from the seed lists before it leaves." in text
 
@@ -741,18 +743,18 @@ def test_absent_seed():
 def test_racks_against_the_allocator():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[4]["vars"]["cassandra_rack"] = "rack2"
-    text = advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
+    text = advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
     assert ("- dc1 has 2 racks with allocate_tokens_for_local_replication_factor 3: the token allocator needs one\n"
             "  rack or at least 3 (preflight refuses it).") in text
     for host in hosts:
         host["vars"]["cassandra_allocate_tokens_for_local_replication_factor"] = "2"
-    assert "token allocator" not in advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
+    assert "token allocator" not in advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD))
 
 
 def test_mixed_versions():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[0]["vars"].update(cassandra_package_version="4.1.9", cassandra_java_version="17")
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert "package MIXED: 4.1.10 (node2, node3, node5); 4.1.9 (node1)" in text
     assert "  Java: MIXED: 11, package (node2, node3, node5); 17, package (node1)" in text
     assert "- Mixed package versions across the nodes: 4.1.10 (node2, node3, node5); 4.1.9 (node1)." in advice(text)
@@ -764,7 +766,7 @@ def test_role_defaults_shown():
     for host in hosts:
         for key in ("cassandra_version", "cassandra_java_version", "cassandra_package_version"):
             del host["vars"][key]
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert "  Cassandra: series 50x (role default), package latest of the series, installed from" in text
     assert "  Java: 17 (role default), package" in text
 
@@ -775,7 +777,7 @@ def test_two_clusters_name_their_group():
     other["name"] = "billing"
     two["clusters"].append(other)
     two["auto"] = ""
-    text = cassandra_help(two, PLAYBOOKS, cwd=CWD)
+    text = help_(two, PLAYBOOKS, cwd=CWD)
     assert "\n==== The clusters as the inventory describes them ====" in text
     assert "\n==== orders: Nodes ====" in text and "\n==== billing: Nodes ====" in text
     assert "community.cassandra.status -e cassandra_hosts=orders" in text
@@ -784,8 +786,8 @@ def test_two_clusters_name_their_group():
 
 
 def test_vault_skipped():
-    text = cassandra_help(model(vault_skipped=["/work/inventories/orders/group_vars/orders/secrets.yml"],
-                                options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    text = help_(model(vault_skipped=["/work/inventories/orders/group_vars/orders/secrets.yml"],
+                       options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert "- Vault-encrypted files not read (help decrypts nothing): group_vars/orders/secrets.yml." in text
     assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.status" in text
 
@@ -796,7 +798,7 @@ def test_import_command_keeps_the_connection_and_jmx():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[0]["vars"].update(ansible_user="admin", cassandra_jmx_username="monitor",
                             cassandra_jmx_password_file="/etc/cassandra/jmxremote.password")
-    text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts, options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -u admin community.cassandra.import_cluster"
             " -e import_cluster_dir=NEW_DIR"
             " -e cassandra_jmx_username=monitor"
@@ -809,15 +811,15 @@ def test_reimport_reads_the_inventory():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     hosts[0]["vars"].update(ansible_user="admin", cassandra_jmx_username="(vaulted)", cassandra_jmx_password=True)
     hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
-    text = cassandra_help(model(hosts=hosts, options=["--ask-vault-pass"], all_hosts=[h["name"] for h in hosts], **IMPORTED),
-                          PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts, options=["--ask-vault-pass"], all_hosts=[h["name"] for h in hosts], **IMPORTED),
+                 PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i inventories/orders.yml --ask-vault-pass community.cassandra.import_cluster"
             " -e import_cluster_force=true\n") in text
     assert "-i 192.0.2.11," not in text and "JMX_USER" not in text and "cassandra_jmx" not in commands(text)
 
 
 def test_absent_nodes_with_topology():
-    text = advice(cassandra_help(MODEL, PLAYBOOKS + ["topology"], cwd=CWD))
+    text = advice(help_(MODEL, PLAYBOOKS + ["topology"], cwd=CWD))
     assert "topology --check shows the plan" in text
     assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.topology --check" in text
 
@@ -826,13 +828,13 @@ def test_single_token_cluster():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"]["cassandra_num_tokens"] = "1"
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert "Not for this cluster" not in text
     assert "token allocator" not in advice(text)
 
 
 def test_inventory_outside_the_current_dir():
-    text = cassandra_help(MODEL, PLAYBOOKS, cwd="/elsewhere")
+    text = help_(MODEL, PLAYBOOKS, cwd="/elsewhere")
     assert "$ ansible-playbook -i /work/inventories/orders/hosts.yml community.cassandra.status" in text
 
 
@@ -848,13 +850,13 @@ def test_password_authenticator_planning_operations():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         del host["vars"]["cassandra_cql_username"]
-    text = " ".join(advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
+    text = " ".join(advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
     assert "without them, add_node and move_node plan as if every keyspace had replicas everywhere." in text
 
 
 def test_reimport_only_into_an_inventory_the_import_wrote():
     for changed in (model(), model(imported=["billing"])):
-        text = cassandra_help(changed, PLAYBOOKS, cwd=CWD)
+        text = help_(changed, PLAYBOOKS, cwd=CWD)
         assert "community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n" in text
         assert "import_cluster_force" not in commands(text)
 
@@ -869,29 +871,29 @@ def test_reimport_into_the_inventory_dir(tmp_path):
     everyone = ["node%d" % i for i in range(1, 6)] + ["node9"]
     shared = model(sources=sources, imported=["orders"], clusters=MODEL["clusters"] + [billing], auto="",
                    all_hosts=everyone)
-    text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))
+    text = help_(shared, PLAYBOOKS, cwd=str(tmp_path))
     assert ("$ ansible-playbook -i inventories community.cassandra.import_cluster -e cassandra_hosts=orders"
             " -e import_cluster_force=true\n") in text
     assert ("$ ansible-playbook -i 192.0.2.19, community.cassandra.import_cluster -e import_cluster_dir=NEW_DIR\n") in text
     # help -e cassandra_hosts=orders: that cluster only shown, the others still in the inventory: named
-    text = cassandra_help(model(sources=sources, imported=["orders"], all_hosts=everyone), PLAYBOOKS, cwd=str(tmp_path))
+    text = help_(model(sources=sources, imported=["orders"], all_hosts=everyone), PLAYBOOKS, cwd=str(tmp_path))
     assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true\n" in text
     # CASSANDRA_CLUSTER names it: not on screen, in RUNBOOK.md
     named = model(sources=sources, imported=["orders"], all_hosts=everyone, auto="", env_cluster="orders")
     assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true\n" in \
-        cassandra_help(named, PLAYBOOKS, cwd=str(tmp_path))
+        help_(named, PLAYBOOKS, cwd=str(tmp_path))
     assert "community.cassandra.import_cluster -e cassandra_hosts=orders -e import_cluster_force=true" in \
-        cassandra_help(named, PLAYBOOKS, cwd=str(tmp_path), markdown=True)
+        help_(named, PLAYBOOKS, cwd=str(tmp_path), markdown=True)
     alone = model(sources=sources, imported=["orders"], all_hosts=everyone[:5])
-    text = cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
+    text = help_(alone, PLAYBOOKS, cwd=str(tmp_path))
     assert "$ ansible-playbook -i inventories community.cassandra.status\n" in text  # alone there: not needed
     assert "$ ansible-playbook -i inventories community.cassandra.import_cluster -e import_cluster_force=true\n" in text
     assert "-e cassandra_hosts" not in commands(text)
-    assert "-e cassandra_hosts" not in commands(cassandra_help(model(), PLAYBOOKS, cwd=CWD))
-    text = cassandra_help(shared, PLAYBOOKS, cwd=str(tmp_path))  # with another cluster: needed
+    assert "-e cassandra_hosts" not in commands(help_(model(), PLAYBOOKS, cwd=CWD))
+    text = help_(shared, PLAYBOOKS, cwd=str(tmp_path))  # with another cluster: needed
     assert "$ ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=orders\n" in text
     # another dir: named
-    text = cassandra_help(alone, PLAYBOOKS, cwd="/elsewhere")
+    text = help_(alone, PLAYBOOKS, cwd="/elsewhere")
     assert ("community.cassandra.import_cluster -e import_cluster_dir=%s/inventories -e import_cluster_force=true"
             % tmp_path) in text
 
@@ -901,7 +903,7 @@ def test_import_command_placeholders_for_what_help_could_not_read():
     hosts[0]["vars"].update(cassandra_jmx_username="(vaulted)", cassandra_jmx_password=True,
                             cassandra_listen_address="10.9.9.9", ansible_port="2222")
     hosts[0]["names"] += ["cassandra_jmx_username", "cassandra_jmx_password"]
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert ("$ ansible-playbook -i 192.0.2.11, -e ansible_port=2222 community.cassandra.import_cluster"
             " -e import_cluster_dir=NEW_DIR"
             " -e cassandra_jmx_username=JMX_USER -e cassandra_jmx_password_file=JMX_PASSWORD_FILE") in text
@@ -912,7 +914,7 @@ def test_unresolved_values_named():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"]["cassandra_rack"] = "{{ vault_rack }}"
-    text = " ".join(advice(cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
+    text = " ".join(advice(help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)).split())
     assert ("- cassandra_rack could not be read from the inventory alone (a vaulted value, a fact of the node, a"
             " lookup; every node): what is shown above for it, and the commands filled from it, may be wrong.") in text
 
@@ -921,22 +923,22 @@ def test_values_are_quoted_for_the_shell():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"]["cassandra_dc"] = "dc one"
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     # as JSON: Ansible's key=value parsing would cut 'dc one' at the space
     assert ("community.cassandra.stop_rack -e '{\"cassandra_target_dc\": \"dc one\"}' -e cassandra_target_rack=rack3"
             in text)
 
 
 def test_runbook_says_where_to_run_from():
-    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
+    runbook = help_(MODEL, PLAYBOOKS, cwd=CWD, markdown=True)
     assert "Run the commands from `../..`, relative to this file (where help was run, with its ansible.cfg" in runbook
     assert "/work" not in runbook
-    runbook = cassandra_help(MODEL, PLAYBOOKS, cwd="/work/inventories/orders", markdown=True)
+    runbook = help_(MODEL, PLAYBOOKS, cwd="/work/inventories/orders", markdown=True)
     assert "Run the commands from this file's directory (where help was run, with its ansible.cfg" in runbook
 
 
 def test_vault_id_path_relative():
-    text = cassandra_help(model(options=["--vault-id", "prod@/work/vault_pass"]), PLAYBOOKS, cwd=CWD)
+    text = help_(model(options=["--vault-id", "prod@/work/vault_pass"]), PLAYBOOKS, cwd=CWD)
     assert "--vault-id prod@vault_pass community.cassandra.status" in text
 
 
@@ -944,14 +946,14 @@ def test_no_node_chosen_for_removal():
     # without a node marked absent, a placeholder: never a real node nobody chose
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     del hosts[3]["vars"]["cassandra_node_state"]
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert "community.cassandra.decommission_node -e cassandra_target_nodes=NODE\n" in text
-    topic = cassandra_help(model(hosts=hosts), PLAYBOOKS, topic="decommission_node", cwd=CWD)
+    topic = help_(model(hosts=hosts), PLAYBOOKS, topic="decommission_node", cwd=CWD)
     assert "Replace NODE with your own value." in topic
 
 
 def test_topic_names_the_placeholders_of_the_command():
-    text = cassandra_help(model(imported=False), PLAYBOOKS, topic="import_cluster", cwd=CWD)
+    text = help_(model(imported=False), PLAYBOOKS, topic="import_cluster", cwd=CWD)
     assert "Replace NEW_DIR with your own value." in text
 
 
@@ -959,7 +961,7 @@ def test_seeds_from_a_template():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"]["cassandra_seeds"] = "{{ groups['orders'] | map('extract', hostvars, 'ansible_host') | join(',') }}"
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
     assert "  Seeds: not readable from the inventory alone\n" in text
     assert "seed" not in advice(text).replace("cassandra_seeds could not be read", "")
     assert "(seed)" not in text
@@ -969,21 +971,21 @@ def test_real_uppercase_values_are_not_placeholders():
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"].update(cassandra_dc="EU_WEST", cassandra_rack="RACK_A")
-    text = cassandra_help(model(hosts=hosts), PLAYBOOKS, topic="stop_rack", cwd=CWD)
+    text = help_(model(hosts=hosts), PLAYBOOKS, topic="stop_rack", cwd=CWD)
     assert "Replace" not in text
 
 
 def test_help_command_without_the_vault_prompt_help_added():
-    text = cassandra_help(model(options=["--ask-vault-pass"], vault_prompt_added=True), PLAYBOOKS, cwd=CWD)
+    text = help_(model(options=["--ask-vault-pass"], vault_prompt_added=True), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help\n" in text
     # given by the user (a vaulted group_vars/all): help needs it too
-    text = cassandra_help(model(options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
+    text = help_(model(options=["--ask-vault-pass"]), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml --ask-vault-pass community.cassandra.help\n" in text
 
 
 def test_help_command_without_the_sudo_password_prompt():
     # help becomes root nowhere: no -K for it; the operations keep it
-    text = cassandra_help(model(options=["-K"]), PLAYBOOKS, cwd=CWD)
+    text = help_(model(options=["-K"]), PLAYBOOKS, cwd=CWD)
     assert "$ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.help\n" in text
     assert "$ ansible-playbook -i inventories/orders/hosts.yml -K community.cassandra.status\n" in text
 
@@ -1001,7 +1003,7 @@ def test_java_origin(more, java):
     hosts = copy.deepcopy(MODEL["clusters"][0]["hosts"])
     for host in hosts:
         host["vars"].update(more)
-    assert "\n  %s\n" % java in cassandra_help(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
+    assert "\n  %s\n" % java in help_(model(hosts=hosts), PLAYBOOKS, cwd=CWD)
 
 
 def test_commands_without_needless_options(tmp_path):
@@ -1011,27 +1013,139 @@ def test_commands_without_needless_options(tmp_path):
     (tmp_path / "inventories").mkdir()
     sources = [str(tmp_path / "inventories")]
     configured = model(sources=sources, default_sources=[str(tmp_path / "inventories") + "/"])
-    text = cassandra_help(configured, PLAYBOOKS, cwd=str(tmp_path))
+    text = help_(configured, PLAYBOOKS, cwd=str(tmp_path))
     assert "$ ansible-playbook community.cassandra.status\n" in text and " -i inventories" not in text
     # the import of a new cluster still needs a node (-i <node>,)
     assert "$ ansible-playbook -i 192.0.2.11, community.cassandra.import_cluster" in text
-    topic = cassandra_help(configured, PLAYBOOKS, topic="cleanup", cwd=str(tmp_path))
+    topic = help_(configured, PLAYBOOKS, topic="cleanup", cwd=str(tmp_path))
     assert "$ ansible-playbook community.cassandra.cleanup" in topic and "-i inventories" not in topic
     # another inventory given with -i: kept
     other = model(sources=sources, default_sources=["/etc/ansible/hosts"])
-    assert "$ ansible-playbook -i inventories community.cassandra.status\n" in cassandra_help(
+    assert "$ ansible-playbook -i inventories community.cassandra.status\n" in help_(
         other, PLAYBOOKS, cwd=str(tmp_path))
     # two clusters, CASSANDRA_CLUSTER names one: help shows that one, its commands on screen without the group
     billing = {"name": "billing", "hosts": [node("node9", "192.0.2.19", "rack1", cassandra_cluster_name="Billing")]}
     named = model(sources=sources, default_sources=sources, auto="", env_cluster="billing", clusters=[billing])
-    text = cassandra_help(named, PLAYBOOKS, cwd=str(tmp_path))
+    text = help_(named, PLAYBOOKS, cwd=str(tmp_path))
     assert "$ ansible-playbook community.cassandra.status\n" in text and "-e cassandra_hosts" not in commands(text)
-    runbook = cassandra_help(named, PLAYBOOKS, markdown=True, cwd=str(tmp_path))
+    runbook = help_(named, PLAYBOOKS, markdown=True, cwd=str(tmp_path))
     assert "ansible-playbook -i inventories community.cassandra.status -e cassandra_hosts=billing" in runbook
     # RUNBOOK.md: no -i for ansible.cfg's inventory only (not ANSIBLE_INVENTORY's), and an imported cluster named
-    runbook = cassandra_help(dict(named, default_sources_origin="cfg"), PLAYBOOKS, markdown=True, cwd=str(tmp_path))
+    runbook = help_(dict(named, default_sources_origin="cfg"), PLAYBOOKS, markdown=True, cwd=str(tmp_path))
     assert "ansible-playbook community.cassandra.status -e cassandra_hosts=billing" in runbook
     alone = dict(configured, default_sources_origin="cfg", imported=["orders"])
-    assert "$ ansible-playbook community.cassandra.status\n" in cassandra_help(alone, PLAYBOOKS, cwd=str(tmp_path))
-    assert "ansible-playbook community.cassandra.status -e cassandra_hosts=orders" in cassandra_help(
+    assert "$ ansible-playbook community.cassandra.status\n" in help_(alone, PLAYBOOKS, cwd=str(tmp_path))
+    assert "ansible-playbook community.cassandra.status -e cassandra_hosts=orders" in help_(
         alone, PLAYBOOKS, markdown=True, cwd=str(tmp_path))
+
+
+def header(name):
+    """The comment that starts the playbook, its lines without the newline."""
+    lines = []
+    with open(os.path.join(TOP, "playbooks", name + ".yml"), encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#"):
+                lines.append(line.rstrip("\n"))
+            elif lines or line.strip() != "---":
+                break
+    return lines
+
+
+@pytest.mark.parametrize("name", PLAYBOOKS)
+def test_playbook_header_shape(name):
+    # what it does in one line, the command, a few short paragraphs, where the options are; nothing more: the
+    # details are next to their tasks and in the guide, the cluster selection in the guide only
+    lines = header(name)
+    assert 5 <= len(lines) <= 15, (name, len(lines))
+    assert re.match(r"^# [A-Z][^ ].*\.$", lines[0]) and len(lines[0]) <= 79, lines[0]
+    assert lines[1] == "#"
+    assert lines[2].startswith("#   ansible-playbook community.cassandra.%s" % name), lines[2]
+    assert lines[-1] == "# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=%s" % name
+    assert lines[-2] == "#"
+    for line in lines[:-1]:
+        assert line == "#" or line.startswith("# "), line
+        if not line.startswith("#   "):  # a command may be longer
+            assert len(line) <= 79 and "  " not in line, line  # no layout by spaces either
+    text = " ".join(lines)
+    assert "CASSANDRA_CLUSTER" not in text and "-e cassandra_hosts" not in text and "Root on the nodes" not in text
+
+
+def test_option_on_one_line():
+    # each option's text and its default on one line at 100 columns (a terminal of 120 and more): short, the
+    # details in the guide (More: under the options)
+    common = _common(MODEL, [], {})
+    for op in OPERATIONS + [{"name": "common", "options": common}]:
+        for arg, text, default in op.get("options") or []:
+            assert len(text) <= 70 and len(_option_text(text, default)) <= OPTION_ROOM, (op["name"], arg, text)
+    line = [line for line in cassandra_help(MODEL, PLAYBOOKS, topic="add_node", cwd=CWD).splitlines()
+            if "the hosts to add" in line][0]
+    assert line.index("the hosts to add") == rule_width(100 - 1) - OPTION_ROOM and line.endswith("(required)")
+
+
+def test_every_operation_points_to_its_guide_section():
+    with open(os.path.join(TOP, GUIDE), encoding="utf-8") as f:
+        sections = re.findall(r"^(\S.*)\n-{3,}$", f.read(), re.M)
+    for op in OPERATIONS:
+        assert op["guide"] in sections, op["name"]
+        text = cassandra_help(MODEL, PLAYBOOKS, topic=op["name"], cwd=CWD)
+        assert ('More: "%s" in the collection\'s %s.' % (op["guide"], GUIDE)) in unwrapped(text).replace("\n        ", " ")
+
+
+@pytest.mark.parametrize("columns", [80, 100, 120])
+def test_commands_cut_between_their_arguments(columns):
+    # at the width the ops callback lays the help out for a terminal of that many columns, and at that width
+    # itself: a command fits, each of its lines cut after a whole argument (an option with its value) and ending
+    # with " \\" but the last, the next ones further in; joined again, the command as it was
+    checked = 0
+    for width in (rule_width(columns - 1), columns):
+        for topic in [""] + PLAYBOOKS:
+            flowing = cassandra_help(MODEL, PLAYBOOKS, topic=topic, cwd=CWD, flow=True)
+            for line in flowing.split("\n"):
+                if not is_command(line):
+                    continue
+                command = line.split(FLOW)[2]
+                laid = laid_out(line, width)[0]
+                assert laid[0].lstrip().startswith("$ ansible-playbook ")
+                assert all(part.endswith(" \\") for part in laid[:-1]) and not laid[-1].endswith("\\")
+                assert all(part.startswith(laid[0].index("$") * " " + "    ") for part in laid[1:])
+                pieces = [command_words(part.lstrip().lstrip("$ ").rstrip("\\").strip()) for part in laid]
+                assert [w for p in pieces for w in p] == command_words(command), laid
+                assert " ".join(part.lstrip().lstrip("$ ").rstrip("\\").strip() for part in laid) == command
+                # each line a whole for the shell (no quote left open), the lines together the same arguments
+                for part in laid[:-1]:  # never an option apart from its value
+                    assert shlex.split(part.lstrip().lstrip("$ ").rstrip("\\"))[-1] not in (
+                        "-e", "-i", "-u", "--limit", "--vault-id", "--vault-password-file", "--private-key"), laid
+                joined = re.sub(r"\\\n", "", "\n".join(laid))  # as bash reads it: backslash-newline dropped
+                assert shlex.split(joined.lstrip().lstrip("$ ")) == shlex.split(command)
+                for part, words in zip(laid, pieces):
+                    assert len(part) <= width or len(words) == 1, part  # a longer argument has a line of its own
+                checked += 1
+    assert checked > 100
+
+
+@pytest.mark.parametrize("name", PLAYBOOKS)
+def test_topic_shows_the_header_paragraphs(name):
+    # the paragraphs of the playbook's header, not the comment as written: its first line, then the ones after
+    # the command, without the pointer to help itself
+    lines = header(name)
+    text = cassandra_help(MODEL, PLAYBOOKS, topic=name, header="---\n" + "\n".join(lines) + "\n- name: x\n", cwd=CWD)
+    shown = text.split("---- What it does (playbooks/%s.yml) " % name, 1)[1]
+    assert shown.split("\n")[2] == "  " + lines[0][2:]
+    assert "Options and defaults" not in shown and "#" not in shown and "ansible-playbook" not in shown
+    words = " ".join(line[2:] for line in lines if not line.startswith("#   ") and "Options and defaults" not in line)
+    assert " ".join(shown.split("\n", 1)[1].split()) == " ".join(words.split())
+
+
+def test_commands_whole_for_a_list_of_lines():
+    # cut false (the default callback's json list of lines): each command whole, on one line, the rest laid out
+    for topic in ["", "add_node"]:
+        text = cassandra_help(MODEL, PLAYBOOKS, topic=topic, cwd=CWD, cut=False)
+        assert " \\\n" not in text and text == unwrapped(cassandra_help(MODEL, PLAYBOOKS, topic=topic, cwd=CWD))
+    assert ("      $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.add_node"
+            " -e cassandra_target_nodes=NEW_NODE -e cassandra_add_node_cleanup=sequential\n") in text
+
+
+def test_header_option_never_apart_from_its_value():
+    header = "# Do it.\n#\n#   ansible-playbook community.cassandra.add_node\n#\n# " + "word " * 19 + "-e x=y.\n"
+    text = cassandra_help(MODEL, PLAYBOOKS, topic="add_node", header=header, cwd=CWD)
+    assert text.endswith("\n  -e x=y.")  # cut before the option, which there would end the line above

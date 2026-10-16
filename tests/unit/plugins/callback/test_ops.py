@@ -1070,6 +1070,7 @@ HELP_TEXT = u"""
           - ""
           - "\\x1f23\\x1f  \\u25cf add_node\\x1fAdds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in turn."
           - "      $ ansible-playbook community.cassandra.add_node -e cassandra_target_nodes=NEW_NODE"
+          - "\\x1f$6\\x1fansible-playbook community.cassandra.add_node -e cassandra_target_nodes=NEW_NODE -e x=y"
           - "\\x1f50\\x1f        -e cassandra_a_long_option_name=value\\x1fwhat it does"
           - "\\x1f4\\x1f    $ rack1: a laid out text, not a command"
           - "---- What it does ----"
@@ -1089,7 +1090,7 @@ HELP_TEXT = u"""
 def test_help_line_colours():
     from ansible import constants as C
     from ansible.utils import color
-    from ansible_collections.community.cassandra.plugins.callback.ops import PROGRESS_COLOR, help_line
+    from ansible_collections.community.cassandra.plugins.callback.ops import PROGRESS_COLOR, help_command, help_line
     saved = color.ANSIBLE_COLOR
     try:
         color.ANSIBLE_COLOR = True
@@ -1101,6 +1102,7 @@ def test_help_line_colours():
         # a command whole, from its $; a continuation line (no key) and any other line plain
         assert help_line("      $ ansible-playbook x -e y=z", "") == "      \x1b[%sm$ ansible-playbook x -e y=z\x1b[0m" % cyan
         assert help_line("            what it does", "") == "            what it does"
+        assert help_command("          -e x=y \\") == "          \x1b[%sm-e x=y \\\x1b[0m" % cyan  # a command's line
         assert help_line("    $ rack1: node1", "", laid=True) == "    $ rack1: node1"  # an inventory's value
         assert help_line("DONE  not coloured here", "") == "DONE  not coloured here"
         color.ANSIBLE_COLOR = False  # ANSIBLE_NOCOLOR, not a terminal: as it is
@@ -1149,6 +1151,8 @@ def test_help_text_laid_out_and_coloured(tmp_path):
         u"  ● add_node".ljust(23) + "Adds new hosts to the running cluster: all prepared at",
         " " * 23 + "once, then each started and bootstrapped in turn.",
         "      $ ansible-playbook community.cassandra.add_node -e cassandra_target_nodes=NEW_NODE",
+        "      $ ansible-playbook community.cassandra.add_node \\",
+        "          -e cassandra_target_nodes=NEW_NODE -e x=y",
         "        -e cassandra_a_long_option_name=value",
         "            what it does",
         "    $ rack1: a laid out text, not a command",
@@ -1165,6 +1169,9 @@ def test_help_text_laid_out_and_coloured(tmp_path):
     assert u"  \x1b[0;32m● add_node\x1b[0m" + " " * 11 + "Adds" in output, repr(output)
     assert "    \x1b[0;36m-e cassandra_hosts=<group>\x1b[0m            the cluster" in output, repr(output)
     assert "      \x1b[0;36m$ ansible-playbook community.cassandra.add_node" in output, repr(output)
+    # a command cut: each of its lines coloured, the continuations too
+    assert ("      \x1b[0;36m$ ansible-playbook community.cassandra.add_node \\\x1b[0m\n"
+            "          \x1b[0;36m-e cassandra_target_nodes=NEW_NODE -e x=y\x1b[0m\n") in output, repr(output)
     assert "        \x1b[0;36m-e cassandra_a_long_option_name=value\x1b[0m\n" in output, repr(output)  # on its own line
     assert "\n    $ rack1: a laid out text, not a command\n" in output, repr(output)
     assert "\nNOTE  not a note here, nor DONE\n" in output  # help lines: no colour by their start
@@ -1185,7 +1192,7 @@ def test_the_help_playbook_under_the_ops_callback(tmp_path):
     assert "\x1f" not in output and u"\xa0" not in output
     plain = re.sub("\x1b\\[[0-9;]*m", "", output)
     assert "\n==== Nodes " + "=" * 67 + "\n" in plain
-    assert not [line for line in plain.splitlines() if len(line) > 78 and not line.lstrip().startswith("$ ")]
+    assert not [line for line in plain.splitlines() if len(line) > 78]  # the commands cut too
     rc, output = help_run(tmp_path)  # ANSIBLE_NOCOLOR: the same text, plain
     assert rc == 0 and output == plain, output
 

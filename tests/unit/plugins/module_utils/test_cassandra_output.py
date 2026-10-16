@@ -844,6 +844,26 @@ def test_laid_out_key_and_its_column():
                                        "            (default: false)"], "-e x=y")
 
 
+def test_laid_out_command():
+    # one line when it fits; else cut between two arguments (an option and its value together, a quoted value
+    # whole), " \\" at the end of each line but the last, the next ones 4 columns in
+    command = ("ansible-playbook -i inventories/orders.yml community.cassandra.move_node"
+               " -e '{\"cassandra_move_tokens\": {\"node1\": \"42\"}}' --check")
+    line = out.command_flow("  ", command)
+    assert out.is_command(line) and not out.is_command(out.flow(2, command))
+    assert out.laid_out(line, 200) == (["  $ " + command], "")
+    assert out.laid_out(line, 80) == (["  $ ansible-playbook -i inventories/orders.yml community.cassandra.move_node \\",
+                                       "      -e '{\"cassandra_move_tokens\": {\"node1\": \"42\"}}' --check"], "")
+    assert out.laid_out(line, 40) == (["  $ ansible-playbook \\", "      -i inventories/orders.yml \\",
+                                       "      community.cassandra.move_node \\",
+                                       "      -e '{\"cassandra_move_tokens\": {\"node1\": \"42\"}}' \\",
+                                       "      --check"], "")  # an argument longer than the room: a line of its own
+    assert out.command_words("a -e 'x y' --check -i 'h1,' p") == ["a", "-e 'x y'", "--check", "-i 'h1,'", "p"]
+    # a backslash keeps the next character in the word (not in single quotes); an option is no option's value
+    assert out.command_words("a -e x\\ y\tb -e \"q\\\" r\" 'c\\' -i -e z") == [
+        "a", "-e x\\ y", "b", "-e \"q\\\" r\"", "'c\\'", "-i", "-e z"]
+
+
 def test_laid_out_key_longer_than_its_column():
     line = out.flow(12, "what it does", "  -e cassandra_long_name=value")
     assert out.laid_out(line, 100) == (["  -e cassandra_long_name=value", "            what it does"],

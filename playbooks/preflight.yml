@@ -1,15 +1,14 @@
 ---
-# Checks one cluster (an inventory group) before changing it:
-#   ansible-playbook -i inventory community.cassandra.preflight
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo), as the operations: the playbook asks for it
-# itself, no -b needed.
-# Fails on settings that must match across the cluster, on rack layouts the
-# token allocator refuses and on mixed Cassandra versions; warns on seed layouts
-# that are only risky.
+# Check a cluster against its inventory before changing it.
+#
+#   ansible-playbook community.cassandra.preflight
+#
+# Fails on settings that must match on every node, on rack layouts the token
+# allocator refuses and on mixed Cassandra versions; warns on seed layouts
+# that are only risky. The operations that change the cluster run it first
+# (start_rack excepted: its rack is down).
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=preflight
 - name: Check the cluster's group
   hosts: localhost
   gather_facts: false

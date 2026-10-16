@@ -1,37 +1,22 @@
 ---
-# Moves nodes of a single-token cluster (cassandra_num_tokens: 1) to new
-# tokens, one at a time (nodetool move):
-#   ansible-playbook -i inventory community.cassandra.move_node
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# Without cassandra_move_tokens, each datacenter is evened out with the fewest
-# moves (e.g. after add_node -e cassandra_token_auto=balanced); with
-#   -e '{"cassandra_move_tokens": {"node2": "-3074457345618258603"}}'
-# only those nodes move. The plan comes first: each datacenter's ring now and
-# after, the order of the moves, the data each one streams and to which
-# nodes; then one confirmation (cassandra_operation_confirm: false skips it).
-# --check shows the plan, asks nothing and stops there.
-# Each move: the cluster checked (all nodes up and normal, no stream), the
-# nodes that receive data keep cassandra_move_min_free_percent (20) of their
-# data disk free (cassandra_move_force_disk: true goes on anyway), nodetool
-# move followed like a bootstrap (its progress printed every
-# cassandra_stream_check_interval seconds), the cluster checked again. The
-# run stops at the first problem.
-# Run it again to resume: the plan is worked out again from the ring (the
-# nodes already moved stay), a move an earlier run left going is waited for.
-# The nodes that lost ranges keep that data until a cleanup: the commands are
-# printed, or cassandra_move_cleanup: sequential (or one), rack, dc or all runs it here. They
-# are recorded next to the progress files (<cassandra_hosts>-move.cleanup),
-# before each move, until a move_node run cleans them up: an interrupted run
-# forgets none.
-# Moved nodes keep their old initial_token in cassandra.yaml (read at the
-# first start only); the end of the run says which inventory tokens to update.
+# Move nodes of a one-token-per-node cluster to new tokens (nodetool move).
+#
+#   ansible-playbook community.cassandra.move_node --check
+#   ansible-playbook community.cassandra.move_node
+#
+# By default each datacenter is evened out with the fewest moves; with
+# cassandra_move_tokens only the nodes given move. One plan screen, one
+# question; one node at a time, the cluster checked before and after each.
+#
+# Re-running resumes: the plan is worked out again from the ring. The cleanup
+# afterwards is printed, or run (cassandra_move_cleanup).
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=move_node
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
 
+# Run it again to resume: the plan is worked out again from the ring (the
+# nodes already moved stay), a move an earlier run left going is waited for.
 - name: Find moves an earlier run left going
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
@@ -118,6 +103,13 @@
           check nodetool netstats and system.log on it. A move that failed leaves the node MOVING with no
           stream: restarting Cassandra on it cancels it (the node keeps its old token), then run move_node again.
 
+# Without cassandra_move_tokens, each datacenter is evened out with the fewest
+# moves (e.g. after add_node -e cassandra_token_auto=balanced); with
+#   -e '{"cassandra_move_tokens": {"node2": "-3074457345618258603"}}'
+# only those nodes move. The plan comes first: each datacenter's ring now and
+# after, the order of the moves, the data each one streams and to which nodes;
+# then one confirmation (cassandra_operation_confirm: false skips it). --check
+# shows the plan, asks nothing and stops there.
 - name: Plan the moves
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
@@ -264,6 +256,8 @@
       vars:
         _cassandra_progress_resume: false
 
+    # Recorded next to the progress files (<cassandra_hosts>-move.cleanup), before
+    # each move, until a move_node run cleans them up: an interrupted run forgets none.
     # All the plan's cleanups (wider than each move's losses when the replication is unknown or a
     # keyspace uses SimpleStrategy), before the first move: a run that stops forgets none
     - name: Record the nodes to clean up after the moves
@@ -279,6 +273,11 @@
         ansible_become: false  # an inventory ansible_become beats the become keyword
       run_once: true
 
+# Each move: the cluster checked (all nodes up and normal, no stream), the nodes
+# that receive data keep cassandra_move_min_free_percent of their data disk free
+# (-e cassandra_move_force_disk=true goes on anyway), nodetool move followed like
+# a bootstrap (its progress printed every cassandra_stream_check_interval
+# seconds), the cluster checked again. The run stops at the first problem.
 - name: Move the nodes, one at a time
   hosts: cassandra_move_order
   serial: 1
@@ -321,7 +320,9 @@
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
         cassandra_service_summary_operation: move_node
 
-    # initial_token is read at the first start only: a stale one does no harm, but is a wrong record
+    # initial_token is read at the first start only: a stale one does no harm, but is a wrong record.
+    # Moved nodes keep their old initial_token in cassandra.yaml: the end of the run
+    # says which inventory tokens to update.
     - name: Say which inventory tokens to update
       ansible.builtin.debug:
         msg: >-

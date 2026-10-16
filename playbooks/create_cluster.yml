@@ -1,38 +1,17 @@
 ---
-# Builds a cluster from blank hosts (one inventory group per cluster):
-#   ansible-playbook -i inventory community.cassandra.create_cluster
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# Before the first start, the clocks of the nodes are checked (sync_clocks:
-# each synchronised, within cassandra_clock_max_offset_ms of its source; else
-# refused, nothing started; -e cassandra_clock_check=false skips it).
-# Nodes are prepared in parallel, then started one at a time: seeds first
-# (a node of a new rack earlier when the token allocator needs it), each one
-# joined before the next. Re-running it on a running cluster
-# starts nothing.
-# The identity settings must come from the inventory, but a new 5.0 cluster
-# may leave cassandra_storage_compatibility_mode out: NONE (CASSANDRA_4 and
-# UPGRADING, steps of an upgrade, are refused on a new cluster).
-# One token per node (cassandra_num_tokens: 1): the nodes without
-# cassandra_initial_token get evenly spaced tokens, shown with each node's
-# share of the data, then confirmed (cassandra_operation_confirm).
-# -e cassandra_create_cluster_reset=true rebuilds a cluster that runs already,
-# ALL ITS DATA LOST: e.g. to move it to another snitch, datacenters or racks,
-# which a node keeps for life once it has joined. Refused when --limit leaves a
-# node of the group out, when no node answers nodetool status, when the ring has
-# a node the group does not have (never wipe part of a cluster that keeps
-# running), when a running node is not in that ring or the rings differ, when
-# a node holding data is not in that ring, when a Cassandra runs that its unit
-# did not start, or when a node's live cassandra.yaml names another cluster. The token plan (one token per node),
-# then each node's plan is shown, then the operator types the cluster name (no
-# terminal: -e '{"cassandra_create_cluster_reset_confirm": "<cluster name>"}'
-# with cassandra_operation_confirm=false); every node is stopped and disabled, then
-# emptied (reset_node.yml), then the cluster is created with the inventory's
-# settings. --check shows the plan only. A create that fails after the wipe:
-# run create_cluster again without the option.
+# Build a cluster from blank hosts.
+#
+#   ansible-playbook community.cassandra.create_cluster
+#
+# Nodes prepared in parallel, then started one at a time, seeds first, each
+# one joined before the next. The identity settings (cluster name, snitch,
+# partitioner, number of tokens) must come from the inventory; the clocks are
+# checked first.
+#
+# Re-running on a running cluster starts nothing. Rebuilding one, all its
+# data lost, takes -e cassandra_create_cluster_reset=true.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=create_cluster
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -112,6 +91,9 @@
              + (['cassandra_allocate_tokens_for_local_replication_factor'] if cassandra_num_tokens | int > 1 else []) }}
         _missing: "{{ _all | reject('in', hostvars[inventory_hostname]) | list }}"
 
+    # The identity settings must come from the inventory, but a new 5.0 cluster
+    # may leave cassandra_storage_compatibility_mode out: NONE (CASSANDRA_4 and
+    # UPGRADING, steps of an upgrade, are refused on a new cluster).
     # Only an upgraded cluster has a reason for another mode (CASSANDRA_4, then UPGRADING, then NONE)
     - name: A new 5.0 cluster starts in storage compatibility mode NONE
       ansible.builtin.assert:
@@ -148,6 +130,9 @@
 # have one is refused unless cassandra_token_allow_partial (the others then
 # split the largest ranges). A rerun after a create that stopped half way
 # gives the same tokens: the nodes already running must have them.
+# One token per node (cassandra_num_tokens: 1): the nodes without
+# cassandra_initial_token get evenly spaced tokens, shown with each node's
+# share of the data, then confirmed (cassandra_operation_confirm).
 - name: Work out the tokens (one token per node)
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
@@ -235,6 +220,21 @@
             cassandra_initial_token: "{{ _plan.tokens[inventory_hostname] }}"
           when: inventory_hostname in _plan.tokens
 
+# -e cassandra_create_cluster_reset=true rebuilds a cluster that runs already,
+# ALL ITS DATA LOST: e.g. to move it to another snitch, datacenters or racks,
+# which a node keeps for life once it has joined. Refused when --limit leaves a
+# node of the group out, when no node answers nodetool status, when the ring has
+# a node the group does not have (never wipe part of a cluster that keeps
+# running), when a running node is not in that ring or the rings differ, when
+# a node holding data is not in that ring, when a Cassandra runs that its unit
+# did not start, or when a node's live cassandra.yaml names another cluster
+# (the last three: reset_node.yml). The token plan (one token per node), then
+# each node's plan is shown, then the operator types the cluster name (no
+# terminal: -e '{"cassandra_create_cluster_reset_confirm": "<cluster name>"}'
+# with cassandra_operation_confirm=false); every node is stopped and disabled,
+# then emptied (reset_node.yml), then the cluster is created with the
+# inventory's settings. --check shows the plan only. A create that fails after
+# the wipe: run create_cluster again without the option.
 # After the token plan (shown and confirmed before anything is wiped)
 - name: Reset the whole cluster first (cassandra_create_cluster_reset)
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -442,6 +442,8 @@
       ansible.builtin.meta: end_play
       when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
 
+    # The clocks of the nodes (sync_clocks' check: each synchronised, within cassandra_clock_max_offset_ms of
+    # its source; else refused, nothing started; -e cassandra_clock_check=false skips it).
     # before the first starts (time sync started by cassandra_linux, waited for): none when the clocks are apart
     - name: Check the clocks
       ansible.builtin.include_role:
@@ -469,6 +471,9 @@
           {{ _cassandra_preflight.cassandra_allocate_tokens_for_local_replication_factor
              if _cassandra_preflight.cassandra_num_tokens | int > 1 else '' }}
 
+# Seeds first (a node of a new rack earlier when the token allocator needs
+# it), each one joined before the next. Re-running it on a running cluster
+# starts nothing.
 - name: Start the nodes, one at a time
   hosts: cassandra_create_start_order
   serial: 1

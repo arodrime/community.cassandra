@@ -1,24 +1,24 @@
 ---
-# Stops every node of one rack at once (maintenance of the rack's hosts,
-# network, power...), each one drained (nodetool drain, best effort; with
-# cassandra_operation_drain: false only by the role's unit) then stopped:
-#   ansible-playbook -i inventory community.cassandra.stop_rack \
+# Stop every node of one rack at once, for maintenance.
+#
+#   ansible-playbook community.cassandra.stop_rack \
 #     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
+#
+# Refused when a keyspace would lose more than one replica, or a node of the
+# datacenter is already down. One question; each node drained, then stopped.
+#
+# start_rack starts the rack again.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=stop_rack
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
 # With at least as many racks as replicas in the datacenter, one rack down is
 # one replica down. Refused when a keyspace would lose more than that (more
 # replicas in the datacenter than racks, SimpleStrategy with RF > 1) or when a
 # node is already down elsewhere in the datacenter; cassandra_rack_force: true
-# goes on anyway, at the risk of unavailable or lost data. Start the rack again
-# with start_rack. CQL credentials, when authentication is on:
-# cassandra_cql_username/_password.
-- name: Preflight
-  ansible.builtin.import_playbook: community.cassandra.preflight
-
+# goes on anyway, at the risk of unavailable or lost data. CQL credentials,
+# when authentication is on: cassandra_cql_username/_password.
 - name: Check that the rack can go down
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   gather_facts: false
@@ -157,6 +157,9 @@
       when: inventory_hostname in _rack_nodes
       changed_when: false
 
+# Maintenance of the rack's hosts, network, power...: each node drained
+# (nodetool drain, best effort; with cassandra_operation_drain: false only by
+# the role's unit) then stopped. Start the rack again with start_rack.
 - name: Stop the rack
   hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_target_rack_nodes"
   gather_facts: false

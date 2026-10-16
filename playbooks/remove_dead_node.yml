@@ -1,35 +1,16 @@
 ---
-# Last resort for a node that is dead for good and will not be replaced: takes
-# it out of the ring, its data rebuilt from the other replicas.
-#   ansible-playbook -i inventory community.cassandra.remove_dead_node \
-#     -e cassandra_target_nodes=10.0.0.14
-# cassandra_target_nodes: the dead node, by its address, its host ID (nodetool
-# status) or its inventory name (a host marked cassandra_node_state: absent, its
-# address from the inventory).
-# Without -e cassandra_hosts=<group>: the cluster the CASSANDRA_CLUSTER environment
-# variable names (its group or its cassandra_cluster_name), else the group
-# cassandra, else the inventory's cluster group (lookup
-# community.cassandra.cassandra_hosts).
-# Root on the nodes (sudo): the playbook asks for it itself, no -b needed.
-# Take the dead host out of the inventory (or mark it absent) first. Prefer
-# replace_node (a new host takes over its tokens and data).
-# cassandra_dead_node_method: removenode
-# (default: streams the dead node's ranges from the other replicas),
-# removenode_force (finishes a removenode of this node that is stuck, without
-# waiting for the streams left; run on the node coordinating it, or one that
-# shows it DL: nodetool forces every removal or leave that node knows of, so it
-# is refused while another node is leaving or being removed too, and does
-# nothing when the node is already out of the ring), or assassinate (removes it
-# from gossip without streaming: only when removenode can't finish; data it held
-# alone is lost, repair after). Run again after an interruption: a removal of it
-# still in progress (asked on every node, whichever coordinates it; the token it
-# removes tells whose) is waited for again, a node already out of the ring is
-# done. A removal of another node in progress is refused. A node being removed
-# (gossip) or DL with no node of the run coordinating its removal (from outside
-# cassandra_hosts, or its coordinator restarted) is refused:
-# cassandra_dead_node_new_removal: true starts a removenode anyway, once none
-# runs anywhere.
-# CQL credentials, when authentication is on: cassandra_cql_username/_password.
+# Take a node that is dead for good out of the ring.
+#
+#   ansible-playbook community.cassandra.remove_dead_node -e cassandra_target_nodes=10.0.0.14
+#
+# Last resort, for a node that will not be replaced (prefer replace_node):
+# its data is rebuilt from the other replicas (removenode). Take the dead host
+# out of the inventory (or mark it absent) first.
+#
+# One screen, one question. Re-running after an interruption waits for the
+# removal still in progress; a node already out of the ring is done.
+#
+# Options and defaults: ansible-playbook community.cassandra.help -e help_topic=remove_dead_node
 - name: Preflight
   ansible.builtin.import_playbook: community.cassandra.preflight
   vars:
@@ -85,6 +66,17 @@
         tasks_from: defaults.yml
         public: true
 
+    # cassandra_target_nodes: the dead node, by its address, its host ID (nodetool
+    # status) or its inventory name (a host marked cassandra_node_state: absent, its
+    # address from the inventory).
+    # cassandra_dead_node_method: removenode (default: streams the dead node's ranges
+    # from the other replicas), removenode_force (finishes a removenode of this node
+    # that is stuck, without waiting for the streams left; run on the node
+    # coordinating it, or one that shows it DL: nodetool forces every removal or
+    # leave that node knows of, so it is refused while another node is leaving or
+    # being removed too, and does nothing when the node is already out of the
+    # ring), or assassinate (removes it from gossip without streaming: only when
+    # removenode can't finish; data it held alone is lost, repair after).
     - name: Check the request
       ansible.builtin.assert:
         that:
@@ -179,6 +171,10 @@
                                                | map(attribute='stdout', default='') | join('\n')) }}
       run_once: true
 
+    # Run again after an interruption: a removal of it still in progress (asked on
+    # every node, whichever coordinates it; the token it removes tells whose) is
+    # waited for again, a node already out of the ring is done. A removal of
+    # another node in progress is refused.
     - name: No other removal in progress
       ansible.builtin.assert:
         that: cassandra_dead_removal.state != 'busy'
@@ -189,7 +185,10 @@
       when: _method == 'removenode'
 
     # Being removed (gossip), or DL (it died decommissioning). Another removenode
-    # from a second node would run next to one still going on elsewhere
+    # from a second node would run next to one still going on elsewhere. Refused
+    # when no node of the run coordinates its removal (from outside cassandra_hosts,
+    # or its coordinator restarted): -e cassandra_dead_node_new_removal=true starts
+    # a removenode anyway, once none runs anywhere.
     - name: Its removal is not coordinated elsewhere
       ansible.builtin.assert:
         that: cassandra_dead_removal.state != 'orphan' or cassandra_dead_node_new_removal | default(false) | bool
@@ -254,6 +253,7 @@
         - _method == 'removenode_force'
         - not _nothing_to_do | bool
 
+    # CQL credentials, when authentication is on: cassandra_cql_username/_password.
     - name: Read the keyspaces' replication
       community.cassandra.cassandra_cqlsh:
         execute: "SELECT JSON keyspace_name, replication FROM system_schema.keyspaces;"
