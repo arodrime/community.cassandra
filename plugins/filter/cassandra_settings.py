@@ -361,7 +361,7 @@ def same_settings(name, live, new, storage_dir=""):
             return xml_settings(live) == xml_settings(new)
         if name.endswith(".sh"):
             return shell_lines(live, strict=True) == shell_lines(new, strict=True)
-    except (yaml.YAMLError, ET.ParseError):
+    except (yaml.YAMLError, ET.ParseError, RecursionError):
         return False
     return False
 

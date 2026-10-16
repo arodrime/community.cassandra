@@ -31,7 +31,7 @@
 #   import_cluster_vault_password_file, import_cluster_vault_id: none, default
 #     (see the passwords below).
 #   import_cluster_medusa_path: none (see Medusa below).
-#   import_cluster_keep_hand_edits: false (see the hand edits below).
+#   import_cluster_keep_hand_edits: false, true or file names (see the hand edits below).
 #   import_cluster_keep_unread_jvm_options: false (see the JVM options below).
 #   import_cluster_allow_unread: false (see the nodes not read below).
 #   import_cluster_adopt: false; true takes the files of an earlier import of
@@ -100,9 +100,15 @@
 # <configuration> are carried as cassandra_env_extra_lines and
 # cassandra_logback_extra_lines; a secret in them (or in a JVM option) goes to
 # secrets.yml as a cassandra_secret_<file>_<name> variable the line refers to.
+# cassandra-env.sh's JVM_OPTS lines of plain options and its heap set elsewhere
+# move to the variables (the heap ones, cassandra_jvm<N>_extra_options) when the
+# running JVM gets the same arguments from the role's files (MOVED in the
+# report; apply_config then rewrites them); the options it does not use are
+# listed (CLEANUP).
 # Other hand edits no variable covers fail the self-check:
 # import_cluster_keep_hand_edits=true leaves those files as they are on their
-# node (cassandra_config_keep_files) instead.
+# node (cassandra_config_keep_files) instead, or the files named (a list, or
+# import_cluster_keep_hand_edits=logback.xml).
 # JVM options: the extra options of a jvm<N>-server.options the running Java
 # does not read (bin/cassandra reads jvm-server.options and the one of its
 # Java: on 4.x jvm8 on Java 8, else jvm11; on 5.0 jvm11 on Java 11, else
@@ -830,9 +836,8 @@
                                                                      import_cluster_conf_target | default(''),
                                                                      import_cluster_storage_dir | default(''),
                                                                      import_cluster_jmx_files | default({}),
-                                                                     _release, import_cluster_java | default(''),
-                                                                     import_cluster_keep_unread_jvm_options | default(false),
-                                                                     import_cluster_jvm_cmdline.content | default('') | b64decode) }}
+                                                                     _release, '', import_cluster_keep_unread_jvm_options | default(false),
+                                                                     '', _jvm) }}
           vars:
             # the cassandra.yaml keys are judged by the release the next start runs: the package installed
             # since Cassandra started (a restart pending), else the running one
@@ -843,6 +848,13 @@
                             and _package.split('.')[:2] == (import_cluster_version | default('') | string).split('.')[:2]
                             and _package is version(import_cluster_version, '>')
                  else import_cluster_version | default('') }}
+            # the running JVM: cassandra-env.sh's hand edits move to variables when it gets the same arguments
+            _jvm:
+              cmdline: "{{ import_cluster_jvm_cmdline.content | default('') | b64decode }}"
+              java: "{{ import_cluster_java | default('') }}"
+              environment: "{{ import_cluster_unit.env | default({}) }}"
+              newer: "{{ import_cluster_newer_files | default([]) }}"
+              keep: "{{ import_cluster_keep_hand_edits | default(false) }}"  # those files not moved
             _slurped: "{{ import_cluster_slurp.results + import_cluster_jmx_slurp.results | default([]) }}"
             _live: >-
               {{ dict(_slurped | selectattr('content', 'defined') | map(attribute='item')

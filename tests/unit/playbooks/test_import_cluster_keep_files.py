@@ -50,6 +50,31 @@ def test_files_with_hand_edits_kept_on_request():
     assert node(hv, keep_hand_edits=True)["keep"]["cassandra_config_keep_files"] == ["logback.xml", "cassandra-env.sh"]
 
 
+@pytest.mark.parametrize("keep, kept", [
+    ("logback.xml", ["logback.xml"]),  # -e import_cluster_keep_hand_edits=logback.xml
+    ("logback.xml, cassandra-env.sh", ["logback.xml", "cassandra-env.sh"]),
+    (["cassandra-env.sh"], ["cassandra-env.sh"]),
+    (["cassandra.yaml"], None),  # no hand edit there: nothing to keep
+    ("false", None),
+    ("yes", ["logback.xml", "cassandra-env.sh"]),
+    ('["logback.xml"]', ["logback.xml"]),  # -e 'import_cluster_keep_hand_edits=["logback.xml"]': a string
+])
+def test_files_with_hand_edits_kept_by_name(keep, kept):
+    hv = {"import_cluster_config": {"vars": {}, "hand_edits": HAND}}
+    assert node(hv, keep_hand_edits=keep)["keep"].get("cassandra_config_keep_files") == kept
+
+
+@pytest.mark.parametrize("keep", ["logback", "cassandra.yml", ["jmxremote.secret"], "logback.xml,cassandra.yml"])
+def test_keep_by_name_refuses_what_is_not_a_config_file(keep):
+    with pytest.raises(AnsibleFilterError, match="not a config file"):
+        node({"import_cluster_config": {"vars": {}, "hand_edits": HAND}}, keep_hand_edits=keep)
+
+
+def test_keep_by_name_takes_the_jmx_users_files():
+    # cassandra_config keeps them too (cassandra_config_keep_files): named, they are no error
+    node({"import_cluster_config": {"vars": {}, "hand_edits": HAND}}, keep_hand_edits="jmxremote.password,jmxremote.access")
+
+
 def stock():
     files = {}
     for name in os.listdir(STOCK):

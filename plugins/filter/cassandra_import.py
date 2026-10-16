@@ -44,9 +44,10 @@ from ansible.errors import AnsibleFilterError, AnsibleUndefinedVariable
 from ansible.module_utils.common.text.converters import to_bytes, to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
+from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, jvm_options_settings, quantity, shell_words,
-    yaml_rejected)
+    DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, jvm_options_settings, quantity, same_settings,
+    shell_words, xml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
@@ -86,6 +87,9 @@ ADDRESSES = ["cassandra_listen_address", "cassandra_rpc_address",
 # cassandra-rackdc.properties' dc= and rack= lines, apart from the node's dc and rack
 # (cassandra_dc/_rack, the ring's) under a snitch that doesn't read them
 RACKDC = ("cassandra_rackdc_dc", "cassandra_rackdc_rack")
+# the config files cassandra_config writes, the JMX users' too (import_cluster_keep_hand_edits names some)
+CONFIG_FILE = re.compile(r"^(cassandra[.]yaml|cassandra-env[.]sh|jvm[0-9]*-server[.]options|cassandra-rackdc[.]properties"
+                         r"|logback[.]xml|jmxremote[.](?:password|access))$")
 # Per node by nature: not reported as drift
 PER_NODE = ADDRESSES + ["cassandra_initial_token", "cassandra_medusa_fqdn", "cassandra_rackdc_rack"]
 # Kept on the node that has it only (host_vars), even when every node does: a node added later must not get it
@@ -856,11 +860,13 @@ class _Shown(str):
         return [line.shown if isinstance(line, _Shown) else shown for line, shown in zip(lines, out.mask_lines(lines))]
 
 
-def _leftovers(env, series, files, ctx, live_files, rejected=()):
+def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
+    """rejected: the cassandra.yaml keys its Cassandra rejects; skip: files not compared here (the JVM's, its
+    arguments shown to be the same)."""
     hand, normalized, comments = [], [], []
     extras = ctx.get("cassandra_extra_settings") or {}
     for name in files:
-        if name not in live_files:
+        if name not in live_files or name in skip:
             continue
         rendered = _render(env, series, name, ctx)[1]
         if name.endswith(".properties"):
@@ -875,6 +881,11 @@ def _leftovers(env, series, files, ctx, live_files, rejected=()):
                         if key in node_kv else []
             if role_kv == node_kv and rendered != live_files[name].split("\n"):
                 normalized.append("%s: same settings, comments and layout rewritten" % name)
+            continue
+        if name.endswith(".xml") and _same_xml(live_files[name], "\n".join(rendered)):
+            # logback.xml: its elements and attributes the same, comments and layout aside (as logback reads it)
+            if live_files[name] != "\n".join(rendered):
+                normalized.append("%s: same settings, written another way (comments, layout, quotes)" % name)
             continue
         live = _align(rendered, live_files[name].split("\n"))
         if name == "cassandra.yaml":
@@ -1010,6 +1021,13 @@ def _jvm_options(env, series, ctx, files, found, java, keep_unread, cmdline):
     options = [(o, "%s, from %s" % (var, f), jvm.fix_it(var)) for f, var in [(f, jvm.options_variable(f)) for f in read]
                for o in jvm.words(found.get(var))]
     return notes, jvm.check(options, java), keep
+
+
+def _same_xml(live, rendered):
+    try:
+        return xml_settings(live) == xml_settings(rendered)
+    except (ET.ParseError, RecursionError):  # not XML, or nested too deep to walk: compared line by line
+        return False
 
 
 def _comment_lines(blocks):
@@ -1201,12 +1219,16 @@ def _hidden(name, where):
 
 
 def cassandra_config_import(live_files, cassandra_version, facts, conf_target="", storage_dir="", jmx_files=None,
-                            release="", java="", keep_unread_jvm_options=False, cmdline=""):
+                            release="", java="", keep_unread_jvm_options=False, cmdline="", jvm=None):
     """cassandra_config variables that render a node's files, and what the
     role would still change: {'vars', 'hand_edits', 'normalized', 'comments'
     (comment lines only, which set nothing), 'not_settings' ({'keys': the
     cassandra.yaml keys its Cassandra rejects, not imported, 'release'}),
-    'release' (the version they were judged by)}.
+    'release' (the version they were judged by), 'moved' (hand edits of
+    cassandra-env.sh moved to variables), 'rewritten' (the files the role
+    then writes in its own layout, the JVM getting the same arguments),
+    'cleanup' (options the running JVM does not use), 'not_moved' (why
+    cassandra-env.sh's JVM_OPTS lines or heap were not moved, '' if moved or none)}.
     conf_target: the resolved dir the node reads its config from; storage_dir:
     the JVM's -Dcassandra.storagedir; jmx_files: cassandra_jmx_files' (the
     remote JMX files the JVM reads, under the names jmxremote.password and
@@ -1216,7 +1238,11 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     read are dropped ('jvm_notes'), unless keep_unread_jvm_options; cmdline: the
     running JVM's arguments (/proc/<pid>/cmdline), for its heap. Also 'jvm_notes',
     'jvm_warnings' (options worth a look: why, the way out) and 'keep_files'
-    (the files to leave as they are on the node)."""
+    (the files to leave as they are on the node); jvm: the running JVM,
+    {cmdline: its /proc/<pid>/cmdline, java: its major version, environment:
+    what the unit gives it, newer: the config files written since it started,
+    keep: import_cluster_keep_hand_edits, the JVM's files it keeps not moved}
+    (java and cmdline from it when not given)."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
@@ -1225,7 +1251,7 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
                       for k, v in live_files.items())
     try:
         return _config_import(live_files, cassandra_version, facts, where, conf_target, storage_dir, jmx_files, release,
-                              java, boolean(keep_unread_jvm_options, strict=False), cmdline)
+                              java, boolean(keep_unread_jvm_options, strict=False), cmdline, jvm)
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
@@ -1236,7 +1262,9 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
 
 
 def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None,
-                   release="", java="", keep_unread_jvm_options=False, cmdline=""):
+                   release="", java="", keep_unread_jvm_options=False, cmdline="", running=None):
+    running = dict(running or {})
+    java, cmdline = java or running.get("java") or "", cmdline or running.get("cmdline") or ""
     env, ctx, files = _load_role(cassandra_version, facts)
     release, rejected = str(release or SERIES[cassandra_version]), []
     found, from_shell = {}, set()
@@ -1247,6 +1275,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             found.update(got)
             if name.endswith(".sh"):
                 from_shell.update(got)
+    if "logback.xml" in live_files:
+        where[0] = "logback.xml"
+        found.update(_logback(live_files["logback.xml"]))
     where[0] = "the JVM options files"
     jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
                                                        found, str(java or ""), keep_unread_jvm_options, cmdline)
@@ -1345,7 +1376,17 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
         render["cassandra_data_file_directories"] = render_dirs
-    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected)
+    where[0] = "the JVM options"
+    moved = _jvm_moves(env, cassandra_version, files, ctx, render, live_files, dict(running, jaas=jmx_files["jaas"]))
+    for key, value in moved["vars"].items():
+        render[key] = value
+        if _same_value(value, _default(ctx, key)):
+            changed.pop(key, None)
+        else:
+            changed[key] = value
+    where[0] = "comparing the files with the role's"
+    hand, normalized, comments = _leftovers(env, cassandra_version, files, render, live_files, rejected,
+                                            moved["shown"])
     hand += jmx_note
     carried = ["%s: %d line(s) at its end kept with %s" % (name, len(changed[key]), key)
                for key, name in (("cassandra_env_extra_lines", "cassandra-env.sh"),
@@ -1377,7 +1418,9 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
             "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release,
             "trusted": trusted, "carried": carried + secrets,
-            "jvm_notes": jvm_notes, "jvm_warnings": jvm_warnings, "keep_files": keep_files}
+            "jvm_notes": jvm_notes, "jvm_warnings": jvm_warnings, "keep_files": keep_files,
+            "moved": moved["moved"], "rewritten": moved["rewritten"], "cleanup": moved["cleanup"],
+            "not_moved": moved["not_moved"]}
 
 
 # The lists of lines the import fills from the hand edits a node has (cassandra-env.sh, logback.xml, the JVM
@@ -1529,6 +1572,92 @@ def _move_secrets(variables):
         if _list_secret(key, variables[key], made):
             said.append("%s: %s kept whole in secrets.yml (a secret in it could not be taken out alone)" % (name, key))
     return variables, trusted, said
+
+
+def _keep_files(value):
+    """import_cluster_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
+    commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]; a name not of a config file fails."""
+    if isinstance(value, str) and value.strip().lower() in ("", "yes", "no", "on", "off", "true", "false", "1", "0"):
+        return boolean(value.strip(), strict=False) or []
+    if isinstance(value, str):
+        value = re.sub(r"[\[\]'\"]", "", value).split(",")
+    if not isinstance(value, (list, tuple)):
+        return boolean(value, strict=False) or []
+    names = [str(v).strip() for v in value if str(v).strip()]
+    wrong = [n for n in names if not CONFIG_FILE.match(n)]
+    if wrong:
+        raise AnsibleFilterError("import_cluster_keep_hand_edits: %s: not a config file of cassandra_config (true,"
+                                 " false, or among cassandra.yaml, cassandra-env.sh, jvm*-server.options,"
+                                 " cassandra-rackdc.properties, logback.xml, jmxremote.password, jmxremote.access)" % ", ".join(wrong))
+    return names
+
+
+def _jvm_moves(env, series, files, ctx, render, live_files, running):
+    """cassandra-env.sh's hand edits moved to variables when the JVM gets the same arguments from the role's files
+    (cassandra_jvm_args), and the options it does not use -> {vars, moved, rewritten: the JVM's files the role
+    rewrites then, cleanup, shown: the JVM's files shown to give the same arguments (left out of the hand edits),
+    not_moved: why not, '' if moved or nothing to say}; running: cassandra_config_import's, jaas: what says JMX
+    authenticates by JAAS."""
+    dep = jvm_args.options_file(series, running.get("java"))
+    if dep is None:  # the running Java not known (Cassandra not running): nothing worked out
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
+    jvm_files = [f for f in (jvm_args.ENV, jvm_args.COMMON, dep) if f in files]
+    keep = _keep_files(running.get("keep", False))
+    kept = jvm_files if keep is True else [f for f in jvm_files if f in keep]
+    if kept:  # import_cluster_keep_hand_edits: those files left as they are (said with the files kept)
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
+
+    def rendered(variables):
+        return dict((name, "\n".join(_render(env, series, name, variables)[1])) for name in jvm_files)
+    if running.get("jaas") and jvm_args.ENV in live_files and jvm_args.ENV in jvm_files \
+            and jvm_args._candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
+        # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note), its lines not moved
+        return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [],
+                "not_moved": "JMX authenticates by JAAS (%s), not imported" % running["jaas"]}
+    cmdline = str(running.get("cmdline") or "")
+    if set(running.get("newer") or []) & set(jvm_files):
+        cmdline = ""  # the files changed since the JVM started: its arguments are not theirs
+    adopted = None
+    if cmdline and dep in files:
+        adopted = jvm_args.cassandra_jvm_args_adopt(
+            cmdline, live_files, rendered, render, series, running.get("java"), running.get("environment") or {})
+    why = (adopted or {}).get("why", "")
+    adopted = adopted if adopted and "vars" in adopted else None
+    found = adopted["vars"] if adopted else {}
+    role = rendered(dict(render, **found))
+    rewritten = [f for f in jvm_files if f in live_files and not same_settings(f, live_files[f], role[f])] \
+        if adopted else []
+    others = dict((name, "\n".join(_render(env, series, name, ctx)[1])) for name in files
+                  if re.match(r"^jvm\d*-server\.options$", name))
+    cleanup = adopted["dropped"] if adopted else []
+    said = set(": ".join(line.split(": ", 2)[:2]) for line in cleanup)
+    cleanup += [line for line in jvm_args.cassandra_jvm_args_cleanup(
+        live_files, others, role, series, running.get("java"), cmdline, moved=bool(adopted))
+        if ": ".join(line.split(": ", 2)[:2]) not in said]
+    return {"vars": found, "moved": adopted["moved"] if adopted else [], "rewritten": rewritten, "cleanup": cleanup,
+            "shown": jvm_files if adopted else [], "not_moved": why}
+
+
+def _logback(text):
+    """cassandra_config's logback.xml variables as logback reads the node's file, whatever its quoting, spacing,
+    attribute order or comments (a line written another way is not read by the template's): the root logger's
+    level and appenders (debug.log, the console), the org.apache.cassandra logger's level. {} when not XML."""
+    try:
+        conf = ET.fromstring(text)
+    except ET.ParseError:
+        return {}
+    found = {}
+    roots = conf.findall("root")
+    if len(roots) == 1:
+        if roots[0].get("level"):
+            found["cassandra_log_level"] = roots[0].get("level")
+        refs = [ref.get("ref") for ref in roots[0].findall("appender-ref")]
+        found["cassandra_debug_log_enabled"] = "ASYNCDEBUGLOG" in refs
+        found["cassandra_log_console"] = "STDOUT" in refs
+    loggers = [logger for logger in conf.findall("logger") if logger.get("name") == "org.apache.cassandra"]
+    if len(loggers) == 1 and loggers[0].get("level"):
+        found["cassandra_log_level_cassandra"] = loggers[0].get("level")
+    return found
 
 
 def _as_text(node):
@@ -2946,6 +3075,8 @@ SAFE_REASONS = [
                 r"it may show a value read from the nodes\))"), r"\1"),
     (re.compile(r"(cassandra_import_nodes: [0-9A-Fa-f.:]+: \w+)"), r"\1"),
     (re.compile(r"(cassandra_config_import: unsupported series \w+)"), r"\1"),
+    # the user's own -e value
+    (re.compile(r"(import_cluster_keep_hand_edits: [^\n]*?: not a config file of cassandra_config \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cannot read [\w, ]+ from cassandra\.yaml \([^)]*\))"), r"\1"),
     (re.compile(r"(cassandra_config_import: cassandra\.yaml is not valid YAML(?: \(line \d+\))?)"), r"\1"),
     (re.compile(r"(?:object'?|object of type '\w+') has no attribute '(\w+)'(?:\.|$)"), r"missing field '\1'"),
