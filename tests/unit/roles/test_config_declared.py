@@ -245,7 +245,7 @@ def test_preflight_warns_about_auto_bootstrap_false(hostvars, warned):
     assert SUSPICIOUS["ansible.builtin.include_role"]["tasks_from"] == "note.yml"
     variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=list(hostvars), hostvars=hostvars)
     found = render(SUSPICIOUS["vars"]["_found"], **variables)
-    assert found == (["WARNING  %s: auto_bootstrap: false \u2014 %s (kept on purpose? add auto_bootstrap_false to"
+    assert found == (["WARNING - %s: auto_bootstrap: false \u2014 %s (kept on purpose? add auto_bootstrap_false to"
                       " cassandra_suspicious_ack)" % (warned, WHY)] if warned else [])
     assert render("{{ %s }}" % SUSPICIOUS["when"], **variables) is bool(warned)
     assert not [t for t in PREFLIGHT["tasks"] if "auto_bootstrap" in str(t.get("ansible.builtin.assert", ""))]
@@ -336,7 +336,7 @@ def test_preflight_judges_a_replace_flag_on_the_ring_members(ring, members_warne
         variables["cassandra_preflight_status"] = {"cluster_status": {"dc1": {"nodes": [
             {"address": a, "status": st} for a, st in ring]}}}
     found = render(SUSPICIOUS["vars"]["_found"], **variables)
-    assert [line.split(":")[0] for line in found] == (["WARNING  " + members_warned] if members_warned else [])
+    assert [line.split(":")[0] for line in found] == (["WARNING - " + members_warned] if members_warned else [])
     # after the ring is read
     names = [t.get("name") for t in PREFLIGHT["tasks"]]
     assert names.index("Warn about sensitive or suspicious settings") > names.index("Check the running cluster")

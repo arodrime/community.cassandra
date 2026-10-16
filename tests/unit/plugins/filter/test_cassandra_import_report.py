@@ -755,7 +755,7 @@ def test_auto_bootstrap_false_kept_on_its_nodes_with_a_warning():
     assert [h for h, v in layout["host_vars"].items() if v.get("cassandra_auto_bootstrap") is False] == ["node1", "node2"]
     assert not [g for g, v in layout["group_vars"].items() if "cassandra_auto_bootstrap" in v]
     lines = report(nodes)
-    assert any(u"WARNING node1, node2: auto_bootstrap: false, kept as found \u2014 a node that loses its data restarts"
+    assert any(u"WARNING - node1, node2: auto_bootstrap: false, kept as found \u2014 a node that loses its data restarts"
                u" empty without streaming it back; remove the setting (default true) unless you know why it is there"
                u" (kept on purpose? add auto_bootstrap_false to cassandra_suspicious_ack)" in line for line in lines)
     every = [node(i) for i in range(1, 4)]
@@ -769,7 +769,7 @@ def test_replace_flag_in_a_hand_edit_warned_with_its_line():
     nodes = [node(1, hand=["cassandra-env.sh, line 290:", '  + JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9"']),
              node(2)]
     lines = report(nodes)
-    assert any(u"WARNING node1: -Dcassandra.replace_address=10.0.0.9 in the node's config, kept as found \u2014 this"
+    assert any(u"WARNING - node1: -Dcassandra.replace_address=10.0.0.9 in the node's config, kept as found \u2014 this"
                u" node is already bootstrapped: Cassandra refuses its next start with it; remove the line"
                u' JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9" (kept on purpose? add replace_address to'
                u" cassandra_suspicious_ack)" in line for line in lines)

@@ -31,14 +31,14 @@ def rows(values, members=MEMBERS):
                                            ("{{ undefined_x }}", False)])  # a template not resolved: not a false
 def test_auto_bootstrap(value, warned):
     lines = cassandra_suspicious_settings({"node4": {"cassandra_auto_bootstrap": value}, "node5": {}})
-    assert lines == ([u"WARNING  node4: auto_bootstrap: false — %s (kept on purpose? add auto_bootstrap_false to"
+    assert lines == ([u"WARNING - node4: auto_bootstrap: false — %s (kept on purpose? add auto_bootstrap_false to"
                       u" cassandra_suspicious_ack)" % AB_WHY] if warned else [])
 
 
 def test_one_line_per_setting_with_its_nodes():
     nodes = dict(("node%d" % i, {"cassandra_auto_bootstrap": False}) for i in (1, 2, 3))
     assert len(cassandra_suspicious_settings(nodes)) == 1 and cassandra_suspicious_settings(nodes)[0].startswith(
-        "WARNING  node1..node3: ")
+        "WARNING - node1..node3: ")
     assert cassandra_suspicious_settings({}) == [] and cassandra_suspicious_settings(None) == []
 
 
@@ -57,7 +57,7 @@ def test_ack_given_another_way():
 def test_an_unknown_ack_id_is_said():
     lines = cassandra_suspicious_settings({"node4": {"cassandra_suspicious_ack": ["auto_bootstrap", "heap_size"]},
                                            "node5": {"cassandra_suspicious_ack": "auto_bootstrap"}})
-    assert lines == ["WARNING  node4, node5: cassandra_suspicious_ack has auto_bootstrap, which no check has"
+    assert lines == ["WARNING - node4, node5: cassandra_suspicious_ack has auto_bootstrap, which no check has"
                      " (auto_bootstrap_false, replace_address, heap_size, allow_all_authenticator, failure_policy_ignore):"
                      " it silences nothing"]
 
