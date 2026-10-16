@@ -20,25 +20,21 @@
     cassandra_output: true
     _known: "{{ _cassandra_playbook_variables }}"
 
+# the lookup's own refusal (a group not in the inventory, several clusters and none named, an unknown
+# CASSANDRA_CLUSTER...), the plays after never reached: in their hosts, the lookup can only fail with a
+# raw Ansible error (under --limit, where this play does not run)
 - name: The cluster's group is in the inventory
   ansible.builtin.assert:
-    that: groups[_name] | default([]) | length > 0
-    fail_msg: >-
-      cassandra_hosts: group '{{ _name }}' {{ 'has no host' if _name in groups else 'not found in the inventory' }}
-      (groups: {{ groups | list | reject('in', ['all', 'ungrouped']) | sort | join(', ') }}).
-      {{ 'Add its hosts to the inventory, or name' if _name in groups else 'Name' }} the cluster's group:
-      -e cassandra_hosts=<group>. Nothing was changed.
+    that: _refusal | length == 0
+    fail_msg: "{{ _refusal }}"
     quiet: true
   run_once: true  # its msg as is, not "localhost: ..." (ops callback)
   vars:
     cassandra_output: true  # a verdict: its msg as is (ops callback)
-    # cassandra_hosts read as is: the lookup refuses a wrong one too (under --limit, where this play does not run)
-    _name: &name "{{ cassandra_hosts if cassandra_hosts | default('', true) else lookup('community.cassandra.cassandra_hosts') }}"
+    _refusal: "{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}"
+  tags: [always]  # under --tags too, else the next play's hosts fail on it
 
 # the default callback's line (the ops callback prints only the failure above)
 - name: Say which group is the cluster's
   ansible.builtin.debug:
-    msg: >-
-      Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) if groups[_name] | default([]) | length > 0 else _name }}
-  vars:
-    _name: *name
+    msg: "Cluster group {{ lookup('community.cassandra.cassandra_hosts', explain=true) }}"

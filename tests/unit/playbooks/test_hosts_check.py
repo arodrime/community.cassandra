@@ -46,7 +46,7 @@ def no_cluster_env(monkeypatch):
 
 
 def check(**variables):
-    variables = dict(CHECK["vars"], groups=GROUPS, **variables)
+    variables = dict(CHECK["vars"], **dict(dict(groups=GROUPS), **variables))
     passed = render("{{ %s }}" % CHECK["ansible.builtin.assert"]["that"], **variables)
     return passed, render(CHECK["ansible.builtin.assert"]["fail_msg"], **variables)
 
@@ -58,27 +58,46 @@ def test_existing_group_passes():
 def test_missing_group_named_with_the_groups():
     passed, msg = check(cassandra_hosts="prd")
     assert passed is False
-    assert msg == ("cassandra_hosts: group 'prd' not found in the inventory (groups: empty, prod)."
-                   " Name the cluster's group: -e cassandra_hosts=<group>. Nothing was changed.")
+    assert msg == ("REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n"
+                   "  Its groups: empty, prod\n"
+                   "  Name the cluster's group: -e cassandra_hosts=<group>")
+
+
+def test_several_clusters_refused_with_the_way_out():
+    """The lookup's refusal is the message: a play's hosts calling it would fail with a raw error."""
+    groups = {"all": ["o1", "b1"], "ungrouped": [], "orders": ["o1"], "orders_dc1": ["o1"],
+              "billing": ["b1"], "billing_dc1": ["b1"]}
+    passed, msg = check(groups=groups)
+    assert passed is False
+    assert msg == ("REFUSED  no cluster named: this inventory has 2 clusters: billing, orders\n"
+                   "  Name the one to run on:\n"
+                   "    export CASSANDRA_CLUSTER=billing\n"
+                   "  or add -e cassandra_hosts=billing to the command.")
+    assert check(groups=groups, cassandra_hosts="")[1].startswith(
+        "REFUSED  no cluster named (-e cassandra_hosts is empty): this inventory has 2 clusters")
+    assert check(groups=groups, cassandra_hosts="orders")[0] is True
+
+
+def test_the_check_runs_under_tags():
+    assert "always" in CHECK["tags"]
 
 
 def test_the_refusal_is_a_verdict_and_the_group_line_is_the_default_callbacks():
     # ops callback: the refusal's message alone (marked), no "Cluster group ..." line on every run (not marked)
     assert CHECK["vars"]["cassandra_output"] is True and CHECK["run_once"] is True  # not "localhost: ..."
     assert "success_msg" not in CHECK["ansible.builtin.assert"]
-    assert "cassandra_output" not in SAY["vars"]
-    assert SAY["vars"]["_name"] == CHECK["vars"]["_name"]
+    assert "cassandra_output" not in SAY.get("vars", {})
 
 
 def test_default_is_the_cluster_group():
     # no -e cassandra_hosts: the inventory's only cluster group
     assert check()[0] is True
-    assert render(CHECK["vars"]["_name"], groups=GROUPS) == "prod"
+    assert render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=GROUPS) == "prod"
 
 
 def test_shows_the_group_and_where_it_comes_from(monkeypatch):
     def shown(**variables):
-        return render(SAY["ansible.builtin.debug"]["msg"], **dict(SAY["vars"], **variables))
+        return render(SAY["ansible.builtin.debug"]["msg"], **variables)
 
     assert shown(groups=GROUPS) == "Cluster group prod (the inventory's cluster group)"
     assert shown(groups=GROUPS, cassandra_hosts="prod") == "Cluster group prod (cassandra_hosts)"
@@ -86,20 +105,18 @@ def test_shows_the_group_and_where_it_comes_from(monkeypatch):
     hostvars = {"n1": {"cassandra_cluster_name": "Prod"}, "n2": {"cassandra_cluster_name": "Prod"}}
     groups = dict(GROUPS, prod_dc1=["n1", "n2"])
     assert shown(groups=groups, hostvars=hostvars) == "Cluster group prod (CASSANDRA_CLUSTER=Prod)"
-    assert shown(groups=groups, hostvars=hostvars, cassandra_hosts="empty") == "Cluster group empty"
 
 
 def test_typo_refused_by_the_lookup_too():
     """Under --limit this play does not run: the lookup in the plays' hosts refuses the group."""
-    with pytest.raises(AnsibleError, match=r"cassandra_hosts: group 'prd' not found in the inventory \(groups: empty, prod\)\.$"):
+    with pytest.raises(AnsibleError, match=r"REFUSED  cassandra_hosts=prd: no group of that name in the inventory\n  Its groups: empty, prod\n"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=GROUPS, cassandra_hosts="prd")
 
 
 def test_empty_group():
     passed, msg = check(cassandra_hosts="empty")
-    assert passed is False and msg.startswith("cassandra_hosts: group 'empty' has no host")
-    assert msg.endswith("Add its hosts to the inventory, or name the cluster's group: -e cassandra_hosts=<group>."
-                        " Nothing was changed.")
+    assert passed is False and msg.startswith("REFUSED  cassandra_hosts=empty: that group has no host\n")
+    assert msg.endswith("\n  Add its hosts to the inventory, or name the cluster's group: -e cassandra_hosts=<group>")
 
 
 @pytest.mark.parametrize("playbook", ["preflight.yml", "health_check.yml", "start_rack.yml", "status.yml"])

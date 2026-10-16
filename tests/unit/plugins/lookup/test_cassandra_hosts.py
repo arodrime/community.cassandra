@@ -40,11 +40,13 @@ def test_given_wins():
 
 def test_given_unknown_fails():
     """A typo matches no host: under --limit the localhost check is skipped, every play would be too."""
-    with pytest.raises(ValueError, match=r"cassandra_hosts: group 'prdo' not found in the inventory \(groups: prod, prod_dc1, prod_dc1_r1, prod_dc1_r2\)\.$"):
+    with pytest.raises(ValueError, match=r"^REFUSED  cassandra_hosts=prdo: no group of that name in the inventory\n"
+                       r"  Its groups: prod, prod_dc1, prod_dc1_r1, prod_dc1_r2\n"
+                       r"  Name the cluster's group: -e cassandra_hosts=<group>$"):
         cluster_group("prdo", IMPORTED)
-    with pytest.raises(ValueError, match="cassandra_hosts: group 'ungrouped' has no host"):
+    with pytest.raises(ValueError, match="cassandra_hosts=ungrouped: that group has no host"):
         cluster_group("ungrouped", IMPORTED)
-    with pytest.raises(ValueError, match="cassandra_hosts: group 'prdo' not found"):
+    with pytest.raises(ValueError, match="cassandra_hosts=prdo: no group of that name"):
         picked("prdo", TWO, "cluster_b", NAMES.get)  # before CASSANDRA_CLUSTER, like a good one
 
 
@@ -84,7 +86,7 @@ def test_runtime_groups_ignored():
 
 def test_same_hosts_without_a_common_name():
     groups = {"all": ["n1"], "orders": ["n1"], "eu": ["n1"]}
-    with pytest.raises(ValueError, match="top groups: eu, orders[)]"):
+    with pytest.raises(ValueError, match="top groups of this inventory: eu, orders\n"):
         cluster_group(None, groups)
 
 
@@ -96,18 +98,18 @@ def test_same_hosts_without_a_common_name():
 ])
 def test_other_groups_refused(other):
     groups = dict({"all": ["n1", "n2", "m1", "b1", "x9"], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"]}, **other)
-    with pytest.raises(ValueError, match="-e cassandra_hosts=<the cluster's group>"):
+    with pytest.raises(ValueError, match="^REFUSED  no cluster named: .*\n  Name the one to run on:\n"):
         cluster_group(None, groups)
 
 
 def test_several_clusters():
     groups = {"all": ["n1", "n2"], "orders": ["n1"], "orders_dc1": ["n1"], "users": ["n2"]}
-    with pytest.raises(ValueError, match=r"top groups: orders, users\)"):
+    with pytest.raises(ValueError, match=r"top groups of this inventory: orders, users\n  Name the one to run on:\n    export CASSANDRA_CLUSTER=orders\n"):
         cluster_group(None, groups)
 
 
 def test_no_group():
-    with pytest.raises(ValueError, match="no group with hosts"):
+    with pytest.raises(ValueError, match="^REFUSED  no cluster: the inventory has no group with hosts\n"):
         cluster_group(None, {"all": ["n1"], "ungrouped": ["n1"], "empty": []})
 
 
@@ -148,13 +150,13 @@ def test_given_wins_over_env():
 
 
 def test_env_unknown():
-    with pytest.raises(ValueError, match=r"CASSANDRA_CLUSTER=nope: no group .* \(top groups: cluster_a, monitoring\)"):
+    with pytest.raises(ValueError, match=r"^REFUSED  CASSANDRA_CLUSTER=nope: no group .*\n  Top groups of this inventory: cluster_a, monitoring\n"):
         cluster_group(None, TWO, "nope", NAMES.get)
 
 
 def test_env_cluster_name_of_several_groups():
     names = dict(NAMES, b1="Cluster A")  # two clusters with the same name
-    with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_a, cluster_b\): give the group instead"):
+    with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_a, cluster_b\)\n  Name the group instead:\n"):
         cluster_group(None, TWO, "Cluster A", names.get)
     # its hosts in no group of their own
     with pytest.raises(ValueError, match=r"not one group's \(groups: cluster_b\)"):
@@ -183,7 +185,7 @@ def test_env_name_not_known_for_some_hosts():
 def test_env_unset_or_empty():
     assert picked(None, IMPORTED, None, NAMES.get) == ("prod", "the inventory's cluster group")
     assert picked(None, IMPORTED, "", NAMES.get) == ("prod", "the inventory's cluster group")
-    with pytest.raises(ValueError, match="top groups: cluster_a, monitoring"):
+    with pytest.raises(ValueError, match="top groups of this inventory: cluster_a, monitoring"):
         cluster_group(None, TWO, None, NAMES.get)
 
 
@@ -209,10 +211,50 @@ def test_lookup_env(monkeypatch):
 
 
 def test_lookup_error():
-    with pytest.raises(AnsibleError, match="not one cluster"):
+    with pytest.raises(AnsibleError, match="REFUSED  no cluster named: top groups of this inventory: a, b"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups={"a": ["n1"], "b": ["n2"]})
-    with pytest.raises(AnsibleError, match="cassandra_hosts: group 'prdo' not found in the inventory"):
+    with pytest.raises(AnsibleError, match="cassandra_hosts=prdo: no group of that name in the inventory"):
         render("{{ lookup('community.cassandra.cassandra_hosts') }}", groups=IMPORTED, cassandra_hosts="prdo")
+
+
+TWO_CLUSTERS = {"all": ["o1", "b1"], "ungrouped": [], "orders": ["o1"], "orders_dc1": ["o1"], "orders_dc1_r1": ["o1"],
+                "billing": ["b1"], "billing_dc1": ["b1"]}
+WAY_OUT = ("  Name the one to run on:\n    export CASSANDRA_CLUSTER=billing\n"
+           "  or add -e cassandra_hosts=billing to the command.")
+
+
+@pytest.mark.parametrize("variables,env,refusal", [
+    ({}, None, "REFUSED  no cluster named: this inventory has 2 clusters: billing, orders\n" + WAY_OUT),
+    ({"cassandra_hosts": ""}, None,
+     "REFUSED  no cluster named (-e cassandra_hosts is empty): this inventory has 2 clusters: billing, orders\n" + WAY_OUT),
+    ({"cassandra_hosts": "ordres"}, None,
+     "REFUSED  cassandra_hosts=ordres: no group of that name in the inventory\n"
+     "  Its groups: billing, billing_dc1, orders, orders_dc1, orders_dc1_r1\n"
+     "  Name the cluster's group: -e cassandra_hosts=<group>"),
+    ({"cassandra_hosts": ["orders"]}, None,
+     "REFUSED  cassandra_hosts must be a group name, not ['orders']\n  Name the cluster's group: -e cassandra_hosts=<group>"),
+    ({}, "ordres",
+     "REFUSED  CASSANDRA_CLUSTER=ordres: no group of that name with hosts, and no host with that cassandra_cluster_name\n"
+     "  This inventory has 2 clusters: billing, orders\n" + WAY_OUT),
+    ({"hostvars": {"o1": {"cassandra_cluster_name": "Shop"}, "b1": {"cassandra_cluster_name": "Shop"}}}, "Shop",
+     "REFUSED  CASSANDRA_CLUSTER=Shop: the hosts with that cassandra_cluster_name are not one group's"
+     " (groups: billing, orders)\n  Name the group instead:\n    export CASSANDRA_CLUSTER=<group>\n"
+     "  or add -e cassandra_hosts=<group> to the command."),
+])
+def test_refusal_returned_not_raised(monkeypatch, variables, env, refusal):
+    """refusal=true: the block the lookup fails with, as its value (the localhost check stops on it)."""
+    if env:
+        monkeypatch.setenv(ENV, env)
+    variables = dict(variables, groups=TWO_CLUSTERS)
+    assert render("{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}", **variables) == refusal
+    with pytest.raises(AnsibleError, match=re.escape(refusal.split("\n")[0])):
+        render("{{ lookup('community.cassandra.cassandra_hosts') }}", **variables)
+
+
+def test_no_refusal_is_empty():
+    assert render("{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}", groups=IMPORTED) == ""
+    assert render("{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}", groups=TWO_CLUSTERS,
+                  cassandra_hosts="orders") == ""
 
 
 def test_runtime_groups_of_the_playbooks_are_known():

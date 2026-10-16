@@ -1,0 +1,5 @@
+---
+bugfixes:
+  - "operation playbooks - an inventory of several clusters with none named (no ``CASSANDRA_CLUSTER``, no or an empty ``-e cassandra_hosts``) or an unknown ``CASSANDRA_CLUSTER`` stops the first play with a ``REFUSED`` block that says how to name the cluster (``export CASSANDRA_CLUSTER=<cluster>`` or ``-e cassandra_hosts=<cluster>``), under ``--tags`` too, instead of a raw templating error. A ``-e cassandra_hosts`` naming no group with hosts is refused with the same kind of block."
+minor_changes:
+  - "cassandra_hosts lookup - the ``refusal`` option returns the refusal block the lookup would fail with (an empty string when there is none) instead of failing on it."

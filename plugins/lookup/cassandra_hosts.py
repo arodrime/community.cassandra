@@ -26,9 +26,18 @@ description:
     needs C(-e cassandra_hosts=<group>), rather than a guess that could run on other hosts.
   - The groups are read at each call, so a group your own plays add (C(group_by), C(add_host)) before
     an operation playbook in the same run makes the next calls fail the same way.
+  - It fails with a C(REFUSED  ...) block that says how to name the cluster, printed as a verdict by the
+    C(community.cassandra.ops) callback.
 options:
   explain:
     description: Returns the group and how it was picked (C(-e cassandra_hosts), C(CASSANDRA_CLUSTER), the inventory).
+    type: bool
+    default: false
+  refusal:
+    description:
+      - Returns the refusal block the lookup would fail with, or an empty string, instead of failing on it. The operation
+        playbooks' first play (on localhost) stops on it with that message, before a play's C(hosts) calls the
+        lookup (where its failure is a raw Ansible error).
     type: bool
     default: false
 author: Alain Rodriguez (@arodrime)
@@ -45,7 +54,8 @@ EXAMPLES = r"""
 
 RETURN = r"""
 _raw:
-  description: The name of the cluster's group; with O(explain), C(<group> (<how it was picked>)).
+  description: The name of the cluster's group; with O(explain), C(<group> (<how it was picked>)); with O(refusal),
+    the refusal or an empty string.
   type: list
   elements: str
 """
@@ -74,6 +84,21 @@ def _candidates(groups):
                 if hosts and name not in ("all", "ungrouped") and not RUNTIME.match(name))
 
 
+def _others(groups):
+    return ", ".join(sorted(g for g in groups if g not in ("all", "ungrouped")))
+
+
+def _way_out(groups):
+    """The clusters of the inventory, then how to name one: a REFUSED block's lines under its first."""
+    tops = top_groups(groups)
+    clusters = [name for name in tops if any(o.startswith(name + "_") for o in _candidates(groups))]
+    example = (clusters or tops or ["<group>"])[0]
+    found = ("this inventory has %d clusters: %s" % (len(tops), ", ".join(tops)) if len(tops) > 1 and clusters == tops
+             else "top groups of this inventory: %s" % (", ".join(tops) or "none"))
+    return found, ("  Name the one to run on:\n    export %s=%s\n  or add -e cassandra_hosts=%s to the command."
+                   % (ENV, example, example))
+
+
 def cluster_group(given, groups, env=None, cluster_name=None):
     """given: cassandra_hosts or None; groups: {name: [hosts]}; env: the value
     of ENV or None; cluster_name(host): its cassandra_cluster_name. Returns
@@ -87,9 +112,10 @@ def picked(given, groups, env=None, cluster_name=None):
         # a typo matches no host: under --limit (no localhost play to check it), every play would be
         # skipped and the run end ok
         if groups and not groups.get(given):
-            raise ValueError("cassandra_hosts: group '%s' %s (groups: %s)."
-                             % (given, "has no host" if given in groups else "not found in the inventory",
-                                ", ".join(sorted(g for g in groups if g not in ("all", "ungrouped")))))
+            raise ValueError("REFUSED  cassandra_hosts=%s: %s\n  Its groups: %s\n  %s the cluster's group:"
+                             " -e cassandra_hosts=<group>"
+                             % (given, "that group has no host" if given in groups else "no group of that name in the inventory",
+                                _others(groups), "Add its hosts to the inventory, or name" if given in groups else "Name"))
         return given, "cassandra_hosts"
     if env:
         return _named(env, groups, cluster_name), "%s=%s" % (ENV, env)
@@ -97,17 +123,16 @@ def picked(given, groups, env=None, cluster_name=None):
         return DEFAULT, "the group %s" % DEFAULT
     cands = _candidates(groups)
     if not cands:
-        raise ValueError("cassandra_hosts is not set and the inventory has no group with hosts."
-                         " Put the nodes in a group (all > <cluster> > <dc> > <rack>, as the import writes it)")
+        raise ValueError("REFUSED  no cluster: the inventory has no group with hosts\n"
+                         "  Put the nodes in a group (all > <cluster> > <dc> > <rack>, as the import writes it).")
     # the import's layout: every other group is <cluster>_..., within <cluster>
     heads = [name for name, hosts in sorted(cands.items())
              if all(o == name or (o.startswith(name + "_") and h <= hosts) for o, h in cands.items())]
     if len(heads) == 1:
         return heads[0], "the inventory's cluster group"
-    raise ValueError("cassandra_hosts is not set and the inventory's groups are not one cluster's"
-                     " (<cluster>, <cluster>_<dc>, <cluster>_<dc>_<rack>; top groups: %s)."
-                     " Run with -e cassandra_hosts=<the cluster's group> (or %s=<the cluster's group or name>)"
-                     % (", ".join(top_groups(groups)), ENV))
+    found, way = _way_out(groups)
+    raise ValueError("REFUSED  no cluster named%s: %s\n%s"
+                     % (" (-e cassandra_hosts is empty)" if given == "" else "", found, way))
 
 
 def _named(value, groups, cluster_name):
@@ -118,8 +143,9 @@ def _named(value, groups, cluster_name):
     names = dict((h, cluster_name(h) if cluster_name else None) for members in cands.values() for h in members)
     named = frozenset(h for h, name in names.items() if name == value)
     if not named:
-        raise ValueError("%s=%s: no group of that name with hosts, and no host with that cassandra_cluster_name"
-                         " (top groups: %s)" % (ENV, value, ", ".join(top_groups(groups))))
+        found, way = _way_out(groups)
+        raise ValueError("REFUSED  %s=%s: no group of that name with hosts, and no host with that cassandra_cluster_name\n"
+                         "  %s\n%s" % (ENV, value, found[0].upper() + found[1:], way))
     # the largest groups of those hosts only, laid out as a cluster's (cassandra, or <cluster> with groups
     # <cluster>_...: not linux or monitoring when the name is set for all); prod, not prod_dc1 of the same hosts
     inside = dict((name, members) for name, members in cands.items() if members <= named and (
@@ -131,8 +157,8 @@ def _named(value, groups, cluster_name):
         # a host whose name is not known could be the rest of a larger group: no guess
         if not any(members > named and members <= named | unread for members in cands.values()):
             return tops[0]
-    raise ValueError("%s=%s: the hosts with that cassandra_cluster_name are not one group's (groups: %s):"
-                     " give the group instead (%s=<group>, or -e cassandra_hosts=<group>)"
+    raise ValueError("REFUSED  %s=%s: the hosts with that cassandra_cluster_name are not one group's (groups: %s)\n"
+                     "  Name the group instead:\n    export %s=<group>\n  or add -e cassandra_hosts=<group> to the command."
                      % (ENV, value, ", ".join(tops) or "none", ENV))
 
 
@@ -151,9 +177,13 @@ class LookupModule(LookupBase):
         given = variables.get("cassandra_hosts")
         if isinstance(given, str):
             given = self._templar.template(given)
-        if given is not None and not isinstance(given, str):
-            raise AnsibleLookupError("cassandra_hosts must be a group name, not %r" % (given,))
         self.set_options(var_options=variables, direct=kwargs)
+        refusal = self.get_option("refusal")
+        if given is not None and not isinstance(given, str):
+            msg = "REFUSED  cassandra_hosts must be a group name, not %r\n  Name the cluster's group: -e cassandra_hosts=<group>" % (given,)
+            if refusal:
+                return [msg]
+            raise AnsibleLookupError(msg)
         hostvars = variables.get("hostvars") or {}
 
         def cluster_name(host):
@@ -168,5 +198,9 @@ class LookupModule(LookupBase):
         try:
             group, why = picked(given, dict(variables.get("groups") or {}), os.environ.get(ENV), cluster_name)
         except ValueError as exc:
+            if refusal:
+                return [str(exc)]
             raise AnsibleLookupError(str(exc))
+        if refusal:
+            return [""]
         return ["%s (%s)" % (group, why) if self.get_option("explain") else group]
