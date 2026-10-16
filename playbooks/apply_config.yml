@@ -204,6 +204,12 @@
           {{ _os | reject('in', _no_unit) | rejectattr('timesync', 'defined') | list if _timesync | bool
              else _os | reject('in', _no_unit) | list }}
         cassandra_apply_config_timesync: "{{ _timesync }}"
+        # why a running node is restarted besides new settings (said in the plan): its time sync, the JMX access
+        # file alone (read at start)
+        cassandra_apply_config_restart_why: >-
+          {{ 'time sync' if _timesync | bool else 'jmxremote.access: read at start'
+             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
+                and not _pending | bool else '' }}
         cassandra_apply_config_timesync_later: "{{ _timesync | bool or _no_unit | length > 0 }}"
         cassandra_apply_config_timesync_only: >-
           {{ _timesync | bool and not ((_files + _perms + _dirs + _jmx) | length > 0 or _pending | bool or _stopped | bool) }}
@@ -474,7 +480,7 @@
           {%-   set v = hostvars[h] -%}
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                    'why': 'time sync' if v.cassandra_apply_config_timesync | default(false) | bool else '',
+                                    'why': v.cassandra_apply_config_restart_why | default(''),
                                     'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('nothing to apply'),
                                     'notes': v.cassandra_apply_config_notes | default([]),
@@ -821,7 +827,7 @@
           {%-   set v = hostvars[h] -%}
           {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
                                     'os': v.cassandra_apply_config_os | default([]) | length > 0,
-                                    'why': 'time sync' if v.cassandra_apply_config_timesync | default(false) | bool else '',
+                                    'why': v.cassandra_apply_config_restart_why | default(''),
                                     'os_done': v.cassandra_apply_config_os_done | default(false),
                                     'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all
