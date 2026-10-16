@@ -76,7 +76,9 @@
           {%- endfor -%}
           {{ _cassandra_config_items | default([]) + out + _cassandra_config_jmx_written | default([]) }}
       vars:
-        _same: "{{ cassandra_config_jmx_same.stdout | from_json if cassandra_config_jmx_same.stdout is defined else none }}"
+        # (not compared: an empty list, and only the missing files listed; none would render as "None" on 2.16)
+        _compared: "{{ cassandra_config_jmx_same.stdout is defined }}"
+        _same: "{{ cassandra_config_jmx_same.stdout | from_json if cassandra_config_jmx_same.stdout is defined else [] }}"
         _changes: >-
           {%- set out = [] -%}
           {%- for name in ['password', 'access'] -%}
@@ -84,7 +86,7 @@
           {%-   set live = cassandra_config_live_stat.results | default([]) | selectattr('cassandra_config_file', 'equalto', f)
                            | first | default({}) -%}
           {%-   set missing = not (live.stat.exists | default(false)) -%}
-          {%-   if missing or (_same is not none and name not in _same) -%}
+          {%-   if missing or (_compared | bool and name not in _same) -%}
           {%-     set _ = out.append({'file': f, 'missing': missing,
                                       'path': cassandra_jmx_remote_password_file if name == 'password'
                                               else cassandra_jmx_remote_access_file}) -%}
