@@ -1641,7 +1641,7 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     env, ctx, files = _load_role(cassandra_version, facts)
     release, rejected = str(release or SERIES[cassandra_version]), []
     found, from_shell = {}, set()
-    for name in files:  # (read here, not in a helper: an error _import_file lets through names _config_import)
+    for name in files:  # (in _config_import itself: an error raised below it, outside these files, names this function)
         if name in live_files:
             where[0] = name
             got = _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))

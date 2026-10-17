@@ -1,0 +1,7 @@
+bugfixes:
+  - "import_cluster - a 4.1 or 5.0 node whose ``cassandra.yaml`` has a setting under its 4.0 name (``column_index_size_in_kb``, ``file_cache_size_in_mb``...) gets that setting's variable; it was imported in ``cassandra_extra_settings``, which ``cassandra_config`` then refused next to the variable's own line."
+  - "import_cluster - the CONVERGENCE section says a change of ``cassandra_jmx_users`` restarts the nodes only when users or their rights change, not for passwords alone (as ``apply_config`` does)."
+  - "import_cluster - after a suspicious setting found on some nodes, the report's other sections no longer name those nodes in place of all the nodes read."
+  - "import_cluster - the cleanup of the JVM options says of biased locking what the Java checks say (refused after Java 17, not ignored)."
+  - "health_check, add_node - a node's address is recognised in nodetool's output however IPv6 is written (``::4`` and ``0:0:0:0:0:0:0:4``, ``[...]:port``)."
+  - "add_node, decommission_node, topology - a user keyspace whose name starts with ``system`` (``systemic``) is no longer taken for one of Cassandra's own."
