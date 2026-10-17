@@ -48,6 +48,18 @@ def test_4x_sizes_with_bytes():
                    "total": 8738133}]}]
 
 
+@pytest.mark.parametrize("peer, expected", [
+    ("/0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:1"),  # IPv6 without a port: its last group kept
+    ("/[0:0:0:0:0:0:0:1]:7000", "0:0:0:0:0:0:0:1"),
+    ("/10.0.0.2:7000", "10.0.0.2"),
+    ("/10.0.0.2", "10.0.0.2"),
+])
+def test_peer_address(peer, expected):
+    out = ("Mode: LEAVING\nUnbootstrap 0d5f4a20-7c2e-11ef-9c2b-4e8d2d1b2c3d\n    %s\n"
+           "        Sending 1 files, 10 total. Already sent 0 files (0.00%%), 0 total (0.00%%)\n" % peer)
+    assert [s["peer"] for s in parse_netstats(out)[2]] == [expected]
+
+
 def test_5x_plain_sizes_ports_and_both_directions():
     out = """Mode: LEAVING
 Unbootstrap 0d5f4a20-7c2e-11ef-9c2b-4e8d2d1b2c3d
