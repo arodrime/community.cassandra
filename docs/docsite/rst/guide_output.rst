@@ -240,11 +240,9 @@ itself). Its ``msg`` is a list of lines (or one string with newlines). Cluster-w
 
 .. code-block:: yaml
 
-    - name: Show the plan
+    - name: Say what is checked
       ansible.builtin.debug:
-        msg: >-
-          {{ {'operation': 'decommission_node', 'cluster': cluster, 'steps': steps, 'facts': facts,
-              'warnings': warnings} | community.cassandra.cassandra_plan(check=ansible_check_mode) }}
+        msg: "{{ 'check_leaving' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
       run_once: true
       vars:
         cassandra_output: true
@@ -337,10 +335,11 @@ With ``-v`` or more, it is the default callback. Under the default callback, the
 Blocks
 ------
 
-``cassandra_node_list``, ``cassandra_size``, ``cassandra_rate``, ``cassandra_duration``,
-``cassandra_setting_lines``, ``cassandra_settings_lines``, ``cassandra_by_nodes``, ``cassandra_plan``, ``cassandra_progress_line``,
-``cassandra_recap``, ``cassandra_perm_lines``, ``cassandra_diff_lines``, ``cassandra_changed_lines``,
-``cassandra_command``, ``cassandra_todo``, ``cassandra_inventory_steps``, ``cassandra_in_git_work_tree``,
-``cassandra_mask``: their arguments are in ``plugins/filter/cassandra_output.py`` and the module_utils functions
-they call. The ``status`` playbook (``cassandra_ring_report``) and ``health_check`` (``cassandra_health_report``)
-use them.
+``cassandra_node_list``, ``cassandra_size``, ``cassandra_duration``, ``cassandra_progress_line``,
+``cassandra_phase``, ``cassandra_check_what``, ``cassandra_prepare_lines``, ``cassandra_left_system_warning``,
+``cassandra_command``, ``cassandra_todo``, ``cassandra_removed_todo``, ``cassandra_seeds_todo``,
+``cassandra_seeds_reload_todo``, ``cassandra_reimport_hosts``: their arguments are in
+``plugins/filter/cassandra_output.py``, with the plugin_utils functions they call. The other blocks (the plan, the
+recap, the settings and diff lines, masking) are the plugin_utils functions themselves, which the screens of the
+operations call: the ``status`` playbook (``cassandra_ring_report``) and ``health_check``
+(``cassandra_health_report``), for example.

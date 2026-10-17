@@ -1,6 +1,6 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""The ends of the node operations, as the other recaps (cassandra_recap).
+"""The ends of the node operations, as the other recaps (plugin_utils cassandra_output recap).
 
 cassandra_op_recap: [{node, result}] (each node's cassandra_op_result) ->
     "DONE  add_node  my_cluster  2 added", the nodes grouped by outcome.
@@ -46,7 +46,7 @@ _SKIPPED = re.compile(r"^(?P<action>\w+) (?:skipped, |(?P<unfinished>not finishe
 
 
 def outcome(node, result):
-    """A node's cassandra_op_result -> (cassandra_recap's outcome, its action or "")."""
+    """A node's cassandra_op_result -> (the recap's outcome, its action or "")."""
     text = " ".join(str(result or "").split())
     m = _DONE.match(text)
     if m:
@@ -74,7 +74,7 @@ def outcome(node, result):
 
 def cassandra_op_recap(results, check=False, cluster="", operation="", action=""):
     """results: [{node, result}] in the order of the run, result each node's
-    cassandra_op_result. The recap of cassandra_recap: the verdict (DONE,
+    cassandra_op_result. The recap of plugin_utils cassandra_output: the verdict (DONE,
     FAILED, CHECK), then the nodes grouped by outcome, their times.
     operation: the playbook's name, else from action (the
     cassandra_service_node_action of the run), else from the actions

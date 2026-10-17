@@ -374,9 +374,9 @@ def test_the_screen_sections_are_blocks_of_their_own():
     assert text == "apply_config: apply the config on node2\n\ncassandra.yaml\n  x: 1\n\nnode2  would apply"
 
 
-def test_the_settings_lines_filter_takes_lists():
-    from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_settings_lines
-    assert cassandra_settings_lines(["f", ["x", [["1", "node1", ""], ["2", "node2", "differs"]]]]) == [
+def test_the_settings_lines_of_several_values():
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import settings_lines
+    assert settings_lines(["f", ("x", [("1", "node1", ""), ("2", "node2", "differs")])]) == [
         "f", "  x: 1   node1", "     2   node2   differs"]
 
 

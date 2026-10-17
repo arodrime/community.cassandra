@@ -166,7 +166,7 @@ def test_a_failed_recap_shows_which_node_failed(tmp_path):
     assert codes["FAILED  rolling_restart  my_cluster  2 restarted, 1 failed"] == "0;31", repr(output)
     assert codes["  node1, node2  restarted  (1m49s each)"] is None, repr(output)
     assert codes["  node3  FAILED"] == "0;31", repr(output)
-    assert codes["    not NORMAL after 10m"] is None, repr(output)  # its reason, under it (cassandra_recap)
+    assert codes["    not NORMAL after 10m"] is None, repr(output)  # its reason, under it (cassandra_output recap)
     assert codes["  node4  not touched (not reached)"] is None, repr(output)
     # a mark colours its own line, not the lines under it
     assert codes[u"  node5  dc1  ← down"] == "0;31" and codes["    its detail"] is None, repr(output)
