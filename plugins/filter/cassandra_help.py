@@ -415,55 +415,9 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
     when the inventory is the configuration's (ansible.cfg), no -e cassandra_hosts when the playbooks take
     this cluster without it."""
     if op["name"] == "import_cluster" and cluster.name in (model.get("imported") or []):
-        # a re-import, into this inventory's dir again: read from the inventory itself (its connection variables
-        # and logins, vaulted ones too), the cluster named unless the import takes it alone: on screen, the
-        # one CASSANDRA_CLUSTER names, or the inventory holds its hosts only (without -e it reads every host)
-        where = _path(_inventory_dir(model), cwd)
-        target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + ["-e import_cluster_force=true"]
-        sources = model.get("sources") or []
-        if model.get("default_sources") and _same_sources(sources, model["default_sources"]) and (
-                not markdown or model.get("default_sources_origin") == "cfg"):
-            sources = []
-        alone = "all_hosts" in model and set(model["all_hosts"]) <= set(h["name"] for h in cluster.hosts)
-        named = markdown or not (alone or model.get("env_cluster") == cluster.name)
-        return _full_command(op["name"], inventory=sources, options=[shlex.quote(o) for o in _options(model, cwd)],
-                             cwd=cwd, extra=target + list(extra), hosts=cluster.name if named else None)
+        return _reimport_command(op, model, cluster, cwd, extra, markdown)
     if op["name"] == "import_cluster":
-        # -u, --private-key, -K only: the import becomes root itself, and reads its own vault password file
-        options, user = [shlex.quote(o) for o in _options(model, cwd)], []
-        for i, option in enumerate(options):
-            if option in ("-u", "--private-key"):
-                user += options[i:i + 2]
-            elif option == "-K":
-                user.append(option)
-        if not cluster.hosts:  # no cluster named: one of its nodes, a dir of its own
-            return " ".join(["ansible-playbook", "-i NODE,"] + user
-                            + ["community.cassandra.import_cluster", "-e import_cluster_dir=NEW_DIR"])
-        # the inventory's connection settings and JMX login: -i ADDRESS, reads none of them
-        # (ansible_ssh_common_args, a bastion: from ansible.cfg only)
-        host = (cluster.present or cluster.hosts)[0]
-        v = host["vars"]
-        if "-u" not in user and _resolved(v.get("ansible_user")):
-            user += ["-u", shlex.quote(str(v["ansible_user"]))]
-        if "--private-key" not in user and _resolved(v.get("ansible_ssh_private_key_file")):
-            user += ["--private-key", shlex.quote(str(v["ansible_ssh_private_key_file"]))]
-        if _resolved(v.get("ansible_port")):
-            user += [_e("ansible_port", v["ansible_port"])]
-        jmx = []
-        for key, placeholder in (("cassandra_jmx_username", "JMX_USER"),
-                                 ("cassandra_jmx_password_file", "JMX_PASSWORD_FILE")):
-            if _resolved(v.get(key)):
-                jmx.append(_e(key, v[key]))
-            elif key in host["names"] or (key.endswith("_file") and "cassandra_jmx_password" in host["names"]):
-                # vaulted or unread; a password in clear on the command line: its file on the nodes instead
-                jmx.append(_e(key, placeholder))
-        address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
-                        if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
-        # a new cluster (not written by the import here): a dir of its own
-        target = ["-e import_cluster_dir=NEW_DIR"]
-        parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
-                 + ["community.cassandra.import_cluster"] + target + jmx)
-        return " ".join(p for p in parts if p)
+        return _import_command(model, cluster, cwd)
     first_dc = sorted(cluster.dcs)[0]
     absent = [h["name"] for h in cluster.hosts if h["absent"]]
     # a real node only when the inventory marks it for removal (or to read from): never one nobody chose
@@ -473,11 +427,8 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
     # help needs no sudo password, nor the vault prompt help added for the operations
     drop = ("-K", "--ask-vault-pass") if model.get("vault_prompt_added") else ("-K",)
     options = [shlex.quote(o) for o in _options(model, cwd) if op["name"] != "help" or o not in drop]
-    sources = model.get("sources") or []
     # (RUNBOOK.md is read in other shells: there, only ansible.cfg's inventory goes without saying)
-    if model.get("default_sources") and _same_sources(sources, model["default_sources"]) and (
-            not markdown or model.get("default_sources_origin") == "cfg"):
-        sources = []
+    sources = _sources_shown(model, markdown)
     args = []
     replaced = [_name(arg) for arg in extra]
     for arg in [o[0] for o in op.get("options") or [] if o[2] is None and _name(o[0]) not in replaced] + list(extra):
@@ -485,6 +436,68 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
         args.append(_e(filled.group(1), fill[filled.group(2)]) if filled and filled.group(2) in fill else arg)
     return _full_command(op["name"], inventory=sources, options=options, cwd=cwd, extra=args,
                          hosts=cluster.name if _hosts_given(model, cluster, markdown) else None)
+
+
+def _sources_shown(model, markdown):
+    """The inventory sources a command gives with -i: none when they are the configuration's (RUNBOOK.md: only
+    when ansible.cfg gives them)."""
+    sources = model.get("sources") or []
+    if model.get("default_sources") and _same_sources(sources, model["default_sources"]) and (
+            not markdown or model.get("default_sources_origin") == "cfg"):
+        sources = []
+    return sources
+
+
+def _reimport_command(op, model, cluster, cwd, extra, markdown):
+    """A re-import, into this inventory's dir again: read from the inventory itself (its connection variables
+    and logins, vaulted ones too), the cluster named unless the import takes it alone: on screen, the one
+    CASSANDRA_CLUSTER names, or the inventory holds its hosts only (without -e it reads every host)."""
+    where = _path(_inventory_dir(model), cwd)
+    target = ([] if where == "inventories" else [_e("import_cluster_dir", where)]) + ["-e import_cluster_force=true"]
+    sources = _sources_shown(model, markdown)
+    alone = "all_hosts" in model and set(model["all_hosts"]) <= set(h["name"] for h in cluster.hosts)
+    named = markdown or not (alone or model.get("env_cluster") == cluster.name)
+    return _full_command(op["name"], inventory=sources, options=[shlex.quote(o) for o in _options(model, cwd)],
+                         cwd=cwd, extra=target + list(extra), hosts=cluster.name if named else None)
+
+
+def _import_command(model, cluster, cwd):
+    """The import of a cluster not written by the import here (a dir of its own): from one of its nodes, -i
+    ADDRESS (it reads none of the inventory's connection settings and JMX login: they are given)."""
+    # -u, --private-key, -K only: the import becomes root itself, and reads its own vault password file
+    options, user = [shlex.quote(o) for o in _options(model, cwd)], []
+    for i, option in enumerate(options):
+        if option in ("-u", "--private-key"):
+            user += options[i:i + 2]
+        elif option == "-K":
+            user.append(option)
+    if not cluster.hosts:  # no cluster named: one of its nodes, a dir of its own
+        return " ".join(["ansible-playbook", "-i NODE,"] + user
+                        + ["community.cassandra.import_cluster", "-e import_cluster_dir=NEW_DIR"])
+    # (ansible_ssh_common_args, a bastion: from ansible.cfg only)
+    host = (cluster.present or cluster.hosts)[0]
+    v = host["vars"]
+    if "-u" not in user and _resolved(v.get("ansible_user")):
+        user += ["-u", shlex.quote(str(v["ansible_user"]))]
+    if "--private-key" not in user and _resolved(v.get("ansible_ssh_private_key_file")):
+        user += ["--private-key", shlex.quote(str(v["ansible_ssh_private_key_file"]))]
+    if _resolved(v.get("ansible_port")):
+        user += [_e("ansible_port", v["ansible_port"])]
+    jmx = []
+    for key, placeholder in (("cassandra_jmx_username", "JMX_USER"),
+                             ("cassandra_jmx_password_file", "JMX_PASSWORD_FILE")):
+        if _resolved(v.get(key)):
+            jmx.append(_e(key, v[key]))
+        elif key in host["names"] or (key.endswith("_file") and "cassandra_jmx_password" in host["names"]):
+            # vaulted or unread; a password in clear on the command line: its file on the nodes instead
+            jmx.append(_e(key, placeholder))
+    address = next((str(v[k]) for k in ("ansible_host", "cassandra_listen_address")
+                    if _resolved(v.get(k)) and v[k] != "localhost"), host["name"])
+    # a new cluster (not written by the import here): a dir of its own
+    target = ["-e import_cluster_dir=NEW_DIR"]
+    parts = (["ansible-playbook", "-i %s" % shlex.quote(address + ",")] + user
+             + ["community.cassandra.import_cluster"] + target + jmx)
+    return " ".join(p for p in parts if p)
 
 
 def _hosts_given(model, cluster, markdown=False):
