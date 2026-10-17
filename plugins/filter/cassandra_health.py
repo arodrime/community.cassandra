@@ -405,8 +405,12 @@ def cassandra_leaving_state(netstats, ring, address):
 
 def _same_address(field, address):
     """True when a nodetool field ("/10.0.0.4", "host/10.0.0.4", "10.0.0.4:7000",
-    "[0:0:0:0:0:0:0:4]:7000") is address."""
-    return same_address(address_part(field.strip().rsplit("/", 1)[-1]), address)
+    "[0:0:0:0:0:0:0:4]:7000", an IPv6 address in full with a port and no brackets: 0:0:0:0:0:0:0:4:7000) is
+    address, however IPv6 is written."""
+    peer = field.strip().rsplit("/", 1)[-1]
+    if peer.count(":") == 8:  # 8 groups, then the port
+        peer = peer.rsplit(":", 1)[0]
+    return same_address(address_part(peer), address)
 
 
 def _gossip_removing(gossip, address):
