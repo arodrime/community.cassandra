@@ -3,7 +3,8 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_new_node import (
     cassandra_new_node_dirs, cassandra_new_node_kept_setup, cassandra_new_node_load, cassandra_new_node_network, cassandra_new_node_packages,
-    cassandra_new_node_urls, parse_load)
+    cassandra_new_node_urls)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import parse_size
 
 GIB = 1024 ** 3
 ROOT = {"mount": "/", "device": "/dev/sda1", "fstype": "xfs", "size_available": 30 * GIB, "size_total": 50 * GIB}
@@ -130,12 +131,12 @@ def test_many_entries_shortened():
     assert "(f0, f1, f2, f3, f4...)" in out["problems"][0]
 
 
-def test_parse_load():
-    assert parse_load("66.2 KiB") == 66.2 * 1024
-    assert parse_load("1.5 TiB") == 1.5 * 1024 ** 4
-    assert parse_load("512 bytes") == 512
-    assert parse_load("?") is None
-    assert parse_load(None) is None
+def test_a_node_load_read_as_nodetool_prints_it():
+    assert parse_size("66.2 KiB") == 66.2 * 1024
+    assert parse_size("1.5 TiB") == 1.5 * 1024 ** 4
+    assert parse_size("512 bytes") == 512
+    assert parse_size("?") is None
+    assert parse_size(None) is None
 
 
 def ring(*nodes):
