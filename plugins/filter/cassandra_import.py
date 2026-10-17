@@ -556,6 +556,80 @@ def _style(value):
     return value[0] if value[:1] in ("'", '"') else ""
 
 
+def _yaml_styles(rendered):
+    """The rendered cassandra.yaml's simple settings, commented ones too -> ({(indent, "- " or "", key): the quote
+    the role writes the value with, "" for none}, {the boolean ones' (indent, "- " or "", key)})."""
+    styles, bools = {}, set()
+    for r in rendered:
+        # a commented sub-key: "#  key:" ("#" in place of its first space) or "# key:"
+        for m in map(YAML_KEY.match, (re.sub(r"^#\s?", "", r), re.sub(r"^#", "", r))):
+            if m and m.group(4):
+                styles.setdefault((m.group(1), m.group(2) or "", m.group(3)), _style(m.group(4)))
+                if m.group(4).strip() in ("true", "false"):  # a boolean setting (| lower)
+                    bools.add((m.group(1), m.group(2) or "", m.group(3)))
+    return styles, bools
+
+
+def _canonical_yaml_line(line, styles, bools):
+    """A line of the node's cassandra.yaml, a setting of the template written as the role writes it (styles,
+    bools: _yaml_styles') -> the line."""
+    m = YAML_KEY.match(line)
+    where = m and (m.group(1), m.group(2) or "", m.group(3))
+    if m and m.group(4) is None and where in styles:
+        return line.rstrip() + " "  # no value (null): read as the template's empty one
+    if m and m.group(4) and where in styles:
+        try:  # its text, quotes and comment out (not a number PyYAML would make of it: 0123 is not 83)
+            value = yaml.load("v: " + m.group(4), Loader=yaml.BaseLoader)["v"]
+        except (yaml.YAMLError, TypeError):
+            value = None
+        text = _yaml_text(value, styles[where]) if isinstance(value, str) else None
+        # yes/on/TRUE, quoted or not, are true for a boolean setting only (text elsewhere)
+        if isinstance(value, str) and where in bools and value.lower() in YAML_BOOLS:
+            return "%s%s%s: %s" % (m.group(1), m.group(2) or "", m.group(3), YAML_BOOLS[value.lower()])
+        if text is not None:
+            return "%s%s%s: %s" % (m.group(1), m.group(2) or "", m.group(3), text)
+        # else: as it is (the role's quoting could not write it the same)
+    return line
+
+
+def _last_key_counts(lines):
+    """lines, a top-level key set twice: the last one counts (as for Cassandra), the others commented out (in
+    place) -> lines."""
+    last = {}
+    for i, line in enumerate(lines):
+        m = YAML_KEY.match(line)
+        if m and not m.group(1) and not m.group(2):
+            if m.group(3) in last:
+                lines[last[m.group(3)]] = "# " + lines[last[m.group(3)]]
+            last[m.group(3)] = i
+    return lines
+
+
+def _canonical_shell(rendered, live):
+    """The node's cassandra-env.sh lines, each simple assignment of the template written in the role's quoting ->
+    [line]."""
+    styles = {}
+    for r in rendered:
+        m = SHELL_SET.match(re.sub(r"^#\s?", "", r))
+        if m:
+            styles.setdefault((m.group(1), m.group(2)), _style(m.group(3)))
+    out = []
+    for line in live:
+        m = SHELL_SET.match(line)
+        if m and (m.group(1), m.group(2)) in styles and not re.search(r"[$`]", m.group(3)):
+            try:
+                words = shlex.split(m.group(3), comments=True)
+            except ValueError:
+                words = []
+            quote = styles[(m.group(1), m.group(2))]
+            if len(words) == 1 and re.match(r"^[\w./:@%+,=-]*$" if quote != '"' else r'^[^"$`\\]*$', words[0]):
+                line = "%s%s=%s" % (m.group(1), m.group(2), ('"%s"' % words[0]) if quote == '"' else words[0])
+        elif m and m.group(1) and ("", m.group(2)) in styles and (m.group(1), m.group(2)) not in styles:
+            line = line.lstrip()  # the role's own line before 2.x: " JVM_OPTS=..." (rmi hostname)
+        out.append(line)
+    return out
+
+
 def _canonical(name, rendered, live):
     """The node's lines, each simple setting written the way the role writes
     that setting (its quoting, no comment after it, true/false in lower case),
@@ -563,62 +637,10 @@ def _canonical(name, rendered, live):
     were written; a top-level cassandra.yaml key set twice: the last one counts
     (as for Cassandra), the others are commented out."""
     if name.endswith(".yaml"):
-        styles, bools = {}, set()
-        for r in rendered:
-            # a commented sub-key: "#  key:" ("#" in place of its first space) or "# key:"
-            for m in map(YAML_KEY.match, (re.sub(r"^#\s?", "", r), re.sub(r"^#", "", r))):
-                if m and m.group(4):
-                    styles.setdefault((m.group(1), m.group(2) or "", m.group(3)), _style(m.group(4)))
-                    if m.group(4).strip() in ("true", "false"):  # a boolean setting (| lower)
-                        bools.add((m.group(1), m.group(2) or "", m.group(3)))
-        out = []
-        for line in live:
-            m = YAML_KEY.match(line)
-            where = m and (m.group(1), m.group(2) or "", m.group(3))
-            if m and m.group(4) is None and where in styles:
-                line = line.rstrip() + " "  # no value (null): read as the template's empty one
-            elif m and m.group(4) and where in styles:
-                try:  # its text, quotes and comment out (not a number PyYAML would make of it: 0123 is not 83)
-                    value = yaml.load("v: " + m.group(4), Loader=yaml.BaseLoader)["v"]
-                except (yaml.YAMLError, TypeError):
-                    value = None
-                text = _yaml_text(value, styles[where]) if isinstance(value, str) else None
-                # yes/on/TRUE, quoted or not, are true for a boolean setting only (text elsewhere)
-                if isinstance(value, str) and where in bools and value.lower() in YAML_BOOLS:
-                    line = "%s%s%s: %s" % (m.group(1), m.group(2) or "", m.group(3), YAML_BOOLS[value.lower()])
-                elif text is not None:
-                    line = "%s%s%s: %s" % (m.group(1), m.group(2) or "", m.group(3), text)
-                # else: as it is (the role's quoting could not write it the same)
-            out.append(line)
-        last = {}
-        for i, line in enumerate(out):
-            m = YAML_KEY.match(line)
-            if m and not m.group(1) and not m.group(2):
-                if m.group(3) in last:
-                    out[last[m.group(3)]] = "# " + out[last[m.group(3)]]
-                last[m.group(3)] = i
-        return out
+        styles, bools = _yaml_styles(rendered)
+        return _last_key_counts([_canonical_yaml_line(line, styles, bools) for line in live])
     if name.endswith(".sh"):
-        styles = {}
-        for r in rendered:
-            m = SHELL_SET.match(re.sub(r"^#\s?", "", r))
-            if m:
-                styles.setdefault((m.group(1), m.group(2)), _style(m.group(3)))
-        out = []
-        for line in live:
-            m = SHELL_SET.match(line)
-            if m and (m.group(1), m.group(2)) in styles and not re.search(r"[$`]", m.group(3)):
-                try:
-                    words = shlex.split(m.group(3), comments=True)
-                except ValueError:
-                    words = []
-                quote = styles[(m.group(1), m.group(2))]
-                if len(words) == 1 and re.match(r"^[\w./:@%+,=-]*$" if quote != '"' else r'^[^"$`\\]*$', words[0]):
-                    line = "%s%s=%s" % (m.group(1), m.group(2), ('"%s"' % words[0]) if quote == '"' else words[0])
-            elif m and m.group(1) and ("", m.group(2)) in styles and (m.group(1), m.group(2)) not in styles:
-                line = line.lstrip()  # the role's own line before 2.x: " JVM_OPTS=..." (rmi hostname)
-            out.append(line)
-        return out
+        return _canonical_shell(rendered, live)
     return live
 
 
