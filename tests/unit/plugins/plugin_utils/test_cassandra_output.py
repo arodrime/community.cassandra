@@ -11,6 +11,12 @@ def test_plural():
     assert out.plural(2, "copy", "copies") == "2 copies"
 
 
+def test_duration():
+    assert [out.duration(s) for s in (45, 560, 690, 3 * 3600 + 60, 2 * 86400 + 4 * 3600)] == \
+        ["45s", "9m20s", "11m30s", "3h01m", "2d04h"]
+    assert out.duration(560, short=True) == "9m" and out.duration(-5) == "0s"
+
+
 @pytest.mark.parametrize("names, text", [
     ([], ""),
     (["node1"], "node1"),

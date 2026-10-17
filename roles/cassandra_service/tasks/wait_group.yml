@@ -1,0 +1,8 @@
+---
+# A group of checks of wait_loop.yml: none once it has ended
+- name: Next checks
+  ansible.builtin.include_tasks: wait_step.yml
+  loop: "{{ range(_cassandra_wait_size | int) | list if _cassandra_wait_going | bool else [] }}"
+  loop_control:
+    loop_var: _cassandra_wait_step
+    label: "{{ _cassandra_wait_step + 1 }}"

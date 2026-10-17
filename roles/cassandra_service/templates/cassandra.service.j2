@@ -1,0 +1,42 @@
+# Managed by Ansible (community.cassandra.cassandra_service): change the role variables, not this file.
+# Native unit replacing the packages' SysV init script.
+[Unit]
+Description=Apache Cassandra
+Documentation=https://cassandra.apache.org/doc/latest/
+After=network-online.target
+Wants=network-online.target
+{% if cassandra_service_restart != 'no' %}
+# Caps automatic restarts (manual starts count too)
+StartLimitIntervalSec={{ cassandra_service_start_limit_interval }}
+StartLimitBurst={{ cassandra_service_start_limit_burst }}
+{% endif %}
+
+[Service]
+Type=simple
+User={{ cassandra_service_user }}
+Group={{ cassandra_service_group }}
+{% for name, value in cassandra_service_environment.items() %}
+Environment="{{ name }}={{ value }}"
+{% endfor %}
+ExecStart=/usr/sbin/cassandra -f
+{% if cassandra_service_drain_on_stop %}
+# Flush and stop accepting writes first; "-": a failed or timed out drain does not block the stop
+# JMX with authentication: user and password FILE only (this unit is world-readable)
+ExecStop=-/usr/bin/timeout -k 10 {{ cassandra_service_drain_timeout }} /usr/bin/nodetool -p {{ cassandra_jmx_port | default(7199) }}{{
+  (' -u ' ~ cassandra_jmx_username ~ ' -pwf ' ~ cassandra_jmx_password_file) if cassandra_jmx_username and cassandra_jmx_password_file else '' }} drain
+{% endif %}
+# JVM exit status on SIGTERM
+SuccessExitStatus=143
+TimeoutStopSec={{ cassandra_service_timeout_stop }}
+Restart={{ cassandra_service_restart }}
+{% if cassandra_service_restart != 'no' %}
+RestartSec=30
+{% endif %}
+LimitNOFILE={{ cassandra_service_limit_nofile }}
+LimitNPROC={{ cassandra_service_limit_nproc }}
+LimitMEMLOCK={{ cassandra_service_limit_memlock }}
+LimitAS={{ cassandra_service_limit_as }}
+TasksMax={{ cassandra_service_tasks_max }}
+
+[Install]
+WantedBy=multi-user.target

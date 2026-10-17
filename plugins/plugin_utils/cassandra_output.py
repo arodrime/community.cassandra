@@ -4,7 +4,7 @@
 function returns text lines (or a string) that a debug task prints, nothing
 else. Pure Python, no Ansible.
 
-- counts: plural;
+- counts and times: plural, duration;
 - node lists: nodes (node1..node5, node7), full_list;
 - warnings: warning, warning_lines (each once, a blank line between two),
   spaced paragraphs.
@@ -25,6 +25,19 @@ PARAGRAPH = " "
 def plural(number, word, many=None):
     """"1 node", "3 nodes"; many: the plural when it is not word + s."""
     return "%d %s" % (number, word if number == 1 else (many or word + "s"))
+
+
+def duration(seconds, short=False):
+    """"45s", "9m20s", "1h12m", "2d04h"; short: minutes at most under an
+    hour ("9m"), for an ETA."""
+    seconds = int(max(0, seconds or 0))
+    if seconds >= 86400:
+        return "%dd%02dh" % (seconds // 86400, seconds % 86400 // 3600)
+    if seconds >= 3600:
+        return "%dh%02dm" % (seconds // 3600, seconds % 3600 // 60)
+    if seconds >= 60:
+        return ("%dm" % (seconds // 60)) if short else "%dm%02ds" % (seconds // 60, seconds % 60)
+    return "%ds" % seconds
 
 
 def _natural(name):

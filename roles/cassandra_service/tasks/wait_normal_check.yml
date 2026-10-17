@@ -1,0 +1,76 @@
+---
+# One read of the wait for NORMAL (wait_normal.yml, through wait_loop.yml):
+# the service (stopped: the end of its journal, the run stops), the mode, then
+# while it is not NORMAL and time is left, a progress line and the wait before
+# the next read
+- name: Read the service
+  ansible.builtin.systemd_service:
+    name: cassandra
+  register: cassandra_service_wait_unit
+
+- name: Stop when the service is not running
+  when: >-
+    cassandra_service_wait_unit.status.ActiveState | default('') in ['failed', 'inactive']
+    or cassandra_service_wait_unit.status.SubState | default('') == 'auto-restart'
+  block:
+    - name: Read the end of its journal
+      ansible.builtin.command:
+        argv: [journalctl, --unit, cassandra, --lines, "40", --no-pager, --quiet]
+      register: cassandra_service_wait_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Cassandra is not running
+      ansible.builtin.fail:
+        msg: >-
+          {{ ['cassandra on ' ~ inventory_hostname ~ ' is ' ~ _unit.ActiveState ~ ' (' ~ _unit.SubState | default('?')
+              ~ ', ' ~ _unit.Result | default('?') ~ '): it stopped instead of joining. journalctl -u cassandra:']
+             + (cassandra_service_wait_journal.stdout_lines | default([]) or ['(empty)']) }}
+      vars:
+        _unit: "{{ cassandra_service_wait_unit.status }}"
+
+- name: Read its mode
+  community.cassandra.cassandra_netstats:
+  module_defaults:
+    community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+  register: cassandra_service_netstats
+  failed_when: false  # not answering yet (JMX starts with Cassandra)
+
+- name: Note whether it still waits
+  ansible.builtin.set_fact:
+    _cassandra_normal_going: >-
+      {{ cassandra_service_netstats.mode | default('') != 'NORMAL'
+         and now().timestamp() | int < _cassandra_service_wait_deadline | int }}
+
+- name: While it is not NORMAL
+  when: _cassandra_normal_going | bool
+  block:
+    - name: Start the progress lines
+      ansible.builtin.set_fact:
+        _cassandra_normal_said: true
+      when: not _cassandra_normal_said | bool
+      vars:
+        cassandra_output_gap: true  # its progress lines, a block of their own (ops callback)
+
+    - name: Say what is waited for
+      ansible.builtin.debug:
+        msg: >-
+          {{ cassandra_service_netstats.mode | default('') | community.cassandra.cassandra_normal_wait_line(
+               waited=now().timestamp() | int - _cassandra_normal_start | int, timeout=cassandra_service_wait_timeout | int,
+               node=_head.node, operation=_head.operation) }}
+      vars:
+        cassandra_output: true  # a progress line (ops callback)
+        _head: "{{ _cassandra_normal_head }}"
+
+    # on the controller, quiet (pause prints "Pausing for ..." on a terminal, between the progress lines)
+    - name: Wait before the next read
+      ansible.builtin.wait_for:
+        timeout: "{{ [1, [_interval | int, _cassandra_service_wait_deadline | int - now().timestamp() | int] | min] | max }}"
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+        _interval: >-
+          {{ cassandra_stream_early_check_interval
+             if now().timestamp() | int - _cassandra_normal_start | int < cassandra_stream_early_time | int
+             else cassandra_stream_check_interval }}
