@@ -19,21 +19,10 @@
           cassandra_java_home | default(''), ansible_facts['user_dir'] | default('')] | select | list }}
     _extra: "{{ cassandra_extra_settings | default({}) }}"
     _inventory: >-
-      {%- set l = [] -%}
-      {%- for d in [cassandra_data_file_directories] | flatten -%}{%- set _ = l.append(['data', d]) -%}{%- endfor -%}
-      {%- set _ = l.extend([['commitlog', cassandra_commitlog_dir], ['saved_caches', cassandra_saved_caches_dir],
-                            ['hints', cassandra_hints_dir]]) -%}
-      {%- if _extra.local_system_data_file_directory is defined -%}
-      {%-   set _ = l.append(['data', _extra.local_system_data_file_directory]) -%}
-      {%- endif -%}
-      {#- cassandra_extra_settings' cdc_raw_directory: an inventory from before cassandra_cdc_raw_dir -#}
-      {%- if cassandra_cdc_raw_dir | default('', true) or _extra.cdc_raw_directory is defined -%}
-      {%-   set _ = l.append(['cdc_raw', cassandra_cdc_raw_dir | default('', true) or _extra.cdc_raw_directory]) -%}
-      {%- elif cassandra_cdc_enabled | default(false) | bool -%}
-      {%-   set _ = l.append(['cdc_raw', (cassandra_config_storage_dir | default('', true) or '/var/lib/cassandra')
-                                       | regex_replace('(?<=.)/+$', '') ~ '/cdc_raw']) -%}
-      {%- endif -%}
-      {{ l }}
+      {{ [cassandra_data_file_directories] | flatten | community.cassandra.cassandra_inventory_dirs(
+           cassandra_commitlog_dir, cassandra_saved_caches_dir, cassandra_hints_dir, extra=_extra,
+           cdc_raw=cassandra_cdc_raw_dir | default('', true), cdc_enabled=cassandra_cdc_enabled | default(false) | bool,
+           storage_dir=cassandra_config_storage_dir | default('', true)) }}
     _live: "{{ (cassandra_node_reset_live.content | b64decode) if cassandra_node_reset_live.content is defined else none }}"
 
 # Links resolved, also in the parents: a link to / is refused like / itself
