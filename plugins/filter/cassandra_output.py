@@ -1,24 +1,16 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""The operator output blocks of plugin_utils/cassandra_output.py as
-filters, for the playbooks (docs/docsite/rst/guide_output.rst). Each one
-returns text lines, which a debug task marked cassandra_output: true prints.
+"""The operator output blocks of plugin_utils/cassandra_output.py the playbooks use, as filters
+(docs/docsite/rst/guide_output.rst). Each returns text (a line, or lines), which a debug task marked
+cassandra_output: true prints.
 
-cassandra_node_list: names -> "node1..node5, node7".
-cassandra_size, cassandra_rate, cassandra_duration: bytes, bytes/s, seconds as text.
-cassandra_setting_lines: {node: value} -> "setting: value  all" and the other values.
-cassandra_settings_lines: several settings, their names, values and nodes in aligned columns.
-cassandra_by_nodes: [[node, [lines]]] -> each line once under the nodes that have it.
-cassandra_plan: {operation, cluster, version, summary, steps, facts, warnings,
-    question} -> the plan screen.
-cassandra_progress_line: a cassandra_stream_progress state -> the progress line
-    and the line of the other ends.
+cassandra_node_list: names -> "node1..node3, node5".
+cassandra_size, cassandra_duration: bytes, seconds -> "1.5 GiB", "1h02m".
+cassandra_progress_line: a cassandra_stream_progress state -> the progress line and the line of the other ends.
+cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
 cassandra_prepare_lines, cassandra_left_system_warning: what the prepare of new nodes did.
-cassandra_recap: [{node, outcome, status, seconds, reason}] -> the end of run recap.
-cassandra_perm_lines, cassandra_diff_lines, cassandra_changed_lines: what changed.
-cassandra_command, cassandra_todo, cassandra_inventory_steps,
-cassandra_in_git_work_tree: what is left to do.
-cassandra_mask: text with its secrets as ****.
+cassandra_command, cassandra_todo, cassandra_removed_todo, cassandra_seeds_todo, cassandra_seeds_reload_todo,
+cassandra_reimport_hosts: what is left to do, and the commands for it.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -61,46 +53,24 @@ _PEER_STALL = 60
 
 
 def cassandra_node_list(names, keep_order=False, full=False):
+    """Node names -> one text, runs of names as ranges (full: every name; keep_order: as given, else sorted the
+    natural way): ["node1", "node2", "node3", "node5"] -> "node1..node3, node5"."""
     return out.nodes(names, keep_order=keep_order, full=full)
 
 
 def cassandra_size(count, scale=None):
+    """Bytes -> a size (scale: the bytes of the unit to write it in, e.g. the total's): 1610612736 -> "1.5 GiB"."""
     return out.size(count, scale)
 
 
-def cassandra_rate(per_second):
-    return out.rate(per_second)
-
-
 def cassandra_duration(seconds, short=False):
+    """Seconds -> a duration: 3725 -> "1h02m"."""
     return out.duration(seconds, short=short)
 
 
-def cassandra_setting_lines(values, setting, all_nodes=None, expected=None, notes=None, where=None, full=False,
-                            indent=""):
-    return out.setting_lines(setting, values or {}, all_nodes=all_nodes, expected=expected, notes=notes, where=where,
-                             full=full, indent=indent)
-
-
-def cassandra_settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=30):
-    """settings: [[setting, [[value, nodes, note]]] or a heading str] -> aligned lines."""
-    entries = [s if isinstance(s, str) else (s[0], [tuple(r) for r in s[1]]) for s in settings or []]
-    return out.settings_lines(entries, indent=indent, max_value=max_value, max_label=max_label, max_nodes=max_nodes)
-
-
-def cassandra_by_nodes(pairs, full=False, every="all"):
-    return out.by_nodes([(p[0], p[1]) for p in pairs or []], full=full, every=every)
-
-
-def cassandra_plan(spec, check=False):
-    """spec: the arguments of plugin_utils cassandra_output.plan as a dict."""
-    spec = dict(spec or {})
-    return out.plan(spec.pop("operation", ""), check=check, **spec)
-
-
 def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode="", names=None, status="going"):
-    """state: a cassandra_stream_progress state; names: {address: inventory
-    name} for the other ends. The other ends: their progress summed per node,
+    """state: a cassandra_stream_progress state -> the progress line and the line of the other ends (as lines of
+    one text, plugin_utils cassandra_output progress_line); names: {address: inventory name} for the other ends. The other ends: their progress summed per node,
     with the time a stream with bytes left moved nothing (the longest),
     stalled from the time the main line says STALLED (the state's warn). The
     peers in columns as many as fit in the terminal."""
@@ -132,23 +102,6 @@ def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode
                              width=terminal_width())
 
 
-def cassandra_recap(outcomes, operation="", cluster="", check=False, seconds=None, extra=None, full=False):
-    return out.recap(operation, cluster, [dict(o) for o in outcomes or []], check=check, seconds=seconds,
-                     extra=extra, full=full)
-
-
-def cassandra_perm_lines(changes, indent="  "):
-    return out.perm_lines(changes, indent=indent)
-
-
-def cassandra_diff_lines(before, after, indent="  "):
-    return out.diff_lines(before, after, indent=indent)
-
-
-def cassandra_changed_lines(diff, indent="  "):
-    return out.changed_lines(diff, indent=indent)
-
-
 def _same_sources(a, b):
     def norm(sources):
         sources = [sources] if isinstance(sources, str) else list(sources or [])
@@ -158,8 +111,10 @@ def _same_sources(a, b):
 
 def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=None, options=None, cwd=None,
                       default_inventory=None):
-    """default_inventory: ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')):
-    no -i when the run's inventory is that one."""
+    """A playbook and the run's options -> the command line that runs it: 'rolling_restart' |
+    cassandra_command(inventory='inv.yml', limit=['n1']) -> "ansible-playbook -i inv.yml
+    community.cassandra.rolling_restart --limit n1". default_inventory: ansible.cfg's (lookup('config',
+    'DEFAULT_HOST_LIST')): no -i when the run's inventory is that one."""
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None
     return out.command(playbook, inventory=inventory, hosts=hosts or None, limit=limit or None, extra=extra,
@@ -169,9 +124,10 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
 def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None, inventory_dir=None, cwd=None,
                            default_inventory=None, in_git=None, unreachable=None, imported=True, reimport_hosts="",
                            first=None):
-    """default_inventory: ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')):
-    no -i when the run's inventory is that one. reimport_hosts: see
-    cassandra_reimport_hosts."""
+    """The nodes removed from the cluster (removed), a node that stays (reimport_from) -> the TO DO lines that
+    take them out of the inventory (a re-import, else by hand), with their commands. default_inventory:
+    ansible.cfg's (lookup('config', 'DEFAULT_HOST_LIST')): no -i when the run's inventory is that one.
+    reimport_hosts: see cassandra_reimport_hosts."""
     if default_inventory and _same_sources(inventory, default_inventory):
         inventory = None
     return out.removed_todo(removed, reimport_from, inventory=inventory, hosts=hosts or None,
@@ -180,14 +136,14 @@ def cassandra_removed_todo(removed, reimport_from="", inventory=None, hosts=None
 
 
 def cassandra_seeds_todo(change, group=""):
-    """cassandra_seed_change's -> the TO DO item when it picked seeds the
-    inventory does not have (None otherwise)."""
+    """cassandra_seed_change's result -> the TO DO item ({text, command}) when it picked seeds the inventory does
+    not have, None otherwise."""
     return out.seeds_todo(change, group=group)
 
 
 def cassandra_seeds_reload_todo(failed, command_line):
-    """The nodes whose nodetool reloadseeds failed -> the TO DO item (None
-    when none)."""
+    """The nodes whose nodetool reloadseeds failed, its command line -> the TO DO item, None when none:
+    ["n1"], "nodetool reloadseeds" -> {"text": "reload the seed list on n1: ...", "command": "nodetool reloadseeds"}."""
     return out.seeds_reload_todo(failed, command_line)
 
 
@@ -198,7 +154,8 @@ def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others
     hosts: the run's -e cassandra_hosts; env_cluster: CASSANDRA_CLUSTER;
     files: the inventory sources are files (the import reads
     CASSANDRA_CLUSTER only then); others: how many hosts of the inventory
-    are not in that group (none: the import reads every host, this cluster's)."""
+    are not in that group (none: the import reads every host, this cluster's). 'c1' |
+    cassandra_reimport_hosts(others=2) -> 'c1'."""
     if hosts:
         return hosts
     if env_cluster and files:
@@ -213,42 +170,29 @@ def cassandra_phase(name, names=None, node="", what="", count=None):
 
 
 def cassandra_prepare_lines(hosts, check=False):
-    """What the prepare of new nodes did, a line per step and group of nodes
-    (plugin_utils cassandra_output prepare_lines)."""
+    """hosts: [{name, ran, repository, packages, cassandra, ...}] (plugin_utils cassandra_output prepare_lines) -> a
+    line per step and group of nodes: "node4, node5  repository  ok (already set)"."""
     return out.prepare_lines(hosts, check=boolean(check, strict=False))
 
 
 def cassandra_left_system_warning(hosts):
-    """The WARNING about an old system keyspace left outside the data
-    directories of new nodes (plugin_utils cassandra_output left_system_warning)."""
+    """hosts: [{name, left: [directories holding a system keyspace], dirs: [its data directories]}] -> the WARNING
+    lines about an old system keyspace left outside the data directories of new nodes (plugin_utils
+    cassandra_output left_system_warning)."""
     return out.left_system_warning(hosts)
 
 
 def cassandra_check_what(present, kind="", targets=None, replacing="", run=None, absent=None):
-    """What preflight's check line says of the cluster (module_utils
-    cassandra_output check_what): "3 nodes; adding node4, node5"."""
+    """The nodes present and the operation's targets -> what preflight's check line says of the cluster
+    (plugin_utils cassandra_output check_what): ["n1", "n2", "n3"] | cassandra_check_what(kind='add',
+    targets=['n4']) -> "3 nodes; adding n4"."""
     return out.check_what(present, kind=kind or "", targets=targets, replacing=replacing or "", run=run, absent=absent)
 
 
-def cassandra_path_from(path, cwd=None):
-    """path relative to cwd when it is under it, else as given."""
-    return out.path_from(str(path), cwd)
-
-
 def cassandra_todo(items, title="TO DO"):
+    """[{text, command}] -> the TO DO block: [{"text": "restart n1", "command": "ansible-playbook x"}] ->
+    ["TO DO", "  1. restart n1:", "     ansible-playbook x"]."""
     return out.todo(items, title=title)
-
-
-def cassandra_inventory_steps(inventory_file, in_git=None, message="", cwd=None):
-    return out.inventory_steps(inventory_file, in_git=in_git, message=message, cwd=cwd)
-
-
-def cassandra_in_git_work_tree(path):
-    return out.in_git_work_tree(path)
-
-
-def cassandra_mask(text):
-    return out.mask(text)
 
 
 class FilterModule(object):
@@ -256,17 +200,8 @@ class FilterModule(object):
         return {
             "cassandra_node_list": cassandra_node_list,
             "cassandra_size": cassandra_size,
-            "cassandra_rate": cassandra_rate,
             "cassandra_duration": cassandra_duration,
-            "cassandra_setting_lines": cassandra_setting_lines,
-            "cassandra_settings_lines": cassandra_settings_lines,
-            "cassandra_by_nodes": cassandra_by_nodes,
-            "cassandra_plan": cassandra_plan,
             "cassandra_progress_line": cassandra_progress_line,
-            "cassandra_recap": cassandra_recap,
-            "cassandra_perm_lines": cassandra_perm_lines,
-            "cassandra_diff_lines": cassandra_diff_lines,
-            "cassandra_changed_lines": cassandra_changed_lines,
             "cassandra_command": cassandra_command,
             "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,
             "cassandra_todo": cassandra_todo,
@@ -274,11 +209,7 @@ class FilterModule(object):
             "cassandra_check_what": cassandra_check_what,
             "cassandra_prepare_lines": cassandra_prepare_lines,
             "cassandra_left_system_warning": cassandra_left_system_warning,
-            "cassandra_path_from": cassandra_path_from,
             "cassandra_removed_todo": cassandra_removed_todo,
             "cassandra_reimport_hosts": cassandra_reimport_hosts,
             "cassandra_seeds_todo": cassandra_seeds_todo,
-            "cassandra_inventory_steps": cassandra_inventory_steps,
-            "cassandra_in_git_work_tree": cassandra_in_git_work_tree,
-            "cassandra_mask": cassandra_mask,
         }
