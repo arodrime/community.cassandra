@@ -127,7 +127,7 @@ else:
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeTool4PairCommand
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeTool4PairCommand, strip_jvm_banner
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -175,7 +175,7 @@ def parse_getfullquerylog(nodetool_output):
     int_list = ['max_log_size', 'max_queue_weight', 'max_archive_retries']
     d = dict()
 
-    for line in nodetool_output.split('\n'):
+    for line in strip_jvm_banner(nodetool_output).split('\n'):
         config_pair = line.split()
         if len(config_pair) > 0:
             if config_pair[0] in bool_list:

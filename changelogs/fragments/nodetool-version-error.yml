@@ -1,0 +1,3 @@
+minor_changes:
+  - "nodetool modules - when ``nodetool version`` fails (the first nodetool call of a module without ``cassandra_version``), the message says whether the JMX login was refused or JMX could not be reached (with the address, the cause and what to check), instead of the raw output."
+  - "nodetool modules - the lines the JVM prints before nodetool's output (``Picked up JAVA_TOOL_OPTIONS: ...``, VM warnings) are dropped from the output the modules parse."
