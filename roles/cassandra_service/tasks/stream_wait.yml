@@ -43,13 +43,13 @@
       {%- elif _cassandra_stream_status == 'job_lost' %}
       the job running it can't be read ({{ _cassandra_stream_job_result.msg | default('') }}): check the node (nodetool netstats, system.log).
       {%- elif _cassandra_stream_status == 'join_failed' %}
-      the bootstrap failed (Mode JOINING_FAILED): see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      the bootstrap failed (Mode JOINING_FAILED): see why in its system.log.{{ (' ' ~ _cassandra_stream_advice) if _cassandra_stream_advice | default('') else '' }}
       {%- elif _cassandra_stream_status == 'leave_failed' %}
       the decommission failed (Mode DECOMMISSION_FAILED): see why in its system.log. Once fixed, nodetool decommission{{
       ' --force' if cassandra_decommission_force | default(false) | bool else '' }} on it resumes it (the ranges already
       streamed are skipped), or restart Cassandra on it to cancel it (it comes back UN).
       {%- elif _cassandra_stream_status == 'stopped' %}
-      Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log. {{ _cassandra_stream_advice | default('') }}
+      Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log.{{ (' ' ~ _cassandra_stream_advice) if _cassandra_stream_advice | default('') else '' }}
       {%- elif _cassandra_stream_status == 'jmx_refused' %}
       JMX login refused on {{ _cassandra_stream_refused | map(attribute='host') | join(', ') }}: check
       cassandra_jmx_username/password (or cassandra_jmx_password_file) for {{ 'it' if _cassandra_stream_refused | length == 1 else 'them' }}
