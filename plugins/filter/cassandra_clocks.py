@@ -187,6 +187,110 @@ def parse_ntpq(lines):
     return {}
 
 
+# the time sync daemons, in the order a probe picks one (several running: the first)
+_ORDER = ["chronyd", "chrony", "systemd-timesyncd", "ntpd", "ntpsec", "ntp"]
+
+
+def _pick_daemon(units):
+    """parse_units' result -> (the unit of the daemon that runs, else of one installed, '' if none; the units
+    running, in _ORDER)."""
+    running = [u for u in _ORDER if units.get(u, {}).get("active")]
+    installed = [u for u in _ORDER if units.get(u, {}).get("installed")]
+    return (running or installed or [""])[0], running
+
+
+def _kernel_synced(s):
+    """The probe's sections -> whether the kernel says its clock is synchronised, None when it does not say."""
+    show = _fields(s.get("timedatectl", []), "=")
+    if "NTPSynchronized" in show:
+        return show["NTPSynchronized"] == "yes"
+    # systemd before 239: timedatectl status
+    status = _fields(s.get("timedatectl_status", []))
+    said = status.get("System clock synchronized", status.get("NTP synchronized"))
+    return said == "yes" if said is not None else None
+
+
+def _configured(s):
+    """The probe's sections -> the sources configured (chrony.conf's and timesyncd's server/pool lines), sorted."""
+    return sorted(set(
+        line.split()[1] for line in s.get("chrony_conf", []) + s.get("timesync_servers", [])
+        if len(line.split()) > 1 and line.split()[0] != "makestep"))
+
+
+def _chrony_said(s):
+    """The probe's sections, chronyd running -> the fields its tracking and sources give."""
+    tracking = parse_chrony_tracking(s.get("tracking", []))
+    sources = parse_chrony_sources(s.get("sources", []))
+    said = {}
+    if tracking:
+        said.update(dict((k, tracking[k]) for k in ("source", "offset", "bound", "skew", "leap", "stratum", "local")))
+        said["synchronised"] = tracking["synchronised"] and (bool(sources["selected"]) or not s.get("sources"))
+        said["source"] = sources["selected"] or tracking["source"] if said["synchronised"] else ""
+    said["sources"], said["reachable"] = sources["count"], sources["reachable"]
+    return said
+
+
+def _timesyncd_said(s, kernel_synced, configured):
+    """The probe's sections, timesyncd running and telling its status, the kernel's word, the sources configured
+    -> the fields its timesync-status gives (its server added to the sources configured)."""
+    sync = parse_timesync(s.get("timesync", []))
+    said = dict((k, sync[k]) for k in ("source", "offset", "bound", "leap", "stratum"))
+    said["synchronised"] = bool(kernel_synced) and bool(sync["source"]) and sync["offset"] is not None
+    said["sources"] = 1 if sync["source"] else 0
+    said["reachable"] = 1 if sync["offset"] is not None else 0
+    if not said["synchronised"]:
+        said["source"] = ""
+    said["configured"] = sorted(set(configured) | set(
+        [sync["source"].split("(")[-1].rstrip(")")] if "(" in sync["source"] else []))
+    return said
+
+
+def _ntp_said(s):
+    """The probe's sections, ntpd running -> the fields its selected peer gives."""
+    peer = parse_ntpq(s.get("ntpq", []))
+    said = {}
+    if peer.get("local"):
+        said["local"] = True
+    elif peer:
+        said.update(dict((k, peer[k]) for k in ("source", "offset", "bound", "stratum")))
+        said["leap"] = "normal"
+    said["synchronised"] = bool(peer) and not peer.get("local")
+    said["sources"] = said["reachable"] = 1 if peer else 0
+    return said
+
+
+def _daemon_said(daemon, s, kernel_synced, configured):
+    """The daemon running (chrony, timesyncd, ntp), the probe's sections -> the fields its own figures give."""
+    if daemon == "chrony":
+        return _chrony_said(s)
+    if daemon == "timesyncd" and not any(x.strip() for x in s.get("timesync", [])):
+        # systemd before 239: no timesync-status, only the kernel's word (compared coarsely)
+        return {"kernel_only": True}
+    if daemon == "timesyncd":
+        return _timesyncd_said(s, kernel_synced, configured)
+    if daemon == "ntp":
+        return _ntp_said(s)
+    return {}
+
+
+def _makestep(conf):
+    """chrony.conf's lines -> its makestep threshold (a start steps an offset over it in its first updates):
+    seconds, the last one readable; None if none."""
+    threshold = None
+    for parts in [line.split() for line in conf if line.split()[:1] == ["makestep"]]:
+        try:
+            threshold = float(parts[1])
+        except (IndexError, ValueError):
+            pass
+    return threshold
+
+
+def _query(lines):
+    """chronyd -Q's output -> |the offset it measured| (seconds), None if it did not say."""
+    query = re.search(r"System clock wrong by (-?[0-9.]+) seconds", "\n".join(lines))
+    return abs(float(query.group(1))) if query else None
+
+
 def cassandra_clock_probe(text):
     """What clock_probe.yml printed on a node -> what its time sync says (see the module's doc)."""
     s = _sections(text)
@@ -195,11 +299,7 @@ def cassandra_clock_probe(text):
            "synchronised": False, "source": "", "sources": 0, "reachable": 0, "configured": [], "offset": None,
            "bound": None, "skew": None, "leap": "", "stratum": None, "local": False, "kernel_synced": None, "container": "",
            "query": None, "window": False, "kernel_only": False}
-    # the daemon that runs (several: the first of chrony, timesyncd, ntp), else one installed
-    order = ["chronyd", "chrony", "systemd-timesyncd", "ntpd", "ntpsec", "ntp"]
-    running = [u for u in order if units.get(u, {}).get("active")]
-    installed = [u for u in order if units.get(u, {}).get("installed")]
-    name = (running or installed or [""])[0]
+    name, running = _pick_daemon(units)
     if name:
         unit = units[name]
         out.update({"daemon": _DAEMONS[name], "service": name, "active": unit["active"], "installed": unit["installed"],
@@ -207,59 +307,13 @@ def cassandra_clock_probe(text):
     out["others"] = [u for u in running[1:] if _DAEMONS[u] != out["daemon"]]
     virt = " ".join(s.get("virt", [])).strip()
     out["container"] = "" if virt in ("", "none") else virt
-    show = _fields(s.get("timedatectl", []), "=")
-    status = _fields(s.get("timedatectl_status", []))
-    if "NTPSynchronized" in show:
-        out["kernel_synced"] = show["NTPSynchronized"] == "yes"
-    else:  # systemd before 239: timedatectl status
-        said = status.get("System clock synchronized", status.get("NTP synchronized"))
-        if said is not None:
-            out["kernel_synced"] = said == "yes"
-    out["configured"] = sorted(set(
-        line.split()[1] for line in s.get("chrony_conf", []) + s.get("timesync_servers", [])
-        if len(line.split()) > 1 and line.split()[0] != "makestep"))
-    if out["active"] and out["daemon"] == "chrony":
-        tracking = parse_chrony_tracking(s.get("tracking", []))
-        sources = parse_chrony_sources(s.get("sources", []))
-        if tracking:
-            out.update(dict((k, tracking[k]) for k in ("source", "offset", "bound", "skew", "leap", "stratum", "local")))
-            out["synchronised"] = tracking["synchronised"] and (bool(sources["selected"]) or not s.get("sources"))
-            out["source"] = sources["selected"] or tracking["source"] if out["synchronised"] else ""
-        out["sources"], out["reachable"] = sources["count"], sources["reachable"]
-    elif out["active"] and out["daemon"] == "timesyncd" and not any(x.strip() for x in s.get("timesync", [])):
-        # systemd before 239: no timesync-status, only the kernel's word (compared coarsely)
-        out["kernel_only"] = True
-    elif out["active"] and out["daemon"] == "timesyncd":
-        sync = parse_timesync(s.get("timesync", []))
-        out.update(dict((k, sync[k]) for k in ("source", "offset", "bound", "leap", "stratum")))
-        out["synchronised"] = bool(out["kernel_synced"]) and bool(sync["source"]) and sync["offset"] is not None
-        out["sources"] = 1 if sync["source"] else 0
-        out["reachable"] = 1 if sync["offset"] is not None else 0
-        if not out["synchronised"]:
-            out["source"] = ""
-        out["configured"] = sorted(set(out["configured"]) | set(
-            [sync["source"].split("(")[-1].rstrip(")")] if "(" in sync["source"] else []))
-    elif out["active"] and out["daemon"] == "ntp":
-        peer = parse_ntpq(s.get("ntpq", []))
-        if peer.get("local"):
-            out["local"] = True
-        elif peer:
-            out.update(dict((k, peer[k]) for k in ("source", "offset", "bound", "stratum")))
-            out["leap"] = "normal"
-        out["synchronised"] = bool(peer) and not peer.get("local")
-        out["sources"] = out["reachable"] = 1 if peer else 0
+    out["kernel_synced"] = _kernel_synced(s)
+    out["configured"] = _configured(s)
+    if out["active"]:
+        out.update(_daemon_said(out["daemon"], s, out["kernel_synced"], out["configured"]))
     out["window"] = "window" in s
-    # chrony's makestep threshold (a start steps an offset over it in its first updates)
-    steps = [line.split() for line in s.get("chrony_conf", []) if line.split()[:1] == ["makestep"]]
-    out["makestep"] = None
-    for parts in steps:
-        try:
-            out["makestep"] = float(parts[1])
-        except (IndexError, ValueError):
-            pass
-    query = re.search(r"System clock wrong by (-?[0-9.]+) seconds", "\n".join(s.get("query", [])))
-    if query:
-        out["query"] = abs(float(query.group(1)))
+    out["makestep"] = _makestep(s.get("chrony_conf", []))
+    out["query"] = _query(s.get("query", []))
     return out
 
 
