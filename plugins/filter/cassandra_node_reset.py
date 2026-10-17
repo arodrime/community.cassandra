@@ -224,7 +224,8 @@ def cassandra_node_reset_ring(addresses, host="", has_data=False, cluster_ring=N
     caller checked them (cassandra_cluster_reset_check); a node holding data
     must be in that ring (cluster_ring: its addresses). addresses: this
     node's. Returns {'problems', 'info'}. Any other reset decides from where
-    the node stands (cassandra_node_standing, cassandra_node_reset_refusal)."""
+    the node stands (cassandra_node_standing, cassandra_node_reset_refusal). Example: a node with data in the
+    ring -> {"problems": [], "info": ["the whole cluster is reset"]}."""
     name = host or "this node"
     me = standing.mine(addresses)
     if has_data and not me & set(_addr(a) for a in cluster_ring or []):
@@ -240,7 +241,8 @@ def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None)
     group; running: the hosts where Cassandra runs. Returns {'problems',
     'info', 'ring': the addresses in it}: refused unless a node answered, every node of the ring is a host
     of the group (never wipe part of a cluster that keeps running) and every
-    running host is in that ring (not in another cluster)."""
+    running host is in that ring (not in another cluster). Example: n1 (10.0.0.1) answers a ring of 10.0.0.1 ->
+    {"problems": [], "info": ["the ring (n1=10.0.0.1) is all in the group"], "ring": ["10.0.0.1"]}."""
     known = dict((_addr(a), h) for h, addrs in (addresses_of or {}).items() for a in addrs or [])
     problems, info = [], []
     answered = [a for a in answers or [] if a.get("status")]

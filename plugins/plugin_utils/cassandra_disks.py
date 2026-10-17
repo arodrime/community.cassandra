@@ -226,7 +226,7 @@ def _lookup(result):
 
 def mount_targets(mounts):
     """The mount points of the tuned directories (the results of the findmnt
-    loop, see plan()), but the OS's."""
+    loop, see plan()), but the OS's: /data/cassandra found on /data -> ["/data"]."""
     out = []
     for r in loop_results(mounts):
         item = r.get("item") or {}
