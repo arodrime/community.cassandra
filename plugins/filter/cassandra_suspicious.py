@@ -137,7 +137,7 @@ def _authenticator(values, node):
     extra = values.get("cassandra_extra_settings")
     reached = bool(isinstance(extra, dict) and extra.get("rpc_interface")) or not LOCAL.match(
         str(rpc if rpc is not None else "localhost").strip())
-    if authenticator.split(".")[-1] == "AllowAllAuthenticator" and reached:
+    if authenticator.rsplit(".", maxsplit=1)[-1] == "AllowAllAuthenticator" and reached:
         return [("authenticator: AllowAllAuthenticator", "any client that reaches the node's rpc address gets in; set"
                                                          " cassandra_authenticator: PasswordAuthenticator")]
     return []

@@ -312,12 +312,13 @@ def test_a_deleted_jmx_file_is_shown_and_written_back(tmp_path, deleted, initial
     # the password file is read at each login: no restart; the access file at start: the rights the running
     # Cassandra has are not known to be these
     assert facts["cassandra_apply_config_then"] == {"password": "none", "access": "restart"}[deleted]
-    assert plan == ["n2  will apply, %s" % {"password": "no restart (jmxremote.password: read at each JMX login)",
-                                             "access": "then restart (jmxremote.access: read at start)"}[deleted], "n1  nothing to apply"]
+    said = {"password": "no restart (jmxremote.password: read at each JMX login)",
+            "access": "then restart (jmxremote.access: read at start)"}[deleted]
+    assert plan == ["n2  will apply, %s" % said, "n1  nothing to apply"]
     # the view: the file, absent on n2, written whole (never its content)
     assert view == ["jmxremote." + deleted, "  file: absent   n2   %s differs (written whole)" % "←"]
     if deleted == "access":  # local JMX logs in no one: its rights change nothing
-        facts, plan, _ = jmx_apply(dict(role, cassandra_local_jmx=True))
+        facts, plan, dummy = jmx_apply(dict(role, cassandra_local_jmx=True))
         assert facts["cassandra_apply_config_then"] == "none"
         assert plan[0] == "n2  will apply, no restart (jmxremote.access: local JMX checks no login)"
 
@@ -395,7 +396,7 @@ def test_other_jmx_rights_restart_the_node(tmp_path):
 
 def test_other_jmx_passwords_alone_need_no_restart(tmp_path):
     role = jmx_compare(tmp_path, {"password": "ops other\nmon m0n\n", "access": JMX_FILES["access"]})
-    facts, plan, _ = jmx_apply(role)
+    facts, plan, dummy = jmx_apply(role)
     assert facts["cassandra_apply_config_then"] == "none"
     assert plan == ["n2  will apply, no restart (jmxremote.password: read at each JMX login)", "n1  nothing to apply"]
 

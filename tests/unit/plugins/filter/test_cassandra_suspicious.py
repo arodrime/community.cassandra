@@ -21,8 +21,12 @@ SPEC = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", 
                     "argument_specs.yml")
 
 
-def rows(values, members=MEMBERS):
-    """[(row, the setting, why)] for node4 with these variables."""
+_MEMBERS = object()  # (None is a value: the ring not read)
+
+
+def rows(values, members=_MEMBERS):
+    """[(row, the setting, why)] for node4 with these variables (members: MEMBERS by default)."""
+    members = MEMBERS if members is _MEMBERS else members
     return [(row, setting, why) for row, names, setting, why in suspicious({"node4": values}, members)]
 
 
