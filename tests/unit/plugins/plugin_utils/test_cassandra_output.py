@@ -64,3 +64,53 @@ def test_warnings_once_a_blank_line_apart():
     seen = set()
     assert out.warning_lines(["a"], seen) == ["WARNING - a"]
     assert out.warning_lines(["a", "b"], seen) == ["WARNING - b"]  # said already: left out
+
+
+P = out.PARAGRAPH  # a blank line between two paragraphs of a block
+GIB = 1024 ** 3
+MIB = 1024 ** 2
+
+
+@pytest.mark.parametrize("count, scale, text", [
+    (0, None, "0 B"),
+    (512, None, "512 B"),
+    (1023, None, "1023 B"),
+    (1024, None, "1.0 KiB"),
+    (2048, None, "2.0 KiB"),
+    (1023.97 * 1024, None, "1.0 MiB"),  # not 1024.0 KiB
+    (260.6 * MIB, None, "260.6 MiB"),  # alone: the unit it reads >= 1 in
+    (1000 * MIB, None, "1000.0 MiB"),
+    (1024 * MIB, None, "1.0 GiB"),
+    (41.2 * GIB, None, "41.2 GiB"),
+    (1023.99 * GIB, None, "1.0 TiB"),
+    (5 * 1024 * GIB, None, "5.0 TiB"),
+    (0, 100 * GIB, "0.0 GiB"),
+    (0.3 * GIB, 100 * GIB, "0.3 GiB"),  # the unit of the scale
+    (52 * 1024, 100 * GIB, "<0.1 GiB"),  # never 0.0 for a non-zero size
+    (5 * GIB, 0, "5.0 GiB"),  # no scale: its own unit
+    (-5, None, "0 B"),
+])
+def test_size(count, scale, text):
+    assert out.size(count, scale) == text
+
+
+def test_command_full_and_minimal():
+    assert out.command("cleanup", "inventory.yml", "my_cluster", ["node1", "node2"],
+                       {"cassandra_cleanup_jobs": 2}) == \
+        "ansible-playbook -i inventory.yml community.cassandra.cleanup -e cassandra_hosts=my_cluster" \
+        " --limit node1,node2 -e cassandra_cleanup_jobs=2"
+    assert out.command("status") == "ansible-playbook community.cassandra.status"  # ansible.cfg's inventory
+    assert out.command("topology", ["/srv/inv/a.yml", "/srv/inv/b.yml"], cwd="/srv") == \
+        "ansible-playbook -i inv/a.yml -i inv/b.yml community.cassandra.topology"
+    assert out.command("x", extra={"msg": "two words"}) == \
+        """ansible-playbook community.cassandra.x -e '{"msg": "two words"}'"""
+    assert out.command("x", options=["--vault-id", "prod@file"], extra=["-e a=1"]) == \
+        "ansible-playbook --vault-id prod@file community.cassandra.x -e a=1"
+
+
+def test_todo():
+    assert out.todo([]) == []
+    assert out.todo(["remove node7 from the inventory", None,
+                     {"text": "cleanup the nodes that gave data", "command": "ansible-playbook x"}]) == [
+        "TO DO", "  1. remove node7 from the inventory", P, "  2. cleanup the nodes that gave data:",
+        "     ansible-playbook x"]

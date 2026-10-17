@@ -3,13 +3,31 @@
 """The operator output blocks of plugin_utils/cassandra_output.py, as filters.
 Each returns text (a line, or lines), which a debug task marked cassandra_output: true prints.
 
+cassandra_node_list: names -> "node1..node3, node5".
+cassandra_duration: seconds -> "1h02m".
 cassandra_normal_wait_line: the progress line of the wait for a node to be NORMAL.
+cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
+cassandra_command: the command line that runs a playbook.
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
+
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+
+
+def cassandra_node_list(names, keep_order=False, full=False):
+    """Node names -> one text, runs of names as ranges (full: every name; keep_order: as given, else sorted the
+    natural way): ["node1", "node2", "node3", "node5"] -> "node1..node3, node5"."""
+    return out.nodes(names, keep_order=keep_order, full=full)
+
+
+def cassandra_duration(seconds, short=False):
+    """Seconds -> a duration: 3725 -> "1h02m"."""
+    return out.duration(seconds, short=short)
+
 
 # the modes (netstats) nodetool status shows as a state of its own: as its letters (UJ, then UN once NORMAL)
 _MODE_STATE = {"JOINING": "UJ", "MOVING": "UM", "LEAVING": "UL"}
@@ -28,8 +46,45 @@ def cassandra_normal_wait_line(mode, waited=0, timeout=0, node="", operation="",
                                  "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
 
 
+def _same_sources(a, b):
+    def norm(sources):
+        sources = [sources] if isinstance(sources, str) else list(sources or [])
+        return sorted(os.path.realpath(os.path.expanduser(str(s))) for s in sources if s)
+    return norm(a) == norm(b)
+
+
+def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=None, options=None, cwd=None,
+                      default_inventory=None):
+    """A playbook and the run's options -> the command line that runs it: 'rolling_restart' |
+    cassandra_command(inventory='inv.yml', limit=['n1']) -> "ansible-playbook -i inv.yml
+    community.cassandra.rolling_restart --limit n1". default_inventory: ansible.cfg's (lookup('config',
+    'DEFAULT_HOST_LIST')): no -i when the run's inventory is that one."""
+    if default_inventory and _same_sources(inventory, default_inventory):
+        inventory = None
+    return out.command(playbook, inventory=inventory, hosts=hosts or None, limit=limit or None, extra=extra,
+                       options=options, cwd=cwd)
+
+
+def cassandra_phase(name, names=None, node="", what="", count=None):
+    """A phase line (plugin_utils cassandra_output PHASES): 'decommission' |
+    cassandra_phase(node='node3') -> "Decommissioning node3..."."""
+    return out.phase(name, names=names, node=node, what=what, count=count)
+
+
+def cassandra_check_what(present, kind="", targets=None, replacing="", run=None, absent=None):
+    """The nodes present and the operation's targets -> what preflight's check line says of the cluster
+    (plugin_utils cassandra_output check_what): ["n1", "n2", "n3"] | cassandra_check_what(kind='add',
+    targets=['n4']) -> "3 nodes; adding n4"."""
+    return out.check_what(present, kind=kind or "", targets=targets, replacing=replacing or "", run=run, absent=absent)
+
+
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_node_list": cassandra_node_list,
+            "cassandra_duration": cassandra_duration,
             "cassandra_normal_wait_line": cassandra_normal_wait_line,
+            "cassandra_command": cassandra_command,
+            "cassandra_phase": cassandra_phase,
+            "cassandra_check_what": cassandra_check_what,
         }
