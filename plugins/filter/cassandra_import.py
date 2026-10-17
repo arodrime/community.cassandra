@@ -408,30 +408,30 @@ def _align(rendered, live):
     return live
 
 
-def _import_file(env, series, name, ctx, live):
-    tpl, rendered = _render(env, series, name, ctx)
-    if name.endswith(".properties") and len(tpl) == len(rendered):
-        # key=value files: read each templated setting by its key, wherever the node has it
-        node_kv, found = _properties(live), {}
-        for t, r in zip(tpl, rendered):
-            key = re.match(r"^(?:#\s*)?([\w.-]+)\s*=", r.strip())
-            if "{{" not in t or not key:
-                continue
-            key = key.group(1)
-            value = node_kv.get(key)
-            if value is not None and value.lower() in ("true", "false"):
-                value = value.lower()  # Java's Boolean.parseBoolean
-            line = "%s=%s" % (key, value) if key in node_kv else "# " + r.lstrip("# ")
-            if line == r.strip():
-                continue  # as the role writes it: nothing to read
-            got = _read_line(t, line, ctx)
-            if got is not None:
-                found.update(got)
-        return found
-    # (the settings the stock file has no line for: written as by the role, however the node writes them)
-    live = _align(rendered, _canonical(name, rendered + _declared_samples(series) if name.endswith(".yaml") else rendered,
-                                       live))
-    found = {}
+def _import_properties(tpl, rendered, live, ctx):
+    """A key=value file (the template and its rendering line for line): each templated setting read by its key,
+    wherever the node has it -> {variable: value}."""
+    node_kv, found = _properties(live), {}
+    for t, r in zip(tpl, rendered):
+        key = re.match(r"^(?:#\s*)?([\w.-]+)\s*=", r.strip())
+        if "{{" not in t or not key:
+            continue
+        key = key.group(1)
+        value = node_kv.get(key)
+        if value is not None and value.lower() in ("true", "false"):
+            value = value.lower()  # Java's Boolean.parseBoolean
+        line = "%s=%s" % (key, value) if key in node_kv else "# " + r.lstrip("# ")
+        if line == r.strip():
+            continue  # as the role writes it: nothing to read
+        got = _read_line(t, line, ctx)
+        if got is not None:
+            found.update(got)
+    return found
+
+
+def _extra_lines_at(name, tpl):
+    """Where a file's extra lines go: (its template lines that join a list of them, the index of the line they
+    follow, None when appended at the end)."""
     tail = [t for t in tpl[-2:] if "| join(" in t]
     # cassandra-env.sh and logback.xml: the line their extra lines follow (env: its last one; logback: the one
     # before </configuration>), the lines after it on the node; the JVM options files: lines appended
@@ -439,30 +439,51 @@ def _import_file(env, series, name, ctx, live):
         if name.endswith((".sh", ".xml")) else None
     if after is not None:
         tail = [tpl[after]]
-    appended = []  # (cassandra-env.sh, logback.xml) the node's lines after that one
-    extra = []  # JVM options the node sets that no variable covers: the file's extra options list
+    return tail, after
+
+
+def _read_changed_lines(name, tpl, rendered, live, ctx, after):
+    """The node's lines that differ from the rendering, each read against its template line -> (found: {variable:
+    value}, appended: the node's lines after the line at after (cassandra-env.sh, logback.xml), extra: the JVM
+    options no variable covers, or the lines appended after the last one)."""
+    found, appended, extra = {}, [], []
     ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
     for op, i1, i2, j1, j2 in ops:
-        if op in ("replace", "insert"):
-            for k, j in enumerate(range(j1, j2)):
-                i = i1 + k if op == "replace" and i1 + k < i2 else None
-                got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
-                if got is not None:
-                    found.update(got)
-                elif name.endswith(".options") and live[j].startswith("-"):
-                    # bin/cassandra passes on the lines starting with '-', the last of an option counts:
-                    # at the end of the file, it has the same effect (unless a later line sets it again)
-                    if not any(_option_key(later) == _option_key(live[j]) for later in live[j + 1:]
-                               if later.startswith("-")):
-                        extra.append(live[j])
-                elif after is not None:
-                    # after that line (logback.xml: still inside <configuration>), where the role writes them; a
-                    # blank line of the role's replaced: the node's lines in its place
-                    if live[j].strip() and i1 > after and (i1 == after + 1 or not name.endswith(".xml")) \
-                            and all(not line.strip() for line in rendered[i1:i2]):
-                        appended.append(live[j])
-                elif op == "insert" and i1 >= len(rendered) - 2 and live[j]:
-                    extra.append(live[j])  # lines appended after the last one
+        if op not in ("replace", "insert"):
+            continue
+        for k, j in enumerate(range(j1, j2)):
+            i = i1 + k if op == "replace" and i1 + k < i2 else None
+            got = _read_line(tpl[i], live[j], ctx) if i is not None and "{{" in tpl[i] else None
+            if got is not None:
+                found.update(got)
+            elif name.endswith(".options") and live[j].startswith("-"):
+                # bin/cassandra passes on the lines starting with '-', the last of an option counts:
+                # at the end of the file, it has the same effect (unless a later line sets it again)
+                if not any(_option_key(later) == _option_key(live[j]) for later in live[j + 1:]
+                           if later.startswith("-")):
+                    extra.append(live[j])
+            elif after is not None:
+                # after that line (logback.xml: still inside <configuration>), where the role writes them; a
+                # blank line of the role's replaced: the node's lines in its place
+                if live[j].strip() and i1 > after and (i1 == after + 1 or not name.endswith(".xml")) \
+                        and all(not line.strip() for line in rendered[i1:i2]):
+                    appended.append(live[j])
+            elif op == "insert" and i1 >= len(rendered) - 2 and live[j]:
+                extra.append(live[j])  # lines appended after the last one
+    return found, appended, extra
+
+
+def _import_file(env, series, name, ctx, live):
+    """The values of the variables that render the template of the config file name as the node's lines live ->
+    {variable: value}."""
+    tpl, rendered = _render(env, series, name, ctx)
+    if name.endswith(".properties") and len(tpl) == len(rendered):
+        return _import_properties(tpl, rendered, live, ctx)
+    # (the settings the stock file has no line for: written as by the role, however the node writes them)
+    live = _align(rendered, _canonical(name, rendered + _declared_samples(series) if name.endswith(".yaml") else rendered,
+                                       live))
+    tail, after = _extra_lines_at(name, tpl)
+    found, appended, extra = _read_changed_lines(name, tpl, rendered, live, ctx, after)
     if appended and _carried(name, series, tpl, appended):
         extra = appended  # all of them or none: a block cut in two would not run (if ... fi) or parse (<root>)
     if tail and extra:
