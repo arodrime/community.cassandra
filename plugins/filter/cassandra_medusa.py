@@ -115,6 +115,39 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     except configparser.Error:
         return {"vars": {}, "notes": ["Medusa: /etc/medusa/medusa.ini is not valid INI, NOT imported"]}
     mapping, defaults = role_settings()
+    out = _ini_vars(sections, mapping, defaults)
+
+    notes = []
+    key_file = sections.get("storage", {}).get("key_file", "")
+    if key_file:
+        keys = _credentials(credentials_text, sections.get("storage", {}).get("api_profile", ""))
+        if keys:
+            out["cassandra_medusa_s3_access_key_id"], out["cassandra_medusa_s3_secret_access_key"] = keys
+        else:
+            notes.append("Medusa key file %s kept as it is (not an AWS credentials file with only the two"
+                         " keys, or unreadable): the role does not manage it" % key_file)
+    # owner and mode of medusa.ini, and of the key file the role manages when they differ; the role's
+    # default owner and group: the account Cassandra runs as (account_user, account_group)
+    role = {"owner": found.get("account_user") or "cassandra", "group": found.get("account_group") or "cassandra",
+            "mode": _perm("mode", defaults["cassandra_medusa_config_mode"])}
+    for name, var in (("owner", "user"), ("group", "group"), ("mode", "mode")):
+        config = _perm(name, found.get("ini_" + name, "")) or role[name]
+        if config != role[name]:
+            out["cassandra_medusa_config_" + var] = config
+        key = _perm(name, found.get("key_" + name, ""))
+        if "cassandra_medusa_s3_access_key_id" in out and key and key != config:
+            out["cassandra_medusa_key_file_" + var] = key
+
+    keep = _install_vars(found, defaults, out, notes)
+    if found.get("hint_missing"):
+        notes.append("Medusa: no medusa in %s (import_cluster_medusa_path) on this node, looked for it in the usual"
+                     " places instead" % found["hint_missing"])
+    return {"vars": out, "notes": notes, "keep": keep}
+
+
+def _ini_vars(sections, mapping, defaults):
+    """medusa.ini's settings -> the cassandra_medusa variables (the role's defaults left out, a key the file lacks
+    "" when the role would write one), the other keys in cassandra_medusa_extra_settings."""
     out, extras = {}, {}
     for section, keys in sections.items():
         for key, value in keys.items():
@@ -140,28 +173,12 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
             del out[var]
     if extras:
         out["cassandra_medusa_extra_settings"] = extras
+    return out
 
-    notes = []
-    key_file = sections.get("storage", {}).get("key_file", "")
-    if key_file:
-        keys = _credentials(credentials_text, sections.get("storage", {}).get("api_profile", ""))
-        if keys:
-            out["cassandra_medusa_s3_access_key_id"], out["cassandra_medusa_s3_secret_access_key"] = keys
-        else:
-            notes.append("Medusa key file %s kept as it is (not an AWS credentials file with only the two"
-                         " keys, or unreadable): the role does not manage it" % key_file)
-    # owner and mode of medusa.ini, and of the key file the role manages when they differ; the role's
-    # default owner and group: the account Cassandra runs as (account_user, account_group)
-    role = {"owner": found.get("account_user") or "cassandra", "group": found.get("account_group") or "cassandra",
-            "mode": _perm("mode", defaults["cassandra_medusa_config_mode"])}
-    for name, var in (("owner", "user"), ("group", "group"), ("mode", "mode")):
-        config = _perm(name, found.get("ini_" + name, "")) or role[name]
-        if config != role[name]:
-            out["cassandra_medusa_config_" + var] = config
-        key = _perm(name, found.get("key_" + name, ""))
-        if "cassandra_medusa_s3_access_key_id" in out and key and key != config:
-            out["cassandra_medusa_key_file_" + var] = key
 
+def _install_vars(found, defaults, out, notes):
+    """The Medusa install found on the node -> the variables that install it the same way (in out), its notes
+    (first in notes) -> the ones for this node only (host_vars)."""
     version, venv, package = found.get("version", ""), found.get("venv", ""), found.get("package", "")
     keep = {}
     where = venv or found.get("bin", "")
@@ -208,10 +225,7 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
     else:
         notes.insert(0, "Medusa: medusa.ini imported, but no Medusa install found (%s):"
                         " cassandra_medusa_enabled left false" % (where or "no medusa binary"))
-    if found.get("hint_missing"):
-        notes.append("Medusa: no medusa in %s (import_cluster_medusa_path) on this node, looked for it in the usual"
-                     " places instead" % found["hint_missing"])
-    return {"vars": out, "notes": notes, "keep": keep}
+    return keep
 
 
 class FilterModule(object):
