@@ -11,3 +11,17 @@
   - name: Clean package manager cache
     ansible.builtin.shell: apt-get update && apt-get clean
     when: ansible_facts['os_family'] == 'Debian'
+
+  - name: A repository left by an earlier series (removed by the role)
+    ansible.builtin.copy:
+      content: "[cassandra-41x]\nname=old\nbaseurl=https://redhat.cassandra.apache.org/41x/\nenabled=1\n"
+      dest: /etc/yum.repos.d/cassandra-41x.repo
+      mode: "0644"
+    when: ansible_facts['os_family'] == 'RedHat'
+
+  - name: A repository left by an earlier series (removed by the role)
+    ansible.builtin.copy:
+      content: "Types: deb\nURIs: https://debian.cassandra.apache.org\nSuites: 41x\nComponents: main\n"
+      dest: /etc/apt/sources.list.d/cassandra-41x.sources
+      mode: "0644"
+    when: ansible_facts['os_family'] == 'Debian'

@@ -95,3 +95,24 @@ def test_debian_apt_search(host):
 
     assert cmd.rc == 0
     assert "debian.cassandra.apache.org" in cmd.stdout
+
+
+def test_only_the_current_series_repository(host, os_family):
+    cassandra_version = get_cassandra_version(host)
+    for series in ("311x", "40x", "41x", "50x"):
+        if series == cassandra_version:
+            continue
+        if os_family == "RedHat":
+            assert not host.file("/etc/yum.repos.d/cassandra-{0}.repo".format(series)).exists
+        else:
+            assert not host.file("/etc/apt/sources.list.d/cassandra-{0}.sources".format(series)).exists
+
+
+def test_no_credentials_left(host, os_family):
+    # the converge ends without credentials: the ones of its first run are gone
+    if os_family == "Debian":
+        assert not host.file("/etc/apt/auth.conf.d/cassandra.conf").exists
+    else:
+        f = host.file("/etc/yum.repos.d/cassandra-{0}.repo".format(get_cassandra_version(host)))
+        assert f.mode == 0o644
+        assert "password" not in f.content_string

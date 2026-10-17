@@ -1,0 +1,282 @@
+---
+- name: A password goes with a user
+  ansible.builtin.assert:
+    that: cassandra_install_password == "" or cassandra_install_username != ""
+    fail_msg: >-
+      cassandra_install_password is set without cassandra_install_username: repositories take both
+      (with a token, the service account it belongs to as the user).
+    quiet: true
+
+# Before anything is declared: a repository on a plain directory of package
+# files would break every later dnf/apt call ("Cannot download repomd.xml").
+# Only a clear answer (404) stops the role: no answer may be a proxy set only
+# for dnf/apt, and a URL with yum variables ($releasever) can't be checked.
+- name: Check the URL is a repository
+  ansible.builtin.uri:
+    url: "{{ _url }}"
+    method: GET
+    url_username: "{{ cassandra_install_username | default(omit, true) }}"
+    url_password: "{{ cassandra_install_password | default(omit, true) }}"
+    force_basic_auth: "{{ cassandra_install_username != '' }}"
+    status_code: [200, 404]
+    timeout: 30
+  register: _cassandra_repository_metadata
+  failed_when: false
+  check_mode: false  # read-only
+  no_log: "{{ cassandra_install_url is search('@|[?]') }}"  # credentials or a signature in the URL
+  retries: 3
+  until: _cassandra_repository_metadata.status | default(-1) not in [500, 502, 503, 504]  # no answer: no retry
+  loop: >-
+    {{ [_base ~ '/dists/' ~ cassandra_version ~ '/InRelease', _base ~ '/dists/' ~ cassandra_version ~ '/Release']
+       if ansible_facts['os_family'] == 'Debian' else [_base ~ '/repodata/repomd.xml'] }}
+  loop_control:
+    loop_var: _url
+    label: "{{ _url | regex_replace('//[^/@]*@', '//') }}"
+  vars:
+    _base: "{{ cassandra_install_url | regex_replace('/+$', '') }}"
+  when: "'$' not in cassandra_install_url"
+
+- name: The URL must be a repository
+  ansible.builtin.assert:
+    that: 200 in _codes or _codes | reject('equalto', 404) | list | length > 0
+    fail_msg: >-
+      {{ _shown }} is not a{{ 'n apt' if ansible_facts['os_family'] == 'Debian' else ' yum' }} repository for
+      {{ cassandra_version }} ({{ _results | map(attribute='_url') | map('regex_replace', '^.*/', '') | join(', ') }}: HTTP 404).
+      If it is a plain directory of package files, set cassandra_install_method: packages (cassandra_install then
+      downloads the files from it, with cassandra_package_version). No repository was added.
+    quiet: true
+  vars: &_cassandra_repository_check
+    _results: "{{ _cassandra_repository_metadata.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+    _codes: "{{ _results | map(attribute='status') | list }}"
+    _shown: "{{ cassandra_install_url | regex_replace('//[^/@]*@', '//') }}"
+  when: _results | length > 0
+
+- name: Say the repository could not be checked
+  ansible.builtin.debug:
+    msg: >-
+      WARNING - {{ inventory_hostname }}: {{ _shown }} answers {{ _codes | map('string') | map('regex_replace', '^-1$', 'nothing') | join(', ') }} for its
+      repository metadata: added all the same (dnf/apt may use a proxy of their own). Check the URL and the
+      credentials if the packages don't install.
+  vars:
+    <<: *_cassandra_repository_check
+    cassandra_output: true
+  when:
+    - _results | length > 0
+    - 200 not in _codes and _codes | reject('equalto', 404) | list | length > 0
+
+# apt reads repository credentials from auth.conf.d, not from the sources.
+# First: the apt refresh below needs them (and a new token replaces an expired one)
+- name: Credentials of the Cassandra apt repository (Debian & Ubuntu)
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (community.cassandra.cassandra_repository)
+      machine {{ cassandra_install_url | urlsplit('netloc') }} login {{ cassandra_install_username }} password {{ cassandra_install_password }}
+    dest: /etc/apt/auth.conf.d/cassandra.conf
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  register: _cassandra_repository_credentials
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - cassandra_install_username != ""
+
+- name: No credentials left for the Cassandra apt repository (Debian & Ubuntu)
+  ansible.builtin.include_tasks: remove_apt_credentials.yml
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - cassandra_install_username == ""
+
+# Also under --check: the package tasks below need a current cache to say
+# what they would install
+- name: Refresh the apt cache (Debian & Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  check_mode: false
+  changed_when: false
+  retries: 3
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Install debian packages (Debian & Ubuntu)
+  ansible.builtin.apt:
+    name: "{{ debian_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  retries: 3
+  register: _cassandra_repository_debian_packages
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Set the signing key path
+  ansible.builtin.set_fact:
+    _cassandra_repository_key_path: "{{ cassandra_apt_keyring_path if ansible_facts['os_family'] == 'Debian' else cassandra_rpm_key_path }}"
+
+- name: Ensure the key directory exists
+  ansible.builtin.file:
+    path: "{{ _cassandra_repository_key_path | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Download the Cassandra signing keys and check their fingerprints
+  block:
+    - name: Download the signing keys
+      ansible.builtin.get_url:
+        url: "{{ cassandra_repository_key_url }}"
+        dest: "{{ _cassandra_repository_key_path }}.new"
+        mode: "0644"
+        url_username: "{{ cassandra_install_username if _on_mirror | bool else omit }}"
+        url_password: "{{ cassandra_install_password if _on_mirror | bool else omit }}"
+        force_basic_auth: "{{ _on_mirror | bool }}"
+      retries: 3
+      register: _cassandra_repository_key_download
+      until: _cassandra_repository_key_download is succeeded
+      changed_when: false  # a temp file: the install below reports the change
+      check_mode: false  # read-only for the host's config: the check below needs the file
+      vars:
+        # the mirror's credentials, only when the keys are on the mirror's host (not sent to apache.org)
+        _on_mirror: >-
+          {{ cassandra_repository_key_url is match('https?://') and cassandra_install_username != ''
+             and (cassandra_repository_key_url | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
+
+    # Minimal images (AlmaLinux 10) come without it; Amazon Linux's
+    # gnupg2-minimal has it, and conflicts with gnupg2
+    - name: Look for gpg (RedHat)
+      ansible.builtin.stat:
+        path: /usr/bin/gpg
+      register: _cassandra_repository_gpg
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Install gpg to read them (RedHat)
+      ansible.builtin.package:
+        name: gnupg2
+        state: present
+      retries: 3
+      when:
+        - ansible_facts['os_family'] == "RedHat"
+        - not _cassandra_repository_gpg.stat.exists
+
+    # --check on a blank host: gnupg, installed above, is not really there yet
+    - name: Look for gpg (--check)
+      ansible.builtin.command: gpg --version
+      register: _cassandra_repository_gpg_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_check_mode
+
+    - name: Read the fingerprints of the downloaded keys
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        home=$(mktemp -d); trap 'rm -rf "$home"' EXIT;
+        GNUPGHOME=$home gpg --batch --show-keys --with-colons {{ _cassandra_repository_key_path }}.new
+        | awk -F: '/^pub/ { primary = 1; next } primary && /^fpr/ { print $10; primary = 0 }'
+      args:
+        executable: /bin/bash
+      register: _cassandra_repository_key_list
+      changed_when: false
+      check_mode: false
+      when: _cassandra_repository_gpg_check.rc | default(0) == 0
+
+    - name: Check the downloaded keys are known ones
+      ansible.builtin.assert:
+        that:
+          - _cassandra_repository_key_list.stdout_lines | length > 0
+          - _unknown | length == 0
+        fail_msg: >-
+          {{ cassandra_repository_key_url }} holds no key or unknown keys ({{ _unknown | join(', ') }}).
+          Check them, then add them to cassandra_repository_key_fingerprints.
+        quiet: true
+      when: _cassandra_repository_gpg_check.rc | default(0) == 0
+      vars:
+        _unknown: "{{ _cassandra_repository_key_list.stdout_lines | difference(cassandra_repository_key_fingerprints) }}"
+
+    - name: Install the downloaded keys
+      ansible.builtin.copy:
+        src: "{{ _cassandra_repository_key_path }}.new"
+        dest: "{{ _cassandra_repository_key_path }}"
+        remote_src: true
+        mode: "0644"
+      register: _cassandra_repository_key_downloaded
+  always:
+    - name: Remove the downloaded file
+      ansible.builtin.file:
+        path: "{{ _cassandra_repository_key_path }}.new"
+        state: absent
+      changed_when: false
+      check_mode: false
+
+- name: Ensure Cassandra yum repository exists (RedHat)
+  ansible.builtin.yum_repository:
+    name: "cassandra-{{ cassandra_version }}"
+    description: "Official Cassandra {{ cassandra_version }} yum repo"
+    baseurl: "{{ cassandra_install_url }}"
+    gpgcheck: true
+    gpgkey: "file://{{ cassandra_rpm_key_path }}"
+    username: "{{ cassandra_install_username | default(omit, true) }}"
+    password: "{{ cassandra_install_password | default(omit, true) }}"
+    mode: "{{ '0600' if cassandra_install_username != '' else '0644' }}"  # the file then holds the password
+  diff: false  # the old file may hold a password
+  register: _cassandra_repository_yum
+  when: ansible_facts['os_family'] == "RedHat"
+
+# One series at a time: after a series change (an upgrade), the old series'
+# packages must not come back through its repository
+- name: Remove the repositories of the other series (RedHat)
+  ansible.builtin.yum_repository:
+    name: "cassandra-{{ item }}"
+    state: absent
+  diff: false  # they may hold a password
+  loop: "{{ ['311x', '40x', '41x', '50x'] | reject('equalto', cassandra_version) | list }}"
+  register: _cassandra_repository_old_yum
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Remove the repositories of the other series (Debian & Ubuntu)
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/cassandra-{{ item.0 }}.{{ item.1 }}"
+    state: absent
+  loop: "{{ ['311x', '40x', '41x', '50x'] | reject('equalto', cassandra_version) | product(['list', 'sources']) | list }}"
+  register: _cassandra_repository_old
+  when: ansible_facts['os_family'] == "Debian"
+
+# Earlier versions of the role wrote a one-line .list file
+- name: Remove the one-line Cassandra apt source (Debian & Ubuntu)
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/cassandra-{{ cassandra_version }}.list"
+    state: absent
+  register: _cassandra_repository_one_line
+  when: ansible_facts['os_family'] == "Debian"
+
+# --check on a blank host: python3-debian, which deb822_repository needs even
+# to compare, is not really installed yet
+- name: Look for python3-debian (--check)
+  ansible.builtin.command: python3 -c "import debian"
+  register: _cassandra_repository_python_debian
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - ansible_check_mode
+    - ansible_facts['os_family'] == "Debian"
+
+- name: Ensure Cassandra apt repository exists (Debian & Ubuntu)
+  ansible.builtin.deb822_repository:
+    name: "cassandra-{{ cassandra_version }}"
+    types: deb
+    uris: "{{ cassandra_install_url }}"
+    suites: "{{ cassandra_version }}"
+    components: main
+    signed_by: "{{ cassandra_apt_keyring_path }}"
+  register: _cassandra_repository_apt
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - _cassandra_repository_python_debian.rc | default(0) == 0
+
+- name: Update the apt cache (Debian & Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+  retries: 3
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - _cassandra_repository_apt is changed or _cassandra_repository_old is changed

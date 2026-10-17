@@ -1,0 +1,9 @@
+minor_changes:
+  - "cassandra_repository - ``cassandra_install_url`` points the repository at a mirror, with ``cassandra_install_username`` and ``cassandra_install_password`` when it needs them (in the yum repository file on RedHat, in ``/etc/apt/auth.conf.d/cassandra.conf`` on Debian and Ubuntu, both mode 0600). They are also sent for ``cassandra_repository_key_url`` when it is on the mirror's host."
+  - "cassandra_repository - the URL is checked to be a yum or apt repository before it is added; a plain directory of package files is refused with a message pointing at ``cassandra_install_method: packages``, which adds no repository and removes the ones the role added before."
+  - "cassandra_repository - removes the repositories of the other series, so that the packages of an old series can't come back after an upgrade."
+  - "cassandra_repository - ``cassandra_repository_manage: false`` (the default with ``cassandra_offline: true``) leaves the repositories to other means."
+  - "cassandra_repository - installs gnupg2 when gpg is missing (AlmaLinux 10 images) before reading the downloaded keys' fingerprints."
+  - "cassandra_repository - argument specs for the role's variables."
+bugfixes:
+  - "cassandra_install - under ``--check`` with ``cassandra_install_method: packages``, the dnf calls leave out the ``cassandra-<series>`` repositories that cassandra_repository removes in the real run."
