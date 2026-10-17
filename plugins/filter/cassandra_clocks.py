@@ -414,156 +414,180 @@ def _names(probe, addresses):
     return names
 
 
-def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS):
-    """nodes: [{node, probe (cassandra_clock_probe), samples ([[controller, node] times]), running (Cassandra runs
-    there), manage (cassandra_linux manages its time sync), offline (cassandra_offline), addresses (the node's
-    own)}] -> {nodes: [{node, verdict, ahead, offset, how, text, why, action, ...}], ok: bool, warnings: [str],
-    notes: [str], spread}. A node is ok when its daemon is synchronised and its offset plus the daemon's error
-    bound is within max_ms; with no daemon to ask (a container: the host's clock), when the dates collected over
-    SSH put it within coarse_ms of the others."""
-    max_s, step_s, coarse_s = float(max_ms) / 1000, float(step_ms) / 1000, float(coarse_ms) / 1000
-    nodes = [dict(n) for n in nodes or []]
-    for n in nodes:
-        n["probe"] = n.get("probe") or {}
-        n["skew"] = _skew(n.get("samples"))
-    # true time as the controller's clock sees it: the nodes whose daemon gives their offset, else all of them
+def _reference(nodes):
+    """The nodes (probe, skew set) -> (true time as the controller's clock sees it, whether the daemons' offsets
+    gave it): the median of the nodes whose daemon gives their offset, else of all of them; None with no dates."""
     known = [n["skew"] - n["probe"]["offset"] for n in nodes
              if n["skew"] is not None and n["probe"].get("synchronised") and n["probe"].get("offset") is not None]
     ref = _median(known) if known else _median([n["skew"] for n in nodes if n["skew"] is not None])
-    referenced = bool(known)
-    skews = [n["skew"] for n in nodes if n["skew"] is not None]
-    addresses = {}
-    for n in nodes:
-        for a in n.get("addresses") or []:
-            addresses[str(a)] = n["node"]
-    out, warnings, notes = [], [], []
-    for n in nodes:
-        p = n["probe"]
-        coarse = (n["skew"] - ref) if n["skew"] is not None and ref is not None else None
-        v = {"node": n["node"], "daemon": p.get("daemon", ""), "service": p.get("service", ""),
-             "active": bool(p.get("active")), "synchronised": bool(p.get("synchronised")), "source": p.get("source", ""),
-             "offset": p.get("offset"), "bound": p.get("bound"), "coarse": coarse, "how": "daemon",
-             "running": bool(n.get("running")), "container": p.get("container", ""), "leap": p.get("leap", ""),
-             "ahead": False, "why": "", "action": "none", "estimate": None}
-        why = _bad(p, max_s) if not p.get("kernel_only") else "kernel only"
-        if p.get("kernel_only") and p.get("kernel_synced") is not True:
-            why = "not synchronised"
-        if not why:
-            v["verdict"] = "ok"
-        elif why == "off":
-            v["verdict"] = "off"
-            v["ahead"] = p["offset"] > 0
-            if (p.get("bound") or 0.0) > max_s and _converging(p, max_s):
-                v["why"] = ("%s still converging (just started: error bound %s): run again in a few minutes, or"
-                            " raise cassandra_clock_sync_timeout"
-                            % (p.get("service") or "its time sync", ms(p["bound"], False)))
-                v["action"] = "manual"
-            elif (p.get("bound") or 0.0) > max_s:
-                v["why"] = ("its daemon's error bound alone is %s (root delay and dispersion): a closer or better"
-                            " source is needed" % ms(p["bound"], False))
-                v["action"] = "manual"
-            else:
-                v["why"] = "%s its source by %s, more than %s" % ("ahead of" if v["ahead"] else "behind",
-                                                                  ms(abs(p["offset"]), False), ms(max_s, False))
-                v["estimate"] = abs(p["offset"])
-                # what the daemon slews by itself (timesyncd steps past 400 ms, ntpd past 128 ms, on their own)
-                slews = min(step_s, {"timesyncd": 0.4, "ntp": 0.128}.get(p.get("daemon"), step_s))
-                v["action"] = "slew" if abs(p["offset"]) <= slews else ("window" if v["running"] else "step")
-                if v["action"] in ("window", "step") and p.get("daemon") == "ntp":
-                    v["action"] = "manual"  # no step of ours for ntpd: its own start (ntpd -g) or chrony
-                    v["why"] += "; ntpd steps it at its start (-g), or move the node to chrony"
-                if v["action"] == "slew" and p.get("daemon") != "chrony":
-                    v["why"] += (" (%s slews at most 0.5 ms per second: about %d min)"
-                                 % (p.get("service"), abs(p["offset"]) / 0.0005 // 60 + 1))
-        elif why in ("not synchronised", "no offset"):
-            v["verdict"] = "unsynchronised"
-            if p.get("local"):
-                v["why"] = "%s follows only its own clock (local stratum): no real source" % p.get("service")
-            elif p.get("sources", 0) == 0:
-                v["why"] = "%s has no source configured" % p.get("service")
-            elif p.get("reachable", 0) == 0:
-                v["why"] = "%s reaches none of its %d sources" % (p.get("service"), p["sources"])
-            else:
-                v["why"] = "%s has not synchronised to any of its sources" % p.get("service")
-            v["action"] = "manual"
-        else:  # no daemon running (or one the probe can only ask the kernel about)
-            # the kernel synchronised and no daemon of ours installed, or one disabled on a node whose time sync is
-            # left alone (PTP: chronyd disabled, phc2sys sets the clock); one only stopped leaves the flag set for hours
-            other = (not p.get("container") and p.get("kernel_synced") is True
-                     and (not p.get("installed") or not p.get("enabled") and not n.get("manage", True)))
-            other = other or p.get("kernel_only") and p.get("kernel_synced") is True
-            if other:
-                # disciplined by a daemon the probe does not know (PTP, openntpd, the hypervisor's): compared coarsely
-                v["how"] = "coarse"
-                if coarse is not None and referenced and abs(coarse) > coarse_s:
-                    v["verdict"], v["ahead"], v["action"] = "off", coarse > 0, "manual"
-                    v["why"] = ("synchronised by another means (the kernel says so), %s the others by about %s (dates"
-                                " over SSH, coarse)" % ("ahead of" if coarse > 0 else "behind", ms(abs(coarse), False)))
-                else:
-                    v["verdict"] = "ok"
-                    v["why"] = ("%s, synchronised (the kernel says so; this systemd tells no offset)" % p["service"]
-                                if p.get("kernel_only") else
-                                "synchronised by another means (the kernel says so; %s disabled, its time sync left alone)"
-                                % p["service"] if p.get("installed") else
-                                "synchronised by another means (the kernel says so; no chrony, timesyncd or ntpd)")
-            elif p.get("container"):
-                # the host's clock (a container shares its kernel): the host syncs it, the dates say how far it is
-                v["how"] = "coarse"
-                if coarse is None or not referenced and len(skews) < 2:
-                    v["verdict"], v["why"] = "ok", "the host's clock (%s container)" % p["container"]
-                elif abs(coarse) > coarse_s:
-                    v["verdict"], v["ahead"] = "off", coarse > 0
-                    v["why"] = ("the host's clock (%s container), %s the others by about %s (dates over SSH, coarse)"
-                                % (p["container"], "ahead of" if coarse > 0 else "behind", ms(abs(coarse), False)))
-                    v["action"] = "manual"
-                elif p.get("kernel_synced") is False:
-                    v["verdict"], v["action"] = "unsynchronised", "manual"
-                    v["why"] = "the host's clock (%s container), its kernel says not synchronised" % p["container"]
-                else:
-                    v["verdict"] = "ok"
-                    v["why"] = "the host's clock (%s container), within %s of the others (coarse)" % (
-                        p["container"], ms(coarse_s, False))
-            else:
-                v["verdict"] = "no_sync"
-                v["why"] = ("%s %s" % (p["service"], "masked" if p.get("masked") else "installed, not running")
-                            if p.get("installed") else "no time sync installed")
-                # how far it is: chronyd -Q measured it, else the dates against the nodes that are synchronised
-                v["estimate"] = p.get("query") if p.get("query") is not None else (
-                    abs(coarse) if coarse is not None and referenced else None)
-                if v["estimate"] is not None:
-                    v["ahead"] = coarse is not None and referenced and coarse > 0
-                if not n.get("manage", True):
-                    v["action"] = "manual"
-                    v["why"] += " (its time sync is left alone: %s false)" % (n.get("unmanaged_by") or "cassandra_linux_timesync")
-                elif p.get("daemon") == "ntp":
-                    v["action"] = "manual"  # installing chrony or timesyncd would replace the site's ntpd
-                    v["why"] += " (start ntpd, or move the node to chrony)"
-                elif p.get("masked"):
-                    v["action"] = "manual"
-                elif n.get("offline") and not p.get("installed"):
-                    v["action"] = "manual"
-                    v["why"] += " (cassandra_offline: install chrony from your mirror)"
-                elif not v["running"]:
-                    v["action"] = "step"  # started, synchronised, stepped if still off: nothing runs to be moved
-                elif p.get("query") is not None and p["query"] < 0.9 * _start_limit(p, step_s):
-                    v["action"] = "start"  # measured small (chronyd -Q): the daemon slews it, Cassandra running
-                else:
-                    v["action"] = "window"
-        if p.get("container") and v["action"] in ("step", "window"):
-            v["action"] = "manual"
-            v["why"] += "; its clock is the host's (%s container): step the host's, never from a container" % (
-                p["container"])
-        v["text"] = _describe(v, p)
-        out.append(v)
-        if p.get("others"):
-            warnings.append("%s runs several time sync daemons (%s and %s): they fight over the clock, keep one"
-                            % (n["node"], p["service"], ", ".join(p["others"])))
-    # the warnings of the cluster
-    # a node where Cassandra runs (it may have stamped writes), ahead by what its daemon says, or by more than the
-    # dates over SSH can tell
+    return ref, bool(known)
+
+
+def _off(p, running, max_s, step_s):
+    """A probe whose offset plus error bound is over max_s, whether Cassandra runs there -> the verdict's fields:
+    why (converging, a far source, or how far) and what sync_clocks does (slew, step, window, manual)."""
+    v = {"verdict": "off", "ahead": p["offset"] > 0}
+    if (p.get("bound") or 0.0) > max_s and _converging(p, max_s):
+        v["why"] = ("%s still converging (just started: error bound %s): run again in a few minutes, or"
+                    " raise cassandra_clock_sync_timeout"
+                    % (p.get("service") or "its time sync", ms(p["bound"], False)))
+        v["action"] = "manual"
+    elif (p.get("bound") or 0.0) > max_s:
+        v["why"] = ("its daemon's error bound alone is %s (root delay and dispersion): a closer or better"
+                    " source is needed" % ms(p["bound"], False))
+        v["action"] = "manual"
+    else:
+        v["why"] = "%s its source by %s, more than %s" % ("ahead of" if v["ahead"] else "behind",
+                                                          ms(abs(p["offset"]), False), ms(max_s, False))
+        v["estimate"] = abs(p["offset"])
+        # what the daemon slews by itself (timesyncd steps past 400 ms, ntpd past 128 ms, on their own)
+        slews = min(step_s, {"timesyncd": 0.4, "ntp": 0.128}.get(p.get("daemon"), step_s))
+        v["action"] = "slew" if abs(p["offset"]) <= slews else ("window" if running else "step")
+        if v["action"] in ("window", "step") and p.get("daemon") == "ntp":
+            v["action"] = "manual"  # no step of ours for ntpd: its own start (ntpd -g) or chrony
+            v["why"] += "; ntpd steps it at its start (-g), or move the node to chrony"
+        if v["action"] == "slew" and p.get("daemon") != "chrony":
+            v["why"] += (" (%s slews at most 0.5 ms per second: about %d min)"
+                         % (p.get("service"), abs(p["offset"]) / 0.0005 // 60 + 1))
+    return v
+
+
+def _unsynchronised(p):
+    """A probe whose daemon runs but is not synchronised (or gives no offset) -> the verdict's fields."""
+    if p.get("local"):
+        why = "%s follows only its own clock (local stratum): no real source" % p.get("service")
+    elif p.get("sources", 0) == 0:
+        why = "%s has no source configured" % p.get("service")
+    elif p.get("reachable", 0) == 0:
+        why = "%s reaches none of its %d sources" % (p.get("service"), p["sources"])
+    else:
+        why = "%s has not synchronised to any of its sources" % p.get("service")
+    return {"verdict": "unsynchronised", "why": why, "action": "manual"}
+
+
+def _other_means(p, coarse, referenced, coarse_s):
+    """A node the kernel says synchronised by a daemon the probe does not know (PTP, openntpd, the hypervisor's),
+    its gap to the others by the dates (coarse), whether the daemons' offsets gave the reference -> the verdict's
+    fields: compared coarsely."""
+    v = {"how": "coarse"}
+    if coarse is not None and referenced and abs(coarse) > coarse_s:
+        v["verdict"], v["ahead"], v["action"] = "off", coarse > 0, "manual"
+        v["why"] = ("synchronised by another means (the kernel says so), %s the others by about %s (dates"
+                    " over SSH, coarse)" % ("ahead of" if coarse > 0 else "behind", ms(abs(coarse), False)))
+    else:
+        v["verdict"] = "ok"
+        v["why"] = ("%s, synchronised (the kernel says so; this systemd tells no offset)" % p["service"]
+                    if p.get("kernel_only") else
+                    "synchronised by another means (the kernel says so; %s disabled, its time sync left alone)"
+                    % p["service"] if p.get("installed") else
+                    "synchronised by another means (the kernel says so; no chrony, timesyncd or ntpd)")
+    return v
+
+
+def _host_clock(p, coarse, referenced, dated, coarse_s):
+    """A container's probe (the host's clock: the host syncs it), its gap to the others by the dates, whether the
+    daemons' offsets gave the reference, how many nodes gave dates -> the verdict's fields."""
+    v = {"how": "coarse"}
+    if coarse is None or not referenced and dated < 2:
+        v["verdict"], v["why"] = "ok", "the host's clock (%s container)" % p["container"]
+    elif abs(coarse) > coarse_s:
+        v["verdict"], v["ahead"] = "off", coarse > 0
+        v["why"] = ("the host's clock (%s container), %s the others by about %s (dates over SSH, coarse)"
+                    % (p["container"], "ahead of" if coarse > 0 else "behind", ms(abs(coarse), False)))
+        v["action"] = "manual"
+    elif p.get("kernel_synced") is False:
+        v["verdict"], v["action"] = "unsynchronised", "manual"
+        v["why"] = "the host's clock (%s container), its kernel says not synchronised" % p["container"]
+    else:
+        v["verdict"] = "ok"
+        v["why"] = "the host's clock (%s container), within %s of the others (coarse)" % (
+            p["container"], ms(coarse_s, False))
+    return v
+
+
+def _no_sync(p, n, coarse, referenced, running, step_s):
+    """A node with no time sync running, its gap to the others by the dates, whether the daemons' offsets gave the
+    reference, whether Cassandra runs there -> the verdict's fields: how far it is (chronyd -Q, else the dates) and
+    what sync_clocks does (start, step, window, manual)."""
+    v = {"verdict": "no_sync"}
+    v["why"] = ("%s %s" % (p["service"], "masked" if p.get("masked") else "installed, not running")
+                if p.get("installed") else "no time sync installed")
+    # how far it is: chronyd -Q measured it, else the dates against the nodes that are synchronised
+    v["estimate"] = p.get("query") if p.get("query") is not None else (
+        abs(coarse) if coarse is not None and referenced else None)
+    if v["estimate"] is not None:
+        v["ahead"] = coarse is not None and referenced and coarse > 0
+    if not n.get("manage", True):
+        v["action"] = "manual"
+        v["why"] += " (its time sync is left alone: %s false)" % (n.get("unmanaged_by") or "cassandra_linux_timesync")
+    elif p.get("daemon") == "ntp":
+        v["action"] = "manual"  # installing chrony or timesyncd would replace the site's ntpd
+        v["why"] += " (start ntpd, or move the node to chrony)"
+    elif p.get("masked"):
+        v["action"] = "manual"
+    elif n.get("offline") and not p.get("installed"):
+        v["action"] = "manual"
+        v["why"] += " (cassandra_offline: install chrony from your mirror)"
+    elif not running:
+        v["action"] = "step"  # started, synchronised, stepped if still off: nothing runs to be moved
+    elif p.get("query") is not None and p["query"] < 0.9 * _start_limit(p, step_s):
+        v["action"] = "start"  # measured small (chronyd -Q): the daemon slews it, Cassandra running
+    else:
+        v["action"] = "window"
+    return v
+
+
+def _no_daemon(p, n, coarse, referenced, dated, running, coarse_s, step_s):
+    """A node no daemon of the probe reports on (none running, or one it can only ask the kernel about) -> the
+    verdict's fields: synchronised by other means, the host's clock (a container), or no time sync."""
+    # the kernel synchronised and no daemon of ours installed, or one disabled on a node whose time sync is
+    # left alone (PTP: chronyd disabled, phc2sys sets the clock); one only stopped leaves the flag set for hours
+    other = (not p.get("container") and p.get("kernel_synced") is True
+             and (not p.get("installed") or not p.get("enabled") and not n.get("manage", True)))
+    other = other or p.get("kernel_only") and p.get("kernel_synced") is True
+    if other:
+        return _other_means(p, coarse, referenced, coarse_s)
+    if p.get("container"):
+        return _host_clock(p, coarse, referenced, dated, coarse_s)
+    return _no_sync(p, n, coarse, referenced, running, step_s)
+
+
+def _node_verdict(n, ref, referenced, dated, max_s, step_s, coarse_s):
+    """One node (probe, skew set), the reference time, whether the daemons' offsets gave it, how many nodes gave
+    dates, the limits (seconds) -> its verdict {node, verdict, ahead, offset, how, text, why, action, ...}."""
+    p = n["probe"]
+    coarse = (n["skew"] - ref) if n["skew"] is not None and ref is not None else None
+    v = {"node": n["node"], "daemon": p.get("daemon", ""), "service": p.get("service", ""),
+         "active": bool(p.get("active")), "synchronised": bool(p.get("synchronised")), "source": p.get("source", ""),
+         "offset": p.get("offset"), "bound": p.get("bound"), "coarse": coarse, "how": "daemon",
+         "running": bool(n.get("running")), "container": p.get("container", ""), "leap": p.get("leap", ""),
+         "ahead": False, "why": "", "action": "none", "estimate": None}
+    why = _bad(p, max_s) if not p.get("kernel_only") else "kernel only"
+    if p.get("kernel_only") and p.get("kernel_synced") is not True:
+        why = "not synchronised"
+    if not why:
+        v["verdict"] = "ok"
+    elif why == "off":
+        v.update(_off(p, v["running"], max_s, step_s))
+    elif why in ("not synchronised", "no offset"):
+        v.update(_unsynchronised(p))
+    else:
+        v.update(_no_daemon(p, n, coarse, referenced, dated, v["running"], coarse_s, step_s))
+    if p.get("container") and v["action"] in ("step", "window"):
+        v["action"] = "manual"
+        v["why"] += "; its clock is the host's (%s container): step the host's, never from a container" % (
+            p["container"])
+    v["text"] = _describe(v, p)
+    return v
+
+
+def _ahead_warnings(out, coarse_s):
+    """The verdicts -> the warnings of the nodes where Cassandra runs (it may have stamped writes) ahead by what
+    their daemon says, or by more than the dates over SSH can tell."""
     ahead = [v for v in out if v["ahead"] and v["verdict"] != "ok" and v["running"]
              and (v["offset"] is not None and v["how"] == "daemon" and v["active"]
                   or abs(v["coarse"] or v["estimate"] or 0) > coarse_s)]
+    warnings = []
     for v in ahead:
         amount = v["offset"] if v["offset"] is not None and v["how"] == "daemon" and v["active"] else v["coarse"] or v["estimate"]
         warnings.append(
@@ -572,6 +596,12 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
             " a correct clock in the next %s loses against them (the latest timestamp wins), silently; TTLs it"
             " set expire late, its compactions purge tombstones early. Check what was written through it lately."
             % (v["node"], ms(abs(amount or 0), False), ms(abs(amount or 0), False)))
+    return warnings
+
+
+def _source_groups(nodes, out, addresses):
+    """The nodes, their verdicts, {address: node} -> the groups of synchronised nodes that share a source (or follow
+    each other), [{names, nodes}], in the order they formed."""
     groups = []
     for n, v in zip(nodes, out):
         if not v["synchronised"]:
@@ -584,6 +614,14 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
             merged["nodes"] = g["nodes"] + merged["nodes"]
             groups.remove(g)
         groups.append(merged)
+    return groups
+
+
+def _cluster_warnings(nodes, out, addresses, coarse_s):
+    """The nodes, their verdicts, {address: node} -> the warnings of the cluster: a clock ahead, unrelated sources,
+    a leap second pending."""
+    warnings = _ahead_warnings(out, coarse_s)
+    groups = _source_groups(nodes, out, addresses)
     if len(groups) > 1:
         said = "; ".join("%s: %s" % (", ".join(g["nodes"]), ", ".join(sorted(x for x in g["names"] if not x.startswith("node:"))) or "?")
                          for g in groups)
@@ -596,6 +634,12 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
         warnings.append(
             "a leap second is pending on %s: nodes whose sources smear it and nodes that step it differ by up to"
             " 1 s for hours around it." % ", ".join(leaping))
+    return warnings
+
+
+def _cluster_notes(out, coarse_s):
+    """The verdicts -> the notes: timesyncd's limits, the coarse measure of the nodes without a daemon."""
+    notes = []
     timesyncd = [v["node"] for v in out if v["daemon"] == "timesyncd" and v["active"]]
     if timesyncd:
         notes.append("systemd-timesyncd on %s: one server at a time, no error bound of its own, and it steps the clock"
@@ -604,9 +648,38 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
     if any(v["how"] == "coarse" for v in out):
         notes.append("a node without its own time sync daemon (a container) is compared by the dates collected over"
                      " SSH: a coarse measure, only a gap over %s counts." % ms(coarse_s, False))
+    return notes
+
+
+def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS):
+    """nodes: [{node, probe (cassandra_clock_probe), samples ([[controller, node] times]), running (Cassandra runs
+    there), manage (cassandra_linux manages its time sync), offline (cassandra_offline), addresses (the node's
+    own)}] -> {nodes: [{node, verdict, ahead, offset, how, text, why, action, ...}], ok: bool, warnings: [str],
+    notes: [str], spread}. A node is ok when its daemon is synchronised and its offset plus the daemon's error
+    bound is within max_ms; with no daemon to ask (a container: the host's clock), when the dates collected over
+    SSH put it within coarse_ms of the others."""
+    max_s, step_s, coarse_s = float(max_ms) / 1000, float(step_ms) / 1000, float(coarse_ms) / 1000
+    nodes = [dict(n) for n in nodes or []]
+    for n in nodes:
+        n["probe"] = n.get("probe") or {}
+        n["skew"] = _skew(n.get("samples"))
+    ref, referenced = _reference(nodes)
+    skews = [n["skew"] for n in nodes if n["skew"] is not None]
+    addresses = {}
+    for n in nodes:
+        for a in n.get("addresses") or []:
+            addresses[str(a)] = n["node"]
+    out, warnings = [], []
+    for n in nodes:
+        out.append(_node_verdict(n, ref, referenced, len(skews), max_s, step_s, coarse_s))
+        p = n["probe"]
+        if p.get("others"):
+            warnings.append("%s runs several time sync daemons (%s and %s): they fight over the clock, keep one"
+                            % (n["node"], p["service"], ", ".join(p["others"])))
+    warnings += _cluster_warnings(nodes, out, addresses, coarse_s)
     spread = (max(skews) - min(skews)) if len(skews) > 1 else None
-    return {"nodes": out, "ok": all(v["verdict"] == "ok" for v in out), "warnings": warnings, "notes": notes,
-            "spread": spread, "max_ms": float(max_ms)}
+    return {"nodes": out, "ok": all(v["verdict"] == "ok" for v in out), "warnings": warnings,
+            "notes": _cluster_notes(out, coarse_s), "spread": spread, "max_ms": float(max_ms)}
 
 
 def _start_limit(p, step_s):
