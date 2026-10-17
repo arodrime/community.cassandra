@@ -385,8 +385,8 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data, inventor
             # ours (their message shows no value) or a missing variable; not another filter's
             # error (2.19+: Ansible's wrapper is an AnsibleFilterError too)
             if undefined_name(exc) or (type(exc) is AnsibleFilterError  # pylint: disable=unidiomatic-typecheck
-                                   and exc.__cause__ is None
-                                   and str(exc).startswith("cassandra_")):
+                                       and exc.__cause__ is None
+                                       and str(exc).startswith("cassandra_")):
                 raise
             # which node, not the message (it may show a value read from it)
             error = error_without_message("cassandra_import_self_check_nodes", str(node.get("address")))
