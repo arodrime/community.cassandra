@@ -23,12 +23,14 @@ options:
   password:
     description:
       - The password to authenticate with.
+      - Requires username.
     type: str
     aliases:
       - "login_password"
   password_file:
     description:
       - Path to a file containing the password.
+      - Requires username.
     type: str
     aliases:
       - "login_password_file"
