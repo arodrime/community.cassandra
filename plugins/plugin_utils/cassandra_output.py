@@ -1543,45 +1543,13 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     def said(o):
         return o.get("said") or (would(o.get("outcome", "")) if check else str(o.get("outcome", "")))
 
-    tally = {}
-    for o in done:
-        tally.setdefault(said(o), []).append(o["node"])
-    if check:
-        counts = [("%s on %s" if len(word.split()) > 2 and word != "would clean up" else "%s %s") % (word, plural(len(names), "node"))
-                  for word, names in tally.items()]
-    else:
-        counts = ["%d %s" % (len(names), word) for word, names in tally.items()]
-    counts += ["%d failed" % len(failed)] if failed else []
-    counts += ["%d not touched" % len(skipped)] if skipped else []
-    verdict = "FAILED" if failed else ("CHECK" if check else ("DONE" if done else "NOTHING TO DO"))
-    head = "  ".join(x for x in [verdict, operation, cluster, ", ".join(counts) or "nothing to do"] if x)
-    if seconds is not None and not check:
-        head += " (%s)" % duration(seconds)
-    if check:
-        head += "   nothing was changed"
-    lines = [head]
-
-    rows = []
     groups = {}
     for o in done:
         groups.setdefault(said(o), []).append(o)
+    lines = [_recap_verdict(operation, cluster, groups, failed, skipped, check, seconds)]
+    rows = []
     for word, members in groups.items():
-        times = [o["seconds"] for o in members if o.get("seconds") is not None]
-        middle = _median(times) if times else None
-        slow = [o for o in members if middle and len(times) > 1 and o.get("seconds") is not None
-                and o["seconds"] > slow_factor * middle]
-        usual = [o for o in members if o not in slow]
-        if usual:
-            spread = sorted(o["seconds"] for o in usual if o.get("seconds") is not None)
-            note = ""
-            if spread and not check:
-                note = "(%s each)" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
-                    else "(%s..%s each)" % (duration(spread[0]), duration(spread[-1]))
-                if len(usual) == 1:
-                    note = duration(spread[0])
-            rows.append([nodes([o["node"] for o in usual], keep_order=True, full=full), word, note])
-        for o in slow:
-            rows.append([o["node"], word, "%s  %s slow (median %s)" % (duration(o["seconds"]), ARROW, duration(middle))])
+        rows += _recap_done_rows(word, members, check, full, slow_factor)
     # a failure's reason on its own line under its row: the columns are not sized on it
     under = {}
     for o in failed:
@@ -1598,6 +1566,48 @@ def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, f
     if extra:
         lines += [""] + list(extra)
     return lines
+
+
+def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds):
+    """The recap's first line: verdict, operation, cluster, the counts by outcome (groups: {outcome as said:
+    [outcomes]}), the run's duration; under check, that nothing was changed."""
+    if check:
+        counts = [("%s on %s" if len(word.split()) > 2 and word != "would clean up" else "%s %s") % (word, plural(len(members), "node"))
+                  for word, members in groups.items()]
+    else:
+        counts = ["%d %s" % (len(members), word) for word, members in groups.items()]
+    counts += ["%d failed" % len(failed)] if failed else []
+    counts += ["%d not touched" % len(skipped)] if skipped else []
+    verdict = "FAILED" if failed else ("CHECK" if check else ("DONE" if groups else "NOTHING TO DO"))
+    head = "  ".join(x for x in [verdict, operation, cluster, ", ".join(counts) or "nothing to do"] if x)
+    if seconds is not None and not check:
+        head += " (%s)" % duration(seconds)
+    if check:
+        head += "   nothing was changed"
+    return head
+
+
+def _recap_done_rows(word, members, check, full, slow_factor):
+    """The rows of the nodes done with one same outcome (word): the usual ones together with their times, then
+    each one slower than slow_factor times the group's median on its own."""
+    times = [o["seconds"] for o in members if o.get("seconds") is not None]
+    middle = _median(times) if times else None
+    slow = [o for o in members if middle and len(times) > 1 and o.get("seconds") is not None
+            and o["seconds"] > slow_factor * middle]
+    usual = [o for o in members if o not in slow]
+    rows = []
+    if usual:
+        spread = sorted(o["seconds"] for o in usual if o.get("seconds") is not None)
+        note = ""
+        if spread and not check:
+            note = "(%s each)" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
+                else "(%s..%s each)" % (duration(spread[0]), duration(spread[-1]))
+            if len(usual) == 1:
+                note = duration(spread[0])
+        rows.append([nodes([o["node"] for o in usual], keep_order=True, full=full), word, note])
+    for o in slow:
+        rows.append([o["node"], word, "%s  %s slow (median %s)" % (duration(o["seconds"]), ARROW, duration(middle))])
+    return rows
 
 
 def perm_lines(changes, indent="  "):
