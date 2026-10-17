@@ -3070,7 +3070,7 @@ def _decrypt(text, password):
     try:
         from ansible.parsing.vault import VaultLib, VaultSecret
         return to_text(VaultLib([("default", VaultSecret(to_bytes(password)))]).decrypt(to_bytes(text)))
-    except Exception:
+    except Exception:  # pylint: disable=broad-except  # a wrong password, a damaged file: not decrypted
         return None
 
 
