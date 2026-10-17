@@ -184,3 +184,28 @@ def test_health_peer_leaves_out_the_target_nodes(extra, peer):
     variables = dict(HEALTH["vars"], inventory_hostname="n1", groups={"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"]},
                      cassandra_hosts="prod", hostvars={}, **extra)
     assert render(task["_cassandra_health_peer"], **variables) == peer
+
+
+def test_a_former_name_set_for_any_node_refused_in_preflight():
+    """A former name in the vars of a group the first host is not in (a datacenter's, a rack's) or in another node's
+    host_vars: variables_check.yml does not see it, preflight refuses it (not only a WARNING)."""
+    tasks = play("preflight.yml", "Cassandra preflight checks")["tasks"]
+    names = [t.get("name") for t in tasks]
+    refuse = tasks[names.index("No variable under a former name on any node")]
+    assert names.index("Find the cassandra_* variables no role or playbook knows") < names.index(refuse["name"]) \
+        < names.index("Warn about them")
+    assert refuse["run_once"] and refuse["any_errors_fatal"]
+    hostvars = {"n1": {"_cassandra_preflight_unknown": {}},
+                "n2": {"_cassandra_preflight_unknown": {"cassandra_config_owner": "cassandra_config_user",
+                                                        "cassandra_heap_sise": "cassandra_heap_size"}},
+                "n3": {"_cassandra_preflight_unknown": {"cassandra_config_owner": "cassandra_config_user"}},
+                "n4": {}}  # not read (unreachable)
+    variables = dict(refuse["vars"], ansible_play_hosts=["n1", "n2", "n3", "n4"], hostvars=hostvars)
+    assert render("{{ %s }}" % refuse["ansible.builtin.assert"]["that"], **variables) is False
+    msg = render(refuse["ansible.builtin.assert"]["fail_msg"], **variables)
+    assert msg.splitlines() == ["REFUSED  variable names  nothing was changed",
+                                "  cassandra_config_owner (set for n2, n3) is renamed cassandra_config_user:"
+                                " set cassandra_config_user instead."]
+    hostvars["n2"]["_cassandra_preflight_unknown"].pop("cassandra_config_owner")
+    hostvars["n3"]["_cassandra_preflight_unknown"] = {}
+    assert render("{{ %s }}" % refuse["ansible.builtin.assert"]["that"], **dict(variables, hostvars=hostvars)) is True
