@@ -1,0 +1,67 @@
+---
+# The node's host ID, its own ring and the rings the others see (node_standing_read.yml)
+- name: Read this node's host ID
+  ansible.builtin.command: "{{ _cassandra_service_nodetool }} info"
+  register: cassandra_node_standing_info
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only; --check needs it too
+  no_log: "{{ cassandra_jmx_password | length > 0 }}"
+  when:
+    - _running | bool
+    - _cassandra_node_standing_ring | default(true) | bool  # only matched against a ring
+  vars:
+    _running: >-
+      {{ cassandra_node_reset_jvm.rc == 0
+         or cassandra_node_reset_unit.status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}
+
+# the preflight read it already, when it runs there and the playbook asked for it
+- name: Read this node's own ring
+  community.cassandra.cassandra_status:
+    down: 10000
+    interval: 0
+  module_defaults:
+    community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+  register: cassandra_node_reset_own
+  failed_when: false
+  when:
+    - cassandra_node_reset_jvm.rc == 0
+    - _cassandra_node_standing_ring | default(true) | bool
+    - not _cassandra_preflight_view.cluster_status | default(none)  # the preflight read it (a failed read: again)
+
+# Every other node of the cluster group, but the ones the preflight found stopped and the ones
+# being added or reset (they may run alone): an answer of a node outside the cluster (its own
+# ring) can't hide the answers of the real members
+- name: Work out which nodes to ask
+  ansible.builtin.set_fact:
+    _cassandra_node_standing_from: "{{ _others | reject('in', _stopped) | list }}"
+    _cassandra_node_standing_stopped: "{{ _stopped }}"
+  vars:
+    _aside_pattern: "{{ [cassandra_target_nodes | default([])] | flatten | select | join(',') }}"
+    # the nodes being added or reset (the play's hosts when not named: topology runs this on every node)
+    _aside: >-
+      {{ query('ansible.builtin.inventory_hostnames', _aside_pattern) if _aside_pattern else ansible_play_hosts_all }}
+    _others: "{{ query('community.cassandra.cassandra_nodes') | default([]) | reject('in', _aside + [inventory_hostname]) | list }}"
+    _stopped: >-
+      {{ _others | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
+         | rejectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list }}
+
+# Those the preflight did not read (left out by --limit, or not asked for) only
+- name: Read the ring other nodes of the cluster see
+  community.cassandra.cassandra_status:
+    down: 10000  # read it whatever the state of the nodes
+    interval: 0  # no wait when a node is down
+    port: "{{ hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int }}"
+  module_defaults:
+    community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ _cassandra_node_standing_from | reject('in', _viewed) | list }}"
+  register: cassandra_node_reset_rings
+  failed_when: false  # a node that does not answer is left out
+  ignore_unreachable: true
+  when: _cassandra_node_standing_ring | default(true) | bool
+  vars:
+    # the preflight's reads that answered (one that failed, e.g. JMX not listening yet: asked again)
+    _viewed: >-
+      {{ _cassandra_node_standing_from | map('extract', hostvars) | selectattr('_cassandra_preflight_view.cluster_status', 'defined')
+         | selectattr('_cassandra_preflight_view.cluster_status') | map(attribute='inventory_hostname') | list }}

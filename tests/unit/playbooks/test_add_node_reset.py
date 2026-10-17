@@ -16,6 +16,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -31,8 +32,7 @@ ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassa
 
 
 def _tasks(name):
-    with open(os.path.join(ROLE, "tasks", name), encoding="utf-8") as f:
-        return dict((t["name"], t) for t in yaml.safe_load(f))
+    return dict((t["name"], t) for t in load_tasks(os.path.join(ROLE, "tasks", name)))
 
 
 TASKS = _tasks("reset_node_plan.yml")
