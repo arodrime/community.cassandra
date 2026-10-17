@@ -1798,12 +1798,6 @@ def test_layout_over_what_is_not_compared():
     assert layout["unread_files"] == ["group_vars/all/vault.yml"]
 
 
-def test_layout_over_the_former_name():
-    """cassandra_config_owner of theirs (it wins over cassandra_config_user): the node's owner written under it."""
-    layout = _over(_owner_nodes()[:1], [("group_vars/all/x.yml", "cassandra_config_owner: cassandra\n")])
-    assert layout["group_vars"]["orders"]["cassandra_config_owner"] == "root"
-
-
 def test_layout_over_a_file_of_theirs_after_main():
     """host_vars/n1/zz.yml sorts after the import's main.yml: it still wins, said so."""
     layout = _over(_owner_nodes()[:1], [("host_vars/n1/zz.yml", "cassandra_config_user: cassandra\n")])

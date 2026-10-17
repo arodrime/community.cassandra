@@ -241,6 +241,12 @@ datacenter and a rack the same way. A former name (``cassandra_new_nodes``, ``ca
 ``cassandra_reset_nodes``, ``cassandra_dead_node_address``, ``cassandra_upgrade_canary``, ``cassandra_status_from``)
 stops the run before anything is done, as ``cassandra_target_nodes`` given to a playbook that takes none (``help`` and
 ``import_cluster`` excepted: they read the inventory alone).
+The names renamed since the 2.1.0 release candidates stop the run the same way, with the one to set:
+``cassandra_repository_deb_url`` and ``cassandra_repository_rpm_url`` (``cassandra_install_url``),
+``cassandra_repository_username`` (``cassandra_install_username``), ``cassandra_repository_password``
+(``cassandra_install_password``), ``cassandra_medusa_config_owner`` (``cassandra_medusa_config_user``),
+``cassandra_medusa_key_file_owner`` (``cassandra_medusa_key_file_user``), ``cassandra_config_owner``
+(``cassandra_config_user``).
 
 Every playbook, ``help`` and ``import_cluster`` included, also stops before anything is done when a ``-e`` variable
 is named like one of the collection's (``cassandra_``, ``import_cluster_``, ``help_``, in any case, ``casandra_``

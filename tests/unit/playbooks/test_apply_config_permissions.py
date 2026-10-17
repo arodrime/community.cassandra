@@ -107,20 +107,17 @@ def note(changes=(), perms=(), pending=False, running=True, unit="inactive", jvm
 
 
 # Written by a run without the inventory: root:cassandra; the inventory has
-# Cassandra's account through the former name of cassandra_config_user
+# Cassandra's account as the owner (cassandra_config_user)
 LIVE = [stat("cassandra.yaml", "root", "cassandra", "0640"), stat("cassandra-env.sh", "root", "cassandra", "0644")]
-INVENTORY = {"cassandra_config_owner": "dbsvc", "cassandra_config_group": "dbgrp"}
+INVENTORY = {"cassandra_config_user": "dbsvc", "cassandra_config_group": "dbgrp"}
 
 
-def test_owner_and_mode_changes_are_listed_under_the_former_name_too():
+def test_owner_and_mode_changes_are_listed():
     changes = perm_changes(LIVE, **INVENTORY)
     assert changes == [
         {"item": "/etc/cassandra/conf/cassandra.yaml (owner:group mode)", "before": "root:cassandra 0640", "after": "dbsvc:dbgrp 0640"},
         {"item": "/etc/cassandra/conf/cassandra-env.sh (owner:group mode)", "before": "root:cassandra 0644",
          "after": "dbsvc:dbgrp 0644"}]
-    # the new name, and the former one winning over it
-    assert perm_changes(LIVE, cassandra_config_user="dbsvc", cassandra_config_group="dbgrp") == changes
-    assert perm_changes(LIVE, cassandra_config_user="root", **INVENTORY) == changes
     assert perm_changes(LIVE) == []
 
 

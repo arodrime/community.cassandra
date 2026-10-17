@@ -15,23 +15,6 @@
       cassandra_version must be one of 40x, 41x, 50x, cassandra_config_confirm auto, true or false, and
       cassandra_jvm_gc (cassandra_jvm<N>_gc) one of G1, CMS, custom
 
-- name: Warn about a variable under its former name
-  ansible.builtin.debug:
-    msg: >-
-      WARNING - deprecated name: cassandra_config_owner is now cassandra_config_user ({{ inventory_hostname }}): rename it
-      (the former name still wins while it is set).
-  when:
-    - cassandra_config_owner is defined
-    - not _cassandra_config_owner_said | default(false) | bool  # once a run (apply_config includes the role twice)
-  vars:
-    cassandra_output: true
-    cassandra_output_gap: true  # a block of its own: one per node
-
-- name: Note the former name said
-  ansible.builtin.set_fact:
-    _cassandra_config_owner_said: true
-  when: cassandra_config_owner is defined
-
 # Cassandra refuses to start without a period above zero in periodic mode
 # (4.1+: a duration in ms or a larger unit)
 - name: Assert the commit log sync settings

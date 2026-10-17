@@ -192,7 +192,7 @@ cassandra_cql_password: ""
 # Owner, group and mode cassandra_config gives the config files (its defaults
 # when it is not in the play), for the check that the account can read them
 _cassandra_service_config_perms:
-  owner: "{{ cassandra_config_owner | default(cassandra_config_user | default('root')) }}"
+  owner: "{{ cassandra_config_user | default('root') }}"
   group: "{{ cassandra_config_group | default(cassandra_group) }}"
   mode: "{{ cassandra_config_mode | default('0640') }}"
   public_mode: "{{ cassandra_config_public_mode | default('0644') }}"

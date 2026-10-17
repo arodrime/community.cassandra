@@ -94,10 +94,6 @@ def test_files_readable_by_all_pass():
     assert check(DEFAULT, cassandra_config_group="dbgrp", cassandra_config_mode="0644")[0]
 
 
-def test_former_name_of_the_owner_counts():
-    assert check(DEFAULT, cassandra_config_group="dbgrp", cassandra_config_owner="cassandra")[0]
-
-
 @pytest.mark.parametrize("check_mode, must_exist, passes", [(False, True, False), (True, True, True), (False, False, True)])
 def test_missing_user(check_mode, must_exist, passes):
     # --check on a blank host, or preflight before a new node gets the package: no user yet

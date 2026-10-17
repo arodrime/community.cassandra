@@ -1430,11 +1430,6 @@ argument_specs:
         default: root
         description:
         - Owner of the config files.
-      cassandra_config_owner:
-        type: str
-        description:
-        - Former name of O(cassandra_config_user), deprecated. Wins when set; the
-          role warns to rename it.
       cassandra_config_group:
         type: str
         description:

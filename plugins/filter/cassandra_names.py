@@ -33,10 +33,17 @@ _OURS = re.compile(r"(?:cas+andra|import_cluster|help)_", re.IGNORECASE)
 # a comment: its names are examples (a typo shown, a module), not variables read (text after " #" in a
 # string goes too: a name only there is then unknown, never a typo let through)
 _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
-# former names of the playbooks' variables: every node an operation targets is cassandra_target_nodes
-RENAMED = dict((name, "cassandra_target_nodes") for name in (
+# former names of the variables: every node an operation targets is cassandra_target_nodes; the others, renamed
+# since the 2.1.0 release candidates (an inventory written for one is refused, not silently ignored)
+RENAMED = dict([(name, "cassandra_target_nodes") for name in (
     "cassandra_new_nodes", "cassandra_leaving_nodes", "cassandra_reset_nodes", "cassandra_dead_node_address",
-    "cassandra_upgrade_canary", "cassandra_status_from"))
+    "cassandra_upgrade_canary", "cassandra_status_from")] + [
+    ("cassandra_repository_deb_url", "cassandra_install_url"), ("cassandra_repository_rpm_url", "cassandra_install_url"),
+    ("cassandra_repository_username", "cassandra_install_username"),
+    ("cassandra_repository_password", "cassandra_install_password"),
+    ("cassandra_medusa_config_owner", "cassandra_medusa_config_user"),
+    ("cassandra_medusa_key_file_owner", "cassandra_medusa_key_file_user"),
+    ("cassandra_config_owner", "cassandra_config_user")])
 
 
 # the secrets import_cluster moves out of a config file's lines, which refer to them (cassandra_env_extra_lines...)

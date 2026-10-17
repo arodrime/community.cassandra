@@ -39,8 +39,9 @@ def test_unknown_names_with_a_suggestion():
     out = cassandra_unknown_names(["cassandra_config_usr", "cassandra_frobnicate_level", "cassandra_config_user",
                                    "cassandra_hosts", "cassandra_config_applied", "cassandra_config_owner"],
                                   ["cassandra_hosts"])
-    # a role variable, a playbook one, a result of a role's task, a former name still read: known
-    assert out == {"cassandra_config_usr": "cassandra_config_user", "cassandra_frobnicate_level": ""}
+    # a role variable, a playbook one, a result of a role's task: known; a former name: its name now
+    assert out == {"cassandra_config_usr": "cassandra_config_user", "cassandra_frobnicate_level": "",
+                   "cassandra_config_owner": "cassandra_config_user"}
 
 
 def test_former_names():
@@ -50,6 +51,23 @@ def test_former_names():
     assert cassandra_renamed_names(former + ["cassandra_target_nodes", "cassandra_hosts", "cassandra_leaving_node"]) == dict(
         (name, "cassandra_target_nodes") for name in former)
     assert cassandra_renamed_names(None) == {}
+
+
+@pytest.mark.parametrize("former, now", [
+    ("cassandra_repository_deb_url", "cassandra_install_url"), ("cassandra_repository_rpm_url", "cassandra_install_url"),
+    ("cassandra_repository_username", "cassandra_install_username"),
+    ("cassandra_repository_password", "cassandra_install_password"),
+    ("cassandra_medusa_config_owner", "cassandra_medusa_config_user"),
+    ("cassandra_medusa_key_file_owner", "cassandra_medusa_key_file_user"),
+    ("cassandra_config_owner", "cassandra_config_user")])
+def test_names_of_the_release_candidates_are_refused(former, now):
+    """An inventory written for v2.1.0-rc3: each former name refused with the one to set, never silently ignored."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import (
+        cassandra_renamed_names, cassandra_unknown_extra_vars, _role_variables)
+    assert cassandra_renamed_names([former, now]) == {former: now}
+    assert now in _role_variables() and former not in _role_variables()
+    # (-e: refused as renamed, not also as unknown)
+    assert cassandra_unknown_extra_vars([former], []) == {}
 
 
 def test_comments_are_not_variables():

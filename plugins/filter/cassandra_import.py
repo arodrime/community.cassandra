@@ -2488,10 +2488,6 @@ def _effective(name, chain, layout, user, mine=True):
     return out
 
 
-# the variable that wins over another one in the roles (its former name)
-_ALIASES = {"cassandra_config_owner": "cassandra_config_user"}
-
-
 def cassandra_inventory_user_files(read, layout, password=""):
     """read: {path: text} of the vars files of the inventory dir; layout: cassandra_inventory_layout's.
     -> [{path, content}]: the user's own (not the import's) that apply to this cluster's hosts: group_vars/all,
@@ -2631,7 +2627,6 @@ _Found = namedtuple("_Found", "live_vars defaults not_compared")
 def _live_of(found, n, key):
     """The node's value of key: left as found on the node (host_vars), else read, else the collection's default ->
     the value, MISSING when unknown."""
-    key = _ALIASES.get(key, key)
     if key in (n.get("keep") or {}):  # left as found on the node (host_vars)
         return n["keep"][key]
     return _resolved(key, found.live_vars[n["name"]], found.defaults)
@@ -2641,7 +2636,6 @@ def _read_on(found, n, key):
     """The node's value of key is known: read from it, left as found, or one the import writes only when
     it is not the default (the config files' and their owners', the unit's; Medusa's and the OS's when
     found there); not a variable the import cannot tell (install sources, policies)."""
-    key = _ALIASES.get(key, key)
     live = found.live_vars[n["name"]]
     return (key in live or key in (n.get("keep") or {}) or key in _template_keys() or _default_when_absent(key)
             or key in _medusa_ini_keys() and boolean((n.get("medusa") or {}).get("ini", False), strict=False)
