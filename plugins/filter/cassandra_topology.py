@@ -157,7 +157,10 @@ def cassandra_seed_change(hosts, seeds):
     is], differ: [hosts whose list is not the new one], step: something to
     apply, auto: [{dc, hosts, labels, entries}] the seeds picked, warnings,
     problems: a datacenter left with no seed and no node up there, no seed at
-    all}."""
+    all}.
+    e.g. (node1, node3 marked absent, both running with "10.0.0.1,10.0.0.3"; seeds "10.0.0.1") -> {new:
+    "10.0.0.1", old: ["10.0.0.1", "10.0.0.3"], removed: ["node3 (dc1/r1)"], added: [], differ: ["node1"], step: True,
+    ...}."""
     wanted = _seed_entries(seeds)
     wanted_line = seeds if isinstance(seeds, str) else ",".join(wanted)
     present = [h for h in hosts if not h.get("absent")]
@@ -355,7 +358,9 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
     [ring entries no host has], down: present hosts down in the ring,
     in_ring: the hosts to remove still in the ring, nodes_left: {dc: nodes
     once done}, large_removals: [a line per datacenter losing more than half
-    of its nodes], problems, warnings}."""
+    of its nodes], problems, warnings}.
+    e.g. (node1 to node3 UN, node3 marked absent, node4 new; seeds "10.0.0.1") -> {add: ["node4"], remove:
+    ["node3"], problems: [], warnings: [], ...}."""
     entries = _ring_entries(ring)
     present = [h for h in hosts if not h.get("absent")]
     absent = [h for h in hosts if h.get("absent")]
@@ -583,7 +588,10 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     lines the checks kept for the plan (note.yml, "WARNING - ..." or a note).
     The checks of the hosts to add (hosts' info, checks: new_node_checks.yml)
     are NOTE and WARNING lines too, one per text, with the hosts it is about.
-    Every note is on one line, said once."""
+    Every note is on one line, said once.
+    e.g. (that plan) -> ["PLAN  topology  my_cluster  2 steps, one node at a time", "  1.  add node4           dc1/r1
+    bootstrap, ~768.0 MiB to stream (the load of dc1 / 4 nodes)", "  2.  decommission node3  dc1/r1  load 1 GiB -> node1,
+    node2, node4", "", "dc1 after:  3 nodes: node1, node2, node4", ...]."""
     by_name = dict((h["name"], h) for h in hosts)
     ring = ring or {}
     steps = cassandra_topology_steps(plan, hosts)
