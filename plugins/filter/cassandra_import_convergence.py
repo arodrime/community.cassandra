@@ -508,7 +508,118 @@ def cassandra_import_convergence(layout, self_check=None, screen=False, report_f
                 " report are not affected)" % type(exc).__name__]
 
 
+def _who(groups, full, members):
+    """The nodes members, by the node groups of the screen and the report (who_text) -> text."""
+    return who_text(members, None, groups, full)
+
+
+def _named_groups(layout, read):
+    """The inventory's own groups (a DC's, a rack's) by their nodes read: a value on exactly these nodes says it ->
+    {frozenset(nodes): group}."""
+    in_group = {}
+    for host, chain in group_chains(layout.get("hosts") or {}).items():
+        for group in chain[1:]:
+            in_group.setdefault(group, set()).add(host)
+    return dict((frozenset(m & set(n["name"] for n in read)), g) for g, m in sorted(in_group.items(), reverse=True))
+
+
+def _who_named(named, who, full, members):
+    """The nodes members, with the inventory's group that has exactly them first (the report) -> text."""
+    group = named.get(frozenset(members))
+    return "%s (%s)" % (group, who(members)) if group and full and len(members) > 1 else who(members)
+
+
+def _score(items, counted, kept, self_check_ok, cluster, unread):
+    """The score: the settings common to all nodes of the counted ones, how many differ, the files kept by hand,
+    the nodes not read -> text."""
+    score = "%d/%d settings common to all nodes" % (counted - len(items), counted)
+    if items:
+        score += ", %d differ" % len(items)
+    if kept:
+        score += ", %s kept by hand" % out.plural(len(kept), "file")
+    if not items and not kept and self_check_ok:
+        score += " %s one group, every setting in group_vars/%s/" % (DASH, cluster)
+    if unread:
+        score += " (%s not read: not counted)" % out.plural(unread, "node")
+    return score
+
+
+def _screen_lines(score, items, kept, who, width, self_check_ok, report_file, inventory, hosts, cwd):
+    """The section on the screen: the score, the first SCREEN_ACTIONS actions and their checks, the files kept by
+    hand, where the rest is -> [line]."""
+    lines = out.fit(["CONVERGENCE  " + score], width)
+    if not self_check_ok:  # (its stop below says how to make it pass)
+        return lines + fill_text("The self-check first: the inventory does not reproduce the nodes yet", width,
+                                 "  ", "  ")
+    if items:
+        shown = items[:SCREEN_ACTIONS]
+        lines.append("  Next (%s, the safest first, then the fewest nodes):" % (
+            "%d of %d" % (len(shown), len(items)) if len(items) > len(shown) else out.plural(len(items), "setting")))
+        rows = [(i["name"], "%s for all   %s" % (unbreakable(cut_text(_shown(i["target"]), SCREEN_VALUE)),
+                                                 _then_text(i, True)))
+                for i in shown]
+        lines += _screen_rows(rows, "    ", width)
+        kinds = set("seeds" if i["kind"] == "seeds" else "restart" for i in shown if _KINDS[i["kind"]][3])
+        commands = [_check([], k, inventory, hosts, cwd) for k in ("restart", "seeds") if k in kinds]
+        if commands:
+            lines += fill_text("Check each one before it is applied: %s" % ", or ".join(unbreakable(c) for c in commands)
+                               + (" (the seeds)" if len(commands) > 1 else ""), width, "  ", "  ")
+    if kept:
+        lines += fill_text("Kept by hand: %s" % "; ".join(
+            "%s on %s" % (name, who([n for dummy, m in variants for n in m])) for name, variants in kept),
+            width, "  ", "  ")
+    if items or kept:
+        lines += fill_text("The files to edit, the commands, the hand edits: %s, section CONVERGENCE" % (
+            out.path_from(report_file, cwd) if report_file else "the report"), width, "  ", "  ")
+    return lines
+
+
+def _report_head(score, items, layout, data, read, width, self_check_ok):
+    """The head of the report's section: its title, the score (with the node values to change), the self-check
+    first, the settings not counted, the *_manage switches in host_vars -> [line]."""
+    cluster = layout["cluster_group"]
+    nodes = layout.get("nodes") or []
+    lines = ["CONVERGENCE %s towards one group, every setting in group_vars/%s/" % (DASH, cluster)]
+    if items:
+        score += "; %s to change, on %s" % (out.plural(sum(len(i["changing"]) for i in items), "node value"),
+                                            out.plural(len(set(n for i in items for n in i["changing"])), "node"))
+    lines += fill_text(score, width, "  ", "  ")
+    if not self_check_ok:
+        lines += fill_text("The self-check first (SELF-CHECK above): the inventory does not reproduce the nodes yet, what"
+                           " follows is from what the nodes have", width, "  ", "  ")
+    names = [n["name"] for n in read]
+    left = sorted(set(data["variable"][p] for p, values in data["settings"]
+                      if data["variable"][p] in NOT_COUNTED and not _common(values, names)))
+    if left:
+        lines += fill_text("Not counted, per node by nature or kept by each node for life: %s" % ", ".join(left),
+                           width, "  ", "  ")
+    switches = sorted(set(k for n in nodes for k in n.get("keep") or {} if k in KEEP))
+    if switches:
+        lines += fill_text("Also in host_vars: %s (LEFT AS IT IS above)" % ", ".join("%s: false" % k for k in switches),
+                           width, "  ", "  ")
+    return lines
+
+
+def _differ_lines(items, layout, who_named, width, inventory, hosts, cwd):
+    """SETTINGS THAT DIFFER (the report): each setting's values and nodes, the action that converges it, what then
+    happens and its check -> [line]."""
+    lines = ["", "  SETTINGS THAT DIFFER %s the safest change first, then the fewest nodes" % DASH]
+    lines += fill_text("Each one: edit the files it names, review it with its check, run that without --check, then"
+                       " import again: once every node has the value, the import keeps it in group_vars/%s/ and the"
+                       " line goes away." % layout["cluster_group"], width, "  ", "  ")
+    for item in items:
+        lines += aligned_rows([(item["name"], _values_text(item, who_named))], "  ", width)
+        lines += fill_text(_action(item, layout), width, "      ", "  ")
+        # (a file of yours named: it reaches other nodes too, the whole cluster checked)
+        reach = [] if any(p.startswith("yours: ") for p in _places(layout, item["key"])) else item["changing"]
+        check = unbreakable(_check(reach, item["kind"], inventory, hosts, cwd)) if _KINDS[item["kind"]][3] \
+            else "none, apply_config does not show it"
+        lines += fill_text("%s; check: %s" % (_then_text(item), check), width, "      ", "  ")
+    return lines
+
+
 def _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd, width, self_check_ok):
+    """cassandra_import_convergence's work (self_check_ok a bool), its errors left to it -> [line]."""
     screen = boolean(screen, strict=False)
     full = not screen
     width = int(width) if width else (terminal_width() if screen else REPORT_WIDTH)
@@ -517,92 +628,16 @@ def _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd,
     if not read:
         return []
     data = report_sections(layout, self_check)
-    groups = data["groups"]
-
-    def who(members):
-        return who_text(members, None, groups, full)
-
-    # the inventory's own groups (a DC's, a rack's) by their nodes read: a value on exactly these nodes says it
-    in_group = {}
-    for host, chain in group_chains(layout.get("hosts") or {}).items():
-        for group in chain[1:]:
-            in_group.setdefault(group, set()).add(host)
-    named = dict((frozenset(m & set(n["name"] for n in read)), g) for g, m in sorted(in_group.items(), reverse=True))
-
-    def who_named(members):
-        group = named.get(frozenset(members))
-        return "%s (%s)" % (group, who(members)) if group and full and len(members) > 1 else who(members)
-
+    who = functools.partial(_who, data["groups"], full)
+    who_named = functools.partial(_who_named, _named_groups(layout, read), who, full)
     items, counted = _setting_items(layout, data, read)
     kept = _kept_files(read)
-    cluster = layout["cluster_group"]
-    score = "%d/%d settings common to all nodes" % (counted - len(items), counted)
-    if items:
-        score += ", %d differ" % len(items)
-    if kept:
-        score += ", %s kept by hand" % out.plural(len(kept), "file")
-    if not items and not kept and self_check_ok:
-        score += " %s one group, every setting in group_vars/%s/" % (DASH, cluster)
-    unread = len(nodes) - len(read)
-    if unread:
-        score += " (%s not read: not counted)" % out.plural(unread, "node")
+    score = _score(items, counted, kept, self_check_ok, layout["cluster_group"], len(nodes) - len(read))
     if screen:
-        lines = out.fit(["CONVERGENCE  " + score], width)
-        if not self_check_ok:  # (its stop below says how to make it pass)
-            return lines + fill_text("The self-check first: the inventory does not reproduce the nodes yet", width,
-                                 "  ", "  ")
-        if items:
-            shown = items[:SCREEN_ACTIONS]
-            lines.append("  Next (%s, the safest first, then the fewest nodes):" % (
-                "%d of %d" % (len(shown), len(items)) if len(items) > len(shown) else out.plural(len(items), "setting")))
-            rows = [(i["name"], "%s for all   %s" % (unbreakable(cut_text(_shown(i["target"]), SCREEN_VALUE)), _then_text(i, True)))
-                    for i in shown]
-            lines += _screen_rows(rows, "    ", width)
-            kinds = set("seeds" if i["kind"] == "seeds" else "restart" for i in shown if _KINDS[i["kind"]][3])
-            commands = [_check([], k, inventory, hosts, cwd) for k in ("restart", "seeds") if k in kinds]
-            if commands:
-                lines += fill_text("Check each one before it is applied: %s" % ", or ".join(unbreakable(c) for c in commands)
-                               + (" (the seeds)" if len(commands) > 1 else ""), width, "  ", "  ")
-        if kept:
-            lines += fill_text("Kept by hand: %s" % "; ".join(
-                "%s on %s" % (name, who([n for dummy, m in variants for n in m])) for name, variants in kept),
-                width, "  ", "  ")
-        if items or kept:
-            lines += fill_text("The files to edit, the commands, the hand edits: %s, section CONVERGENCE" % (
-                out.path_from(report_file, cwd) if report_file else "the report"), width, "  ", "  ")
-        return lines
-
-    lines = ["CONVERGENCE %s towards one group, every setting in group_vars/%s/" % (DASH, cluster)]
+        return _screen_lines(score, items, kept, who, width, self_check_ok, report_file, inventory, hosts, cwd)
+    lines = _report_head(score, items, layout, data, read, width, self_check_ok)
     if items:
-        score += "; %s to change, on %s" % (out.plural(sum(len(i["changing"]) for i in items), "node value"),
-                                            out.plural(len(set(n for i in items for n in i["changing"])), "node"))
-    lines += fill_text(score, width, "  ", "  ")
-    if not self_check_ok:
-        lines += fill_text("The self-check first (SELF-CHECK above): the inventory does not reproduce the nodes yet, what"
-                       " follows is from what the nodes have", width, "  ", "  ")
-    names = [n["name"] for n in read]
-    left = sorted(set(data["variable"][p] for p, values in data["settings"]
-                      if data["variable"][p] in NOT_COUNTED and not _common(values, names)))
-    if left:
-        lines += fill_text("Not counted, per node by nature or kept by each node for life: %s" % ", ".join(left),
-                       width, "  ", "  ")
-    switches = sorted(set(k for n in nodes for k in n.get("keep") or {} if k in KEEP))
-    if switches:
-        lines += fill_text("Also in host_vars: %s (LEFT AS IT IS above)" % ", ".join("%s: false" % k for k in switches),
-                       width, "  ", "  ")
-    if items:
-        lines += ["", "  SETTINGS THAT DIFFER %s the safest change first, then the fewest nodes" % DASH]
-        lines += fill_text("Each one: edit the files it names, review it with its check, run that without --check, then"
-                       " import again: once every node has the value, the import keeps it in group_vars/%s/ and the"
-                       " line goes away." % cluster, width, "  ", "  ")
-        for item in items:
-            lines += aligned_rows([(item["name"], _values_text(item, who_named))], "  ", width)
-            lines += fill_text(_action(item, layout), width, "      ", "  ")
-            # (a file of yours named: it reaches other nodes too, the whole cluster checked)
-            reach = [] if any(p.startswith("yours: ") for p in _places(layout, item["key"])) else item["changing"]
-            check = unbreakable(_check(reach, item["kind"], inventory, hosts, cwd)) if _KINDS[item["kind"]][3] \
-                else "none, apply_config does not show it"
-            lines += fill_text("%s; check: %s" % (_then_text(item), check), width, "      ", "  ")
+        lines += _differ_lines(items, layout, who_named, width, inventory, hosts, cwd)
     if kept:
         lines += ["", "  KEPT BY HAND %s cassandra_config_keep_files: left as their node has them" % DASH]
         lines += _kept_lines(kept, layout, read, who_named, width, inventory, hosts, cwd)
