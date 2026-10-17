@@ -436,6 +436,59 @@ def _rack_aware(keyspaces, dc, racks):
     return bool(rfs) and all(rf == racks for rf in rfs)
 
 
+def _racks_after(ring, new_nodes, dc):
+    """A datacenter's ring nodes, the nodes to add -> {rack: nodes} once they are added."""
+    after = {}
+    for n in ring:
+        after[n["rack"]] = after.get(n["rack"], 0) + 1
+    for n in new_nodes:
+        if n["dc"] == dc and not n.get("in_ring"):
+            after[n["rack"]] = after.get(n["rack"], 0) + 1
+    return after
+
+
+def _uneven_racks(dc, after):
+    """A datacenter, {rack: nodes} once added -> the warning of racks of different sizes, '' when even."""
+    if len(set(after.values())) <= 1:
+        return ""
+    counts = ", ".join("%s %d" % (r, c) for r, c in sorted(after.items()))
+    return ("%s after the add: %s nodes per rack. With NetworkTopologyStrategy and as many replicas as racks, "
+            "each rack holds a full copy of the data: the nodes of a smaller rack each hold a bigger share "
+            "(e.g. 1/%d against 1/%d), so they carry more data and load." % (
+                dc, counts, min(after.values()), max(after.values())))
+
+
+def _stream_estimates(ring, new_nodes, dc, after, aware, added):
+    """A datacenter's ring nodes, the nodes to add, {rack: nodes} once added, whether each rack holds a full copy,
+    the addresses that receive data -> [{host, bytes, basis}]: the data each new node of dc should receive (none
+    when a load is unknown)."""
+    estimate = []
+    loads = [(n, _load_bytes(n.get("load"))) for n in ring if n["status"] + n["state"] == "UN" and n["address"] not in added]
+    for n in [n for n in new_nodes if n["dc"] == dc and not n.get("in_ring")]:
+        source = [b for m, b in loads if not aware or m["rack"] == n["rack"]]
+        nodes_after = after[n["rack"]] if aware else sum(after.values())
+        if source and None not in source:
+            estimate.append({"host": n["host"], "bytes": sum(source) // nodes_after,
+                             "basis": ("the load of rack %s / %d nodes" % (n["rack"], nodes_after)) if aware
+                             else ("the load of %s / %d nodes" % (dc, nodes_after))})
+    return estimate
+
+
+def _dc_cleanup(ring, hosts, new_nodes, adding, dc, aware, added):
+    """A datacenter's ring nodes, {address: name}, the nodes to add (and the ones that receive data in this run),
+    whether each rack holds a full copy, their addresses -> the nodes of dc to clean up afterwards, in ring
+    order."""
+    new_racks = set(n["rack"] for n in new_nodes if n["dc"] == dc)
+    # the nodes up and normal now (not the ones joining) that hand over ranges
+    cleanup = [hosts.get(n["address"], n["address"]) for n in ring
+               if n["status"] + n["state"] == "UN" and n["address"] not in added
+               and (not aware or n["rack"] in new_racks)]
+    # a node added in this run hands ranges over to the ones added after it in its
+    # datacenter (its rack when each rack holds a full copy): those get a cleanup too
+    mine = [n for n in (adding or new_nodes) if n["dc"] == dc]
+    return cleanup + [n["host"] for i, n in enumerate(mine) if any(not aware or m["rack"] == n["rack"] for m in mine[i + 1:])]
+
+
 def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=None):
     """What adding new_nodes ([{host, address, dc, rack, in_ring, state}];
     in_ring: already in the ring from an earlier run, state: new, joining or
@@ -455,40 +508,15 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
     added = set(n.get("address") for n in (adding if adding else new_nodes))
     for dc in sorted(set(n["dc"] for n in new_nodes)):
         ring = (cluster_status.get(dc) or {}).get("nodes", [])
-        after = {}
-        for n in ring:
-            after[n["rack"]] = after.get(n["rack"], 0) + 1
-        for n in new_nodes:
-            if n["dc"] == dc and not n.get("in_ring"):
-                after[n["rack"]] = after.get(n["rack"], 0) + 1
+        after = _racks_after(ring, new_nodes, dc)
         racks[dc] = after
-        if len(set(after.values())) > 1:
-            counts = ", ".join("%s %d" % (r, c) for r, c in sorted(after.items()))
-            warnings.append(
-                "%s after the add: %s nodes per rack. With NetworkTopologyStrategy and as many replicas as racks, "
-                "each rack holds a full copy of the data: the nodes of a smaller rack each hold a bigger share "
-                "(e.g. 1/%d against 1/%d), so they carry more data and load." % (
-                    dc, counts, min(after.values()), max(after.values())))
+        uneven = _uneven_racks(dc, after)
+        if uneven:
+            warnings.append(uneven)
         aware = _rack_aware(keyspaces, dc, len(after))
-        loads = [(n, _load_bytes(n.get("load"))) for n in ring if n["status"] + n["state"] == "UN" and n["address"] not in added]
-        for n in [n for n in new_nodes if n["dc"] == dc and not n.get("in_ring")]:
-            source = [b for m, b in loads if not aware or m["rack"] == n["rack"]]
-            nodes_after = after[n["rack"]] if aware else sum(after.values())
-            if source and None not in source:
-                estimate.append({"host": n["host"], "bytes": sum(source) // nodes_after,
-                                 "basis": ("the load of rack %s / %d nodes" % (n["rack"], nodes_after)) if aware
-                                 else ("the load of %s / %d nodes" % (dc, nodes_after))})
+        estimate += _stream_estimates(ring, new_nodes, dc, after, aware, added)
         scope[dc] = "rack" if aware else "dc"
-        new_racks = set(n["rack"] for n in new_nodes if n["dc"] == dc)
-        # the nodes up and normal now (not the ones joining) that hand over ranges
-        cleanup[dc] = [hosts.get(n["address"], n["address"]) for n in ring
-                       if n["status"] + n["state"] == "UN" and n["address"] not in added
-                       and (not aware or n["rack"] in new_racks)]
-        # a node added in this run hands ranges over to the ones added after it in its
-        # datacenter (its rack when each rack holds a full copy): those get a cleanup too
-        mine = [n for n in (adding or new_nodes) if n["dc"] == dc]
-        cleanup[dc] += [n["host"] for i, n in enumerate(mine)
-                        if any(not aware or m["rack"] == n["rack"] for m in mine[i + 1:])]
+        cleanup[dc] = _dc_cleanup(ring, hosts, new_nodes, adding, dc, aware, added)
     if _ring_wide(keyspaces) and keyspaces is not None:
         # replicas placed around the whole ring: every datacenter hands data over
         for dc in cluster_status:
