@@ -121,7 +121,7 @@ def test_owner_group_and_mode_not_imported_are_caught():
     out = check(files, "50x", permissions=perms["files"])
     assert "cassandra.yaml: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0640" \
         in out["differences"]
-    assert "cassandra-env.sh: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0644" \
+    assert "cassandra-env.sh: owner:group mode: node has cassandra:dbgrp 0640, import would write root:cassandra 0640" \
         in out["differences"]
     assert len(out["differences"]) == 7  # one line per file
 
@@ -145,7 +145,7 @@ def test_mixed_modes_pass_with_per_file_permissions():
     files = seeded(stock("41x"))
     found = stats(files, "root", "cassandra", "0644")
     for name in found:
-        if name == "cassandra.yaml" or name.startswith("jvm"):
+        if name in ("cassandra.yaml", "cassandra-env.sh") or name.startswith("jvm"):
             found[name]["mode"] = "0640"
     found["logback.xml"]["mode"] = "0600"
     perms = cassandra_permissions_import(found, {"user": "cassandra", "group": "cassandra"}, "41x")

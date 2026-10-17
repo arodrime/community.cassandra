@@ -46,12 +46,12 @@ def test_mode_text(given, text):
 
 
 def test_role_defaults_per_file():
-    # passwords may be there (keystores, the JVM options' extra options)
+    # passwords may be there (keystores, the JVM options' extra options, cassandra-env.sh's extra lines)
     for name in ("cassandra.yaml", "jvm-server.options", "jvm8-server.options", "jvm11-server.options",
-                 "jvm17-server.options"):
+                 "jvm17-server.options", "cassandra-env.sh"):
         assert cassandra_file_permissions(name, DEFAULTS) == {"owner": "root", "group": "cassandra", "mode": "0640"}
-    for name in ("cassandra-env.sh", "cassandra-rackdc.properties", "logback.xml"):
-        # no secret there: nodetool, run by any user, reads the JMX port in cassandra-env.sh
+    for name in ("cassandra-rackdc.properties", "logback.xml"):
+        # no secret there
         assert cassandra_file_permissions(name, DEFAULTS) == {"owner": "root", "group": "cassandra", "mode": "0644"}
     for name in ("jmxremote.password", "jmxremote.access"):
         assert cassandra_file_permissions(name, dict(DEFAULTS, user="dbsvc", user_group="dbgrp")) == {
@@ -91,8 +91,7 @@ def test_defaults_are_the_roles():
 
 def test_jmx_password_file_kept_readable():
     """A node whose JVM does not read it (local JMX, JAAS) may have it readable: kept as it is."""
-    files = node("root", "cassandra", "0640", **{"cassandra-env.sh": st("root", "cassandra", "0644"),
-                                                 "cassandra-rackdc.properties": st("root", "cassandra", "0644"),
+    files = node("root", "cassandra", "0640", **{"cassandra-rackdc.properties": st("root", "cassandra", "0644"),
                                                  "logback.xml": st("root", "cassandra", "0644"),
                                                  "jmxremote.password": st("cassandra", "cassandra", "0644"),
                                                  "jmxremote.access": st("cassandra", "cassandra", "0400")})
@@ -120,7 +119,6 @@ def test_service_account_group_files_0640():
     # the config group is cassandra_group's default: not written
     assert "cassandra_config_group" not in out["vars"]
     assert any("Cassandra runs as cassandra:dbgrp" in n for n in out["notes"])
-    assert any(n.startswith("cassandra-env.sh is not readable by other users") for n in out["notes"])
     # read back, the role gives every file what it has
     settings = dict(DEFAULTS, owner="cassandra", group="dbgrp", public_mode="0640", user_group="dbgrp")
     wanted = dict((n, cassandra_file_permissions(n, settings)) for n in CONFIG_50)
@@ -128,11 +126,24 @@ def test_service_account_group_files_0640():
 
 
 def test_role_defaults_write_nothing():
-    public = ("cassandra-env.sh", "cassandra-rackdc.properties", "logback.xml")
+    public = ("cassandra-rackdc.properties", "logback.xml")
     files = node("root", "cassandra", "0640", **dict((n, st("root", "cassandra", "0644")) for n in public))
     out = cassandra_permissions_import(files, {"user": "cassandra", "group": "cassandra"}, "50x")
     assert out["vars"] == {}
     assert out["notes"] == []
+
+
+def test_cassandra_env_readable_by_all_kept():
+    """A node the roles wrote before cassandra-env.sh was 0640 (0644, as rackdc and logback): the import keeps its
+    mode (no change on the next run); apply_config shows the mode change without it."""
+    public = ("cassandra-env.sh", "cassandra-rackdc.properties", "logback.xml")
+    files = node("root", "cassandra", "0640", **dict((n, st("root", "cassandra", "0644")) for n in public))
+    out = cassandra_permissions_import(files, {"user": "cassandra", "group": "cassandra"}, "50x")
+    assert out["vars"] == {"cassandra_config_file_permissions": {"cassandra-env.sh": {"mode": "0644"}}}
+    settings = dict(DEFAULTS, files=out["vars"]["cassandra_config_file_permissions"])
+    wanted = dict((n, cassandra_file_permissions(n, settings)) for n in CONFIG_50)
+    assert permission_differences(wanted, out["files"]) == []
+    assert cassandra_file_permissions("cassandra-env.sh", DEFAULTS)["mode"] == "0640"
 
 
 def test_old_default_root_cassandra_0640():
@@ -149,7 +160,8 @@ def test_mixed_modes_kept_per_file():
                                              "jvm17-server.options": st("root", "root", "0644")})
     out = cassandra_permissions_import(files, {"user": "dbsvc", "group": "dbgrp"}, "50x")
     assert out["vars"] == {"cassandra_user": "dbsvc", "cassandra_group": "dbgrp", "cassandra_config_mode": "0600",
-                           "cassandra_config_file_permissions": {"logback.xml": {"owner": "dbsvc", "mode": "0664"},
+                           "cassandra_config_file_permissions": {"cassandra-env.sh": {"mode": "0644"},
+                                                                 "logback.xml": {"owner": "dbsvc", "mode": "0664"},
                                                                  "jvm17-server.options": {"group": "root", "mode": "0644"}}}
     note = [n for n in out["notes"] if n.startswith("Files whose owner, group or mode differ")]
     assert note and "logback.xml dbsvc:dbgrp 0664" in note[0] and "jvm17-server.options root:root 0644" in note[0]
@@ -162,8 +174,7 @@ def test_mixed_modes_kept_per_file():
 
 
 def test_jmx_files_compared_with_the_account():
-    files = node("root", "cassandra", "0640", **{"cassandra-env.sh": st("root", "cassandra", "0644"),
-                                                 "cassandra-rackdc.properties": st("root", "cassandra", "0644"),
+    files = node("root", "cassandra", "0640", **{"cassandra-rackdc.properties": st("root", "cassandra", "0644"),
                                                  "logback.xml": st("root", "cassandra", "0644"),
                                                  "jmxremote.password": st("dbsvc", "dbgrp", "0600"),
                                                  "jmxremote.access": st("dbsvc", "dbgrp", "0400")})
@@ -218,14 +229,15 @@ def test_unsupported_series():
 
 def test_changes_for_the_report():
     results = [{"cassandra_config_file": "cassandra.yaml", "stat": dict(st("root", "cassandra", "0640"), path="/c/cassandra.yaml")},
-               {"cassandra_config_file": "cassandra-env.sh", "stat": dict(st("root", "cassandra", "0640"), path="/c/cassandra-env.sh")},
+               # written readable by all before it held secrets: 0640 now
+               {"cassandra_config_file": "cassandra-env.sh", "stat": dict(st("root", "cassandra", "0644"), path="/c/cassandra-env.sh")},
                {"cassandra_config_file": "logback.xml", "stat": {"exists": False}},
                # a numeric owner for the same account: no change
                {"cassandra_config_file": "jmxremote.access", "stat": dict(st("cassandra", "cassandra", "0400", 990, 990),
                                                                           path="/etc/cassandra/jmxremote.access")}]
     settings = dict(DEFAULTS, user="990")
     assert cassandra_permission_changes(results, settings) == [
-        {"item": "/c/cassandra-env.sh (owner:group mode)", "before": "root:cassandra 0640", "after": "root:cassandra 0644"}]
+        {"item": "/c/cassandra-env.sh (owner:group mode)", "before": "root:cassandra 0644", "after": "root:cassandra 0640"}]
 
 
 def dir_results(*dirs):

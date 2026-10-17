@@ -57,12 +57,14 @@ Values of keys named like `*password*` or `*secret*` are shown as `****` in
 that diff, and Ansible's own `--diff` is off for these files. The files are
 owned by `root`, group `cassandra_group` (`cassandra_config_user`,
 `cassandra_config_group`): Cassandra reads them, but cannot rewrite them.
-`cassandra.yaml` may hold keystore passwords, and the `jvm*-server.options`
-files too (extra options such as `-Djavax.net.ssl.keyStorePassword=`): mode
-`0640` (`cassandra_config_mode`). The others (`cassandra-env.sh`, rackdc,
-logback) hold no secret: mode `0644` (`cassandra_config_public_mode`), so that
-`nodetool`, run by any user, can read the JMX port in `cassandra-env.sh` (else
-it prints `grep: .../cassandra-env.sh: Permission denied`).
+`cassandra.yaml` may hold keystore passwords, the `jvm*-server.options` files
+too (extra options such as `-Djavax.net.ssl.keyStorePassword=`), and
+`cassandra-env.sh` (its extra lines, e.g. a `JVM_OPTS` with a password): mode
+`0640` (`cassandra_config_mode`). `nodetool` reads the JMX port in
+`cassandra-env.sh`: run as root or by a user of the group (Cassandra's
+account), it can; another user gets `grep: .../cassandra-env.sh: Permission
+denied` and the default port. The others (rackdc, logback) hold no secret:
+mode `0644` (`cassandra_config_public_mode`).
 `cassandra_config_file_permissions` sets a file apart, e.g.
 `{logback.xml: {mode: "0600"}}`. A change of owner, group or mode alone is
 shown, listed in the report and needs no confirmation nor restart (Cassandra

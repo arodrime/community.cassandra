@@ -86,9 +86,9 @@ def stock():
 
 
 def role_permissions(files):
-    # what the roles give them: root:cassandra, cassandra.yaml and the JVM options 0640, the others 0644
+    # what the roles give them: root:cassandra, cassandra.yaml, the JVM options and cassandra-env.sh 0640, the others 0644
     return dict((name, {"owner": "root", "group": "cassandra", "uid": 0, "gid": 990,
-                        "mode": "0640" if name == "cassandra.yaml" or name.endswith(".options") else "0644"})
+                        "mode": "0640" if name in ("cassandra.yaml", "cassandra-env.sh") or name.endswith(".options") else "0644"})
                 for name in files)
 
 

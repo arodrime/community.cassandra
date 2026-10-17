@@ -1,0 +1,3 @@
+---
+security_fixes:
+  - cassandra_config role - ``cassandra-env.sh`` is written with ``cassandra_config_mode`` (``0640``), no longer readable by all: its extra lines may hold a password. Root and Cassandra's group still read it (the start scripts, ``nodetool``); ``import_cluster`` keeps the mode a node has, ``apply_config`` shows a node at ``0644`` as a mode change (no restart).

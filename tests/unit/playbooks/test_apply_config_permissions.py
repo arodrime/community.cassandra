@@ -117,8 +117,10 @@ def test_owner_and_mode_changes_are_listed():
     assert changes == [
         {"item": "/etc/cassandra/conf/cassandra.yaml (owner:group mode)", "before": "root:cassandra 0640", "after": "dbsvc:dbgrp 0640"},
         {"item": "/etc/cassandra/conf/cassandra-env.sh (owner:group mode)", "before": "root:cassandra 0644",
-         "after": "dbsvc:dbgrp 0644"}]
-    assert perm_changes(LIVE) == []
+         "after": "dbsvc:dbgrp 0640"}]
+    # cassandra-env.sh written readable by all by an earlier release: its mode alone
+    assert perm_changes(LIVE) == [{"item": "/etc/cassandra/conf/cassandra-env.sh (owner:group mode)",
+                                   "before": "root:cassandra 0644", "after": "root:cassandra 0640"}]
 
 
 def test_a_node_with_only_owner_and_mode_to_change_is_done_without_a_restart():
@@ -234,7 +236,7 @@ def test_the_role_reports_them_and_records_what_cassandra_started_with():
     assert render(shown["ansible.builtin.debug"]["msg"], {"_cassandra_config_perm_changes": perm_changes(LIVE, **INVENTORY),
                                                           "_cassandra_config_dir_changes": [], "_cassandra_config_dir_notes": []}) == [
         "/etc/cassandra/conf/cassandra.yaml (owner:group mode): root:cassandra 0640 -> dbsvc:dbgrp 0640",
-        "/etc/cassandra/conf/cassandra-env.sh (owner:group mode): root:cassandra 0644 -> dbsvc:dbgrp 0644"]
+        "/etc/cassandra/conf/cassandra-env.sh (owner:group mode): root:cassandra 0644 -> dbsvc:dbgrp 0640"]
     # recorded before an owner or mode change too: later runs then tell it needs no restart (same checksums)
     seed = find(ROLE, "Record the config the running Cassandra started with")
     condition = "{{ %s }}" % seed["when"][1]

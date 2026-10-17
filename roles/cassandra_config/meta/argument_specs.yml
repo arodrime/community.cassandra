@@ -1439,17 +1439,17 @@ argument_specs:
         type: str
         default: "0640"
         description:
-        - Mode of C(cassandra.yaml), which may hold keystore passwords, and of the
+        - Mode of C(cassandra.yaml), which may hold keystore passwords, of the
           C(jvm*-server.options) files, whose extra options may too (e.g.
-          C(-Djavax.net.ssl.keyStorePassword=)). Octal, quoted.
+          C(-Djavax.net.ssl.keyStorePassword=)), and of C(cassandra-env.sh),
+          whose extra lines may too (C(nodetool) reads the JMX port in it, run
+          as root or by a user of O(cassandra_config_group)). Octal, quoted.
       cassandra_config_public_mode:
         type: str
         default: "0644"
         description:
-        - Mode of the other config files (C(cassandra-env.sh),
-          C(cassandra-rackdc.properties), C(logback.xml)), which hold no secret.
-          C(nodetool), run by any user, reads the JMX port in C(cassandra-env.sh).
-          Octal, quoted.
+        - Mode of the other config files (C(cassandra-rackdc.properties),
+          C(logback.xml)), which hold no secret. Octal, quoted.
       cassandra_config_file_permissions:
         type: dict
         default: {}

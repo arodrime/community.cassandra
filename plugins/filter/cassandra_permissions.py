@@ -47,9 +47,10 @@ def _files_of(series):
 
 
 def restricted(name):
-    """cassandra.yaml (keystore passwords) and the JVM options files (their extra
-    options, e.g. -Djavax.net.ssl.keyStorePassword=): cassandra_config_mode."""
-    return name == "cassandra.yaml" or bool(re.match(r"^jvm\d*-server\.options$", name))
+    """cassandra.yaml (keystore passwords), the JVM options files (their extra
+    options, e.g. -Djavax.net.ssl.keyStorePassword=) and cassandra-env.sh (its
+    extra lines, e.g. a JVM_OPTS with a password): cassandra_config_mode."""
+    return name in ("cassandra.yaml", "cassandra-env.sh") or bool(re.match(r"^jvm\d*-server\.options$", name))
 
 
 def mode_text(mode):
@@ -69,8 +70,8 @@ def cassandra_file_permissions(name, settings):
     """name: a file cassandra_config writes; settings: {owner, group, mode,
     public_mode, files, user, user_group} (cassandra_config_user, _group,
     _mode, _public_mode, _file_permissions, cassandra_user, cassandra_group)
-    -> {owner, group, mode}: cassandra.yaml and the JVM options files get
-    mode, the other config files public_mode, the JMX users' files are
+    -> {owner, group, mode}: cassandra.yaml, the JVM options files and
+    cassandra-env.sh get mode, the other config files public_mode, the JMX users' files are
     cassandra_user's, 0400; a file listed in files gets what it sets over that."""
     per_files = settings.get("files") or {}
     if not isinstance(per_files, dict):
@@ -261,11 +262,6 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
                      " cassandra_config_file_permissions): "
                      + ", ".join("%s %s:%s %s" % (n, found[n]["owner"], found[n]["group"], found[n]["mode"])
                                  for n in sorted(per_file)))
-    env = found.get("cassandra-env.sh")
-    if env and re.match(r"^[0-7]+$", env["mode"]) and not int(env["mode"], 8) & 0o004:
-        notes.append("cassandra-env.sh is not readable by other users (%s:%s %s): nodetool run by a user outside %s"
-                     " cannot read the JMX port in it (kept as the node has it; the roles' default is 0644)"
-                     % (env["owner"], env["group"], env["mode"], env["group"]))
     notes += _dirs_not_owned(dirs, user, group)
     return {"vars": out, "notes": notes, "files": dict(found, **unread)}
 

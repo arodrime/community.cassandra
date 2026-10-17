@@ -386,14 +386,14 @@ cassandra_logback_extra_lines: []
 cassandra_user: cassandra
 cassandra_group: cassandra
 # The config files: owned by root, group cassandra_group (Cassandra reads them
-# but cannot rewrite them). cassandra.yaml (keystore passwords) and the JVM
+# but cannot rewrite them). cassandra.yaml (keystore passwords), the JVM
 # options files (their extra options, e.g. -Djavax.net.ssl.keyStorePassword=)
-# are not readable by others. The other files hold no secret and are readable
-# by all: nodetool, run by any user, reads the JMX port from cassandra-env.sh.
+# and cassandra-env.sh (its extra lines, e.g. a JVM_OPTS with a password) are
+# not readable by others. The other files hold no secret and are readable by all.
 cassandra_config_user: root
 cassandra_config_group: "{{ cassandra_group }}"
-cassandra_config_mode: "0640"  # cassandra.yaml, jvm*-server.options
-cassandra_config_public_mode: "0644"  # cassandra-env.sh, cassandra-rackdc.properties, logback.xml
+cassandra_config_mode: "0640"  # cassandra.yaml, jvm*-server.options, cassandra-env.sh
+cassandra_config_public_mode: "0644"  # cassandra-rackdc.properties, logback.xml
 # Per file, over the above: {file name: {owner, group, mode}}, any of the three,
 # e.g. {logback.xml: {mode: "0600"}}. Also for jmxremote.password and
 # jmxremote.access (cassandra_user, cassandra_group, 0400 by default; the JVM

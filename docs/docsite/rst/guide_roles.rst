@@ -1206,12 +1206,11 @@ The account Cassandra runs as (the user and group of its running process) become
 ``cassandra_group`` when it is not ``cassandra``. The owner, group and mode of the config files (``cassandra.yaml``,
 ``cassandra-env.sh``, the JVM options, rackdc, logback) and of the JMX users' files are read too, and kept:
 ``cassandra_config_user`` and ``cassandra_config_group`` (what most files have), ``cassandra_config_mode``
-(``cassandra.yaml`` and the JVM options files) and ``cassandra_config_public_mode`` (the others), each written when it
+(``cassandra.yaml``, the JVM options files and ``cassandra-env.sh``) and ``cassandra_config_public_mode`` (the others), each written when it
 is not the roles' default, and ``cassandra_config_file_permissions`` for a file that differs from the others. Nodes
 that differ from each other get them per datacenter, rack or node, listed with the other differences. So files owned
 ``cassandra:dbgrp`` mode ``0640`` stay so, rather than going back to the roles' ``root:cassandra``, ``0640`` for
-``cassandra.yaml`` and the JVM options, ``0644`` for the others. The report says when ``cassandra-env.sh`` is not
-readable by other users (``nodetool`` run by them cannot read the JMX port in it), and lists the data, commitlog,
+``cassandra.yaml``, the JVM options and ``cassandra-env.sh``, ``0644`` for the others. The report lists the data, commitlog,
 hints, saved caches and log directories not owned by that account (``cassandra_config`` leaves the directories there
 as they are, and creates the missing ones ``cassandra_user:cassandra_group`` mode ``0750``).
 

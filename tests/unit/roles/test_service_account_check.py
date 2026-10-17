@@ -79,7 +79,8 @@ def test_unit_group_apart_from_the_files_refused():
     assert not passes
     assert "Cassandra would run as cassandra:cassandra (groups: cassandra, 990), which could not read cassandra.yaml" \
         " (root:dbgrp 0640)" in msg
-    assert "cassandra-env.sh" not in msg  # 0644: readable by all
+    assert "cassandra-env.sh (root:dbgrp 0640)" in msg  # its extra lines may hold a password: 0640 too
+    assert "logback.xml" not in msg  # 0644: readable by all
 
 
 def test_user_in_the_files_group_passes():
@@ -119,8 +120,8 @@ SETTINGS = {"owner": "root", "group": "dbgrp", "mode": "0640", "public_mode": "0
 
 def test_unreadable_config_filter():
     assert cassandra_unreadable_config("41x", SETTINGS, ["cassandra", "990"], ["cassandra"]) == [
-        "cassandra.yaml (root:dbgrp 0640)", "jvm-server.options (root:dbgrp 0640)", "jvm8-server.options (root:dbgrp 0640)",
-        "jvm11-server.options (root:dbgrp 0640)"]
+        "cassandra.yaml (root:dbgrp 0640)", "cassandra-env.sh (root:dbgrp 0640)", "jvm-server.options (root:dbgrp 0640)",
+        "jvm8-server.options (root:dbgrp 0640)", "jvm11-server.options (root:dbgrp 0640)"]
     assert cassandra_unreadable_config("41x", SETTINGS, ["cassandra"], ["dbgrp"]) == []
     # the owner reads it, root reads everything, another series is not checked
     assert cassandra_unreadable_config("41x", dict(SETTINGS, owner="cassandra"), ["cassandra"], ["x"]) == []
