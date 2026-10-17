@@ -42,9 +42,7 @@ Role Variables
   `cassandra_repository`; `tarball` is not supported yet.
 * `cassandra_install_url`, `cassandra_install_username`,
   `cassandra_install_password`: the repository or the directory of the files,
-  and its credentials (default to `cassandra_repository_rpm_url` /
-  `cassandra_repository_deb_url`, `cassandra_repository_username`,
-  `cassandra_repository_password`).
+  and its credentials (Apache's repositories by default, no credentials).
 * `cassandra_package_version`: exact Cassandra version (e.g. `5.0.4`), so
   every node, including the ones added later, runs the same one. Empty
   (default) installs the repository's latest. An installed node is never moved
