@@ -25,8 +25,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_jmx_files,
     _same_setting,
 )
-from ansible_collections.community.cassandra.plugins.filter import cassandra_import
-from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _jmx_entries
+from ansible_collections.community.cassandra.plugins.filter import cassandra_import, cassandra_settings
+from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _compare, _jmx_entries
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "modules", "fixtures")
@@ -217,6 +217,37 @@ def test_renamed_key_is_imported(series, release):
     out = cassandra_config_import(files, series, FACTS, release=release)
     assert out["vars"]["cassandra_extra_settings"] == {"commitlog_total_space_in_mb": 8192}
     assert out["not_settings"] == {}
+
+
+@pytest.mark.parametrize("series", ["41x", "50x"])
+def test_former_name_of_a_key_a_variable_writes_goes_to_that_variable(series):
+    # a file from 4.0 (column_index_size_in_kb): Cassandra 4.1+ reads either name and refuses both, so not an extra
+    # setting next to the variable's line, but the variable, which the role writes under the new name
+    files = node_files(series)
+    lines = [line for line in files["cassandra.yaml"].split("\n")
+             if not re.match(r"^#? ?(column_index_size|stream_throughput_outbound|file_cache_size):", line)]
+    files["cassandra.yaml"] = "\n".join(lines) + ("column_index_size_in_kb: 32\nfile_cache_size_in_mb: 512\n"
+                                                  "stream_throughput_outbound_megabits_per_sec: 200\n")
+    out = cassandra_config_import(files, series, FACTS, release="4.1.12" if series == "41x" else "5.0.9")
+    assert "cassandra_extra_settings" not in out["vars"]
+    assert out["vars"]["cassandra_column_index_size"] == "32KiB"
+    assert out["vars"]["cassandra_file_cache_size"] == "512MiB"
+    assert out["vars"]["cassandra_stream_throughput_outbound"] == "25000000B/s"  # 200 Mb/s, as Cassandra converts it
+    assert out["hand_edits"] == []
+    # the role's file has the same settings: cassandra_config leaves the node's as it is
+    role = node_files(series, **out["vars"])["cassandra.yaml"]
+    assert cassandra_settings.same_settings("cassandra.yaml", files["cassandra.yaml"], role)
+    assert not cassandra_settings.same_settings("cassandra.yaml", files["cassandra.yaml"].replace("_in_kb: 32", "_in_kb: 16"), role)
+    # nor does the import's self-check see a difference
+    assert _compare("cassandra.yaml", files["cassandra.yaml"], role) == []
+    assert sum("(node: column_index_size_in_kb: 32)" in line for line in out["normalized"]) == 1
+
+
+def test_former_name_with_its_new_name_or_not_a_number_stays_an_extra_setting():
+    files = node_files("41x")
+    files["cassandra.yaml"] += "column_index_size_in_kb: 32\nroles_update_interval_in_ms: -1\n"
+    out = cassandra_config_import(files, "41x", FACTS, release="4.1.12")
+    assert out["vars"]["cassandra_extra_settings"] == {"column_index_size_in_kb": 32, "roles_update_interval_in_ms": -1}
 
 
 def test_unsupported_series():
