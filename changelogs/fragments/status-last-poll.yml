@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_status - no longer waits ``interval`` after the last read when a node is down (``poll`` reads, ``poll - 1`` waits).
