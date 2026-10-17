@@ -165,7 +165,10 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     samples (time and bytes done of the last checks), rate (bytes per
     second over the last _WINDOW seconds, 3 checks at least; None while
     unknown or when nothing moved),
-    checks (calls so far) and wait (seconds before the next check)."""
+    checks (calls so far) and wait (seconds before the next check).
+    e.g. ([{item: node4, sessions: [{operation: Bootstrap, peer: 10.0.0.1, direction: receiving, bytes_total: 10
+    GiB, bytes_done: 4 GiB, ...}]}], <the state of a check 30 s before, 2 GiB done>, now=1030) -> {progressed: True,
+    bytes_done: 4 GiB, bytes_total: 10 GiB, rate: 71582788.3 (68 MiB/s), stalled: False, idle: 0, checks: 2, ...}."""
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
     start = state.get("start", now)
@@ -258,7 +261,11 @@ def cassandra_stream_report(state, node="", what="", status="going", names=None,
     stalled, too_long, stopped, *_failed...); names: {address: inventory
     name} for the other ends; files_label: what the files are called;
     clocks, stall: False leaves out Now and Started, the line about the
-    checks without progress (a batch shows them once)."""
+    checks without progress (a batch shows them once).
+    Output: [str]. e.g. (that state, node="node4", what="bootstrap", names={"10.0.0.1": "node1"}) -> ["node4
+    bootstrap  [########------------]  40%   68 MiB/s", "", "      data:      4.0 / 10.0 GiB", "                 5 / 20
+    files", "", "      from:      node1   40% done  (4.0 / 10.0 GiB)", "", "      Now:       current - <clock>", ...];
+    status="done" -> ["node4  bootstrap  done  8.0 GiB in 30s (10.0 GiB in all), 273 MiB/s on average"]."""
     total, done, now = state.get("bytes_total", 0), state.get("bytes_done", 0), state.get("now", 0)
     start = state.get("start", now)
     rate = state.get("rate")
@@ -339,7 +346,8 @@ def _host_var(hostvars, host, *path):
 
 def cassandra_stream_progress_by_host(views, states=None, **kwargs):
     """cassandra_stream_progress for each host of views on its own: {host:
-    state}; states: what the previous call returned."""
+    state}; states: what the previous call returned.
+    e.g. ([<node4's netstats view>], None, now=1000) -> {node4: <its cassandra_stream_progress state>}."""
     states = states or {}
     return dict((str(v.get("item", "")), cassandra_stream_progress([v], states.get(str(v.get("item", ""))), **kwargs))
                 for v in views)
@@ -352,7 +360,11 @@ def cassandra_cleanup_report(states, jobs, batch, status="going"):
     cassandra_stream_progress state and status (cleanup_check.yml: the batch
     stops as a whole). One block per node, its own done line once its job
     has ended; with several nodes, a line that names them first; the clocks
-    and the checks without progress once, for the batch."""
+    and the checks without progress once, for the batch.
+    Output: [str]. e.g. (node1 at 25%, node2's job finished) -> ["2 nodes in parallel: node1, node2", "Finish
+    counts the cleanup tasks running now, not the ones queued after them.", "", "node1  cleanup  [#####-----...]  25%",
+    "", "      data:      1.0 / 4.0 MiB", ..., "node2  cleanup  done  1.0 MiB, at the first check", "", "      Now:
+    current - <clock>", ...]."""
     hosts = [str(j["item"]["item"]) for j in jobs]
     lines = []
     if len(hosts) > 1:
@@ -395,7 +407,9 @@ def cassandra_host_addresses(hosts, hostvars):
     names the other ends by address). A variable that can't be read is skipped.
     What a host broadcasts or listens on first, for every host, then ansible_host
     and the facts: one host's ansible_host never takes the address another one
-    is in the ring by (127.0.0.1 for ccm-like nodes, a stale ansible_host)."""
+    is in the ring by (127.0.0.1 for ccm-like nodes, a stale ansible_host).
+    e.g. (["node1", "node2"], {node1: {cassandra_listen_address: "10.0.0.1"}, node2: {ansible_host: "10.0.0.2"}})
+    -> {"10.0.0.1": "node1", "10.0.0.2": "node2", "node1": "node1", "node2": "node2"}."""
     names = {}
     for paths in ((("cassandra_extra_settings", "broadcast_address"), ("_cassandra_preflight", "ring_address"),
                    ("_cassandra_preflight", "address"), ("cassandra_listen_address",)),
@@ -499,7 +513,10 @@ def cassandra_add_node_plan(cluster_status, new_nodes, hosts=None, keyspaces=Non
     (uneven racks), estimate ([{host, bytes, basis}]: data each new node
     should receive) and cleanup ({dc: [hosts]}: the nodes that hand over
     ranges and need a cleanup afterwards, in ring order), scope ({dc: 'rack'
-    when only the new nodes' racks hand over data, else 'dc'})."""
+    when only the new nodes' racks hand over data, else 'dc'}).
+    e.g. (node1 to node3 of dc1/r1 UN, 30 GiB each; node4 to add in dc1/r1) -> {racks: {dc1: {r1: 4}}, warnings:
+    [], estimate: [{host: node4, bytes: 24159191040, basis: "the load of dc1 / 4 nodes"}], cleanup: {dc1: ["node1",
+    "node2", "node3"]}, scope: {dc1: "dc"}}."""
     hosts = hosts or {}
     racks, warnings, estimate, cleanup, scope = {}, [], [], {}, {}
     # the nodes that receive data in this run are not cleaned; the ones that joined in
@@ -532,7 +549,9 @@ _COMPACTION = re.compile(r"^\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 
 def cassandra_cleanup_view(pair):
-    """(nodetool compactionstats result, host): the Cleanup tasks as a view."""
+    """(nodetool compactionstats result, host): the Cleanup tasks as a view.
+    e.g. ({rc: 0, stdout: <compactionstats>}, "node1") -> cassandra_compactionstats(dict(result, item="node1"),
+    types=["Cleanup"])."""
     result, host = pair
     return cassandra_compactionstats(dict(result, item=host), types=["Cleanup"])
 
@@ -540,7 +559,10 @@ def cassandra_cleanup_view(pair):
 def cassandra_compactionstats(result, types=None):
     """A looped nodetool compactionstats command result (item: the host) as a
     cassandra_stream_progress view: one session per running compaction of
-    the given types (e.g. ['Cleanup']), its table as the only file."""
+    the given types (e.g. ['Cleanup']), its table as the only file.
+    e.g. ({item: node1, rc: 0, stdout: <a Cleanup of shop.carts, 1048576 of 4194304 bytes>}, types=["Cleanup"]) ->
+    {item: node1, sessions: [{operation: Cleanup, peer: node1, direction: local, bytes_total: 4194304, bytes_done:
+    1048576, files_total: 1, files_done: 0, files: [{table: "shop.carts", ...}], ...}]}."""
     view = {"item": result.get("item", "")}
     if result.get("failed") or result.get("skipped") or result.get("unreachable") or result.get("rc", 0) != 0:
         view.update(failed=True, msg=result.get("msg", ""), stderr=result.get("stderr", ""))
@@ -567,7 +589,10 @@ def cassandra_stream_own_error(own):
     """Why this node's own nodetool netstats gave no mode at a check
     (stream_check.yml), '' when it answered: the first line of its error,
     without JVM banners (Picked up JAVA_TOOL_OPTIONS...). own: the
-    cassandra_netstats result (unreachable, failed or not)."""
+    cassandra_netstats result (unreachable, failed or not).
+    e.g. {failed: True, stderr: "Picked up JAVA_TOOL_OPTIONS: -Xss1m\\nnodetool: Failed to connect to
+    '127.0.0.1:7199' - ConnectException: 'Connection refused'."} -> "nodetool: Failed to connect to '127.0.0.1:7199' -
+    ConnectException: 'Connection refused'."; {mode: NORMAL} -> ""."""
     own = own or {}
     if own.get("mode"):
         return ""
@@ -581,7 +606,9 @@ def cassandra_stream_own_error(own):
 
 def _own_stopped(own):
     """Its own nodetool says Cassandra does not run there (JMX refuses the
-    connection); not an unreachable host (ssh's own "Connection refused")."""
+    connection); not an unreachable host (ssh's own "Connection refused").
+    Input: a cassandra_netstats result; output: bool. e.g. {failed: True, stderr: "... Connection refused"} -> True;
+    {unreachable: True, msg: "ssh: ... Connection refused"} -> False."""
     own = own or {}
     return not own.get("unreachable") and "Connection refused" in "%s %s" % (own.get("stderr") or "", own.get("msg") or "")
 
@@ -589,7 +616,8 @@ def _own_stopped(own):
 def cassandra_ring_seen(results, address):
     """How the other nodes see a node in nodetool status: 'UN', 'UJ', 'DN'...
     from the first cassandra_status result that lists its address, '' when
-    none does. results: the registered loop results of cassandra_status."""
+    none does. results: the registered loop results of cassandra_status.
+    e.g. ([{cluster_status: {dc1: {nodes: [{address: "10.0.0.4", status: U, state: J}]}}}], "10.0.0.4") -> "UJ"."""
     if not address:
         return ""
     for result in results or []:
@@ -617,7 +645,9 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
     status result (None: not followed): done once no removal is left;
     max_time: cassandra_stream_max_time (0: none); refused: the JMX logins
     refused at this check (cassandra_jmx_refused): jmx_refused at once
-    rather than a stall much later."""
+    rather than a stall much later.
+    Output: one of the words above. e.g. (a state going, join=True, own={mode: JOINING}) -> "going";
+    own={mode: NORMAL} -> "done"; a state stalled -> "stalled"."""
     state = state or {}
     own = own or {}
     mode = own.get("mode") or ""
@@ -675,7 +705,9 @@ def cassandra_jmx_refused(results, joining="", answered=None, hosts=None):
     that answered earlier in this wait (a login that worked: a refusal now
     is a passing one, e.g. Cassandra's own authenticator timing out on
     system_auth), left out; hosts: the ones read with their own login (the
-    others' refusals tell nothing about theirs), None: all."""
+    others' refusals tell nothing about theirs), None: all.
+    e.g. [{item: node1, failed: True, stderr: "error: Authentication failed! Invalid username or password"},
+    {item: node2, stdout: "ok"}] -> [{host: "node1", error: "error: Authentication failed! Invalid username or password"}]."""
     refused = []
     for result in results or []:
         if not isinstance(result, dict) or result.get("skipped") or result.get("unreachable"):
@@ -695,7 +727,10 @@ def cassandra_jmx_refused(results, joining="", answered=None, hosts=None):
 
 def cassandra_stream_waiting(own, seen="", node="", join=False):
     """The line that says why a join is not over yet when its node's own
-    nodetool can't answer (stream_check.yml), [] otherwise."""
+    nodetool can't answer (stream_check.yml), [] otherwise.
+    Output: [str]. e.g. ({failed: True, stderr: "error: Authentication failed! Invalid username or password"},
+    seen="UJ", node="node4", join=True) -> ["      node4: its own nodetool does not answer (error: Authentication failed!
+    Invalid username or password): done once the other nodes see it UN (they see it UJ)"]."""
     error = cassandra_stream_own_error(own)
     if not join or not error or _own_stopped(own):
         return []
