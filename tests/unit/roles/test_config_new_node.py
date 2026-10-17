@@ -187,6 +187,8 @@ def test_no_second_question_whatever_e_cassandra_config_confirm_says():
                     if (t.get("ansible.builtin.include_role") or {}).get("name") == "community.cassandra.cassandra_config"
                     and (t["ansible.builtin.include_role"].get("apply") or {}).get("check_mode") is True]
         assert previews and all(t["vars"]["_cassandra_config_no_question"] is True for t in previews), playbook
+        # nothing is written: no "restart needed" either (the template reports changed under the applied check mode)
+        assert all(t["vars"]["_cassandra_config_no_restart_warning"] is True for t in previews), playbook
 
 
 def test_the_question_comes_after_the_diffs_it_is_about():
