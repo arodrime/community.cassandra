@@ -113,8 +113,7 @@ def cassandra_seed_change(hosts, seeds):
         for h in members:
             if h.get("up"):  # the ones it runs with as seeds first: a rerun picks the same
                 racks.setdefault(h.get("rack"), []).append(dict(h, seed=h["name"] in old_keys))
-        target = min(len(members), out.SEEDS_MAX, max(out.SEEDS_MIN, len(set(h.get("rack") for h in members))))
-        picked = out._seed_pick(racks, target)  # pylint: disable=protected-access
+        picked = out.pick_seeds(racks, out.seed_target(len(members), len(set(h.get("rack") for h in members))))
         order = [h["name"] for h in members]
         picked.sort(key=lambda h: order.index(h["name"]))  # in the inventory's order: a rerun writes the same line
         if not picked:

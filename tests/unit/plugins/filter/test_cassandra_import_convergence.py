@@ -400,7 +400,7 @@ def test_an_undefined_value_is_raised(monkeypatch):
 
     def undefined(*args):
         raise AnsibleUndefinedVariable("'cluster_group' is undefined")
-    monkeypatch.setattr(convergence, "_sections", undefined)
+    monkeypatch.setattr(convergence, "report_sections", undefined)
     with pytest.raises(AnsibleUndefinedVariable):
         section()
 
@@ -408,7 +408,7 @@ def test_an_undefined_value_is_raised(monkeypatch):
 def test_an_error_of_its_own_is_a_line(monkeypatch):
     def broken(*args):
         raise KeyError("hunter2")
-    monkeypatch.setattr(convergence, "_sections", broken)
+    monkeypatch.setattr(convergence, "report_sections", broken)
     lines = section(screen=True)
     assert lines == ["CONVERGENCE  not worked out (KeyError in cassandra_import_convergence; the inventory and the"
                      " rest of the report are not affected)"]

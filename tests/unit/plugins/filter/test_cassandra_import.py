@@ -1698,7 +1698,7 @@ def test_layout_over_the_users_group_vars_all():
     """group_vars/all of the inventory dir sets a standard some nodes do not follow: after the import, every host
     gets its live value from the effective inventory (theirs + the import's), so the roles change nothing."""
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-        _chains, _effective, cassandra_inventory_files, cassandra_inventory_layout_over)
+        group_chains, _effective, cassandra_inventory_files, cassandra_inventory_layout_over)
     from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import (
         cassandra_inventory_host_vars)
     layout = cassandra_inventory_layout_over(_owner_nodes(), "Orders", STANDARD)
@@ -1708,7 +1708,7 @@ def test_layout_over_the_users_group_vars_all():
         got = cassandra_inventory_host_vars(files, layout["hosts"], name)
         assert (got.get("cassandra_config_user", "root"), got.get("cassandra_config_group", "cassandra")) == \
             live.get(name, ("cassandra", "cassandraops")), name
-        effective = _effective(name, _chains(layout["hosts"])[name], layout, [(f["path"], {}) for f in STANDARD])
+        effective = _effective(name, group_chains(layout["hosts"])[name], layout, [(f["path"], {}) for f in STANDARD])
         assert "cassandra_config_user" in effective or name not in live
     # the nodes that follow it: nothing written for them, theirs applies
     assert not any("cassandra_config_user" in v for v in layout["group_vars"].values())

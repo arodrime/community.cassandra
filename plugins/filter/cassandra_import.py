@@ -1225,7 +1225,7 @@ def cassandra_unit_environment(text):
     return dict(w.split("=", 1) for w in words if "=" in w)
 
 
-def _undefined(exc):
+def undefined_name(exc):
     """A missing variable or field of the nodes' data (Ansible's lazy
     templating), whose message names it and shows no value."""
     source = getattr(exc, "source", None)  # 2.19+: the marker behind the error
@@ -1234,7 +1234,7 @@ def _undefined(exc):
             and bool(MISSING_NAME.search(str(exc))))
 
 
-def _hidden(name, where):
+def error_without_message(name, where):
     """The error being handled, without its message (it may quote a value)."""
     frames = [f for f in traceback.extract_tb(sys.exc_info()[2])
               if re.match(r"cassandra_import(_check|_nodes)?[.]py$", os.path.basename(f[0]))]
@@ -1280,9 +1280,9 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     except AnsibleFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
-        if _undefined(exc):
+        if undefined_name(exc):
             raise
-        error = _hidden("cassandra_config_import", where[0])
+        error = error_without_message("cassandra_config_import", where[0])
     raise error  # out of the except block: no chained message either
 
 
@@ -1608,7 +1608,7 @@ def _move_secrets(variables):
     return variables, trusted, said
 
 
-def _keep_files(value):
+def keep_files_option(value):
     """import_cluster_keep_hand_edits: true/false, or the config files to keep (a list, or names separated by
     commas: -e import_cluster_keep_hand_edits=logback.xml) -> True, or [names]; a name not of a config file fails."""
     if isinstance(value, str) and value.strip().lower() in ("", "yes", "no", "on", "off", "true", "false", "1", "0"):
@@ -1636,7 +1636,7 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running):
     if dep is None:  # the running Java not known (Cassandra not running): nothing worked out
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
     jvm_files = [f for f in (jvm_args.ENV, jvm_args.COMMON, dep) if f in files]
-    keep = _keep_files(running.get("keep", False))
+    keep = keep_files_option(running.get("keep", False))
     kept = jvm_files if keep is True else [f for f in jvm_files if f in keep]
     if kept:  # import_cluster_keep_hand_edits: those files left as they are (said with the files kept)
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [], "not_moved": ""}
@@ -1644,7 +1644,7 @@ def _jvm_moves(env, series, files, ctx, render, live_files, running):
     def rendered(variables):
         return dict((name, "\n".join(_render(env, series, name, variables)[1])) for name in jvm_files)
     if running.get("jaas") and jvm_args.ENV in live_files and jvm_args.ENV in jvm_files \
-            and jvm_args._candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
+            and jvm_args.env_has_candidates(live_files[jvm_args.ENV], rendered(render)[jvm_args.ENV]):
         # JMX authenticated by JAAS, not imported: cassandra-env.sh to keep as it is (its note), its lines not moved
         return {"vars": {}, "moved": [], "rewritten": [], "cleanup": [], "shown": [],
                 "not_moved": "JMX authenticates by JAAS (%s), not imported" % running["jaas"]}
@@ -1785,7 +1785,7 @@ def _show(key, value):
     return json.dumps(value, sort_keys=True, default=str)
 
 
-def _values_hidden(func):
+def values_hidden(func):
     """func, raising its unexpected errors without their message."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -1794,9 +1794,9 @@ def _values_hidden(func):
         except AnsibleFilterError:
             raise
         except Exception as exc:  # pylint: disable=broad-except
-            if _undefined(exc):
+            if undefined_name(exc):
                 raise
-            error = _hidden(func.__name__, "")
+            error = error_without_message(func.__name__, "")
         raise error
     return wrapper
 
@@ -1861,7 +1861,7 @@ def _name_template(key, values):
     return None
 
 
-def _sort_key(key):
+def vars_sort_key(key):
     """Keys in the order of the vars files: by block, then as listed there."""
     titles = [title for title, dummy in BLOCKS]
     order = dict(BLOCKS)[_block(key)]
@@ -1871,7 +1871,7 @@ def _sort_key(key):
 def _differences(keys, read, dcg, rackg):
     """One line per key: each value and the nodes (or DC, rack) that have it."""
     lines = []
-    for key in sorted(keys, key=_sort_key):
+    for key in sorted(keys, key=vars_sort_key):
         groups = {}  # by value, shown masked
         for n in read:
             value = n["vars"].get(key, MISSING)
@@ -1902,7 +1902,7 @@ def _without_ring_rackdc(node):
     return dict((k, node["vars"][k]) for k in node["vars"] if k not in ring or node["vars"][k] != ring[k])
 
 
-def _hand_edits_kept(node):
+def hand_edits_kept(node):
     """A node's hand edit lines -> (the ones in files cassandra_config_keep_files keeps, the others); a
     "<file>: ..." or "<file>, line N:" line starts the lines of a file."""
     keep = (node.get("keep") or {}).get("cassandra_config_keep_files") or []
@@ -1914,7 +1914,7 @@ def _hand_edits_kept(node):
     return kept, edits
 
 
-@_values_hidden
+@values_hidden
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
     vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
@@ -2031,7 +2031,7 @@ def cassandra_inventory_layout(nodes, cluster_name):
             if k in (n.get("keep") or {}):
                 report.append("  Set up by the roles, LEFT AS IT IS on this node (host_vars/%s/main.yml): %s (%s: false;"
                               " remove the line to have it done, after --check --diff)" % (n["name"], KEEP[k], k))
-        kept, edits = _hand_edits_kept(n)
+        kept, edits = hand_edits_kept(n)
         if kept:
             report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
                           " (cassandra_config_keep_files; nodes added later get the role's):")
@@ -2135,8 +2135,8 @@ _MEDUSA_INI = []
 def _medusa_ini_keys():
     """The variables medusa.ini is made of (cassandra_medusa's template), its owners and mode, its key file."""
     if not _MEDUSA_INI:
-        from ansible_collections.community.cassandra.plugins.filter.cassandra_medusa import _role_settings
-        mapping, dummy = _role_settings()
+        from ansible_collections.community.cassandra.plugins.filter.cassandra_medusa import role_settings
+        mapping, dummy = role_settings()
         others = ("config_user", "config_group", "config_mode", "key_file_user", "key_file_group", "key_file_mode",
                   "s3_access_key_id", "s3_secret_access_key", "extra_settings")
         _MEDUSA_INI.append(set(mapping.values()) | set("cassandra_medusa_" + k for k in others))
@@ -2166,7 +2166,7 @@ def _vars_dir(path):
     return parts[0] + "/" + (os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1])
 
 
-def _chains(hosts):
+def group_chains(hosts):
     """The hosts file's data -> {host: [its groups, top down]}."""
     out = {}
 
@@ -2231,7 +2231,7 @@ def cassandra_inventory_user_files(read, layout, password=""):
     return out
 
 
-@_values_hidden
+@values_hidden
 def cassandra_inventory_layout_over(nodes, cluster_name, user_files, inventory_dir=""):
     """_layout_over (inventory_dir: where the inventory is, for a {{ inventory_dir }} in the path of your own
     template), without the user's files at the paths it writes (replaced, kept as <file>.<date>~: their
@@ -2256,7 +2256,7 @@ def _yours_rendered(n, theirs, inventory_dir=""):
     overrides = (theirs.get("cassandra_config_template_overrides") or (None,))[0]
     if not isinstance(overrides, dict) or not overrides:
         return
-    kept, edits = _hand_edits_kept(dict(n, keep={"cassandra_config_keep_files": list(overrides)}))
+    kept, edits = hand_edits_kept(dict(n, keep={"cassandra_config_keep_files": list(overrides)}))
     if kept:
         n["hand_edits"] = edits
         n["normalized"] = list(n.get("normalized") or []) + [
@@ -2363,7 +2363,7 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
 
     layout = cassandra_inventory_layout(nodes, cluster_name)
     # a value theirs gives already, as the node has it: left to theirs (where Ansible reads it once written)
-    chains = _chains(layout["hosts"])
+    chains = group_chains(layout["hosts"])
     from_yours, differ = {}, []
     for n in nodes:
         name = layout["names"].get(n.get("address"), n["name"])
@@ -2383,7 +2383,7 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
                     differ.append({"node": name, "key": key, "value": live, "yours": value, "path": path})
     layout = cassandra_inventory_layout(nodes, cluster_name)
     for dummy in range(3):  # each round writes the values theirs would change; the layout again
-        chains = _chains(layout["hosts"])
+        chains = group_chains(layout["hosts"])
         changed, pins = False, []
         for n in nodes:
             if not boolean(n.get("read", False), strict=False):
@@ -2413,7 +2413,7 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
             break
         layout = cassandra_inventory_layout(nodes, cluster_name)
     # a file of theirs that still wins (sorted after main.yml in a host's dir): said, not hidden
-    chains = _chains(layout["hosts"])
+    chains = group_chains(layout["hosts"])
     for y in yours:
         n = next((n for n in nodes if layout["names"].get(n.get("address"), n["name"]) == y["node"]), None)
         got = _effective(y["node"], chains.get(y["node"], []), layout, user).get(y["key"])
@@ -2547,7 +2547,7 @@ TEMPLATE_BLOCKS = [("cassandra.yaml", "Other cassandra.yaml settings"), ("logbac
 
 
 @functools.lru_cache(maxsize=None)
-def _template_vars(name):
+def template_vars(name):
     """The variables a cassandra_config template uses, whatever the series."""
     used = set()
     for series in SERIES.values():
@@ -2566,7 +2566,7 @@ def _block(key):
         if regex.search(key):
             return title
     for name, title in TEMPLATE_BLOCKS:
-        if key in _template_vars(name):
+        if key in template_vars(name):
             return title
     return "Other"
 
@@ -2656,7 +2656,7 @@ def _split_secrets(variables, trusted=()):
     return public, secrets
 
 
-@_values_hidden
+@values_hidden
 def cassandra_inventory_files(layout):
     """[{path, content, secret}] for group_vars/<group>/ and
     host_vars/<host>/: main.yml, and secrets.yml for variables named like
@@ -2990,7 +2990,7 @@ def cassandra_inventory_same_secret(existing, content, password):
     return _decrypt(existing, password) == content
 
 
-@_values_hidden
+@values_hidden
 def cassandra_inventory_own_values(read, cluster_group, keys, password=""):
     """read: {path: text} of the vars files of the inventory dir -> {key: value} of keys as an earlier import of
     this cluster wrote them in its own files of the cluster group (group_vars/<cluster group>/main.yml and
@@ -3033,7 +3033,7 @@ def _host_entries(data):
     return out
 
 
-@_values_hidden
+@values_hidden
 def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, names, password=""):
     """nodes: cassandra_import_nodes' -> the same, without ansible_host for the hosts the inventory already there
     reaches without one: the hosts file of this cluster an earlier import wrote (<cluster group>.yml, its first

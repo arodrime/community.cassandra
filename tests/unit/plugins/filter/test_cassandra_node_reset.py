@@ -20,7 +20,7 @@ def cassandra_node_reset_ring(answers, addresses, replace_address="", running=Fa
     view = standing.ring_view(answers, addresses, standing.own_ids(addresses, running=running, own=own), replace_address,
                               known, has_data)
     return {"problems": standing.ring_problems(view, addresses, host or "this node", replace_address, running, own),
-            "info": ["%s sees %s down (%s): the node being replaced" % (o, standing._addr(n.get("address")), standing._seen(n))
+            "info": ["%s sees %s down (%s): the node being replaced" % (o, standing.status_address(n.get("address")), standing._seen(n))
                      for o, n in view["replaced"]]}
 
 

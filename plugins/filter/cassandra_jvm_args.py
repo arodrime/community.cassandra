@@ -506,7 +506,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
         info = _analyse(args, live, role, series, java, node_env)
         role_heap, dummy = heap_values(info["role_lines"], node_env)
     except NotSame as exc:
-        return {"why": str(exc)} if _candidates(live[ENV], role[ENV]) else None
+        return {"why": str(exc)} if env_has_candidates(live[ENV], role[ENV]) else None
     if not info["added"] and not info["heap_lines"]:
         return None
     end, dropped, keep = info["end"], [], []
@@ -573,7 +573,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
     return {"why": why}
 
 
-def _candidates(live, role):
+def env_has_candidates(live, role):
     """Whether the node's cassandra-env.sh has JVM_OPTS lines of plain options or heap assignments the role's has
     not (wherever they are)."""
     try:

@@ -31,7 +31,7 @@ import shlex
 from collections import OrderedDict
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
-from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import _stat
+from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
@@ -53,7 +53,7 @@ ABSENT = "absent"
 _DM_KNAME = re.compile(r" \(dm-\d+\)$")
 
 # what follows the write, by cassandra_apply_config_then: (--check or the plan, real run)
-_THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
+THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
          "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart"),
          "os": ("no restart", "no restart")}
 # said in the plan only, before the question
@@ -264,7 +264,7 @@ def _stats(results, key):
             continue
         name = key(result)
         if name:
-            p = _stat(st)
+            p = stat_fields(st)
             found[name] = "%s:%s %s" % (p["owner"], p["group"], p["mode"])
     return found
 
@@ -562,7 +562,7 @@ def _outcome(node, check, plan):
         then = "os" if os_only else node.get("then")
         word = "would apply" if check else "will apply" if plan else "applied"  # (plan: before a real run's question)
         text = word
-        said = _THEN.get(then, ("", ""))[0 if check or plan else 1]
+        said = THEN.get(then, ("", ""))[0 if check or plan else 1]
         text += (", " + said if said else "")
         if then == "restart" and node.get("why"):  # not for new settings alone: a restart for this too
             text += " (%s)" % node["why"]

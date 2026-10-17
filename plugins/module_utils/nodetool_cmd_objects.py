@@ -47,7 +47,7 @@ _JMX_REFUSED = re.compile(r"Invalid username or password|Authentication failed|C
 
 # nodetool not reaching JMX: "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'."
 _JMX_UNREACHED = re.compile(r"Failed to connect to '(?P<where>[^']*)'(?: - (?P<kind>\w+): '?(?P<why>[^'\n]*?)'?\.?)?\s*$", re.M)
-_JMX_CAUSES = (
+JMX_CAUSES = (
     (re.compile(r"Connection refused", re.I), "Connection refused",
      "Cassandra is not running there, or its JMX listens on another port (cassandra_jmx_port). "
      "Check: systemctl status cassandra, and its system.log"),
@@ -77,7 +77,7 @@ def version_error(out, err, host=None, port=None):
     if unreached:
         where = unreached.group("where") or ("{0}:{1}".format(host, port) if host else "")
         why = (unreached.group("why") or unreached.group("kind") or "").strip()
-        for pattern, cause, hint in _JMX_CAUSES:
+        for pattern, cause, hint in JMX_CAUSES:
             if pattern.search(why or text):
                 return "nodetool gets no answer from JMX on {0} ({1}): {2}".format(where, cause, hint)
         return ("nodetool can't reach JMX on {0}{1}: is Cassandra running there (systemctl status cassandra), "

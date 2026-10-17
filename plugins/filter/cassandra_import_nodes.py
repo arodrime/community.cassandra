@@ -22,7 +22,7 @@ import re
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    CARRIED, CONFIG_FILE, _keep_files, _values_hidden)  # (CONFIG_FILE: the report's too)
+    CARRIED, CONFIG_FILE, keep_files_option, values_hidden)  # (CONFIG_FILE: the report's too)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 
@@ -295,7 +295,7 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     }
 
 
-@_values_hidden
+@values_hidden
 def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default=None, host_names="hostname",
                            set_ansible_host=True, keep_hand_edits=False):
     """ring: cassandra_ring_nodes; data: cassandra_import_host_vars of the given
@@ -306,7 +306,7 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     import_cluster_ options (keep_hand_edits: a bool, or the config
     files to keep) -> [node] for cassandra_inventory_layout."""
     ordered = list(given) + list(found or [])
-    keep_files = _keep_files(keep_hand_edits)
+    keep_files = keep_files_option(keep_hand_edits)
     out = []
     for item in ring:
         host = _match(item["address"], data, ordered)

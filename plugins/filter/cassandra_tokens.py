@@ -27,7 +27,9 @@ from fractions import Fraction
 from functools import wraps
 
 from ansible.errors import AnsibleFilterError
-from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _host_of, _ip
+from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import hosts_by_address
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import parse_size
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import size as _size, sizes as _sizes
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_tokens import (
     TokenError, balanced_positions, dc_offset, move_order, ownership, parse_token, partitioner_range,
@@ -153,7 +155,7 @@ def _addresses(hosts, ring):
     known = {}
     for address, name in (hosts or {}).items():
         known.setdefault(name, []).extend([address, name])
-    return _host_of(known, [_ip(n["address"]) for dc in (ring or {}) for n in ring[dc]])
+    return hosts_by_address(known, [_ip(n["address"]) for dc in (ring or {}) for n in ring[dc]])
 
 
 def _ring_entries(ring, dc, hosts, problems):
@@ -425,7 +427,7 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
     loads = {}
     for dc in (status or {}):
         for n in status[dc].get("nodes", []):
-            loads[_ip(n["address"])] = _bytes(n.get("load"))
+            loads[_ip(n["address"])] = parse_size(n.get("load"))
     dcs = sorted(ring or {})
     index = _dc_index(dcs)
     rfs = _rf_by_dc(keyspaces, dcs, default_rf)

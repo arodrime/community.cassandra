@@ -79,7 +79,7 @@ def cassandra_medusa_ini_changes(old_text, new_text, name="medusa.ini"):
     return out
 
 
-def _role_settings():
+def role_settings():
     with open(os.path.join(ROLE, "templates", "medusa.ini.j2")) as f:
         mapping = {(section, key.lower()): var for section, key, var in SETTING.findall(f.read())}
     with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
@@ -117,7 +117,7 @@ def cassandra_medusa_import(ini_text, credentials_text=None, found=None):
         sections = _parse(ini_text)
     except configparser.Error:
         return {"vars": {}, "notes": ["Medusa: /etc/medusa/medusa.ini is not valid INI, NOT imported"]}
-    mapping, defaults = _role_settings()
+    mapping, defaults = role_settings()
     out, extras = {}, {}
     for section, keys in sections.items():
         for key, value in keys.items():

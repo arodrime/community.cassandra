@@ -212,8 +212,8 @@ def cassandra_node_reset_real(result, real, mounts=None, protected=None):
     return dict(result, dirs=dirs, problems=problems)
 
 
-_addr = standing._addr
-_nodes = standing._nodes
+_addr = standing.status_address
+_nodes = standing.status_nodes
 
 
 def cassandra_node_reset_ring(addresses, host="", has_data=False, cluster_ring=None):

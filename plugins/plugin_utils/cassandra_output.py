@@ -1843,7 +1843,12 @@ def removed_todo(removed, reimport_from, inventory=None, hosts=None, inventory_d
 SEEDS_MIN, SEEDS_MAX = 2, 3  # per datacenter (OUTPUT Q7)
 
 
-def _seed_pick(racks, target):
+def seed_target(nodes, racks):
+    """The seeds a datacenter of that many nodes and racks gets by the seed rule."""
+    return min(nodes, SEEDS_MAX, max(SEEDS_MIN, racks))
+
+
+def pick_seeds(racks, target):
     """target nodes of a datacenter, one rack after the other, its seeds first
     (racks holding a seed first: well placed seeds stay)."""
     order = sorted(racks, key=lambda r: not any(n["seed"] for n in racks[r]))
@@ -1898,8 +1903,7 @@ def seed_layout(nodes):
             result["problems"].append("%s: %s" % (dc, text))
         elif level == "note":
             result["notes"].append("%s: %s" % (dc, text))
-        target = min(len(members), SEEDS_MAX, max(SEEDS_MIN, len(racks)))
-        keep = seeds if level != "warning" else _seed_pick(racks, target)
+        keep = seeds if level != "warning" else pick_seeds(racks, seed_target(len(members), len(racks)))
         suggested += [n["address"] for n in keep]
     result["suggested"] = suggested if result["problems"] else []
     return result
