@@ -527,7 +527,9 @@ def cassandra_apply_config_diff(nodes, width=None, verbose=False):
     after the files, then the OS settings. [] when nothing differs. From GROUPS_FROM nodes on
     (cassandra_output), the node lists by NODE GROUPS defined first. width:
     the lines fit in it (None: as long as they are; "terminal": the terminal's). verbose: a device-mapper
-    device's OS items with its kernel name (dm-N) too, which differs from node to node."""
+    device's OS items with its kernel name (dm-N) too, which differs from node to node.
+    e.g. node1 on the inventory's cassandra.yaml, node2 live with max_hint_window: 6h -> ["cassandra.yaml",
+    "  max_hint_window: 3h   node1   (inventory)", "                   6h   node2   \u2190 differs"]."""
     width = _width(width)
     prepared = [_prepare(n, verbose) for n in nodes or []]
     all_nodes = [n["name"] for n in prepared]
@@ -651,14 +653,18 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None):
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
     before the run (every node to do "will apply", "would apply" under check,
-    with why it is not restarted: kept_running, its reasons, else the usual one). width: the lines fit in it ("terminal": the terminal's)."""
+    with why it is not restarted: kept_running, its reasons, else the usual one). width: the lines fit in it ("terminal": the terminal's).
+    e.g. ([{name: node1, todo: False}, {name: node2, todo: True, done: True, then: restart}], check=True) ->
+    ["node2  would apply, then restart", "node1  nothing to apply"]."""
     return _grouped(nodes, check, plan, width)[0]
 
 
 def cassandra_apply_config_warnings(nodes):
     """The WARNING notes of the nodes, for the plan's warnings (said there
     only, not under each node): [{label: the nodes, text}], one per text,
-    the nodes with it together, in the order they come."""
+    the nodes with it together, in the order they come.
+    e.g. [{name: node2, notes: ["WARNING - node2's data dirs belong to root"]}, ...] -> [{label: "node2", text:
+    "node2's data dirs belong to root"}]."""
     by_text, order = {}, []
     for node in nodes or []:
         for note in node.get("notes") or []:
@@ -744,7 +750,10 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     ("terminal": the terminal's; the diff is laid out already).
     restart_command: the rolling_restart command of this cluster (as the run
     named it, no --limit): after a real run, a TO DO with it, for the nodes
-    whose read-ahead was set live."""
+    whose read-ahead was set live.
+    e.g. (those nodes, check=True, cluster="my_cluster", seconds=12, diff=<the diff's lines>) ->
+    ["CHECK  apply_config  my_cluster  1 would apply, 1 nothing to apply (12s)", "", <the diff's lines>, "",
+    "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING - node2: node2's data dirs belong to root"]."""
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
     lines, counts = _grouped(nodes, check, width=width)
     shown = [_recap_verdict(counts, check, cluster, seconds)]
