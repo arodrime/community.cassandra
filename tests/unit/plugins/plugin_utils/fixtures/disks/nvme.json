@@ -1,0 +1,38 @@
+{
+   "blockdevices": [
+      {
+         "name": "nvme0n1",
+         "kname": "nvme0n1",
+         "maj:min": "259:0",
+         "type": "disk",
+         "mountpoint": null,
+         "fstype": null,
+         "children": [
+            {
+               "name": "nvme0n1p1",
+               "kname": "nvme0n1p1",
+               "maj:min": "259:1",
+               "type": "part",
+               "mountpoint": "/boot",
+               "fstype": "vfat"
+            },
+            {
+               "name": "nvme0n1p2",
+               "kname": "nvme0n1p2",
+               "maj:min": "259:2",
+               "type": "part",
+               "mountpoint": "/var/lib/cassandra",
+               "fstype": "xfs"
+            }
+         ]
+      },
+      {
+         "name": "nvme1n1",
+         "kname": "nvme1n1",
+         "maj:min": "259:3",
+         "type": "disk",
+         "mountpoint": "/var/lib/cassandra/commitlog",
+         "fstype": "xfs"
+      }
+   ]
+}

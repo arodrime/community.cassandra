@@ -1,0 +1,177 @@
+---
+# The OS settings for Cassandra (see main.yml)
+- name: Include vars for OS family
+  ansible.builtin.include_vars:
+    file: "{{ ansible_facts['os_family'] }}.yml"
+
+# Persistent settings (sysctl.conf, fstab, THP unit) are always written;
+# applying them live is skipped in containers, where /proc/sys and /sys
+# belong to the host kernel (read-only, or worse, the host's if privileged).
+# What runs at boot (THP unit enabled, udev rule) is skipped there too.
+- name: Gather the virtualization facts (not in every gather_subset)
+  ansible.builtin.setup:
+    gather_subset: ['!all', '!min', 'virtual']
+  when: "'virtualization_type' not in ansible_facts"
+
+- name: Check cassandra_linux_apply_live
+  ansible.builtin.assert:
+    that: cassandra_linux_apply_live | string | lower in ['auto', 'true', 'false', 'yes', 'no', 'on', 'off', '1', '0']
+    fail_msg: "cassandra_linux_apply_live must be auto, true or false, not {{ cassandra_linux_apply_live | default('') }}"
+    quiet: true
+
+- name: Detect a container
+  ansible.builtin.set_fact:
+    _cassandra_linux_container: >-
+      {{ 'container' in ansible_facts['virtualization_tech_guest'] | default([])
+         or ansible_facts['virtualization_type'] | default('') in cassandra_linux_container_types }}
+
+- name: Decide whether kernel settings are applied live
+  ansible.builtin.set_fact:
+    _cassandra_linux_live: >-
+      {{ not (_cassandra_linux_container | bool) if cassandra_linux_apply_live | string | lower == 'auto'
+         else cassandra_linux_apply_live | bool }}
+
+- name: Decide whether what runs at boot is set up
+  ansible.builtin.set_fact:
+    _cassandra_linux_boot: "{{ _cassandra_linux_live | bool or not (_cassandra_linux_container | bool) }}"
+
+- name: Look for chrony (kept rather than replaced)
+  ansible.builtin.stat:
+    path: /usr/sbin/chronyd
+  register: cassandra_linux_chrony
+
+- name: Keep what was found
+  ansible.builtin.set_fact:
+    _cassandra_chrony_present: "{{ cassandra_linux_chrony.stat.exists }}"
+
+- name: Snapshot the current OS settings (change report)
+  ansible.builtin.include_tasks: snapshot.yml
+
+# swapoff reads every swapped page back into memory: not when they would not
+# fit easily in what is available (the OOM killer would pick Cassandra), said
+# instead
+- name: Disable Swap
+  ansible.builtin.command: swapoff -a
+  when:
+    - _cassandra_linux_live
+    - _cassandra_linux_swapoff | bool
+
+- name: Say swap is left on
+  ansible.builtin.debug:
+    msg: >-
+      WARNING - {{ inventory_hostname }}: swap left on, {{ _cassandra_linux_before['swap|used'] | int // 1024 }} MB in use
+      for {{ _cassandra_linux_before['mem|available'] | int // 1024 }} MB of memory available: swapoff would read it back
+      into memory. Free some memory, then run again (or swapoff -a by hand).
+  when:
+    - _cassandra_linux_live
+    - _cassandra_linux_before['swap|active'] | int > 0
+    - not _cassandra_linux_swapoff | bool
+    - not _cassandra_linux_swap_said | default(false) | bool  # (apply_config: in its plan)
+  vars:
+    cassandra_output: true
+
+# (lines with mount point none too: not only "swap")
+- name: Remove swap partitions
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*[^#\s]\S*\s+\S+\s+swap(\s|$)'
+    state: absent
+
+# Absent on minimal images
+- name: Directory of the kernel settings file
+  ansible.builtin.file:
+    path: "{{ cassandra_linux_sysctl_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Kernel settings for Cassandra
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: "{{ cassandra_linux_sysctl_file }}"
+    sysctl_set: "{{ _cassandra_linux_live }}"
+    reload: "{{ _cassandra_linux_live }}"
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+
+# /etc/sysctl.conf is read last: a line left there by an earlier version of
+# the role would win over the file above
+- name: Remove the same settings from /etc/sysctl.conf
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    state: absent
+    sysctl_file: /etc/sysctl.conf
+    reload: false
+  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: cassandra_linux_sysctl_conf
+  when: cassandra_linux_sysctl_file != '/etc/sysctl.conf'
+
+# apply_config, on a node where Cassandra runs: in its restart window instead
+# (Cassandra stopped: a clock stepped under it would date its writes wrongly)
+- name: Time sync
+  ansible.builtin.include_tasks: timesync.yml
+  when: not _cassandra_linux_timesync_later | default(false) | bool
+
+# For what runs as cassandra outside the systemd unit (tools run by hand):
+# the unit sets its own limits, systemd ignores these files
+- name: Limits of the cassandra user
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (community.cassandra.cassandra_linux)
+      {% for name, value in cassandra_linux_limits.items() %}
+      cassandra - {{ name }} {{ value }}
+      {% endfor %}
+    dest: /etc/security/limits.d/cassandra.conf
+    mode: "0644"
+
+- name: Remove the block earlier versions of the role wrote to limits.conf
+  ansible.builtin.blockinfile:
+    path: /etc/security/limits.conf
+    marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+    state: absent
+  register: cassandra_linux_limits_old
+
+- name: Extra Limit for RH Derived Distros
+  ansible.builtin.lineinfile:
+    path: /etc/security/limits.d/90-nproc.conf
+    regexp: "^\\* - nproc 32768"
+    line: "* - nproc 32768"
+    create: yes
+  when: ansible_facts['os_family'] == "RedHat"
+  register: cassandra_linux_nproc
+
+- name: Ensure disable-thp service file exists
+  ansible.builtin.copy:
+    src: disable-thp.service
+    dest: /etc/systemd/system/
+    mode: "0644"
+  register: thp
+
+- name: Ensure service to disable THP is enabled at boot
+  ansible.builtin.systemd:
+    name: disable-thp
+    daemon_reload: "{{ thp.changed }}"
+    enabled: true
+  when:
+    - _cassandra_linux_boot | bool
+    - not (_cassandra_linux_check and thp is changed)  # the unit file only exists once really copied
+
+# The unit exits once THP is off: started again only while THP is still on
+- name: Ensure service to disable THP is started
+  ansible.builtin.systemd:
+    name: disable-thp
+    state: started
+  when:
+    - _cassandra_linux_live | bool
+    - _cassandra_linux_before['thp|enabled'] not in ['never', '']
+    - not (_cassandra_linux_check and thp is changed)
+
+- name: Disk tuning
+  ansible.builtin.include_tasks: disks.yml
+
+- name: Report changes
+  ansible.builtin.include_tasks: report.yml
