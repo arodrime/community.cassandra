@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_decommission - new ``force`` option, runs ``nodetool decommission --force``, which Cassandra 4.0 and later need to decommission a node that leaves fewer nodes in its datacenter than the replication factor of a keyspace there.
