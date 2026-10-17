@@ -787,7 +787,7 @@ def _header_lines(report, cluster, hosts_file, report_file, self_check_ok, same)
 def _todo_found(report, allow_unread, moves):
     """The TO DO items of what was found on the nodes: the nodes not read, the settings their Cassandra rejects, the
     sensitive or suspicious settings, the JVM options worth a look, the hand edits moved (moves: the files
-    rewritten) or reverted -> ([item], the nodes of the last suspicious setting found, None when none)."""
+    rewritten) or reverted -> [item]."""
     read, screen = report.read, report.screen
     edit_names = []
     for n in read:
@@ -821,7 +821,7 @@ def _todo_found(report, allow_unread, moves):
     if edit_names:
         todo.append("Hand edits the roles would revert: %s (see %s)" % (
             ", ".join(edit_names), "HAND EDITS in the report" if screen else "below"))
-    return todo, (found[-1][1] if found else None)
+    return todo
 
 
 def _todo_inventory(report, self_check_ok, self_check_error, others, check_items, strict, secrets_clear, leftovers,
@@ -1092,11 +1092,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     moves = sorted({f for n in read for f in n.get("rewritten") or []})
 
     lines = _header_lines(report, cluster, hosts_file, report_file, self_check_ok, same)
-    todo_items, warned = _todo_found(report, allow_unread, moves)
-    if warned is not None:
-        # NB: from here on the nodes of the last suspicious setting stand for the nodes read (the TO DO's loop
-        # variable used to rebind names): kept as it was, not a choice
-        report = report._replace(names=warned)
+    todo_items = _todo_found(report, allow_unread, moves)
     todo_items += _todo_inventory(report, self_check_ok, self_check_error, others, check_items, strict, secrets_clear,
                                   leftovers, inventory_dir)
     todo_items += more
