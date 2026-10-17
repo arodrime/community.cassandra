@@ -64,7 +64,7 @@
   loop_control:
     label: "{{ item.item.key }}"
 
-- name: Add the disk tuning (compared in disks.yml)
+- name: Add the disk tuning (compared in disks_summary.yml)
   ansible.builtin.set_fact:
     _cassandra_linux_items: "{{ _cassandra_linux_items + _cassandra_disk_items | default([]) }}"
 

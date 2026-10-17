@@ -163,7 +163,7 @@ def test_applied_first_at_once_before_any_config_write():
 
 
 def test_the_role_s_restart_hint_left_to_the_restart_that_follows():
-    disks = load("roles", "cassandra_linux", "tasks", "disks.yml")
+    disks = load("roles", "cassandra_linux", "tasks", "disks_summary.yml")
     keep = [t for t in disks if t.get("name") == "Keep how the data disks are tuned"][0]
     info = keep["ansible.builtin.set_fact"]["_cassandra_disk_summary"]["info"]
     variables = {"_cassandra_disk_plan": {}, "_cassandra_data_lvm_here": False, "_lvm_by_udev": [], "_lvm_refused": [],
@@ -185,7 +185,7 @@ def test_the_role_s_check_mode_also_when_applied_to_it():
     flag = load("roles", "cassandra_linux", "vars", "main.yml")["_cassandra_linux_check"]
     for check, compare, expected in ((True, False, True), (False, True, True), (False, False, False)):
         assert render(flag, {"ansible_check_mode": check, "_cassandra_linux_compare": compare}) is expected
-    for name in ("os.yml", "disks.yml", "report.yml", "main.yml"):
+    for name in ("os.yml", "disks.yml", "disks_find.yml", "disks_apply.yml", "disks_summary.yml", "report.yml", "main.yml"):
         with open(os.path.join(TOP, "roles", "cassandra_linux", "tasks", name), encoding="utf-8") as f:
             assert "ansible_check_mode" not in f.read(), name
 

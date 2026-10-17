@@ -12,6 +12,7 @@ import pytest
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -24,14 +25,13 @@ DEFAULTS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "c
 
 
 def tasks():
-    with open(DISKS) as f:
-        out = []
-        todo = list(yaml.safe_load(f))
-        while todo:
-            t = todo.pop(0)
-            out.append(t)
-            todo[0:0] = t.get("block", [])
-        return out
+    out = []
+    todo = load_tasks(DISKS)
+    while todo:
+        t = todo.pop(0)
+        out.append(t)
+        todo[0:0] = t.get("block", [])
+    return out
 
 
 def task(name):
