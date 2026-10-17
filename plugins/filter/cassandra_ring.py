@@ -128,6 +128,76 @@ def _taken_for(owner, elsewhere, nodes, inventory, unreachable, places):
     return {_ip(n["address"]): lost[0]}
 
 
+def _elsewhere(outside):
+    """{host: [addresses]} of the other hosts of the inventory -> {address: host}, by address only."""
+    elsewhere = {}
+    for host in outside or {}:
+        for address in outside[host]:
+            if address and _IP.search(address):
+                elsewhere.setdefault(_ip(address), host)
+    return elsewhere
+
+
+def _shown_name(n, owner, guessed):
+    """A ring node, {address: host}, the guesses -> the host it is ("host?" when guessed), None for none."""
+    return (owner.get(_ip(n["address"])) + "?") if _ip(n["address"]) in guessed else owner.get(_ip(n["address"]))
+
+
+def _sort_nodes(cluster_status, owner, elsewhere, guessed, absent):
+    """The ring, {address: host} of the run's hosts and of the other hosts, the guesses, the hosts marked absent
+    -> (in_ring: the run's hosts in the ring, stray, known: in another host of the inventory, leaving: marked
+    absent, their "address (dc, UN)" texts; named: (name, datacenter, node) of each node, for the verdict)."""
+    in_ring, stray, known, leaving, named = set(), [], [], [], []
+    for dc in sorted(cluster_status):
+        for n in cluster_status[dc].get("nodes", []):
+            host = owner.get(_ip(n["address"]))
+            if host is None and elsewhere.get(_ip(n["address"])) in (absent or []):
+                leaving.append("%s = %s (%s, %s%s)" % (n["address"], elsewhere[_ip(n["address"])], dc, n["status"], n["state"]))
+            elif host is None and _ip(n["address"]) in elsewhere:
+                known.append("%s = %s (%s, %s%s)" % (n["address"], elsewhere[_ip(n["address"])], dc, n["status"], n["state"]))
+            elif host is None:
+                stray.append("%s (%s, %s%s)" % (n["address"], dc, n["status"], n["state"]))
+            else:
+                in_ring.add(host)
+            named.append((_shown_name(n, owner, guessed) or elsewhere.get(_ip(n["address"])) or n["address"], dc, n))
+    return in_ring, stray, known, leaving, named
+
+
+def _dc_block(dc, nodes, owner, guessed):
+    """A datacenter, its ring nodes, {address: host}, the guesses -> its lines: the nodes as nodetool status shows
+    them (the ones not UN marked), then the summary of its racks and of the datacenter."""
+    rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory", ""]]
+    for n in nodes:
+        mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
+            "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
+        rows.append([n["status"] + n["state"], n["address"], n["load"] or "?", n["tokens"] or "",
+                     n["owns"] or "", n["host_id"], n["rack"], _shown_name(n, owner, guessed) or "-", mark])
+    lines = ["", "Datacenter: %s" % dc, ""]
+    lines.extend(" " + line for line in _table(rows))
+    racks = sorted(set(n["rack"] for n in nodes))
+    summary = [_summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks] if len(racks) > 1 else []
+    return lines + [""] + _summaries(summary + [_summary(dc, nodes)])
+
+
+def _differences(missing, known, leaving, stray, guessed, unreachable, run, outside):
+    """Where the run's hosts and the ring differ -> the notes, a line each."""
+    notes = ["%s not reached by Ansible: taken for %s, the only node of the ring no host has (its ansible_host or"
+             " cassandra_listen_address in the inventory would say for sure)" % (host, address)
+             for address, host in guessed.items()]
+    if missing:
+        notes.append("In %s, not in the ring: " % run + ", ".join(
+            h + (" (unreachable)" if h in unreachable else "") for h in missing))
+    if known:
+        notes.append("In the ring and the inventory, not in %s: " % run + ", ".join(known))
+    if leaving:
+        notes.append("Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): "
+                     + ", ".join(leaving))
+    if stray:
+        notes.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
+                     + ", ".join(stray))
+    return notes
+
+
 def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=False, group="the inventory",
                           outside=None, absent=None, cluster="", seen_from="", places=None):
     """cluster_status: the cassandra_status module's. inventory: {host:
@@ -144,65 +214,20 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     no host has in its place (marked "host?"). Returns the report as a list
     of lines."""
     cluster_status = cluster_status or {}
-    owner = hosts_by_address(inventory, [_ip(n["address"]) for dc in cluster_status
-                                 for n in cluster_status[dc].get("nodes", [])])
-    elsewhere = {}
-    for host in outside or {}:
-        for address in outside[host]:
-            if address and _IP.search(address):
-                elsewhere.setdefault(_ip(address), host)
+    ring = [(dc, n) for dc in cluster_status for n in cluster_status[dc].get("nodes", [])]
+    owner = hosts_by_address(inventory, [_ip(n["address"]) for dc, n in ring])
+    elsewhere = _elsewhere(outside)
     unreachable = set(unreachable or [])
-    guessed = _taken_for(owner, elsewhere, [(dc, n) for dc in cluster_status for n in cluster_status[dc].get("nodes", [])],
-                         inventory, unreachable, places)
+    guessed = _taken_for(owner, elsewhere, ring, inventory, unreachable, places)
     owner.update(guessed)
+    in_ring, stray, known, leaving, named = _sort_nodes(cluster_status, owner, elsewhere, guessed, absent)
     lines = []
-    in_ring = set()
-    stray = []
-    known = []
-    leaving = []
-    named = []  # (name, datacenter, node), for the verdict
     for dc in sorted(cluster_status):
-        nodes = cluster_status[dc].get("nodes", [])
-        rows = [["--", "Address", "Load", "Tokens", "Owns", "Host ID", "Rack", "Inventory", ""]]
-        for n in nodes:
-            host = owner.get(_ip(n["address"]))
-            if host is None and elsewhere.get(_ip(n["address"])) in (absent or []):
-                leaving.append("%s = %s (%s, %s%s)" % (n["address"], elsewhere[_ip(n["address"])], dc, n["status"], n["state"]))
-            elif host is None and _ip(n["address"]) in elsewhere:
-                known.append("%s = %s (%s, %s%s)" % (n["address"], elsewhere[_ip(n["address"])], dc, n["status"], n["state"]))
-            elif host is None:
-                stray.append("%s (%s, %s%s)" % (n["address"], dc, n["status"], n["state"]))
-            else:
-                in_ring.add(host)
-            named.append(((host + "?") if _ip(n["address"]) in guessed else host or elsewhere.get(_ip(n["address"])) or n["address"],
-                          dc, n))
-            mark = "" if n["status"] + n["state"] == "UN" else out.ARROW + " " + (
-                "down" if n["status"] == "D" else dict(_STATES).get(n["state"], n["status"] + n["state"]))
-            rows.append([n["status"] + n["state"], n["address"], n["load"] or "?", n["tokens"] or "",
-                         n["owns"] or "", n["host_id"], n["rack"],
-                         (host + "?") if _ip(n["address"]) in guessed else host or "-", mark])
-        lines.extend(["", "Datacenter: %s" % dc, ""])
-        lines.extend(" " + line for line in _table(rows))
-        racks = sorted(set(n["rack"] for n in nodes))
-        summary = [_summary(rack, [n for n in nodes if n["rack"] == rack]) for rack in racks] if len(racks) > 1 else []
-        lines.extend([""] + _summaries(summary + [_summary(dc, nodes)]))
+        lines.extend(_dc_block(dc, cluster_status[dc].get("nodes", []), owner, guessed))
     missing = [h for h in inventory if h not in in_ring]
     run = "this run (--limit)" if limited else group
-    notes = ["%s not reached by Ansible: taken for %s, the only node of the ring no host has (its ansible_host or"
-             " cassandra_listen_address in the inventory would say for sure)" % (host, address)
-             for address, host in guessed.items()]
+    notes = _differences(missing, known, leaving, stray, guessed, unreachable, run, outside)
     matches = not missing and not known and not leaving and not stray and not guessed  # a guess is no match
-    if missing:
-        notes.append("In %s, not in the ring: " % run + ", ".join(
-            h + (" (unreachable)" if h in unreachable else "") for h in missing))
-    if known:
-        notes.append("In the ring and the inventory, not in %s: " % run + ", ".join(known))
-    if leaving:
-        notes.append("Marked cassandra_node_state: absent, still in the ring (the playbook topology removes them): "
-                     + ", ".join(leaving))
-    if stray:
-        notes.append("In the ring, not in %s%s: " % (run, "" if outside is None else " nor found elsewhere in the inventory")
-                     + ", ".join(stray))
     members = "inventory" if run == group else run
     if cluster or seen_from:
         lines.insert(0, _header(cluster, seen_from, matches, members, len(named)))
