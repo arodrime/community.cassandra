@@ -19,6 +19,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import functools
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -54,10 +55,57 @@ DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
 NOT_COMPARED = {"heap_dump_path": "the -XX:HeapDumpPath cassandra-env.sh gives wins"}
 
 
+ROLE_VARS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "vars",
+                         "main.yml")
+# The unit of the number a former name holds (Converters of Config.java's @Replaces), by the end of the name
+FORMER_UNITS = (("_megabits_per_sec", "megabits"), ("_in_mb", "MiB"), ("_mb", "MiB"), ("_in_kb", "KiB"),
+                ("_in_ms", "ms"))
+
+
+@functools.lru_cache(maxsize=None)
+def former_names(series):
+    """4.1+: {former (4.0) name: the variable of its key} of the cassandra.yaml keys cassandra_config's variables
+    write in that series (4.1, 5.0; the role's _cassandra_config_old_names): Cassandra reads either name, and
+    refuses both. 4.0: none."""
+    if series == "4.0":
+        return {}
+    with open(ROLE_VARS) as f:
+        role_vars = yaml.safe_load(f)
+    return dict(role_vars["_cassandra_config_old_names"], **role_vars["_cassandra_config_old_names_of"].get(series, {}))
+
+
+@functools.lru_cache(maxsize=None)
+def former_keys():
+    """(former name, its 4.1+ key) of every series."""
+    return tuple(sorted(set((old, var[len("cassandra_"):]) for series in ("4.1", "5.0")
+                            for old, var in former_names(series).items())))
+
+
+def former_value(name, value):
+    """The value of the former name `name` written for its 4.1+ key, as Cassandra converts it (512 for
+    file_cache_size_in_mb: 512MiB; megabits per second: bytes per second), else None (not a whole number, or
+    negative: none, or -1 for "not set"). A former name without a unit (5.0's
+    compaction_large_partition_warning_threshold): its value as it is."""
+    unit = next((u for end, u in FORMER_UNITS if str(name).endswith(end)), None)
+    if unit is None:
+        return value
+    if isinstance(value, bool) or not re.match(r"^\d+$", str(value)):
+        return None
+    if unit == "megabits":
+        return "%dB/s" % (int(value) * 125000)
+    return "%d%s" % (int(value), unit)
+
+
 def compared(settings, role_text):
-    """cassandra.yaml's settings (yaml_settings') without the NOT_COMPARED ones the role's text has a line for."""
+    """cassandra.yaml's settings (yaml_settings') without the NOT_COMPARED ones the role's text has a line for, and
+    with a former name the role's text writes under its 4.1+ name (Cassandra reads either) under that name."""
     gone = [k for k in NOT_COMPARED if re.search(r"(?m)^#?[ \t]*%s:" % k, role_text)]
-    return dict((k, v) for k, v in settings.items() if re.split(r"[.\[]", k, maxsplit=1)[0] not in gone)
+    out = dict((k, v) for k, v in settings.items() if re.split(r"[.\[]", k, maxsplit=1)[0] not in gone)
+    for old, new in former_keys():
+        if old in out and new not in out and re.search(r"(?m)^%s:" % new, role_text) \
+                and former_value(old, out[old]) is not None:
+            out[new] = former_value(old, out.pop(old))
+    return out
 
 
 def quantity(text):

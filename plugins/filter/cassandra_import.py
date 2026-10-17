@@ -46,8 +46,8 @@ from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import regex_replace
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, jvm_options_settings, quantity, same_settings,
-    shell_words, xml_settings, yaml_rejected)
+    DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names, former_value,
+    jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
@@ -790,6 +790,29 @@ def _without_declared(series, rendered, live):
     return rendered, [n for i, n in enumerate(live) if i not in drop], notes
 
 
+def _without_former_names(rendered, live):
+    """Both sides minus the node's line of a key under its former name (4.0's: 4.1+ reads either), wherever it is,
+    and the role's line of the new name, when the role sets the same (as Cassandra converts it); a note for each."""
+    role = dict((m.group(1), i) for i, m in enumerate(map(TOP_KEY.match, rendered)) if m)
+    node = dict((key, indexes[0]) for key, indexes in _top_blocks(live) if len(indexes) == 1)
+    drop_rendered, drop_live, notes = set(), set(), []
+    for old, new in former_keys():
+        if old not in node or new not in role or node[old] in drop_live:
+            continue
+        try:
+            value = former_value(old, (yaml.safe_load(live[node[old]]) or {}).get(old))
+            role_value = (yaml.safe_load(rendered[role[new]]) or {}).get(new)
+        except (yaml.YAMLError, AttributeError):
+            continue
+        if value is not None and (str(value) == str(role_value) or
+                                  quantity(value) is not None and quantity(value) == quantity(role_value)):
+            drop_rendered.add(role[new])
+            drop_live.add(node[old])
+            notes.append("cassandra.yaml: %s  (node: %s)" % (rendered[role[new]].strip(), live[node[old]].strip()))
+    return ([r for i, r in enumerate(rendered) if i not in drop_rendered],
+            [n for i, n in enumerate(live) if i not in drop_live], notes)
+
+
 def _snitch_reads_rackdc(snitch):
     """False for the snitches that take the node's dc and rack from elsewhere than
     cassandra-rackdc.properties' dc= and rack= (the role's list); a snitch of
@@ -890,6 +913,8 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
         live = _align(rendered, live_files[name].split("\n"))
         if name == "cassandra.yaml":
             rendered, live, notes = _without_declared(series, rendered, live)
+            normalized += notes
+            rendered, live, notes = _without_former_names(rendered, live)
             normalized += notes
         if name == "cassandra.yaml" and (extras or rejected):
             # masked before the lines of those keys go: a secret's value may go on past the lines dropped
@@ -1336,6 +1361,15 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
             render_dirs = dirs
         tpl = _render(env, cassandra_version, "cassandra.yaml", ctx)[0]
         extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
+        # 4.1+: a key under its former name (a file from 4.0): its variable, which writes it under its new name
+        live_keys = set(key for key, dummy in _top_blocks(live_files["cassandra.yaml"].split("\n")))
+        for key, var in former_names(SERIES[cassandra_version]).items():
+            value = former_value(key, extras[key]) if key in extras else None
+            if value is not None and var[len("cassandra_"):] not in live_keys:
+                del extras[key]
+                found[var] = canonical_quantity(var[len("cassandra_"):], value)
+                if not _same_value(found[var], _default(ctx, var)):
+                    changed[var] = found[var]
         # a key Cassandra rejects (e.g. added by hand since it started): not imported, the node would not restart
         rejected = yaml_rejected(extras, release)
         extras = dict((k, v) for k, v in extras.items() if str(k) not in rejected)
