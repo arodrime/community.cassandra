@@ -3,7 +3,8 @@
 """The import_cluster self-check: do the imported variables make the roles
 write each node's config as the node has it?
 
-cassandra_import_self_check: the files import_cluster writes (group_vars,
+cassandra_import_self_check (the function, for one node; the filter is the next one): the files import_cluster
+    writes (group_vars,
     host_vars), the hosts file's data, a host, its facts, {file: what the node has}
     -> the files the roles would write for that host (their templates, by
     Ansible's template lookup, with the variables read back from the files'
@@ -12,8 +13,8 @@ cassandra_import_self_check: the files import_cluster writes (group_vars,
     JVM options, shell words, XML elements, unit keys), not as text: the
     settings that differ, values of secrets masked; and the owner, group and
     mode cassandra_config would give its files, against the node's.
-cassandra_import_self_check_nodes: the same for each node read, the
-    inventory files read once for all of them.
+cassandra_import_self_check_nodes (filter): the same for each node read, the
+    inventory files read once for all of them -> {node: {differences, notes}}.
 
 Their unexpected errors do not quote the error message, which may show a
 value read from the nodes (a password).
@@ -505,6 +506,5 @@ def _jvm_rewritten(rendered, live, by_file, heap, node_environment, role_environ
 class FilterModule(object):
     def filters(self):
         return {
-            "cassandra_import_self_check": cassandra_import_self_check,
             "cassandra_import_self_check_nodes": cassandra_import_self_check_nodes,
         }
