@@ -16,11 +16,36 @@ def strip_jvm_banner(text):
     return ''.join(line for line in text.splitlines(True) if not JVM_BANNER_RE.match(line))
 
 
+def nodetool_error(out, err):
+    """What nodetool said went wrong, for a failure's message: its error line
+    ("error: ..."), else the first line of its output (not a JVM banner),
+    without its final dot; "" when it said nothing."""
+    lines = [line.strip() for line in strip_jvm_banner((err or "") + "\n" + (out or "")).splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith("error:"):
+            return line.rstrip(".")
+    return lines[0].rstrip(".") if lines else ""
+
+
 def release_series(out):
     """nodetool version's output ("ReleaseVersion: 5.0.7") -> the series of that release ("5.0")."""
     lines = [x for x in out.splitlines() if x.startswith('ReleaseVersion')]
     line = lines[-1] if lines else out
     return ".".join(line.split(': ')[1].split(".")[:2]).strip()
+
+
+def fail_nodetool(module, result, command, rc, out, err, advice):
+    """Fail the module on a nodetool command that did not succeed: result gets the error (nodetool_error's), rc,
+    stdout and stderr, msg says which command failed, its error and advice (what to check, a sentence)."""
+    error = nodetool_error(out, err)
+    result['error'] = error
+    result['rc'] = rc
+    result['changed'] = False
+    result['stdout'] = out
+    result['stderr'] = err
+    result['msg'] = "nodetool {0} did not execute successfully (rc {1}){2}. {3}".format(
+        command, rc, ": " + error if error else "", advice)
+    module.fail_json(**result)
 
 
 def cassandra_version_at_least(version_string, minimum_version):

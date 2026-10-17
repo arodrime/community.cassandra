@@ -57,13 +57,18 @@ cassandra_reload:
   description: The return state of the executed command.
   returned: success
   type: str
+error:
+  description: What nodetool said went wrong (its error line, else its first line of output).
+  returned: failure
+  type: str
+  version_added: 3.0.0
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple, nodetool_error
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -98,15 +103,26 @@ def main():
         if err:
             result['stderr'] = err
 
-    if rc == 0:
+    # reloadseeds prints this and returns 0 when the seed provider fails (cassandra.yaml unreadable)
+    if rc == 0 and not (module.params['reload'] == 'seeds' and 'Failed to reload the seed node list' in out):
         result['changed'] = True
         result['msg'] = "nodetool {0} executed successfully".format(cmd)
         module.exit_json(**result)
     else:
+        error = nodetool_error(out, err)
+        result['error'] = error
         result['rc'] = rc
         result['changed'] = False
-        result['msg'] = "nodetool {0} did not execute successfully".format(cmd)
-        module.exit_json(**result)
+        result['stdout'] = out
+        result['stderr'] = err
+        result['msg'] = ("nodetool {0} did not execute successfully (rc {1}){2}. "
+                         "The node keeps what it had loaded before: check its system.log{3}, fix the cause, then reload "
+                         "again"
+                         .format(cmd, rc, ": " + error if error else "",
+                                 " (Error while getting seed node list: why cassandra.yaml could not be read again)"
+                                 if module.params['reload'] == 'seeds' and 'Failed to reload the seed node list' in out
+                                 else ""))
+        module.fail_json(**result)
 
 
 if __name__ == '__main__':

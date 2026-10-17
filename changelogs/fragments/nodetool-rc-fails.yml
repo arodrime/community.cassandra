@@ -1,0 +1,4 @@
+breaking_changes:
+  - "cassandra_cleanup, cassandra_drain, cassandra_flush, cassandra_garbagecollect, cassandra_reload, cassandra_truncatehints, cassandra_upgradesstables, cassandra_verify - a nodetool command that returns a non-zero code now fails the task, with nodetool's error line and what to check in ``msg``, and ``error``, ``rc``, ``stdout`` and ``stderr`` in the result. Before, the task was ok with ``did not execute successfully`` in ``msg``."
+bugfixes:
+  - "cassandra_reload - ``reload: seeds`` fails when nodetool prints ``Failed to reload the seed node list.``, which it does with a zero return code (the node keeps its old seeds)."

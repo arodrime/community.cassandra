@@ -58,6 +58,11 @@ msg:
   description: A brief description of what happened.
   returned: success
   type: str
+error:
+  description: What nodetool said went wrong (its error line, else its first line of output).
+  returned: failure
+  type: str
+  version_added: 3.0.0
 '''
 
 
@@ -65,7 +70,7 @@ from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCmd
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCmd, fail_nodetool
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -132,9 +137,8 @@ def main():
         result['changed'] = True
         result['msg'] = "nodetool garbagecollect executed successfully"
     else:
-        result['rc'] = rc
-        result['changed'] = False
-        result['msg'] = "nodetool garbagecollect did not execute successfully"
+        fail_nodetool(module, result, "garbagecollect", rc, out, err,
+                      "Check the node's system.log (disk space, nodetool compactionstats), then run it again")
     module.exit_json(**result)
 
 
