@@ -541,37 +541,18 @@
              | map('extract', hostvars, '_cassandra_preflight') | selectattr('cassandra_dc', 'equalto', item) | list }}
         _inventory_racks: "{{ _inventory | map(attribute='cassandra_rack') | unique | list }}"
         # the hosts of the datacenter not in its ring yet, refused in turn
+        # the order they join in (worked out only when there is a ring and no replacement): add_node's
+        # cassandra_target_nodes, else create_cluster's start order
         _refused: >-
-          {%- set out = [] -%}
-          {%- if not _ring_racks -%}
-          {%-   if _inventory_racks | length != 1 and _inventory_racks | length < _hint | int -%}
-          {%-     set _ = out.append('the inventory') -%}
-          {%-   endif -%}
-          {%- elif cassandra_replace_address | default('', true) == '' -%}
-          {%-   set racks = _ring_racks | list -%}
-          {%-   set new = _inventory | rejectattr('address', 'in', _ring_nodes | map(attribute='address') | list) | list -%}
-          {%-   set order = [] -%}
-          {%-   set nn = cassandra_target_nodes | default('', true) if _cassandra_preflight_target | default('') == 'add' else '' -%}
-          {%-   set nn = nn | join(',') if nn is iterable and nn is not string else nn | string -%}
-          {%-   set _ = order.extend(query('ansible.builtin.inventory_hostnames', nn) if nn
-                                     else ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list
-                                          | community.cassandra.cassandra_start_order(_hint,
-                                              cassandra_preflight_status.cluster_status | default({}, true))) -%}
-          {%-   set ordered = [] -%}
-          {%-   for n in order -%}
-          {%-     for h in new | selectattr('layout.name', 'equalto', n) -%}
-          {%-       if h not in ordered -%}{%- set _ = ordered.append(h) -%}{%- endif -%}
-          {%-     endfor -%}
-          {%-   endfor -%}
-          {%-   for h in ordered + new | reject('in', ordered) | list -%}
-          {%-     if h.cassandra_rack in racks and racks | length != 1 and racks | length < _hint | int -%}
-          {%-       set _ = out.append(h.layout.name ~ ' in ' ~ h.cassandra_rack ~ ' when the ring has ' ~ racks | join(', ')) -%}
-          {%-     elif h.cassandra_rack not in racks -%}
-          {%-       set _ = racks.append(h.cassandra_rack) -%}
-          {%-     endif -%}
-          {%-   endfor -%}
-          {%- endif -%}
-          {{ out }}
+          {{ _inventory | community.cassandra.cassandra_rack_refusals(_ring_nodes, _hint, replacing=_replacing | bool,
+               order=[] if not _ring_racks or _replacing | bool
+                     else query('ansible.builtin.inventory_hostnames', _added if _added is string else _added | join(','))
+                          if _added | length > 0
+                     else ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list
+                          | community.cassandra.cassandra_start_order(_hint,
+                              cassandra_preflight_status.cluster_status | default({}, true))) }}
+        _replacing: "{{ cassandra_replace_address | default('', true) != '' }}"
+        _added: "{{ cassandra_target_nodes | default('', true) if _cassandra_preflight_target | default('') == 'add' else '' }}"
       loop: "{{ ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | list }}"
       when:
         - _hint | string not in ['', 'None']
