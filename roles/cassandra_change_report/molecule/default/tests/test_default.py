@@ -28,6 +28,8 @@ def test_check_on_a_blank_host(host):
 
     assert install['mode'] == 'check'
     assert items(install)['package cassandra']['after'] == 'not in configured repos yet'
+    for role in ('cassandra_linux', 'cassandra_firewall'):
+        assert report('check', name, role)['changes']
 
 
 def test_apply_reports_installed_versions(host):

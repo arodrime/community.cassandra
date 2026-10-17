@@ -8,11 +8,9 @@ import yaml
 
 ROLES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 # roles with defaults: each has an argument spec, every default documented, with the same value
-# (cassandra_firewall and cassandra_linux get theirs with their next changes)
-NO_SPEC_YET = ("cassandra_firewall", "cassandra_linux")
 ROLES = sorted(
     role for role in os.listdir(ROLES_DIR)
-    if os.path.isfile(os.path.join(ROLES_DIR, role, "defaults", "main.yml")) and role not in NO_SPEC_YET
+    if os.path.isfile(os.path.join(ROLES_DIR, role, "defaults", "main.yml"))
 )
 
 

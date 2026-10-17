@@ -2,6 +2,28 @@
 - name: Prepare
   hosts: all
   tasks:
+    # EL 10's chronyd (4.8, Type=notify) fails "Could not send notification to
+    # $NOTIFY_SOCKET" in containers on recent host kernels (GitHub runners,
+    # 6.17), systemd-notify itself works there: run it as on EL 9, forking.
+    # A real EL 10 host runs its own kernel. Test scaffolding only.
+    - name: chronyd drop-in directory (EL 10 containers)
+      ansible.builtin.file:
+        path: /etc/systemd/system/chronyd.service.d
+        state: directory
+        mode: "0755"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - ansible_facts['distribution_major_version'] == '10'
+
+    - name: chronyd forking (EL 10 containers)
+      ansible.builtin.copy:
+        content: "[Service]\nType=forking\nExecStart=\nExecStart=/usr/sbin/chronyd $OPTIONS\n"
+        dest: /etc/systemd/system/chronyd.service.d/forking.conf
+        mode: "0644"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - ansible_facts['distribution_major_version'] == '10'
+
     # Behave like a real VM (the image's policy-rc.d blocks service starts)
     - name: Remove the image's policy-rc.d
       ansible.builtin.file:

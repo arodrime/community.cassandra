@@ -6,18 +6,22 @@ A simple role to install and configure firewalld with the ports commonly used by
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should
-be mentioned here. For instance, if the role uses the EC2 module, it may be a
-good idea to mention in this section that the boto package is required.
+Root on the hosts: the role does not ask for it itself, apply it in a play
+with `become: true` (the collection's playbooks do).
 
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including
-any variables that are in defaults/main.yml, vars/main.yml, and any variables
-that can/should be set via parameters to the role. Any variables that are read
-from other roles and/or the global scope (ie. hostvars, group vars, etc.) should
-be mentioned here as well.
+* `cassandra_firewall_manage`: `false` leaves the firewall as it is on this
+  node (nothing installed, started or opened). `import_cluster` sets it for
+  the nodes it imports. Default `true`.
+* `cassandra_offline`: `true` on air-gapped hosts: firewalld or ufw is
+  checked instead of installed. Default `false`.
+* `open_ports`: ports open to everyone (SSH, JMX, storage, TLS storage, CQL).
+* `cassandra_firewall_port_sources`: ports open only to some sources instead,
+  e.g. JMX for a remote repair scheduler:
+  `{"7199/tcp": ["10.0.9.0/24", "10.0.10.5"]}`. A port listed here is closed to
+  the others even when it is in `open_ports`.
 
 Dependencies
 ------------
@@ -33,6 +37,7 @@ Including an example of how to use your role (for instance, with variables
 passed in as parameters) is always nice for users too:
 
     - hosts: servers
+      become: true
       roles:
          - { role: cassandra_firewall, x: 42 }
 

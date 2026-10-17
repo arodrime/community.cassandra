@@ -90,3 +90,12 @@ def test_the_other_install_tasks():
     assert runs("cassandra_linux", "timesync.yml", "Install time sync package", ansible_facts={"packages": {}}, **linux)
     assert not runs("cassandra_linux", "timesync.yml", "Install time sync package", ansible_facts={"packages": {"chrony": []}},
                     **linux)
+    firewall = {"cassandra_offline": False, "firewall_packages": ["python-firewall", "firewalld"]}
+    assert runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed", ansible_facts={"packages": {}},
+                **firewall)
+    assert runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed",
+                ansible_facts={"packages": {"firewalld": []}}, **firewall)  # its Python bindings missing
+    assert not runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed",
+                    ansible_facts={"packages": {"firewalld": [], "python3-firewall": []}}, **firewall)
+    assert not runs("cassandra_firewall", "firewall.yml", "Ensure firewall package is installed",
+                    ansible_facts={"packages": {"ufw": []}}, cassandra_offline=False, firewall_packages=["ufw"])

@@ -4,3 +4,5 @@
   roles:
     - community.cassandra.cassandra_repository
     - community.cassandra.cassandra_install
+    - community.cassandra.cassandra_linux
+    - community.cassandra.cassandra_firewall
