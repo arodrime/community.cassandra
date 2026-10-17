@@ -209,6 +209,92 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
         down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok, names=names)]
 
 
+def _lost_guess(names, found, unreachable, ring):
+    """{address: name}, the findings of the hosts checked, the hosts not reached, the ring a node saw -> (the
+    address, "host?") of an unreachable host known by no address (no facts, no ansible_host, no listen address)
+    taken for the one node of the ring no host has, down; None: never a guess between several, nor with a ring
+    of another size than the inventory's."""
+    unnamed = sorted(set(_ip(n["address"]) for dc in (ring or {}).values() for n in dc.get("nodes", [])
+                         if _ip(n["address"]) not in names))
+    down = set(_ip(f["address"]) for f in found if f.get("kind") == "state" and f["state"].startswith("D"))
+    addressed = set(name for address, name in names.items() if address != name)
+    lost = [h for h in unreachable if h not in addressed]
+    if len(unnamed) == 1 and unnamed[0] in down and len(lost) == 1 and not any(f.get("kind") == "count" for f in found):
+        return unnamed[0], lost[0] + "?"
+    return None
+
+
+def _finding_row(f, names):
+    """A finding (cassandra_health_findings'), {address: name} -> (label, key: the same problem seen by several
+    nodes has the same, text, who saw it or where: None for none). A text with %s gets the nodes there."""
+    kind = f.get("kind")
+    if kind == "state":
+        name = names.get(_ip(f["address"]))
+        return "ring", ("state", f["address"], f["state"]), "%s%s (%s) %s" % (
+            (name + " ") if name else "", f["address"], f["rack"], f["state"]), f["seen_from"]
+    if kind == "count":
+        return ("ring", ("count", f["ring"], f["expected"]), "%d members, inventory %d" % (f["ring"], f["expected"]),
+                f["seen_from"])
+    if kind == "nodetool":
+        return "nodetool", ("nodetool", f["error"]), "status failed on %s: " + str(f["error"]), f["on"]
+    if kind == "port":
+        return "ports", ("port", f["name"], f["port"]), "%s %s not answering on" % (f["name"], f["port"]), f["on"]
+    if kind == "gossip":
+        return "gossip", ("gossip",), "not running on", f["on"]
+    if kind == "cql":
+        return "CQL", ("cql",), "native transport not running on", f["on"]
+    if kind == "streams":
+        return "streams", ("streams",), "in progress on", f["on"]
+    if kind == "netstats":
+        return "netstats", ("netstats", f["error"]), "failed on %s: " + str(f["error"]), f["on"]
+    if kind == "check":
+        return ("nodetool", ("check", f["what"], f["error"]), "%s check failed on %%s: %s" % (f["what"], f["error"]),
+                f["on"])
+    if kind == "schema":
+        return "schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"], None
+    return "other", ("other", f.get("text")), f.get("text", ""), None
+
+
+def _problem_lines(rows, seen):
+    """The problems' keys in order, {key: [label, text, who]} -> a line per problem, with the nodes that saw it."""
+    lines = []
+    width = max([len(seen[k][0]) for k in rows] or [0]) + 1
+    for key in rows:
+        label, text, who = seen[key]
+        if key[0] in ("state", "count"):
+            text += "   seen from %s" % out.nodes(who)
+        elif key[0] in ("nodetool", "netstats", "check"):
+            text = text.replace("%s", out.nodes(who), 1)
+        elif who:
+            text += " " + out.nodes(who)
+        lines.append("  %s  %s" % ((label + ":").ljust(width), text))
+    return lines
+
+
+def _report_todo(rows, names, unreachable, absent, counted, topology_command):
+    """The problems' keys, {address: name}, the hosts not reached, the hosts marked absent, whether the ring was
+    counted, the command that removes them -> the TO DO items (a node down and not reached: one item)."""
+    todo = []
+    down = [names.get(_ip(k[1]), k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
+    # a node down and not reached: one thing to do, its server first
+    both = [h + "?" if h + "?" in down else h for h in unreachable if h in down or h + "?" in down]  # a guess said so
+    down = [d for d in down if d not in both]
+    if down:
+        todo.append("start Cassandra on %s (its server first if it is down); a node that can't be recovered: "
+                    "replace_node" % ", ".join(down))
+    if both:
+        todo.append("bring %s back (not reached over SSH, down in the ring): its server first, then Cassandra, then run "
+                    "this again; a node that can't be recovered: replace_node" % out.nodes(both))
+    if absent and counted and topology_command:
+        todo.append({"text": "remove %s from the ring" % out.nodes(absent), "command": topology_command})
+    others = [h for h in unreachable if h not in both and h + "?" not in both]
+    if others:
+        todo.append("reach %s over SSH, then run this again" % out.nodes(others))
+    if any(k[0] == "streams" for k in rows):
+        todo.append("wait for the streams to end (nodetool netstats), then run this again")
+    return todo
+
+
 def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=None, names=None, members=None,
                             topology_command="", ring=None):
     """The health_check report. findings: {host: its
@@ -229,17 +315,10 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     unreachable = [h for h in hosts if h in (unreachable or [])]
     checked = [h for h in hosts if h not in unreachable]
     rows, seen = [], {}
-    # an unreachable host known by no address (no facts, no ansible_host, no listen address) and the one
-    # node of the ring no host has, down: taken for each other ("node3?"), never a guess between several,
-    # nor with a ring of another size than the inventory's
     found = [f for host in checked for f in (findings or {}).get(host) or []]
-    unnamed = sorted(set(_ip(n["address"]) for dc in (ring or {}).values() for n in dc.get("nodes", [])
-                         if _ip(n["address"]) not in names))
-    down = set(_ip(f["address"]) for f in found if f.get("kind") == "state" and f["state"].startswith("D"))
-    addressed = set(name for address, name in names.items() if address != name)
-    lost = [h for h in unreachable if h not in addressed]
-    if len(unnamed) == 1 and unnamed[0] in down and len(lost) == 1 and not any(f.get("kind") == "count" for f in found):
-        names[unnamed[0]] = lost[0] + "?"
+    guess = _lost_guess(names, found, unreachable, ring)
+    if guess:
+        names[guess[0]] = guess[1]
 
     def add(label, key, text, who=None):
         if key not in seen:
@@ -248,49 +327,12 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
         if who and who not in seen[key][2]:
             seen[key][2].append(who)
 
-    for host in checked:
-        for f in (findings or {}).get(host) or []:
-            kind = f.get("kind")
-            if kind == "state":
-                name = names.get(_ip(f["address"]))
-                add("ring", ("state", f["address"], f["state"]), "%s%s (%s) %s" % (
-                    (name + " ") if name else "", f["address"], f["rack"], f["state"]), f["seen_from"])
-            elif kind == "count":
-                add("ring", ("count", f["ring"], f["expected"]), "%d members, inventory %d" % (f["ring"], f["expected"]),
-                    f["seen_from"])
-            elif kind == "nodetool":
-                add("nodetool", ("nodetool", f["error"]), "status failed on %s: " + str(f["error"]), f["on"])
-            elif kind == "port":
-                add("ports", ("port", f["name"], f["port"]), "%s %s not answering on" % (f["name"], f["port"]), f["on"])
-            elif kind == "gossip":
-                add("gossip", ("gossip",), "not running on", f["on"])
-            elif kind == "cql":
-                add("CQL", ("cql",), "native transport not running on", f["on"])
-            elif kind == "streams":
-                add("streams", ("streams",), "in progress on", f["on"])
-            elif kind == "netstats":
-                add("netstats", ("netstats", f["error"]), "failed on %s: " + str(f["error"]), f["on"])
-            elif kind == "check":
-                add("nodetool", ("check", f["what"], f["error"]), "%s check failed on %%s: %s" % (f["what"], f["error"]),
-                    f["on"])
-            elif kind == "schema":
-                add("schema", ("schema", f["msg"]), "disagreement: %s" % f["msg"])
-            else:
-                add("other", ("other", f.get("text")), f.get("text", ""))
+    for f in found:
+        add(*_finding_row(f, names))
     for host in unreachable:
         add("ssh", ("ssh",), "not reached by Ansible:", host)
 
-    lines = []
-    width = max([len(seen[k][0]) for k in rows] or [0]) + 1
-    for key in rows:
-        label, text, who = seen[key]
-        if key[0] in ("state", "count"):
-            text += "   seen from %s" % out.nodes(who)
-        elif key[0] in ("nodetool", "netstats", "check"):
-            text = text.replace("%s", out.nodes(who), 1)
-        elif who:
-            text += " " + out.nodes(who)
-        lines.append("  %s  %s" % ((label + ":").ljust(width), text))
+    lines = _problem_lines(rows, seen)
     counted = any(k[0] == "count" for k in rows)
     absent = list(absent or [])
     if absent and counted:
@@ -300,24 +342,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
         return {"healthy": True, "problems": 0, "lines": [
             "HEALTHY  %s  %s  %d UN, schema agreed, no streams, ports open" % (
                 cluster, out.plural(len(hosts), "node"), size)]}
-    todo = []
-    down = [names.get(_ip(k[1]), k[1]) for k in rows if k[0] == "state" and k[2].startswith("D")]
-    # a node down and not reached: one thing to do, its server first
-    both = [h + "?" if h + "?" in down else h for h in unreachable if h in down or h + "?" in down]  # a guess said so
-    down = [d for d in down if d not in both]
-    if down:
-        todo.append("start Cassandra on %s (its server first if it is down); a node that can't be recovered: "
-                    "replace_node" % ", ".join(down))
-    if both:
-        todo.append("bring %s back (not reached over SSH, down in the ring): its server first, then Cassandra, then run "
-                    "this again; a node that can't be recovered: replace_node" % out.nodes(both))
-    if absent and counted and topology_command:
-        todo.append({"text": "remove %s from the ring" % out.nodes(absent), "command": topology_command})
-    others = [h for h in unreachable if h not in both and h + "?" not in both]
-    if others:
-        todo.append("reach %s over SSH, then run this again" % out.nodes(others))
-    if any(k[0] == "streams" for k in rows):
-        todo.append("wait for the streams to end (nodetool netstats), then run this again")
+    todo = _report_todo(rows, names, unreachable, absent, counted, topology_command)
     head = "NOT HEALTHY  %s  %s checked, %s" % (cluster, out.plural(len(checked), "node"), out.plural(len(rows), "problem"))
     return {"healthy": False, "problems": len(rows), "lines": [head] + lines + out.todo(todo)}
 
