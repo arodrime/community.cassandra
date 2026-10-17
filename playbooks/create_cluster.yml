@@ -133,7 +133,7 @@
              | map(attribute='inventory_hostname') | list }}
 
 # Each datacenter's nodes evenly spaced on the ring, racks taken in turn, the
-# datacenters 100 tokens apart (module_utils/cassandra_tokens.py). A node
+# datacenters 100 tokens apart (plugin_utils/cassandra_tokens.py). A node
 # that has cassandra_initial_token keeps it; a datacenter where only some
 # have one is refused unless cassandra_token_allow_partial (the others then
 # split the largest ranges). A rerun after a create that stopped half way

@@ -8,9 +8,10 @@ from fractions import Fraction
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
-    TokenError, _gap, balanced_positions, balanced_tokens, dc_offset, move_order, ownership, parse_ring,
-    parse_token, partitioner_range, plan_balanced, plan_bisect, rack_order, tolerance, transfer)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_tokens import (
+    TokenError, _gap, balanced_positions, balanced_tokens, dc_offset, move_order, ownership, parse_token,
+    partitioner_range, plan_balanced, plan_bisect, rack_order, tolerance, transfer)
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_ring import parse_ring
 
 M3 = "org.apache.cassandra.dht.Murmur3Partitioner"
 RP = "org.apache.cassandra.dht.RandomPartitioner"
@@ -422,7 +423,7 @@ def test_bisect_doubling_splits_every_range(n, racks, rf):
 
 @pytest.mark.parametrize("seed", range(30))
 def test_many_new_nodes_never_worse_than_alternating(seed):
-    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import _alternate, _balance_key
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_tokens import _alternate, _balance_key
     rnd = random.Random(seed)
     size = 10 ** 6
     n = rnd.randint(2, 6)
@@ -438,7 +439,7 @@ def test_many_new_nodes_never_worse_than_alternating(seed):
 @pytest.mark.parametrize("n, k, racks, rf", [
     (3, 6, 1, 2), (3, 5, 2, 3), (5, 5, 2, 3), (4, 4, 1, 3), (6, 3, 3, 3), (67, 14, 4, 2)])
 def test_bisect_not_worse_than_each_greedy(n, k, racks, rf):
-    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_tokens import (
         _balance_key, _greedy_bisect, _largest_first, _largest_only, _split_largest)
     size = 2 ** 64
     ring = ring_of(balanced_positions(n, size), ["r%d" % (i % racks) for i in range(n)])
@@ -454,6 +455,6 @@ def test_bisect_same_positions_other_racks_both_tried():
     size = 2 ** 64
     ring = [(2208115789264903189, "n0", "r0"), (3436951878756879807, "n1", "r1"), (6906942652851629972, "n2", "r0")]
     new = [("x0", "r0"), ("x2", "r1"), ("x1", "r0"), ("x3", "r1"), ("x6", "r0"), ("x4", "r1"), ("x5", "r1"), ("x7", "r1")]
-    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import _balance_key, _split_largest
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_tokens import _balance_key, _split_largest
     best = _balance_key(ring + plan_bisect(ring, new, size, 3), size, 3)
     assert best <= _balance_key(ring + _split_largest(ring, new, size), size, 3)

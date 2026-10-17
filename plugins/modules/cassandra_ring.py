@@ -59,7 +59,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import parse_ring
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_ring import parse_ring
 
 
 def main():
