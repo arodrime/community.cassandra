@@ -243,36 +243,9 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
     found = dict((name, stat_fields(st)) for name, st in files.items() if (st or {}).get("exists"))
     # a stat that failed (no exists at all): None, for the self-check
     unread = dict((name, None) for name, st in files.items() if not st)
-    out, notes = {}, []
-    user, group = str(account.get("user") or ""), str(account.get("group") or "")
-    if not user or not group:
-        notes.append("The account Cassandra runs as could not be read: %s:%s assumed"
-                     % (user or DEFAULTS["user"], group or DEFAULTS["group"]))
-    user, group = user or DEFAULTS["user"], group or DEFAULTS["group"]
-    if user != DEFAULTS["user"]:
-        out["cassandra_user"] = user
-    if group != DEFAULTS["group"]:
-        out["cassandra_group"] = group
-    if out:
-        notes.append("Cassandra runs as %s:%s (cassandra_user, cassandra_group)" % (user, group))
-
+    out, notes, user, group = _account(account)
     config = [name for name in _files_of(series) if name in found]
-    settings = {"owner": DEFAULTS["owner"], "group": group, "mode": DEFAULTS["mode"],
-                "public_mode": DEFAULTS["public_mode"], "user": user, "user_group": group}
-    if config:
-        yaml_file = found.get("cassandra.yaml", {})
-        settings["owner"] = _common([found[n]["owner"] for n in config], yaml_file.get("owner"))
-        settings["group"] = _common([found[n]["group"] for n in config], yaml_file.get("group"))
-        closed = [found[n]["mode"] for n in config if restricted(n)]
-        public = [found[n]["mode"] for n in config if not restricted(n)]
-        settings["mode"] = _common(closed, yaml_file.get("mode")) if closed else DEFAULTS["mode"]
-        settings["public_mode"] = _common(public, DEFAULTS["public_mode"]) if public else DEFAULTS["public_mode"]
-        for key, var, default in (("owner", "cassandra_config_user", DEFAULTS["owner"]),
-                                  ("group", "cassandra_config_group", group),  # its default: cassandra_group
-                                  ("mode", "cassandra_config_mode", DEFAULTS["mode"]),
-                                  ("public_mode", "cassandra_config_public_mode", DEFAULTS["public_mode"])):
-            if settings[key] != default:
-                out[var] = settings[key]
+    settings = _common_settings(config, found, user, group, out)
     per_file = {}
     for name in config + [n for n in JMX_FILES if n in found]:
         want = cassandra_file_permissions(name, dict(settings, files={}))
@@ -290,7 +263,53 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
         notes.append("cassandra-env.sh is not readable by other users (%s:%s %s): nodetool run by a user outside %s"
                      " cannot read the JMX port in it (kept as the node has it; the roles' default is 0644)"
                      % (env["owner"], env["group"], env["mode"], env["group"]))
-    odd = []
+    notes += _dirs_not_owned(dirs, user, group)
+    return {"vars": out, "notes": notes, "files": dict(found, **unread)}
+
+
+def _account(account):
+    """{user, group} Cassandra runs as -> (its variables when not the defaults, notes, user, group)."""
+    out, notes = {}, []
+    user, group = str(account.get("user") or ""), str(account.get("group") or "")
+    if not user or not group:
+        notes.append("The account Cassandra runs as could not be read: %s:%s assumed"
+                     % (user or DEFAULTS["user"], group or DEFAULTS["group"]))
+    user, group = user or DEFAULTS["user"], group or DEFAULTS["group"]
+    if user != DEFAULTS["user"]:
+        out["cassandra_user"] = user
+    if group != DEFAULTS["group"]:
+        out["cassandra_group"] = group
+    if out:
+        notes.append("Cassandra runs as %s:%s (cassandra_user, cassandra_group)" % (user, group))
+    return out, notes, user, group
+
+
+def _common_settings(config, found, user, group, out):
+    """The owner, group and modes most config files have (cassandra.yaml's on a tie) -> the settings of
+    cassandra_file_permissions; out gets the variables that differ from the defaults."""
+    settings = {"owner": DEFAULTS["owner"], "group": group, "mode": DEFAULTS["mode"],
+                "public_mode": DEFAULTS["public_mode"], "user": user, "user_group": group}
+    if not config:
+        return settings
+    yaml_file = found.get("cassandra.yaml", {})
+    settings["owner"] = _common([found[n]["owner"] for n in config], yaml_file.get("owner"))
+    settings["group"] = _common([found[n]["group"] for n in config], yaml_file.get("group"))
+    closed = [found[n]["mode"] for n in config if restricted(n)]
+    public = [found[n]["mode"] for n in config if not restricted(n)]
+    settings["mode"] = _common(closed, yaml_file.get("mode")) if closed else DEFAULTS["mode"]
+    settings["public_mode"] = _common(public, DEFAULTS["public_mode"]) if public else DEFAULTS["public_mode"]
+    for key, var, default in (("owner", "cassandra_config_user", DEFAULTS["owner"]),
+                              ("group", "cassandra_config_group", group),  # its default: cassandra_group
+                              ("mode", "cassandra_config_mode", DEFAULTS["mode"]),
+                              ("public_mode", "cassandra_config_public_mode", DEFAULTS["public_mode"])):
+        if settings[key] != default:
+            out[var] = settings[key]
+    return settings
+
+
+def _dirs_not_owned(dirs, user, group):
+    """The note on the Cassandra directories the account does not own."""
+    odd, notes = [], []
     for path in sorted(dirs or {}):
         st = dirs[path] or {}
         if not st.get("exists"):
@@ -302,7 +321,7 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
         notes.append("Directories not owned by %s:%s, the account Cassandra runs as (cassandra_config leaves them"
                      " as they are, but a data, commitlog, saved_caches or hints directory that account cannot use; it creates the missing"
                      " ones %s:%s 0750): %s" % (user, group, user, group, ", ".join(odd)))
-    return {"vars": out, "notes": notes, "files": dict(found, **unread)}
+    return notes
 
 
 class FilterModule(object):
