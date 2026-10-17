@@ -54,7 +54,8 @@ def test_each_check_reads_the_refusals_and_stops_on_them():
 
 def test_the_stop_names_the_node_and_the_login_variables():
     stop = next(t for t in load("stream_wait.yml") if t["name"] == "Stop when it failed or stopped moving")
-    msg = render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="node5", _cassandra_stream_status="jmx_refused",
+    msg = render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="node5", cassandra_stream_stall_time=1800,
+                 cassandra_stream_max_time=0, _cassandra_stream_status="jmx_refused",
                  _cassandra_stream_what="bootstrap",
                  _cassandra_stream_refused=[{"host": "node5", "error": "SecurityException: 'Authentication failed! Invalid"
                                                                        " username or password'."}])

@@ -22,7 +22,6 @@ MARKED = [
     ("playbooks/upgrade.yml", "Say what is left to do"),
     ("playbooks/upgrade.yml", "Say what the next phase is"),
     ("roles/cassandra_change_report/tasks/main.yml", "Show changes ({{ cassandra_change_report_role }})"),
-    ("roles/cassandra_config/tasks/checks.yml", "Warn about a variable under its former name"),
     ("roles/cassandra_config/tasks/read.yml", "Say when Cassandra is newer than the templates"),
     ("roles/cassandra_install/tasks/dsbulk.yml", "Say dsbulk is not downloaded (offline)"),
     ("roles/cassandra_install/tasks/cqlsh_python.yml", "Say python3.11 is missing (cqlsh only)"),

@@ -41,7 +41,8 @@ def test_the_module_forced_and_the_advice_says_so():
                         (False, "nodetool decommission on it resumes it")):
         assert render(force, cassandra_decommission_force=given) is given
         assert word in render(advice, cassandra_decommission_force=given)
-        msg = render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="node3", _cassandra_stream_what="decommission",
+        msg = render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="node3", cassandra_stream_stall_time=1800,
+                     cassandra_stream_max_time=0, _cassandra_stream_what="decommission",
                      _cassandra_stream_status="leave_failed", cassandra_decommission_force=given,
                      _cassandra_stream_report=["x"])
         assert word in msg
