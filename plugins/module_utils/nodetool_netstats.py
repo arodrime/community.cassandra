@@ -9,12 +9,14 @@ __metaclass__ = type
 
 import re
 
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import address_part
+
 _UNITS = {"": 1, "bytes": 1, "B": 1, "KB": 1024, "KiB": 1024, "MB": 1024 ** 2, "MiB": 1024 ** 2,
           "GB": 1024 ** 3, "GiB": 1024 ** 3, "TB": 1024 ** 4, "TiB": 1024 ** 4}
 _SIZE = r"([0-9.]+)(?:\s*(bytes|B|KB|KiB|MB|MiB|GB|GiB|TB|TiB))?"
 # "Bootstrap 1b2c...": the operation (Bootstrap, Unbootstrap, Rebuild, Restore replica count, Repair...) and the plan ID
 _PLAN = re.compile(r"^(\S.*?) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$")
-_PEER = re.compile(r"^\s{4}/?(\S+?)(?::\d+)?(?: \(using .*\))?\s*$")
+_PEER = re.compile(r"^\s{4}/?(\S+?)(?: \(using .*\))?\s*$")
 _TOTALS = re.compile(r"^\s+(Receiving|Sending) (\d+) files, " + _SIZE + r" total\. Already (?:received|sent) (\d+) files"
                      r" \([0-9.,]+%\), " + _SIZE + r" total")
 _FILE = re.compile(r"^\s+(\S+) (\d+)/(\d+) bytes \(\d+%\) (received from|sent to) ")
@@ -79,5 +81,5 @@ def parse_netstats(stdout):
             continue
         m = _PEER.match(line)
         if m and plan and not line.startswith("     "):
-            peer = m.group(1)
+            peer = address_part(m.group(1))
     return mode, lines, sessions
