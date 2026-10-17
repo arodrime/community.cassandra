@@ -10,8 +10,8 @@
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_repository
           vars:
-            cassandra_repository_username: reader
-            cassandra_repository_password: s3cret-token
+            cassandra_install_username: reader
+            cassandra_install_password: s3cret-token
 
         - name: Read where the credentials went
           ansible.builtin.stat:

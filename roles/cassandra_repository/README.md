@@ -42,8 +42,8 @@ cassandra_install_method:
   - Same variable as in `cassandra_install`.
 
 cassandra_install_url:
-  - The repository, or the directory of the package files. Defaults to
-    `cassandra_repository_deb_url` / `cassandra_repository_rpm_url`.
+  - The repository, or the directory of the package files. Defaults to the
+    Apache repositories (or point it at a mirror of them).
 
 cassandra_install_username / cassandra_install_password:
   - Credentials for a mirror that needs them to read: an account and its
@@ -53,17 +53,11 @@ cassandra_install_username / cassandra_install_password:
     `/etc/apt/auth.conf.d/cassandra.conf` (0600). Keep the password in a vault.
     Without credentials that file is removed, only when this role wrote it
     (its header).
-    Default to `cassandra_repository_username` / `cassandra_repository_password`
-    (their older names, still read).
 
 cassandra_repository_manage:
   - `false` when the repositories are configured by other means (a
     Satellite/Foreman, the system image): the role then does nothing.
     Defaults to `true`, `false` with `cassandra_offline`.
-
-cassandra_repository_deb_url / cassandra_repository_rpm_url:
-  - Older names of `cassandra_install_url` (its default): the Apache
-    repositories by default, or a mirror of them.
 
 cassandra_repository_key_url:
   - Where the release signing keys come from. Empty (default): the copy of

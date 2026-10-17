@@ -958,16 +958,16 @@ their OS repositories. Point the roles at it:
 
 .. code-block:: yaml
 
-   cassandra_repository_deb_url: https://mirror.example.com/cassandra-debian
-   cassandra_repository_rpm_url: "https://mirror.example.com/cassandra-redhat/{{ cassandra_version }}/"
+   cassandra_install_url: >-
+     {{ 'https://mirror.example.com/cassandra-debian' if ansible_facts['os_family'] == 'Debian'
+        else 'https://mirror.example.com/cassandra-redhat/' ~ cassandra_version ~ '/' }}
    # Ubuntu 24.04 with Cassandra 4.x, and 26.04: python3.11 for cqlsh (on 26.04 for Medusa's virtualenv too), "" if the OS mirror has it
    cassandra_cqlsh_python_repo_uri: https://mirror.example.com/deadsnakes
 
-``cassandra_install_url`` sets the same, for the hosts' own OS family. A mirror that needs credentials to read (an
-account, or a service account and its token) takes them in ``cassandra_install_username`` and
-``cassandra_install_password`` (keep the password in a vault; ``cassandra_repository_username``/``_password``, their
-older names, still work). A Java tarball on the same host (``cassandra_java_tarball``, see Java above) uses them too,
-unless ``cassandra_java_tarball_username``/``_password`` are set; a tarball elsewhere gets no credentials.
+A mirror that needs credentials to read (an account, or a service account and its token) takes them in
+``cassandra_install_username`` and ``cassandra_install_password`` (keep the password in a vault). A Java tarball on the
+same host (``cassandra_java_tarball``, see Java above) uses them too, unless
+``cassandra_java_tarball_username``/``_password`` are set; a tarball elsewhere gets no credentials.
 ``cassandra_repository`` checks the URL is a repository before adding it (``repodata/repomd.xml``, or the suite's
 ``InRelease``/``Release``): a plain directory of package files is refused, rather than left as a repository that
 breaks every later ``dnf``/``apt`` call.

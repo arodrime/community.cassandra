@@ -32,22 +32,25 @@ argument_specs:
         description:
           - The repository (V(repository)), or the directory of the package files
             (V(packages)).
-          - Defaults to O(cassandra_repository_rpm_url) or O(cassandra_repository_deb_url)
-            (Apache's repositories). Apache's RPM directory
+          - Defaults to Apache's repositories, C(https://redhat.cassandra.apache.org/<cassandra_version>/)
+            on the RedHat family, C(https://debian.cassandra.apache.org) on Debian and Ubuntu. Apache's RPM directory
             (C(https://redhat.cassandra.apache.org/<series>/)) also works with V(packages);
             its Debian files are under C(https://debian.cassandra.apache.org/pool/main/c/cassandra/).
       cassandra_install_username:
         type: str
+        default: ""
         description:
           - User for O(cassandra_install_url) when it needs credentials to read (an
             account, or a service account with a token as O(cassandra_install_password)).
-            Defaults to O(cassandra_repository_username).
+            Used for the repository and for O(cassandra_repository_key_url).
+          - On RedHat the credentials go in the yum repository file (then mode 0600),
+            on Debian/Ubuntu in C(/etc/apt/auth.conf.d/cassandra.conf) (0600).
       cassandra_install_password:
         type: str
         no_log: true
+        default: ""
         description:
           - Password or token for O(cassandra_install_username). Keep it in a vault.
-            Defaults to O(cassandra_repository_password).
       debian_packages:
         type: list
         elements: str
@@ -92,31 +95,3 @@ argument_specs:
             Satellite/Foreman, the system image, an internal mirror already set up),
             so the role does nothing.
           - Defaults to V(true), V(false) with O(cassandra_offline).
-      cassandra_repository_username:
-        type: str
-        default: ""
-        description:
-          - Older name of O(cassandra_install_username), its default.
-          - User for a mirror that needs credentials to read (an account, or a service
-            account with a token as O(cassandra_repository_password)). Used for the
-            repository and for O(cassandra_repository_key_url).
-          - On RedHat the credentials go in the yum repository file (then mode 0600),
-            on Debian/Ubuntu in C(/etc/apt/auth.conf.d/cassandra.conf) (0600).
-      cassandra_repository_password:
-        type: str
-        default: ""
-        no_log: true
-        description:
-          - Older name of O(cassandra_install_password), its default.
-      cassandra_repository_deb_url:
-        type: str
-        default: https://debian.cassandra.apache.org
-        description:
-          - Older name of O(cassandra_install_url) on Debian and Ubuntu, its default
-            there (the Cassandra apt repository, or a mirror of it).
-      cassandra_repository_rpm_url:
-        type: str
-        description:
-          - Older name of O(cassandra_install_url) on the RedHat family, its default
-            there (the Cassandra yum/dnf repository, or a mirror of it).
-            Defaults to C(https://redhat.cassandra.apache.org/<cassandra_version>/).

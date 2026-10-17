@@ -33,15 +33,13 @@ cassandra_package_version: ""
 #               manager), installed without their Java dependency;
 #               cassandra_package_version is then required
 cassandra_install_method: repository
-# The repository, or the directory of the package files. Defaults to the
-# older cassandra_repository_deb_url / cassandra_repository_rpm_url.
+# The repository, or the directory of the package files: Apache's by default.
 cassandra_install_url: >-
-  {{ cassandra_repository_deb_url | default('https://debian.cassandra.apache.org') if ansible_facts['os_family'] == 'Debian'
-     else cassandra_repository_rpm_url | default('https://redhat.cassandra.apache.org/' ~ cassandra_version ~ '/') }}
-# Credentials for that URL (keep the password in a vault). Default to the
-# older cassandra_repository_username / cassandra_repository_password.
-cassandra_install_username: "{{ cassandra_repository_username | default('') }}"
-cassandra_install_password: "{{ cassandra_repository_password | default('') }}"
+  {{ 'https://debian.cassandra.apache.org' if ansible_facts['os_family'] == 'Debian'
+     else 'https://redhat.cassandra.apache.org/' ~ cassandra_version ~ '/' }}
+# Credentials for that URL (keep the password in a vault)
+cassandra_install_username: ""
+cassandra_install_password: ""
 # packages: the name of each file in cassandra_install_url ({name}: the
 # package, {version}: cassandra_package_version), Apache's by default
 cassandra_install_package_file: "{{ '{name}_{version}_all.deb' if ansible_facts['os_family'] == 'Debian' else '{name}-{version}-1.noarch.rpm' }}"
