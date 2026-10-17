@@ -281,81 +281,83 @@ def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAUL
     return out
 
 
-def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
-    """One datacenter of cassandra_token_add_plan. taken: the positions of every
-    node of the cluster, and of the new ones already planned."""
+def _given_tokens(new_dc, partitioner, taken, problems):
+    """A datacenter's new nodes, the positions taken in the cluster -> (fixed: [(position, name, rack)] of the
+    ones the inventory gives a token, taken grows with them; free: [(name, rack)] of the others); a token that
+    is not one, or already the cluster's, is a problem."""
     first, size = partitioner_range(partitioner)
-    entries = _ring_entries(ring, dc, hosts, out["problems"])
-    if entries is None:
-        return
-    existing = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
     fixed, free = [], []
-    for n in [n for n in new if n["dc"] == dc]:
+    for n in new_dc:
         if not _has_token(n):
             free.append((n["name"], n["rack"]))
             continue
         try:
             p = position(parse_token(n["token"], partitioner), first, size)
         except TokenError as exc:
-            out["problems"].append("%s: cassandra_initial_token %s" % (n["name"], exc))
+            problems.append("%s: cassandra_initial_token %s" % (n["name"], exc))
             continue
         if p in taken:
-            out["problems"].append("%s: cassandra_initial_token %s is already a token of the cluster"
-                                   % (n["name"], n["token"]))
+            problems.append("%s: cassandra_initial_token %s is already a token of the cluster" % (n["name"], n["token"]))
             continue
         taken.add(p)
         fixed.append((p, n["name"], n["rack"]))
-    rf = rfs[dc]
-    new_names = set(f[0] for f in free) | set(name for dummy, name, dummy2 in fixed)
-    marks = dict((name, " +") for name in new_names)
-    out["lines"] += _table(dc, existing, size, first, rf, "now")
+    return fixed, free
+
+
+def _added_racks_warning(dc, existing, fixed, free):
+    """A datacenter's ring, its new nodes (fixed, free) -> the warning of racks of different sizes once they are
+    added, '' when they are even."""
     racks = {}
     for rack in [r for dummy, dummy2, r in existing + fixed] + [r for dummy, r in free]:
         racks[rack] = racks.get(rack, 0) + 1
     if len(racks) > 1 and len(set(racks.values())) > 1:
-        out["warnings"].append("%s: racks of different sizes once the nodes are added (%s): with one token per node"
-                               " some nodes hold more, whatever the tokens" % (
-                                   dc, ", ".join("%s %d" % (r, c) for r, c in sorted(racks.items()))))
-    if not existing:  # a new datacenter: as create_cluster would do it
-        if fixed:
-            placed = plan_bisect(fixed, rack_order(free), size, rf)
-        else:
-            off = _free_offset(index[dc], len(free), size, taken)
-            placed = [(p, name, rack) for p, (name, rack) in
-                      zip(balanced_positions(len(free), size, off), rack_order(free))]
-        bisect_ring = balanced_ring = fixed + _nudge(placed, taken, size)
-        moves = []
+        return ("%s: racks of different sizes once the nodes are added (%s): with one token per node some nodes hold"
+                " more, whatever the tokens" % (dc, ", ".join("%s %d" % (r, c) for r, c in sorted(racks.items()))))
+    return ""
+
+
+def _new_dc_ring(fixed, free, index, size, rf, taken):
+    """A new datacenter (none of its nodes in the ring), its new nodes (fixed, free), its index -> its ring, as
+    create_cluster would do it; taken grows with it."""
+    if fixed:
+        placed = plan_bisect(fixed, rack_order(free), size, rf)
     else:
-        others = set(taken)
-        bisect_ring = existing + fixed + _nudge(plan_bisect(existing + fixed, rack_order(free), size, rf), taken, size)
-        balanced_ring, moves = None, []
-        if fixed:
-            given = sorted(name for dummy, name, dummy2 in fixed)
-            out["balanced_problems"].append(
-                "%s: %s %s a cassandra_initial_token: balanced only places nodes without one (use bisect, or take it"
-                " out of the inventory)" % (dc, ", ".join(given), "has" if len(given) == 1 else "have"))
-        else:
-            try:
-                plan = plan_balanced(existing, free, size, rf, dc_offset(index[dc]))
-            except TokenError as exc:
-                out["balanced_problems"].append("%s: %s" % (dc, exc))
-                plan = None
-            if plan:
-                mine = set(p for p, dummy, dummy2 in existing)
-                # other datacenters' tokens: a worked out position moves on by a token or two
-                avoid = others - mine
-                dst = dict((name, d) for name, dummy, d in plan["moves"])
-                spots = _nudge([(dst.get(name, p), name, rack) for p, name, rack in plan["ring"]
-                                if name in dst or name in new_names], avoid, size)
-                moved = dict((name, p) for p, name, dummy in spots)
-                balanced_ring = [(moved.get(name, p), name, rack) for p, name, rack in plan["ring"]]
-                moves = [(name, src, moved[name]) for name, src, dummy in plan["moves"]]
-                taken |= set(p for p, name, dummy in balanced_ring if name in new_names)
-                blocked = [name for p, name, dummy in balanced_ring if name in new_names and p in mine]
-                if blocked:
-                    out["balanced_problems"].append(
-                        "%s: %s would bootstrap at a token a node that moves still holds: move it first (move_node),"
+        off = _free_offset(index, len(free), size, taken)
+        placed = [(p, name, rack) for p, (name, rack) in zip(balanced_positions(len(free), size, off), rack_order(free))]
+    return fixed + _nudge(placed, taken, size)
+
+
+def _balanced_add(dc, existing, free, new_names, size, rf, offset, taken, others, problems):
+    """A datacenter's ring, its new nodes (none with a token), the positions taken (and the ones before bisect
+    planned) -> (its balanced ring, None when there is none; the moves [(name, from, to)] of its nodes); taken
+    grows with the new nodes' positions."""
+    try:
+        plan = plan_balanced(existing, free, size, rf, offset)
+    except TokenError as exc:
+        problems.append("%s: %s" % (dc, exc))
+        return None, []
+    if not plan:
+        return None, []
+    mine = set(p for p, dummy, dummy2 in existing)
+    # other datacenters' tokens: a worked out position moves on by a token or two
+    avoid = others - mine
+    dst = dict((name, d) for name, dummy, d in plan["moves"])
+    spots = _nudge([(dst.get(name, p), name, rack) for p, name, rack in plan["ring"]
+                    if name in dst or name in new_names], avoid, size)
+    moved = dict((name, p) for p, name, dummy in spots)
+    balanced_ring = [(moved.get(name, p), name, rack) for p, name, rack in plan["ring"]]
+    moves = [(name, src, moved[name]) for name, src, dummy in plan["moves"]]
+    taken.update(set(p for p, name, dummy in balanced_ring if name in new_names))
+    blocked = [name for p, name, dummy in balanced_ring if name in new_names and p in mine]
+    if blocked:
+        problems.append("%s: %s would bootstrap at a token a node that moves still holds: move it first (move_node),"
                         " or use bisect" % (dc, ", ".join(blocked)))
+    return balanced_ring, moves
+
+
+def _record_new_tokens(out, bisect_ring, balanced_ring, new_names, first, size, rf):
+    """The two rings of a datacenter (balanced None when there is none) -> the new nodes' tokens and whether
+    each ring is even, recorded in out's bisect, balanced and even."""
     for kind, kring in (("bisect", bisect_ring), ("balanced", balanced_ring)):
         if kring is None:
             out["even"][kind] = False
@@ -364,6 +366,40 @@ def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
             if name in new_names:
                 out[kind][name] = str(token_of(p, first, size))
         out["even"][kind] = out["even"][kind] and _even(kring, size, rf)
+
+
+def _add_dc(dc, ring, new, hosts, partitioner, index, rfs, taken, out):
+    """One datacenter of cassandra_token_add_plan. taken: the positions of every
+    node of the cluster, and of the new ones already planned."""
+    first, size = partitioner_range(partitioner)
+    entries = _ring_entries(ring, dc, hosts, out["problems"])
+    if entries is None:
+        return
+    existing = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
+    fixed, free = _given_tokens([n for n in new if n["dc"] == dc], partitioner, taken, out["problems"])
+    rf = rfs[dc]
+    new_names = set(f[0] for f in free) | set(name for dummy, name, dummy2 in fixed)
+    marks = dict((name, " +") for name in new_names)
+    out["lines"] += _table(dc, existing, size, first, rf, "now")
+    racks_warning = _added_racks_warning(dc, existing, fixed, free)
+    if racks_warning:
+        out["warnings"].append(racks_warning)
+    moves = []
+    if not existing:  # a new datacenter: as create_cluster would do it
+        bisect_ring = balanced_ring = _new_dc_ring(fixed, free, index[dc], size, rf, taken)
+    else:
+        others = set(taken)
+        bisect_ring = existing + fixed + _nudge(plan_bisect(existing + fixed, rack_order(free), size, rf), taken, size)
+        balanced_ring = None
+        if fixed:
+            given = sorted(name for dummy, name, dummy2 in fixed)
+            out["balanced_problems"].append(
+                "%s: %s %s a cassandra_initial_token: balanced only places nodes without one (use bisect, or take it"
+                " out of the inventory)" % (dc, ", ".join(given), "has" if len(given) == 1 else "have"))
+        else:
+            balanced_ring, moves = _balanced_add(dc, existing, free, new_names, size, rf, dc_offset(index[dc]), taken,
+                                                 others, out["balanced_problems"])
+    _record_new_tokens(out, bisect_ring, balanced_ring, new_names, first, size, rf)
     out["lines"] += _table(dc, bisect_ring, size, first, rf, "bisect (no move)", marks)
     if existing and balanced_ring is not None:
         for name, src, dst in moves:
