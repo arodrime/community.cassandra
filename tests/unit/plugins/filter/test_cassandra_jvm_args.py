@@ -377,6 +377,14 @@ def test_options_file_the_running_java_reads(java, series, read):
     assert jvm.options_file(series, java) == read
 
 
+@pytest.mark.parametrize("java, series, read", [("17.0.2", "50x", "jvm17-server.options"), ("11.0.20", "41x", "jvm11-server.options"),
+                                                ("1.8.0_402", "40x", "jvm8-server.options"), ("17", "311x", None)])
+def test_options_file_of_a_full_java_version_and_of_an_unknown_series(java, series, read):
+    # module_utils' rule (cassandra_jvm_options.options_file): a full version read as its major, a series the
+    # collection does not know has no options file known
+    assert jvm.options_file(series, java) == read
+
+
 def test_stock_options_as_cassandra_env_adds_them():
     g1 = {"+UseG1GC": True, "UseConcMarkSweepGC": False, "Xmx": False, "Xms": False, "Xmn": False,
           "MaxDirectMemorySize": False, "ParallelGCThreads": False, "ConcGCThreads": False}
