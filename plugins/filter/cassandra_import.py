@@ -907,10 +907,6 @@ def _declared_lines(series):
     return tuple(line for line in tpl[at:end] if TOP_KEY.match(line))
 
 
-def _declared_keys(series):
-    return [TOP_KEY.match(line).group(1) for line in _declared_lines(series)]
-
-
 def _declared_samples(series):
     """Their lines with a sample value, for _canonical: a plain value, true for a boolean."""
     return [re.sub(r"\{\{ \(?\w+(?: \| bool\))?\)? \| lower \}\}", "true", re.sub(r"\{\{ \w+ \}\}", "x", line))
@@ -2371,9 +2367,6 @@ def _trusted_lines(read):
     made = set(line for n in read for line in n.get("trusted") or [])
     own = set(line for n in read for line in _marked(n["vars"]) if line not in (n.get("trusted") or []))
     return sorted(made - own)
-
-
-ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 
 
 def _roles_defaults():
