@@ -2580,14 +2580,9 @@ def _left_to_yours(n, key, name, text):
         % (name, len(lines))]
 
 
-def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
-    """cassandra_inventory_layout, with the user's own variables files of the inventory dir (user_files: [{path,
-    content}], group_vars/all and those of this cluster's groups and hosts) taken into account: a node whose value
-    one of them would change gets its value written (the node as it is wins), and is listed in 'yours': [{node,
-    key, value, yours, path}] (so is one the import writes anyway, a value that differs between nodes); a value
-    of theirs equal to the node's is not written again ('from_yours': {node: {key: {value, path}}}). 'not_compared': the keys
-    of theirs not compared (a template, a vaulted value, a default not known here); 'unread_files': theirs not read
-    (vaulted, no password); 'theirs_win': [{node, key, path}] a file of theirs still wins over the import's."""
+def _user_data(user_files):
+    """The user's files ([{path, content}]) -> ([(path, data)] of those that are a dict of variables, the paths of
+    those not read (no content: vaulted, no password))."""
     user, unread = [], []
     for f in user_files or []:
         if f.get("content") is None:
@@ -2599,38 +2594,50 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
             data = None
         if isinstance(data, dict):
             user.append((f["path"], data))
-    defaults = _roles_defaults()
-    nodes = [dict(n, vars=dict(n.get("vars") or {})) for n in nodes]
-    live_vars = dict((n["name"], dict(n["vars"])) for n in nodes)  # as found, whatever is written
-    yours, not_compared, theirs_win = [], [], []
+    return user, unread
 
-    def live_of(n, key):
-        key = _ALIASES.get(key, key)
-        if key in (n.get("keep") or {}):  # left as found on the node (host_vars)
-            return n["keep"][key]
-        return _resolved(key, live_vars[n["name"]], defaults)
 
-    def read_on(n, key):
-        """The node's value of key is known: read from it, left as found, or one the import writes only when
-        it is not the default (the config files' and their owners', the unit's; Medusa's and the OS's when
-        found there); not a variable the import cannot tell (install sources, policies)."""
-        key = _ALIASES.get(key, key)
-        live = live_vars[n["name"]]
-        return (key in live or key in (n.get("keep") or {}) or key in _template_keys() or _default_when_absent(key)
-                or key in _medusa_ini_keys() and boolean((n.get("medusa") or {}).get("ini", False), strict=False)
-                or key in _MEDUSA_INSTALL and boolean((n.get("medusa") or {}).get("install", False), strict=False)
-                or key in _OS_READ and bool(n.get("os")))
+# What _layout_over compares the user's values with: the nodes' variables as found (live_vars: {node name: {key:
+# value}}), every role's defaults, the keys not compared so far (filled as they come)
+_Found = namedtuple("_Found", "live_vars defaults not_compared")
 
-    def comparable(key, value):
-        if _templated(value) or isinstance(value, _Vaulted) or (isinstance(value, (dict, list)) and _Vaulted in [
-                type(v) for v in (value.values() if isinstance(value, dict) else value)]):
-            if key not in not_compared:
-                not_compared.append(key)
-            return False
-        return True
 
-    layout = cassandra_inventory_layout(nodes, cluster_name)
-    # a value theirs gives already, as the node has it: left to theirs (where Ansible reads it once written)
+def _live_of(found, n, key):
+    """The node's value of key: left as found on the node (host_vars), else read, else the collection's default ->
+    the value, MISSING when unknown."""
+    key = _ALIASES.get(key, key)
+    if key in (n.get("keep") or {}):  # left as found on the node (host_vars)
+        return n["keep"][key]
+    return _resolved(key, found.live_vars[n["name"]], found.defaults)
+
+
+def _read_on(found, n, key):
+    """The node's value of key is known: read from it, left as found, or one the import writes only when
+    it is not the default (the config files' and their owners', the unit's; Medusa's and the OS's when
+    found there); not a variable the import cannot tell (install sources, policies)."""
+    key = _ALIASES.get(key, key)
+    live = found.live_vars[n["name"]]
+    return (key in live or key in (n.get("keep") or {}) or key in _template_keys() or _default_when_absent(key)
+            or key in _medusa_ini_keys() and boolean((n.get("medusa") or {}).get("ini", False), strict=False)
+            or key in _MEDUSA_INSTALL and boolean((n.get("medusa") or {}).get("install", False), strict=False)
+            or key in _OS_READ and bool(n.get("os")))
+
+
+def _comparable(found, key, value):
+    """A value of the user's that can be compared with a node's (not a template, nothing vaulted in it); key added
+    to found.not_compared when not -> bool."""
+    if _templated(value) or isinstance(value, _Vaulted) or (isinstance(value, (dict, list)) and _Vaulted in [
+            type(v) for v in (value.values() if isinstance(value, dict) else value)]):
+        if key not in found.not_compared:
+            found.not_compared.append(key)
+        return False
+    return True
+
+
+def _left_to_theirs(nodes, layout, user, inventory_dir, found):
+    """A value the user's files give already, as the node has it: left to theirs (taken out of the node's variables,
+    in place), where Ansible reads it once written -> (from_yours: {node: {key: {value, path}}}, differ: [{node,
+    key, value, yours, path}] the values of theirs a node read does not have)."""
     chains = group_chains(layout["hosts"])
     from_yours, differ = {}, []
     for n in nodes:
@@ -2638,61 +2645,94 @@ def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
         theirs = _effective(name, chains.get(name, []), layout, user, mine=False)
         _yours_rendered(n, theirs, inventory_dir)
         for key in [k for k in n["vars"] if k in theirs and k not in ALWAYS and k not in ("cassandra_dc", "cassandra_rack")]:
-            if comparable(key, theirs[key][0]) and _same(key, theirs[key][0], n["vars"][key]):
+            if _comparable(found, key, theirs[key][0]) and _same(key, theirs[key][0], n["vars"][key]):
                 from_yours.setdefault(name, {})[key] = {"value": n["vars"].pop(key), "path": theirs[key][1]}
         # a value of theirs the node does not have: kept as found (written by the import), listed
         if boolean(n.get("read", False), strict=False):
             for key, (value, path) in sorted(theirs.items()):
-                if key in ALWAYS or key in ("cassandra_dc", "cassandra_rack") or not read_on(n, key) \
-                        or not comparable(key, value):
+                if key in ALWAYS or key in ("cassandra_dc", "cassandra_rack") or not _read_on(found, n, key) \
+                        or not _comparable(found, key, value):
                     continue
-                live = live_of(n, key)
+                live = _live_of(found, n, key)
                 if live is not MISSING and not _same(key, value, live):
                     differ.append({"node": name, "key": key, "value": live, "yours": value, "path": path})
-    layout = cassandra_inventory_layout(nodes, cluster_name)
-    for dummy in range(3):  # each round writes the values theirs would change; the layout again
-        chains = group_chains(layout["hosts"])
-        changed, pins = False, []
-        for n in nodes:
-            if not boolean(n.get("read", False), strict=False):
-                continue
-            name = layout["names"].get(n.get("address"), n["name"])
-            own = ["group_vars/%s/main.yml" % g for g in chains.get(name, [])] + ["host_vars/%s/main.yml" % name]
-            for key, (value, path) in sorted(_effective(name, chains.get(name, []), layout, user).items()):
-                if path in own or not read_on(n, key) or not comparable(key, value):
-                    continue
-                live = live_of(n, key)
-                if live is MISSING:
-                    if key not in not_compared:
-                        not_compared.append(key)
-                    continue
-                if _same(key, value, live):
-                    continue
-                if _same(key, n["vars"].get(key, MISSING), live):  # written, theirs wins (a host file of theirs)
-                    pins.append((name, key, live))
-                else:
-                    n["vars"][key] = live
-                    changed = True
-                if not any(y["node"] == name and y["key"] == key for y in yours):
-                    yours.append({"node": name, "key": key, "value": live, "yours": value, "path": path})
-        if not changed:
-            for name, key, live in pins:
-                layout["host_vars"].setdefault(name, {})[key] = live
-            break
-        layout = cassandra_inventory_layout(nodes, cluster_name)
-    # a file of theirs that still wins (sorted after main.yml in a host's dir): said, not hidden
+    return from_yours, differ
+
+
+def _write_over_theirs(nodes, layout, user, found, yours):
+    """One round: the values the user's files would change on a node read written into its variables (in place),
+    each listed in yours (in place) -> (whether a value was written, pins: [(node, key, value)] the values written
+    that a host file of theirs still wins over)."""
     chains = group_chains(layout["hosts"])
+    changed, pins = False, []
+    for n in nodes:
+        if not boolean(n.get("read", False), strict=False):
+            continue
+        name = layout["names"].get(n.get("address"), n["name"])
+        own = ["group_vars/%s/main.yml" % g for g in chains.get(name, [])] + ["host_vars/%s/main.yml" % name]
+        for key, (value, path) in sorted(_effective(name, chains.get(name, []), layout, user).items()):
+            if path in own or not _read_on(found, n, key) or not _comparable(found, key, value):
+                continue
+            live = _live_of(found, n, key)
+            if live is MISSING:
+                if key not in found.not_compared:
+                    found.not_compared.append(key)
+                continue
+            if _same(key, value, live):
+                continue
+            if _same(key, n["vars"].get(key, MISSING), live):  # written, theirs wins (a host file of theirs)
+                pins.append((name, key, live))
+            else:
+                n["vars"][key] = live
+                changed = True
+            if not any(y["node"] == name and y["key"] == key for y in yours):
+                yours.append({"node": name, "key": key, "value": live, "yours": value, "path": path})
+    return changed, pins
+
+
+def _theirs_win(nodes, layout, user, yours):
+    """A file of theirs that still wins (sorted after main.yml in a host's dir): said, not hidden -> [{node, key,
+    path}]."""
+    chains = group_chains(layout["hosts"])
+    theirs_win = []
     for y in yours:
         n = next((n for n in nodes if layout["names"].get(n.get("address"), n["name"]) == y["node"]), None)
         got = _effective(y["node"], chains.get(y["node"], []), layout, user).get(y["key"])
         if n is not None and got and not _same(y["key"], got[0], y["value"]):
             theirs_win.append({"node": y["node"], "key": y["key"], "path": got[1]})
+    return theirs_win
+
+
+def _layout_over(nodes, cluster_name, user_files, inventory_dir=""):
+    """cassandra_inventory_layout, with the user's own variables files of the inventory dir (user_files: [{path,
+    content}], group_vars/all and those of this cluster's groups and hosts) taken into account: a node whose value
+    one of them would change gets its value written (the node as it is wins), and is listed in 'yours': [{node,
+    key, value, yours, path}] (so is one the import writes anyway, a value that differs between nodes); a value
+    of theirs equal to the node's is not written again ('from_yours': {node: {key: {value, path}}}). 'not_compared': the keys
+    of theirs not compared (a template, a vaulted value, a default not known here); 'unread_files': theirs not read
+    (vaulted, no password); 'theirs_win': [{node, key, path}] a file of theirs still wins over the import's."""
+    user, unread = _user_data(user_files)
+    defaults = _roles_defaults()
+    nodes = [dict(n, vars=dict(n.get("vars") or {})) for n in nodes]
+    found = _Found(dict((n["name"], dict(n["vars"])) for n in nodes), defaults, [])  # (live_vars: as found)
+    yours = []
+    layout = cassandra_inventory_layout(nodes, cluster_name)
+    from_yours, differ = _left_to_theirs(nodes, layout, user, inventory_dir, found)
+    layout = cassandra_inventory_layout(nodes, cluster_name)
+    for dummy in range(3):  # each round writes the values theirs would change; the layout again
+        changed, pins = _write_over_theirs(nodes, layout, user, found, yours)
+        if not changed:
+            for name, key, live in pins:
+                layout["host_vars"].setdefault(name, {})[key] = live
+            break
+        layout = cassandra_inventory_layout(nodes, cluster_name)
+    theirs_win = _theirs_win(nodes, layout, user, yours)
     for d in differ:  # the ones the import writes anyway (a value that differs between nodes) too
         if not any(y["node"] == d["node"] and y["key"] == d["key"] for y in yours):
             yours.append(d)
     layout["yours"] = sorted(yours, key=lambda y: (y["key"], y["node"]))
     layout["from_yours"] = from_yours
-    layout["not_compared"] = sorted(not_compared)
+    layout["not_compared"] = sorted(found.not_compared)
     layout["unread_files"] = unread
     layout["theirs_win"] = theirs_win
     return layout
