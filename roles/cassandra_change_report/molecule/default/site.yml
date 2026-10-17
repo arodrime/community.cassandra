@@ -1,0 +1,6 @@
+---
+- name: The roles that report their changes, on a single node
+  hosts: all
+  roles:
+    - community.cassandra.cassandra_repository
+    - community.cassandra.cassandra_install

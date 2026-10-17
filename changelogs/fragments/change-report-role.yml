@@ -1,0 +1,2 @@
+minor_changes:
+  - "cassandra_change_report - new role used by the other roles to show what they change as ``item: before -> after`` lines, on a normal run and under ``--check``, and, with ``cassandra_change_report_dir``, to write the same list on the controller, one private YAML file per host and role."

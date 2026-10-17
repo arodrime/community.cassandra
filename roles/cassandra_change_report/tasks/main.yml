@@ -1,0 +1,72 @@
+---
+# Called by the other roles with:
+#   cassandra_change_report_role: role name
+#   cassandra_change_report_items: [{item, before, after}] for what changes
+#   _cassandra_change_report_quiet: true when the caller shows them its own way (written all the same)
+#   cassandra_change_report_state: optional, what the role found (e.g. the version installed)
+# Kept per role in _cassandra_change_report_seen (no diff): the step lines of a
+# prepare read it (cassandra_service prepare_lines.yml)
+- name: Keep what changed ({{ cassandra_change_report_role }})
+  ansible.builtin.set_fact:
+    _cassandra_change_report_seen: >-
+      {{ _cassandra_change_report_seen | default({}) | combine({cassandra_change_report_role: {
+           'items': cassandra_change_report_items | default([], true) | map('dict2items')
+                    | map('selectattr', 'key', 'in', ['item', 'before', 'after']) | map('items2dict') | list,
+           'state': cassandra_change_report_state | default({})}}) }}
+
+- name: Show changes ({{ cassandra_change_report_role }})
+  ansible.builtin.debug:
+    msg: "{{ [inventory_hostname ~ ' (' ~ cassandra_change_report_role ~ '):'] + lines.splitlines() }}"
+  vars:
+    cassandra_output: true  # (the ops callback names no host: the first line does)
+    lines: |-
+      {% for c in cassandra_change_report_items %}
+        {{ c.item }}: {{ c.before }} -> {{ c.after }}
+      {% endfor %}
+  when:
+    - cassandra_change_report_items | length > 0
+    - not _cassandra_change_report_quiet | default(false) | bool
+
+# Same timestamp for every host and role of the run. Not under the block's
+# conditions: run_once would skip it for every host when the first one has
+# no change.
+- name: Pick the report timestamp
+  ansible.builtin.set_fact:
+    cassandra_change_report_stamp: "{{ cassandra_change_report_stamp | default(now(utc=true).strftime('%Y%m%dT%H%M%SZ')) }}"
+  run_once: true
+  when: cassandra_change_report_dir != ""
+
+- name: Write the change report on the controller
+  when:
+    - cassandra_change_report_dir != ""
+    - cassandra_change_report_items | length > 0
+  block:
+    - name: Create the report directory
+      ansible.builtin.file:
+        path: "{{ cassandra_change_report_dir }}/{{ cassandra_change_report_stamp }}"
+        state: directory
+        mode: "0700"  # reports show config diffs
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+      check_mode: false
+      changed_when: false  # a report is not a change to the host
+
+    - name: Write {{ inventory_hostname }}-{{ cassandra_change_report_role }}.yml
+      ansible.builtin.copy:
+        dest: "{{ cassandra_change_report_dir }}/{{ cassandra_change_report_stamp }}/{{ inventory_hostname }}-{{ cassandra_change_report_role }}.yml"
+        content: "{{ report | to_nice_yaml(indent=2, width=200, sort_keys=false) }}"
+        mode: "0600"
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+        report:
+          host: "{{ inventory_hostname }}"
+          role: "{{ cassandra_change_report_role }}"
+          mode: "{{ 'check' if ansible_check_mode else 'applied' }}"
+          date: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          changes: "{{ cassandra_change_report_items }}"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false  # a report is not a change to the host
