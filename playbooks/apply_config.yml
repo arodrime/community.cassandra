@@ -720,16 +720,8 @@
         # these (or not to do: left down), those left stopped (for a restart under --check too: a real run refuses
         # it, as the recap says)
         _cassandra_apply_config_down_ok: >-
-          {%- set out = [] -%}
-          {%- for h in query('community.cassandra.cassandra_nodes') if h != inventory_hostname
-                                                                      and hostvars[h].cassandra_apply_config_then is defined -%}
-          {%-   set v = hostvars[h] -%}
-          {%-   if v.cassandra_apply_config_then == 'start'
-                   or (v.cassandra_apply_config_then == 'write' and (cassandra_apply_config_then != 'restart' or ansible_check_mode)) -%}
-          {%-     set _ = out.append(v._cassandra_preflight.ring_address) -%}
-          {%-   endif -%}
-          {%- endfor -%}
-          {{ out }}
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
+               hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode, batch=true) }}
 
     - name: Apply the config on these nodes
       ansible.builtin.include_role:
@@ -781,19 +773,8 @@
         # being taken down (none, start, write): those started later in the run (or not to do), those left
         # stopped; a restart waits for every other node up (under --check, the nodes before it were not started)
         _cassandra_apply_config_down_ok: >-
-          {%- set out = [] -%}
-          {%- set nodes = query('community.cassandra.cassandra_nodes') -%}
-          {%- for h in nodes if h != inventory_hostname and hostvars[h].cassandra_apply_config_then is defined -%}
-          {%-   set v = hostvars[h] -%}
-          {#-   a start node down until its turn (or not to do: left down); a write node down for good -#}
-          {%-   set later_start = v.cassandra_apply_config_then == 'start'
-                                  and (nodes.index(h) > nodes.index(inventory_hostname) or not v.cassandra_apply_config_todo | bool
-                                       or ansible_check_mode) -%}
-          {%-   if later_start or (v.cassandra_apply_config_then == 'write' and cassandra_apply_config_then != 'restart') -%}
-          {%-     set _ = out.append(v._cassandra_preflight.ring_address) -%}
-          {%-   endif -%}
-          {%- endfor -%}
-          {{ out if cassandra_apply_config_then != 'restart' or ansible_check_mode else [] }}
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
+               hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode) }}
 
     - name: Apply the config on this node
       ansible.builtin.include_role:
