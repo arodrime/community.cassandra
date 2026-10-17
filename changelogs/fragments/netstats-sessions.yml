@@ -1,0 +1,3 @@
+minor_changes:
+  - cassandra_netstats - returns the stream sessions with their progress in ``sessions`` (operation, peer, direction, files and bytes done and total, and the files started with their table).
+  - cassandra_netstats - ``stderr`` is returned on failure too, not only with ``debug``.

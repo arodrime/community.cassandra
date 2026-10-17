@@ -1,9 +1,12 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import os
+
 import pytest
 
 from ansible_collections.community.cassandra.plugins.modules import cassandra_netstats
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 
 try:
     from unittest.mock import patch
@@ -28,6 +31,13 @@ Read Repair Statistics:
 Attempted: 0
 Pool Name                    Active   Pending      Completed   Dropped
 """
+
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def load_fixture(name):
+    with open(os.path.join(FIXTURES_DIR, name)) as f:
+        return f.read()
 
 
 class ExitJson(Exception):
@@ -71,6 +81,21 @@ def run_main(out, rc=0, err='', debug=False):
     return exc.value
 
 
+def test_parse_normal_not_streaming():
+    assert parse_netstats(load_fixture("nodetool_netstats_normal.txt"))[:2] == ("NORMAL", [])
+
+
+def test_parse_joining_streaming():
+    mode, streams = parse_netstats(load_fixture("nodetool_netstats_joining.txt"))[:2]
+    assert mode == "JOINING"
+    assert streams[0].startswith("Bootstrap ")
+    assert len(streams) == 4
+
+
+def test_parse_node_down_output():
+    assert parse_netstats("")[:2] == ("", [])
+
+
 def test_normal():
     exc = run_main(NETSTATS_NORMAL)
     assert isinstance(exc, ExitJson)
@@ -79,6 +104,7 @@ def test_normal():
     assert result['streams'] == []
     assert result['streaming'] is False
     assert result['stdout'] == NETSTATS_NORMAL
+    assert result['sessions'] == []
     assert 'changed' not in result
     assert 'stderr' not in result
 
@@ -108,9 +134,12 @@ def test_nodetool_fails():
 
 
 def test_nodetool_fails_no_debug():
-    exc = run_main('', rc=1, err='nodetool: Failed to connect')
+    # stderr is returned on failure even without debug: it tells a stopped node
+    # (Connection refused) from other failures
+    err = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'."
+    exc = run_main('', rc=1, err=err)
     assert isinstance(exc, FailJson)
-    assert 'stderr' not in exc.args[0]
+    assert "Connection refused" in exc.args[0]['stderr']
 
 
 def test_stderr_with_debug():

@@ -1,0 +1,14 @@
+Mode: NORMAL
+Bootstrap 72d21960-bb9c-11f1-8e1f-b99d523076f8
+    /192.168.0.3
+        Sending 12 files, 95740912 bytes total. Already sent 1 files (8.33%), 42624463 bytes total (44.52%)
+            /var/lib/cassandra/data/ks/items-fb4082b0bb9b11f195143dd3805a0807/nb-6-big-Data.db 3618771/8848828 bytes (40%) sent to idx:0/192.168.0.3
+            /var/lib/cassandra/data/ks/items-fb4082b0bb9b11f195143dd3805a0807/nb-5-big-Data.db 39005692/39005692 bytes (100%) sent to idx:0/192.168.0.3
+Read Repair Statistics:
+Attempted: 0
+Mismatch (Blocking): 0
+Mismatch (Background): 0
+Pool Name                    Active   Pending      Completed   Dropped
+Large messages                  n/a         0              0         0
+Small messages                  n/a         0              1         0
+Gossip messages                 n/a         0            309         0

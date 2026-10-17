@@ -1,0 +1,13 @@
+Mode: JOINING
+Bootstrap 72d21960-bb9c-11f1-8e1f-b99d523076f8
+    /192.168.0.2
+        Receiving 12 files, 95740912 bytes total. Already received 0 files (0.00%), 25632576 bytes total (26.77%)
+            ks/items-0 25632576/39005692 bytes (65%) received from idx:0/192.168.0.2
+Read Repair Statistics:
+Attempted: 0
+Mismatch (Blocking): 0
+Mismatch (Background): 0
+Pool Name                    Active   Pending      Completed   Dropped
+Large messages                  n/a         0              0         0
+Small messages                  n/a         0              1         0
+Gossip messages                 n/a         0            258         0

@@ -1,9 +1,7 @@
 #!/usr/bin/python
+# Copyright: Contributors to the community.cassandra collection
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# 2026 Alain Rodriguez <alain@casterix.fr>
-# https://github.com/arodrime
-# GNU General Public License v3.0+
-# (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import absolute_import, division, print_function
 
 
@@ -12,7 +10,7 @@ DOCUMENTATION = '''
 module: cassandra_netstats
 author: Alain Rodriguez (@arodrime)
 short_description: Returns the mode of the node and whether it is streaming.
-version_added: 2.1.0
+version_added: 3.0.0
 requirements:
   - nodetool
 description:
@@ -56,13 +54,35 @@ streams:
   returned: success
   type: list
   elements: str
+sessions:
+  description:
+    - The stream sessions, one per session and direction, with their progress.
+    - C(files) lists the files nodetool shows for the session (those started), with the
+      C(keyspace.table) they belong to when their path shows it.
+  returned: success
+  type: list
+  elements: dict
+  sample:
+    - operation: Bootstrap
+      plan_id: 9a3f2c10-6b1e-11ef-8b1a-3d7c1c0a1b2c
+      peer: 10.0.0.1
+      direction: receiving
+      files_total: 12
+      files_done: 3
+      bytes_total: 104857600
+      bytes_done: 26214400
+      files:
+        - path: /var/lib/cassandra/data/ks/t-5a1c3b2e8d9f4a6b7c8d9e0f1a2b3c4d/nb-1-big-Data.db
+          table: ks.t
+          done: 8738133
+          total: 8738133
 stdout:
   description: Raw output of the nodetool netstats command.
   returned: success
   type: str
 stderr:
   description: Error output of the nodetool command.
-  returned: when debug is true
+  returned: when debug is true, or on failure
   type: str
 '''
 
@@ -93,13 +113,15 @@ def main():
         result['stderr'] = err
 
     if rc != 0:
-        module.fail_json(name=cmd, msg="netstats command failed", **result)
+        # stderr tells a stopped node (Connection refused) from others
+        module.fail_json(name=cmd, msg="netstats command failed", **dict(result, stderr=err))
 
-    mode, streams = parse_netstats(out)
+    mode, streams, sessions = parse_netstats(out)
     result['stdout'] = out
     result['mode'] = mode
     result['streams'] = streams
     result['streaming'] = len(streams) > 0
+    result['sessions'] = sessions
 
     module.exit_json(**result)
 

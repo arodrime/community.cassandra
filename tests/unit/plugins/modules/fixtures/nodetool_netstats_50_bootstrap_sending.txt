@@ -1,0 +1,14 @@
+Mode: NORMAL
+Bootstrap 950b5840-bb81-11f1-a97b-371e6e35e306
+    /172.29.0.5 (using /172.29.0.5)
+        Sending 2 files, 137813054 bytes total. Already sent 1 files (50.00%), 8789056 bytes total (6.38%)
+            /data/dirty/cassandra/data/e2e/t-33a30b40bb7f11f1842b81dfa099fc79/nb-1-big-Data.db 7232/7232 bytes (100%) sent to idx:0/172.29.0.5
+            /data/dirty/cassandra/data/keyspace1/standard1-9c8e05b0bb7f11f1823f2bd40658ad70/nb-26-big-Data.db 8781824/137805822 bytes (6%) sent to idx:0/172.29.0.5
+Read Repair Statistics:
+Attempted: 0
+Mismatch (Blocking): 0
+Mismatch (Background): 0
+Pool Name                    Active   Pending      Completed   Dropped
+Large messages                  n/a         0              2         0
+Small messages                  n/a         0         650032         0
+Gossip messages                 n/a         0           2643         0

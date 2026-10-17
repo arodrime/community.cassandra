@@ -1,0 +1,20 @@
+Mode: JOINING
+Bootstrap 72d21960-bb9c-11f1-8e1f-b99d523076f8
+    /192.168.0.2
+        Receiving 12 files, 95740912 bytes total. Already received 8 files (66.67%), 47859601 bytes total (49.99%)
+            /var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090/nb-1-big-Statistics.db 4832/4832 bytes (100%) received from idx:0/192.168.0.2
+            /var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090/nb-1-big-Index.db 13/13 bytes (100%) received from idx:0/192.168.0.2
+            /var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090/nb-1-big-Summary.db 71/71 bytes (100%) received from idx:0/192.168.0.2
+            ks/items-0 39005692/39005692 bytes (100%) received from idx:0/192.168.0.2
+            /var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090/nb-1-big-Filter.db 16/16 bytes (100%) received from idx:0/192.168.0.2
+            ks/items-1 8848828/8848828 bytes (100%) received from idx:0/192.168.0.2
+            /var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090/nb-1-big-CompressionInfo.db 47/47 bytes (100%) received from idx:0/192.168.0.2
+            /var/lib/cassandra/data/system_auth/roles-5bc52802de2535edaeab188eecebb090/nb-1-big-Data.db 102/102 bytes (100%) received from idx:0/192.168.0.2
+Read Repair Statistics:
+Attempted: 0
+Mismatch (Blocking): 0
+Mismatch (Background): 0
+Pool Name                    Active   Pending      Completed   Dropped
+Large messages                  n/a         0              0         0
+Small messages                  n/a         0              1         0
+Gossip messages                 n/a         0            327         0
