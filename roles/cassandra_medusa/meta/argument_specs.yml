@@ -86,10 +86,6 @@ argument_specs:
         description:
           - Owner of medusa.ini (and by default of the S3 credentials file). Defaults to the account Cassandra runs as
             (O(cassandra_user), or C(cassandra_service_user) when set), else C(cassandra).
-      cassandra_medusa_config_owner:
-        type: str
-        description:
-          - Former name of O(cassandra_medusa_config_user), deprecated. Wins when set; the role warns to rename it.
       cassandra_medusa_config_group:
         type: str
         description:
@@ -104,10 +100,6 @@ argument_specs:
         type: str
         description:
           - Owner of the S3 credentials file. Defaults to O(cassandra_medusa_config_user).
-      cassandra_medusa_key_file_owner:
-        type: str
-        description:
-          - Former name of O(cassandra_medusa_key_file_user), deprecated. Wins when set; the role warns to rename it.
       cassandra_medusa_key_file_group:
         type: str
         description:

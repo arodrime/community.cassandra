@@ -84,7 +84,7 @@ def test_known_extra_vars_pass():
         "import_cluster_set_ansible_host", "import_cluster_vault_password_file", "import_cluster_medusa_path",
         "help_topic", "help_write", "help_runbook_dir", "help_inventory",
         "cassandra_version", "cassandra_jmx_username", "cassandra_operation_confirm", "cassandra_cleanup_jobs",
-        "cassandra_rack_force", "cassandra_token_auto", "cassandra_medusa_config_owner"]
+        "cassandra_rack_force", "cassandra_token_auto", "cassandra_medusa_config_user"]
     assert cassandra_unknown_extra_vars(names, PLAYBOOK_VARIABLES) == {}
 
 
