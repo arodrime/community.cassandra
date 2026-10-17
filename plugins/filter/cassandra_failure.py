@@ -3,7 +3,8 @@
 """cassandra_failure_cause: a failed task's cause in one short line (a
 repository that can't be reached named as such); cassandra_failure_report:
 the failures of several nodes at the same step, identical causes grouped,
-then what to check (add_node's prepare step)."""
+then what to check (add_node's prepare step). cassandra_failure_repos (a
+function) names the repositories an error could not read."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -120,5 +121,4 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
 class FilterModule(object):
     def filters(self):
         return {"cassandra_failure_cause": cassandra_failure_cause,
-                "cassandra_failure_repos": cassandra_failure_repos,
                 "cassandra_failure_report": cassandra_failure_report}
