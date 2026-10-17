@@ -364,6 +364,58 @@ def cassandra_disk_tuned_conflict(lines, kb, devices=None, state=None, udev_info
             % (" ".join(t["active"]), section, value, device, section, what, instead, hint))
 
 
+def _summary_head(nodes, kbs, check):
+    """The nodes, their read-aheads (each once), --check -> the summary's first line: "Data disks: read-ahead 8 KB,
+    set now on 2 nodes (already set on 1)"."""
+    changed = [n["name"] for n in nodes if boolean(n.get("changed", False), strict=False)]
+    # a node with nothing to tune (NFS, not created yet...) is not one already set
+    tuned = [n["name"] for n in nodes if n.get("brief") and n["name"] not in changed]
+    if changed:
+        head = "%s on %s" % ("would be set" if boolean(check, strict=False) else "set now", out.plural(len(changed), "node"))
+        if tuned:
+            head += " (already set on %d)" % len(tuned)
+    elif tuned:
+        head = "already set (nothing changed)"
+    else:
+        head = "nothing to tune"
+    return "Data disks: %s%s" % ("read-ahead %s KB, " % kbs[0] if len(kbs) == 1 and (changed or tuned) else "", head)
+
+
+def _disk_groups(nodes, kbs, verbose):
+    """The nodes, their read-aheads (each once), -v -> the lines of each group of nodes with the same lines (and
+    read-ahead, when they differ), in the order of the nodes."""
+    groups = []   # [(key, [names])], in the order of the nodes
+    for n in nodes:
+        shown = list(n.get("stacks") or []) + ["note: " + x for x in n.get("notes") or []] if verbose \
+            else list(n.get("brief") or [])
+        key = (str(n.get("kb", "")) if len(kbs) > 1 else "", tuple(shown))
+        group = next((g for g in groups if g[0] == key), None)
+        if group is None:
+            groups.append((key, [n["name"]]))
+        else:
+            group[1].append(n["name"])
+    lines = []
+    for (kb, shown), names in groups:
+        who = out.nodes(names) + (" (read-ahead %s KB)" % kb if kb else "")
+        if shown:
+            lines.append("  %s:" % who)
+            lines += ["    " + x for x in shown]
+        else:
+            lines.append("  %s: nothing to tune" % who)
+    return lines
+
+
+def _once_with_nodes(nodes, key, said):
+    """The nodes, a key of theirs (info, warnings), {node: [said already]} -> each text once, with its nodes:
+    "text (node1, node2)"; the ones said already (apply_config: in its plan) left out."""
+    grouped = OrderedDict()
+    for n in nodes:
+        for text in n.get(key) or []:
+            if text not in (said or {}).get(n["name"], []):
+                grouped.setdefault(text, []).append(n["name"])
+    return ["%s (%s)" % (text, out.nodes(names)) for text, names in grouped.items()]
+
+
 def cassandra_disk_summary(nodes, check=False, verbose=False, said=None):
     """How the data disks are tuned, one summary for the run (a run_once
     task, from what each node kept: _cassandra_disk_summary). nodes: [{name,
@@ -379,42 +431,9 @@ def cassandra_disk_summary(nodes, check=False, verbose=False, said=None):
         return []
     verbose = boolean(verbose, strict=False)
     kbs = list(OrderedDict.fromkeys(str(n.get("kb", "")) for n in nodes))
-    changed = [n["name"] for n in nodes if boolean(n.get("changed", False), strict=False)]
-    # a node with nothing to tune (NFS, not created yet...) is not one already set
-    tuned = [n["name"] for n in nodes if n.get("brief") and n["name"] not in changed]
-    if changed:
-        head = "%s on %s" % ("would be set" if boolean(check, strict=False) else "set now", out.plural(len(changed), "node"))
-        if tuned:
-            head += " (already set on %d)" % len(tuned)
-    elif tuned:
-        head = "already set (nothing changed)"
-    else:
-        head = "nothing to tune"
-    lines = ["Data disks: %s%s" % ("read-ahead %s KB, " % kbs[0] if len(kbs) == 1 and (changed or tuned) else "", head)]
-    groups = []   # [(key, [names])], in the order of the nodes
-    for n in nodes:
-        shown = list(n.get("stacks") or []) + ["note: " + x for x in n.get("notes") or []] if verbose \
-            else list(n.get("brief") or [])
-        key = (str(n.get("kb", "")) if len(kbs) > 1 else "", tuple(shown))
-        group = next((g for g in groups if g[0] == key), None)
-        if group is None:
-            groups.append((key, [n["name"]]))
-        else:
-            group[1].append(n["name"])
-    for (kb, shown), names in groups:
-        who = out.nodes(names) + (" (read-ahead %s KB)" % kb if kb else "")
-        if shown:
-            lines.append("  %s:" % who)
-            lines += ["    " + x for x in shown]
-        else:
-            lines.append("  %s: nothing to tune" % who)
+    lines = [_summary_head(nodes, kbs, check)] + _disk_groups(nodes, kbs, verbose)
     for key in ("info", "warnings"):
-        grouped = OrderedDict()
-        for n in nodes:
-            for text in n.get(key) or []:
-                if text not in (said or {}).get(n["name"], []):  # said already (apply_config: in its plan)
-                    grouped.setdefault(text, []).append(n["name"])
-        texts = ["%s (%s)" % (text, out.nodes(names)) for text, names in grouped.items()]
+        texts = _once_with_nodes(nodes, key, said)
         lines += ["  " + t for t in texts] if key == "info" else out.warning_lines(texts)
     return lines
 
