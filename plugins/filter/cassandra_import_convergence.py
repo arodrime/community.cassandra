@@ -59,6 +59,10 @@ _KINDS = {"none": (0, _THEN["none"][0], _THEN["none"][0], True),
           "os": (0, "%s (cassandra_linux, applied live)" % _THEN["os"][0], _THEN["os"][0], True),
           "restart": (1, _THEN["restart"][0], _THEN["restart"][0], True),
           "seeds": (1, "no restart (change_seeds applies it live)", "no restart (change_seeds)", True),
+          # apply_config's rule: jmxremote.password is read at each JMX login, jmxremote.access at start
+          "jmx": (1, "then restart for a user or a right (jmxremote.access, read at start); passwords only: no restart"
+                     " (jmxremote.password, read at each JMX login)", "then restart (users, rights; not passwords alone)",
+                  True),
           "switch": (2, "then restart, node by node: a cluster-wide switch, its procedure first (its *_optional"
                         " step, then the switch)", "then restart (a cluster-wide switch)", True),
           "keystore": (2, "then restart, which fails unless the file on the node matches it: check it there first",
@@ -73,7 +77,7 @@ _KINDS = {"none": (0, _THEN["none"][0], _THEN["none"][0], True),
 
 def _kind(key):
     """What apply_config does after writing key on a running node: none (an owner or mode), os (cassandra_linux's,
-    live), restart (a config file), keystore (a config file naming a keystore), seeds (change_seeds' live reload),
+    live), restart (a config file), jmx (the JMX users: a restart unless only passwords change), keystore (a config file naming a keystore), seeds (change_seeds' live reload),
     login (the playbooks' own), move (where its data is), unknown (not its own)."""
     if key in PERMS:
         return "none"
@@ -93,8 +97,9 @@ def _kind(key):
         return "restart"
     if key.startswith("cassandra_linux_") or key in ("cassandra_data_readahead_kb", "cassandra_data_disk_tuning"):
         return "os"
-    # (the users go to jmxremote.password and .access, whose templates are not a series')
-    if key == "cassandra_jmx_users" or any(key in _template_vars(name) for name in TEMPLATES):
+    if key == "cassandra_jmx_users":  # (jmxremote.password and .access, whose templates are not a series')
+        return "jmx"
+    if any(key in _template_vars(name) for name in TEMPLATES):
         return "keystore" if re.search(r"keystore|truststore", key) else "restart"
     return "unknown"
 
