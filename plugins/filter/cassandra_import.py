@@ -5,18 +5,36 @@
 cassandra_ring_nodes: cassandra_status module's cluster_status -> list of nodes.
 cassandra_config_import: a node's config files -> cassandra_config variables,
     plus what the role would still change (hand edits / normalized lines).
+cassandra_jmx_files: cassandra-env.sh, the JVM options files, the JVM's
+    arguments -> the remote JMX password and access files the JVM reads.
 cassandra_inventory_layout: every node's variables -> inventory groups,
     group_vars, host_vars, drift between nodes and the report.
+cassandra_inventory_layout_over: the same, over the user's own variables
+    files of the inventory dir (a value of theirs kept or written over).
+cassandra_inventory_user_files: the inventory dir's vars files -> the user's
+    own that apply to this cluster's hosts.
 cassandra_inventory_files: that layout -> the files to write, passwords apart,
     variables grouped by subject.
-cassandra_unit_environment: systemctl's Environment of a unit -> dict.
+cassandra_inventory_generated: a file's content -> the same with the import's
+    first line (naming the cluster).
+cassandra_inventory_leftovers: the inventory dir's files -> the ones of an
+    earlier import to remove, keep or replace, and the conflicts with others.
+cassandra_inventory_same_secret: a vaulted file, a content -> whether writing
+    it again would only change its encryption.
+cassandra_inventory_own_values: the inventory dir's vars files -> values an
+    earlier import of this cluster wrote (the CQL login).
+cassandra_import_kept_ansible_host: the import's nodes -> the same, without the
+    ansible_host the inventory already there does without.
 cassandra_config_ignored_vars: variable names, series -> the cassandra_config
     variables among them that series' templates don't use (e.g. 4.0 names after
     an upgrade to 4.1).
+cassandra_unit_environment: systemctl's Environment of a unit -> dict.
 cassandra_import_error: a failed task's result -> why it failed, without the
     values (the import's no_log tasks hold passwords).
 cassandra_ring_names: getent hosts on a given node -> the name to reach each
     node found in the ring by.
+cassandra_leading_comments: a file's text -> its lines before the first line
+    of data (what tells an earlier import's file).
 
 Their unexpected errors do not quote the error message, which may show a value
 read from the config (a password): its type and where it happened only.
@@ -137,7 +155,9 @@ MISSING_NAME = re.compile(r"(?:object'?|object of type '\w+') has no attribute '
 
 
 def cassandra_ring_nodes(cluster_status):
-    """[{address, state, dc, rack, host_id}] from cassandra_status' cluster_status."""
+    """cluster_status: cassandra_status' -> [{address, state, dc, rack, host_id}], by DC.
+    e.g. {"dc1": {"nodes": [{"address": "10.0.0.1", "status": "U", "state": "N", "rack": "r1", "host_id": "h1"}]}}
+    -> [{"state": "UN", "address": "10.0.0.1", "dc": "dc1", "host_id": "h1", "rack": "r1"}]."""
     return [{"state": n["status"] + n["state"], "address": n["address"], "dc": dc,
              "host_id": n["host_id"], "rack": n["rack"]}
             for dc, info in sorted((cluster_status or {}).items()) for n in info["nodes"]]
@@ -1352,7 +1372,10 @@ def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", cassandra
     cassandra-env.sh gives through what only the shell knows (a variable it does not set, ${X:-d}, $(..)) is
     looked for in the next ones.
     -> {password, access: the paths ('' when not found), from: where, unknown: what cassandra-env.sh gives that
-    no source resolves ('' when nothing), jaas: what says JMX authenticates by JAAS ('' when nothing does)}."""
+    no source resolves ('' when nothing), jaas: what says JMX authenticates by JAAS ('' when nothing does)}.
+    e.g. a cassandra-env.sh with -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password
+    -> {"password": "/etc/cassandra/jmxremote.password", "access": "", "from": "cassandra-env.sh", "unknown": "",
+    "jaas": ""}."""
     names = {"CASSANDRA_CONF": conf_dir} if conf_dir else {}
     lines = [_shell_code(line) for line in str(env_sh or "").split("\n")]
     seen = {}
@@ -1402,7 +1425,8 @@ def cassandra_jmx_files(env_sh, options=None, cmdline="", conf_dir="", cassandra
 
 
 def cassandra_unit_environment(text):
-    """systemctl show -p Environment --value -> {name: value} (quoted entries kept whole)."""
+    """systemctl show -p Environment --value -> {name: value} (quoted entries kept whole).
+    e.g. 'A=1 "B=x y"' -> {"A": "1", "B": "x y"}."""
     try:
         words = shlex.split(text or "")
     except ValueError:
@@ -1452,7 +1476,9 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     {cmdline: its /proc/<pid>/cmdline, java: its major version, environment:
     what the unit gives it, newer: the config files written since it started,
     keep: import_cluster_keep_hand_edits, the JVM's files it keeps not moved}
-    (java and cmdline from it when not given)."""
+    (java and cmdline from it when not given).
+    e.g. cassandra_config_import({"cassandra.yaml": text, ...}, "41x", ansible_facts)
+    -> {"vars": {"cassandra_cluster_name": "Prod", ...}, "hand_edits": [], "normalized": [], ...}."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_import: unsupported series %s" % cassandra_version)
     where = ["the role defaults"]
@@ -2292,7 +2318,9 @@ def _node_report(n):
 def cassandra_inventory_layout(nodes, cluster_name):
     """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
     vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
-    'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead."""
+    'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead.
+    e.g. cassandra_inventory_layout(cassandra_import_nodes, "Prod Cluster") -> {"cluster_group": "prod_cluster",
+    "hosts": {"all": {"children": {"prod_cluster": {"children": {"prod_cluster_dc1": ...}}}}}, ...}."""
     cluster = _slug(cluster_name)
     names = [n["name"] for n in nodes]
     shared = sorted({name for name in names if names.count(name) > 1})
@@ -2477,7 +2505,9 @@ def cassandra_inventory_user_files(read, layout, password=""):
     its groups', its hosts'; a vaulted one decrypted with password (else its content None). Not the user's: a
     file with the import's first line, a main.yml or secrets.yml laid out as an import writes it (an earlier
     release's, without that line: old_import). (The ones at the paths it writes: left out by the playbook, which
-    lays out again without them.)"""
+    lays out again without them.)
+    e.g. {"group_vars/all.yml": "cassandra_heap_size: 8G"} -> [{"path": "group_vars/all.yml", "content":
+    "cassandra_heap_size: 8G"}]."""
     groups = ["all"] + sorted(layout.get("group_vars") or {})
     hosts = [n["name"] for n in layout.get("nodes") or []]
     out = []
@@ -2501,9 +2531,12 @@ def cassandra_inventory_user_files(read, layout, password=""):
 
 @values_hidden
 def cassandra_inventory_layout_over(nodes, cluster_name, user_files, inventory_dir=""):
-    """_layout_over (inventory_dir: where the inventory is, for a {{ inventory_dir }} in the path of your own
+    """nodes, cluster_name: cassandra_inventory_layout's; user_files: cassandra_inventory_user_files' -> the layout
+    of _layout_over (inventory_dir: where the inventory is, for a {{ inventory_dir }} in the path of your own
     template), without the user's files at the paths it writes (replaced, kept as <file>.<date>~: their
-    values are not the user's any more), until they no longer meet; 'user_paths': the user's files counted."""
+    values are not the user's any more), until they no longer meet; 'user_paths': the user's files counted.
+    e.g. -> {"cluster_group": "prod", ..., "yours": [{"node": "db1", "key": "cassandra_heap_size", "value": "8G",
+    "yours": "4G", "path": "group_vars/all.yml"}], "user_paths": ["group_vars/all.yml"]}."""
     files = list(user_files or [])
     for dummy in range(len(files) + 2):  # one file less each round
         layout = _layout_over(nodes, cluster_name, files, inventory_dir)
@@ -2966,9 +2999,11 @@ def _split_secrets(variables, trusted=()):
 
 @values_hidden
 def cassandra_inventory_files(layout):
-    """[{path, content, secret}] for group_vars/<group>/ and
+    """layout: cassandra_inventory_layout's -> [{path, content, secret}] for group_vars/<group>/ and
     host_vars/<host>/: main.yml, and secrets.yml for variables named like
-    passwords (and extra settings holding one)."""
+    passwords (and extra settings holding one).
+    e.g. -> [{"path": "group_vars/prod/main.yml", "content": "<its YAML>", "secret": False},
+    {"path": "group_vars/prod/secrets.yml", "content": "<its YAML>", "secret": True}, ...]."""
     layout = _plain(layout)
     files = []
     for kind in ("group_vars", "host_vars"):
@@ -2992,7 +3027,8 @@ _OWNABLE = re.compile(r"^(?:group_vars|host_vars)/[^/]+/(?:main|secrets)\.yml$")
 
 
 def cassandra_inventory_generated(content, cluster):
-    """content, marked as written by the import of the cluster (its group)."""
+    """content, cluster (its group) -> content, marked as written by the import of the cluster (GENERATED first).
+    e.g. ("x: 1\n", "prod") -> "# Written by community.cassandra.import_cluster for prod: ...\nx: 1\n"."""
     return GENERATED % cluster + "\n" + content
 
 
@@ -3004,8 +3040,8 @@ def written_for(text):
 
 
 def leading_comments(text):
-    """The lines of text before its first line of data (comments, blank lines, ---): what tells an earlier
-    import's file without its first line, and shows no value."""
+    """text -> the lines of text before its first line of data (comments, blank lines, ---): what tells an earlier
+    import's file without its first line, and shows no value. e.g. "# a\n\nx: 1" -> "# a\n"."""
     out = []
     for line in str(text or "").split("\n"):
         if line.strip() and line.strip() != "---" and not line.lstrip().startswith("#"):
@@ -3312,7 +3348,9 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
     the paths it writes or in its groups' and hosts' dirs, are this
     cluster's (the replaced ones kept as <file>.<date>~); 'adoptable': the
     conflicts it would solve; 'backup': the stale files to keep as
-    <file>.<date>~ when removed (known by their layout only, or adopted)."""
+    <file>.<date>~ when removed (known by their layout only, or adopted).
+    e.g. -> {"stale": ["host_vars/db9/main.yml"], "kept": ["group_vars/all.yml"], "replaced": [], "unsure": [],
+    "conflicts": [], "adoptable": [], "backup": []}."""
     found = dict((p, read.get(p)) for p in paths)
     old_layout = set()
     headers = dict((p, _file_header(p, found.get(p), password, old_layout)) for p in found)
@@ -3333,8 +3371,9 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
 
 
 def cassandra_inventory_same_secret(existing, content, password):
-    """True when existing, a vaulted file, decrypts with password to content:
-    written again, it would only change its encryption."""
+    """existing (a file's text), content, password -> True when existing, a vaulted file, decrypts with password to
+    content: written again, it would only change its encryption. e.g. ("$ANSIBLE_VAULT;1.1;AES256...", "x: 1\n",
+    "secret") -> True."""
     if not existing or not str(existing).startswith("$ANSIBLE_VAULT"):
         return False
     return _decrypt(existing, password) == content
@@ -3345,7 +3384,9 @@ def cassandra_inventory_own_values(read, cluster_group, keys, password=""):
     """read: {path: text} of the vars files of the inventory dir -> {key: value} of keys as an earlier import of
     this cluster wrote them in its own files of the cluster group (group_vars/<cluster group>/main.yml and
     secrets.yml, with the import's first line naming the group; a vaulted one decrypted with password). What a
-    re-import keeps when nothing else gives it (the CQL login: no node gives it)."""
+    re-import keeps when nothing else gives it (the CQL login: no node gives it).
+    e.g. (read, "prod", ["cassandra_cql_username", "cassandra_cql_password"]) -> {"cassandra_cql_username": "admin",
+    "cassandra_cql_password": "..."}."""
     out = {}
     for name in ("main.yml", "secrets.yml"):
         text = (read or {}).get("group_vars/%s/%s" % (cluster_group, name))
@@ -3393,7 +3434,9 @@ def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, n
     may not be known to the controller).
     read: {path: text} of the inventory dir; hosts_file: the cluster's hosts file there (<cluster group>.yml);
     names: {address: the node's name there} (the layout's). For a
-    re-import that is not given import_cluster_set_ansible_host."""
+    re-import that is not given import_cluster_set_ansible_host.
+    e.g. [{"name": "db1", "ansible_host": "10.0.0.1", ...}] -> [{"name": "db1", "ansible_host": "", ...}] when the
+    hosts file there gives db1 no ansible_host."""
     text = (read or {}).get(hosts_file)
     if not text or (written_for(text) != cluster_group and not _cluster_tree(text, cluster_group)):
         return nodes
@@ -3430,6 +3473,10 @@ def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, n
 
 
 def cassandra_config_ignored_vars(names, cassandra_version):
+    """names: variable names; cassandra_version: a series (40x, 41x, 50x) -> the cassandra_config variables among
+    them that series' templates, tasks and defaults do not use, sorted (e.g. 4.0 names after an upgrade to 4.1).
+    e.g. (["cassandra_column_index_size_in_kb", "cassandra_cluster_name"], "41x")
+    -> ["cassandra_column_index_size_in_kb"]."""
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
     role_vars = set(role_file("cassandra_config"))
@@ -3476,7 +3523,9 @@ def _safe_reason(msg):
 def cassandra_import_error(result, label="address"):
     """A failed task's result (ansible_failed_result) -> why it failed, for the
     import's no_log tasks: the failed loop items (their `label` key) and what
-    of the error shows no value, else ''."""
+    of the error shows no value, else ''.
+    e.g. {"failed": True, "results": [{"failed": True, "item": {"address": "10.0.0.1"}, "msg": "..."}]}
+    -> "10.0.0.1: failed" (its message shows a value: left out)."""
     out = []
     for res in (result or {}).get("results") or [result or {}]:
         if not isinstance(res, dict) or not boolean(res.get("failed", False), strict=False):
@@ -3511,7 +3560,9 @@ def cassandra_ring_names(on_node, addresses, given):
     inventory name. Returns {address: the name to reach it by}: the name the
     given node knows it by, in the form the given name has (its short name,
     or the fqdn when the given name has a domain); else the address (a given
-    node named by its address: the others too)."""
+    node named by its address: the others too).
+    e.g. ("10.0.0.2  db2.example.com db2", ["10.0.0.2"], "db1") -> {"10.0.0.2": "db2"}; given "db1.example.com":
+    {"10.0.0.2": "db2.example.com"}."""
     if _IPV4.match(str(given)) or ":" in str(given):
         return dict((a, a) for a in addresses)
     names, dummy = _getent(on_node)
