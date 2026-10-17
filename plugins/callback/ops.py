@@ -561,6 +561,9 @@ class CallbackModule(DefaultCallback):
         when one is printed already."""
         if self._verbose() or not self._blank:
             return super(CallbackModule, self)._print_task_banner(task)
+        # The default callback's banner is private, and prints its blank line itself (Display.banner): no public
+        # API leaves that line out. Its own behaviour kept (its _last_task_banner, which the results use), only
+        # this display call is wrapped, on this instance, for this call
         display = self._display
 
         def shown(msg, *args, **kwargs):
@@ -717,7 +720,7 @@ class CallbackModule(DefaultCallback):
 
     # --- what is quiet without -v ---
 
-    def _quiet(name):  # pylint: disable=no-self-argument
+    def _quiet(name):  # pylint: disable=no-self-argument  # a factory run in the class body, not a method
         def method(self, *args, **kwargs):
             if self._verbose():
                 return getattr(super(CallbackModule, self), name)(*args, **kwargs)

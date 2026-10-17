@@ -32,7 +32,7 @@ def terminal_width():
     SCREEN_WIDTH."""
     try:
         columns = int(getattr(Display(), "columns", 0) or 0)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # no display to ask (outside a run): the other sources
         columns = 0
     if columns:
         return max(60, columns)
