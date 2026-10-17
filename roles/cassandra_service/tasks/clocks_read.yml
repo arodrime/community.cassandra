@@ -14,17 +14,4 @@
       {{ _nodes | community.cassandra.cassandra_clock_verdicts(cassandra_clock_max_offset_ms, cassandra_clock_step_ms) }}
   run_once: true
   vars:
-    _nodes: >-
-      {%- set l = [] -%}
-      {%- for h in ansible_play_hosts if hostvars[h]._cassandra_clock_read_ok | default(false) | bool -%}
-      {%-   set v = hostvars[h] -%}
-      {%-   set _ = l.append({'node': h, 'probe': v._cassandra_clock, 'samples': v._cassandra_clock_samples,
-                              'running': v._cassandra_clock_running | default(false) | bool,
-                              'manage': v.cassandra_linux_manage | default(true) | bool and v.cassandra_linux_timesync | default(true) | bool,
-                              'unmanaged_by': 'cassandra_linux_manage' if not v.cassandra_linux_manage | default(true) | bool
-                                              else 'cassandra_linux_timesync',
-                              'offline': v.cassandra_offline | default(false) | bool,
-                              'addresses': [h, v.ansible_host | default(h), (v._cassandra_preflight | default({})).ring_address | default('')]
-                                           + v.ansible_facts.all_ipv4_addresses | default([])}) -%}
-      {%- endfor -%}
-      {{ l }}
+    _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_clock_nodes(hostvars) }}"
