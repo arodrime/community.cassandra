@@ -16,6 +16,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -69,7 +70,7 @@ def test_the_root_check_comes_before_any_node_action():
 
 
 def test_a_restart_writes_the_unit_before_draining():
-    tasks = load("roles", "cassandra_service", "tasks", "action_restart.yml")
+    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "action_restart.yml"))
     assert [t["name"] for t in tasks] == ["Install the cassandra systemd unit", "Drain the node",
                                           "Stop when the node did not answer", "Say the drain did not work",
                                           "Apply the OS settings with Cassandra stopped",  # (apply_config's only)

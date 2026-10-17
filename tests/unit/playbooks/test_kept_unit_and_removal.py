@@ -13,6 +13,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -115,7 +116,8 @@ def test_stop_rack_drain_never_stops_the_stop():
 @pytest.mark.parametrize("operation_drain, unit_manage, drained", [
     (True, True, True), (False, False, True), (False, True, False)])
 def test_restart_drain(file, operation_drain, unit_manage, drained):
-    task = next(t for t in load("roles", "cassandra_service", "tasks", file) if t["name"] == "Drain the node")
+    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", file))
+    task = next(t for t in tasks if t["name"] == "Drain the node")
     assert true(task["when"], cassandra_operation_drain=operation_drain, cassandra_service_unit_manage=unit_manage) is drained
 
 
@@ -205,12 +207,20 @@ def test_rack_failure_names_the_node_that_failed(node, failure, said):
     assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure) == said
 
 
-@pytest.mark.parametrize("file", ["action_restart.yml", "action_reboot.yml", "action_upgrade.yml"])
+@pytest.mark.parametrize("file, then", [("action_restart.yml", "restarted"), ("action_reboot.yml", "rebooted"),
+                                        ("action_upgrade.yml", "flushed, then stopped")])
+def test_the_actions_drain_the_same_way(file, then):
+    imports = [t for t in load("roles", "cassandra_service", "tasks", file) if t.get("name") == "Drain the node"]
+    assert imports[0]["ansible.builtin.import_tasks"] == "drain.yml"
+    assert imports[0]["vars"]["_cassandra_service_drain_then"] == then
+    assert ("when" in imports[0]) is (file != "action_upgrade.yml")  # an upgrade always drains
+
+
 @pytest.mark.parametrize("result, resumed, stops, warns", [
     ({"failed": False, "rc": 2, "error": "error: x", "msg": "nodetool drain did not execute successfully (rc 2)"}, False,
      False, "error: x"),  # nodetool answered with an error: warned, the node goes on
     ({"failed": False, "msg": "Unable to reach JMX at 127.0.0.1:7199"}, False, True, None),  # no answer: stops
-    ({"failed": False, "msg": "Connection refused", "stderr": ""}, True, None, None),  # a resumed node, stopped already
+    ({"failed": False, "msg": "Connection refused", "stderr": ""}, True, False, None),  # a resumed node, stopped already
     ({"failed": True, "msg": "The cassandra_drain action failed to execute in the expected time frame (120) and was"
                              " terminated"}, False, False, "The cassandra_drain action"),  # the timeout (2.16, 2.17)
     ({"failed": True, "changed": False, "msg": "Task failed: Timed out after 120 second(s).",
@@ -218,17 +228,16 @@ def test_rack_failure_names_the_node_that_failed(node, failure, said):
     ({"failed": False, "changed": True, "msg": "ok"}, False, False, None),
     ({"skipped": True, "changed": False}, False, False, None),  # --check, or left to the unit
 ])
-def test_node_drain_failure(file, result, resumed, stops, warns):
-    tasks = load("roles", "cassandra_service", "tasks", file)
+def test_node_drain_failure(result, resumed, stops, warns):
+    tasks = load("roles", "cassandra_service", "tasks", "drain.yml")
     drain = next(t for t in tasks if t["name"] == "Drain the node")
     stop = next(t for t in tasks if t["name"] == "Stop when the node did not answer")
     warn = next(t for t in tasks if t["name"] == "Say the drain did not work")
     assert drain["failed_when"] is False and drain["ignore_errors"] is True
     assert drain["timeout"] == "{{ cassandra_service_drain_timeout | int }}"
-    if stops is None:  # (upgrade does not resume at a stopped node)
-        stops = file == "action_upgrade.yml"
     skipped = "skipped" in result
-    variables = dict(cassandra_service_drain=result, _cassandra_resumed_node=resumed, inventory_hostname="n1")
+    variables = dict(cassandra_service_drain=result, _cassandra_resumed_node=resumed, inventory_hostname="n1",
+                     _cassandra_service_drain_then="restarted")
     if skipped:
         variables["cassandra_service_drain"] = dict(result, skipped=True)
     assert true(stop["when"], **variables) is stops

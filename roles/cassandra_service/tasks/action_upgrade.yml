@@ -2,39 +2,9 @@
 # One node of the upgrade: drain and stop, the target series' repository and
 # package, its config, start, wait until joined, check the version it runs.
 - name: Drain the node
-  community.cassandra.cassandra_drain:
-  module_defaults:
-    community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
-  register: cassandra_service_drain
-  # best effort: nodetool failing (rc) or the timeout, the node is flushed instead, then stopped all the same,
-  # never left drained and running
-  failed_when: false
-  ignore_errors: true  # the timeout below
-  timeout: "{{ cassandra_service_drain_timeout | int }}"
-
-# no answer at all (JMX not reached, its login refused): nothing drained, the node is left as it is
-- name: Stop when the node did not answer
-  ansible.builtin.fail:
-    msg: "{{ cassandra_service_drain.msg }}"
-  when:
-    - cassandra_service_drain is not skipped
-    - not cassandra_service_drain.changed | default(false)
-    - cassandra_service_drain.rc is not defined
-    # a timeout (maybe drained in part): timedout from ansible-core 2.18, its message before
-    - cassandra_service_drain.timedout is not defined
-    - cassandra_service_drain.msg | default('') is not search('expected time frame|Timed out after')
-
-- name: Say the drain did not work
-  ansible.builtin.debug:
-    msg: >-
-      WARNING - {{ inventory_hostname }} was not drained ({{ cassandra_service_drain.error | default('', true)
-      or ('rc ' ~ cassandra_service_drain.rc if cassandra_service_drain.rc is defined else cassandra_service_drain.msg) }}):
-      flushed, then stopped all the same.
-  when:
-    - cassandra_service_drain is not skipped
-    - not cassandra_service_drain.changed | default(false)
+  ansible.builtin.import_tasks: drain.yml
   vars:
-    cassandra_output: true
+    _cassandra_service_drain_then: flushed, then stopped
 
 # the new version replays as little of the old one's commitlog as it can (best effort: a node drained in part
 # may not flush, its start replays the commitlog)

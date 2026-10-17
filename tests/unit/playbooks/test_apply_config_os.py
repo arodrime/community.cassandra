@@ -16,6 +16,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -320,7 +321,7 @@ def test_a_node_stopped_for_its_time_sync_is_started_by_the_resumed_run():
 
 
 def test_the_restart_window_reuses_the_restart():
-    tasks = load("roles", "cassandra_service", "tasks", "action_restart.yml")
+    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "action_restart.yml"))
     names = [t["name"] for t in tasks]
     assert names.index("Drain the node") < names.index("Apply the OS settings with Cassandra stopped") \
         < names.index("Restart it and wait until it has joined")

@@ -5,43 +5,10 @@
   ansible.builtin.include_tasks: unit.yml
 
 - name: Drain the node
-  community.cassandra.cassandra_drain:
-  module_defaults:
-    community.cassandra.cassandra_drain: "{{ _cassandra_service_jmx }}"
+  ansible.builtin.import_tasks: drain.yml
   when: cassandra_operation_drain | bool or not cassandra_service_unit_manage | bool  # a kept unit may not drain
-  register: cassandra_service_drain
-  # best effort: nodetool failing (rc) or the timeout, the node is restarted all the same, never left drained and
-  # running (Cassandra flushes what it can on shutdown, the commitlog replays the rest)
-  failed_when: false
-  ignore_errors: true  # the timeout below
-  timeout: "{{ cassandra_service_drain_timeout | int }}"
-
-# no answer at all (JMX not reached, its login refused): nothing drained, the node is left as it is; but on
-# the node a resumed run stopped at, which may be stopped already (node_operation.yml)
-- name: Stop when the node did not answer
-  ansible.builtin.fail:
-    msg: "{{ cassandra_service_drain.msg }}"
-  when:
-    - cassandra_service_drain is not skipped
-    - not cassandra_service_drain.changed | default(false)
-    - cassandra_service_drain.rc is not defined
-    # a timeout (maybe drained in part): timedout from ansible-core 2.18, its message before
-    - cassandra_service_drain.timedout is not defined
-    - cassandra_service_drain.msg | default('') is not search('expected time frame|Timed out after')
-    - not (_cassandra_resumed_node | default(false) | bool
-           and 'Connection refused' in cassandra_service_drain.stderr | default('') ~ cassandra_service_drain.msg | default(''))
-
-- name: Say the drain did not work
-  ansible.builtin.debug:
-    msg: >-
-      WARNING - {{ inventory_hostname }} was not drained ({{ cassandra_service_drain.error | default('', true)
-      or ('rc ' ~ cassandra_service_drain.rc if cassandra_service_drain.rc is defined else cassandra_service_drain.msg) }}):
-      restarted all the same.
-  when:
-    - cassandra_service_drain is not skipped
-    - not cassandra_service_drain.changed | default(false)
   vars:
-    cassandra_output: true
+    _cassandra_service_drain_then: restarted
 
 # apply_config: its OS settings done with Cassandra stopped (os_window.yml): its time sync, its disk settings
 - name: Apply the OS settings with Cassandra stopped

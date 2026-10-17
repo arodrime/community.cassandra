@@ -162,7 +162,8 @@ def test_checked_before_the_unit_is_written_and_before_a_drain():
     assert "ansible.builtin.template" in unit[1]
     restart = tasks("action_restart.yml")
     assert restart[0].get("ansible.builtin.include_tasks") == "unit.yml"
-    assert any("community.cassandra.cassandra_drain" in t for t in restart[1:])
+    assert restart[1].get("ansible.builtin.import_tasks") == "drain.yml"
+    assert "community.cassandra.cassandra_drain" in tasks("drain.yml")[0]
     main = tasks("main.yml")
     assert not any(t.get("ansible.builtin.include_tasks") == "account_check.yml" for t in main)
     assert any(t.get("ansible.builtin.include_tasks") == "unit.yml" for t in main)
