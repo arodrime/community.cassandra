@@ -23,6 +23,7 @@ token twice (its datacenters' offsets keep them apart).
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+from collections import namedtuple
 from fractions import Fraction
 from functools import wraps
 
@@ -406,6 +407,154 @@ def cassandra_token_add_plan(ring, new_nodes, partitioner, keyspaces=None, defau
     return out
 
 
+# what cassandra_token_move_plan works from, the same for every datacenter
+_MoveInput = namedtuple("_MoveInput", ["partitioner", "first", "size", "hosts", "names", "loads", "targets", "keyspaces",
+                                       "default_rf", "rfs", "index"])
+
+
+def _node_name(hosts, n):
+    """A node of the parsed ring, {address: name} -> its inventory name, else its address."""
+    return hosts.get(_ip(n["address"]), _ip(n["address"]))
+
+
+def _loads(status):
+    """cassandra_status cluster_status -> {address: load in bytes (None when unknown)}."""
+    loads = {}
+    for dc in (status or {}):
+        for n in status[dc].get("nodes", []):
+            loads[_ip(n["address"])] = parse_size(n.get("load"))
+    return loads
+
+
+def _target_moves(wanted, where, members, m, problems):
+    """The tokens the operator gives this datacenter's nodes ({name: token}), where every node is, the
+    datacenter's nodes -> the moves [(name, from, to)] to them; a token that is not one, or another node's,
+    is a problem."""
+    moves = []
+    for name in sorted(wanted):
+        try:
+            dst = position(parse_token(wanted[name], m.partitioner), m.first, m.size)
+        except TokenError as exc:
+            problems.append("%s: %s" % (name, exc))
+            continue
+        src = where[name]
+        # a node of this datacenter that moves away first is fine (move_order); one of another
+        # datacenter moves after this datacenter's moves, if at all
+        holder = [n for n, p in where.items() if p == dst and n != name and (n not in members or n not in m.targets)]
+        if holder:
+            problems.append("%s: token %s is %s's, which %s" % (
+                name, wanted[name], holder[0], "does not move" if holder[0] not in m.targets
+                else "moves later (another datacenter): move it first, in a run of its own"))
+        elif src != dst:
+            moves.append((name, src, dst))
+    return moves
+
+
+def _even_moves(cur, elsewhere, size, rf, offset):
+    """A datacenter's ring [(position, name, rack)], the other datacenters' positions -> the fewest moves
+    [(name, from, to)] that even it out, a worked out position moved on by a token or two off another's."""
+    planned = plan_balanced(cur, [], size, rf, offset)["moves"]
+    spots = _nudge([(dst, name, None) for name, dummy, dst in planned], set(elsewhere), size)
+    return [(name, src, spot[0]) for (name, src, dummy), spot in zip(planned, spots)]
+
+
+def _move_steps(dc, cur, ordered, all_rfs, m):
+    """A datacenter, its ring, its moves in order, its replication factors -> (the steps: what each move
+    streams to whom, in shares and bytes; the ring after them; the nodes that lose ranges)."""
+    first, size = m.first, m.size
+    known = [m.loads.get(m.names.get(name)) for dummy, name, dummy2 in cur]
+    rf_data = min(all_rfs[0], len(cur))
+    unique = (sum(known) / rf_data) if known and None not in known else None
+    steps, lost, state_ring = [], set(), list(cur)
+    for name, src, dst in ordered:
+        after = [(dst if n == name else p, n, r) for p, n, r in state_ring]
+        moved = _transfer_all(state_ring, after, size, all_rfs)
+        gain = dict((n, g) for n, (g, dummy) in moved.items() if g)
+        loss = dict((n, lo) for n, (dummy, lo) in moved.items() if lo)
+        lost |= set(loss)
+        steps.append({
+            "name": name, "address": m.names[name], "dc": dc,
+            "from": str(token_of(src, first, size)), "to": str(token_of(dst, first, size)),
+            "gain": dict((n, float(g)) for n, g in gain.items()),
+            "loss": dict((n, float(lo)) for n, lo in loss.items()),
+            "gain_bytes": dict((n, int(g * unique) if unique is not None else None) for n, g in gain.items())})
+        state_ring = after
+    return steps, state_ring, lost
+
+
+def _move_dc(dc, ring, where, m, out):
+    """One datacenter of cassandra_token_move_plan: its moves planned and ordered, its tables, steps, problems
+    added to out; where follows its moves. Returns the nodes that lose ranges."""
+    first, size = m.first, m.size
+    members = set(_node_name(m.hosts, n) for n in ring[dc])
+    wanted = dict((k, v) for k, v in m.targets.items() if k in members)
+    problems = []
+    entries = _ring_entries(ring, dc, m.hosts, problems)
+    if entries is None:
+        if wanted or not m.targets:
+            (out["problems"] if wanted else out["warnings"]).extend(problems)
+        return set()
+    if m.targets and not wanted:
+        return set()
+    busy = sorted(m.hosts.get(_ip(n["address"]), n["address"]) for n in ring[dc] if n["state"] != "Normal")
+    if busy:
+        out["problems"].append("%s: %s not Normal (joining, leaving or moving): wait until it is" % (dc, ", ".join(busy)))
+        return set()
+    cur = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
+    rf = m.rfs[dc]
+    all_rfs = _rf_set(m.keyspaces, dc, m.default_rf)
+    if wanted:
+        moves = _target_moves(wanted, where, members, m, out["problems"])
+    else:
+        elsewhere = set(p for name, p in where.items() if name not in members)
+        moves = _even_moves(cur, elsewhere, size, rf, dc_offset(m.index[dc]))
+        final = dict((name, p) for name, dummy, p in moves)
+        if moves and not _better([(final.get(n, p), n, r) for p, n, r in cur], cur, size, all_rfs):
+            out["lines"] += _table(dc, cur, size, first, rf, "now")
+            out["lines"].append("  %s: nothing to move (the moves that even out the tokens leave the shares as they"
+                                " are: racks of different sizes)" % dc)
+            return set()
+    try:
+        ordered = move_order(cur, moves, size)
+    except TokenError as exc:
+        out["problems"].append("%s: %s" % (dc, exc))
+        return set()
+    out["lines"] += _table(dc, cur, size, first, rf, "now")
+    if not ordered:
+        out["lines"].append("  %s: nothing to move%s" % (dc, "" if wanted else " (the tokens are as even as they get with the nodes in this order)"))
+        return set()
+    steps, state_ring, lost = _move_steps(dc, cur, ordered, all_rfs, m)
+    out["steps"] += steps
+    where.update((name, dst) for name, dummy, dst in ordered)
+    out["lines"] += _table(dc, state_ring, size, first, rf, "after the moves",
+                           dict((name, " >") for name, dummy, dummy2 in ordered))
+    return lost
+
+
+def _same_tokens(where, first, size):
+    """Where every node is once moved -> the problems of two nodes at the same token."""
+    by_pos, problems = {}, []
+    for name, p in where.items():
+        by_pos.setdefault(p, []).append(name)
+    for p, same in sorted(by_pos.items()):
+        if len(same) > 1:
+            problems.append("%s would have the same token %d" % (" and ".join(sorted(same)), token_of(p, first, size)))
+    return problems
+
+
+def _moves_lines(steps, cleanup):
+    """The steps, the nodes to clean up -> the "Moves" table: each move, what it streams to whom, then the
+    cleanup."""
+    lines = ["Moves, one at a time, in this order:"]
+    for i, s in enumerate(steps):
+        sizes = dict((n, "" if b is None else " ~" + _size(b)) for n, b in s["gain_bytes"].items())
+        receive = ", ".join("%s %s%s" % (n, _pct(g), sizes[n]) for n, g in sorted(s["gain"].items()))
+        lines.append("  %d. %s (%s): %s -> %s; streamed to %s" % (i + 1, s["name"], s["dc"], s["from"],
+                                                                  s["to"], receive or "nobody"))
+    lines.append("Then a cleanup on the nodes that lose ranges: %s" % ", ".join(cleanup))
+    return lines
+
+
 @_wrap
 def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFAULT_RF, hosts=None, targets=None,
                               status=None):
@@ -419,105 +568,21 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
     'cleanup': [names that lose ranges], 'lines', 'problems', 'warnings'}."""
     first, size = partitioner_range(partitioner)
     hosts = _addresses(hosts, ring)
-    names = dict((hosts.get(_ip(n["address"]), _ip(n["address"])), _ip(n["address"]))
-                 for dc in (ring or {}) for n in ring[dc])
-    loads = {}
-    for dc in (status or {}):
-        for n in status[dc].get("nodes", []):
-            loads[_ip(n["address"])] = parse_size(n.get("load"))
+    names = dict((_node_name(hosts, n), _ip(n["address"])) for dc in (ring or {}) for n in ring[dc])
     dcs = sorted(ring or {})
-    index = _dc_index(dcs)
-    rfs = _rf_by_dc(keyspaces, dcs, default_rf)
     out = {"steps": [], "cleanup": [], "lines": [], "problems": [], "warnings": [], "after": {}}
     targets = dict(targets or {})
+    m = _MoveInput(partitioner=partitioner, first=first, size=size, hosts=hosts, names=names, loads=_loads(status),
+                   targets=targets, keyspaces=keyspaces, default_rf=default_rf,
+                   rfs=_rf_by_dc(keyspaces, dcs, default_rf), index=_dc_index(dcs))
     for name in sorted(set(targets) - set(names)):
         out["problems"].append("%s is not in the ring (nodetool ring): no token to move" % name)
     # where every node of the cluster is, after the moves planned so far
-    where = dict((hosts.get(_ip(n["address"]), _ip(n["address"])), position(int(n["token"]), first, size))
-                 for dc in dcs for n in ring[dc])
+    where = dict((_node_name(hosts, n), position(int(n["token"]), first, size)) for dc in dcs for n in ring[dc])
     lost_any = set()
     for dc in dcs:
-        members = set(hosts.get(_ip(n["address"]), _ip(n["address"])) for n in ring[dc])
-        wanted = dict((k, v) for k, v in targets.items() if k in members)
-        problems = []
-        entries = _ring_entries(ring, dc, hosts, problems)
-        if entries is None:
-            if wanted or not targets:
-                (out["problems"] if wanted else out["warnings"]).extend(problems)
-            continue
-        if targets and not wanted:
-            continue
-        busy = sorted(hosts.get(_ip(n["address"]), n["address"]) for n in ring[dc] if n["state"] != "Normal")
-        if busy:
-            out["problems"].append("%s: %s not Normal (joining, leaving or moving): wait until it is" % (dc, ", ".join(busy)))
-            continue
-        cur = [(position(int(t), first, size), name, rack) for dummy, name, rack, t in entries]
-        elsewhere = set(p for name, p in where.items() if name not in members)
-        rf = rfs[dc]
-        all_rfs = _rf_set(keyspaces, dc, default_rf)
-        if wanted:
-            moves = []
-            for name in sorted(wanted):
-                try:
-                    dst = position(parse_token(wanted[name], partitioner), first, size)
-                except TokenError as exc:
-                    out["problems"].append("%s: %s" % (name, exc))
-                    continue
-                src = where[name]
-                # a node of this datacenter that moves away first is fine (move_order); one of another
-                # datacenter moves after this datacenter's moves, if at all
-                holder = [n for n, p in where.items() if p == dst and n != name and (n not in members or n not in targets)]
-                if holder:
-                    out["problems"].append("%s: token %s is %s's, which %s" % (
-                        name, wanted[name], holder[0], "does not move" if holder[0] not in targets
-                        else "moves later (another datacenter): move it first, in a run of its own"))
-                elif src != dst:
-                    moves.append((name, src, dst))
-        else:
-            planned = plan_balanced(cur, [], size, rf, dc_offset(index[dc]))["moves"]
-            spots = _nudge([(dst, name, None) for name, dummy, dst in planned], set(elsewhere), size)
-            moves = [(name, src, p) for (name, src, dummy), (p, dummy2, dummy3) in zip(planned, spots)]
-            final = dict((name, p) for name, dummy, p in moves)
-            if moves and not _better([(final.get(n, p), n, r) for p, n, r in cur], cur, size, all_rfs):
-                out["lines"] += _table(dc, cur, size, first, rf, "now")
-                out["lines"].append("  %s: nothing to move (the moves that even out the tokens leave the shares as they"
-                                    " are: racks of different sizes)" % dc)
-                continue
-        try:
-            ordered = move_order(cur, moves, size)
-        except TokenError as exc:
-            out["problems"].append("%s: %s" % (dc, exc))
-            continue
-        out["lines"] += _table(dc, cur, size, first, rf, "now")
-        if not ordered:
-            out["lines"].append("  %s: nothing to move%s" % (dc, "" if wanted else " (the tokens are as even as they get with the nodes in this order)"))
-            continue
-        known = [loads.get(names.get(name)) for dummy, name, dummy2 in cur]
-        rf_data = min(all_rfs[0], len(cur))
-        unique = (sum(known) / rf_data) if known and None not in known else None
-        state_ring = list(cur)
-        for name, src, dst in ordered:
-            after = [(dst if n == name else p, n, r) for p, n, r in state_ring]
-            moved = _transfer_all(state_ring, after, size, all_rfs)
-            gain = dict((n, g) for n, (g, dummy) in moved.items() if g)
-            loss = dict((n, lost) for n, (dummy, lost) in moved.items() if lost)
-            lost_any |= set(loss)
-            out["steps"].append({
-                "name": name, "address": names[name], "dc": dc,
-                "from": str(token_of(src, first, size)), "to": str(token_of(dst, first, size)),
-                "gain": dict((n, float(g)) for n, g in gain.items()),
-                "loss": dict((n, float(lost)) for n, lost in loss.items()),
-                "gain_bytes": dict((n, int(g * unique) if unique is not None else None) for n, g in gain.items())})
-            state_ring = after
-            where[name] = dst
-        out["lines"] += _table(dc, state_ring, size, first, rf, "after the moves",
-                               dict((name, " >") for name, dummy, dummy2 in ordered))
-    by_pos = {}
-    for name, p in where.items():
-        by_pos.setdefault(p, []).append(name)
-    for p, same in sorted(by_pos.items()):
-        if len(same) > 1:
-            out["problems"].append("%s would have the same token %d" % (" and ".join(sorted(same)), token_of(p, first, size)))
+        lost_any |= _move_dc(dc, ring, where, m, out)
+    out["problems"] += _same_tokens(where, first, size)
     if out["steps"]:
         simple = _simple_warning(keyspaces)
         out["warnings"] += simple
@@ -525,20 +590,14 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
             out["warnings"].append("the replication could not be read: the shares assume RF %s, and every node of the"
                                    " datacenters that move is cleaned up" % default_rf)
             for dc in set(s["dc"] for s in out["steps"]):
-                lost_any |= set(hosts.get(_ip(n["address"]), _ip(n["address"])) for n in ring[dc])
+                lost_any |= set(_node_name(hosts, n) for n in ring[dc])
         if simple:  # its replicas follow the whole ring: every node may have lost some
             lost_any |= set(where)
         if any(None in s["gain_bytes"].values() for s in out["steps"]):
             out["warnings"].append("the loads are not all known: the disk space of the nodes that receive data is not"
                                    " checked before their moves")
-        out["lines"].append("Moves, one at a time, in this order:")
-        for i, s in enumerate(out["steps"]):
-            sizes = dict((n, "" if b is None else " ~" + _size(b)) for n, b in s["gain_bytes"].items())
-            receive = ", ".join("%s %s%s" % (n, _pct(g), sizes[n]) for n, g in sorted(s["gain"].items()))
-            out["lines"].append("  %d. %s (%s): %s -> %s; streamed to %s" % (i + 1, s["name"], s["dc"], s["from"],
-                                                                             s["to"], receive or "nobody"))
         out["cleanup"] = sorted(lost_any)
-        out["lines"].append("Then a cleanup on the nodes that lose ranges: %s" % ", ".join(out["cleanup"]))
+        out["lines"] += _moves_lines(out["steps"], out["cleanup"])
         out["after"] = dict((s["name"], s["to"]) for s in out["steps"])
     return out
 
