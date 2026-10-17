@@ -334,13 +334,11 @@ def _default_when_absent(key, a, b):
     return BOOLS.get(str(value).lower()) == DEFAULT_WHEN_ABSENT[key]
 
 
-def _file_entries(name, nodes, all_nodes):
-    """The settings of one file that differ on a node -> (its settings_lines
-    entries, the lines of the nodes whose live file no longer fits their
-    diff). A key written twice in a file is by its lines (see _line_settings):
-    one written twice on a node and once in the inventory shows as lines there
-    or not."""
-    per_node, layout_only, new_file, unread = {}, [], [], []
+def _node_settings(name, nodes):
+    """One file, the nodes -> ({node: (settings before, settings after, (the secret lines written, their texts))}
+    of the nodes whose live file was read, [(node, diff)] of the ones it is new on, [(node, diff)] of the ones
+    whose live file was not read or no longer fits their diff)."""
+    per_node, new_file, unread = {}, [], []
     for node in nodes:
         live = node["texts"].get(name)
         diff = node["diffs"].get(name)
@@ -359,8 +357,26 @@ def _file_entries(name, nodes, all_nodes):
         before, after = _settings(name, _masked(live)), _settings(name, patched[0])
         secrets = _secrets_written(patched[0], patched[1])
         per_node[node["name"]] = (before, after, (secrets, set(patched[0][i].strip(" \t") for i in secrets)))
-    # the keys changed on some node, in the order of the new file
-    keys, changed = [], {}
+    return per_node, new_file, unread
+
+
+def _key_changed(key, before, after, secrets, secret_lines, yaml_file):
+    """A key, a node's settings before and after, the secret lines written (and their texts), whether the file is
+    YAML -> whether the key changes there."""
+    a, b = before.get(key), after.get(key)
+    # a masked value the diff writes (on its key's line or the lines of its value): changed, the same
+    # **** on both sides
+    # (a line written twice: by its text, its key gives its first line)
+    secret = b is not None and a is not None and (b[1] in secrets or (b[2] is not None and b[2] in secret_lines))
+    if yaml_file and _default_when_absent(key, a, b):
+        return False  # (auto_bootstrap: true written or not: Cassandra's default either way)
+    return (a is None) != (b is None) or (a is not None and (a[0], a[2]) != (b[0], b[2])) or secret
+
+
+def _changed_keys(name, nodes, per_node, all_nodes):
+    """One file, the nodes, their settings -> (the keys changed on some node, in the order of the new file;
+    {node: the keys it changes}; the nodes whose diff changes no setting: comments or layout)."""
+    keys, changed, layout_only = [], {}, []
     yaml_file = name.endswith((".yaml", ".yml"))
     for node_name in all_nodes:
         if node_name not in per_node:
@@ -368,51 +384,68 @@ def _file_entries(name, nodes, all_nodes):
         before, after, (secrets, secret_lines) = per_node[node_name]
         mine = []
         for key in list(after) + [k for k in before if k not in after]:
-            a, b = before.get(key), after.get(key)
-            # a masked value the diff writes (on its key's line or the lines of its value): changed, the same
-            # **** on both sides
-            # (a line written twice: by its text, its key gives its first line)
-            secret = b is not None and a is not None and (b[1] in secrets or (b[2] is not None and b[2] in secret_lines))
-            if yaml_file and _default_when_absent(key, a, b):
-                continue  # (auto_bootstrap: true written or not: Cassandra's default either way)
-            if (a is None) != (b is None) or (a is not None and (a[0], a[2]) != (b[0], b[2])) or secret:
+            if _key_changed(key, before, after, secrets, secret_lines, yaml_file):
                 mine.append(key)
                 if key not in keys:
                     keys.append(key)
         changed[node_name] = set(mine)
         if not mine and name in next(n for n in nodes if n["name"] == node_name)["diffs"]:
             layout_only.append(node_name)
+    return keys, changed, layout_only
 
-    entries = []
-    yaml = name.endswith((".yaml", ".yml"))
-    for key in keys:
-        records = {}
-        for node_name, (before, after, dummy) in per_node.items():
-            records[node_name] = (before.get(key), after.get(key), key in changed.get(node_name, ()))
-        forms = set(v[2] for r in records.values() for v in r[:2] if v is not None)
-        if not yaml and len(forms) == 1:  # one form of the line: there or not
-            label = out.mask(list(forms)[0])
 
-            def shown_of(v):
-                return ABSENT if v is None else "present"
-        else:
-            label = key
+def _presence(v):
+    """A setting of one form of line -> whether it is there: "present" or ABSENT."""
+    return ABSENT if v is None else "present"
 
-            def shown_of(v, key=key):
-                if v is None:
-                    return ABSENT
-                value = v[0] if v[0] is not None else v[2]
-                return _one_line(out.shown(key, value)) if value != "" else "(empty)"
-        entries.append((label.replace("\r", "\\r"), _rows(records, shown_of, all_nodes)))
-    if layout_only:
-        entries.append(("comments or layout", [("differ", layout_only, "(no setting changes)")]))
-    # written whole with no diff shown: missing, or other content (said, not shown)
+
+def _shown_value(key, v):
+    """A key, its setting (value, line, text; None: absent) -> its value as the view shows it."""
+    if v is None:
+        return ABSENT
+    value = v[0] if v[0] is not None else v[2]
+    return _one_line(out.shown(key, value)) if value != "" else "(empty)"
+
+
+def _setting_entry(key, per_node, changed, all_nodes, yaml):
+    """A key changed on some node, the nodes' settings, {node: the keys it changes}, whether the file is YAML ->
+    its entry (label, rows): a line of one form only is there or not, else by its value."""
+    records = {}
+    for node_name, (before, after, dummy) in per_node.items():
+        records[node_name] = (before.get(key), after.get(key), key in changed.get(node_name, ()))
+    forms = set(v[2] for r in records.values() for v in r[:2] if v is not None)
+    if not yaml and len(forms) == 1:  # one form of the line: there or not
+        label, shown_of = out.mask(list(forms)[0]), _presence
+    else:
+        label, shown_of = key, functools.partial(_shown_value, key)
+    return label.replace("\r", "\\r"), _rows(records, shown_of, all_nodes)
+
+
+def _whole_rows(name, nodes, new_file, all_nodes):
+    """One file, the nodes, the ones it is new on -> the rows of the nodes it is written whole on with no diff
+    shown: missing, or other content (said, not shown)."""
     wholes = [(node["name"], node["wholes"][name]) for node in nodes if name in node["wholes"]]
     absent = [n for n, d in new_file] + [n for n, before in wholes if before == ABSENT]
     rows = [(before, [n for n, b in wholes if b == before], out.ARROW + " differs (written whole)")
             for before in sorted(set(b for n, b in wholes if b != ABSENT))]
     if absent:
         rows.insert(0, (ABSENT, [n for n in all_nodes if n in absent], out.ARROW + " differs (written whole)"))
+    return rows
+
+
+def _file_entries(name, nodes, all_nodes):
+    """The settings of one file that differ on a node -> (its settings_lines
+    entries, the lines of the nodes whose live file no longer fits their
+    diff). A key written twice in a file is by its lines (see _line_settings):
+    one written twice on a node and once in the inventory shows as lines there
+    or not."""
+    per_node, new_file, unread = _node_settings(name, nodes)
+    keys, changed, layout_only = _changed_keys(name, nodes, per_node, all_nodes)
+    yaml = name.endswith((".yaml", ".yml"))
+    entries = [_setting_entry(key, per_node, changed, all_nodes, yaml) for key in keys]
+    if layout_only:
+        entries.append(("comments or layout", [("differ", layout_only, "(no setting changes)")]))
+    rows = _whole_rows(name, nodes, new_file, all_nodes)
     if rows:
         entries.append(("file", rows))
     # not its diff: a secret's block value (a PEM key) is in clear there
