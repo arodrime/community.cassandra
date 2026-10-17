@@ -20,9 +20,8 @@ import configparser
 import os
 import re
 
-import yaml
-
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_medusa")
 # s('section', 'key', variable ...) in the role's template
@@ -82,9 +81,7 @@ def cassandra_medusa_ini_changes(old_text, new_text, name="medusa.ini"):
 def role_settings():
     with open(os.path.join(ROLE, "templates", "medusa.ini.j2")) as f:
         mapping = {(section, key.lower()): var for section, key, var in SETTING.findall(f.read())}
-    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
-        defaults = yaml.safe_load(f)
-    return mapping, defaults
+    return mapping, role_file("cassandra_medusa")
 
 
 def _credentials(text, profile):

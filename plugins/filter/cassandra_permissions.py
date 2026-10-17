@@ -26,9 +26,8 @@ import functools
 import os
 import re
 
-import yaml
-
 from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -40,8 +39,7 @@ DEFAULTS = {"user": "cassandra", "group": "cassandra", "owner": "root", "mode": 
 
 @functools.lru_cache(maxsize=None)
 def _all_files():
-    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
-        return yaml.safe_load(f)["_cassandra_config_files"]
+    return role_file("cassandra_config", "vars")["_cassandra_config_files"]
 
 
 def _files_of(series):
