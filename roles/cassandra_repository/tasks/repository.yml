@@ -142,6 +142,7 @@
       register: _cassandra_repository_key_download
       until: _cassandra_repository_key_download is succeeded
       changed_when: false  # a temp file: the install below reports the change
+      check_mode: false  # read-only for the host's config: the check below needs the file
 
     # Minimal images (AlmaLinux 10) come without it; Amazon Linux's
     # gnupg2-minimal has it, and conflicts with gnupg2
@@ -160,6 +161,15 @@
         - ansible_facts['os_family'] == "RedHat"
         - not _cassandra_repository_gpg.stat.exists
 
+    # --check on a blank host: gnupg, installed above, is not really there yet
+    - name: Look for gpg (--check)
+      ansible.builtin.command: gpg --version
+      register: _cassandra_repository_gpg_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_check_mode
+
     - name: Read the fingerprints of the downloaded keys
       ansible.builtin.shell: >-
         set -o pipefail;
@@ -170,6 +180,8 @@
         executable: /bin/bash
       register: _cassandra_repository_key_list
       changed_when: false
+      check_mode: false
+      when: _cassandra_repository_gpg_check.rc | default(0) == 0
 
     - name: Check the downloaded keys are known ones
       ansible.builtin.assert:
@@ -180,6 +192,7 @@
           {{ cassandra_repository_key_url }} holds no key or unknown keys ({{ _unknown | join(', ') }}).
           Check them, then add them to cassandra_repository_key_fingerprints.
         quiet: true
+      when: _cassandra_repository_gpg_check.rc | default(0) == 0
       vars:
         _unknown: "{{ _cassandra_repository_key_list.stdout_lines | difference(cassandra_repository_key_fingerprints) }}"
 
@@ -196,6 +209,7 @@
         path: "{{ _cassandra_repository_key_path }}.new"
         state: absent
       changed_when: false
+      check_mode: false
 
 - name: Ensure Cassandra yum repository exists (RedHat)
   ansible.builtin.yum_repository:

@@ -75,3 +75,18 @@ def test_jemalloc_query_leaves_them_out():
     assert render(argv) == ["dnf", "-q", "repoquery", "jemalloc"]
     assert render(argv, _cassandra_repository_check_removed=["cassandra-50x"]) == [
         "dnf", "-q", "repoquery", "--disablerepo=cassandra-50x", "jemalloc"]
+
+
+def test_signing_keys_downloaded_and_read_under_check():
+    # --check on a blank host: the keys are still downloaded and checked (a temp file, removed after),
+    # their fingerprints read unless gpg is not really installed yet
+    keys = load("cassandra_repository", "repository.yml")
+    for name in ("Download the signing keys", "Read the fingerprints of the downloaded keys",
+                 "Look for gpg (--check)", "Remove the downloaded file"):
+        assert task(keys, name)["check_mode"] is False, name
+    probe = "_cassandra_repository_gpg_check.rc | default(0) == 0"
+    assert task(keys, "Read the fingerprints of the downloaded keys")["when"] == probe
+    assert task(keys, "Check the downloaded keys are known ones")["when"] == probe
+    assert render("{{ %s }}" % probe, _cassandra_repository_gpg_check={"skipped": True}) is True
+    assert render("{{ %s }}" % probe, _cassandra_repository_gpg_check={"rc": 2}) is False
+
