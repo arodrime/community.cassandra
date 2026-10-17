@@ -158,7 +158,7 @@ def parse_timesync(lines):
     source = "" if not server or server.split()[0] in ("n/a", "null", "(null)") else server
     offset = _span(f.get("Offset")) if "Offset" in f else None
     # the server's root distance, plus half the delay to it
-    bound = _span(f.get("Root distance", "").split("(")[0]) if "Root distance" in f else None
+    bound = _span(f.get("Root distance", "").split("(", 1)[0]) if "Root distance" in f else None
     if bound is not None and "Delay" in f:
         bound += (_span(f["Delay"]) or 0.0) / 2
     leap = f.get("Leap", "").lower()
@@ -241,7 +241,7 @@ def _timesyncd_said(s, kernel_synced, configured):
     if not said["synchronised"]:
         said["source"] = ""
     said["configured"] = sorted(set(configured) | set(
-        [sync["source"].split("(")[-1].rstrip(")")] if "(" in sync["source"] else []))
+        [sync["source"].rsplit("(", 1)[-1].rstrip(")")] if "(" in sync["source"] else []))
     return said
 
 
@@ -414,7 +414,7 @@ def ms(seconds, signed=True):
 def _names(probe, addresses):
     """The source names a node is configured with, its selected source, and the cluster node it follows (a chain)."""
     names = set(probe.get("configured") or [])
-    source = (probe.get("source") or "").split(" ")[0]
+    source = (probe.get("source") or "").split(" ", 1)[0]
     if source:
         names.add(source)
         if source in addresses:
