@@ -498,7 +498,9 @@ def cassandra_import_convergence(layout, self_check=None, screen=False, report_f
     read.
     A setting is one row of SETTINGS (a dict one per sub-key); the addresses and the settings a node keeps for life
     are not counted. An error of its own is a line saying so (its message hidden: values), never the import's
-    failure (the section is output only)."""
+    failure (the section is output only).
+    e.g. on the screen -> ["CONVERGENCE  4/11 settings common to all nodes, 7 differ, 3 files kept by hand", "  Next
+    (5 of 7, the safest first, then the fewest nodes):", ...]."""
     try:
         return _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd, width,
                             boolean(self_check_ok, strict=False))
