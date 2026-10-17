@@ -16,6 +16,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -68,7 +69,7 @@ def with_task_vars(task, variables):
     return variables
 
 
-ROLE = load("roles", "cassandra_config", "tasks", "main.yml")
+ROLE = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"))
 FIND = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Find what each node needs"][0]
 NOTE = find(FIND["tasks"], "Note what this node needs")
 

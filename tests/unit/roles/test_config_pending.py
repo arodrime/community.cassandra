@@ -19,6 +19,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -152,8 +153,7 @@ def test_service_seeds_before_changing_the_unit():
 
 def test_config_seeds_before_writing():
     # cassandra_config records what the JVM started with before its first change of a node started another way
-    with open(os.path.join(ROLE, "..", "cassandra_config", "tasks", "main.yml")) as f:
-        main = yaml.safe_load(f)
+    main = load_tasks(os.path.join(ROLE, "..", "cassandra_config", "tasks", "main.yml"))
     block = next(t for t in main if t.get("name") == "Configure")["block"]
     names = [t["name"] for t in block]
     seed = names.index("Record the config the running Cassandra started with")

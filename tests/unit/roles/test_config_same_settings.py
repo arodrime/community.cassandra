@@ -32,14 +32,14 @@ with warnings.catch_warnings():  # already done under ansible-test
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import cassandra_same_settings  # noqa: E402 pylint: disable=wrong-import-position
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import (  # noqa: E402 pylint: disable=wrong-import-position
     SCRIPT, compare as compare_files, identity_changes, preview)
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402 pylint: disable=wrong-import-position
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
 
 
 def task(name, tasks_file="main.yml"):
-    with open(os.path.join(TASKS, tasks_file), encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(TASKS, tasks_file))
     while todo:
         t = todo.pop(0)
         if t.get("name") == name:

@@ -17,6 +17,7 @@ from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -589,7 +590,7 @@ def test_apply_config_shows_the_changes_once():
                  if t.get("name") == "Write the config")
     assert write["vars"]["_cassandra_config_quiet"] is True and write["vars"]["_cassandra_change_report_quiet"] is True
 
-    role = list(walk(load("roles", "cassandra_config", "tasks", "main.yml")))
+    role = list(walk(load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"))))
     report = load("roles", "cassandra_change_report", "tasks", "main.yml")
     shows = [next(t for t in role if t.get("name") == "Show the config changes"),
              next(t for t in role if t.get("name") == "Show the owner, group and mode changes"),

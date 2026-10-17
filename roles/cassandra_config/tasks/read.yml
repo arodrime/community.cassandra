@@ -1,0 +1,141 @@
+---
+# What the role looks at on the node, read in one go (a task per file or
+# directory would cost a round trip each): files/config_read.py, whose
+# results are shaped as the stat, slurp and command tasks would register
+# them. The package creates the stock directories only: others (a data
+# disk, a log dir) must exist, owned by the service user, before the node
+# first starts (created in apply.yml, their missing parents root-owned, 0755).
+# The live cassandra.yaml: read for the paths it holds (an initialized
+# node). The owner and mode of the live files (the JMX users' files when
+# the role writes them) and of Cassandra's directories (the top level
+# only: a data dir can hold TBs, a link to a disk followed).
+- name: Read the node's config files and directories
+  ansible.builtin.command:
+    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_read.py') }}"]
+    stdin: "{{ _request | to_json }}"
+  environment:
+    LC_ALL: C  # errors in English
+  register: cassandra_config_read
+  changed_when: false
+  check_mode: false  # reads only
+  no_log: true  # the live cassandra.yaml may hold passwords
+  vars:
+    _request:
+      step: node
+      dirs: >-
+        {{ (cassandra_data_file_directories + [cassandra_commitlog_dir, cassandra_saved_caches_dir,
+            cassandra_hints_dir, cassandra_log_dir] + _cassandra_config_more_dirs | map(attribute=1) | flatten)
+           | select | unique | list }}
+      yaml: "{{ cassandra_conf_dir }}/cassandra.yaml"
+      conf_target: "{{ '/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' and cassandra_rpm_conf_alternative != '' else '' }}"
+      keep: >-
+        {%- set out = [] -%}
+        {%- for f in cassandra_config_keep_files | intersect(_cassandra_config_files[_cassandra_config_series]) -%}
+        {%-   set _ = out.append([f, cassandra_conf_dir ~ '/' ~ f]) -%}
+        {%- endfor -%}
+        {{ out }}
+      files: >-
+        {%- set out = [] -%}
+        {%- for f in _cassandra_config_files[_cassandra_config_series]
+                     + (['jmxremote.password', 'jmxremote.access'] if cassandra_jmx_users | length > 0 else []) -%}
+        {%-   set _ = out.append([f, cassandra_jmx_remote_password_file if f == 'jmxremote.password'
+                                     else cassandra_jmx_remote_access_file if f == 'jmxremote.access'
+                                     else cassandra_conf_dir ~ '/' ~ f]) -%}
+        {%- endfor -%}
+        {{ out }}
+      dir_stats: >-
+        {%- set out = [] -%}
+        {%- for kind, paths in [['data dir', cassandra_data_file_directories], ['commitlog dir', [cassandra_commitlog_dir]],
+                                ['saved_caches dir', [cassandra_saved_caches_dir]], ['hints dir', [cassandra_hints_dir]]]
+                               + _cassandra_config_more_dirs -%}
+        {%-   for d in paths if d and d not in out | map(attribute=1) -%}{%- set _ = out.append([kind, d]) -%}{%- endfor -%}
+        {%- endfor -%}
+        {{ out }}
+
+- name: Stop on a path that could not be looked at
+  ansible.builtin.fail:
+    msg: "{{ _read.errors | default([_read.error]) | join('; ') }}"
+  vars:
+    _read: "{{ cassandra_config_read.stdout | from_json }}"
+  when: _read.error is defined or _read.errors | length > 0
+
+# as the tasks that read them one by one registered them
+- name: Note what was read
+  ansible.builtin.set_fact:
+    cassandra_config_dirs: {results: "{{ _read.dirs }}"}
+    cassandra_config_unmounted: {stdout_lines: "{{ _read.unmounted }}"}
+    cassandra_config_live_yaml_stat: {stat: "{{ _read.yaml_stat }}"}
+    cassandra_config_live: "{{ {'content': _read.yaml} if _read.yaml is not none else {'failed': true} }}"
+    cassandra_config_conf_target: "{{ _read.conf_target if _read.conf_target is not none else {'skipped': true} }}"
+    cassandra_config_keep_stat: {results: "{{ _read.keep }}"}
+    cassandra_config_live_stat: {results: "{{ _read.files }}"}
+    cassandra_config_dir_stat: {results: "{{ _read.dir_stats }}"}
+    _cassandra_config_package: "{{ _read.package }}"
+    # the unit's state (running, else stopped or ''); unread: not systemd, service_facts reads it
+    _cassandra_config_unit_state: "{{ 'unread' if _read.running is none else _read.running }}"
+    _cassandra_config_links: "{{ _read.links }}"
+  vars:
+    _read: "{{ cassandra_config_read.stdout | from_json }}"
+  no_log: true  # the live cassandra.yaml
+
+# Templates come from the stock files of one release per series: a later
+# release may accept settings they don't have (cassandra_extra_settings).
+# Not under --check, nor in the upgrade playbook's preflight (check_mode applied to the role, which
+# ansible_check_mode does not tell): it shows the target series' config while the former one is installed
+- name: Refuse the templates of another series than the one installed
+  ansible.builtin.assert:
+    that: _installed == '' or (_installed ~ '.').startswith(_cassandra_config_series ~ '.')
+    fail_msg: >-
+      Cassandra {{ _installed }} is installed, not {{ _cassandra_config_series }} (cassandra_version {{ cassandra_version }}):
+      set cassandra_version to the installed series.
+    quiet: true
+  vars:
+    _installed: "{{ _cassandra_config_installed }}"
+  when:
+    - not ansible_check_mode
+    - not _cassandra_config_target_preview | default(false) | bool
+
+# Cassandra refuses to start on a cassandra.yaml key it does not know ("Invalid yaml"): checked against the
+# installed release, else (another series installed, or none) what no release of the series accepts
+- name: Refuse extra settings Cassandra rejects
+  ansible.builtin.assert:
+    that: _rejected | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: cassandra_extra_settings has {{ _rejected | join(', ') }}, which Cassandra
+      {{ _version }} rejects: it would not restart. Remove {{ 'it' if _rejected | length == 1 else 'them' }}
+      from the inventory; nothing is changed.
+    quiet: true
+  vars:
+    _version: >-
+      {{ _cassandra_config_installed if (_cassandra_config_installed ~ '.').startswith(_cassandra_config_series ~ '.')
+         else _cassandra_config_series }}
+    _rejected: "{{ cassandra_extra_settings | community.cassandra.cassandra_yaml_rejected(_version) }}"
+  when: cassandra_extra_settings | length > 0
+
+- name: Say when Cassandra is newer than the templates
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Cassandra {{ _cassandra_config_installed }} is newer than {{ _templates }}, the release the
+      {{ _cassandra_config_series }} templates come from: settings it added are not variables, set them with
+      cassandra_extra_settings.
+  vars:
+    cassandra_output: true
+    _templates: "{{ _cassandra_config_template_versions[_cassandra_config_series] }}"
+  when:
+    - _cassandra_config_installed != ''
+    - _cassandra_config_installed is version(_templates, '>')
+
+# (the upgrade playbook's preview: the same template for the series it moves to)
+- name: Say which files your own templates render for another series than the one installed
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ cassandra_config_template_overrides | list | join(', ') }} rendered from your own
+      template (cassandra_config_template_overrides) for Cassandra {{ _cassandra_config_series }}, while
+      {{ _cassandra_config_installed }} is installed: check it suits {{ _cassandra_config_series }} (the role's
+      templates follow each series, yours do not).
+  vars:
+    cassandra_output: true
+  when:
+    - cassandra_config_template_overrides | length > 0
+    - _cassandra_config_installed != ''
+    - not (_cassandra_config_installed ~ '.').startswith(_cassandra_config_series ~ '.')

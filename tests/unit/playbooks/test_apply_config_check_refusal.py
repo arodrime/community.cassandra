@@ -16,6 +16,7 @@ from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_recap
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -162,8 +163,7 @@ def test_the_check_plan_says_it_too():
 
 def test_the_owner_and_mode_changes_are_not_shown_twice():
     # the role (or apply_config's view) shows them: no raw before/after diff under --diff
-    with open(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"), encoding="utf-8") as f:
-        role = yaml.safe_load(f)
+    role = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"))
 
     def walk(tasks):
         for t in tasks or []:

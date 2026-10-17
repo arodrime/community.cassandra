@@ -16,6 +16,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -620,4 +621,4 @@ def _no_is_failed_past_failed_when(tasks, where):
 
 def test_no_is_failed_on_a_result_past_its_failed_when():
     _no_is_failed_past_failed_when(SEEDS_APPLY, "seeds_apply.yml")
-    _no_is_failed_past_failed_when(load("roles", "cassandra_config", "tasks", "main.yml"), "cassandra_config main.yml")
+    _no_is_failed_past_failed_when(load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml")), "cassandra_config main.yml")

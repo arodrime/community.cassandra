@@ -16,6 +16,7 @@ from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -34,7 +35,7 @@ def load(*path):
         return yaml.safe_load(f)
 
 
-TASKS = load("roles", "cassandra_config", "tasks", "main.yml")
+TASKS = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"))
 ROLE_VARS = load("roles", "cassandra_config", "vars", "main.yml")
 DEFAULTS = load("roles", "cassandra_config", "defaults", "main.yml")
 
