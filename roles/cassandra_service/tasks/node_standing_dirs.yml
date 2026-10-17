@@ -1,0 +1,125 @@
+---
+# What a node's Cassandra directories hold (node_standing_read.yml)
+# Parsed on the controller: only the paths, the cluster name and the addresses are kept
+- name: Work out its Cassandra directories
+  ansible.builtin.set_fact:
+    _cassandra_node_reset_protected: "{{ _protected }}"
+    _cassandra_node_reset_listed: "{{ _inventory | community.cassandra.cassandra_node_reset_dirs(_live, _mounts, _protected) }}"
+    # the data directories its config uses, and the usual ones it does not (a system keyspace left there)
+    _cassandra_node_standing_data_dirs: >-
+      {{ ([cassandra_data_file_directories] | flatten + [_extra.local_system_data_file_directory | default('', true) | string])
+         | community.cassandra.cassandra_node_data_dirs(_live, usual=[cassandra_data_dir | default('/var/lib/cassandra/data'),
+             (cassandra_conf_dir | regex_replace('(?<=.)/+$', '') | dirname) ~ '/data/data']) }}
+  no_log: true  # the live file's text is in the vars
+  vars:
+    _mounts: "{{ ansible_facts['mounts'] | default([]) + (cassandra_node_reset_mounts.content | default('') | b64decode).splitlines() }}"
+    # what a directory to empty must not hold
+    _protected: >-
+      {{ [cassandra_conf_dir, cassandra_log_dir | default('/var/log/cassandra'), '/usr/share/cassandra',
+          cassandra_java_home | default(''), ansible_facts['user_dir'] | default('')] | select | list }}
+    _extra: "{{ cassandra_extra_settings | default({}) }}"
+    _inventory: >-
+      {%- set l = [] -%}
+      {%- for d in [cassandra_data_file_directories] | flatten -%}{%- set _ = l.append(['data', d]) -%}{%- endfor -%}
+      {%- set _ = l.extend([['commitlog', cassandra_commitlog_dir], ['saved_caches', cassandra_saved_caches_dir],
+                            ['hints', cassandra_hints_dir]]) -%}
+      {%- if _extra.local_system_data_file_directory is defined -%}
+      {%-   set _ = l.append(['data', _extra.local_system_data_file_directory]) -%}
+      {%- endif -%}
+      {#- cassandra_extra_settings' cdc_raw_directory: an inventory from before cassandra_cdc_raw_dir -#}
+      {%- if cassandra_cdc_raw_dir | default('', true) or _extra.cdc_raw_directory is defined -%}
+      {%-   set _ = l.append(['cdc_raw', cassandra_cdc_raw_dir | default('', true) or _extra.cdc_raw_directory]) -%}
+      {%- elif cassandra_cdc_enabled | default(false) | bool -%}
+      {%-   set _ = l.append(['cdc_raw', (cassandra_config_storage_dir | default('', true) or '/var/lib/cassandra')
+                                       | regex_replace('(?<=.)/+$', '') ~ '/cdc_raw']) -%}
+      {%- endif -%}
+      {{ l }}
+    _live: "{{ (cassandra_node_reset_live.content | b64decode) if cassandra_node_reset_live.content is defined else none }}"
+
+# Links resolved, also in the parents: a link to / is refused like / itself
+- name: Resolve the directories
+  ansible.builtin.command:
+    argv: "{{ ['realpath', '-m', '--'] + _cassandra_node_reset_listed.dirs | map(attribute='path') | list }}"
+  register: cassandra_node_reset_realpath
+  changed_when: false
+  check_mode: false  # read-only
+  when: _cassandra_node_reset_listed.dirs | length > 0
+
+- name: Check them where they really are
+  ansible.builtin.set_fact:
+    _cassandra_node_reset_dirs: "{{ _real | combine({'problems': _unreadable + _real.problems}) }}"
+  vars:
+    _real: >-
+      {{ _cassandra_node_reset_listed | community.cassandra.cassandra_node_reset_real(
+           dict(_cassandra_node_reset_listed.dirs | map(attribute='path') | zip(cassandra_node_reset_realpath.stdout_lines | default([]))),
+           _mounts, _cassandra_node_reset_protected) }}
+    _unreadable: >-
+      {{ ['the live ' ~ cassandra_conf_dir ~ '/cassandra.yaml can not be read: its directories are unknown']
+         if cassandra_node_reset_live_stat.stat.exists and cassandra_node_reset_live.content is not defined else [] }}
+    _mounts: "{{ ansible_facts['mounts'] | default([]) + (cassandra_node_reset_mounts.content | default('') | b64decode).splitlines() }}"
+
+# stat fails on a directory that can't be reached (no root: become turned off?): find would skip it silently
+- name: Look at the directories
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ _cassandra_node_reset_dirs.dirs | map(attribute='real') | list }}"
+  register: cassandra_node_reset_stat
+  failed_when: false
+
+# Listed where they really are: what is deleted is what is shown
+- name: List what the directories hold
+  ansible.builtin.find:
+    paths: >-
+      {{ cassandra_node_reset_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list }}
+    file_type: any
+    hidden: true
+  register: cassandra_node_reset_found
+  when: cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length > 0
+
+# a system keyspace left where its config does not look (the package's default dir, a tarball's): not its own
+# and in a data directory of its config the reset refuses to empty (e.g. a top-level dir that is not a
+# mount point): not listed above, a system keyspace there is still its own
+- name: Look for a system keyspace its config does not use, or the reset does not list
+  ansible.builtin.stat:
+    path: "{{ item }}/system"
+    get_checksum: false
+  loop: "{{ _cassandra_node_standing_data_dirs.elsewhere + _cassandra_node_standing_data_dirs.own | reject('in', _listed) | list }}"
+  register: cassandra_node_standing_elsewhere
+  failed_when: false
+  vars:
+    _listed: "{{ _cassandra_node_reset_dirs.dirs | map(attribute='path') | list }}"
+
+# add_node's reset: how much it holds (for its line), and whether it met other nodes (its system.peers tables)
+- name: Measure what the directories hold
+  ansible.builtin.command:
+    argv: "{{ ['du', '-sbc', '--'] + _there }}"
+  register: cassandra_node_reset_du
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when:
+    - _cassandra_node_standing_size | default(false) | bool
+    - cassandra_node_reset_found.files | default([]) | length > 0
+  vars:
+    _there: >-
+      {{ cassandra_node_reset_stat.results | default([]) | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list }}
+
+- name: Look for the peers it met
+  ansible.builtin.find:
+    paths: "{{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real')
+               | map('regex_replace', '$', '/system') | list }}"
+    patterns: "*-Data.db"
+    recurse: true
+  register: cassandra_node_reset_peers
+  failed_when: false
+  when: cassandra_node_reset_found.files | default([]) | length > 0  # a blank host: no system dir to look in
+
+# add_node's mark of a bootstrap it started there and that never ended (action_add.yml)
+- name: Look for a bootstrap add_node left unfinished
+  ansible.builtin.stat:
+    path: "{{ _cassandra_service_bootstrap_mark }}"
+    get_checksum: false
+  register: cassandra_node_reset_bootstrap_mark
