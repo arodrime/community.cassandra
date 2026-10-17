@@ -144,10 +144,11 @@
       changed_when: false  # a temp file: the install below reports the change
       check_mode: false  # read-only for the host's config: the check below needs the file
       vars:
-        # the mirror's credentials, only when the keys are on the mirror's host (not sent to apache.org)
+        # the mirror's credentials, only when the keys are on the mirror itself: same scheme, host
+        # and port (not sent to apache.org, nor over http:// or to another port of the mirror's host)
         _on_mirror: >-
-          {{ cassandra_repository_key_url is match('https?://') and cassandra_install_username != ''
-             and (cassandra_repository_key_url | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
+          {{ cassandra_install_username != ''
+             and cassandra_repository_key_url | community.cassandra.cassandra_same_origin(cassandra_install_url) }}
 
     # Minimal images (AlmaLinux 10) come without it; Amazon Linux's
     # gnupg2-minimal has it, and conflicts with gnupg2
