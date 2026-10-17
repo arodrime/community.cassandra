@@ -80,7 +80,7 @@ cassandra_java_tarball: "{{ _cassandra_java_tarball_entry.url | default('') if c
 cassandra_java_tarball_checksum: "{{ _cassandra_java_tarball_entry.checksum if _cassandra_java_tarball_from_entry else '' }}"
 cassandra_java_tarball_dir: /opt/cassandra-java
 # Credentials for the URL. By default the entry's, else cassandra_install_url's
-# when the tarball is on the same host (the mirror)
+# when the tarball is on the mirror (same scheme, host and port)
 cassandra_java_tarball_username: >-
   {{ _cassandra_java_tarball_entry.username | default('') if _cassandra_java_tarball_own_credentials
      else cassandra_install_username if _cassandra_java_tarball_on_mirror else '' }}
@@ -94,9 +94,7 @@ _cassandra_java_tarball_from_entry: >-
 _cassandra_java_tarball_own_credentials: >-
   {{ _cassandra_java_tarball_from_entry
      and (_cassandra_java_tarball_entry.username is defined or _cassandra_java_tarball_entry.password is defined) }}
-_cassandra_java_tarball_on_mirror: >-
-  {{ cassandra_java_tarball is match('https?://')
-     and (cassandra_java_tarball | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
+_cassandra_java_tarball_on_mirror: "{{ cassandra_java_tarball | community.cassandra.cassandra_same_origin(cassandra_install_url) }}"
 _cassandra_java_tarball_name: "{{ cassandra_java_tarball | urlsplit('path') | basename }}"
 # Java already unpacked there by other means (not a package): made the system
 # java, and the Cassandra packages installed without a Java package, as with
@@ -138,7 +136,7 @@ cassandra_cqlsh_python_repo_uri: https://ppa.launchpadcontent.net/deadsnakes/ppa
 # with links /usr/share/dsbulk and /usr/bin/dsbulk, like the packaged tools.
 cassandra_dsbulk_install: true
 cassandra_dsbulk_version: "1.11.2"
-# A mirror (with cassandra_install_url's credentials when on its host) or a
+# A mirror (with cassandra_install_url's credentials when on the same server) or a
 # copy on the node (file:///path/to/dsbulk-x.y.z.tar.gz, also offline)
 cassandra_dsbulk_url: "https://github.com/datastax/dsbulk/releases/download/{{ cassandra_dsbulk_version }}/dsbulk-{{ cassandra_dsbulk_version }}.tar.gz"
 # Checksum of the tarball, for the default version: set it with the version

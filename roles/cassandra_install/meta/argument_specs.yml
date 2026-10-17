@@ -186,13 +186,13 @@ argument_specs:
         type: str
         description:
           - User for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_username) when the
-            tarball is on the same host as O(cassandra_install_url), else none.
+            tarball is on the same server (scheme, host and port) as O(cassandra_install_url), else none.
       cassandra_java_tarball_password:
         type: str
         no_log: true
         description:
           - Password or token for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_password)
-            when the tarball is on the same host as O(cassandra_install_url), else none.
+            when the tarball is on the same server (scheme, host and port) as O(cassandra_install_url), else none.
       cassandra_java_set_default:
         type: bool
         default: true
@@ -249,8 +249,8 @@ argument_specs:
         description:
           - Where the dsbulk tarball is downloaded from. Defaults to its GitHub release
             for O(cassandra_dsbulk_version).
-          - A mirror (with C(cassandra_install_username) and C(cassandra_install_password)
-            when it is on the host of C(cassandra_install_url)), or a copy on the node
+          - A mirror (with O(cassandra_install_username) and O(cassandra_install_password)
+            when it has the scheme, host and port of O(cassandra_install_url)), or a copy on the node
             (C(file:///path/to/dsbulk-<version>.tar.gz)), the way to install it with
             O(cassandra_offline).
       cassandra_dsbulk_checksum:

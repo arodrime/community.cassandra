@@ -149,8 +149,8 @@ Role Variables
 * `cassandra_dsbulk_url`: where the tarball comes from. Default: the release
   on GitHub. Or a local mirror
   (e.g. `https://mirror.example.com/dsbulk/dsbulk-1.11.2.tar.gz`; with
-  `cassandra_install_username`/`_password` when it is on the host of
-  `cassandra_install_url`), or a copy of the file on the node
+  `cassandra_install_username`/`_password` when it has the scheme, host and
+  port of `cassandra_install_url`), or a copy of the file on the node
   (`file:///path/to/dsbulk-1.11.2.tar.gz`), which `cassandra_offline` also
   installs.
 * `cassandra_dsbulk_checksum`: checksum of the tarball, as `sha256:<hex>`
