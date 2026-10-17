@@ -1,0 +1,2 @@
+trivial:
+  - "CI roles - a pull request runs the molecule tests of the roles it changes and of the roles that use them or a module it changes (all roles when a filter, lookup, module_utils or plugin_utils file, the workflow or galaxy.yml changes), one job per docker scenario; scheduled and manual runs test every role."

@@ -1,6 +1,7 @@
 name: CI_roles
 on:
   pull_request:
+  workflow_dispatch:  # manual full run
   schedule:
     - cron: "0 6 * * *"
 
@@ -26,9 +27,54 @@ jobs:
         with:
           path: ansible_collections/community/cassandra
 
-      - name: Generate module list
+      # Pull requests test the roles they change; scheduled and manual runs test every role
+      - name: Find changed files
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
+        id: changes
+        with:
+          list-files: shell
+          filters: |
+            global:
+              - 'plugins/filter/**'
+              - 'plugins/lookup/**'
+              - 'plugins/module_utils/**'
+              - 'plugins/plugin_utils/**'
+              - 'meta/runtime.yml'
+              - '.github/workflows/test-roles.yml'
+              - 'galaxy.yml'
+            roles:
+              - 'roles/**'
+            modules:
+              - 'plugins/modules/*.py'
+
+      # One job per role and docker scenario (a vagrant scenario needs a VM)
+      - name: Generate role and scenario list
+        env:
+          TEST_ALL: ${{ github.event_name != 'pull_request' || steps.changes.outputs.global == 'true' }}
+          ROLES: ${{ steps.changes.outputs.roles_files }}
+          MODULES: ${{ steps.changes.outputs.modules_files }}
         run: |
-          find roles -type d -maxdepth 1 -mindepth 1 -not -name cassandra_medusa | cut -d '/' -f2 | awk NF | jq -sRc 'split("\n") | map(select(length > 0))' > int_test_roles.json
+          all=$(find roles -mindepth 1 -maxdepth 1 -type d -not -name cassandra_medusa | cut -d/ -f2)
+          if [ "$TEST_ALL" = true ]; then
+            selected="$all"
+          else
+            changed=$(for f in $ROLES; do echo "$f" | cut -d/ -f2; done | sort -u)
+            # roles/cassandra_linux/tasks/main.yml -> cassandra_linux, plugins/modules/cassandra_flush.py -> cassandra_flush
+            names=$(echo "$changed"; for f in $MODULES; do basename "$f" .py; done)
+            selected=$(
+              echo "$changed"
+              # the roles whose tasks or scenarios use a changed role or module
+              for n in $names; do grep -rlw "community.cassandra.$n" roles || true; done | cut -d/ -f2
+            )
+          fi
+          for role in $(echo "$selected" | sort -u | { grep -Fx "$all" || true; }); do
+            for m in roles/"$role"/molecule/*/molecule.yml; do
+              if [ -f "$m" ] && grep -qE '^ +name: docker' "$m"; then
+                echo "$role $(basename "$(dirname "$m")")"
+              fi
+            done
+          done | jq -nRc '[inputs | split(" ") | {role: .[0], scenario: .[1]}]' > int_test_roles.json
 
       - name: Set output variable
         id: json-list
@@ -38,17 +84,20 @@ jobs:
           echo "$output"
 
   roles:
+    name: molecule ${{ matrix.molecule.role }} (${{ matrix.molecule.scenario }})
     runs-on: ubuntu-24.04
     needs: roles_matrix
+    if: needs.roles_matrix.outputs.matrix != '[]'
     defaults:
       run:
         working-directory: ansible_collections/community/cassandra
 
     strategy:
+      fail-fast: false  # a failing scenario must not stop the others
       matrix:
         python_version:
           - "3.12"
-        cassandra_role: ${{ fromJson(needs.roles_matrix.outputs.matrix) }}
+        molecule: ${{ fromJson(needs.roles_matrix.outputs.matrix) }}
 
     steps:
       - name: Check out code
@@ -110,8 +159,8 @@ jobs:
           # uses: steps don't get the job's working-directory
           command: cd ansible_collections/community/cassandra && ansible-galaxy collection install --no-cache community-cassandra-*.tar.gz 'community.docker:>=3.0.2'
 
-      - name: Run molecule test for ${{ matrix.cassandra_role }}
-        run: molecule test
-        working-directory: ansible_collections/community/cassandra/roles/${{ matrix.cassandra_role }}
+      - name: Run molecule test for ${{ matrix.molecule.role }} (${{ matrix.molecule.scenario }})
+        run: molecule test -s ${{ matrix.molecule.scenario }}
+        working-directory: ansible_collections/community/cassandra/roles/${{ matrix.molecule.role }}
         env:
           ANSIBLE_ALLOW_BROKEN_CONDITIONALS: 1  # need for  TASK [Set async_dir for HOME env]
