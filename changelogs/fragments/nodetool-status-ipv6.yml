@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_assassinate - an IPv6 address is found in ``nodetool status`` and ``nodetool gossipinfo`` however it is written (``::4`` or ``0:0:0:0:0:0:0:4``, as nodetool prints it)."
