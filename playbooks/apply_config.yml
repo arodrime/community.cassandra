@@ -118,6 +118,8 @@
           {{ inventory_hostname }}: {{ cassandra_config_unknown_files | join(', ') }} written after Cassandra started
           (not by the roles, which keep a record of the files it starts with): not restarted for them. If they
           changed a setting, run rolling_restart to apply it.
+      vars:
+        cassandra_output: true
       when: cassandra_config_unknown_files | length > 0
 
     # its unit not running: a JVM started another way still runs the config it read

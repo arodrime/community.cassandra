@@ -41,6 +41,8 @@
       WARNING - {{ inventory_hostname }}: {{ _cassandra_config_keep_missing | join(', ') }} kept by hand
       (cassandra_config_keep_files) {{ 'is' if _cassandra_config_keep_missing | length == 1 else 'are' }} missing:
       written back from the template, the hand edits are lost. Restore your copy first to keep them.
+  vars:
+    cassandra_output: true
   when:
     - _cassandra_config_keep_missing | length > 0
     - not _cassandra_config_quiet | default(false)  # said by the caller (apply_config: in its plan and recap)

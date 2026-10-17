@@ -35,6 +35,8 @@ MARKED = [
     ("roles/cassandra_repository/tasks/repository.yml", "Say the repository could not be checked"),
     ("roles/cassandra_service/tasks/action_move.yml", "Say which receiving nodes are not checked"),
     ("roles/cassandra_service/tasks/main.yml", "Warn that a Cassandra started by the init script keeps running"),
+    ("roles/cassandra_config/tasks/apply.yml", "Warn that a restart is needed"),
+    ("playbooks/apply_config.yml", "Say which files changed since Cassandra started, with no record of the ones it started with"),
 ]
 
 # import_cluster's refusals: their message as is, no task dump
@@ -93,3 +95,22 @@ def test_marking_keeps_the_task_variables():
     t = next(t for t in tasks("roles/cassandra_repository/tasks/repository.yml")
              if t.get("name") == "Say the repository could not be checked")
     assert {"_results", "_codes", "_shown", "cassandra_output"} <= set(t["vars"])
+
+
+def _warns(t):
+    msg = (t.get("ansible.builtin.debug") or t.get("debug") or {}).get("msg", "")
+    return str(msg).lstrip("{[(' ").startswith("WARNING")
+
+
+def test_every_warning_marked():
+    # a WARNING is what prevents an incident (a full disk mid-upgrade, a JVM that will not start): always shown
+    paths = glob.glob(os.path.join(TOP, "playbooks", "*.yml")) + glob.glob(os.path.join(TOP, "roles", "*", "tasks", "*.yml"))
+    unmarked = [(os.path.relpath(path, TOP), t.get("name")) for path in sorted(paths)
+                for t in tasks(os.path.relpath(path, TOP))
+                if any(a in t for a in DEBUG) and _warns(t) and (t.get("vars") or {}).get("cassandra_output") is not True]
+    assert unmarked == []
+
+
+def test_update_java_says_no_restart_is_needed_before_its_restart():
+    t = [t for t in tasks("roles/cassandra_service/tasks/action_update_java.yml") if t.get("name") == "Write the config"][0]
+    assert t["vars"]["_cassandra_config_no_restart_warning"] is True

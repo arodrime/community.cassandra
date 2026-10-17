@@ -245,6 +245,7 @@
           WARNING - {{ _mount.mount }} has {{ (100 * _mount.size_available / _mount.size_total) | round | int }}% free:
           the snapshot shares files at first, but sstables rewritten after the upgrade need room.
       vars:
+        cassandra_output: true
         # the mount point holding cassandra_data_dir: the longest one that is a prefix of it
         _mount: >-
           {%- set best = {'mount': '', 'size_available': 1, 'size_total': 1} -%}
