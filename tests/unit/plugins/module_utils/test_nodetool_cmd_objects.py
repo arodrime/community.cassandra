@@ -58,3 +58,10 @@ def test_fail_nodetool_says_the_command_its_error_and_the_advice():
                                     " run it again"}
     fail_nodetool(module, {}, "drain", 1, "", "", "Restart it")
     assert module.failed["msg"] == "nodetool drain did not execute successfully (rc 1). Restart it"
+
+
+def test_release_series_of_nodetool_version():
+    from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import release_series
+    assert release_series("ReleaseVersion: 5.0.7\n") == "5.0"
+    assert release_series("Picked up X\nReleaseVersion: 4.1.12") == "4.1"
+    assert release_series("ReleaseVersion: 4.0.21-SNAPSHOT") == "4.0"

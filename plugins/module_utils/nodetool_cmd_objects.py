@@ -21,7 +21,17 @@ def nodetool_error(out, err):
     ("error: ..."), else the first line of its output (not a JVM banner),
     without its final dot; "" when it said nothing."""
     lines = [line.strip() for line in strip_jvm_banner((err or "") + "\n" + (out or "")).splitlines() if line.strip()]
-    return next((line for line in lines if line.startswith("error:")), lines[0] if lines else "").rstrip(".")
+    for line in lines:
+        if line.startswith("error:"):
+            return line.rstrip(".")
+    return lines[0].rstrip(".") if lines else ""
+
+
+def release_series(out):
+    """nodetool version's output ("ReleaseVersion: 5.0.7") -> the series of that release ("5.0")."""
+    lines = [x for x in out.splitlines() if x.startswith('ReleaseVersion')]
+    line = lines[-1] if lines else out
+    return ".".join(line.split(': ')[1].split(".")[:2]).strip()
 
 
 def fail_nodetool(module, result, command, rc, out, err, advice):
@@ -145,10 +155,7 @@ class NodeToolCmd(object):
         if self.cassandra_version is None:
             (rc, out, err) = self.nodetool_cmd("version")
             if rc == 0:
-                # ReleaseVersion: 5.0.7
-                line = [x for x in out.splitlines() if x.startswith('ReleaseVersion')][-1:] or [out]
-                what_is_the_version = ".".join(line[0].split(': ')[1].split(".")[:2]).strip()
-                module.params['cassandra_version'] = what_is_the_version
+                module.params['cassandra_version'] = release_series(out)
             else:
                 module.fail_json(msg=version_error(out, err, self.host, self.port), stderr=err)
 
