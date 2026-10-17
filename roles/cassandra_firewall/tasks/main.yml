@@ -1,36 +1,11 @@
 ---
 # tasks file for cassandra_firewall
-- name: Include vars for os family
-  ansible.builtin.include_vars:
-    file: "{{ ansible_facts['os_family'] }}.yml"
+- name: Set up the firewall
+  ansible.builtin.include_tasks: firewall.yml
+  when: cassandra_firewall_manage | bool
 
-- name: Ensure firewall package is installed
-  ansible.builtin.package:
-    name: "{{ firewall_packages }}"
-    state: present
-  retries: 3
-
-- name: Ensure firewall service is started
-  ansible.builtin.service:
-    name: "{{ (ansible_facts['os_family'] == 'RedHat') | ternary('firewalld', 'ufw') }}"
-    state: started
-    enabled: yes
-
-- name: Ensure ports for cassandra open (RedHat)
-  ansible.posix.firewalld:
-    port: "{{ item }}"
-    permanent: yes
-    immediate: yes
-    state: enabled
-  with_items:
-    - "{{ open_ports }}"
-  when: ansible_facts['os_family'] == "RedHat"
-
-- name: Ensure ports for cassandra open (Debian)
-  community.general.ufw:
-    port: "{{ item | split('/') | first }}"
-    proto: "{{ item | split('/') | last }}"
-    rule: "allow"
-  with_items:
-    - "{{ open_ports }}"
-  when: ansible_facts['os_family'] == "Debian"
+# e.g. imported: the node has no firewall the role manages, or its own rules
+- name: Say the firewall is left as it is
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: firewall left as it is (cassandra_firewall_manage: false)"
+  when: not cassandra_firewall_manage | bool

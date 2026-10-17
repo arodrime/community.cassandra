@@ -1,0 +1,5 @@
+minor_changes:
+  - "cassandra_firewall - ``cassandra_firewall_port_sources`` opens the ports to the given sources only."
+  - "cassandra_firewall - ``cassandra_firewall_manage: false`` leaves the firewall as it is (nothing installed, started or opened)."
+  - "cassandra_firewall - the firewall package is not installed again when it is there, and the role reports what it changes (cassandra_change_report)."
+  - "cassandra_firewall - argument specs for the role's variables."
