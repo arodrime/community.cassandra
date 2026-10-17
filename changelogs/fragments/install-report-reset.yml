@@ -1,0 +1,2 @@
+bugfixes:
+  - cassandra_install - run a second time for a host in the same playbook run, its change report listed the first run's changes again; each run now reports only its own.
