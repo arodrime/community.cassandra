@@ -23,24 +23,10 @@
 - name: Stop when a cleanup failed or stopped moving
   ansible.builtin.fail:
     msg: >-
-      {%- if _cassandra_cleanup_status == 'failed' -%}
-      Cleanup failed or can't be followed on {{ _hosts | join(', ') }}: {{ _errors | join('; ') }} (see system.log there).
-      {%- elif _cassandra_cleanup_status == 'jmx_refused' -%}
-      JMX login refused on {{ _cassandra_cleanup_refused | map(attribute='host') | join(', ') }}: check
-      cassandra_jmx_username/password (or cassandra_jmx_password_file) for {{ 'it' if _cassandra_cleanup_refused | length == 1 else 'them' }}
-      (nodetool: {{ (_cassandra_cleanup_refused | first).error }}). Nothing was stopped: the cleanups go on by themselves.
-      {%- else -%}
-      no cleanup progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
-      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s; nodetool compactionstats). Nothing was stopped: check nodetool compactionstats and system.log on the nodes.
-      {%- endif %}
-      Last progress: {{ (_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
-                          status=_cassandra_cleanup_status) | first) }}
-  vars:
-    # the nodes whose job failed, or ended without a result
-    _hosts: >-
-      {{ (_cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.item') | list
-          + _cassandra_cleanup_jobs | rejectattr('unreachable', 'defined') | rejectattr('finished', 'defined')
-            | map(attribute='item.item') | list) | unique }}
-    _errors: >-
-      {{ _cassandra_cleanup_jobs | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='msg', default='') }}
+      {{ _cassandra_cleanup_status | community.cassandra.cassandra_cleanup_failure(
+           _cassandra_cleanup_jobs | default([]), refused=_cassandra_cleanup_refused | default([]),
+           idle=_cassandra_stream_state.idle | default(0), stall_time=cassandra_stream_stall_time,
+           last=_cassandra_stream_state | community.cassandra.cassandra_stream_report(what='cleanup',
+                                                                                     status=_cassandra_cleanup_status)
+                | first) }}
   when: _cassandra_cleanup_status in ['failed', 'stalled', 'jmx_refused']
