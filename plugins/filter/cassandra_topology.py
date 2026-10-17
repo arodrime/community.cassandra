@@ -191,6 +191,147 @@ def cassandra_seed_change(hosts, seeds):
             "step": bool(removed or added or differ), "auto": auto, "warnings": warnings, "problems": problems}
 
 
+def _present_hosts(present, entries):
+    """The hosts staying, the ring's entries -> (problems: the hosts a check refused, joining: a bootstrap an
+    earlier run started, new: the hosts to add, down: the ones down in the ring)."""
+    problems, joining, new, down = [], [], [], []
+    for h in present:
+        name, address = h["name"], h.get("address") or ""
+        entry = entries.get(address, (None, None))[1]
+        if h.get("refused"):
+            problems.append("%s: %s" % (name, h["refused"]))
+        elif h.get("state") == "joining" or (entry and entry["status"] + entry["state"] == "UJ"):
+            joining.append(name)
+        elif h.get("state") == "joined" or entry:
+            if entry and entry["status"] == "D":
+                down.append(name)
+        else:  # in cassandra_seeds too: it joins with the others as its seeds, and is made one once up
+            new.append(name)
+    return problems, joining, new, down
+
+
+def _absent_unreachable(h, entry, where, entries, known):
+    """A host marked absent that does not answer, its ring entry (or None) -> ("silent", "") when nothing is
+    to do, else (None, the problem)."""
+    name, address = h["name"], h.get("address") or ""
+    if entry:
+        return None, ("%s (%s) is marked absent and still in the ring (%s) but does not answer: bring it back and run"
+                      " topology again (it is then decommissioned), or, if it is dead for good, remove_dead_node"
+                      " -e cassandra_target_nodes=%s" % (name, address, where, address))
+    if not address and any(a not in known for a in entries):
+        return None, ("%s is marked absent, does not answer and the inventory gives no address for it, while the ring"
+                      " has nodes the inventory does not know: it may be one of them. Give its address"
+                      " (cassandra_listen_address or ansible_host), or bring it back." % name)
+    return "silent", ""
+
+
+def _absent_host(h, entries, known):
+    """A host marked absent, the ring's entries, the inventory's addresses -> (what the plan does with it:
+    "leaving", "normal" (decommissioned), "finish" (only stopped), "gone", "silent", or None; the problem, '')."""
+    name, address = h["name"], h.get("address") or ""
+    dc_entry = entries.get(address)
+    entry = dc_entry[1] if dc_entry else None
+    where = ("%s, %s%s" % (dc_entry[0], entry["status"], entry["state"])) if entry else ""
+    if not h.get("reachable"):
+        return _absent_unreachable(h, entry, where, entries, known)
+    if h.get("refused"):
+        return None, "%s: %s" % (name, h["refused"])
+    if entry and entry["status"] == "D":
+        return None, ("%s (%s) is marked absent and down in the ring (%s): a dead node is not decommissioned. Start it"
+                      " and run topology again, or remove it with remove_dead_node -e cassandra_target_nodes=%s"
+                      % (name, address, where, address))
+    if entry and h.get("seed"):
+        return None, ("%s is marked absent but is still in cassandra_seeds: take it out of cassandra_seeds in the"
+                      " inventory; topology then applies the new seed list on the other nodes before it removes it."
+                      % name)
+    if entry and entry["state"] in ("J", "M"):
+        return None, ("%s (%s) is marked absent and %s in the ring (%s): Cassandra decommissions a node up and"
+                      " normal only. Run topology again once it is UN." % (
+                          name, address, "joining" if entry["state"] == "J" else "moving", where))
+    if entry:
+        return ("leaving" if h.get("state") == "leaving" or entry["state"] == "L" else "normal"), ""
+    if h.get("state") in ("decommissioned", "leaving"):
+        return "finish", ""  # out of the ring, Cassandra still running: stopped and disabled
+    if h.get("running"):
+        return None, ("%s is marked absent and runs Cassandra, but is not in the ring (another cluster's node, or one"
+                      " started alone?): topology leaves it as it is. Stop it by hand, or check its address (%s)."
+                      % (name, address or "unknown"))
+    return "gone", ""
+
+
+def _same_address(hosts):
+    """The hosts -> the problems of one address given to two hosts: the plan can't tell which one the ring means."""
+    by_address, problems = {}, []
+    for h in hosts:
+        if h.get("address"):
+            by_address.setdefault(h["address"], []).append(h["name"] + (" (marked absent)" if h.get("absent") else ""))
+    for address, names in sorted(by_address.items()):
+        if len(names) > 1:
+            problems.append("%s have the same address %s: fix the inventory (an address reused?) before adding or"
+                            " removing any of them." % (" and ".join(names), address))
+    return problems
+
+
+def _large_removals(in_ring, absent, present, new, entries):
+    """The hosts to remove still in the ring, the hosts marked absent and staying, the hosts to add, the ring's
+    entries -> a line per datacenter losing more than half of its nodes (the replicas it keeps are the guard)."""
+    by_dc, large_removals = {}, []
+    for name in in_ring:
+        h = next(x for x in absent if x["name"] == name)
+        by_dc.setdefault(entries[h["address"]][0], []).append(name)
+    for dc, names in sorted(by_dc.items()):
+        # the datacenter with the nodes this run adds first
+        size = len([e for e in entries.values() if e[0] == dc]) + len([h for h in present if h["name"] in new and h.get("dc") == dc])
+        if len(names) == size:
+            large_removals.append("%s removed whole (%s): no node left there" % (dc, out.nodes(names)))
+        elif len(names) * 2 > size:
+            large_removals.append("%d of %s of %s removed (%s): %s left to hold their data"
+                                  % (len(names), out.plural(size, "node"), dc, out.nodes(names),
+                                     out.plural(size - len(names), "node")))
+    return large_removals
+
+
+def _plan_seeds(hosts, new, entries, seeds):
+    """The hosts, the hosts to add, the ring's entries, cassandra_seeds -> cassandra_seed_change's result: applied
+    live on every node once the adds are done, before the removals."""
+    # a host to add may have a cassandra.yaml of its own (a package's): not a list the cluster runs with
+    # (a seed it may get when a datacenter is left with none: up and normal in the ring, staying)
+    un = [a for a, (dc, e) in entries.items() if e.get("status") == "U" and e.get("state") == "N"]
+    seed_hosts = [dict(h, live="", up=False) if h["name"] in new
+                  else dict(h, up=not h.get("absent") and h.get("address") in un) for h in hosts]
+    return cassandra_seed_change(seed_hosts, seeds) if seeds is not None else {"step": False, "problems": []}
+
+
+def _token_problems(present, new, in_ring, token_auto):
+    """The hosts staying, the hosts to add, the hosts to remove still in the ring, cassandra_token_auto -> the
+    problems of one token per node: add_node needs a token per new node, or cassandra_token_auto."""
+    problems = []
+    auto = str(token_auto).strip().lower()
+    no_token = [h["name"] for h in present if h["name"] in new and h.get("single") and not h.get("token")]
+    if new and in_ring and any(h.get("single") for h in present):
+        problems.append("one token per node: adding %s and removing %s in one run would place the new tokens in a ring"
+                        " that changes right after. Mark the hosts absent once the adds are done (topology again), then"
+                        " even out the ring with move_node." % (", ".join(new), ", ".join(in_ring)))
+    if auto == "true" and new and any(h.get("single") for h in present):
+        problems.append("cassandra_token_auto=true asks a second question (bisect or balanced): choose one on the"
+                        " command line instead (-e cassandra_token_auto=bisect or balanced).")
+    elif auto == "false" and no_token:
+        problems.append("one token per node: %s %s no cassandra_initial_token. Set it, or -e cassandra_token_auto=bisect"
+                        " (no node moves) or balanced (an even ring)." % (", ".join(no_token), "has" if len(no_token) == 1 else "have"))
+    return problems
+
+
+def _nodes_left(present, absent, in_ring):
+    """The hosts staying, the hosts marked absent, the hosts to remove still in the ring -> {dc: nodes once done}."""
+    nodes_left = {}
+    for h in present:
+        nodes_left[h.get("dc")] = nodes_left.get(h.get("dc"), 0) + 1
+    for h in absent:
+        if h["name"] in in_ring:
+            nodes_left.setdefault(h.get("dc"), 0)
+    return nodes_left
+
+
 def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
     """hosts: every host of the cluster's group in the inventory's order:
     [{name, absent, address (the one the ring shows, '' when unknown), dc, rack,
@@ -219,77 +360,17 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
     present = [h for h in hosts if not h.get("absent")]
     absent = [h for h in hosts if h.get("absent")]
     known = set(h.get("address") for h in hosts if h.get("address"))
-    problems, warnings = [], []
-    joining, new, leaving, normal, finish, gone, silent, down = [], [], [], [], [], [], [], []
-
-    for h in present:
-        name, address = h["name"], h.get("address") or ""
-        entry = entries.get(address, (None, None))[1]
-        if h.get("refused"):
-            problems.append("%s: %s" % (name, h["refused"]))
-        elif h.get("state") == "joining" or (entry and entry["status"] + entry["state"] == "UJ"):
-            joining.append(name)
-        elif h.get("state") == "joined" or entry:
-            if entry and entry["status"] == "D":
-                down.append(name)
-        else:  # in cassandra_seeds too: it joins with the others as its seeds, and is made one once up
-            new.append(name)
-
+    problems, joining, new, down = _present_hosts(present, entries)
+    warnings = []
+    kinds = {"leaving": [], "normal": [], "finish": [], "gone": [], "silent": []}
     for h in absent:
-        name, address = h["name"], h.get("address") or ""
-        dc_entry = entries.get(address)
-        entry = dc_entry[1] if dc_entry else None
-        where = ("%s, %s%s" % (dc_entry[0], entry["status"], entry["state"])) if entry else ""
-        if not h.get("reachable"):
-            if entry:
-                problems.append(
-                    "%s (%s) is marked absent and still in the ring (%s) but does not answer: bring it back and run"
-                    " topology again (it is then decommissioned), or, if it is dead for good, remove_dead_node"
-                    " -e cassandra_target_nodes=%s" % (name, address, where, address))
-            elif not address and any(a not in known for a in entries):
-                problems.append(
-                    "%s is marked absent, does not answer and the inventory gives no address for it, while the ring has"
-                    " nodes the inventory does not know: it may be one of them. Give its address"
-                    " (cassandra_listen_address or ansible_host), or bring it back." % name)
-            else:
-                silent.append(name)
-        elif h.get("refused"):
-            problems.append("%s: %s" % (name, h["refused"]))
-        elif entry and entry["status"] == "D":
-            problems.append(
-                "%s (%s) is marked absent and down in the ring (%s): a dead node is not decommissioned. Start it and"
-                " run topology again, or remove it with remove_dead_node -e cassandra_target_nodes=%s"
-                % (name, address, where, address))
-        elif entry and h.get("seed"):
-            problems.append(
-                "%s is marked absent but is still in cassandra_seeds: take it out of cassandra_seeds in the"
-                " inventory; topology then applies the new seed list on the other nodes before it removes it."
-                % name)
-        elif entry and entry["state"] in ("J", "M"):
-            problems.append("%s (%s) is marked absent and %s in the ring (%s): Cassandra decommissions a node up and"
-                            " normal only. Run topology again once it is UN." % (
-                                name, address, "joining" if entry["state"] == "J" else "moving", where))
-        elif entry:
-            (leaving if h.get("state") == "leaving" or entry["state"] == "L" else normal).append(name)
-        elif h.get("state") in ("decommissioned", "leaving"):
-            finish.append(name)  # out of the ring, Cassandra still running: stopped and disabled
-        elif h.get("running"):
-            problems.append(
-                "%s is marked absent and runs Cassandra, but is not in the ring (another cluster's node, or one"
-                " started alone?): topology leaves it as it is. Stop it by hand, or check its address (%s)."
-                % (name, address or "unknown"))
+        kind, problem = _absent_host(h, entries, known)
+        if kind:
+            kinds[kind].append(h["name"])
         else:
-            gone.append(name)
-
-    # one address, two hosts: the plan can't tell which one the ring means
-    by_address = {}
-    for h in hosts:
-        if h.get("address"):
-            by_address.setdefault(h["address"], []).append(h["name"] + (" (marked absent)" if h.get("absent") else ""))
-    for address, names in sorted(by_address.items()):
-        if len(names) > 1:
-            problems.append("%s have the same address %s: fix the inventory (an address reused?) before adding or"
-                            " removing any of them." % (" and ".join(names), address))
+            problems.append(problem)
+    leaving, normal, finish, gone, silent = (kinds[k] for k in ("leaving", "normal", "finish", "gone", "silent"))
+    problems.extend(_same_address(hosts))
 
     add = joining + new
     remove = leaving + finish + normal
@@ -308,57 +389,17 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
                         % ", ".join(unknown))
 
     # more than half of a datacenter removed: said on the screen (the replicas it keeps are the guard)
-    by_dc, large_removals = {}, []
-    for name in in_ring:
-        h = next(x for x in absent if x["name"] == name)
-        by_dc.setdefault(entries[h["address"]][0], []).append(name)
-    for dc, names in sorted(by_dc.items()):
-        # the datacenter with the nodes this run adds first
-        size = len([e for e in entries.values() if e[0] == dc]) + len([h for h in present if h["name"] in new and h.get("dc") == dc])
-        if len(names) == size:
-            large_removals.append("%s removed whole (%s): no node left there" % (dc, out.nodes(names)))
-        elif len(names) * 2 > size:
-            large_removals.append("%d of %s of %s removed (%s): %s left to hold their data"
-                                  % (len(names), out.plural(size, "node"), dc, out.nodes(names),
-                                     out.plural(size - len(names), "node")))
-
-    # the seeds: cassandra_seeds applied live on every node once the adds are done, before the removals
-    # a host to add may have a cassandra.yaml of its own (a package's): not a list the cluster runs with
-    # (a seed it may get when a datacenter is left with none: up and normal in the ring, staying)
-    un = [a for a, (dc, e) in entries.items() if e.get("status") == "U" and e.get("state") == "N"]
-    seed_hosts = [dict(h, live="", up=False) if h["name"] in new
-                  else dict(h, up=not h.get("absent") and h.get("address") in un) for h in hosts]
-    seed_change = cassandra_seed_change(seed_hosts, seeds) if seeds is not None else {"step": False, "problems": []}
+    large_removals = _large_removals(in_ring, absent, present, new, entries)
+    seed_change = _plan_seeds(hosts, new, entries, seeds)
     if seed_change["step"]:
         problems.extend(seed_change["problems"])
     warnings.extend(seed_change.get("warnings") or [])
-
-    # one token per node: add_node needs a token per new node, or cassandra_token_auto
-    auto = str(token_auto).strip().lower()
-    no_token = [h["name"] for h in present if h["name"] in new and h.get("single") and not h.get("token")]
-    if new and in_ring and any(h.get("single") for h in present):
-        problems.append("one token per node: adding %s and removing %s in one run would place the new tokens in a ring"
-                        " that changes right after. Mark the hosts absent once the adds are done (topology again), then"
-                        " even out the ring with move_node." % (", ".join(new), ", ".join(in_ring)))
-    if auto == "true" and new and any(h.get("single") for h in present):
-        problems.append("cassandra_token_auto=true asks a second question (bisect or balanced): choose one on the"
-                        " command line instead (-e cassandra_token_auto=bisect or balanced).")
-    elif auto == "false" and no_token:
-        problems.append("one token per node: %s %s no cassandra_initial_token. Set it, or -e cassandra_token_auto=bisect"
-                        " (no node moves) or balanced (an even ring)." % (", ".join(no_token), "has" if len(no_token) == 1 else "have"))
-
-    nodes_left = {}
-    for h in present:
-        nodes_left[h.get("dc")] = nodes_left.get(h.get("dc"), 0) + 1
-    for h in absent:
-        if h["name"] in in_ring:
-            nodes_left.setdefault(h.get("dc"), 0)
-
+    problems.extend(_token_problems(present, new, in_ring, token_auto))
     if down:
         warnings.append("%s down in the ring: the check before the first step stops the run unless it is back up."
                         % ", ".join(down))
     return {"add": add, "remove": remove, "seeds": seed_change, "finish": finish, "gone": gone, "silent": silent, "unknown": unknown, "down": down,
-            "in_ring": in_ring, "joining": joining, "leaving": leaving, "nodes_left": nodes_left,
+            "in_ring": in_ring, "joining": joining, "leaving": leaving, "nodes_left": _nodes_left(present, absent, in_ring),
             "large_removals": large_removals, "problems": problems, "warnings": warnings}
 
 
