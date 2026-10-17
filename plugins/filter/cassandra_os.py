@@ -293,7 +293,41 @@ def _limits(recs, wanted, own):
     # pam_limits: limits.conf, then limits.d/*.conf by name; a user entry wins
     # over a group one, which wins over "*"; the last of the same kind wins
     entries.sort(key=lambda e: (e[0] != LIMITS_CONF, os.path.basename(e[0])))
-    effective = {}  # (item, soft|hard) -> (rank, value, path, domain)
+    effective = _limits_effective(entries, groups)
+    items = list(role) + sorted({i for (i, dummy), e in effective.items() if e[0] < 3} - set(role))
+    lines = _limits_overridden(entries, effective, groups, owners)
+    carried, notes, skipped = dict(role), [], []
+    for item in items:
+        soft, hard = effective.get((item, "soft")), effective.get((item, "hard"))
+        if not soft and not hard:
+            continue
+        lines.append("limits " + _limit_text(item, soft, hard, role, owners))
+        if own:
+            continue
+        if soft and hard and soft[0] < 3 and hard[0] < 3:
+            if soft[1] == hard[1]:
+                carried[item] = _typed(soft[1])
+            else:
+                skipped.append(item)
+    if own:
+        carried = _limits_own(entries, effective, items, skipped)
+    changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
+    out = {}
+    if [(k, _norm(v)) for k, v in carried.items()] != [(k, _norm(v)) for k, v in role.items()]:
+        changed = changed or sorted(carried)
+        out["cassandra_linux_limits"] = carried
+        notes.append("cassandra_linux_limits: %s, as these nodes give the cassandra user"
+                     % ", ".join("%s %s" % (k, carried[k]) for k in changed))
+    if skipped:
+        notes.append("NOT carried: the cassandra user's %s (soft and hard differ; the role sets both to one value)"
+                     % ", ".join(skipped))
+    return lines, out, notes
+
+
+def _limits_effective(entries, groups):
+    """The limits files' entries (in the order pam_limits reads them) -> {(item, soft|hard): (rank, value, path,
+    domain)}: the entry in effect for the cassandra user (rank 0: its own, 1: a group of it, 3: "*")."""
+    effective = {}
     for path, line in entries:
         parts = line.split()
         if len(parts) < 4 or parts[0].startswith("#"):
@@ -310,10 +344,12 @@ def _limits(recs, wanted, own):
         for k in (["soft", "hard"] if kind == "-" else [kind] if kind in ("soft", "hard") else []):
             if (item, k) not in effective or rank <= effective[(item, k)][0]:
                 effective[(item, k)] = (rank, value, path, domain)
+    return effective
 
-    items = list(role) + sorted({i for (i, dummy), e in effective.items() if e[0] < 3} - set(role))
-    lines, carried, notes, skipped = [], dict(role), [], []
-    # the cassandra user's lines another file overrides
+
+def _limits_overridden(entries, effective, groups, owners):
+    """The cassandra user's lines (or a group's of it) another file overrides."""
+    lines = []
     for path, line in entries:
         parts = line.split()
         if len(parts) < 4 or not (parts[0] == "cassandra" or parts[0].startswith("@") and parts[0][1:] in groups):
@@ -322,50 +358,34 @@ def _limits(recs, wanted, own):
         if won and path not in won:
             lines.append("limits %s: %s %s %s = %s, overridden by %s" % (
                 _label(path, owners), parts[0], parts[1], parts[2], parts[3], _label(won[-1], owners)))
-    for item in items:
-        soft, hard = effective.get((item, "soft")), effective.get((item, "hard"))
-        if not soft and not hard:
-            continue
-        same = soft and hard and soft[1:] == hard[1:]
-        if same:
-            text = "%s: %s %s = %s%s" % (_label(soft[2], owners), soft[3], item, soft[1], _vs(soft[1], role.get(item), "cassandra_linux"))
-        else:
-            text = "; ".join("%s: %s %s %s = %s" % (_label(e[2], owners), e[3], k, item, e[1])
-                             for k, e in (("soft", soft), ("hard", hard)) if e)
-            text += " (cassandra_linux: %s)" % role[item] if item in role else ""
-        lines.append("limits " + text)
-        if own:
-            continue
-        if soft and hard and soft[0] < 3 and hard[0] < 3:
-            if soft[1] == hard[1]:
+    return lines
+
+
+def _limit_text(item, soft, hard, role, owners):
+    """A limit in effect: one text when soft and hard are the same entry's, else each one."""
+    if soft and hard and soft[1:] == hard[1:]:
+        return "%s: %s %s = %s%s" % (_label(soft[2], owners), soft[3], item, soft[1], _vs(soft[1], role.get(item), "cassandra_linux"))
+    text = "; ".join("%s: %s %s %s = %s" % (_label(e[2], owners), e[3], k, item, e[1])
+                     for k, e in (("soft", soft), ("hard", hard)) if e)
+    return text + (" (cassandra_linux: %s)" % role[item] if item in role else "")
+
+
+def _limits_own(entries, effective, items, skipped):
+    """A node the role set up keeps exactly its own file, in its order (the role writes it whole); not in the
+    role's file (another name, an older role): the values in effect (skipped gets the ones soft and hard differ)."""
+    carried = {}
+    for path, line in entries:
+        parts = line.split()
+        if path == LIMITS_OWN and len(parts) >= 4 and parts[0] == "cassandra" and parts[1] == "-":
+            carried[parts[2]] = _typed(parts[3])
+    if not carried:
+        for item in items:
+            soft, hard = effective.get((item, "soft")), effective.get((item, "hard"))
+            if soft and hard and soft[0] < 3 and hard[0] < 3 and soft[1] == hard[1]:
                 carried[item] = _typed(soft[1])
-            else:
+            elif soft or hard:
                 skipped.append(item)
-    if own:
-        # a node the role set up keeps exactly its own file, in its order (the role writes it whole)
-        carried = {}
-        for path, line in entries:
-            parts = line.split()
-            if path == LIMITS_OWN and len(parts) >= 4 and parts[0] == "cassandra" and parts[1] == "-":
-                carried[parts[2]] = _typed(parts[3])
-        if not carried:  # not in the role's file (another name, an older role): the values in effect
-            for item in items:
-                soft, hard = effective.get((item, "soft")), effective.get((item, "hard"))
-                if soft and hard and soft[0] < 3 and hard[0] < 3 and soft[1] == hard[1]:
-                    carried[item] = _typed(soft[1])
-                elif soft or hard:
-                    skipped.append(item)
-    changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
-    out = {}
-    if [(k, _norm(v)) for k, v in carried.items()] != [(k, _norm(v)) for k, v in role.items()]:
-        changed = changed or sorted(carried)
-        out["cassandra_linux_limits"] = carried
-        notes.append("cassandra_linux_limits: %s, as these nodes give the cassandra user"
-                     % ", ".join("%s %s" % (k, carried[k]) for k in changed))
-    if skipped:
-        notes.append("NOT carried: the cassandra user's %s (soft and hard differ; the role sets both to one value)"
-                     % ", ".join(skipped))
-    return lines, out, notes
+    return carried
 
 
 def _unit_limits(recs, wanted):
