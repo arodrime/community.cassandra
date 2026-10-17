@@ -135,40 +135,24 @@ def mine(addresses):
     return set(status_address(a) for a in addresses or [] if a and not _loopback(status_address(a)))
 
 
-def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_data=False):
-    """What the rings other nodes of the cluster see say of this node.
-    answers: [{'host', 'addresses', 'status'}] (status: cassandra_status
-    cluster_status, None when it did not answer); only the answer of a node
-    that sees itself up and normal (UN) counts. Returns {'usable': [(host,
-    nodes)], 'tried': [hosts], 'entries': [(host, node)]: this node, by one
-    of its addresses or host IDs; 'replaced': [(host, node)]: replace_address
-    down, the node being replaced; 'replaced_up'; 'unknown_down': [(host,
-    node)]: a down node no host of the inventory has (known), when this node
-    holds data (maybe this one under an old address)}."""
-    me = mine(addresses)
-    own = set(i for i in ids or [] if i)
-    replace = status_address(replace_address)
-    out = {"usable": [], "tried": [str(a.get("host")) for a in answers or [] if a.get("asked", True)], "entries": [],
-           "replaced": [], "replaced_up": [], "unknown_down": []}
-    for a in answers or []:
+def _usable(answers):
+    """The answers (ring_view's) -> [(host, nodes)] of the nodes that see themselves up and normal (UN): the
+    rings that count."""
+    usable = []
+    for a in answers:
         nodes = status_nodes(a.get("status"))
         own_addr = set(status_address(x) for x in a.get("addresses") or [])
         if any(status_address(n.get("address")) in own_addr and n.get("status") == "U" and n.get("state") == "N" for n in nodes):
-            out["usable"].append((a.get("host"), nodes))
-    # for a node holding data, a node alone in its ring (a host of the group not added yet, the package's own
-    # instance) does not stand for the cluster while other nodes of the group did not answer (asked, or stopped:
-    # asked False): their ring is unknown. A node without data needs no proof of that (nothing to lose): a one-node
-    # cluster adding its second node, a stock instance on 127.0.0.1 elsewhere in the group (never usable), do not
-    # stop it. Several nodes each alone (a one-node cluster and a stray instance at a real address): unknown for any.
-    silent = [a for a in answers or [] if not a.get("status")
-              or (len(status_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, dummy in out["usable"]])]
-    out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
-    alone = [h for h, nodes in out["usable"] if len(nodes) <= 1]
-    if (_true(has_data) and silent) or (len(alone) > 1 and len(alone) == len(out["usable"])):
-        # several nodes each alone in its ring (a one-node cluster and a stray instance): which is the cluster?
-        out["lone"] = alone
-        out["usable"] = [(h, nodes) for h, nodes in out["usable"] if len(nodes) > 1]
-    for other, nodes in out["usable"]:
+            usable.append((a.get("host"), nodes))
+    return usable
+
+
+def _placed(usable, me, own, replace, known, has_data):
+    """The rings that count, this node's addresses and host IDs, replace_node's dead node, the group's addresses
+    -> {entries, replaced, replaced_up, unknown_down}: where this node (or the node it replaces) shows in them,
+    and the down nodes no host of the inventory has (when this node holds data)."""
+    out = {"entries": [], "replaced": [], "replaced_up": [], "unknown_down": []}
+    for other, nodes in usable:
         for n in nodes:
             address = status_address(n.get("address"))
             if address not in me and n.get("host_id") not in own:
@@ -182,6 +166,37 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
                 out["replaced_up"].append((other, n))
             else:
                 out["entries"].append((other, n))
+    return out
+
+
+def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_data=False):
+    """What the rings other nodes of the cluster see say of this node.
+    answers: [{'host', 'addresses', 'status'}] (status: cassandra_status
+    cluster_status, None when it did not answer); only the answer of a node
+    that sees itself up and normal (UN) counts. Returns {'usable': [(host,
+    nodes)], 'tried': [hosts], 'entries': [(host, node)]: this node, by one
+    of its addresses or host IDs; 'replaced': [(host, node)]: replace_address
+    down, the node being replaced; 'replaced_up'; 'unknown_down': [(host,
+    node)]: a down node no host of the inventory has (known), when this node
+    holds data (maybe this one under an old address)}."""
+    answers = answers or []
+    out = {"usable": _usable(answers), "tried": [str(a.get("host")) for a in answers if a.get("asked", True)],
+           "entries": [], "replaced": [], "replaced_up": [], "unknown_down": []}
+    # for a node holding data, a node alone in its ring (a host of the group not added yet, the package's own
+    # instance) does not stand for the cluster while other nodes of the group did not answer (asked, or stopped:
+    # asked False): their ring is unknown. A node without data needs no proof of that (nothing to lose): a one-node
+    # cluster adding its second node, a stock instance on 127.0.0.1 elsewhere in the group (never usable), do not
+    # stop it. Several nodes each alone (a one-node cluster and a stray instance at a real address): unknown for any.
+    silent = [a for a in answers if not a.get("status")
+              or (len(status_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, dummy in out["usable"]])]
+    out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
+    alone = [h for h, nodes in out["usable"] if len(nodes) <= 1]
+    if (_true(has_data) and silent) or (len(alone) > 1 and len(alone) == len(out["usable"])):
+        # several nodes each alone in its ring (a one-node cluster and a stray instance): which is the cluster?
+        out["lone"] = alone
+        out["usable"] = [(h, nodes) for h, nodes in out["usable"] if len(nodes) > 1]
+    out.update(_placed(out["usable"], mine(addresses), set(i for i in ids or [] if i), status_address(replace_address),
+                       known, has_data))
     return out
 
 
