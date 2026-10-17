@@ -61,7 +61,9 @@ def _d(value):
 
 def cassandra_import_host_vars(hostvars, hosts):
     """hostvars, host names -> {host: {variable: value}} with KEYS only, each host's
-    variables worked out once; a name that is not a host is left out."""
+    variables worked out once; a name that is not a host is left out.
+    e.g. (hostvars, ["db1", "nohost"]) -> {"db1": {"ansible_host": "10.0.0.1", "import_cluster_version": "4.1.5",
+    ...}}."""
     out = {}
     for h in hosts:
         if h in out or h not in hostvars:
@@ -384,7 +386,10 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     the import; java_default: {series: the Java the roles default to};
     host_names: hostname, fqdn or ip; set_ansible_host, keep_hand_edits: the
     import_cluster_ options (keep_hand_edits: a bool, or the config
-    files to keep) -> [node] for cassandra_inventory_layout."""
+    files to keep) -> [node] for cassandra_inventory_layout.
+    e.g. -> [{"name": "db1", "address": "10.0.0.1", "dc": "dc1", "rack": "r1", "read": True, "reason": ...,
+    "vars": {"cassandra_version": "41x", ...}, "keep": {"cassandra_firewall_manage": False, ...}, "notes": [...],
+    ...}]."""
     ordered = list(given) + list(found or [])
     keep_files = keep_files_option(keep_hand_edits)
     out = []
