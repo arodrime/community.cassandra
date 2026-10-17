@@ -177,6 +177,111 @@ def _true(value):
     return str(value).strip().lower() in ("true", "yes", "1")
 
 
+def _ring_members(ring, nodes):
+    """cluster_status, the group's nodes -> {dc: [(name or address, rack, entry)]}: the ring, its nodes named by
+    the inventory; the inventory's nodes (no entry) without a ring."""
+    by_address = dict((n.get("address"), n["name"]) for n in nodes)
+    members = {}
+    for dc, info in ring.items():
+        for entry in (info or {}).get("nodes") or []:
+            members.setdefault(dc, []).append((by_address.get(entry.get("address"), entry.get("address")),
+                                               entry.get("rack"), entry))
+    if not ring:
+        for n in nodes:
+            members.setdefault(n["dc"], []).append((n["name"], n["rack"], {}))
+    return members
+
+
+def _load_said(seen, ring, peer):
+    """A node's ring entries, the ring, the node it is seen from -> (the lines of its load and share, its load in
+    short for the step: "load 1.2 GiB, owns 33.3% ", '' when unknown)."""
+    if seen and seen[0]:
+        owns = seen[0].get("owns") or "?"
+        return (["load %s, %s" % (seen[0].get("load") or "?",
+                                  ("owns " + owns) if owns != "?" else "share unknown (the keyspaces replicate differently)")],
+                "load %s%s " % (seen[0].get("load") or "?", (", owns " + owns) if owns != "?" else ""))
+    if ring:
+        return ["not in the ring as %s sees it" % (peer or "the node that stays")], ""
+    return [], ""
+
+
+def _data_goes(name, dc, rack, gone, members, keyspaces, simple):
+    """A node to remove, its dc and rack, the nodes removed before it, the ring per dc, cassandra_keyspaces, the
+    SimpleStrategy keyspaces -> (the nodes its data goes to, whether by rack: one replica per rack, the line
+    that says where it goes, whether a SimpleStrategy keyspace sends it to any node)."""
+    receivers = [(m, r) for m, r, e in members.get(dc, []) if m != name and m not in gone]
+    racks = sorted(set(r for m, r in receivers) | set([rack]))
+    rfs = set(v["rf"][dc] for v in keyspaces.values() if dc in v.get("rf", {}))
+    same_rack = [m for m, r in receivers if r == rack]
+    by_rack = len(racks) > 1 and rfs == set([len(racks)]) and bool(same_rack)
+    if by_rack:
+        names = same_rack
+        where = "data goes to the other nodes of %s (%d racks in %s, its replication factor): %s" % (
+            rack, len(racks), dc, ", ".join(names))
+    else:
+        names = [m for m, r in receivers]
+        where = "data goes to the other nodes of %s: %s" % (dc, ", ".join(names) or "none")
+    # SimpleStrategy ignores racks and datacenters
+    any_node = bool(simple) and (by_rack or len(members) > 1)
+    if any_node:
+        where += "; SimpleStrategy keyspaces (%s): any node of the cluster" % ", ".join(simple)
+    return names, by_rack, where, any_node
+
+
+def _leaving_block(index, item, order, by_name, members, ring, keyspaces, simple, peer):
+    """The index-th node to remove ({name, state}), the run's order, the nodes by name, the ring per dc, the ring,
+    cassandra_keyspaces, the SimpleStrategy keyspaces, the node that stays -> its block {title, lines, step}."""
+    name, state = item["name"], item.get("state") or "normal"
+    node = by_name.get(name, {"dc": "?", "rack": "?", "address": "?"})
+    dc, rack = node.get("dc"), node.get("rack")
+    title = cassandra_screen_title(name, {"address": node.get("address"), "cassandra_dc": dc, "cassandra_rack": rack})
+    lines = ["a seed until now: the other nodes' seed lists drop it first (cassandra_seeds, live)"
+             if node.get("seed") else "not a seed"]
+    # the same, on one line (the plan of topology)
+    step = {"node": name, "dc": dc, "rack": rack, "text": ""}
+    if state == "decommissioned":
+        lines.append("already out of the ring (an earlier run): Cassandra only stopped and disabled on it")
+        step["text"] = "already out of the ring (an earlier run): Cassandra stopped and disabled only"
+        return {"title": title, "lines": lines, "step": step}
+    short = []
+    if state == "leaving":
+        lines.append("still leaving (a decommission an earlier run started): waited for")
+        short.append("still leaving (an earlier run): waited for")
+    load_lines, load = _load_said([e for m, r, e in members.get(dc, []) if m == name], ring, peer)
+    lines += load_lines
+    names, by_rack, where, any_node = _data_goes(name, dc, rack, order[:index], members, keyspaces, simple)
+    lines.append(where)
+    receivers_text = out.nodes(names) or "none (no node left in %s)" % dc
+    short.append("%s-> %s%s" % (load, receivers_text, (" (the other nodes of %s)" % rack) if by_rack else ""))
+    if any_node:
+        short.append("SimpleStrategy keyspaces: any node")
+    passed_on = [m for m in names if m in order[index + 1:]]
+    if passed_on:
+        lines.append("%s %s removed later and hand%s this data on again" % (
+            ", ".join(passed_on), "is" if len(passed_on) == 1 else "are", "s" if len(passed_on) == 1 else ""))
+        short.append("%s removed later" % out.nodes(passed_on))
+    step["text"] = "; ".join(short)
+    # a decommission an earlier run started is only followed
+    run = ("followed on %s" if state == "leaving" else "runs on %s (nodetool decommission)") % name
+    lines.append("%s, the ring checked from %s before and after" % (run, peer or "another node"))
+    lines.append("end state: out of the ring, Cassandra stopped and disabled, its data left on disk")
+    return {"title": title, "lines": lines, "step": step}
+
+
+def _decommission_after(order, by_name, members):
+    """The nodes to remove, the nodes by name, the ring per dc -> what each datacenter keeps, then what is left
+    to do by hand."""
+    after = []
+    for dc in sorted(set(by_name[n]["dc"] for n in order if n in by_name)):
+        left = [m for m, r, e in members.get(dc, []) if m not in order]
+        after.append("Afterwards %s keeps %d node%s: %s." % (dc, len(left), "" if len(left) == 1 else "s", ", ".join(left))
+                     if left else "Afterwards %s has no node left." % dc)
+    after.append("Then empty %s (reset_node) before reusing the host%s, and re-import the cluster to drop %s from"
+                 " the inventory: the commands are printed at the end."
+                 % (", ".join(order), "" if len(order) == 1 else "s", "it" if len(order) == 1 else "them"))
+    return after
+
+
 def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, peer="", replication_problems=None):
     """leaving: [{name, state (normal, leaving, decommissioned)}] in the order
     of the run; nodes: [{name, address, dc, rack, seed}] for every node of the
@@ -187,82 +292,12 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
     ring = ring or {}
     keyspaces = keyspaces or {}
     by_name = dict((n["name"], n) for n in nodes)
-    by_address = dict((n.get("address"), n["name"]) for n in nodes)
     order = [n["name"] for n in leaving]
-
     # the ring per dc: [(name or address, rack, entry)]; the inventory without one
-    members = {}
-    for dc, info in ring.items():
-        for entry in (info or {}).get("nodes") or []:
-            members.setdefault(dc, []).append((by_address.get(entry.get("address"), entry.get("address")),
-                                               entry.get("rack"), entry))
-    if not ring:
-        for n in nodes:
-            members.setdefault(n["dc"], []).append((n["name"], n["rack"], {}))
+    members = _ring_members(ring, nodes)
     simple = sorted(k for k, v in keyspaces.items() if "*" in v.get("rf", {}) and v["rf"]["*"] > 0)
-
-    blocks = []
-    for index, item in enumerate(leaving):
-        name, state = item["name"], item.get("state") or "normal"
-        node = by_name.get(name, {"dc": "?", "rack": "?", "address": "?"})
-        dc, rack = node.get("dc"), node.get("rack")
-        title = cassandra_screen_title(name, {"address": node.get("address"), "cassandra_dc": dc, "cassandra_rack": rack})
-        lines = ["a seed until now: the other nodes' seed lists drop it first (cassandra_seeds, live)"
-                 if node.get("seed") else "not a seed"]
-        # the same, on one line (the plan of topology)
-        step = {"node": name, "dc": dc, "rack": rack, "text": ""}
-        if state == "decommissioned":
-            lines.append("already out of the ring (an earlier run): Cassandra only stopped and disabled on it")
-            step["text"] = "already out of the ring (an earlier run): Cassandra stopped and disabled only"
-            blocks.append({"title": title, "lines": lines, "step": step})
-            continue
-        short = []
-        if state == "leaving":
-            lines.append("still leaving (a decommission an earlier run started): waited for")
-            short.append("still leaving (an earlier run): waited for")
-        seen = [e for m, r, e in members.get(dc, []) if m == name]
-        load = ""
-        if seen and seen[0]:
-            owns = seen[0].get("owns") or "?"
-            lines.append("load %s, %s" % (seen[0].get("load") or "?",
-                                          ("owns " + owns) if owns != "?" else "share unknown (the keyspaces replicate differently)"))
-            load = "load %s%s " % (seen[0].get("load") or "?", (", owns " + owns) if owns != "?" else "")
-        elif ring:
-            lines.append("not in the ring as %s sees it" % (peer or "the node that stays"))
-        gone = order[:index]
-        later = order[index + 1:]
-        receivers = [(m, r) for m, r, e in members.get(dc, []) if m != name and m not in gone]
-        racks = sorted(set(r for m, r in receivers) | set([rack]))
-        rfs = set(v["rf"][dc] for v in keyspaces.values() if dc in v.get("rf", {}))
-        same_rack = [m for m, r in receivers if r == rack]
-
-        by_rack = len(racks) > 1 and rfs == set([len(racks)]) and bool(same_rack)
-        if by_rack:
-            names = same_rack
-            where = "data goes to the other nodes of %s (%d racks in %s, its replication factor): %s" % (
-                rack, len(racks), dc, ", ".join(names))
-        else:
-            names = [m for m, r in receivers]
-            where = "data goes to the other nodes of %s: %s" % (dc, ", ".join(names) or "none")
-        # SimpleStrategy ignores racks and datacenters
-        if simple and (by_rack or len(members) > 1):
-            where += "; SimpleStrategy keyspaces (%s): any node of the cluster" % ", ".join(simple)
-        lines.append(where)
-        receivers_text = out.nodes(names) or "none (no node left in %s)" % dc
-        short.append("%s-> %s%s" % (load, receivers_text, (" (the other nodes of %s)" % rack) if by_rack else ""))
-        if simple and (by_rack or len(members) > 1):
-            short.append("SimpleStrategy keyspaces: any node")
-        passed_on = [m for m in names if m in later]
-        if passed_on:
-            lines.append("%s %s removed later and hand%s this data on again" % (
-                ", ".join(passed_on), "is" if len(passed_on) == 1 else "are", "s" if len(passed_on) == 1 else ""))
-            short.append("%s removed later" % out.nodes(passed_on))
-        step["text"] = "; ".join(short)
-        # a decommission an earlier run started is only followed
-        run = ("followed on %s" if state == "leaving" else "runs on %s (nodetool decommission)") % name
-        lines.append("%s, the ring checked from %s before and after" % (run, peer or "another node"))
-        lines.append("end state: out of the ring, Cassandra stopped and disabled, its data left on disk")
-        blocks.append({"title": title, "lines": lines, "step": step})
+    blocks = [_leaving_block(index, item, order, by_name, members, ring, keyspaces, simple, peer)
+              for index, item in enumerate(leaving)]
 
     if len(order) == 1:
         intro = "One node to remove: %s. It streams its data to the nodes that stay (hours on a big node), then" \
@@ -272,23 +307,14 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
                 " nodes that stay (hours on a big node), then Cassandra is stopped and disabled on it." % (
                     len(order), order[0], ", then ".join(order[1:]))
 
-    after = []
-    for dc in sorted(set(by_name[n]["dc"] for n in order if n in by_name)):
-        left = [m for m, r, e in members.get(dc, []) if m not in order]
-        after.append("Afterwards %s keeps %d node%s: %s." % (dc, len(left), "" if len(left) == 1 else "s", ", ".join(left))
-                     if left else "Afterwards %s has no node left." % dc)
-    after.append("Then empty %s (reset_node) before reusing the host%s, and re-import the cluster to drop %s from"
-                 " the inventory: the commands are printed at the end."
-                 % (", ".join(order), "" if len(order) == 1 else "s", "it" if len(order) == 1 else "them"))
-
     warnings = []
     if replication_problems:
         warnings.append({"label": "replication",
                          "text": ["cassandra_decommission_force is true: the removal goes on although too few nodes are"
                                   " left for some keyspaces; those replicas are lost and QUORUM can fail:"]
                          + list(replication_problems)})
-    return {"operation": "decommission_node", "summary": "remove %s" % ", ".join(order), "intro": [intro], "blocks": blocks, "after": after,
-            "warnings": warnings}
+    return {"operation": "decommission_node", "summary": "remove %s" % ", ".join(order), "intro": [intro], "blocks": blocks,
+            "after": _decommission_after(order, by_name, members), "warnings": warnings}
 
 
 class FilterModule(object):
