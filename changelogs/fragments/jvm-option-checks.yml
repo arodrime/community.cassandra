@@ -10,7 +10,7 @@ minor_changes:
   - >-
     import_cluster - the report's TO DO has a WARNING for an imported JVM option worth a look (as preflight), the option imported as it is.
   - >-
-    cassandra_jvm_option_checks, cassandra_jvm_options_file, cassandra_jvm_options_variable filters - the JVM options checks (a table in module_utils ``cassandra_jvm_options``), the options file a Java reads.
+    cassandra_jvm_option_checks, cassandra_jvm_options_file, cassandra_jvm_options_variable filters - the JVM options checks (a table in plugin_utils ``cassandra_jvm_options``), the options file a Java reads.
 bugfixes:
   - >-
     import_cluster - an option the role's template writes already (``-Xss256k``), found at another place in the file, is no longer imported again as an extra option, and the file is not listed as a hand edit (the role leaves it as it is).

@@ -17,7 +17,7 @@ __metaclass__ = type
 import ipaddress
 import re
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import _JMX_CAUSES
 
 

@@ -3,7 +3,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings, cassandra_screen)
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
 
 SPEC = {
     "operation": "stop_rack", "cluster": "Orders", "version": "4.1.5", "summary": "stop dc1 / rack2",

@@ -122,7 +122,7 @@ from ansible.plugins.callback.default import CallbackModule as DefaultCallback
 from ansible import constants as C
 from ansible.utils.color import parsecolor, stringc
 
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, FLOW, PARAGRAPH, is_command, laid_out)
 
 MARKER = "cassandra_output"

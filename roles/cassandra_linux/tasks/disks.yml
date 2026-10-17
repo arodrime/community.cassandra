@@ -4,7 +4,7 @@
 # or the ones set in cassandra_data_block_devices (and the devices under
 # them). Read-ahead is used at the top, the device the filesystem is mounted
 # from; the devices under it are tuned too, whatever else they hold
-# (module_utils/cassandra_disks.py says why). The lookups only read, so they
+# (plugin_utils/cassandra_disks.py says why). The lookups only read, so they
 # also run in check mode.
 - name: Find the devices to tune
   ansible.builtin.import_tasks: disks_find.yml

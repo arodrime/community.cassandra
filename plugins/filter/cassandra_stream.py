@@ -13,9 +13,9 @@ __metaclass__ = type
 
 import re
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import address_part, same_address
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     clock as _clock, count as _count, rate as _rate, size as _size)
 
 _GIB = out.GIB

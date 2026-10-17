@@ -12,7 +12,7 @@ cassandra_help: model (lookup community.cassandra.cassandra_inventory) ->
     command for this inventory, its options and an example, and advice; with
     topic, the detail of one operation; markdown true: the same as RUNBOOK.md;
     flow true: its lines for the ops callback, which lays them out at the
-    terminal's width and colours them (module_utils cassandra_output.flow).
+    terminal's width and colours them (plugin_utils cassandra_output.flow).
 cassandra_help_runbook: model -> where RUNBOOK.md goes (the inventory's dir, or runbook_dir).
 """
 
@@ -31,7 +31,7 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import WIDTH
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
     path_from as _path, seed_layout)
 

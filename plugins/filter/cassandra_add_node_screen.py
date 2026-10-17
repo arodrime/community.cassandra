@@ -9,7 +9,7 @@ __metaclass__ = type
 from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen_title
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 _UNCHECKED = "the directories above could not all be checked: fix that (root, the live cassandra.yaml)"
 _SEED = ("in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed once it is up"

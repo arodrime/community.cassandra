@@ -20,7 +20,7 @@ import re
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import cassandra_disk_tuned_conflict
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disks import plan
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_disks import plan
 
 # Read in this order by sysctl --system (and systemd-sysctl): a file name
 # found in several dirs is read from the first one, all of them sorted by file

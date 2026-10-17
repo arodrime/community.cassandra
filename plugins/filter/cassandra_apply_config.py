@@ -33,7 +33,7 @@ from collections import OrderedDict
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import _stat
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # the order of the files in the view (the role's own); any other after them
 FILES = ("cassandra.yaml", "cassandra-env.sh", "jvm-server.options", "jvm8-server.options", "jvm11-server.options",

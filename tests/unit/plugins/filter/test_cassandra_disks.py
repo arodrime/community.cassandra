@@ -29,7 +29,7 @@ UDEV = {"results": [
     {"item": "md0", "stdout_lines": ["MD_UUID=3a1bc2d3:e4f50617:28394a5b:6c7d8e9f"]},
 ]}
 DM_FLAGS = ', ENV{DM_UDEV_DISABLE_OTHER_RULES_FLAG}!="1", ENV{DM_SUSPENDED}!="1"'
-FIXTURES = os.path.join(os.path.dirname(__file__), "..", "module_utils", "fixtures", "disks")
+FIXTURES = os.path.join(os.path.dirname(__file__), "..", "plugin_utils", "fixtures", "disks")
 HEAD = 'ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", '
 
 

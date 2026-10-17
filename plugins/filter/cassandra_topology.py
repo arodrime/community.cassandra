@@ -18,7 +18,7 @@ import re
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_add_node_plan
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 
 def _ring_entries(ring):

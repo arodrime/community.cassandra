@@ -25,8 +25,8 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_yaml_properties as known
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_yaml_properties as known
 
 NULLS = ("", "~", "null", "Null", "NULL")
 BOOLS = {"true": "true", "yes": "true", "on": "true", "false": "false", "no": "false", "off": "false"}

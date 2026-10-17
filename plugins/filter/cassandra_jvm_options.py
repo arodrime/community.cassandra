@@ -17,7 +17,7 @@ import functools
 import os
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_supported
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 
 TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "templates")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}

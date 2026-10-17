@@ -16,7 +16,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -467,7 +467,7 @@ def test_reset_screen():
 
 def test_every_confirmation_goes_through_the_screen():
     # no playbook builds its own prompt without its plan: through screen.yml, or (the plan layout of
-    # module_utils cassandra_output, OUTPUT Q5) confirm.yml right after the task that prints the plan
+    # plugin_utils cassandra_output, OUTPUT Q5) confirm.yml right after the task that prints the plan
     for name in os.listdir(os.path.join(TOP, "playbooks")):
         with open(os.path.join(TOP, "playbooks", name), encoding="utf-8") as f:
             plays = yaml.safe_load(f)

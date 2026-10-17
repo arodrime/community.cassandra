@@ -4,7 +4,7 @@ Operator output
 ===============
 
 What the playbooks print, and how a playbook prints it. The text comes from
-``plugins/module_utils/cassandra_output.py`` (filters in ``plugins/filter/cassandra_output.py``): every block is
+``plugins/plugin_utils/cassandra_output.py`` (filters in ``plugins/filter/cassandra_output.py``): every block is
 written once there, a playbook only fills it.
 
 Conventions
@@ -43,7 +43,7 @@ Conventions
   ``progress_color``), e.g. ``Checking the cluster (3 nodes; adding node4, node5)...`` (the members: not the nodes
   being added or reset, nor those marked absent), ``Preparing the new nodes (node5, node6)...``, ``Starting node5 and waiting for its
   bootstrap...``, ``Decommissioning node3...``, ``Waiting for every node to be UN...``, ``Restarting node2...``. Their
-  words are in one place (``PHASES`` in ``plugins/module_utils/cassandra_output.py``, filter
+  words are in one place (``PHASES`` in ``plugins/plugin_utils/cassandra_output.py``, filter
   ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only.
 - **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
   per step, the nodes with the same outcome together, in the progress colour::
@@ -293,12 +293,12 @@ touches it.
 
 Inside a plan, a screen or a recap, an empty line ``""`` between two blocks is printed as a light rule; the
 paragraphs of one block (the intro's sentences, each fact, each warning, the items of a TO DO that span several
-lines) are separated by ``PARAGRAPH`` (``plugins/module_utils/cassandra_output.py``, a line with only a space),
+lines) are separated by ``PARAGRAPH`` (``plugins/plugin_utils/cassandra_output.py``, a line with only a space),
 printed as a blank line. Under the default callback (``callback_result_format = yaml``) both show as blank lines in
 a text message.
 
 The help playbook's message also sets ``cassandra_output_help: true``: its lines (``flow`` in
-``plugins/module_utils/cassandra_output.py``) are laid out at the terminal's width (100 columns at most), its
+``plugins/plugin_utils/cassandra_output.py``) are laid out at the terminal's width (100 columns at most), its
 sections drawn as rules, each operation's name in the ok colour, its commands and their options in the progress
 colour (coloured on the screen only, plain in a ``log_path`` file). Other callbacks enabled next to it (``tree``,
 ``junit``...) record that message with its layout marks.

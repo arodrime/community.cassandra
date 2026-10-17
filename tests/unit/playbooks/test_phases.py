@@ -4,7 +4,7 @@ __metaclass__ = type
 # Phase lines: one per major phase of add_node, decommission_node, topology,
 # reset_node, apply_config, rolling_restart, cleanup and import_cluster,
 # marked for the ops callback (plain, its phase colour by the "..." end),
-# their words in one place (module_utils cassandra_output PHASES).
+# their words in one place (plugin_utils cassandra_output PHASES).
 
 import os
 import warnings
@@ -17,7 +17,7 @@ from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.callback.ops import colour
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template

@@ -29,7 +29,7 @@ with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()  # the collection's filters (cassandra_node_standing), under plain pytest too
 
-from ansible_collections.community.cassandra.tests.unit.plugins.module_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
 

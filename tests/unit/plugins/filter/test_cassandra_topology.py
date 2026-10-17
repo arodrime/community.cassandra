@@ -5,7 +5,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
     cassandra_seed_change, cassandra_topology_plan, cassandra_topology_screen, cassandra_topology_steps)
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
 
 
 def screen(plan, hosts, **kwargs):

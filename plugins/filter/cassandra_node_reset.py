@@ -29,7 +29,7 @@ from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter import cassandra_node_standing as standing
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command as _command
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output
 
 # cassandra.yaml keys of the directories a reset empties, their kind, and the
 # directory under the package's storage dir (/var/lib/cassandra) a missing key

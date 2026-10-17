@@ -58,8 +58,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_permission
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines, xml_settings, yaml_settings,
     yaml_rejected)
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as _out
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}

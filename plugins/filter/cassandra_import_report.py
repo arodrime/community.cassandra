@@ -29,7 +29,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nod
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
     LINES as SUSPICIOUS_LINES, how_to_keep, suspicious)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # shown in the header, or the ring's (dc and rack): not among the settings
 _NOT_SETTINGS = ("cassandra_cluster_name", "cassandra_dc", "cassandra_rack")

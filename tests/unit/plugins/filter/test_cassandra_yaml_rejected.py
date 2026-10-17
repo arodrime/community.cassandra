@@ -11,7 +11,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     cassandra_yaml_rejected, yaml_rejected)
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_yaml_properties as known
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_yaml_properties as known
 
 VARS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "vars", "main.yml")
 

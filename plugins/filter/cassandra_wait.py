@@ -7,7 +7,7 @@ ending with the last progress line."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 _GENERIC = "check nodetool netstats and system.log on the nodes."
 

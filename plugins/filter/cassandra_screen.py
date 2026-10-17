@@ -37,7 +37,7 @@ import textwrap
 
 from collections.abc import Mapping
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 WIDTH = 100
 

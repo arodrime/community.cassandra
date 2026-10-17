@@ -35,8 +35,8 @@ import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     JVM_LISTS, JVM_UNLOCK, shell_words)
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
 ENV = "cassandra-env.sh"
