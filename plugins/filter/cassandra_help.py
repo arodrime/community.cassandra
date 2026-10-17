@@ -515,6 +515,18 @@ def _name(arg):
 
 
 def _advice(model, cluster, playbooks, cwd, known, markdown=False):
+    """What help advises for this cluster, by subject: [text, or (text, command)]."""
+    return (_absent_advice(model, cluster, playbooks, cwd, markdown)
+            + _auth_advice(model, cluster, playbooks)
+            + _unresolved_advice(cluster)
+            + _misspelled_advice(cluster, known)
+            + _seed_advice(cluster)
+            + _rack_advice(cluster)
+            + _mixed_advice(cluster))
+
+
+def _absent_advice(model, cluster, playbooks, cwd, markdown):
+    """The nodes marked absent: the command that removes them, a seed among them."""
     out = []
     absent = [h for h in cluster.hosts if h["absent"]]
     if absent:
@@ -531,7 +543,12 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
         if seeds:
             out.append("Seed and marked absent: %s. Take it out of cassandra_seeds in the inventory: topology"
                        " then drops it from the seed lists before it leaves." % ", ".join(seeds))
+    return out
 
+
+def _auth_advice(model, cluster, playbooks):
+    """Authentication on without the CQL login the operations that read the replication need."""
+    out = []
     auth = cluster.values("cassandra_authenticator", cluster.defaults["cassandra_authenticator"])
     if any("PasswordAuthenticator" in str(a) for a in auth) and not any(
             h["vars"].get("cassandra_cql_username") for h in cluster.hosts):
@@ -545,7 +562,12 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
                       ", ".join(needs),
                       "; without them, %s plan as if every keyspace had replicas everywhere" % " and ".join(plans)
                       if plans else ""))
+    return out
 
+
+def _unresolved_advice(cluster):
+    """The variables the inventory alone could not give (what is shown for them may be wrong)."""
+    out = []
     unresolved = {}
     for host in cluster.hosts:
         for key in UNRESOLVED_CHECKED:
@@ -555,7 +577,12 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
         out.append("%s could not be read from the inventory alone (a vaulted value, a fact of the node, a lookup;"
                    " %s): what is shown above for it, and the commands filled from it, may be wrong."
                    % (key, ", ".join(hosts) if len(hosts) < len(cluster.hosts) else "every node"))
+    return out
 
+
+def _misspelled_advice(cluster, known):
+    """A variable no role or playbook reads, close to one they read (a typo)."""
+    out = []
     names = set()
     for host in cluster.hosts:
         names.update(host["names"])
@@ -565,7 +592,12 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
             users = [h["name"] for h in cluster.hosts if name in h["names"]]
             out.append("%s is set (%s) but no role or playbook reads it: did you mean %s?"
                        % (name, ", ".join(users) if len(users) < len(cluster.hosts) else "every node", match[0]))
+    return out
 
+
+def _seed_advice(cluster):
+    """The seeds: none, not nodes of the inventory, against the seed rule."""
+    out = []
     inventory_names = set()
     for host in cluster.hosts:
         inventory_names.update([host["name"], host["address"], str(host["vars"].get("ansible_host") or "")])
@@ -584,7 +616,12 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
                        " cassandra_seeds, then change_seeds applies it live." % problem)
         for note in layout["notes"]:
             out.append("%s (more seeds, more gossip; no gain)." % note)
+    return out
 
+
+def _rack_advice(cluster):
+    """Per datacenter: racks against the token allocator's replication factor, racks of different sizes."""
+    out = []
     rf = cluster.rf()
     for dc in sorted(cluster.dcs):
         count = len([r for r, hosts in cluster.dcs[dc].items() if any(not h["absent"] for h in hosts)])
@@ -595,7 +632,12 @@ def _advice(model, cluster, playbooks, cwd, known, markdown=False):
         if len(sizes) > 1 and sizes[0] != sizes[-1]:
             out.append("%s: racks of different sizes (%s nodes): the data is not shared evenly; add or remove"
                        " nodes rack by rack." % (dc, ", ".join(str(s) for s in sizes)))
+    return out
 
+
+def _mixed_advice(cluster):
+    """Series, package versions or Java that differ between the nodes."""
+    out = []
     for key, label in (("cassandra_version", "series"), ("cassandra_package_version", "package versions")):
         found = dict((v, h) for v, h in cluster.values(key).items() if v is not None)
         if len(found) > 1:
