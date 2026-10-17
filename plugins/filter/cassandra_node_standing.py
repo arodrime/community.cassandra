@@ -274,7 +274,10 @@ def cassandra_node_data_dirs(inventory, live_yaml=None, usual=None):
     the live file's), 'elsewhere': the usual ones it does not use,
     'problem': why the live file can't be parsed ('' when it can)}. A reset
     empties the 'own' ones (and the other directories): a node emptied is
-    blank."""
+    blank.
+    e.g. (["/data/cassandra"], a live cassandra.yaml with data_file_directories: [/data2],
+    ["/var/lib/cassandra/data"]) -> {own: ["/data/cassandra", "/data2"], elsewhere: ["/var/lib/cassandra/data"],
+    problem: ""}."""
     own, problem = [], ""
     for d in [inventory] if isinstance(inventory, str) else inventory or []:
         if d and str(d).strip():
@@ -459,7 +462,11 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
     blank; 'holds_data', 'has_system', 'running', 'ring': {'read', 'known',
     'in_ring' (UN, DN, ... or ''), 'entry', 'seen_by', 'from', 'tried',
     'problems': why the ring forbids a reset}, 'users': its user keyspaces,
-    'ours': its data is of this very cluster, ...}."""
+    'ours': its data is of this very cluster, ...}.
+    e.g. ("node4", "my_cluster", answers=[], addresses=["10.0.0.4"]) -> {state: "blank", words: "blank:
+    nothing in its Cassandra directories, Cassandra stopped, not in the ring", reasons: [], blank: True, ...}; a node
+    node1 sees UN under its own host ID -> {state: "member", reasons: ["node1 sees 10.0.0.4 in its ring (UN, host
+    ID b4)"], ...}."""
     name = title or node
     running = _true(running)
     jvm = running if jvm is None else _true(jvm)
@@ -522,7 +529,8 @@ def cassandra_node_add_state(state, choice="auto", address=""):
     A node holding data that is not in the ring is 'new': whether it is
     emptied first is cassandra_add_node_reset_check's. choice:
     cassandra_add_node_reset (cassandra_reset_choice); address: its address,
-    for the replace_node command."""
+    for the replace_node command.
+    e.g. a state "member" -> {state: "joined", refusal: ""}; "blank" -> {state: "new", refusal: ""}."""
     s = state.get("state")
     ring = state.get("ring") or {}
     entry = ring.get("entry") or {}
@@ -675,7 +683,10 @@ def cassandra_add_node_reset_check(state, size=0, explicit=False):
     (keyspaces shop), not in the ring, stopped", why it is refused); former:
     refused only as a former member (reset_node or -e
     cassandra_add_node_reset=true empties it); way: what to do about the
-    first reason it is refused for."""
+    first reason it is refused for.
+    e.g. (a failed_bootstrap state of node4, size=12 GiB) -> {reset: True, problems: [], holds: "holds 12.0
+    GiB of cluster 'my_cluster', not in the ring, stopped", line: "node4: has data (12.0 GiB, cluster 'my_cluster', not
+    in any ring, down) \u2014 will be reset", ...}."""
     if not state.get("holds_data"):
         return {"reset": False, "problems": [], "line": "", "holds": "", "why": "", "former": False, "way": ""}
     ring_probs = list((state.get("ring") or {}).get("problems") or [])
@@ -712,7 +723,10 @@ def cassandra_node_reset_refusal(state, whole_cluster=False):
     answered UN, its own ring has other nodes or does not answer) nor its
     cassandra.yaml (another cluster's) says otherwise: the state is never the
     only guard. whole_cluster: create_cluster wipes every node, it checked
-    the ring itself: the cassandra.yaml only."""
+    the ring itself: the cassandra.yaml only.
+    Input: cassandra_node_standing's result; output: [str]. e.g. a failed_bootstrap state -> []; a member running
+    -> ["Cassandra runs on node4 and its ring has other nodes (10.0.0.1): ...", "node1 sees 10.0.0.4 in its ring (UN,
+    host ID b4): node4 is a member of the cluster, never reset it. ..."]."""
     out = [] if whole_cluster else list((state.get("ring") or {}).get("problems") or [])
     live = state.get("live_cluster")
     if live is not None and live not in (state.get("cluster_name"), STOCK_CLUSTER):
