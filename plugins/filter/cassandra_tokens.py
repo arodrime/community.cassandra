@@ -2,7 +2,7 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Single-token clusters (num_tokens: 1): the tokens create_cluster gives new
 nodes, the plans add_node offers, the moves move_node runs. The math is in
-module_utils/cassandra_tokens.py (conventions there).
+plugin_utils/cassandra_tokens.py (conventions there).
 
 cassandra_token_assign: the initial_token of every node of a new cluster.
 cassandra_token_add_plan: where new nodes go in a running cluster, two ways:
@@ -29,7 +29,7 @@ from functools import wraps
 from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _host_of, _ip
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import size as _size, sizes as _sizes
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_tokens import (
     TokenError, balanced_positions, dc_offset, move_order, ownership, parse_token, partitioner_range,
     plan_balanced, plan_bisect, position, rack_order, token_of, tolerance, transfer)
 

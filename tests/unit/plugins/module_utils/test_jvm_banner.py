@@ -13,7 +13,7 @@ import pytest
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import (
     NodeToolCmd, NodeToolCommandSimple, strip_jvm_banner)
 from ansible_collections.community.cassandra.plugins.module_utils import nodetool_netstats, nodetool_status
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import parse_ring
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_ring import parse_ring
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import parse_nodetool_get
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 from ansible_collections.community.cassandra.plugins.modules.cassandra_netstats import parse_netstats
