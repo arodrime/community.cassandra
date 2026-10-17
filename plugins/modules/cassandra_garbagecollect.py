@@ -137,7 +137,7 @@ def main():
         result['msg'] = "nodetool garbagecollect executed successfully"
     else:
         fail_nodetool(module, result, "garbagecollect", rc, out, err,
-                      ("Check the node's system.log (disk space, nodetool compactionstats), then run it again"))
+                      "Check the node's system.log (disk space, nodetool compactionstats), then run it again")
     module.exit_json(**result)
 
 
