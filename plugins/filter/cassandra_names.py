@@ -61,7 +61,9 @@ def cassandra_close_names(names, known, cutoff=0.9):
     """names: the variables set; known: the playbooks' own. Returns {name:
     the known name it is close to} for the names that are neither known nor
     a variable of the collection's roles (cassandra_rpc_address is not a
-    misspelt cassandra_replace_address)."""
+    misspelt cassandra_replace_address).
+    Example: ["cassandra_heap_sise"], [] ->
+    {"cassandra_heap_sise": "cassandra_heap_size"}."""
     close = {}
     ours = _role_variables()
     for name in names or []:
@@ -107,7 +109,9 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
 
 
 def cassandra_renamed_names(names):
-    """names: the variables set. Returns {name: its name now} for those set under a former name."""
+    """names: the variables set. Returns {name: its name now} for those set under a former name.
+    Example:
+    ["cassandra_new_nodes"] -> {"cassandra_new_nodes": "cassandra_target_nodes"}."""
     return dict((name, RENAMED[name]) for name in names or [] if name in RENAMED)
 
 
@@ -126,7 +130,9 @@ def cassandra_unknown_extra_vars(names, known, allow=False):
     """names: the -e variables; known: the playbooks' own options; allow: cassandra_allow_unknown_variables.
     Returns {name: the documented variable it is close to, or ""} for those under a prefix of the collection that
     no role or playbook knows (cassandra_unknown_names), the allowed ones left out. The former names are left to
-    cassandra_renamed_names, the other prefixes to their owners."""
+    cassandra_renamed_names, the other prefixes to their owners.
+    Example: ["cassandra_heap_sise"], [] ->
+    {"cassandra_heap_sise": "cassandra_heap_size"}."""
     allowed = _allowed(allow)
     if allowed is True:
         return {}

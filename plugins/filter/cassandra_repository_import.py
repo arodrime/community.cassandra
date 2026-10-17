@@ -141,7 +141,7 @@ def _apt(files, stats, series, shipped, packages, debian_packages):
 
 def cassandra_repository_import(files, stats, series, os_family, shipped, packages=None, from_file=False,
                                 debian_packages=None):
-    """See the module."""
+    """See the module. -> {vars, notes} of cassandra_repository (the module's docstring says what is read)."""
     files = dict(files or {})
     if not files:
         return {"manage": True, "vars": {}, "why": ""}
