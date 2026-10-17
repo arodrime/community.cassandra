@@ -77,7 +77,8 @@ _KINDS = {"none": (0, THEN["none"][0], THEN["none"][0], True),
 
 def _kind(key):
     """What apply_config does after writing key on a running node: none (an owner or mode), os (cassandra_linux's,
-    live), restart (a config file), jmx (the JMX users: a restart unless only passwords change), keystore (a config file naming a keystore), seeds (change_seeds' live reload),
+    live), restart (a config file), jmx (the JMX users: a restart unless only passwords change), keystore (a config
+    file naming a keystore), seeds (change_seeds' live reload),
     login (the playbooks' own), move (where its data is), unknown (not its own)."""
     if key in PERMS:
         return "none"
@@ -463,7 +464,7 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                     carries.append("no variable (a line taken out)")
                 text = "%s:  %s" % (where or "note", "   ".join(["- " + r for r in removed] + ["+ " + a for a in added]))
                 lines += fill_text("%s   %s %s" % (text, ARROW_RIGHT, "; ".join(carries) or "no effect (a comment)"),
-                               width, "      ", "    ")
+                                   width, "      ", "    ")
         alone = "host_vars/%s/" % nodes[0] if len(nodes) == 1 else \
             "host_vars of %s (%s)" % (out.plural(len(nodes), "node"), out.full_list(nodes))
         if carried & set(NOT_COUNTED) or len(variants) > 1:  # (a node's own: its rack, its DC; values per variant)
@@ -477,11 +478,11 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                                    "; undo the edits no variable carries on the nodes, or keep the file" if loose else "")
                if carried else "no variable carries these edits: undo them on the nodes, or keep the file")
         lines += fill_text("%s to give it back to the roles: %s; then take %s out of cassandra_config_keep_files (%s):"
-                       " apply_config writes it, then restarts the node; check first: %s (what its diff still shows,"
-                       " the roles would revert)" % (ARROW_RIGHT, how, name,
-                                                     "the same host_vars" if place.startswith(alone) else alone,
-                                                     unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
-                       width, "    ", "  ")
+                           " apply_config writes it, then restarts the node; check first: %s (what its diff still shows,"
+                           " the roles would revert)" % (ARROW_RIGHT, how, name,
+                                                         "the same host_vars" if place.startswith(alone) else alone,
+                                                         unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
+                           width, "    ", "  ")
     return lines
 
 
