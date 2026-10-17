@@ -59,7 +59,7 @@ PLAYBOOK = """
 
     - name: Wait for the decommission
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: stream_wait.yml
       vars:
         _cassandra_stream_what: decommission

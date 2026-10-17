@@ -20,7 +20,7 @@
   tasks:
     - name: Check the cluster's group
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: hosts_check.yml
       tags: [always]  # its variables check under --tags too
       vars:
@@ -86,14 +86,14 @@
     # also run by the first play, which --limit skips
     - name: No unknown variable
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: variables_check.yml
       tags: [always]  # under --tags too
 
     # the run's first line, here when --limit left the first play (localhost) out
     - name: Say which cluster the run is on
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_banner.yml
       tags: [always]  # under --tags too
 
@@ -103,11 +103,12 @@
       register: cassandra_status_setup
       ignore_errors: true  # a host without facts is part of the view too
 
-    - name: Load the cassandra_service defaults (JMX access)
+    - name: Load the cassandra_service and cassandra_operation defaults (JMX access)
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
+      loop: [cassandra_service, cassandra_operation]
 
     - name: Check the options
       ansible.builtin.assert:

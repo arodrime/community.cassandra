@@ -18,7 +18,7 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
 
 
 def load(name):

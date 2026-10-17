@@ -27,11 +27,14 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service")
+ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation")
 
 
 def tasks(name):
-    with open(os.path.join(ROLE, "tasks", name)) as f:
+    """A task file, from the role that holds it (the record of the config at start: config and service)."""
+    path = next(p for p in (os.path.join(ROLE, "..", r, "tasks", name)
+                            for r in ("cassandra_operation", "cassandra_service", "cassandra_config")) if os.path.exists(p))
+    with open(path) as f:
         todo = list(yaml.safe_load(f))
     out = []
     while todo:
@@ -147,7 +150,7 @@ def test_service_seeds_before_changing_the_unit():
     assert unit[plan]["check_mode"] is True
     assert "mode" not in unit[plan]["ansible.builtin.template"]  # a mode change alone records nothing
     assert "not ansible_check_mode" in unit[plan]["when"]
-    assert unit[seed]["ansible.builtin.include_tasks"] == "config_seed.yml"
+    assert unit[seed]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "config_seed.yml"}
     assert unit[seed]["when"] == "cassandra_service_unit_planned is changed"
 
 
@@ -158,7 +161,7 @@ def test_config_seeds_before_writing():
     names = [t["name"] for t in block]
     seed = names.index("Record the config the running Cassandra started with")
     assert seed < names.index("Template Cassandra config files")
-    assert block[seed]["ansible.builtin.include_role"]["tasks_from"] == "config_seed.yml"
+    assert block[seed]["ansible.builtin.include_tasks"] == "config_seed.yml"
     assert "not ansible_check_mode" in block[seed]["when"]
 
 

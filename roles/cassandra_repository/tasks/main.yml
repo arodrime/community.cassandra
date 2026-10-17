@@ -32,7 +32,7 @@
     - cassandra_repository_manage | bool
     - cassandra_install_method == 'packages'
 
-# What the step lines of a prepare say (cassandra_service prepare_lines.yml):
+# What the step lines of a prepare say (prepare_lines.yml of the playbooks):
 # off, packages (no repository), set (its source, keys or credentials written or
 # changed now, the other series' removed; under --check also
 # a Debian node without python3-debian yet, where it can't be compared) or ok

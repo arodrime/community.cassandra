@@ -2,7 +2,7 @@
 # The cluster's CQL login, when CQL authentication is on: the one given (the
 # inventory, -e) checked with a real login on one node; none given, asked on
 # the terminal (3 tries at most), each one checked. For import_cluster:
-#   include_role: name=community.cassandra.cassandra_service tasks_from=cql_login.yml
+#   include_role: name=community.cassandra.cassandra_operation tasks_from=cql_login.yml
 #   vars:
 #     _cassandra_cql_login_from: the node to log in on (cqlsh runs there)
 #     _cassandra_cql_login_host: its CQL address (cqlsh logs in as the operations do)

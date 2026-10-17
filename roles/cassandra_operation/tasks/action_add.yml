@@ -31,7 +31,10 @@
     - cassandra_service_wait_for_normal | bool  # its end is waited for, the mark removed then
 
 - name: Start it
-  ansible.builtin.include_tasks: main.yml
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: main.yml
+    rolespec_validate: false  # as the include it was: no argument check
   vars:
     _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_wait_for_normal: false  # the bootstrap is waited for below

@@ -11,7 +11,7 @@ import os
 import yaml
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-TASKS = os.path.join(TOP, "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(TOP, "roles", "cassandra_operation", "tasks")
 
 
 def load(*path):
@@ -50,7 +50,7 @@ def test_prepared_all_at_once_before_the_starts_one_at_a_time():
 
 
 def test_the_prepare_starts_nothing():
-    prepare = load("roles", "cassandra_service", "tasks", "action_add_prepare.yml")
+    prepare = load("roles", "cassandra_operation", "tasks", "action_add_prepare.yml")
     assert included(prepare[0]) == "join_seeds.yml"  # its cassandra.yaml lists the seeds it joins with
     roles = [included(t) for t in prepare if "ansible.builtin.include_role" in t]
     assert roles == ["community.cassandra.cassandra_repository", "community.cassandra.cassandra_install",
@@ -61,13 +61,13 @@ def test_the_prepare_starts_nothing():
 
 
 def test_the_add_prepares_unless_prepared():
-    add = load("roles", "cassandra_service", "tasks", "action_add.yml")
+    add = load("roles", "cassandra_operation", "tasks", "action_add.yml")
     first = add[0]
     assert included(first) == "action_add_prepare.yml"
     assert first["when"] == "not _cassandra_add_prepared | default(false) | bool"
     # the start comes after it, the roles only through it
     assert [included(t) for t in add[1:] if included(t) and "cassandra_" in included(t)] == []
-    replace = load("roles", "cassandra_service", "tasks", "action_replace.yml")
+    replace = load("roles", "cassandra_operation", "tasks", "action_replace.yml")
     assert "action_add.yml" in [included(t) for t in replace]
     assert "_cassandra_add_prepared" not in str(replace)
 

@@ -65,7 +65,7 @@ def test_status_says_it_takes_them():
     assert include["vars"]["_cassandra_preflight_target"] == "status"
 
 
-CHECK = load("roles", "cassandra_service", "tasks", "target_nodes_check.yml")[1]
+CHECK = load("roles", "cassandra_operation", "tasks", "target_nodes_check.yml")[1]
 
 
 @pytest.mark.parametrize("target, kind, extra, ok", [
@@ -121,7 +121,7 @@ def test_former_names_used_nowhere():
 
 
 def test_former_names_refused_first():
-    hosts_check = load("roles", "cassandra_service", "tasks", "hosts_check.yml")
+    hosts_check = load("roles", "cassandra_operation", "tasks", "hosts_check.yml")
     assert hosts_check[0]["ansible.builtin.include_tasks"] == "target_nodes_check.yml"
     # (after the task that gives each node its own facts, and its check)
     first = play("preflight.yml", "Cassandra preflight checks")["tasks"][2]
@@ -170,7 +170,7 @@ def test_upgrade_canary_is_the_target_node():
     assert canary("", phase="rolling")[1] is True
 
 
-HEALTH = load("roles", "cassandra_service", "tasks", "cluster_health.yml")[0]
+HEALTH = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]
 
 
 @pytest.mark.parametrize("extra, peer", [

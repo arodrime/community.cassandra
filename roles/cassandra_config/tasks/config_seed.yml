@@ -2,16 +2,17 @@
 # Before the roles change the config (or the systemd unit) of a running
 # Cassandra with no record of the files it started with (started another way,
 # e.g. imported): records the files not written since its JVM started, which
-# are the ones it runs with, so config_pending.yml tells the change still to
-# apply by content (_jvm: that JVM, as config_snapshot.yml records it).
+# are the ones it runs with, so a change still to apply is told by content
+# (_jvm: that JVM, as cassandra_service records it at each start).
+# Run by this role and by cassandra_service (unit.yml).
 - name: Look for the directory of the record of the config Cassandra started with
   ansible.builtin.stat:
-    path: "{{ _cassandra_service_config_snapshot | dirname }}"
+    path: "{{ _cassandra_config_snapshot | dirname }}"
   register: cassandra_seed_dir
 
 - name: Look for the record itself
   ansible.builtin.stat:
-    path: "{{ _cassandra_service_config_snapshot }}"
+    path: "{{ _cassandra_config_snapshot }}"
   register: cassandra_seed_snapshot
   when: cassandra_seed_dir.stat.isdir | default(false)
 
@@ -24,7 +25,7 @@
     - name: Say the change cannot be told pending
       ansible.builtin.debug:
         msg: >-
-          WARNING - {{ inventory_hostname }} has no {{ _cassandra_service_config_snapshot | dirname }} to record the
+          WARNING - {{ inventory_hostname }} has no {{ _cassandra_config_snapshot | dirname }} to record the
           config the running Cassandra started with: apply_config will not tell that this change waits for a
           restart. Restart it (rolling_restart).
       when:
@@ -35,8 +36,8 @@
 
     - name: Checksum the config files
       ansible.builtin.find:
-        paths: "{{ _cassandra_service_conf_dir }}"
-        patterns: "{{ _cassandra_service_config_files }}"
+        paths: "{{ cassandra_conf_dir }}"
+        patterns: "{{ _cassandra_config_snapshot_files }}"
         file_type: file
         get_checksum: true
       register: cassandra_seed_files
@@ -59,7 +60,7 @@
         content: >-
           {{ dict(_files | map(attribute='path') | zip(_files | map(attribute='checksum')))
              | combine({'_jvm': {'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start | float}}) | to_nice_json }}
-        dest: "{{ _cassandra_service_config_snapshot }}"
+        dest: "{{ _cassandra_config_snapshot }}"
         mode: "0600"  # root only: the checksum of the JMX password file
       vars:
         _files: >-

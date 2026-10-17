@@ -1138,7 +1138,7 @@ def check_what(present, kind="", targets=None, replacing="", run=None, absent=No
 
 # --- the prepare of new nodes ---------------------------------------------------------------
 
-# The steps of a prepare (cassandra_service action_add_prepare.yml, create_cluster), in their order
+# The steps of a prepare (cassandra_operation action_add_prepare.yml, create_cluster), in their order
 PREPARE_STEPS = ("repository", "install", "java", "os tuning", "data disks", "config", "firewall", "medusa", "seeds")
 _FILE_CHANGED = re.compile(r"\d+ line\(s\) changed$")  # cassandra_config's item for a file it writes
 _VERSION = re.compile(r"(?:\d+:)?(\d+(?:\.\d+)*)")  # "1:17.0.12+7-1~deb12u1" -> 17.0.12

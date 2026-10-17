@@ -20,16 +20,17 @@ except ImportError:
         return template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-TASKS = os.path.join(TOP, "roles", "cassandra_service", "tasks")
+ROLES = os.path.join(TOP, "roles")
 
 
 def load(name):
-    with open(os.path.join(TASKS, name), encoding="utf-8") as f:
+    role = "cassandra_service" if name == "main.yml" else "cassandra_operation"
+    with open(os.path.join(ROLES, role, "tasks", name), encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def defaults():
-    with open(os.path.join(TOP, "roles", "cassandra_service", "defaults", "main.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "defaults", "main.yml"), encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

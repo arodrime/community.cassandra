@@ -24,7 +24,7 @@ except ImportError:
         return template
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-SCRIPT = os.path.join(ROOT, "roles", "cassandra_service", "files", "import_read_files.py")
+SCRIPT = os.path.join(ROOT, "playbooks", "files", "import_read_files.py")
 
 
 def read(*wanted):

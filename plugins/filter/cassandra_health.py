@@ -1,7 +1,7 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_health_problems: the problems found by the cluster health check
-(roles/cassandra_service/tasks/cluster_health.yml), as readable sentences;
+(roles/cassandra_operation/tasks/cluster_health.yml), as readable sentences;
 cassandra_health_findings: the same as data, for cassandra_health_report:
 the health_check playbook's report, a line per problem (each one once,
 whatever node saw it), the verdict first.

@@ -34,19 +34,18 @@ Role Variables
   files their owner: set them once for both roles.
   `cassandra_service_user` / `cassandra_service_group` override them for the
   unit and `cassandra_config`'s directories and JMX users' files, not for the
-  config files' group. Before writing the unit (and in `preflight`, before any
-  operation), the role refuses an account that could not read the config
-  files `cassandra_config` writes (their owner, group and mode from its
-  variables, the account's groups from `id`), or that does not exist. With a
-  kept unit (`cassandra_service_unit_manage: false`), its own `User=` and
-  `Group=` are checked. A changed `User=`
-  or `Group=` takes effect at the next restart (`apply_config` restarts the
-  nodes whose unit changed since Cassandra started).
+  config files' group. Before writing the unit, the role refuses an account
+  that could not read the config files `cassandra_config` writes (their
+  owner, group and mode from its variables, the account's groups from `id`),
+  or that does not exist (`tasks/account_check.yml`, which a playbook can
+  run before any operation). With a kept unit
+  (`cassandra_service_unit_manage: false`), its own `User=` and `Group=` are
+  checked. A changed `User=` or `Group=` takes effect at the next restart.
 * `cassandra_service_unit_manage`: `false` keeps the node's own unit (or the
   package's init script) instead of writing the role's: the unit variables
   have no effect on it, and the playbooks drain the node with `nodetool`
-  before stopping it (such a unit may not drain). The `import_cluster`
-  playbook sets it on the nodes it finds started another way. Default `true`.
+  before stopping it (such a unit may not drain). Set on the nodes started
+  another way. Default `true`.
 * `cassandra_service_restart`: systemd `Restart=`. Default `no`; with
   `on-failure`, at most `cassandra_service_start_limit_burst` (3) restarts
   per `cassandra_service_start_limit_interval` (1800 s).
@@ -71,110 +70,14 @@ Role Variables
   `cassandra_service_wait_timeout` (seconds, default 600). While the node is
   not NORMAL, a progress line at each read of its mode, as the other waits
   (`node2 restart  waiting for NORMAL (mode STARTING)  40s/10m`).
-* Streaming operations (the bootstrap of `add_node` and `replace_node`,
-  `decommission_node`, `remove_dead_node`, the rebuild of `add_datacenter`,
-  `move_node`, `topology`) and cleanups are waited for as long as they make
-  progress: `nodetool netstats` (`compactionstats` for a cleanup) is read
-  every `cassandra_stream_early_check_interval` seconds (default 10) during
-  the first `cassandra_stream_early_time` seconds (default 300), then every
-  `cassandra_stream_check_interval` seconds (default 30), and the progress
-  printed, one line per check and the other nodes in columns under it, e.g.
-
-  ```
-  [1/2] node5 bootstrap  JOINING  [####------]  40%  168.2/420.0 GiB  82 MiB/s  ETA 14:27 (52m)  35m
-        from node1  88.1/220.0 GiB  40%           from node2  52.1/130.0 GiB  40%
-        from node3   28.0/70.0 GiB  40% STALLED
-  ```
-
-  Above 30 other ends (a node streaming both ways counts twice), one line
-  sums them up (done, ok and their average, stalled, behind, the 3 slowest)
-  and only the stalled ones and the ones behind are detailed, 12 at most.
-
-  The times are the controller's. After a minute without progress the line
-  says it, as progress (`no progress for 3m`); after
-  `cassandra_stream_stall_warn_time` seconds (default 300) it says
-  `STALLED 6m/30m` (the time without progress and the limit); once done, a
-  single line with the total time.
-
-  The run fails only after `cassandra_stream_stall_time` seconds (default
-  1800) with nothing streamed: no byte or file, no session started or
-  ended. Nothing is stopped then. Entire-SSTable streaming (4.0+) counts a
-  file only once whole: on a node that receives (bootstrap, replace,
-  rebuild), each check while bytes are left also reads the space used on
-  its data and commitlog filesystems (`df`), and its growth is progress too
-  (`receiving (disk +3.2 GiB in 5m)` while netstats stays still), from 64 MiB
-  a check (heavy writes on that node meanwhile can hide a stall:
-  `cassandra_stream_max_time` bounds the wait). A
-  decommission or a move goes by netstats only (the nodes that receive take
-  client load, their disk says little): with very big SSTables, raise
-  `cassandra_stream_stall_warn_time` and `cassandra_stream_stall_time`. No overall limit unless
-  `cassandra_stream_max_time` (seconds) is set. A JMX login or permission
-  refused stops the wait at once, naming the node (on a node being added,
-  Cassandra's own JMX authenticator refuses every login until it has joined:
-  its bootstrap is then followed from the other nodes). The bootstrap wait also stops
-  when Cassandra stops or, on 5.0, when the bootstrap fails
-  (`Mode: JOINING_FAILED`). On 5.0.0 to 5.0.4 nodetool does not answer on a
-  bootstrapping node (CASSANDRA-19902): its progress is read from the other
-  nodes' side (their sending sessions to it). On 4.0 and 4.1 a failed
-  bootstrap leaves the node JOINING with no stream: the wait then ends as a
-  stall, see `system.log` (`nodetool bootstrap resume` retries it).
-* `cassandra_add_node_cleanup` (default `none`): after `add_node`, the
-  cleanup of the nodes that handed data over, with the words of the
-  `cleanup` playbook's `cassandra_cleanup_mode`. `none` prints the command,
-  `sequential` runs it one node at a time (`one` is the same), `rack` a rack
-  at a time, `dc` a datacenter at a time, `all` every node at once (heavy I/O).
-* One token per node (`cassandra_num_tokens: 1`): `cassandra_token_auto`
-  (default `false`), where `add_node` puts new nodes without
-  `cassandra_initial_token`: `bisect` (no node moves), `balanced` (even ring,
-  `move_node` moves the others afterwards) or `true` (shows both, asks);
-  `cassandra_token_rf` (default 3), the replication factor the shares shown
-  assume when no keyspace gives one; `cassandra_token_allow_partial` (default
-  `false`), `create_cluster` with tokens on only some nodes of a datacenter;
-  `move_node`: `cassandra_move_tokens` (default `{}`: even out each
-  datacenter), `cassandra_move_cleanup` (as `cassandra_add_node_cleanup`),
-  `cassandra_move_min_free_percent` (default 20) and
-  `cassandra_move_force_disk` (default `false`).
-
+* `cassandra_stream_early_check_interval` (default 10),
+  `cassandra_stream_early_time` (default 300) and
+  `cassandra_stream_check_interval` (default 30): the wait reads the node
+  every early interval during the early time, then every check interval
+  (seconds).
 * `cassandra_service_allow_new_seed`: a node that never started and is
   listed in `cassandra_seeds` is refused when another seed already answers
   (seeds don't bootstrap: it would join without its data). Default `false`.
-* `cassandra_new_node_checks`: `add_node` and `replace_node` check the new
-  hosts before installing anything (root access, the Cassandra directories
-  mounted where fstab or a systemd mount unit expects and empty, free space
-  against the load of the other nodes, the Pythons of cqlsh and Medusa, the
-  packages or the sources they come from, the seeds' ports, the host's own
-  ports free, no Cassandra running) and stop with every problem found.
-  Default `true`; `false` skips them.
-* `cassandra_add_node_reset`: `add_node` (and `topology`) empty first a new
-  node that has data but is not in the ring (started once by mistake, a
-  failed bootstrap): `tasks/reset_node.yml`, as the `reset_node` playbook,
-  what its directories hold deleted, shown and confirmed. Only when
-  Cassandra is down there, no up node sees it in its ring, its cluster is
-  this one or the stock `Test Cluster`, and it has no user keyspace but a
-  failed bootstrap's of this cluster (one `add_node` started: its mark in
-  `/var/lib/cassandra` until the node joined); else refused with what it
-  holds. A node of this cluster with its keyspaces and no such mark is a
-  former member (removed with `remove_dead_node`, put back in the
-  inventory): the writes only it holds would be lost, so `auto` (the
-  default) refuses it too, saying so; `true`, given on purpose, resets it.
-  `false` refuses every new node with data. Default `auto`.
-* `cassandra_replace_node_reset`: the same for a replacement host that still
-  holds data in `replace_node`, typically a host replacing itself (its
-  address only seen down, as the node being replaced). Default `false`.
-* `cassandra_create_cluster_reset`: `create_cluster` rebuilds a cluster that
-  runs already, all its data lost (another snitch, datacenters or racks):
-  refused unless the group is the whole ring; the operator types the cluster
-  name, or gives it in `cassandra_create_cluster_reset_confirm` for a run
-  without a terminal. Default `false`.
-* `cassandra_new_node_min_free_gb`: minimum free space (GiB) on each data
-  directory's file system of a new host. Default `0` (none).
-* `cassandra_new_node_allow_kept_setup`: the checks refuse a new host with no
-  Cassandra installed that still has the host_vars `import_cluster` wrote for
-  the node that had its name (`cassandra_imported_host: true` with
-  `cassandra_linux_manage`, `cassandra_cqlsh_python_manage` or
-  `cassandra_service_unit_manage` false): the roles would leave it half set
-  up. Those switches set by the operator (no marker) are not refused. `true`
-  accepts it, when the host is set up another way. Default `false`.
 
 Config changes made by `cassandra_config` never restart the node either.
 

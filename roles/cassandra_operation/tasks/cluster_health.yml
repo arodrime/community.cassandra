@@ -6,7 +6,7 @@
 # another one sees down), a progress line at each read (every
 # cassandra_stream_check_interval seconds, sooner at first, as the
 # bootstrap's), then fails listing every problem; anything else fails at once.
-#   include_role: name=community.cassandra.cassandra_service tasks_from=cluster_health.yml
+#   include_role: name=community.cassandra.cassandra_operation tasks_from=cluster_health.yml
 # Runs on the cluster the lookup community.cassandra.cassandra_hosts picks
 # (-e cassandra_hosts, or the one CASSANDRA_CLUSTER names: the same one when
 # both are set; else the inventory's only cluster).
@@ -118,10 +118,13 @@
         cassandra_output_gap: true  # its progress lines, a block of their own (ops callback)
 
     - name: Wait for the nodes down to come back
-      ansible.builtin.include_tasks: wait_loop.yml
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: wait_loop.yml
       when: _cassandra_health_going | bool
       vars:
-        _cassandra_wait_check: cluster_health_wait.yml
+        # templated in the wait loop of cassandra_service (its role_path): this role is its sibling
+        _cassandra_wait_check: "{{ role_path }}/../cassandra_operation/tasks/cluster_health_wait.yml"
         _cassandra_wait_going: "{{ _cassandra_health_going | bool }}"
 
     - name: Say the nodes waited for are back

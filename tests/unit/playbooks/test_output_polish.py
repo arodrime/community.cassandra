@@ -46,8 +46,8 @@ def tasks(tree):
 
 @pytest.mark.parametrize("action", ["add", "apply_config", "decommission", "reboot", "replace", "restart", "upgrade"])
 def test_the_service_report_is_left_to_the_recap(action):
-    starts = [t for t in tasks(load("roles", "cassandra_service", "tasks", "action_%s.yml" % action))
-              if t.get("ansible.builtin.include_tasks") == "main.yml"]
+    starts = [t for t in tasks(load("roles", "cassandra_operation", "tasks", "action_%s.yml" % action))
+              if (t.get("ansible.builtin.include_role") or {}).get("tasks_from") == "main.yml"]
     assert starts, action
     for t in starts:
         quiet = t["vars"]["_cassandra_change_report_quiet"]

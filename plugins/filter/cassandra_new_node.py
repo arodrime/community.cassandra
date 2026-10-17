@@ -1,7 +1,7 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Checks of a host before add_node or replace_node installs anything on it
-(roles/cassandra_service/tasks/new_node_checks.yml). Each filter returns
+(roles/cassandra_operation/tasks/new_node_checks.yml). Each filter returns
 {'problems': [...], 'warnings': [...], 'info': [...]}, readable sentences.
 
 cassandra_new_node_dirs: the Cassandra directories, their mount and free space,

@@ -15,7 +15,10 @@
     boot_time_command: "{{ cassandra_reboot_boot_time_command | default(omit) }}"
 
 - name: Wait until the node has joined
-  ansible.builtin.include_tasks: main.yml
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: main.yml
+    rolespec_validate: false  # as the include it was: no argument check
   vars:
     _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_state: started

@@ -23,6 +23,7 @@ the hosts: apply them in a play with `become: true`.
 - `cassandra_install`- Install Cassandra.
 - `cassandra_linux`- Configure Linux OS Settings for Cassandra.
 - `cassandra_medusa`- Install Cassandra Medusa (backups) with pip and write its `medusa.ini` (optional: `cassandra_medusa_enabled`).
+- `cassandra_operation`- Used by the playbooks: their task files (cluster health, rolling operations, node checks, waits) and their settings; not run on its own.
 - `cassandra_repository`- Configures a package repository for Cassandra on Debian and RedHat based platforms.
 - `cassandra_service`- Run Cassandra under a systemd unit, start it and wait for the node to join.
 

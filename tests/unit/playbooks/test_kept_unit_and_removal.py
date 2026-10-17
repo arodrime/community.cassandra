@@ -22,7 +22,6 @@ except ImportError:
         return template
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-TASKS = os.path.join(TOP, "roles", "cassandra_service", "tasks")
 
 
 def load(*path):
@@ -116,19 +115,19 @@ def test_stop_rack_drain_never_stops_the_stop():
 @pytest.mark.parametrize("operation_drain, unit_manage, drained", [
     (True, True, True), (False, False, True), (False, True, False)])
 def test_restart_drain(file, operation_drain, unit_manage, drained):
-    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", file))
+    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", file))
     task = next(t for t in tasks if t["name"] == "Drain the node")
     assert true(task["when"], cassandra_operation_drain=operation_drain, cassandra_service_unit_manage=unit_manage) is drained
 
 
 @pytest.mark.parametrize("host_vars, drained", [({}, False), ({"cassandra_service_unit_manage": False}, True)])
 def test_rack_restart_drains_a_kept_unit(host_vars, drained):
-    block = load("roles", "cassandra_service", "tasks", "restart_batch.yml")[0]["block"]
+    block = load("roles", "cassandra_operation", "tasks", "restart_batch.yml")[0]["block"]
     task = next(t for t in block if t["name"] == "Drain the rack's nodes")
     assert true(task["when"], cassandra_operation_drain=False, item="node1", hostvars={"node1": host_vars}) is drained
 
 
-RACK = load("roles", "cassandra_service", "tasks", "restart_batch.yml")[0]
+RACK = load("roles", "cassandra_operation", "tasks", "restart_batch.yml")[0]
 RACK_DRAIN = next(t for t in RACK["block"] if t["name"] == "Drain the rack's nodes")
 RACK_WARN = next(t for t in RACK["block"] if t["name"] == "Say the drains that did not work")
 # the drain loop of a rack: n1 drained, n2 failed (nodetool's rc), n3 skipped (left to its unit), n4 no answer
@@ -210,7 +209,7 @@ def test_rack_failure_names_the_node_that_failed(node, failure, said):
 @pytest.mark.parametrize("file, then", [("action_restart.yml", "restarted"), ("action_reboot.yml", "rebooted"),
                                         ("action_upgrade.yml", "flushed, then stopped")])
 def test_the_actions_drain_the_same_way(file, then):
-    imports = [t for t in load("roles", "cassandra_service", "tasks", file) if t.get("name") == "Drain the node"]
+    imports = [t for t in load("roles", "cassandra_operation", "tasks", file) if t.get("name") == "Drain the node"]
     assert imports[0]["ansible.builtin.import_tasks"] == "drain.yml"
     assert imports[0]["vars"]["_cassandra_service_drain_then"] == then
     assert ("when" in imports[0]) is (file != "action_upgrade.yml")  # an upgrade always drains
@@ -229,7 +228,7 @@ def test_the_actions_drain_the_same_way(file, then):
     ({"skipped": True, "changed": False}, False, False, None),  # --check, or left to the unit
 ])
 def test_node_drain_failure(result, resumed, stops, warns):
-    tasks = load("roles", "cassandra_service", "tasks", "drain.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "drain.yml")
     drain = next(t for t in tasks if t["name"] == "Drain the node")
     stop = next(t for t in tasks if t["name"] == "Stop when the node did not answer")
     warn = next(t for t in tasks if t["name"] == "Say the drain did not work")
@@ -314,7 +313,7 @@ def test_force_result_not_checked_in_check_mode():
 
 def test_removal_checked_with_the_coordinator_jmx():
     # the removal found on n2 is followed there with n2's own JMX port and login
-    task = next(t for t in load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
+    task = next(t for t in load("roles", "cassandra_operation", "tasks", "stream_check.yml")[0]["block"]
                 if t["name"] == "Check the removal")
     variables = dict(task["vars"], _cassandra_stream_removal_on="n2", inventory_hostname="n1",
                      _cassandra_service_jmx={"port": 7199}, cassandra_jmx_username="ops", cassandra_jmx_password_file="",
@@ -334,7 +333,7 @@ def test_orphan_removal_refused_unless_asked():
 
 def test_new_node_check_passes_the_import_marker():
     # without it the refusal of a blank host under an imported name would silently never happen
-    block = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"))[1]["block"]
+    block = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "new_node_checks.yml"))[1]["block"]
     task = next(t for t in block if t.get("name") == "Put the findings together")
     kept = [e for e in task["vars"]["_all"] if "cassandra_new_node_kept_setup" in e][0]
     assert "imported=cassandra_imported_host | default(false)" in kept
@@ -380,7 +379,7 @@ def test_progress_report_knows_the_status_before_the_block_ends():
     # and the report gets the new status (a single done line, no "next check" once it has ended)
     for name, status, now in (("stream_check.yml", "_cassandra_stream_status", "_cassandra_stream_now"),
                               ("cleanup_check.yml", "_cassandra_cleanup_status", "_cassandra_cleanup_now")):
-        block = load("roles", "cassandra_service", "tasks", name)[0]["block"]
+        block = load("roles", "cassandra_operation", "tasks", name)[0]["block"]
         names = [t["name"] for t in block]
         where, write, keep = (block[names.index(n)] for n in ("Where it stands", "Write the progress", "Keep where it stands"))
         progress = next(t for t in block if t["name"].startswith("Progress of the"))
@@ -409,7 +408,7 @@ def test_progress_report_knows_the_status_before_the_block_ends():
     ({"finished": 1, "failed": True}, "LEAVING", "job_failed"),
 ])
 def test_decommission_job_that_changed_nothing_is_not_the_end(job, mode, expected):
-    block = load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
+    block = load("roles", "cassandra_operation", "tasks", "stream_check.yml")[0]["block"]
     where = next(t for t in block if t["name"] == "Where it stands")
     variables = dict(where["vars"], _cassandra_stream_leave=True, _cassandra_stream_job={"jid": "1"},
                      cassandra_stream_job_status=job, _cassandra_stream_self={"mode": mode},
@@ -441,7 +440,7 @@ def test_dead_node_by_address_host_id_or_inventory_name(target, ring, address):
 
 
 def test_former_name_refused_with_its_name_now():
-    check = load("roles", "cassandra_service", "tasks", "variables_check.yml")[0]
+    check = load("roles", "cassandra_operation", "tasks", "variables_check.yml")[0]
     msg = render(check["ansible.builtin.assert"]["fail_msg"], _renamed={"cassandra_new_nodes": "cassandra_target_nodes"},
                  _unknown={}, _nl="\n")
     assert msg == ("REFUSED  variable names  nothing was changed\n"

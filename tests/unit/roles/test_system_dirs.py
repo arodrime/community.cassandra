@@ -71,7 +71,7 @@ def stat_results(found):
 
 def test_add_node_and_replace_node_decide_from_where_the_node_stands():
     """Its data directories (the inventory's and the live cassandra.yaml's) are read once, by node_standing.yml."""
-    block = load("roles", "cassandra_service", "tasks", "new_node_state.yml")[0]
+    block = load("roles", "cassandra_operation", "tasks", "new_node_state.yml")[0]
     tasks = dict((t["name"], t) for t in block["block"])
     assert tasks["Read where it stands"]["ansible.builtin.include_tasks"] == "node_standing.yml"
     # no node of the cluster answered UN: add_node stops, it has no ring to plan with

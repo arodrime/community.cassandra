@@ -41,7 +41,7 @@
     # asks once (cassandra_operation_confirm: false, or --check, asks nothing)
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       vars:
         _rack: "{{ cassandra_rolling_mode | default('node') == 'rack' }}"
@@ -63,7 +63,7 @@
     # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
     - name: Set up the progress file
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
 
 # Each node in turn: the cluster checked, the node drained, restarted, waited
@@ -84,7 +84,7 @@
 
     - name: Restart this node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: restart
@@ -107,11 +107,12 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
-    - name: Load the cassandra_service defaults
+    - name: Load the cassandra_service and cassandra_operation defaults
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
+      loop: [cassandra_service, cassandra_operation]
 
     - name: Read the keyspaces' replication
       community.cassandra.cassandra_cqlsh:
@@ -161,7 +162,7 @@
 
     - name: Restart the racks
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: restart_batch.yml
         apply:
           run_once: true
@@ -173,7 +174,7 @@
 
     - name: Check the cluster after the last rack
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
         apply:
           run_once: true
@@ -193,5 +194,5 @@
 
     - name: Print the summary
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: summary.yml

@@ -175,7 +175,7 @@
                          else [])) }}
 
 # in a prepare of new nodes (_cassandra_prepare_lines), said once for all of them after
-# its step lines instead (cassandra_service prepare_lines.yml)
+# its step lines instead (prepare_lines.yml of the playbooks)
 - name: Say what a new node leaves as it is
   ansible.builtin.debug:
     msg: "{{ [{'name': inventory_hostname, 'left': _cassandra_config_left, 'dirs': _cassandra_config_own_dirs}]

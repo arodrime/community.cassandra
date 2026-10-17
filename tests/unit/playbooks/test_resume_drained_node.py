@@ -36,7 +36,7 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-OPERATION = load("roles", "cassandra_service", "tasks", "node_operation.yml")[1]
+OPERATION = load("roles", "cassandra_operation", "tasks", "node_operation.yml")[1]
 BEFORE = [t for t in OPERATION["block"] if t["name"] == "Check the cluster before touching this node"][0]
 HOSTS = ["n1", "n2", "n3"]
 
@@ -109,7 +109,7 @@ def test_a_node_apply_config_starts_may_be_down(action, then, down):
 
 
 def test_the_health_check_lets_that_node_only_be_down():
-    block = [t for t in load("roles", "cassandra_service", "tasks", "cluster_health.yml") if "block" in t][0]
+    block = [t for t in load("roles", "cassandra_operation", "tasks", "cluster_health.yml") if "block" in t][0]
     down_ok = render(block["vars"]["_down_ok"], cassandra_service_health_resumed_down=["10.0.0.2"])
     assert down_ok == ["10.0.0.2"]
     # one read: no waiting for the node left down to come back (a string before ansible-core 2.19)
@@ -126,7 +126,7 @@ def test_the_health_check_lets_that_node_only_be_down():
 
 
 def test_its_drain_may_fail_on_a_stopped_node_only():
-    tasks = load("roles", "cassandra_service", "tasks", "drain.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "drain.yml")
     stop = [t for t in tasks if t["name"] == "Stop when the node did not answer"][0]
     refused = {"failed": False, "msg": "", "stderr": "ConnectException: 'Connection refused (Connection refused)'"}
     other = {"failed": False, "msg": "Authentication failed"}

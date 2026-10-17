@@ -19,7 +19,7 @@
   tasks:
     - name: Check the cluster's group
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: hosts_check.yml
       tags: [always]  # its variables check under --tags too
 
@@ -58,14 +58,14 @@
     # also run by the first play, which --limit skips
     - name: No unknown variable
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: variables_check.yml
       tags: [always]  # under --tags too
 
     # the run's first line, here when --limit left the first play (localhost) out
     - name: Say which cluster the run is on
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_banner.yml
       tags: [always]  # under --tags too
 
@@ -97,7 +97,7 @@
     # goes on).
     - name: Check the running nodes belong to this cluster
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_name.yml
       vars:
         cassandra_service_cluster_candidates: >-
@@ -120,7 +120,7 @@
 
     - name: Check the run has root on the nodes
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: root_check.yml
 
     - name: Start Cassandra and wait until the node has joined
@@ -155,7 +155,7 @@
 
     - name: Check the whole cluster from one node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
       when:
         - inventory_hostname == ansible_play_hosts[0]

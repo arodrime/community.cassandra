@@ -3,7 +3,7 @@
 """The progress and the checks of streaming operations (bootstrap, decommission, rebuild, removenode, cleanup).
 
 cassandra_stream_progress: successive cassandra_netstats results -> the progress state, for the wait of
-    roles/cassandra_service/tasks/stream_wait.yml; cassandra_stream_report: the lines that print it;
+    roles/cassandra_operation/tasks/stream_wait.yml; cassandra_stream_report: the lines that print it;
     cassandra_stream_status, cassandra_stream_waiting: how the wait goes on.
 cassandra_host_addresses: the inventory names of the addresses netstats shows.
 cassandra_stream_progress_by_host, cassandra_cleanup_report, cassandra_cleanup_view: the cleanups of a batch

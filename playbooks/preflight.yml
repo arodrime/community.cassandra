@@ -18,7 +18,7 @@
   tasks:
     - name: Check the cluster's group
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: hosts_check.yml
       tags: [always]  # its variables check under --tags too
 
@@ -69,14 +69,14 @@
     # also run by the first play, which --limit skips
     - name: Check cassandra_target_nodes
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: target_nodes_check.yml
       tags: [always]  # its variables check under --tags too
 
     # the run's first line, here when --limit left the first play (localhost) out
     - name: Say which cluster the run is on
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_banner.yml
       tags: [always]  # under --tags too
 
@@ -117,12 +117,12 @@
 
     - name: Check the run has root on the nodes
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: root_check.yml
 
     - name: Going on without the nodes that did not answer
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: note.yml
       vars:
         _note: >-
@@ -133,7 +133,7 @@
 
     - name: Read this node's settings
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_facts.yml
         public: true
 
@@ -212,7 +212,7 @@
     # not start): then read on another node of the group
     - name: Check the running node belongs to this cluster
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_name.yml
       vars:
         cassandra_service_cluster_describe: >-
@@ -222,7 +222,7 @@
         cassandra_service_cluster_candidates: >-
           {{ [] if _cassandra_preflight_running_nodes | length > 0 else _cassandra_preflight_peers }}
 
-    # Where a node stands (cassandra_service node_standing.yml) is worked out from the rings the cluster's nodes
+    # Where a node stands (cassandra_operation node_standing.yml) is worked out from the rings the cluster's nodes
     # see: each running node reads its own, all at once (collected at the end of this play). The playbooks
     # that add, reset or replace nodes ask for it (_cassandra_preflight_node_views)
     - name: Start reading the ring this node sees
@@ -292,7 +292,7 @@
 
     - name: Warn about them
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
@@ -328,7 +328,7 @@
 
     - name: Warn about the JVM options
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
@@ -372,7 +372,7 @@
     # datacenter when one breaks it, with a seed list that follows it
     - name: Seed layout
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
@@ -396,7 +396,7 @@
     # Once the cluster exists, every seed must be a live member: a stale seed
     # (decommissioned node, old IP) breaks bootstraps. A host the run adds
     # (add_node's cassandra_target_nodes; topology: any host of the group)
-    # joins with the other seeds and is made a seed once up (cassandra_service join_seeds.yml)
+    # joins with the other seeds and is made a seed once up (cassandra_operation join_seeds.yml)
     - name: Check the running cluster
       run_once: true
       when: _cassandra_preflight_running_nodes | length > 0
@@ -500,7 +500,7 @@
 
     # A node up and normal in the ring is a member: the mark of a bootstrap add_node started there (a wait
     # that stopped before the end) goes, or a removal of the node later would read it as a failed bootstrap
-    # (cassandra_service reset_node_plan.yml)
+    # (cassandra_operation reset_node_plan.yml)
     - name: Remove the mark of a bootstrap that went through
       ansible.builtin.file:
         path: "{{ _cassandra_service_bootstrap_mark | default('/var/lib/cassandra/.ansible_bootstrap_started') }}"
@@ -518,7 +518,7 @@
     # purpose is silenced by cassandra_suspicious_ack. After the ring is read: who is a member
     - name: Warn about sensitive or suspicious settings
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: note.yml
       vars:
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)

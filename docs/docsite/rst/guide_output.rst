@@ -120,7 +120,7 @@ Where a node stands
 -------------------
 
 Every operation that adds, empties or replaces a node decides from one reading of where the node stands
-(``roles/cassandra_service/tasks/node_standing.yml``, the filter ``community.cassandra.cassandra_node_standing``),
+(``roles/cassandra_operation/tasks/node_standing.yml``, the filter ``community.cassandra.cassandra_node_standing``),
 read once per step (each deciding play reads the node again): whether Cassandra runs there (its JVM, or the
 ``cassandra`` unit active), the ring the other nodes of the cluster see (each running node reads its own, all at
 once, in the preflight; for a node holding data, a node alone in its ring does not stand for the cluster while

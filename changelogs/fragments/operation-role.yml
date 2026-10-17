@@ -1,0 +1,2 @@
+minor_changes:
+  - cassandra_operation - new internal role holding the task files and the settings of the collection's playbooks (cluster health, rolling operations, new node checks, confirmation screens, progress files, streaming waits), moved out of ``cassandra_service``, which keeps the unit, the start and the wait for the node to join. The variables keep their names and defaults; ``cassandra_service``'s README and argument spec document only its own.

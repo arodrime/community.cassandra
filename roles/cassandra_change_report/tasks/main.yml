@@ -5,7 +5,7 @@
 #   _cassandra_change_report_quiet: true when the caller shows them its own way (written all the same)
 #   cassandra_change_report_state: optional, what the role found (e.g. the version installed)
 # Kept per role in _cassandra_change_report_seen (no diff): the step lines of a
-# prepare read it (cassandra_service prepare_lines.yml)
+# prepare read it (prepare_lines.yml of the playbooks)
 - name: Keep what changed ({{ cassandra_change_report_role }})
   ansible.builtin.set_fact:
     _cassandra_change_report_seen: >-

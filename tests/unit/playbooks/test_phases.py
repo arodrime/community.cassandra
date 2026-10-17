@@ -76,11 +76,11 @@ def test_the_words():
 @pytest.mark.parametrize("path, at_least", [
     (("playbooks", "preflight.yml"), 1), (("playbooks", "add_node.yml"), 2), (("playbooks", "decommission_node.yml"), 1),
     (("playbooks", "topology.yml"), 2), (("playbooks", "reset_node.yml"), 1), (("playbooks", "apply_config.yml"), 1),
-    (("playbooks", "import_cluster.yml"), 1), (("roles", "cassandra_service", "tasks", "node_operation.yml"), 2),
-    (("roles", "cassandra_service", "tasks", "cleanup_batch.yml"), 1),
-    (("roles", "cassandra_service", "tasks", "restart_batch.yml"), 1),
-    (("roles", "cassandra_service", "tasks", "action_apply_config.yml"), 1),
-    (("roles", "cassandra_service", "tasks", "reset_node.yml"), 1)])
+    (("playbooks", "import_cluster.yml"), 1), (("roles", "cassandra_operation", "tasks", "node_operation.yml"), 2),
+    (("roles", "cassandra_operation", "tasks", "cleanup_batch.yml"), 1),
+    (("roles", "cassandra_operation", "tasks", "restart_batch.yml"), 1),
+    (("roles", "cassandra_operation", "tasks", "action_apply_config.yml"), 1),
+    (("roles", "cassandra_operation", "tasks", "reset_node.yml"), 1)])
 def test_marked_phase_lines(path, at_least):
     found = phases(*path)
     assert len(found) >= at_least, path
@@ -106,7 +106,7 @@ def test_marked_phase_lines(path, at_least):
     ("update_java", {}, "Updating Java on node5..."),
     ("sync_clock", {}, "Setting the clock of node5 (drained, stopped, started again)...")])
 def test_each_node_says_what_is_done_to_it(action, extra, line):
-    say = next(t for t in phases("roles", "cassandra_service", "tasks", "node_operation.yml")
+    say = next(t for t in phases("roles", "cassandra_operation", "tasks", "node_operation.yml")
                if t["name"].startswith("Say what is done"))
     variables = dict(say["vars"], inventory_hostname="node5", cassandra_service_node_action=action, **extra)
     variables["_phase"] = render(say["vars"]["_phase"], **variables)

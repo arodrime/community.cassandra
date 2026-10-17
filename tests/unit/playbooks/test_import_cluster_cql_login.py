@@ -66,7 +66,7 @@ LOGIN = """
   gather_facts: false
   tasks:
     - ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cql_login.yml
       vars:
         _cassandra_cql_login_from: localhost
@@ -281,9 +281,9 @@ def test_cql_address_of_the_node():
 
 def test_logs_in_as_the_operations_do():
     # no quoting, port or TLS of its own: a login that works here works for keyspaces.yml's cqlsh too
-    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_service", "tasks", "cql_login_try.yml")) as f:
+    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "cql_login_try.yml")) as f:
         mine = yaml.safe_load(f)[0]["community.cassandra.cassandra_cqlsh"]
-    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_service", "tasks", "keyspaces.yml")) as f:
+    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "keyspaces.yml")) as f:
         theirs = yaml.safe_load(f)[0]["community.cassandra.cassandra_cqlsh"]
     assert sorted(set(mine) - {"execute"}) == sorted(set(theirs) - {"execute", "transform"})
 

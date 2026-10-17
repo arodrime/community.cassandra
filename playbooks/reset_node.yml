@@ -53,7 +53,7 @@
     # (cassandra_replace_node_reset) run the same reset themselves.
     - name: Reset this node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: reset_node.yml
 
     # DONE (CHECK under --check), then the add_node command for the nodes emptied

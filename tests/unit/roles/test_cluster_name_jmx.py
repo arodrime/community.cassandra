@@ -23,7 +23,7 @@ with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()
 
-TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
 
 
 def tasks():

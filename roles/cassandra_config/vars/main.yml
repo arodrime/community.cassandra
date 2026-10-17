@@ -49,6 +49,13 @@ _cassandra_config_gcs: >-
      else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
 # Where the package puts its config (RedHat: the alternatives target it ships)
 _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
+# The record of the config files the running Cassandra started with (config_seed.yml writes it before a
+# change; cassandra_service writes it at each start, its _cassandra_service_config_snapshot: a unit test keeps
+# them equal), and the files of the conf dir it covers: the config a restart picks up (and the JMX access file,
+# in the conf dir on Debian and Ubuntu; not the password file, read at each login: a new one needs no restart)
+_cassandra_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
+_cassandra_config_snapshot_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties,
+                                   logback.xml, jmxremote.access]
 # A duration above zero Cassandra 4.1+ reads in milliseconds (DurationSpec.IntMillisecondsBound)
 _cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
 # Installed Cassandra release ('' if not from a package), read with the node (rpm, else dpkg)

@@ -87,7 +87,9 @@
       delay: 10
 
     - name: Record the config they started with
-      ansible.builtin.include_tasks: config_snapshot.yml
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: config_snapshot.yml
       args:
         apply:
           delegate_to: "{{ cassandra_restarted_node }}"

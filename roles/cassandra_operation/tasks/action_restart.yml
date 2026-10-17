@@ -2,7 +2,9 @@
 # The unit written first: a run that can't write it (no root) stops with the
 # node still running, not drained
 - name: Install the cassandra systemd unit
-  ansible.builtin.include_tasks: unit.yml
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: unit.yml
 
 - name: Drain the node
   ansible.builtin.import_tasks: drain.yml
@@ -30,7 +32,10 @@
       ansible.builtin.include_tasks: "{{ _cassandra_service_while_stopped }}"
 
 - name: Restart it and wait until it has joined
-  ansible.builtin.include_tasks: main.yml
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: main.yml
+    rolespec_validate: false  # as the include it was: no argument check
   vars:
     _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
     cassandra_service_state: restarted

@@ -33,11 +33,12 @@
         tasks_from: defaults.yml
         public: true
 
-    - name: Load the cassandra_service defaults (JMX access)
+    - name: Load the cassandra_service and cassandra_operation defaults (JMX access)
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
+      loop: [cassandra_service, cassandra_operation]
 
     # cassandra_seeds, with seeds of its own for a datacenter it leaves with none (filter cassandra_seed_change,
     # as topology and decommission_node): 2 or 3 of its nodes up, on different racks, the ones it runs with
@@ -82,7 +83,7 @@
 
     - name: Show the new seed list and confirm
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       vars:
         _changed: >-
@@ -123,7 +124,7 @@
 
     - name: Apply the new seed list
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: seeds_apply.yml
       vars:
         cassandra_seeds: "{{ _new }}"

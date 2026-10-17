@@ -36,7 +36,7 @@ def render(template, **variables):
 
 
 def test_operation_summary_is_a_recap():
-    task = load("roles", "cassandra_service", "tasks", "summary.yml")[0]
+    task = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
     variables = dict(cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]}, cassandra_hosts="prod",
                      ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster")

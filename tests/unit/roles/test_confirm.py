@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# cassandra_service confirm.yml, run by ansible-playbook on two local hosts
+# cassandra_operation confirm.yml, run by ansible-playbook on two local hosts
 # the way the playbooks include it, answered through a terminal (a pty).
 
 import os
@@ -23,7 +23,7 @@ PLAYBOOK = """
   tasks:
     - name: Confirm
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: confirm.yml
       vars:
         cassandra_confirm_prompt: "Remove node7 from the ring?"
@@ -183,7 +183,7 @@ SCREEN_PLAYBOOK = """
   tasks:
     - name: Screen
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       vars:
         cassandra_screen_question: Remove node7?
@@ -320,7 +320,7 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
         "",
         "----",  # above the question
         "",
-        "[community.cassandra.cassandra_service : Confirm the operation]",
+        "[community.cassandra.cassandra_operation : Confirm the operation]",
         "Remove node7?",
         "Answer yes to go on, no to stop:",
         "yes",  # pause clears it once read: shown again

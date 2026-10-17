@@ -19,7 +19,7 @@ except ImportError:
         return template
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-TASKS = os.path.join(ROOT, "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(ROOT, "roles", "cassandra_operation", "tasks")
 
 
 def load(*path):
@@ -33,7 +33,7 @@ def render(template, **variables):
 
 
 def disk_task():
-    block = load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
+    block = load("roles", "cassandra_operation", "tasks", "stream_check.yml")[0]["block"]
     return next(t for t in block if t["name"] == "Read the space used where this node writes")
 
 
@@ -46,7 +46,7 @@ def test_read_only_on_a_receiving_node_while_bytes_are_left():
     assert "_cassandra_stream_disk | default(false) | bool" in when
     assert "_cassandra_stream_state.transferring | default(false) | bool" in when
     # its reading is this node's, and goes to the progress
-    block = load("roles", "cassandra_service", "tasks", "stream_check.yml")[0]["block"]
+    block = load("roles", "cassandra_operation", "tasks", "stream_check.yml")[0]["block"]
     work = next(t for t in block if t["name"] == "Work out the progress")
     assert "disk=_disk" in work["ansible.builtin.set_fact"]["_cassandra_stream_state"]
     assert render(work["vars"]["_disk"], inventory_hostname="n4", cassandra_stream_disk={"stdout": "123"}) == {"n4": "123"}
@@ -61,12 +61,12 @@ def test_the_operations_that_receive_ask_for_it_the_others_not():
                     "tasks_from")
                 if inc == "stream_wait.yml":
                     yield inner.get("vars", {})
-    joins = list(wait_vars(load("roles", "cassandra_service", "tasks", "action_add.yml")))
+    joins = list(wait_vars(load("roles", "cassandra_operation", "tasks", "action_add.yml")))
     rebuild = [v for p in load("playbooks", "add_datacenter.yml") for v in wait_vars(p.get("tasks", []))]
     assert joins and all(v.get("_cassandra_stream_disk") is True for v in joins)
     assert rebuild and all(v.get("_cassandra_stream_disk") is True for v in rebuild)
-    others = list(wait_vars(load("roles", "cassandra_service", "tasks", "action_decommission.yml")))
-    others += list(wait_vars(load("roles", "cassandra_service", "tasks", "action_move.yml")))
+    others = list(wait_vars(load("roles", "cassandra_operation", "tasks", "action_decommission.yml")))
+    others += list(wait_vars(load("roles", "cassandra_operation", "tasks", "action_move.yml")))
     for name in ("move_node.yml", "remove_dead_node.yml"):
         others += [v for p in load("playbooks", name) for v in wait_vars(p.get("tasks", []))]
     assert len(others) >= 4 and not any("_cassandra_stream_disk" in v for v in others)

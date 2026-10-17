@@ -1,6 +1,6 @@
 ---
 # The screen of an operation playbook, then its confirmation, once per run:
-#   include_role: name=community.cassandra.cassandra_service tasks_from=screen.yml
+#   include_role: name=community.cassandra.cassandra_operation tasks_from=screen.yml
 #   vars: cassandra_screen: {operation, summary, intro, blocks, after, warnings} (filter cassandra_screen)
 #         cassandra_screen_question: "Remove node7?"
 #         cassandra_screen_session_warning: true adds the warning of a run not inside tmux or screen

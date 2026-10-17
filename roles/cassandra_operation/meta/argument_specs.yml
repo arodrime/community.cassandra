@@ -1,0 +1,381 @@
+---
+argument_specs:
+  main:
+    short_description: The task files of the collection's playbooks (internal).
+    description:
+      - Not a role to run on its own (it has no main tasks), nor a stable interface. It holds the task
+        files the collection's playbooks include (cluster health, rolling operations, node checks,
+        confirmation screens, progress files, streaming waits), with the defaults they read.
+      - The playbooks' settings below are set in the inventory as any role variable.
+    options:
+      cassandra_new_node_checks:
+        type: bool
+        default: true
+        description:
+          - C(add_node) and C(replace_node) check the new hosts before installing anything (root access,
+            the Cassandra directories and their mounts, free space, the Pythons of cqlsh and Medusa, the
+            packages and their sources, the seeds' ports, no Cassandra there yet) and stop with every
+            problem found. V(false) skips these checks.
+      cassandra_new_node_min_free_gb:
+        type: int
+        default: 0
+        description:
+          - Minimum free space, in GiB, on the file system of each data directory of a new host. V(0)
+            checks none, the free space is only shown.
+      cassandra_new_node_allow_kept_setup:
+        type: bool
+        default: false
+        description:
+          - The new host checks refuse a host with no Cassandra installed yet that still has the host_vars
+            C(import_cluster) wrote for the node that had its name (C(cassandra_imported_host=true) with
+            C(cassandra_linux_manage), C(cassandra_cqlsh_python_manage) or C(cassandra_service_unit_manage)
+            V(false)), as the roles would leave it half set up. The same switches set by the operator are not
+            refused. V(true) accepts it, when that host is set up another way.
+      cassandra_imported_host:
+        type: bool
+        description:
+          - Written by C(import_cluster) in the host_vars of a node next to the C(*_manage) switches it sets
+            there. The new host checks use it to tell those switches from the operator's own.
+      cassandra_suspicious_ack:
+        type: list
+        elements: str
+        default: []
+        description:
+          - The sensitive or suspicious settings a node keeps on purpose, by the id of their row, whose WARNING the
+            C(preflight) playbook and the C(import_cluster) report leave out for it (per host or group).
+          - V(auto_bootstrap_false), V(replace_address) (a replace flag left on a member of the ring), V(heap_size)
+            (not set on a 4.x host with 64G of RAM, whose auto-sizing stops at 8G; under 2G, 32G or more, over half
+            the RAM), V(allow_all_authenticator) (with an rpc address other hosts reach), V(failure_policy_ignore).
+          - Each WARNING names the id that silences it; an id no check has gets a WARNING of its own.
+          - The RAM-based heap checks need the host's facts, read by C(preflight), not by C(import_cluster).
+      cassandra_add_node_cleanup:
+        type: str
+        default: none
+        choices: [none, sequential, one, rack, dc, all]
+        description:
+          - What the C(add_node) playbook does, after the add, about the cleanup of the nodes that handed
+            data over (the datacenter's nodes, or only the new nodes' racks when every keyspace has as many
+            replicas as racks there), with the words of the C(cleanup) playbook's C(cassandra_cleanup_mode).
+            C(none) prints the command; C(sequential) runs it one node at a time (C(one) is the same);
+            C(rack) a rack at a time, C(dc) a datacenter at a time; C(all) every node at once (heavy I/O).
+            The cluster is checked before each batch.
+      cassandra_add_node_reset:
+        type: raw
+        default: auto
+        description:
+          - What the C(add_node) and C(topology) playbooks do with a new node that has data but is not in the
+            ring (started once by mistake, a failed bootstrap). C(auto) (the default) resets it first, the same
+            way as the C(reset_node) playbook. It keeps Cassandra from starting at boot, then deletes what its
+            data, commitlog, saved_caches, hints and cdc_raw directories hold, from the inventory and the live
+            C(cassandra.yaml). The node, what it holds and the list are shown and confirmed first. C(false)
+            refuses any new node with data. A new node without data needs no reset.
+          - The node is reset only when all hold. Cassandra is down there. No up node of the cluster lists one
+            of its addresses in its ring, and its data does not show it as a member of another ring. Its cluster
+            name (its live C(cassandra.yaml)) is this cluster's or the package's stock C(Test Cluster). It has no
+            user keyspace, unless it is a failed bootstrap of this cluster (its cluster name is this one, its
+            keyspaces among the cluster's) that C(add_node) started (its mark on the node, until it joined).
+            Otherwise it is refused, with what it holds (size, cluster, user keyspaces, ring, running or down). Paths that look wrong are refused too (a system directory, a
+            top-level one that is not a mount point, one holding another mount point, the config or the logs).
+          - A node of this cluster that holds its keyspaces without such a bootstrap is a former member (removed
+            with C(remove_dead_node) and put back in the inventory), the writes only it holds would be lost.
+            C(auto) refuses it, saying so; C(true), given on purpose (C(-e cassandra_add_node_reset=true)), resets
+            it (snapshot or copy its data first if in doubt).
+      cassandra_replace_node_reset:
+        type: bool
+        default: false
+        description:
+          - What the C(replace_node) playbook does with a replacement host that still holds data, typically a
+            host replacing itself (the dead node's address is its own, e.g. a lost disk or a reinstall).
+            C(false) refuses it, C(true) resets it first as C(cassandra_add_node_reset) does. The other nodes
+            may list the host's address only as the dead node being replaced, down.
+      cassandra_node_state:
+        type: str
+        default: present
+        choices: [present, absent]
+        description:
+          - The state this host should be in, the inventory being the desired state of the cluster. C(absent)
+            (a host var, or a group var for a group of hosts) takes the host out of the cluster - every operation
+            playbook leaves it out (preflight, health checks and their node counts, rolling operations, status,
+            import), and the C(topology) playbook decommissions it if it is still in the ring.
+          - Delete the host from the inventory once C(topology) has removed it, or leave it marked absent.
+      cassandra_create_cluster_reset:
+        type: bool
+        default: false
+        description:
+          - C(true) makes the C(create_cluster) playbook rebuild a cluster that runs already, ALL ITS DATA
+            LOST, e.g. to move it to another snitch, datacenters or racks (a node keeps them for life once it
+            has joined). Every node is stopped, kept from starting at boot and emptied as by the C(reset_node)
+            playbook, then the cluster is created with the inventory's settings.
+          - Refused when C(--limit) leaves a host of the group out, when no node answers C(nodetool status),
+            when the ring has a node the group does not have, when a running node is not in that ring or the
+            running nodes see different rings, when a node holding data is not in that ring, or when a node's
+            live C(cassandra.yaml) names another cluster. The plan is shown, then the operator types the cluster name. C(--check) shows
+            the plan only.
+      cassandra_create_cluster_reset_confirm:
+        type: str
+        default: ""
+        description:
+          - The cluster name, for C(cassandra_create_cluster_reset) without a terminal (it replaces typing
+            it). Any other value is refused.
+      cassandra_token_auto:
+        type: raw
+        default: false
+        description:
+          - One token per node (I(cassandra_num_tokens=1)), C(add_node) - where the new nodes without
+            C(cassandra_initial_token) go. C(false) refuses them; C(bisect) splits the largest ranges, no node
+            moves; C(balanced) gives an even ring for the new node count, the new nodes join at their final
+            tokens and C(move_node) moves the others afterwards; C(true) shows both plans and asks which
+            (refused when C(cassandra_operation_confirm) is false; C(--check) follows bisect without asking).
+      cassandra_token_rf:
+        type: int
+        default: 3
+        description:
+          - One token per node - the replication factor the shares shown by C(create_cluster), C(add_node),
+            C(add_datacenter) and C(move_node) assume in a datacenter no keyspace is replicated to.
+            Otherwise the largest replication factor of the datacenter's keyspaces.
+      cassandra_token_allow_partial:
+        type: bool
+        default: false
+        description:
+          - One token per node, C(create_cluster) - a datacenter where only some nodes have
+            C(cassandra_initial_token) is refused; C(true) gives the others the middles of the largest ranges.
+      cassandra_move_tokens:
+        type: dict
+        default: {}
+        description:
+          - "C(move_node) - the nodes to move and their new tokens, a dict node name to token. Empty, each single-token
+            datacenter is evened out with the fewest moves."
+      cassandra_move_cleanup:
+        type: str
+        default: none
+        choices: [none, sequential, one, rack, dc, all]
+        description:
+          - What C(move_node) does about the cleanup of the nodes that lost ranges (this run's and the ones an
+            interrupted run recorded), as C(cassandra_add_node_cleanup).
+      cassandra_move_min_free_percent:
+        type: int
+        default: 20
+        description:
+          - C(move_node) - before each move, the nodes that receive data must keep this share of their data
+            directories' disks free, counting the data the move streams to them (estimated from the loads,
+            data spread evenly along the ring).
+      cassandra_decommission_force:
+        type: bool
+        default: false
+        description:
+          - C(decommission_node), C(topology), C(remove_dead_node) - go on when a datacenter would keep fewer
+            nodes than a keyspace has replicas there (those keyspaces keep fewer copies of the data). The plan
+            says it, and a node is decommissioned with C(nodetool decommission --force), which Cassandra 4.0
+            and later need then.
+      cassandra_move_force_disk:
+        type: bool
+        default: false
+        description:
+          - C(move_node) - go on with a move the disk check refuses.
+      cassandra_move_timeout:
+        type: int
+        description:
+          - C(move_node) - seconds the job running C(nodetool move) may last; by default as long as the
+            streams make progress (see C(cassandra_stream_max_time)).
+      cassandra_stream_stall_warn_time:
+        type: int
+        default: 300
+        description:
+          - After this many seconds without any progress (see C(cassandra_stream_stall_time)), the progress
+            line of a streaming operation says C(STALLED) (earlier, as progress, C(no progress for 3m)). The
+            wait goes on until C(cassandra_stream_stall_time).
+      cassandra_stream_stall_time:
+        type: int
+        default: 1800
+        description:
+          - A streaming operation or cleanup fails only after this many seconds without any progress in
+            C(nodetool netstats) (no byte or file streamed, no session started or ended). On a node that
+            receives (bootstrap, replace, rebuild), the growth of the space used on its data and commitlog
+            filesystems counts too, while bytes are left (a stream of whole SSTables, zero-copy, counts a
+            file's bytes only once it is over; the line then says C(receiving (disk +3.2 GiB in 5m))), from
+            64 MiB a check (heavy writes on that node meanwhile can hide a stall, C(cassandra_stream_max_time)
+            bounds the wait). A
+            decommission or a move goes by C(nodetool netstats) only (the nodes that receive take client
+            load, so their disk says little); with very big SSTables, raise this and
+            C(cassandra_stream_stall_warn_time). Nothing is stopped then; the node stays as it is.
+      cassandra_stream_max_time:
+        type: int
+        default: 0
+        description:
+          - Optional limit, in seconds, on the whole streaming operation. C(0) (default) sets none.
+      cassandra_service_health_timeout:
+        type: int
+        default: 600
+        description:
+          - Operation playbooks, cluster health check before and after each
+            node. Seconds to wait for down nodes to come back (and this node's storage and CQL ports, gossip and
+            native transport to answer), read again every C(cassandra_stream_check_interval) seconds (sooner at
+            first, plus the time of a read) with a progress line.
+      cassandra_service_health_force:
+        type: bool
+        default: false
+        description:
+          - Go on although the cluster is not healthy. Risky, a second replica
+            down can make data unavailable.
+      cassandra_clock_max_offset_ms:
+        type: int
+        default: 50
+        description:
+          - Clocks (the C(sync_clocks) playbook, and the check before C(create_cluster)
+            and C(add_node) start nodes). A node is in sync when its time sync daemon
+            says it is synchronised and its offset plus the daemon's error bound
+            (root delay and dispersion) is within this many milliseconds.
+          - A node no daemon reports on (a container, its clock the host's) is
+            compared with the others by dates collected over SSH, a coarse
+            measure (only a gap over a second counts there).
+      cassandra_clock_step_ms:
+        type: int
+        default: 400
+        description:
+          - A clock correction over this many milliseconds steps the clock instead
+            of slewing it (systemd-timesyncd steps past 400 ms). On a node where
+            Cassandra runs, C(sync_clocks) steps it in a restart window (drain,
+            stop, step, start), one node at a time.
+      cassandra_clock_sync_timeout:
+        type: int
+        default: 180
+        description:
+          - Seconds to wait for a time sync daemon just started to synchronise and
+            converge (its error bound shrinks with its first samples; chrony polls
+            about every 64 s at first).
+      cassandra_clock_check:
+        type: bool
+        default: true
+        description:
+          - Check the clocks before C(create_cluster) and C(add_node) start nodes
+            (refused when not in sync, nothing started). V(false) skips it, for
+            clocks kept in sync by other means.
+      cassandra_operation_confirm:
+        type: bool
+        default: true
+        description:
+          - Ask the operator before a risky operation. C(false) for non-interactive runs. C(--check) never asks
+            (nothing changes, the plan only).
+      cassandra_operation_drain:
+        type: bool
+        default: true
+        description:
+          - Rolling restarts and C(stop_rack) drain each node before stopping it (the role's unit drains
+            on stop too, a second drain is harmless). V(false) leaves it to the unit, except on a node whose own
+            unit is kept (C(cassandra_service_unit_manage=false)), which is drained anyway.
+      cassandra_rolling_resume:
+        type: bool
+        default: false
+        description:
+          - Resume the latest interrupted rolling operation of this cluster,
+            skipping the nodes already done.
+      cassandra_rolling_progress_dir:
+        type: path
+        default: ""
+        description:
+          - Where rolling operations keep their progress files, on the
+            controller. A relative path is from the current dir.
+          - Empty (default) means C(.cassandra_progress) in the inventory's
+            dir, or in the current dir when the inventory's dir is not writable
+            and has no C(.cassandra_progress) yet (or there is none, as with
+            C(-i host1,host2)). With several inventories, the one of the first
+            host of the play.
+      cassandra_rolling_progress_days:
+        type: int
+        default: 30
+        description:
+          - Progress files older than this are removed.
+      cassandra_cql_username:
+        type: str
+        default: ""
+        description:
+          - CQL user for the checks that read the schema (e.g. the keyspaces'
+            replication before a decommission), when authentication is on.
+      cassandra_cql_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password of O(cassandra_cql_username).
+      cassandra_service_enabled:
+        type: bool
+        default: true
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_state:
+        type: str
+        default: started
+        choices: [started, stopped, restarted]
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_restart_on_change:
+        type: bool
+        default: false
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_allow_new_seed:
+        type: bool
+        default: false
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_unit_manage:
+        type: bool
+        default: true
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_environment:
+        type: dict
+        default: {}
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_wait_for_normal:
+        type: bool
+        default: true
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_wait_timeout:
+        type: int
+        default: 600
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_stream_check_interval:
+        type: int
+        default: 30
+        description:
+          - Seconds between two progress checks of a streaming operation (bootstrap of C(add_node),
+            C(replace_node), C(decommission_node), C(remove_dead_node), rebuild of C(add_datacenter),
+            C(move_node), C(topology)) and of a cleanup, after the first
+            C(cassandra_stream_early_time) seconds. Each check reads C(nodetool netstats) and prints
+            one progress line (bar, percentage, rate, expected end) and the other nodes in columns under it. Also
+            the pace of the cluster health check's wait for nodes down (C(cassandra_service_health_timeout)).
+      cassandra_stream_early_check_interval:
+        type: int
+        default: 10
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_stream_early_time:
+        type: int
+        default: 300
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_drain_timeout:
+        type: int
+        default: 120
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_jmx_username:
+        type: str
+        default: ""
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_jmx_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_jmx_password_file:
+        type: str
+        default: ""
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).

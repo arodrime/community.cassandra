@@ -31,7 +31,7 @@
     # asks once (cassandra_operation_confirm: false, or --check, asks nothing)
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       vars:
         _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list }}"
@@ -50,7 +50,7 @@
     # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
     - name: Set up the progress file
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
 
 - name: Rolling reboot
@@ -73,7 +73,7 @@
     # to ansible.builtin.reboot (action_reboot.yml)
     - name: Reboot this host
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: reboot
@@ -92,5 +92,5 @@
 
     - name: Print the summary
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: summary.yml

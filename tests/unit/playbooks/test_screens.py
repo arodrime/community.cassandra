@@ -46,7 +46,7 @@ def load(*path):
         return yaml.safe_load(f)
 
 
-SCREEN = load("roles", "cassandra_service", "tasks", "screen.yml")[0]
+SCREEN = load("roles", "cassandra_operation", "tasks", "screen.yml")[0]
 
 
 def trust(value):
@@ -250,7 +250,7 @@ def test_replace_node_screen():
 def test_resets_asked_on_the_operation_screen_only():
     # add_node and replace_node: the reset is planned before their screen, applied after their
     # one question without a question of its own; reset_node alone asks its own
-    tasks = load("roles", "cassandra_service", "tasks", "reset_node.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "reset_node.yml")
     confirm = next(x for x in tasks if x.get("name") == "Confirm the reset")
     assert "not _cassandra_node_reset_confirmed | default(false) | bool" in confirm["when"]
     for playbook, screen_task in (("add_node.yml", "Show the plan and confirm the add"),
@@ -453,7 +453,7 @@ def test_create_cluster_reset_screen():
 
 
 def test_reset_screen():
-    tasks = load("roles", "cassandra_service", "tasks", "reset_node.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "reset_node.yml")
     t = next(x for x in tasks if x.get("name") == "Confirm the reset")
     plan = {"delete": ["a", "b"], "stop": True, "disable": True, "dirs": ["/var/lib/cassandra/data (2 entries)"]}
     text = screen({"ansible_play_hosts": ["node7"], "hostvars": {"node7": {"_cassandra_node_reset_plan": plan}}}, t["vars"])
@@ -468,7 +468,7 @@ def test_reset_screen():
 def test_every_confirmation_goes_through_the_screen():
     # no playbook builds its own prompt without its plan: through screen.yml, or (the plan layout of
     # plugin_utils cassandra_output, OUTPUT Q5) confirm.yml right after the task that prints the plan
-    for name in os.listdir(os.path.join(TOP, "playbooks")):
+    for name in sorted(n for n in os.listdir(os.path.join(TOP, "playbooks")) if n.endswith(".yml")):
         with open(os.path.join(TOP, "playbooks", name), encoding="utf-8") as f:
             plays = yaml.safe_load(f)
         for play in plays:
@@ -567,7 +567,7 @@ def test_apply_config_reads_every_node_and_puts_the_settings_side_by_side():
 # node_operation.yml and restart_batch.yml: test_check_mode_results.py
 @pytest.mark.parametrize("tasks_file,would,done", [("cleanup_batch.yml", "would clean up", "cleanup done in ")])
 def test_batch_result_under_check(tasks_file, would, done):
-    tasks = load("roles", "cassandra_service", "tasks", tasks_file)
+    tasks = load("roles", "cassandra_operation", "tasks", tasks_file)
     record = next(t for t in walk(tasks) if t.get("name") == "Record the result")["ansible.builtin.set_fact"]
 
     def result(check):
@@ -586,7 +586,7 @@ def test_apply_config_shows_the_changes_once():
     compare, play = task("apply_config.yml", "Compare the config")
     assert compare["vars"]["_cassandra_change_report_quiet"] is True
     assert compare["vars"]["_cassandra_config_quiet"] is True
-    write = next(t for t in load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
+    write = next(t for t in load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
                  if t.get("name") == "Write the config")
     assert write["vars"]["_cassandra_config_quiet"] is True and write["vars"]["_cassandra_change_report_quiet"] is True
 

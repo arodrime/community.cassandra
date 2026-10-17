@@ -1,5 +1,6 @@
 ---
-# Runs one check (_cassandra_wait_check: a task file of this role) again and
+# Runs one check (_cassandra_wait_check: a task file of this role, or the path
+# of another role's) again and
 # again while _cassandra_wait_going (an expression, read before each check) is
 # true, and stops right after the check that ends it. Ansible includes every
 # item of a looped include before running any, and nests every include one

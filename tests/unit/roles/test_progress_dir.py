@@ -24,7 +24,7 @@ PLAYBOOK = """
   tasks:
     - name: Progress
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
 
     - name: Show
@@ -194,7 +194,7 @@ def test_the_progress_file_writes_show_no_diff():
             for key in ("block", "rescue", "always"):
                 yield from walk(t.get(key) or [])
 
-    here = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+    here = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
     for name, task_name in (("progress.yml", "Create the progress file"),
                             ("node_operation.yml", "Add the node to the progress file")):
         with open(os.path.join(here, name), encoding="utf-8") as f:

@@ -129,7 +129,10 @@
 
     # (restarted: also a node still running, drained, when the stop is what failed; not another JVM's)
     - name: Start Cassandra again, without them
-      ansible.builtin.include_tasks: main.yml
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: main.yml
+        rolespec_validate: false  # as the include it was: no argument check
       vars:
         cassandra_service_state: restarted
       when: _restart | bool

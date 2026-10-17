@@ -1,7 +1,7 @@
 ---
 # Progress file of a rolling operation, on the controller: one line per node
 # done. Run it once, in a play without serial, before the rolling play:
-#   include_role: name=community.cassandra.cassandra_service tasks_from=progress.yml
+#   include_role: name=community.cassandra.cassandra_operation tasks_from=progress.yml
 # A fresh run starts a new file; -e cassandra_rolling_resume=true reuses the
 # latest one of this operation and cluster and skips the nodes it lists.
 - name: Set up the progress file

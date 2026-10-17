@@ -12,7 +12,7 @@ import os
 import pytest
 import yaml
 
-TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
 
 
 def conditions(task):

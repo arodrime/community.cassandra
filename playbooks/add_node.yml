@@ -47,7 +47,7 @@
 
     - name: Check this host
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: new_node_checks.yml
       vars:
         _cassandra_new_node_skip_in_ring: true  # an interrupted run: checked next
@@ -94,7 +94,7 @@
         name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
-      loop: [cassandra_service, cassandra_install]
+      loop: [cassandra_service, cassandra_operation, cassandra_install]
 
     # The nodes already in the ring are only checked (re-running is safe), a node
     # still bootstrapping (an earlier run that stopped waiting) is waited for again;
@@ -103,7 +103,7 @@
       block:
         - name: Find which ones already joined (an interrupted run)
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: new_node_state.yml
           vars:
             _cassandra_new_node_refused_by_caller: true  # below, one block for all the nodes
@@ -130,7 +130,7 @@
 
         - name: Print the summary
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: summary.yml
           vars:
             cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
@@ -181,7 +181,7 @@
       block:
         - name: Read the keyspaces' replication
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: keyspaces.yml
           vars:
             cassandra_keyspaces_from: "{{ _existing | first }}"
@@ -302,7 +302,7 @@
     # (topology worked it out already and showed it on its own screen: kept as shown)
     - name: Work out the reset of the new nodes (cassandra_add_node_reset)
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: reset_node_plan.yml
       when:
         - cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false'
@@ -352,7 +352,7 @@
     # outside tmux/screen).
     - name: Show the plan and confirm the add
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       when: _new | length > 0 or _joining | length > 0 or cassandra_add_node_cleanup | default('none') != 'none'
       vars:
@@ -472,7 +472,7 @@
     # start or bootstrap, not in the ring) starts over empty
     - name: Reset the new nodes first (cassandra_add_node_reset)
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: reset_node.yml
       when:
         - cassandra_add_node_reset | default('auto') | community.cassandra.cassandra_reset_choice != 'false'
@@ -527,7 +527,7 @@
         # as it is (its config is apply_config's, with its own question)
         - name: Prepare this node
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: action_add_prepare.yml
           when: cassandra_new_node_state == 'new'
           vars:
@@ -605,7 +605,7 @@
     # only prints never goes to its rescue, nor stops the add)
     - name: Say what the prepare did
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: prepare_lines.yml
       vars:
         _cassandra_prepare_hosts: >-
@@ -631,7 +631,7 @@
 
     - name: Check the clocks
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: clocks_check.yml
       vars:
         _cassandra_clock_operation: "{{ _cassandra_screen_asked_by | default('') or 'add_node' }}"
@@ -663,7 +663,7 @@
 
     - name: Add this node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: add
@@ -797,7 +797,7 @@
 
     - name: Apply cassandra_seeds on every node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: seeds_apply.yml
       when:
         - _new_seeds | length > 0
@@ -820,7 +820,7 @@
 
     - name: Print the summary
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: summary.yml
       vars:
         cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
@@ -925,7 +925,7 @@
 
     - name: Clean up, by batches
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cleanup_batch.yml
         apply:
           run_once: true

@@ -92,11 +92,11 @@ def test_the_start_is_read_only_when_a_file_is_written_back():
 def test_the_jvm_is_checked_again_before_the_write():
     # restarted between the plan and the write (the question may wait): refused, nothing written on it
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
-    action = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
+    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in action]
     check = action[names.index("Check the JVM a file is written back for still runs")]
     assert names.index("Check the JVM a file is written back for still runs") < names.index("Write the config")
-    assert check["block"][0]["ansible.builtin.include_tasks"] == "jvm_started.yml"
+    assert check["block"][0]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "jvm_started.yml"}
     plan = needs(full=True)[2]
     assert plan == {"files": [OPTIONS], "pid": "42", "start": "100.00", "sha1": {OPTIONS: sha1(STARTED_WITH)}}
     stop = check["block"][1]
@@ -111,11 +111,13 @@ def test_the_jvm_is_checked_again_before_the_write():
 
 def test_the_files_written_back_are_checked_after_the_write():
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
-    action = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
+    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in action]
     assert names.index("Write the config") < names.index("Check the files written back")
     check = action[names.index("Check the files written back")]
-    assert check["block"][1]["ansible.builtin.include_tasks"] == "jvm_started.yml"  # restarted during the write?
+    # restarted during the write?
+    assert check["block"][1]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config",
+                                                                 "tasks_from": "jvm_started.yml"}
     stop = check["block"][2]
     plan = needs(full=True)[2]
     same = {"pid": "42", "start": "100.00"}

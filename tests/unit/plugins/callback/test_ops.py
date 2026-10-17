@@ -700,7 +700,7 @@ def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
   tasks:
     - name: Confirm
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: confirm.yml
       vars:
         cassandra_confirm_prompt: "Go?"
@@ -1394,7 +1394,7 @@ def test_the_cluster_line_with_a_datacenter_only_the_node_knows(tmp_path):
         "        p2: {cassandra_dc: \"{{ ansible_facts['hostname'][:3] }}\"}\n"
         "        p3: {cassandra_dc: \"{{ undefined_thing }}\", cassandra_node_state: absent}\n")
     rc, output = run(tmp_path, "- hosts: localhost\n  gather_facts: false\n  tasks:\n"
-                     "    - ansible.builtin.include_role:\n        name: community.cassandra.cassandra_service\n"
+                     "    - ansible.builtin.include_role:\n        name: community.cassandra.cassandra_operation\n"
                      "        tasks_from: cluster_banner.yml\n", INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0, output
     banner = "CLUSTER prod (2 nodes + 1 marked absent, dc1, dc?) | chosen by: the only cluster in the inventory"

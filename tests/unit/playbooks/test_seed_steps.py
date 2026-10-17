@@ -119,7 +119,7 @@ def test_preflight_lets_add_node_and_topology_add_a_seed():
 
 # join_seeds.yml: the seeds a new node starts with, never itself
 
-JOIN = load("roles", "cassandra_service", "tasks", "join_seeds.yml")[0]
+JOIN = load("roles", "cassandra_operation", "tasks", "join_seeds.yml")[0]
 
 
 def join_seeds(seeds, members=(1, 2, 3), joining=()):
@@ -144,13 +144,13 @@ def test_join_seeds_keep_cassandra_seeds_as_written_when_nothing_is_left_out():
 
 
 def test_the_add_and_its_checks_use_the_join_seeds():
-    add = load("roles", "cassandra_service", "tasks", "action_add.yml")
-    prepare = load("roles", "cassandra_service", "tasks", "action_add_prepare.yml")
+    add = load("roles", "cassandra_operation", "tasks", "action_add.yml")
+    prepare = load("roles", "cassandra_operation", "tasks", "action_add_prepare.yml")
     assert prepare[0]["ansible.builtin.include_tasks"] == "join_seeds.yml"
     config = task(prepare, "Write the config")
     assert config["vars"]["cassandra_seeds"] == "{{ _cassandra_join_seeds }}"
     assert task(add, "Start it")["vars"]["cassandra_service_allow_new_seed"] is True
-    checks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"))
+    checks = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "new_node_checks.yml"))
     block = task(checks, "Check the host before installing anything")["block"]
     names = [t["name"] for t in flat(block)]
     assert names.index("Work out the seeds it joins with") < names.index("Work out what to check")
@@ -234,7 +234,7 @@ def test_a_failed_seed_step_stops_the_run():
 
 
 def test_the_add_refuses_a_node_among_its_own_join_seeds():
-    guard = task(load("roles", "cassandra_service", "tasks", "action_add_prepare.yml"), "It is not one of the seeds it joins with")
+    guard = task(load("roles", "cassandra_operation", "tasks", "action_add_prepare.yml"), "It is not one of the seeds it joins with")
     own = guard["vars"]["_own"]
     names = ["n5", "10.0.0.5"]
     assert render(own, _cassandra_join_seeds=["10.0.0.1"], _cassandra_service_names=names) == []
@@ -322,7 +322,7 @@ def test_decommission_shows_applies_and_says_the_seeds_picked():
 def test_change_seeds_uses_the_shared_tasks():
     tasks = play("change_seeds.yml", "Update the seed list")["tasks"]
     assert task(tasks, "Apply the new seed list")["ansible.builtin.include_role"]["tasks_from"] == "seeds_apply.yml"
-    apply = load("roles", "cassandra_service", "tasks", "seeds_apply.yml")
+    apply = load("roles", "cassandra_operation", "tasks", "seeds_apply.yml")
     block = task(apply, "Apply the seed list")["block"]
     reload = task(block, "Reload the seeds on the running node")
     # read when applied: a node this run added was not running at the preflight
@@ -361,19 +361,19 @@ def test_the_shared_seed_tasks_vars_are_their_own():
     # the vars of the include that runs them win over their own task vars: add_node's _pending (a count) once
     # broke join_seeds.yml's list of the same name
     elsewhere = set()
-    for name in os.listdir(os.path.join(TOP, "playbooks")):
+    for name in sorted(n for n in os.listdir(os.path.join(TOP, "playbooks")) if n.endswith(".yml")):
         elsewhere.update(_var_names(load("playbooks", name)))
-    tasks_dir = os.path.join(TOP, "roles", "cassandra_service", "tasks")
-    for name in os.listdir(tasks_dir):
-        if name not in ("join_seeds.yml", "seeds_apply.yml"):
-            elsewhere.update(_var_names(load("roles", "cassandra_service", "tasks", name)))
+    for role in ("cassandra_service", "cassandra_operation"):
+        for name in os.listdir(os.path.join(TOP, "roles", role, "tasks")):
+            if name not in ("join_seeds.yml", "seeds_apply.yml"):
+                elsewhere.update(_var_names(load("roles", role, "tasks", name)))
     for name in ("join_seeds.yml", "seeds_apply.yml"):
-        own = _var_names(load("roles", "cassandra_service", "tasks", name)) - {"cassandra_output"}  # the callback's mark
+        own = _var_names(load("roles", "cassandra_operation", "tasks", name)) - {"cassandra_output"}  # the callback's mark
         assert not own & elsewhere, (name, own & elsewhere)
 
 
 def test_the_seed_line_read_with_any_quotes():
-    facts = task(load("roles", "cassandra_service", "tasks", "node_facts.yml"), "Record this node's settings")
+    facts = task(load("roles", "cassandra_operation", "tasks", "node_facts.yml"), "Record this node's settings")
     template = facts["ansible.builtin.set_fact"]["_cassandra_preflight"]["live_seeds"]
     import base64
     for line in ('- seeds: "10.0.0.1,10.0.0.2"', "- seeds: '10.0.0.1,10.0.0.2'", "- seeds: 10.0.0.1,10.0.0.2"):
@@ -513,7 +513,7 @@ def test_add_node_keeps_the_seeds_picked_for_a_datacenter():
 # next restart), the TO DO says it; change_seeds, whose job the reload is, still fails. A node whose list did not
 # change is not reloaded (a decommission of a non-seed once failed on a seed whose cassandra.yaml no longer loaded).
 
-SEEDS_APPLY = load("roles", "cassandra_service", "tasks", "seeds_apply.yml")
+SEEDS_APPLY = load("roles", "cassandra_operation", "tasks", "seeds_apply.yml")
 
 
 def test_the_reload_only_where_the_list_changed_or_a_reload_is_owed():

@@ -44,7 +44,7 @@
     # -e cassandra_rolling_resume=true: an interrupted run skips the nodes already done
     - name: Set up the progress file
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
         public: true
 
@@ -64,7 +64,7 @@
 
     - name: Run the batches
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cleanup_batch.yml
         apply:
           run_once: true
@@ -76,7 +76,7 @@
 
     - name: Check the cluster after the last batch
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
         apply:
           run_once: true
@@ -84,5 +84,5 @@
 
     - name: Print the summary
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: summary.yml

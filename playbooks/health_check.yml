@@ -19,7 +19,7 @@
   tasks:
     - name: Check the cluster's group
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: hosts_check.yml
       tags: [always]  # its variables check under --tags too
 
@@ -62,14 +62,14 @@
     # also run by the first play, which --limit skips
     - name: No unknown variable
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: variables_check.yml
       tags: [always]  # under --tags too
 
     # the run's first line, here when --limit left the first play (localhost) out
     - name: Say which cluster the run is on
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_banner.yml
       tags: [always]  # under --tags too
 
@@ -83,7 +83,7 @@
     # gossip, native transport, streams, schema agreement, the storage and CQL ports
     - name: Check the cluster from this node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
       vars:
         cassandra_service_health_report_only: true

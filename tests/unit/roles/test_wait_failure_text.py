@@ -21,7 +21,7 @@ except ImportError:
 
 load_collection_filters()
 
-TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
 
 
 def stop(name, file):

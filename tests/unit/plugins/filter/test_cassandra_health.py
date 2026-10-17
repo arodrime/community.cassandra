@@ -60,7 +60,7 @@ def test_a_node_of_the_inventory_named_by_its_host_and_address():
 def test_the_health_checks_pass_the_inventory_names():
     import os
     import yaml
-    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_service", "tasks",
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_operation", "tasks",
                         "cluster_health_read.yml")
     with open(path, encoding="utf-8") as f:
         text = f.read()

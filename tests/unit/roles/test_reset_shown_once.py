@@ -27,7 +27,7 @@ def load(*path):
 
 
 def shown(**variables):
-    say = next(t for t in load("roles", "cassandra_service", "tasks", "reset_node_plan.yml")
+    say = next(t for t in load("roles", "cassandra_operation", "tasks", "reset_node_plan.yml")
                if t["name"] == "What the reset of {{ inventory_hostname }} would do")
     variables.setdefault("_p", {"delete": ["/var/lib/cassandra/data/system"]})
     templar = Templar(loader=DataLoader(), variables=variables)
@@ -51,7 +51,7 @@ def test_add_node_and_replace_node_show_it_on_their_screen():
 
 
 def test_reset_node_shows_it_on_its_screen_in_a_real_run():
-    include = next(t for t in load("roles", "cassandra_service", "tasks", "reset_node.yml")
+    include = next(t for t in load("roles", "cassandra_operation", "tasks", "reset_node.yml")
                    if t.get("name") == "Work out the reset")
     on_screen = include["vars"]["_cassandra_node_reset_on_screen"]
     for check, whole, expected in ((False, False, True), (True, False, False), (False, True, False)):

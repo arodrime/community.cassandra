@@ -77,7 +77,7 @@
 
     - name: Look for a restart still pending
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: config_pending.yml
 
     # A file written back with the content the running Cassandra started with (deleted or edited by hand
@@ -106,7 +106,7 @@
 
     - name: Read when the running Cassandra started (files written back as it started with them)
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_config
         tasks_from: jvm_started.yml
       when:
         - _cassandra_apply_config_as_started | length > 0
@@ -126,7 +126,7 @@
     # its unit not running: a JVM started another way still runs the config it read
     - name: Look for a Cassandra JVM the unit did not start
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_config
         tasks_from: jvm_started.yml
       when: not _cassandra_preflight_running | default(true) | bool
 
@@ -490,7 +490,7 @@
 
     - name: Show the plan and confirm the run
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       when: _todo | length > 0
       vars:
@@ -594,7 +594,7 @@
 
     - name: Set up the progress file
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
 
     # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
@@ -673,7 +673,7 @@
 
         - name: Print the summary
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: summary.yml
 
         - name: Stop here
@@ -725,7 +725,7 @@
 
     - name: Apply the config on these nodes
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: apply_config
@@ -778,7 +778,7 @@
 
     - name: Apply the config on this node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: apply_config

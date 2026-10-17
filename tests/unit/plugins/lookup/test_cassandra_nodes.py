@@ -94,10 +94,10 @@ def test_playbooks_leave_the_absent_hosts_out():
         ("playbooks/add_node.yml", "          {{ inventory_hostname }} is {{ 'marked cassandra_node_state: absent' if inventory_hostname in"
                                    " groups[lookup('community.cassandra.cassandra_hosts')]"),
         # reset_node empties a host marked absent (removed by topology)
-        ("roles/cassandra_service/tasks/reset_node_plan.yml",
+        ("roles/cassandra_operation/tasks/reset_node_plan.yml",
          "    that: inventory_hostname in groups[lookup('community.cassandra.cassandra_hosts')] | default([])"),
         # the addresses where a node stands is read against (the reset's too)
-        ("roles/cassandra_service/tasks/node_standing_read.yml",
+        ("roles/cassandra_operation/tasks/node_standing_read.yml",
          "      {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] | default([]) -%}"),
         # the hosts of the inventory outside the cluster's group (its hosts marked absent are in it)
         ("playbooks/decommission_node.yml",

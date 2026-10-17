@@ -108,7 +108,7 @@ def test_topology_done_then_the_same_todo(tmp_path, monkeypatch):
 
 
 def test_reset_node_takes_a_host_marked_absent():
-    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "reset_node_plan.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "reset_node_plan.yml"), encoding="utf-8") as f:
         check = yaml.safe_load(f)[0]
     that = check["ansible.builtin.assert"]["that"]
     groups = {"my_cluster": ["node1", "node2", "node3"], "my_cluster_dc1": ["node1", "node2", "node3"]}

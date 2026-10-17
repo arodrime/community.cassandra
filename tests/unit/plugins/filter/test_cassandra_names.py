@@ -8,7 +8,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_close_names
 
-with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_service", "defaults", "main.yml"),
+with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_operation", "defaults", "main.yml"),
           encoding="utf-8") as _f:
     PLAYBOOK_VARIABLES = yaml.safe_load(_f)["_cassandra_playbook_variables"]
 

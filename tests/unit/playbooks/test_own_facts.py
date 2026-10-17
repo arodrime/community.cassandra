@@ -120,7 +120,7 @@ def test_every_node_play_gives_its_nodes_their_own_facts_first():
 def test_the_first_plays_check_the_nodes_own_their_facts():
     # every playbook that does not start with the preflight's node play is one of these
     checked = {playbook for playbook, play in FIRST_PLAYS}
-    for name in sorted(os.listdir(os.path.join(TOP, "playbooks"))):
+    for name in sorted(n for n in os.listdir(os.path.join(TOP, "playbooks")) if n.endswith(".yml")):
         plays = load("playbooks", name)
         if name not in checked and any("hosts" in p and str(p["hosts"]).strip() != "localhost" for p in plays):
             assert plays[0].get("ansible.builtin.import_playbook") == "community.cassandra.preflight", name

@@ -27,7 +27,6 @@ with warnings.catch_warnings():  # already done under ansible-test
     init_plugin_loader()  # the collection's filters, under plain pytest too
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-TASKS = os.path.join(TOP, "roles", "cassandra_service", "tasks")
 
 
 def load(*path):
@@ -60,7 +59,7 @@ def includes(tasks):
 
 def test_every_rolling_operation_asks_before_its_progress_file():
     # the progress file set up after the question: a run stopped there leaves none, a resume takes the latest
-    for name in sorted(os.listdir(os.path.join(TOP, "playbooks"))):
+    for name in sorted(n for n in os.listdir(os.path.join(TOP, "playbooks")) if n.endswith(".yml")):
         if name == "cleanup.yml":  # no node taken down (nodetool cleanup on running nodes): no question
             continue
         steps = [tasks_from for play in load("playbooks", name) for tasks_from, dummy in includes(play.get("tasks"))]
@@ -74,7 +73,7 @@ SESSION = "this run is not inside tmux or screen"
 def screen_text(playbook, check=False, confirm=True, resume=False, mode="node"):
     play = next(p for p in load("playbooks", playbook) if p["name"] == "Set up the progress file")
     t = next(t for dummy, t in includes(play["tasks"]) if t["name"] == "Show the plan and confirm the run")
-    screen = load("roles", "cassandra_service", "tasks", "screen.yml")[0]
+    screen = load("roles", "cassandra_operation", "tasks", "screen.yml")[0]
     hosts = ["node1", "node2", "node3"]
     variables = {"ansible_check_mode": check, "cassandra_operation_confirm": confirm, "_cassandra_session_warning": SESSION,
                  "ansible_play_hosts": hosts, "cassandra_rolling_resume": resume, "cassandra_rolling_mode": mode,
@@ -227,7 +226,7 @@ def test_the_progress_lines_are_coloured_as_progress():
     assert _HEADED.match("rolling_restart on cluster 'Orders': restart node1..node3, one node at a time")
 
 
-HEALTH = load("roles", "cassandra_service", "tasks", "cluster_health.yml")
+HEALTH = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")
 CHECK = next(t for t in HEALTH if t["name"] == "Check the cluster state")
 
 
@@ -252,15 +251,15 @@ def test_when_the_health_check_waits():
 
 
 def test_each_read_is_one_read_the_wait_reads_again_with_a_progress_line():
-    read = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]["block"]
+    read = load("roles", "cassandra_operation", "tasks", "cluster_health_read.yml")[0]["block"]
     polls = [t["community.cassandra.cassandra_status"]["poll"] for t in read if "community.cassandra.cassandra_status" in t]
     assert polls == [1, 1]  # the old poll of the module waited in silence for every down node
     names = [t["name"] for t in CHECK["block"]]
     assert names[0] == "Read the cluster state"
     loop = CHECK["block"][names.index("Wait for the nodes down to come back")]
-    assert loop["ansible.builtin.include_tasks"] == "wait_loop.yml"
-    assert loop["vars"]["_cassandra_wait_check"] == "cluster_health_wait.yml"
-    step = [t["name"] for t in load("roles", "cassandra_service", "tasks", "cluster_health_wait.yml")]
+    assert loop["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_service", "tasks_from": "wait_loop.yml"}
+    assert loop["vars"]["_cassandra_wait_check"] == "{{ role_path }}/../cassandra_operation/tasks/cluster_health_wait.yml"
+    step = [t["name"] for t in load("roles", "cassandra_operation", "tasks", "cluster_health_wait.yml")]
     assert step == ["Say what is waited for", "Wait before the next read", "Read the cluster state again",
                     "Note whether it still waits"]
     # the stop says how long it waited
@@ -302,7 +301,7 @@ def test_it_waits_only_when_allowed_and_while_something_is_down():
 
 
 def test_each_check_goes_on_while_something_is_down_and_time_is_left():
-    tasks = load("roles", "cassandra_service", "tasks", "cluster_health_wait.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "cluster_health_wait.yml")
     going = tasks[-1]["ansible.builtin.set_fact"]["_cassandra_health_going"]
     import time
     now = int(time.time())
@@ -326,7 +325,7 @@ def test_each_check_goes_on_while_something_is_down_and_time_is_left():
 
 
 def test_the_ports_are_read_for_5s_when_the_loop_waits():
-    read = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]["block"]
+    read = load("roles", "cassandra_operation", "tasks", "cluster_health_read.yml")[0]["block"]
     ports = next(t for t in read if "ansible.builtin.wait_for" in t)["ansible.builtin.wait_for"]["timeout"]
 
     def timeout(wait_on, batch=False, check=False, host="node2"):

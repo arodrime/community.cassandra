@@ -1,7 +1,7 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Where a node stands, worked out in one place from what was read on it
-(roles/cassandra_service/tasks/node_standing_read.yml, then
+(roles/cassandra_operation/tasks/node_standing_read.yml, then
 node_standing.yml): whether Cassandra runs
 there, the ring the cluster's nodes see, what its Cassandra directories hold
 (the data directories its config uses: the inventory's and the live

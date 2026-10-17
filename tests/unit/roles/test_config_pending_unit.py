@@ -21,7 +21,7 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks", "config_pending.yml")
+TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "config_pending.yml")
 with open(TASKS) as f:
     NOTE = next(t for t in yaml.safe_load(f) if t["name"] == "Note whether a restart is pending")
 

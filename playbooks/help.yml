@@ -29,7 +29,7 @@
   tasks:
     - name: No unknown variable
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: variables_check.yml
       vars:
         _cassandra_variables_check_renamed: false  # it reads neither the former names nor their name now

@@ -37,9 +37,9 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-CHECK = next(t for t in load("roles", "cassandra_service", "tasks", "hosts_check.yml")
+CHECK = next(t for t in load("roles", "cassandra_operation", "tasks", "hosts_check.yml")
              if t["name"] == "The cluster is named, or the inventory holds one")
-SAY = next(t for t in load("roles", "cassandra_service", "tasks", "cluster_banner.yml")
+SAY = next(t for t in load("roles", "cassandra_operation", "tasks", "cluster_banner.yml")
            if t["name"] == "Say which cluster the run is on")
 GROUPS = {"all": ["n1", "n2"], "ungrouped": [], "prod": ["n1", "n2"], "prod_dc1": ["n1", "n2"], "empty": []}
 
@@ -94,7 +94,7 @@ def test_the_refusal_and_the_cluster_line_are_operator_messages():
     assert "success_msg" not in CHECK["ansible.builtin.assert"]
     assert SAY["vars"]["cassandra_output"] is True and SAY["run_once"] is True
     assert "always" in CHECK["tags"] and "always" in SAY["tags"]
-    tasks = load("roles", "cassandra_service", "tasks", "hosts_check.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "hosts_check.yml")
     names = [t["name"] for t in tasks]
     # the variables checked first (a -e cassandra_host=... typo is pointed out before the refusal it leads to)
     assert names.index("Check cassandra_target_nodes") < names.index("Variables close to the playbooks' own") \
@@ -141,7 +141,7 @@ def test_the_cluster_line_once_per_run():
     assert render("{{ %s }}" % when, _group="prod", hostvars={"localhost": {}}) is True
     assert render("{{ %s }}" % when, _group="prod", hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}) is False
     assert render("{{ %s }}" % when, _group="dev", hostvars={"localhost": {"_cassandra_cluster_shown": "prod"}}) is True
-    mark = next(t for t in load("roles", "cassandra_service", "tasks", "cluster_banner.yml") if t["name"] == "Say it once per run")
+    mark = next(t for t in load("roles", "cassandra_operation", "tasks", "cluster_banner.yml") if t["name"] == "Say it once per run")
     assert mark["ansible.builtin.set_fact"] == {"_cassandra_cluster_shown": "{{ _group }}"}
     assert mark["vars"]["_group"] == SAY["vars"]["_group"]
     assert mark["delegate_to"] == "localhost" and mark["delegate_facts"] is True and mark["run_once"] is True

@@ -60,11 +60,12 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
-    - name: Load the cassandra_service defaults
+    - name: Load the cassandra_service and cassandra_operation defaults
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: "community.cassandra.{{ item }}"
         tasks_from: defaults.yml
         public: true
+      loop: [cassandra_service, cassandra_operation]
 
     # cassandra_target_nodes: the dead node, by its address, its host ID (nodetool
     # status) or its inventory name (a host marked cassandra_node_state: absent, its
@@ -282,7 +283,7 @@
 
     - name: Show the plan and confirm
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: screen.yml
       when: not _nothing_to_do | bool
       vars:
@@ -354,7 +355,7 @@
     # The nodes that take over its ranges stream them from the other replicas
     - name: Follow the removal
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: stream_wait.yml
         apply:
           run_once: true
@@ -423,7 +424,7 @@
     # does not stop them): said, not a failure
     - name: Check the cluster without it
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
         apply:
           run_once: true

@@ -17,7 +17,7 @@ AB_WHY = (u"a node that loses its data restarts empty without streaming it back;
           u" unless you know why it is there")
 BOOTSTRAPPED = "this node is already bootstrapped: Cassandra refuses its next start with it"
 WIPED = "a member of the ring: ignored now, it would replace a node again after its data is wiped"
-SPEC = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_service", "meta",
+SPEC = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_operation", "meta",
                     "argument_specs.yml")
 
 

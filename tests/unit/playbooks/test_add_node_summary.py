@@ -30,7 +30,7 @@ PLAYBOOK = os.path.join(os.path.dirname(__file__), "..", "..", "..", "playbooks"
 with open(PLAYBOOK, encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
 TASK = [t for p in PLAYS for t in p.get("tasks", []) if t.get("name") == "Show the plan and confirm the add"][0]
-with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_service", "tasks", "screen.yml"),
+with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "screen.yml"),
           encoding="utf-8") as f:
     SCREEN = yaml.safe_load(f)[0]
 

@@ -63,7 +63,7 @@ def run(tmp_path, inventory_name, node_name, candidates=("gone", "n1", "n2", "n3
         f.chmod(f.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "hosts.ini").write_text("[cassandra]\n" + "\n".join(lines) + "\n")
     play = [{"hosts": "n0,n9", "gather_facts": False, "vars": dict({"cassandra_cluster_name": inventory_name}, **(extra or {})),
-             "tasks": [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_service",
+             "tasks": [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_operation",
                                                          "tasks_from": "cluster_name.yml"},
                         "vars": dict({"cassandra_service_cluster_candidates": list(candidates)},
                                      **({"cassandra_service_cluster_describe": describe} if describe else {}))}]},

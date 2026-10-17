@@ -65,7 +65,7 @@
     # no ring: a new cluster has none (the reset below reads it again, after the token question)
     - name: Where the node stands
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: node_standing.yml
       vars:
         _cassandra_node_standing_ring: false
@@ -163,11 +163,12 @@
              else ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
                   | map(attribute='inventory_hostname') | list }}
       block:
-        - name: Load the cassandra_service defaults
+        - name: Load the cassandra_service and cassandra_operation defaults
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: "community.cassandra.{{ item }}"
             tasks_from: defaults.yml
             public: true
+          loop: [cassandra_service, cassandra_operation]
 
         - name: Read the tokens of the nodes already running
           community.cassandra.cassandra_ring:
@@ -207,7 +208,7 @@
 
         - name: Show the ring and confirm the tokens
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: screen.yml
           vars:
             cassandra_screen_question: >-
@@ -271,11 +272,12 @@
           {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running', 'defined')
              | selectattr('_cassandra_preflight_running') | map(attribute='inventory_hostname') | list }}
       block:
-        - name: Load the cassandra_service defaults
+        - name: Load the cassandra_service and cassandra_operation defaults
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: "community.cassandra.{{ item }}"
             tasks_from: defaults.yml
             public: true
+          loop: [cassandra_service, cassandra_operation]
 
         - name: Every node of the group is in the run
           ansible.builtin.assert:
@@ -324,7 +326,7 @@
         # before the wipe: clocks apart would refuse the starts after it, the cluster then down
         - name: Check the clocks before the wipe
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: clocks_check.yml
           vars:
             _cassandra_clock_operation: create_cluster
@@ -332,7 +334,7 @@
 
         - name: Show what the reset does
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: screen.yml
           vars:
             cassandra_screen_question: ""  # the cluster name is typed next (reset_node.yml)
@@ -365,7 +367,7 @@
 
         - name: Stop and empty every node
           ansible.builtin.include_role:
-            name: community.cassandra.cassandra_service
+            name: community.cassandra.cassandra_operation
             tasks_from: reset_node.yml
           vars:
             _cassandra_node_reset_whole_cluster: true
@@ -413,7 +415,7 @@
 
     - name: Forget what an earlier prepare did
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: prepare_reset.yml
   roles:
     - community.cassandra.cassandra_repository
@@ -429,7 +431,7 @@
   post_tasks:
     - name: Say what the prepare did
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: prepare_lines.yml
       vars:
         _cassandra_prepare_hosts: "{{ ansible_play_hosts_all }}"
@@ -460,7 +462,7 @@
     # before the first starts (time sync started by cassandra_linux, waited for): none when the clocks are apart
     - name: Check the clocks
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: clocks_check.yml
       vars:
         _cassandra_clock_operation: create_cluster
@@ -526,7 +528,7 @@
 
     - name: Check the whole cluster from one node
       ansible.builtin.include_role:
-        name: community.cassandra.cassandra_service
+        name: community.cassandra.cassandra_operation
         tasks_from: cluster_health.yml
       vars:
         cassandra_service_health_expected_nodes: "{{ ansible_play_hosts_all | length }}"  # --limit may leave nodes out

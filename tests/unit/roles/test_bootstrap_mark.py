@@ -12,7 +12,7 @@ import yaml
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
-TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service", "tasks")
+TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks")
 DEFAULTS = os.path.join(TASKS, "..", "defaults", "main.yml")
 
 

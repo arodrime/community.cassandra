@@ -178,7 +178,7 @@ def test_nothing_to_do():
 
 
 def test_the_action_restarts_starts_or_only_writes():
-    tasks = load("roles", "cassandra_service", "tasks", "action_apply_config.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs", "Write the config",
@@ -223,7 +223,7 @@ def test_the_action_restarts_starts_or_only_writes():
         assert render(came_up, values) is ok
         assert render("{{ %s }}" % steps[2]["when"], values) is stop
     assert steps[3]["ansible.builtin.command"] == "systemctl reset-failed cassandra"
-    assert start["ansible.builtin.include_tasks"] == "main.yml" and start["vars"]["cassandra_service_state"] == "started"
+    assert start["ansible.builtin.include_role"]["tasks_from"] == "main.yml" and start["vars"]["cassandra_service_state"] == "started"
 
 
 def test_the_role_reports_them_and_records_what_cassandra_started_with():
@@ -294,7 +294,7 @@ def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
         # no wait for them: they will not come back
         no_wait = render(include["_cassandra_health_no_wait"], dict(values, cassandra_service_health_down_ok=down_ok))
         assert no_wait in (bool(expected), str(bool(expected)))
-    block = [t for t in load("roles", "cassandra_service", "tasks", "cluster_health.yml") if "block" in t][0]
+    block = [t for t in load("roles", "cassandra_operation", "tasks", "cluster_health.yml") if "block" in t][0]
     wait_on = block["vars"]["_cassandra_health_wait_on"]
     for no_wait, check, waits in ((True, False, False), (False, False, True), (False, True, False)):  # --check waits for nothing
         assert render(wait_on, {"_cassandra_health_no_wait": no_wait, "cassandra_service_health_timeout": 600,
@@ -368,7 +368,7 @@ def test_a_node_not_running_has_no_restart_pending_unless_a_resumed_run_stopped_
 
 
 def test_the_second_node_checked_from_is_not_one_expected_down():
-    work = load("roles", "cassandra_service", "tasks", "cluster_health.yml")[0]
+    work = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]
     hosts = ["n1", "n2", "n3"]
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in hosts)
     variables = {"groups": {"all": hosts, "cassandra": hosts, "cassandra_dc1": hosts}, "hostvars": hostvars, "inventory_hostname": "n2"}
@@ -381,7 +381,7 @@ def test_the_second_node_checked_from_is_not_one_expected_down():
 
 
 def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
-    work = load("roles", "cassandra_service", "tasks", "cluster_health.yml")[0]
+    work = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]
     hosts = ["n1", "n2", "n3"]
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in hosts)
     peer = work["ansible.builtin.set_fact"]["_cassandra_health_peer"]
@@ -391,7 +391,7 @@ def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
         variables = {"groups": {"all": hosts, "cassandra": hosts, "cassandra_dc1": hosts}, "hostvars": hostvars, "inventory_hostname": me,
                      "ansible_play_hosts": play, "cassandra_service_health_batch": batch}
         assert render(peer, with_task_vars(work, variables)) == expected
-    block = load("roles", "cassandra_service", "tasks", "cluster_health_read.yml")[0]
+    block = load("roles", "cassandra_operation", "tasks", "cluster_health_read.yml")[0]
     shared = [t for t in block["block"] if t.get("delegate_to") == "{{ _cassandra_health_peer }}" and "async" in t]
     assert [t["name"] for t in shared] == ["Read the ring from {{ _cassandra_health_peer }}",
                                            "Check schema agreement (same answer from any node)"]
@@ -410,7 +410,7 @@ def test_a_batch_reads_the_ring_and_schema_once_from_a_node_outside_it():
 
 
 def test_a_batch_says_its_nodes_once_and_writes_the_progress_file_a_line_at_a_time():
-    tasks = load("roles", "cassandra_service", "tasks", "node_operation.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "node_operation.yml")
     block = [t for t in tasks if "block" in t][0]["block"]
     say = [t for t in block if str(t.get("name", "")).startswith("Say what is done to")][0]
     assert say["run_once"] == "{{ cassandra_service_node_batch | default(false) | bool }}"
@@ -454,7 +454,7 @@ def test_the_files_the_same_on_the_node_are_not_written_again():
 def test_a_batch_node_stopped_by_another_says_so():
     # any_errors_fatal stops the nodes of the batch with the one that failed (ansible-core 2.17+ rescues them too):
     # only that one is said FAILED; the others are not finished (2.16 lets them finish first: done)
-    tasks = load("roles", "cassandra_service", "tasks", "node_operation.yml")
+    tasks = load("roles", "cassandra_operation", "tasks", "node_operation.yml")
     op = [t for t in tasks if "block" in t][0]
     note = [t for t in op["block"] if t.get("name") == "Note a node of a batch as not finished"][0]
     record, dummy, stop = op["rescue"]

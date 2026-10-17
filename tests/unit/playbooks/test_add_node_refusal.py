@@ -190,7 +190,7 @@ def test_the_checks_leave_the_refusal_to_add_node():
     assert names.index("Work out the reset of the new nodes (cassandra_add_node_reset)") + 1 == names.index(
         "Refuse the new nodes add_node may not reset")
     assert names.index("Refuse the new nodes add_node may not reset") < names.index("Show the plan and confirm the add")
-    roles = os.path.join(TOP, "roles", "cassandra_service", "tasks")
+    roles = os.path.join(TOP, "roles", "cassandra_operation", "tasks")
     with open(os.path.join(roles, "reset_node_plan.yml"), encoding="utf-8") as f:
         refuse = [t for t in yaml.safe_load(f) if t.get("name") == "Refuse the reset of {{ inventory_hostname }}"][0]
     assert "not _cassandra_node_reset_refused_by_caller | default(false) | bool" in refuse["when"]
@@ -218,7 +218,7 @@ def test_a_stopped_add_says_how_to_go_on():
            if p.get("name") == "Add the new nodes, one at a time"][0]
     hint = [t for t in add["tasks"] if t.get("name") == "Add this node"][0]["vars"]["cassandra_service_resume_hint"]
     assert "rolling_resume" not in hint and "run {{ _cassandra_screen_asked_by | default('') or 'add_node' }} again" in hint
-    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "node_operation.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "node_operation.yml"), encoding="utf-8") as f:
         text = f.read()
     # the progress file named only when there is one
     assert "(progress: ' ~ cassandra_progress_file ~ ')') if cassandra_progress_file is defined else ''" in text

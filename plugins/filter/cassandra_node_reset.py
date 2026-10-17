@@ -1,6 +1,6 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""Decisions of the node reset (roles/cassandra_service/tasks/reset_node.yml),
+"""Decisions of the node reset (roles/cassandra_operation/tasks/reset_node.yml),
 which empties a node's Cassandra directories for a fresh start.
 
 cassandra_node_reset_dirs: the directories to empty, from the inventory and

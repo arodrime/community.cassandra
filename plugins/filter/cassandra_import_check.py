@@ -257,7 +257,7 @@ def _compare(name, node, role, storage_dir="", left_out=()):
 @functools.lru_cache(maxsize=None)
 def _defaults():
     ctx = {}
-    for role in ("cassandra_config", "cassandra_service", "cassandra_medusa"):
+    for role in ("cassandra_config", "cassandra_service", "cassandra_operation", "cassandra_medusa"):
         ctx.update(role_file(role) or {})
     ctx.update(role_file("cassandra_config", "vars") or {})
     return ctx

@@ -276,7 +276,7 @@ def test_extra_vars_check_still_catches_a_typo():
 
 # --- reset_node ------------------------------------------------------------------
 
-RESET_PLAN = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "node_standing_read.yml"))  # (reset_node_plan.yml reads it)
+RESET_PLAN = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "node_standing_read.yml"))  # (reset_node_plan.yml reads it)
 RESET_DIRS = next(t for t in RESET_PLAN if t.get("name") == "Work out its Cassandra directories")["vars"]["_inventory"]
 
 

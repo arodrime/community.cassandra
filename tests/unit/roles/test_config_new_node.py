@@ -111,7 +111,7 @@ def test_a_stat_error_outside_its_data_dirs_does_not_count_for_a_new_node():
 def prepare_vars(state, confirm=None, replace=False, planned=True, operation_confirm=None, standing=None):
     """What action_add_prepare.yml passes to cassandra_config for a node in that state (planned: add_node worked
     out its reset, cassandra_add_node_reset not false)."""
-    tasks = dict((t["name"], t) for t in load("roles", "cassandra_service", "tasks", "action_add_prepare.yml"))
+    tasks = dict((t["name"], t) for t in load("roles", "cassandra_operation", "tasks", "action_add_prepare.yml"))
     tell = tasks["Tell cassandra_config whether the node is new"]
     v = {} if state is None else {"cassandra_new_node_state": state}
     if planned and state is not None:
@@ -174,9 +174,9 @@ def test_no_second_question_whatever_e_cassandra_config_confirm_says():
                   cassandra_config_preview=preview) is True  # a run of the role on its own: asked
     # the operations whose own question shows the config changes say so too; update_java's and
     # add_datacenter's show none: -e cassandra_config_confirm=true still asks there
-    for path, said in ((("roles", "cassandra_service", "tasks", "action_apply_config.yml"), [True]),
-                       (("roles", "cassandra_service", "tasks", "action_upgrade.yml"), [True]),
-                       (("roles", "cassandra_service", "tasks", "action_update_java.yml"), [None])):
+    for path, said in ((("roles", "cassandra_operation", "tasks", "action_apply_config.yml"), [True]),
+                       (("roles", "cassandra_operation", "tasks", "action_upgrade.yml"), [True]),
+                       (("roles", "cassandra_operation", "tasks", "action_update_java.yml"), [None])):
         writes = [t for t in load(*path) if (t.get("ansible.builtin.include_role") or {}).get("name")
                   == "community.cassandra.cassandra_config"]
         assert [t["vars"].get("_cassandra_config_no_question") for t in writes] == said, path
@@ -247,7 +247,7 @@ def test_every_operation_that_asked_writes_the_config_without_a_second_question(
     """Each include of the whole cassandra_config role (not its defaults) in the playbooks and roles sets
     cassandra_config_confirm: the operation's own question (or a --check preview) covers the change."""
     found = []
-    for top in ("playbooks", os.path.join("roles", "cassandra_service", "tasks")):
+    for top in ("playbooks", os.path.join("roles", "cassandra_operation", "tasks")):
         for name in sorted(os.listdir(os.path.join(TOP, top))):
             if not name.endswith(".yml"):
                 continue

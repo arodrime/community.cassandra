@@ -15,9 +15,12 @@
     cassandra_output_gap: true  # its progress lines, a block of their own (ops callback)
 
 - name: Check the progress, then every {{ cassandra_stream_check_interval }}s
-  ansible.builtin.include_tasks: wait_loop.yml
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: wait_loop.yml
   vars:
-    _cassandra_wait_check: cleanup_check.yml
+    # templated in the wait loop of cassandra_service (its role_path): this role is its sibling
+    _cassandra_wait_check: "{{ role_path }}/../cassandra_operation/tasks/cleanup_check.yml"
     _cassandra_wait_going: "{{ _cassandra_cleanup_status == 'going' }}"
 
 - name: Stop when a cleanup failed or stopped moving

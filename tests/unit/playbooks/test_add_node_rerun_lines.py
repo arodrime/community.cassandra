@@ -61,7 +61,7 @@ def test_the_progress_lines_count_the_bootstraps():
     variables = dict(add["vars"], ansible_play_hosts_all=HOSTS, hostvars=hostvars)
     assert int(render(add["vars"]["_cassandra_stream_index"], inventory_hostname="node5", **variables)) == 2
     # a node already in the ring: no bootstrap followed ("[1/2] node4 bootstrap NORMAL done 0s")
-    wait = next(t for t in load("roles", "cassandra_service", "tasks", "action_add.yml")
+    wait = next(t for t in load("roles", "cassandra_operation", "tasks", "action_add.yml")
                 if t.get("name") == "Wait for the bootstrap")
     joined = [c for c in wait["when"] if "joined" in c]
     assert joined and render("{{ %s }}" % joined[0], cassandra_new_node_state="joined") is False

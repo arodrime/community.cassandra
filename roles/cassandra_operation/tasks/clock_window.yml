@@ -5,7 +5,9 @@
 # step: the run stops there, the clock left as it is), then the clock set
 # (clock_fix.yml).
 - name: Find a Cassandra still running
-  ansible.builtin.include_tasks: jvm_started.yml
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+    tasks_from: jvm_started.yml
 
 - name: Stop when Cassandra still runs
   ansible.builtin.fail:

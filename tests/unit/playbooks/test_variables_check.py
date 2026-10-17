@@ -36,9 +36,9 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-TASKS = load("roles", "cassandra_service", "tasks", "variables_check.yml")
+TASKS = load("roles", "cassandra_operation", "tasks", "variables_check.yml")
 CHECK = TASKS[0]
-PLAYBOOK_VARIABLES = load("roles", "cassandra_service", "defaults", "main.yml")["_cassandra_playbook_variables"]
+PLAYBOOK_VARIABLES = load("roles", "cassandra_operation", "defaults", "main.yml")["_cassandra_playbook_variables"]
 PLAYBOOKS = sorted(name[:-4] for name in os.listdir(os.path.join(TOP, "playbooks")) if name.endswith(".yml"))
 
 
@@ -121,7 +121,7 @@ def first_check(playbook):
     assert plays[0]["hosts"] == "localhost", playbook
     name = first["ansible.builtin.include_role"]["tasks_from"]
     while name != "variables_check.yml":
-        tasks = load("roles", "cassandra_service", "tasks", name)
+        tasks = load("roles", "cassandra_operation", "tasks", name)
         step = tasks[0]
         name = step.get("ansible.builtin.include_tasks") or step.get("ansible.builtin.import_tasks")
         if name is None:
@@ -133,7 +133,7 @@ def first_check(playbook):
 def test_every_playbook_checks_first(playbook):
     first = first_check(playbook)
     assert first is not None, playbook
-    assert first["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_service"
+    assert first["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_operation"
     # help and import_cluster read neither the former names nor cassandra_target_nodes: not theirs to refuse
     renamed = (first.get("vars") or {}).get("_cassandra_variables_check_renamed", True)
     assert renamed is (playbook not in ("help", "import_cluster")), playbook
@@ -155,7 +155,7 @@ def test_preflight_checks_again_where_limit_skips_localhost():
     nodes_play = load("playbooks", "preflight.yml")[1]
     names = [t.get("ansible.builtin.include_role", {}).get("tasks_from") for t in nodes_play["tasks"]]
     assert "target_nodes_check.yml" in names
-    assert load("roles", "cassandra_service", "tasks", "target_nodes_check.yml")[0] == {
+    assert load("roles", "cassandra_operation", "tasks", "target_nodes_check.yml")[0] == {
         "name": "No unknown variable, none under a former name", "ansible.builtin.import_tasks": "variables_check.yml"}
 
 

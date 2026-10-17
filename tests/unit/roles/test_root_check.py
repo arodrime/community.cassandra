@@ -63,19 +63,19 @@ def test_the_root_check_comes_before_any_node_action():
     assert start[1]["ansible.builtin.include_role"]["tasks_from"] == "root_check.yml"  # (after the facts task)
     # every playbook that changes nodes goes through preflight (or is start_rack)
     readonly = {"health_check.yml", "help.yml", "import_cluster.yml", "preflight.yml", "start_rack.yml", "status.yml"}
-    for name in sorted(os.listdir(os.path.join(TOP, "playbooks"))):
+    for name in sorted(n for n in os.listdir(os.path.join(TOP, "playbooks")) if n.endswith(".yml")):
         if name.endswith(".yml") and name not in readonly:
             plays = load("playbooks", name)
             assert any(p.get("ansible.builtin.import_playbook") == "community.cassandra.preflight" for p in plays), name
 
 
 def test_a_restart_writes_the_unit_before_draining():
-    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "action_restart.yml"))
+    tasks = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "action_restart.yml"))
     assert [t["name"] for t in tasks] == ["Install the cassandra systemd unit", "Drain the node",
                                           "Stop when the node did not answer", "Say the drain did not work",
                                           "Apply the OS settings with Cassandra stopped",  # (apply_config's only)
                                           "Do what is done while it is stopped", "Restart it and wait until it has joined"]
-    assert tasks[0]["ansible.builtin.include_tasks"] == "unit.yml"
+    assert tasks[0]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_service", "tasks_from": "unit.yml"}
     assert tasks[6]["vars"]["_cassandra_service_unit_written"] is True
     main = load("roles", "cassandra_service", "tasks", "main.yml")
     unit = [t for t in main if t["name"] == "Install the cassandra systemd unit"][0]
@@ -84,7 +84,7 @@ def test_a_restart_writes_the_unit_before_draining():
 
 
 def test_every_node_without_root_is_named():
-    check = [t for t in load("roles", "cassandra_service", "tasks", "root_check.yml") if "ansible.builtin.assert" in t][0]
+    check = [t for t in load("roles", "cassandra_operation", "tasks", "root_check.yml") if "ansible.builtin.assert" in t][0]
     hostvars = {"n1": {"cassandra_root_check": {"stdout": "0"}}, "n2": {"cassandra_root_check": {"stdout": "1000"}},
                 "n3": {"cassandra_root_check": {"stdout": "0"}}, "n4": {"cassandra_root_check": {"stdout": "1001"}}}
     templar = Templar(loader=DataLoader(), variables={"hostvars": hostvars, "ansible_play_hosts": ["n1", "n2", "n3", "n4"]})

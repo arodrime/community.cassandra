@@ -32,7 +32,7 @@ MARKED = [
     ("roles/cassandra_medusa/tasks/python.yml", "Say python3.11 is not offered yet (--check)"),
     ("roles/cassandra_medusa/tasks/main.yml", "Say another medusa comes first in the PATH"),
     ("roles/cassandra_repository/tasks/repository.yml", "Say the repository could not be checked"),
-    ("roles/cassandra_service/tasks/action_move.yml", "Say which receiving nodes are not checked"),
+    ("roles/cassandra_operation/tasks/action_move.yml", "Say which receiving nodes are not checked"),
     ("roles/cassandra_service/tasks/main.yml", "Warn that a Cassandra started by the init script keeps running"),
     ("roles/cassandra_config/tasks/apply.yml", "Warn that a restart is needed"),
     ("playbooks/apply_config.yml", "Say which files changed since Cassandra started, with no record of the ones it started with"),
@@ -50,11 +50,11 @@ MARKED += [("playbooks/import_cluster.yml", name) for name in (
 MARKED += [
     ("playbooks/preflight.yml", "Every node answers"),
     ("playbooks/apply_config.yml", "Refuse restarts while a node is not running"),
-    ("roles/cassandra_service/tasks/target_nodes_check.yml", "Only where the playbook takes it"),
+    ("roles/cassandra_operation/tasks/target_nodes_check.yml", "Only where the playbook takes it"),
     ("playbooks/preflight.yml", "Every seed is up"),  # a loop: one verdict for its items (ops callback)
     ("playbooks/preflight.yml", "One Cassandra version in the cluster"),
     ("playbooks/preflight.yml", "Racks per datacenter"),  # a loop too
-    ("roles/cassandra_service/tasks/hosts_check.yml", "The cluster is named, or the inventory holds one"),
+    ("roles/cassandra_operation/tasks/hosts_check.yml", "The cluster is named, or the inventory holds one"),
 ]
 
 
@@ -111,5 +111,5 @@ def test_every_warning_marked():
 
 
 def test_update_java_says_no_restart_is_needed_before_its_restart():
-    t = [t for t in tasks("roles/cassandra_service/tasks/action_update_java.yml") if t.get("name") == "Write the config"][0]
+    t = [t for t in tasks("roles/cassandra_operation/tasks/action_update_java.yml") if t.get("name") == "Write the config"][0]
     assert t["vars"]["_cassandra_config_no_restart_warning"] is True

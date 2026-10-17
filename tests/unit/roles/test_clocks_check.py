@@ -106,7 +106,7 @@ def run(tmp_path, tasks, *args, extra=None):
     return result.returncode, result.stdout.decode(errors="replace")
 
 
-CHECK = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_service", "tasks_from": "clocks_check.yml"},
+CHECK = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_operation", "tasks_from": "clocks_check.yml"},
           "vars": {"_cassandra_clock_operation": "create_cluster"}}]
 
 
@@ -254,8 +254,8 @@ def test_the_check_can_be_skipped(tmp_path):
     assert (fake / "log").read_text() == ""  # nothing read
 
 
-FIX = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_service", "tasks_from": "clock_probe.yml"}},
-       {"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_service", "tasks_from": "clock_fix.yml"},
+FIX = [{"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_operation", "tasks_from": "clock_probe.yml"}},
+       {"ansible.builtin.include_role": {"name": "community.cassandra.cassandra_operation", "tasks_from": "clock_fix.yml"},
         "vars": {"_cassandra_clock_action": "step"}},
        {"ansible.builtin.debug": {"msg": "FIX {{ inventory_hostname }} did={{ _cassandra_clock_did | join(',') }}"
                                          " error={{ _cassandra_clock_fix_error }}"}}]
@@ -296,7 +296,7 @@ def test_no_time_sync_offline_a_warning_elsewhere_a_refusal_for_sync_clocks():
     assert "not _cassandra_timesync_required | default(false) | bool" in warn
     assert "_cassandra_timesync_required | default(false) | bool" in refuse
     assert [w for w in warn if "required" not in w] == [w for w in refuse if "required" not in w and "check_mode" not in w]
-    clock_fix = os.path.join(os.path.dirname(path), "..", "..", "cassandra_service", "tasks", "clock_fix.yml")
+    clock_fix = os.path.join(os.path.dirname(path), "..", "..", "cassandra_operation", "tasks", "clock_fix.yml")
     with open(clock_fix, encoding="utf-8") as f:
         text = f.read()
     assert "_cassandra_timesync_required: true" in text

@@ -28,7 +28,7 @@ with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
     init_plugin_loader()  # the collection's filters, under plain pytest too
 
-ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_service")
+ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation")
 
 
 def _tasks(name):

@@ -66,7 +66,7 @@ def render_all(value, **variables):
     return render(value, **variables)
 
 
-LINES = load("roles", "cassandra_service", "tasks", "prepare_lines.yml")
+LINES = load("roles", "cassandra_operation", "tasks", "prepare_lines.yml")
 KEEP, SAY, DISKS, WARN = (named(LINES, n) for n in (
     "Keep what the prepare did", "Say what the prepare did", "Say how the data disks are tuned",
     "Warn about an old system keyspace left outside the data directories"))
@@ -256,7 +256,7 @@ def test_every_prepare_says_its_lines():
     assert roles["vars"]["_cassandra_prepare_lines"] is True
     assert roles["vars"]["_cassandra_change_report_quiet"] == "{{ ansible_verbosity | int == 0 }}"  # -v: the lists too
     # replace_node, add_datacenter: one node at a time, through action_add.yml
-    add = load("roles", "cassandra_service", "tasks", "action_add.yml")
+    add = load("roles", "cassandra_operation", "tasks", "action_add.yml")
     assert [t["name"] for t in add[:2]] == ["Prepare the node", "Say what the prepare did"]
     assert add[0]["vars"]["_cassandra_prepare_lines"] is True
     assert add[1]["ansible.builtin.include_tasks"] == "prepare_lines.yml" and add[1]["when"] == add[0]["when"]
@@ -270,14 +270,14 @@ def test_every_prepare_says_its_lines():
 
 
 def test_a_prepare_forgets_an_earlier_one():
-    prepare = load("roles", "cassandra_service", "tasks", "action_add_prepare.yml")
+    prepare = load("roles", "cassandra_operation", "tasks", "action_add_prepare.yml")
     names = [t["name"] for t in prepare]
     assert names.index("Forget what an earlier prepare did") < names.index("Configure the package repository")
     assert named(prepare, "Forget what an earlier prepare did")["ansible.builtin.include_tasks"] == "prepare_reset.yml"
     create = next(p for p in load("playbooks", "create_cluster.yml") if p["name"] == "Prepare the nodes")
     assert named(create["pre_tasks"], "Forget what an earlier prepare did")["ansible.builtin.include_role"][
         "tasks_from"] == "prepare_reset.yml"
-    reset = load("roles", "cassandra_service", "tasks", "prepare_reset.yml")[0]["ansible.builtin.set_fact"]
+    reset = load("roles", "cassandra_operation", "tasks", "prepare_reset.yml")[0]["ansible.builtin.set_fact"]
     assert reset == {"_cassandra_change_report_seen": {}, "_cassandra_repository_outcome": "",
                      "_cassandra_config_left": [], "_cassandra_config_own_dirs": []}
 

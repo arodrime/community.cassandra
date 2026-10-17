@@ -174,7 +174,7 @@ def test_replication_refusals():
 def test_plan_vars_do_not_shadow_the_included_tasks_vars():
     # the plan play includes new_node_checks.yml and the like: a play var they also define as a task var
     # (e.g. _ring) would be read with their value in this play's own expressions
-    tasks_dir = os.path.join(TOP, "roles", "cassandra_service", "tasks")
+    tasks_dir = os.path.join(TOP, "roles", "cassandra_operation", "tasks")
     used = set()
     for name in os.listdir(tasks_dir):
         with open(os.path.join(tasks_dir, name), encoding="utf-8") as f:
@@ -229,7 +229,7 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
     show = task("Show the plan")["ansible.builtin.debug"]["msg"]
     assert "notes=hostvars[ansible_play_hosts_all[0]]._cassandra_notes" in show and "join(_nl)" in show
     # a check's notes: kept when deferred, printed (one string, marked) otherwise
-    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "note.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "note.yml"), encoding="utf-8") as f:
         keep, say = yaml.safe_load(f)
     kept = render(keep["ansible.builtin.set_fact"]["_cassandra_notes"], _note="WARNING - a\nNOTE b\nWARNING - a",
                   _cassandra_notes=["WARNING - a"])
@@ -238,9 +238,9 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
     assert say["when"] == "not _cassandra_notes_deferred | default(false) | bool"
     assert say["vars"]["cassandra_output"] is True and say["ansible.builtin.debug"]["msg"] == "{{ _note }}"
     # the per-host dumps of the checks: not printed under topology
-    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
         text = f.read()
-    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_read.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "new_node_read.yml"), encoding="utf-8") as f:
         read = f.read()
     assert (text + read).count("not _cassandra_notes_deferred | default(false) | bool") == 3
     # the stop: a verdict (printed as is) outside topology, unmarked there (topology says it in its refusal)
@@ -330,7 +330,7 @@ def test_preflight_notes_render_one_line_each():
 
 
 def test_a_step_of_topology_prints_only_its_token_tables():
-    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "screen.yml"), encoding="utf-8") as f:
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "screen.yml"), encoding="utf-8") as f:
         block = yaml.safe_load(f)[0]["block"]
     plan, step = block[0], block[1]
     assert plan["when"] == "not _cassandra_screen_asked_by | default('')"
