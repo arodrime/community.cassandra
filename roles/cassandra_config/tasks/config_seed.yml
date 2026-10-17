@@ -26,8 +26,8 @@
       ansible.builtin.debug:
         msg: >-
           WARNING - {{ inventory_hostname }} has no {{ _cassandra_config_snapshot | dirname }} to record the
-          config the running Cassandra started with: apply_config will not tell that this change waits for a
-          restart. Restart it (rolling_restart).
+          config the running Cassandra started with: this change cannot be told waiting for a restart.
+          Restart it.
       when:
         - cassandra_jvm.pid is defined
         - not cassandra_seed_dir.stat.isdir | default(false)

@@ -114,8 +114,7 @@ argument_specs:
           node's first start only.
         - When C('') on a node that has joined (its system keyspace exists), the value its C(cassandra.yaml)
           already has is kept.
-        - The create_cluster and add_datacenter playbooks work it out when it is not set, add_node with
-          C(cassandra_token_auto).
+        - The playbooks that create a cluster or add nodes can work it out when it is not set (see the guide).
       cassandra_hinted_handoff_enabled:
         type: bool
         default: true

@@ -1,12 +1,12 @@
 ---
 # Records the checksums of the config files (and of the systemd unit) the running Cassandra started with,
-# so config_pending.yml can tell a change still to apply by content (a file
+# so a later run can tell a change still to apply by content (a file
 # rewritten with the same content, or a change applied live, is not pending).
 # Run after the start (and its wait): a file written since the JVM started is
 # left out (what it read is unknown: pending until a restart), and the JVM is
 # recorded (_jvm: its pid and start, as jvm_started.yml finds them), so that
-# apply_config trusts the record for that JVM only. In one go, as
-# config_pending.yml reads them.
+# a later run trusts the record for that JVM only. In one go, as the reader of
+# the record reads them.
 - name: Record the config Cassandra started with
   ansible.builtin.command:
     argv:

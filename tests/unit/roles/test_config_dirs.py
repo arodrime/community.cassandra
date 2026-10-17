@@ -154,5 +154,5 @@ def test_a_failed_seed_reload_is_a_warning():
     assert "fix the file before any restart, or the node will not start" in text
     text = render(say["ansible.builtin.debug"]["msg"], inventory_hostname="n1", _error="error: Authentication failed",
                   cassandra_config_seeds_reload={"stdout": ""})
-    assert text.endswith("Authentication failed. The list applies at the next restart of the node, or fix the cause and run"
-                         " community.cassandra.change_seeds.")
+    assert text.endswith("Authentication failed. The list applies at the next restart of the node, or fix the cause and"
+                         " reload the seeds (nodetool reloadseeds).")

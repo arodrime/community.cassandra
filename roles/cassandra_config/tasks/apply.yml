@@ -151,9 +151,9 @@
       failed: {{ _error }}{{
       '. The running node cannot load its cassandra.yaml again (system.log: Error while getting seed node list
       says why, e.g. a key it does not know): fix the file before any restart, or the node will not start; then
-      run community.cassandra.change_seeds.'
+      reload the seeds (nodetool reloadseeds).'
       if cassandra_config_seeds_reload.stdout | default('') is search('Failed to reload the seed node list') else
-      '. The list applies at the next restart of the node, or fix the cause and run community.cassandra.change_seeds.' }}
+      '. The list applies at the next restart of the node, or fix the cause and reload the seeds (nodetool reloadseeds).' }}
   when:  # its result is never "failed" past its failed_when: the module's msg says
     - cassandra_config_seeds_reload is not skipped
     - cassandra_config_seeds_reload.msg | default('') != 'nodetool reloadseeds executed successfully'

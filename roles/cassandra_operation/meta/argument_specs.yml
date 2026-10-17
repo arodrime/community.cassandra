@@ -338,6 +338,8 @@ argument_specs:
         default: 600
         description:
           - Read by these task files too, with the same default (see the C(cassandra_service) role).
+          - For a node being added or replaced, how long to wait for it to answer on JMX (then
+            the bootstrap is waited for as long as it makes progress, see C(cassandra_stream_stall_time)).
       cassandra_stream_check_interval:
         type: int
         default: 30

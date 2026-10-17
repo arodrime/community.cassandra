@@ -5,7 +5,8 @@
 # unit runs it as cassandra_service_user/_group; a kept unit
 # (cassandra_service_unit_manage: false) as its own User=/Group= (none: a SysV
 # script, not checked). Read only; run by cassandra_service before it writes
-# the unit, and by preflight before any operation.
+# the unit, and by a playbook before any operation (_cassandra_account_must_exist: false
+# before the package is there).
 - name: Read the account Cassandra runs as
   ansible.builtin.command:
     argv:
@@ -40,7 +41,7 @@
 - name: Refuse an account that could not read the config
   ansible.builtin.assert:
     that:
-      # --check on a blank host, or preflight before a new node gets the package: no package user yet
+      # --check on a blank host, or a check before a new node gets the package: no package user yet
       - _account.nouser is not defined or ansible_check_mode or not _cassandra_account_must_exist | default(true)
       - _account.nogroup is not defined or ansible_check_mode or not _cassandra_account_must_exist | default(true)
       - _unreadable | length == 0

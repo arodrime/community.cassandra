@@ -101,10 +101,9 @@ look new.
 Taking over an existing node
 ----------------------------
 
-The `community.cassandra.import_cluster` playbook reads a running cluster
-back into an inventory for the roles, and lists what `cassandra_config`
-would still change (hand edits no variable covers). See the collection
-README.
+The collection can read a running cluster back into an inventory for the
+roles, and list what `cassandra_config` would still change (hand edits no
+variable covers). See the collection README.
 
 Role Variables
 --------------

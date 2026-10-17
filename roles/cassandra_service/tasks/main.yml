@@ -64,15 +64,15 @@
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: Cassandra runs under the package's init script; the native unit
-      takes over at the next restart (e.g. the rolling_restart playbook).
+      takes over at the next restart.
   when:
     - cassandra_service_jvm.rc | default(1) == 0
     - cassandra_service_unit_manage | bool
   vars:
     cassandra_output: true
 
-# Stopped before the boot setting: the stop is what stop_rack and decommission
-# are for, and a kept unit or init script that fails to disable (e.g. no
+# Stopped before the boot setting: the stop is what stopping a rack or a
+# decommission is for, and a kept unit or init script that fails to disable (e.g. no
 # chkconfig for systemd-sysv-install) must not leave the node running. A stop
 # then a failed disable leaves it down (a decommissioned node refuses to start).
 - name: Stop cassandra
@@ -179,7 +179,7 @@
         - name: Wait for the node to be joined (Mode NORMAL)
           ansible.builtin.include_tasks: wait_normal.yml
 
-    # the config this start used, to tell later changes still to apply (apply_config)
+    # the config this start used, to tell later changes still to apply
     - name: Record the config Cassandra started with
       ansible.builtin.include_tasks: config_snapshot.yml
       when:
