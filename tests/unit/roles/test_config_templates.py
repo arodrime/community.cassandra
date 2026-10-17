@@ -1,8 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# cassandra_config templates: the remote JMX users, passwords YAML reads back as
-# written, the heap settings cassandra-env.sh accepts, and the service account.
+# cassandra_config: passwords YAML reads back as written, the heap settings cassandra-env.sh
+# accepts, the GC values, the accounts of what it writes, and the commit log sync settings Cassandra accepts.
 
 import os
 import re
@@ -12,6 +12,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -23,8 +24,7 @@ TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cass
 
 
 def task(name):
-    with open(os.path.join(TASKS, "main.yml"), encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(TASKS, "main.yml"))
     while todo:
         t = todo.pop(0)
         if t.get("name") == name:
@@ -40,20 +40,6 @@ def render(template, escape_backslashes=True, **variables):
 
 
 TEMPLATES = os.path.join(TASKS, "..", "templates")
-with open(os.path.join(TEMPLATES, "jmxremote.access.j2"), encoding="utf-8") as f:
-    ACCESS = f.read()
-
-
-@pytest.mark.parametrize("create_unregister, access", [
-    (True, "ops readwrite \\\n    create javax.management.monitor.*,javax.management.timer.* \\\n    unregister\nmon readonly\n"),
-    (False, "ops readwrite\nmon readonly\n"),
-])
-def test_jmx_access_rights(create_unregister, access):
-    users = [{"name": "ops", "password": "s3cret", "access": "readwrite", "create_unregister": create_unregister},
-             {"name": "mon", "password": "m0n", "access": "readonly"}]
-    assert render(ACCESS, cassandra_jmx_users=users) == access
-
-
 with open(os.path.join(TASKS, "..", "vars", "main.yml"), encoding="utf-8") as f:
     ROLE_VARS = yaml.safe_load(f)
 with open(os.path.join(TASKS, "..", "templates", "5.0", "cassandra.yaml.j2"), encoding="utf-8") as f:
@@ -120,8 +106,10 @@ def owners(tasks):
             yield from owners(t.get(section, []))
 
 
-ALLOWED = {"owner": {"{{ cassandra_user }}", "{{ cassandra_config_user }}"},
-           "group": {"{{ cassandra_group }}", "{{ cassandra_config_group }}"}}
+# the config files' (per file: cassandra_config_file_permissions), the account Cassandra runs as
+# (cassandra_service's, else cassandra_user), the OS users of cassandra_cqlsh_credentials
+ALLOWED = {"owner": {"{{ _cassandra_config_perm.owner }}", "{{ _cassandra_config_perm_settings.user }}", "{{ item.os_user }}"},
+           "group": {"{{ _cassandra_config_perm.group }}", "{{ _cassandra_config_perm_settings.user_group }}"}}
 
 
 def wrong_owners(tasks):
@@ -130,13 +118,13 @@ def wrong_owners(tasks):
 
 def test_owner_guard_catches_a_hardcoded_account():
     assert wrong_owners([{"name": "a", "file": {"owner": "cassandra"}},
-                         {"block": [{"name": "b", "x.y.template": {"group": "{{ cassandra_user }}"}}]},
+                         {"block": [{"name": "b", "x.y.template": {"group": "{{ _cassandra_config_perm.owner }}"}}]},
                          {"name": "c", "command": "id", "become_user": "cassandra"}]) == [
-        ("a", "owner", "cassandra"), ("b", "group", "{{ cassandra_user }}"), ("c", "become_user", "cassandra")]
+        ("a", "owner", "cassandra"), ("b", "group", "{{ _cassandra_config_perm.owner }}"), ("c", "become_user", "cassandra")]
 
 
 def test_owners_follow_the_service_account():
-    # no task hardcodes the cassandra account: cassandra_user/cassandra_group, or the config owner/group variables
+    # no task hardcodes the cassandra account: the role's owner and group variables only
     found, wrong = [], []
     for name in sorted(os.listdir(TASKS)):
         with open(os.path.join(TASKS, name), encoding="utf-8") as f:
@@ -147,38 +135,6 @@ def test_owners_follow_the_service_account():
             assert re.findall(r"\b(?:chown|chgrp)\b[^\n]*\bcassandra\b|\binstall\b[^\n]*-[og] *cassandra\b", f.read()) == []
     assert found
     assert wrong == []
-
-
-@pytest.mark.parametrize("user_rc, groups, file_rc, ok", [
-    (0, "cassandra", 0, True),
-    (0, "dbsvc cassandra", 0, True),  # a supplementary group counts
-    (1, "", 0, False),  # no such user
-    (0, "dbsvc", 0, False),  # not in cassandra_group
-    (0, "cassandra-old", 0, False),  # a group name containing it is not it
-    (0, "cassandra", 1, False),  # config owner or group missing
-])
-def test_account_assert(user_rc, groups, file_rc, ok):
-    that = task("Assert the accounts exist")["ansible.builtin.assert"]["that"]
-    variables = dict(cassandra_group="cassandra",
-                     cassandra_config_service_groups={"rc": user_rc, "stdout": groups},
-                     cassandra_config_file_account={"rc": file_rc})
-    assert all(render("{{ %s }}" % cond, **variables) for cond in that) is ok
-
-
-def test_accounts_checked_before_any_write():
-    # the account assert comes first in the Configure block (later tasks write or prepare writes),
-    # and the JMX users files (access.yml) are written after that block
-    with open(os.path.join(TASKS, "main.yml"), encoding="utf-8") as f:
-        tasks = yaml.safe_load(f)
-    names = [t.get("name") for t in tasks]
-    configure = task("Configure")["block"]
-    first_write = next(i for i, t in enumerate(configure)
-                       if any(isinstance(v, dict) and ("dest" in v or "owner" in v or "state" in v) for v in t.values())
-                       or "block" in t or "ansible.builtin.tempfile" in t)
-    assert [t["name"] for t in configure].index("Assert the accounts exist") < first_write
-    assert all("ansible.builtin.command" in t or "ansible.builtin.assert" in t or "ansible.builtin.stat" in t
-               for t in configure[:[t["name"] for t in configure].index("Assert the accounts exist")])
-    assert names.index("JMX users") > names.index("Configure")
 
 
 with open(os.path.join(TASKS, "..", "defaults", "main.yml"), encoding="utf-8") as f:

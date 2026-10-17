@@ -100,6 +100,24 @@ def test_interpreter_python_of_the_config(monkeypatch):
         assert pin("/usr/bin/python3.11") == expected
 
 
+def test_cassandra_config_runs_its_python_scripts_with_it():
+    # its facts were gathered with python3.11, before the pin
+    value = load("roles", "cassandra_config", "vars", "main.yml")["_cassandra_config_python"]
+    facts = {"python": {"executable": "/usr/bin/python3.11"}}
+
+    def render(**variables):
+        templar = Templar(loader=DataLoader(), variables=dict(variables, ansible_facts=facts))
+        return templar.template(trust_as_template(value)).strip()
+
+    assert render(ansible_python_interpreter="/usr/bin/python3") == "/usr/bin/python3"
+    assert render() == "/usr/bin/python3.11"
+    assert render(ansible_python_interpreter="auto") == "/usr/bin/python3.11"
+    assert render(ansible_python_interpreter="python3") == "/usr/bin/python3.11"
+    assert render(ansible_python_interpreter="/usr/bin/env python3") == "/usr/bin/python3.11"
+    facts = {}
+    assert render() == "/usr/bin/python3"
+
+
 def test_no_usr_bin_python3():
     assert pin("/usr/bin/python3.11", rc=127) == ("", True)
 

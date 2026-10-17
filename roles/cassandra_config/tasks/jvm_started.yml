@@ -1,0 +1,31 @@
+---
+# The running Cassandra, found by its JVM's main class whatever started it (the
+# unit, the package's init script, a script of its own): cassandra_jvm gets its
+# pid, its start (seconds since the epoch), its java and its storagedir (where
+# the directories cassandra.yaml leaves out are); {} when none runs.
+- name: Find the running Cassandra JVM
+  ansible.builtin.shell: |
+    # its command line is too long for pgrep -f, and a wrapper script may match
+    for p in $(pgrep -x java); do
+      # not one of a container on this host
+      [ "$(readlink /proc/$p/ns/pid)" = "$(readlink /proc/self/ns/pid)" ] || continue
+      tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qx org.apache.cassandra.service.CassandraDaemon || continue
+      # its start in clock ticks since boot (field 22 of stat, the 20th after the command name), from now and the
+      # uptime read together (the boot time of /proc/stat is whole seconds: a file written just before would be newer)
+      ticks=$(sed 's/^.*) //' /proc/$p/stat | awk '{print $20}')
+      now=$(date +%s.%N) up=$(cut -d' ' -f1 /proc/uptime)
+      echo "pid=$p"
+      echo "start=$(awk -v n="$now" -v u="$up" -v t="$ticks" -v h="$(getconf CLK_TCK)" 'BEGIN {printf "%.2f", n - u + t / h}')"
+      # (a java replaced since, e.g. a JDK update: "<path> (deleted)"; readlink -f prints nothing once its directory went)
+      echo "exe=$(readlink /proc/$p/exe | sed 's/ (deleted)$//')"
+      echo "storagedir=$(tr '\0' '\n' < /proc/$p/cmdline | sed -n 's#^-Dcassandra.storagedir=##p' | head -1)"
+      break
+    done
+    exit 0
+  register: cassandra_jvm_found
+  changed_when: false
+  check_mode: false  # read-only
+
+- name: Note it
+  ansible.builtin.set_fact:
+    cassandra_jvm: "{{ dict(cassandra_jvm_found.stdout_lines | map('split', '=', 1)) }}"

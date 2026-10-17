@@ -7,14 +7,41 @@ _cassandra_config_files:
           cassandra-rackdc.properties, logback.xml]
   "4.0": [cassandra.yaml, cassandra-env.sh, jvm-server.options, jvm8-server.options, jvm11-server.options,
           cassandra-rackdc.properties, logback.xml]
+# The template of each config file: yours (cassandra_config_template_overrides, an absolute path), else the role's
+_cassandra_config_templates: >-
+  {%- set out = {} -%}
+  {%- for f in _cassandra_config_files[_cassandra_config_series] -%}
+  {%-   set _ = out.update({f: cassandra_config_template_overrides[f] | default(_cassandra_config_series ~ '/' ~ f ~ '.j2')}) -%}
+  {%- endfor -%}
+  {{ out }}
 # Stock release each series' templates come from (tools/gen_templates.py)
 _cassandra_config_template_versions:
   "5.0": 5.0.9
   "4.1": 4.1.12
   "4.0": 4.0.21
+# the modules' Python: the one set (e.g. by cassandra_install after the facts were gathered), else the facts'
 _cassandra_config_python: >-
-  {{ ansible_facts['python']['executable'] if ansible_facts['python'] is defined
-     else ansible_python_interpreter | default('/usr/bin/python3') }}
+  {{ ansible_python_interpreter if ansible_python_interpreter is defined and ansible_python_interpreter is match('/[^ ]+$')
+     else ansible_facts['python']['executable'] if ansible_facts['python'] is defined
+     else '/usr/bin/python3' }}
+# Snitches that don't take the node's dc and rack from cassandra-rackdc.properties'
+# dc= and rack= (Cassandra 4.0 to 5.0; the cloud ones may read its other settings)
+_cassandra_config_snitches_without_rackdc: [SimpleSnitch, RackInferringSnitch, PropertyFileSnitch, Ec2Snitch,
+                                            Ec2MultiRegionSnitch, GoogleCloudSnitch, CloudstackSnitch,
+                                            AlibabaCloudSnitch, AzureSnitch]
+# Owner, group and mode the role gives a file it writes (its name in
+# _cassandra_config_perm_file); import_cluster's self-check uses the same filter
+_cassandra_config_perm: >-
+  {{ _cassandra_config_perm_file | community.cassandra.cassandra_file_permissions(_cassandra_config_perm_settings) }}
+_cassandra_config_perm_settings:
+  owner: "{{ cassandra_config_user }}"
+  group: "{{ cassandra_config_group }}"
+  mode: "{{ cassandra_config_mode }}"
+  public_mode: "{{ cassandra_config_public_mode }}"
+  files: "{{ cassandra_config_file_permissions }}"
+  # the account the unit runs Cassandra as (cassandra_service), else cassandra_user
+  user: "{{ cassandra_service_user | default(cassandra_user) }}"
+  user_group: "{{ cassandra_service_group | default(cassandra_group) }}"
 # GC of each jvm<N>-server.options file of the series
 _cassandra_config_gcs: >-
   {{ [cassandra_jvm8_gc | default(cassandra_jvm_gc), cassandra_jvm11_gc | default(cassandra_jvm_gc)]
@@ -22,13 +49,61 @@ _cassandra_config_gcs: >-
      else [cassandra_jvm11_gc | default(cassandra_jvm_gc), cassandra_jvm17_gc | default(cassandra_jvm_gc)] }}
 # Where the package puts its config (RedHat: the alternatives target it ships)
 _cassandra_config_pkg_conf_dir: "{{ '/etc/cassandra/default.conf' if ansible_facts['os_family'] == 'RedHat' else cassandra_conf_dir }}"
+# The record of the config files the running Cassandra started with (config_seed.yml writes it before a
+# change; cassandra_service writes it at each start, its _cassandra_service_config_snapshot: a unit test keeps
+# them equal), and the files of the conf dir it covers: the config a restart picks up (and the JMX access file,
+# in the conf dir on Debian and Ubuntu; not the password file, read at each login: a new one needs no restart)
+_cassandra_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
+_cassandra_config_snapshot_files: [cassandra.yaml, cassandra-env.sh, jvm*-server.options, cassandra-rackdc.properties,
+                                   logback.xml, jmxremote.access]
 # A duration above zero Cassandra 4.1+ reads in milliseconds (DurationSpec.IntMillisecondsBound)
 _cassandra_config_duration_ms: '^0*[1-9][0-9]*(ms|s|m|h|d)$'
-# Installed Cassandra release ('' if not from a package)
-_cassandra_config_installed: "{{ (ansible_facts.packages['cassandra'] | default([{}]) | first).version | default('') | regex_replace('^([0-9.]+).*$', '\\1') }}"
+# Installed Cassandra release ('' if not from a package), read with the node (rpm, else dpkg)
+_cassandra_config_installed: "{{ _cassandra_config_package | default('') | regex_replace('^([0-9.]+).*$', '\\1') }}"
+# cassandra.yaml sections the template writes that cassandra_extra_settings may
+# add sub-keys to (written in the section), and the sub-keys of their variables
+_cassandra_config_extra_sections:
+  audit_logging_options: [enabled, logger]
 # A value (a password) that YAML would not read back as the same plain string:
 # single-quoted in cassandra.yaml
 _cassandra_config_quote: '(?s)^(?!(?!(?i:y|n|yes|no|true|false|on|off|null)$)[A-Za-z][A-Za-z0-9_./+=@-]*$)(.*)$'
 # data_file_directories when cassandra.yaml has none: <cassandra.storagedir>/data,
 # /var/lib/cassandra with the deb and rpm packages (cassandra.in.sh)
 _cassandra_config_default_data_dir: /var/lib/cassandra/data
+# A directory given as an absolute path, no shell expansion in it ($CASSANDRA_LOG_DIR)
+_cassandra_config_plain_path: '/[^$`]*$'
+# [kind, [path]] of the directories the role creates besides the data, commitlog, saved_caches and hints ones: cdc_raw when set or
+# with CDC on (Cassandra's default then, under the storage dir), the heap dump dir when it is a path
+_cassandra_config_more_dirs: >-
+  {{ ([['cdc_raw dir', [cassandra_cdc_raw_dir or ((cassandra_config_storage_dir or '/var/lib/cassandra')
+                                                  | regex_replace('(?<=.)/+$', '')) ~ '/cdc_raw']]]
+      if cassandra_cdc_raw_dir or cassandra_cdc_enabled | bool else [])
+     + ([['heap dump dir', [cassandra_heap_dump_dir]]] if cassandra_heap_dump_dir is match(_cassandra_config_plain_path) else []) }}
+# Variables of keys a series has from that one on (the role refuses them set for an earlier one)
+_cassandra_config_since:
+  cassandra_entire_sstable_stream_throughput_outbound: "4.1"
+  cassandra_entire_sstable_inter_dc_stream_throughput_outbound: "4.1"
+  cassandra_sstable_format: "5.0"
+  cassandra_partition_size_warn_threshold: "5.0"
+  cassandra_partition_size_fail_threshold: "5.0"
+# 4.1+: the former names (4.0's) of keys a variable writes; Cassandra refuses a cassandra.yaml with both
+_cassandra_config_old_names:
+  file_cache_size_in_mb: cassandra_file_cache_size
+  memtable_heap_space_in_mb: cassandra_memtable_heap_space
+  memtable_offheap_space_in_mb: cassandra_memtable_offheap_space
+  column_index_size_in_kb: cassandra_column_index_size
+  stream_throughput_outbound_megabits_per_sec: cassandra_stream_throughput_outbound
+  inter_dc_stream_throughput_outbound_megabits_per_sec: cassandra_inter_dc_stream_throughput_outbound
+  internode_streaming_tcp_user_timeout_in_ms: cassandra_internode_streaming_tcp_user_timeout
+  roles_update_interval_in_ms: cassandra_roles_update_interval
+  permissions_update_interval_in_ms: cassandra_permissions_update_interval
+  credentials_update_interval_in_ms: cassandra_credentials_update_interval
+  gc_log_threshold_in_ms: cassandra_gc_log_threshold
+  gc_warn_threshold_in_ms: cassandra_gc_warn_threshold
+# and the ones of one series
+_cassandra_config_old_names_of:
+  "4.1":
+    compaction_large_partition_warning_threshold_mb: cassandra_compaction_large_partition_warning_threshold
+  "5.0":
+    compaction_large_partition_warning_threshold_mb: cassandra_partition_size_warn_threshold
+    compaction_large_partition_warning_threshold: cassandra_partition_size_warn_threshold

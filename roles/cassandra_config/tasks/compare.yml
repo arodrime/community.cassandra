@@ -1,0 +1,101 @@
+---
+# The config files rendered here, on the controller, and compared on the node
+# in one go (config_read.py, its "compare" step), diffed with the Python
+# Ansible runs with (no diff binary needed; Ansible's own diff skips files
+# over 100KB, like the 5.0 cassandra.yaml); the new cassandra.yaml checked
+# when PyYAML is on the node: a cassandra.yaml Cassandra cannot read stops
+# the run before any file is written
+- name: Render the config files
+  ansible.builtin.set_fact:
+    _cassandra_config_new: >-
+      {{ dict(_cassandra_config_files[_cassandra_config_series]
+              | zip(query('ansible.builtin.template', *_cassandra_config_files[_cassandra_config_series]
+                                                       | map('extract', _cassandra_config_templates)))) }}
+  no_log: true  # passwords
+
+# On a node that is not blank, a file with the same settings is left as it is: the live ones that
+# differ read, their settings compared on the controller, as the import self-check does. Top-level keys
+# and rackdc properties a joined node must keep: plain text, no YAML parser needed on the node. A file
+# left as the node has it (cassandra_config_keep_files) changes none of them.
+- name: Diff them against the live files
+  ansible.builtin.command:
+    argv: ["{{ _cassandra_config_python }}", -c, "{{ lookup('ansible.builtin.file', 'config_read.py') }}"]
+    stdin: >-
+      {{ {'step': 'compare', 'conf_dir': cassandra_conf_dir,
+          'names': _cassandra_config_files[_cassandra_config_series], 'files': _cassandra_config_new,
+          'compare': _cassandra_config_initialized | bool and not cassandra_config_normalize | bool,
+          'identity': {'live_yaml': cassandra_conf_dir ~ '/cassandra.yaml',
+                       'new_yaml': {'path': cassandra_conf_dir ~ '/cassandra.yaml'}
+                                   if 'cassandra.yaml' in cassandra_config_keep_files
+                                   else {'text': _cassandra_config_new['cassandra.yaml']},
+                       'live_rackdc': cassandra_conf_dir ~ '/cassandra-rackdc.properties',
+                       'new_rackdc': {'path': cassandra_conf_dir ~ '/cassandra-rackdc.properties'}
+                                     if 'cassandra-rackdc.properties' in cassandra_config_keep_files
+                                     else {'text': _cassandra_config_new['cassandra-rackdc.properties']},
+                       'snitches': _cassandra_config_snitches_without_rackdc}
+                      if _cassandra_config_initialized | bool else none} | to_json }}
+  register: cassandra_config_compare
+  changed_when: false
+  check_mode: false  # reads only
+  no_log: true  # the new files and the live ones that differ hold passwords; the diffs are shown masked (confirm.yml)
+
+- name: Check the new cassandra.yaml is valid YAML
+  ansible.builtin.fail:
+    msg: "{{ _compare.error | default(_compare.yaml_error) }}"
+  vars:
+    _compare: "{{ cassandra_config_compare.stdout | from_json }}"
+  when: _compare.error is defined or _compare.yaml_error is not none
+
+# (none on a node not initialized: compared in one expression, a var of a null value reads as '' before 2.19)
+- name: Stop when the settings a joined node must keep could not be compared
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: the settings a joined node must keep could not be compared:
+      {{ (cassandra_config_compare.stdout | from_json).identity.error }}
+  when: ((cassandra_config_compare.stdout | from_json).identity or {}).rc | default(0) != 0
+
+# as the tasks that read them one by one registered them
+- name: Note the comparison
+  ansible.builtin.set_fact:
+    cassandra_config_preview:
+      results: >-
+        {%- set out = [] -%}
+        {%- for r in _compare.preview -%}
+        {%-   set _ = out.append(r | combine({'stdout_lines': r.stdout.splitlines()})) -%}
+        {%- endfor -%}
+        {{ out }}
+    # the live files that differ, read on a node that is not blank: {name: base64 content, none when unreadable}
+    _cassandra_config_compared: "{{ _compare.live }}"
+    cassandra_config_identity: "{{ {'stdout': _compare.identity.changes | to_json} if _compare.identity is not none else {'skipped': true} }}"
+  vars:
+    _compare: "{{ cassandra_config_compare.stdout | from_json }}"
+  no_log: true  # the live files
+
+# the directories cassandra.yaml leaves out are under its -Dcassandra.storagedir
+- name: Read where the running Cassandra keeps the directories cassandra.yaml leaves out
+  ansible.builtin.include_tasks: jvm_started.yml
+  when:
+    - cassandra_config_storage_dir == ''
+    - "'cassandra.yaml' in _cassandra_config_compared"
+
+- name: Refuse to change the identity of a joined node
+  ansible.builtin.assert:
+    that: _changes | length == 0 or cassandra_config_force_identity_change | bool
+    fail_msg: >-
+      {{ inventory_hostname }} is not blank ({{ _cassandra_config_initialized_why }}) and these settings
+      would change: {{ _changes | join('; ') }}.{{ _not_loaded }} A node keeps them for life: a new cluster_name, partitioner or
+      num_tokens stops it from starting, a new dc or rack too (unless forced), a new snitch or forced dc/rack moves
+      data ownership without streaming, and storage_compatibility_mode (5.0) only moves one step at a time,
+      CASSANDRA_4 (also when absent, write it first), UPGRADING, NONE, never back. Fix the inventory to match the
+      node, or follow the documented procedure and set cassandra_config_force_identity_change: true.
+      {{ _cassandra_config_reset }}
+    quiet: true
+  vars:
+    _changes: "{{ cassandra_config_identity.stdout | default('[]') | from_json }}"
+    # the likely cause first
+    _not_loaded: >-
+      {{ " cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with
+      ansible-inventory -i <inventory> --host " ~ inventory_hostname ~ " (group_vars are read next to the inventory
+      file or directory given, not in its subdirectories)."
+      if cassandra_cluster_name == 'Test Cluster' and _changes | select('match', 'cluster_name: ') | list | length > 0 else '' }}
+  when: _cassandra_config_initialized | bool

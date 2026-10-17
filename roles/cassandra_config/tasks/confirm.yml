@@ -1,0 +1,176 @@
+---
+# On a node that is not blank, a file with the same settings (only comments,
+# blank lines or their layout differ, e.g. no header: set up by hand) is left as it is
+- name: List the files to change and whether to ask first
+  ansible.builtin.set_fact:
+    _cassandra_config_kept: "{{ _kept }}"
+    # kept as the node has them, but not there: written from the template, the hand edits lost
+    _cassandra_config_keep_missing: >-
+      {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | rejectattr('stat.exists')
+         | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
+    _cassandra_config_changes: >-
+      {{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file')
+         | reject('in', _kept) | list }}
+    _cassandra_config_ask: >-
+      {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _kept)
+         | list | length > 0
+         and (_cassandra_config_initialized | bool if cassandra_config_confirm | string | lower == 'auto'
+              else cassandra_config_confirm | bool) }}
+  vars:
+    _kept: >-
+      {%- set out = [] -%}
+      {%- for f in cassandra_config_preview.results | map(attribute='cassandra_config_file') if f in _cassandra_config_compared -%}
+      {%-   set live = _cassandra_config_compared[f] -%}
+      {%-   if live is not none and live | b64decode | community.cassandra.cassandra_same_settings(
+                 _cassandra_config_new[f], f, cassandra_config_storage_dir or cassandra_jvm.storagedir | default('')) -%}
+      {%-     set _ = out.append(f) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out + _keep }}
+    # (where the node has them, on a node that is not blank: a new one's are the package's)
+    _keep: >-
+      {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
+
+- name: Warn that a file kept by hand is missing
+  ansible.builtin.debug:
+    msg: >-
+      WARNING - {{ inventory_hostname }}: {{ _cassandra_config_keep_missing | join(', ') }} kept by hand
+      (cassandra_config_keep_files) {{ 'is' if _cassandra_config_keep_missing | length == 1 else 'are' }} missing:
+      written back from the template, the hand edits are lost. Restore your copy first to keep them.
+  vars:
+    cassandra_output: true
+  when:
+    - _cassandra_config_keep_missing | length > 0
+
+- name: Show the config changes
+  ansible.builtin.debug:
+    msg: >-
+      {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _cassandra_config_kept)
+         | map(attribute='stdout_lines') | flatten }}
+  when:
+    - _cassandra_config_changes | length > 0
+    - not (_cassandra_config_ask | bool and not ansible_check_mode)  # asked below: shown with its question
+
+# the diffs the question below is about: printed by the ops callback too, each node's under its name
+- name: Show the config changes to confirm
+  ansible.builtin.debug:
+    msg: >-
+      {{ [inventory_hostname ~ ':'] + cassandra_config_preview.results | selectattr('stdout')
+         | rejectattr('cassandra_config_file', 'in', _cassandra_config_kept) | map(attribute='stdout_lines') | flatten }}
+  when:
+    - _cassandra_config_changes | length > 0
+    - _cassandra_config_ask | bool and not ansible_check_mode
+  vars:
+    cassandra_output: true
+
+- name: Say which files are left as they are
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ _same | join(', ') }} left as they are: same settings as the
+      role's, written another way (cassandra_config_normalize: true rewrites them).
+  vars:
+    _same: "{{ _cassandra_config_kept | reject('in', cassandra_config_keep_files) | list }}"
+  when: _same | length > 0
+
+- name: Say which files are kept as they are (cassandra_config_keep_files)
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ _kept | join(', ') }} left as they are (cassandra_config_keep_files)"
+  vars:
+    _kept: "{{ _cassandra_config_kept | select('in', cassandra_config_keep_files) | list }}"
+  when: _kept | length > 0
+
+# Cassandra cannot start on a file its account cannot read: changed even when the content is not
+- name: List the owner, group and mode changes
+  ansible.builtin.set_fact:
+    _cassandra_config_perm_changes: >-
+      {{ cassandra_config_live_stat.results | community.cassandra.cassandra_permission_changes(_cassandra_config_perm_settings) }}
+    # the files the template task writes: all of them (but the ones kept), as before the role compared
+    # them, unless the live one is a regular file with the same content, owner, group and mode (a file
+    # missing or not read, a link, or /etc/cassandra/conf about to point elsewhere: written)
+    _cassandra_config_write: >-
+      {%- set alternative = cassandra_rpm_conf_alternative | regex_replace('(?<=.)/+$', '') -%}
+      {%- set target = cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped
+                       else alternative -%}
+      {%- set out = [] -%}
+      {%- for r in cassandra_config_preview.results -%}
+      {%-   set f = r.cassandra_config_file -%}
+      {%-   set live = cassandra_config_live_stat.results | selectattr('cassandra_config_file', 'equalto', f) | first -%}
+      {%-   if r.rc != 0 or f in _cassandra_config_links or target != alternative or not live.stat.exists | default(false)
+               or [live] | community.cassandra.cassandra_permission_changes(_cassandra_config_perm_settings) -%}
+      {%-     set _ = out.append(f) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: List the owner, group and mode changes of the directories
+  ansible.builtin.set_fact:
+    _cassandra_config_dir_changes: >-
+      {%- set out = [] -%}
+      {%- for r in cassandra_config_dir_try.results | default([]) if r.rc | default(1) != 0 -%}{%- set _ = out.append(r.item) -%}{%- endfor -%}
+      {{ out }}
+
+- name: Note the dirs another account owns
+  ansible.builtin.set_fact:
+    _cassandra_config_dir_notes: >-
+      {%- set out = [] -%}
+      {%- for r in cassandra_config_dir_foreign.results | default([]) if r.stdout_lines | default([]) -%}
+      {%-   set _ = out.append('WARNING - data dir ' ~ r.item.item.1 ~ ': not owned by ' ~ _cassandra_config_perm_settings.user ~ ': '
+                               ~ r.stdout_lines[:3] | join(', ') ~ (', ...' if r.stdout_lines | length > 3 else '')
+                               ~ ' (left as they are: chown -R them if Cassandra cannot read them)') -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Show the owner, group and mode changes
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for c in _cassandra_config_perm_changes + _cassandra_config_dir_changes -%}
+      {%-   set _ = out.append(c.item ~ ': ' ~ c.before ~ ' -> ' ~ c.after) -%}
+      {%- endfor -%}
+      {{ out + _cassandra_config_dir_notes }}
+  when:
+    - (_cassandra_config_perm_changes + _cassandra_config_dir_changes + _cassandra_config_dir_notes) | length > 0
+
+# The diffs are masked (compare.yml): no password reaches the report
+- name: Record the changes for the report
+  ansible.builtin.set_fact:
+    _cassandra_config_items: >-
+      {{ ([{'item': '/etc/cassandra/conf', 'before': _conf_target, 'after': cassandra_rpm_conf_alternative}]
+          if _conf_target | default(cassandra_rpm_conf_alternative, true) != cassandra_rpm_conf_alternative else [])
+         + _files + _cassandra_config_perm_changes + _cassandra_config_dir_changes }}
+  vars:
+    _conf_target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped else '' }}"
+    _files: >-
+      {% set out = [] %}{% for r in cassandra_config_preview.results if r.stdout and r.cassandra_config_file not in _cassandra_config_kept %}{% set _ = out.append({
+        'item': cassandra_conf_dir ~ '/' ~ r.cassandra_config_file,
+        'before': 'current',
+        'after': '%d line(s) changed' % (r.stdout_lines | select('match', '^[-+](?![-+]{2} )') | list | length),
+        'diff': r.stdout}) %}{% endfor %}{{ out }}
+
+# One prompt per batch (with serial, once per batch). run_once: its answer registered on every
+# host of the batch (pause runs once anyway, but without run_once only its own host gets the answer)
+- name: Confirm config changes
+  ansible.builtin.pause:
+    prompt: |-
+      cassandra_config is about to change (diffs above):
+      {% for h in ansible_play_batch if hostvars[h]._cassandra_config_ask | default(false) | bool %}
+        {{ h }}: {{ hostvars[h]._cassandra_config_changes | join(', ') }}
+      {% endfor %}
+      Nodes are NOT restarted by this role. Type 'yes' to apply
+  register: cassandra_config_answer
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - ansible_play_batch | map('extract', hostvars) | map(attribute='_cassandra_config_ask', default=false) | map('bool') | select | list | length > 0
+
+- name: Stop unless the changes were confirmed
+  ansible.builtin.assert:
+    that: (cassandra_config_answer.user_input | default('')) == 'yes'
+    fail_msg: >-
+      Config changes not confirmed on {{ inventory_hostname }}{{ (' (not blank: ' ~ _cassandra_config_initialized_why ~ ')')
+      if _cassandra_config_initialized | bool else '' }}. Run interactively and answer 'yes',
+      or set cassandra_config_confirm: false to apply without asking.
+  when:
+    - not ansible_check_mode
+    - _cassandra_config_ask | bool

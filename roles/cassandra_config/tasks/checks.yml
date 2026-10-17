@@ -1,0 +1,197 @@
+---
+# The variables checked before anything is read on the node: a value Cassandra would
+# refuse to start with stops the run here.
+- name: Assert required cassandra_config variables are set
+  ansible.builtin.assert:
+    that:
+      - cassandra_conf_dir is defined and cassandra_conf_dir != ""
+      - cassandra_data_file_directories | length > 0
+      - cassandra_config_confirm | string | lower in ['auto', 'true', 'false', 'yes', 'no']
+      - _cassandra_config_gcs | reject('in', ['G1', 'CMS', 'custom']) | list | length == 0
+      - cassandra_data_dir is defined and cassandra_data_dir != ""
+      - cassandra_version in ["40x", "41x", "50x"]
+    fail_msg: >-
+      cassandra_conf_dir, cassandra_data_dir and cassandra_data_file_directories must not be empty,
+      cassandra_version must be one of 40x, 41x, 50x, cassandra_config_confirm auto, true or false, and
+      cassandra_jvm_gc (cassandra_jvm<N>_gc) one of G1, CMS, custom
+
+# Cassandra refuses to start without a period above zero in periodic mode
+# (4.1+: a duration in ms or a larger unit)
+- name: Assert the commit log sync settings
+  ansible.builtin.assert:
+    that:
+      - cassandra_commitlog_sync in ['periodic', 'group', 'batch']
+      - >-
+        cassandra_commitlog_sync != 'periodic'
+        or (cassandra_commitlog_sync_period_in_ms | int > 0 if cassandra_version == '40x'
+            else (cassandra_commitlog_sync_period | string) is match(_cassandra_config_duration_ms))
+    fail_msg: >-
+      cassandra_commitlog_sync must be periodic, group or batch, and in periodic mode
+      {{ 'cassandra_commitlog_sync_period_in_ms above zero (milliseconds)' if cassandra_version == '40x'
+         else 'cassandra_commitlog_sync_period above zero, in ms or a larger unit (e.g. 10000ms)' }}
+
+# Group mode has no default window, as in Cassandra, which refuses to start without one
+- name: Assert the commit log group window is set
+  ansible.builtin.assert:
+    that: >-
+      cassandra_commitlog_sync_group_window_in_ms | float > 0 if cassandra_version == '40x'
+      else (cassandra_commitlog_sync_group_window | string) is match(_cassandra_config_duration_ms)
+    fail_msg: >-
+      cassandra_commitlog_sync is group: set
+      {{ 'cassandra_commitlog_sync_group_window_in_ms (e.g. 15' if cassandra_version == '40x'
+         else 'cassandra_commitlog_sync_group_window (e.g. 15ms' }}; the time a write may wait for the group fsync),
+      above zero
+  when: cassandra_commitlog_sync == 'group'
+
+# Your own template for a file the role writes (not one it keeps as it is): a file on the controller
+- name: Refuse template overrides the role cannot use
+  ansible.builtin.assert:
+    that: _wrong | length == 0
+    fail_msg: "cassandra_config_template_overrides: {{ _wrong | join('; ') }}. Nothing is changed."
+    quiet: true
+  vars:
+    _files: "{{ _cassandra_config_files[_cassandra_config_series] }}"
+    _wrong: >-
+      {%- set out = [] -%}
+      {%- if cassandra_config_template_overrides is not mapping -%}
+      {%-   set _ = out.append('a dict of {file name: template path} is expected') -%}
+      {%- else -%}
+      {%-   for f, path in cassandra_config_template_overrides.items() -%}
+      {%-     if f not in _files -%}
+      {%-       set _ = out.append(f ~ ' is not a file the role writes (' ~ _files | join(', ') ~ ')') -%}
+      {%-     elif path is not string or path is not match('/') -%}
+      {%-       set _ = out.append(f ~ ': an absolute path on the controller is expected (e.g. under inventory_dir)') -%}
+      {%-     elif path is not file -%}
+      {%-       set _ = out.append(f ~ ': ' ~ path ~ ' not found on the controller') -%}
+      {%-     elif f in cassandra_config_keep_files -%}
+      {%-       set _ = out.append(f ~ ' is also in cassandra_config_keep_files (left as the node has it): one or the other') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: Refuse extra settings the template already has
+  ansible.builtin.assert:
+    that: _taken | length == 0
+    fail_msg: >-
+      cassandra_extra_settings: {{ _named | join(', ') }} already in cassandra.yaml, or the former name of a key
+      whose variable is set (Cassandra refuses both names): set them with their variable
+  vars:
+    # (the one written: cassandra_config_template_overrides' when set)
+    _template: >-
+      {{ lookup('ansible.builtin.file', ('' if _cassandra_config_templates['cassandra.yaml'] is match('/') else role_path ~ '/templates/')
+                                        ~ _cassandra_config_templates['cassandra.yaml']) }}
+    _keys: >-
+      {{ _template | regex_findall('(?m)^(?:\{\{[^}]*\}\})?([a-z0-9_]+):') }}
+    # a section of _cassandra_config_extra_sections: a dict of other sub-keys than its variables'; a dotted key
+    # (sstable.selected_format) by its first part; 4.1+: a former name of a key whose variable is set
+    _taken: >-
+      {%- set out = cassandra_extra_settings | list | intersect(_keys)
+                    | difference(_cassandra_config_extra_sections | list) -%}
+      {%- for key in cassandra_extra_settings if key is search('[.]') and key.split('.') | first in _keys -%}
+      {%-   set _ = out.append(key) -%}
+      {%- endfor -%}
+      {%- for key, var in _old.items() if key in cassandra_extra_settings and key not in _keys
+                                                                and lookup('ansible.builtin.vars', var) | string not in ['', 'None'] -%}
+      {%-   set _ = out.append(key) -%}
+      {%- endfor -%}
+      {%- for section, own in _cassandra_config_extra_sections.items() if section in cassandra_extra_settings -%}
+      {%- set value = cassandra_extra_settings[section] -%}
+      {%- set _ = out.extend([section] if value is not mapping
+                             else value | list | intersect(own) | map('regex_replace', '^', section ~ '.')) -%}
+      {%- endfor -%}
+      {{ out }}
+    # 4.1+: a key's former name -> its variable
+    _old: >-
+      {{ {} if cassandra_version == '40x'
+         else _cassandra_config_old_names | combine(_cassandra_config_old_names_of[_cassandra_config_series] | default({})) }}
+    # each with its variable: the one of its template line, or the one its former name goes with
+    _named: >-
+      {%- set out = [] -%}
+      {%- for key in _taken -%}
+      {%-   set line = _template | regex_findall('(?m)^(?:\{\{[^}]*\}\})?' ~ key.split('.') | first ~ ':.*$') | first | default('') -%}
+      {%-   set var = _old[key] if key in _old and key not in _keys
+                      else line | regex_findall('cassandra_\w+') | first | default('') -%}
+      {%-   set _ = out.append(key ~ ((' (' ~ var ~ ')') if var else '')) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: cassandra_extra_settings | length > 0
+
+# A key a later series added: the series' templates have no line for it, so set, it would be ignored
+- name: Refuse settings of a later Cassandra series
+  ansible.builtin.assert:
+    that: _later | length == 0
+    fail_msg: >-
+      {{ _later | join(', ') }}: not a setting of Cassandra {{ _cassandra_config_series }} (cassandra_version
+      {{ cassandra_version }}), only from {{ _since | join(', ') }} on. Remove {{ 'it' if _later | length == 1 else 'them' }}
+      from the inventory; nothing is changed.
+    quiet: true
+  vars:
+    _later: >-
+      {{ _cassandra_config_since | dict2items | rejectattr('value', 'version', _cassandra_config_series, '<=')
+         | map(attribute='key') | select('in', _set) | list }}
+    _set: >-
+      {{ _cassandra_config_since | list | zip(query('ansible.builtin.vars', *_cassandra_config_since | list))
+         | rejectattr(1, 'in', ['', none]) | map(attribute=0) | list }}
+    _since: "{{ _later | map('extract', _cassandra_config_since) | unique | list }}"
+
+# Cassandra 5.0 refuses to start with BTI in storage_compatibility_mode CASSANDRA_4 (4.x nodes may still read its
+# SSTables), and a format name other than big or bti
+- name: Refuse an SSTable format Cassandra would not start with
+  ansible.builtin.assert:
+    that:
+      - cassandra_sstable_format | string in ['', 'None', 'big', 'bti']
+      - cassandra_sstable_format != 'bti' or cassandra_storage_compatibility_mode != 'CASSANDRA_4'
+    fail_msg: >-
+      cassandra_sstable_format must be big or bti (lower case), and bti needs cassandra_storage_compatibility_mode
+      UPGRADING or NONE (it is {{ cassandra_storage_compatibility_mode }}): Cassandra refuses to start with BTI while in
+      CASSANDRA_4. Move on from CASSANDRA_4 first (a rolling restart), or keep big; nothing is changed.
+    quiet: true
+  when: cassandra_version == '50x'
+
+# Cassandra refuses to start on another value (5.0 also refuses its own direct)
+- name: Refuse a disk_access_mode Cassandra would not start with
+  ansible.builtin.assert:
+    that: cassandra_disk_access_mode | string in ['', 'None', 'auto', 'mmap', 'mmap_index_only', 'standard'] + _legacy
+    fail_msg: >-
+      cassandra_disk_access_mode {{ cassandra_disk_access_mode }}: Cassandra {{ _cassandra_config_series }} takes auto, mmap,
+      mmap_index_only or standard{{ ' (5.0 also legacy)' if _legacy else '' }}; nothing is changed.
+    quiet: true
+  vars:
+    _legacy: "{{ ['legacy'] if cassandra_version == '50x' else [] }}"
+
+# 5.0's cassandra-env.sh always gives -XX:HeapDumpPath: empty, the dumps would go to /
+- name: Refuse an empty heap dump dir on 5.0
+  ansible.builtin.assert:
+    that: cassandra_heap_dump_dir | string not in ['', 'None']
+    fail_msg: >-
+      cassandra_heap_dump_dir is empty: 5.0's cassandra-env.sh would give the JVM -XX:HeapDumpPath=/cassandra-<time>-pid<pid>.hprof.
+      Remove it from the inventory (the log dir, as in stock) or set a directory; nothing is changed.
+    quiet: true
+  when: cassandra_version == '50x'
+
+# GossipingPropertyFileSnitch takes the node's dc and rack from the file: other lines would
+# move it (e.g. kept by import_cluster under SimpleSnitch, then the snitch changed)
+- name: Refuse rackdc lines other than the node's dc and rack under a snitch that reads them
+  ansible.builtin.assert:
+    that: >-
+      [cassandra_rackdc_dc | string, cassandra_rackdc_rack | string] == [cassandra_dc | string, cassandra_rack | string]
+      or cassandra_endpoint_snitch | regex_replace('^org[.]apache[.]cassandra[.]locator[.]', '')
+         in _cassandra_config_snitches_without_rackdc
+    fail_msg: >-
+      {{ cassandra_endpoint_snitch }} reads the node's dc and rack from cassandra-rackdc.properties: cassandra_rackdc_dc
+      ({{ cassandra_rackdc_dc }}) and cassandra_rackdc_rack ({{ cassandra_rackdc_rack }}) must be cassandra_dc
+      ({{ cassandra_dc }}) and cassandra_rack ({{ cassandra_rack }}). Remove them from the inventory.
+    quiet: true
+
+# Unless G1 is in use, cassandra-env.sh exits when only one of MAX_HEAP_SIZE
+# and HEAP_NEWSIZE is set; 5.0's leaves HEAP_NEWSIZE commented out
+- name: Assert heap settings are consistent
+  ansible.builtin.assert:
+    that: >-
+      _cassandra_config_gcs | reject('equalto', 'G1') | list | length == 0
+      or (cassandra_heap_size == '' and cassandra_heap_newsize == '')
+      or (cassandra_heap_size != '' and cassandra_heap_newsize != '' and cassandra_version != '50x')
+    fail_msg: >-
+      Without G1 (cassandra_jvm_gc, cassandra_jvm<N>_gc), set cassandra_heap_size and cassandra_heap_newsize
+      together on 4.x, and neither on 5.0 (its cassandra-env.sh has no HEAP_NEWSIZE)

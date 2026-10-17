@@ -5,16 +5,18 @@ __metaclass__ = type
 # changing an initialized node and refuses to change the identity of a joined node.
 
 import base64
+import difflib
 import json
 import os
+import re
 import subprocess
-import sys
 import time
+import warnings
 
 import pytest
-import yaml
 
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 try:  # ansible-core 2.19+ renders trusted templates only
@@ -23,13 +25,19 @@ except ImportError:
     def trust_as_template(template):
         return template
 
+with warnings.catch_warnings():  # already done under ansible-test
+    warnings.simplefilter("ignore")
+    init_plugin_loader()  # the collection's filters (cassandra_node_standing), under plain pytest too
+
+from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
+
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
 
 
 def task(name):
-    with open(os.path.join(TASKS, "main.yml"), encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(TASKS, "main.yml"))
     while todo:
         t = todo.pop(0)
         if t.get("name") == name:
@@ -42,19 +50,7 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-SCRIPT = task("Diff them against the live files")["ansible.builtin.command"]["argv"][2]
-
-
-def preview(tmp_path, name, live, new):
-    """The preview's output for a live file (None: none yet) and the role's."""
-    (tmp_path / "live").mkdir()
-    (tmp_path / "new").mkdir()
-    live_path, new_path = tmp_path / "live" / name, tmp_path / "new" / name
-    if live is not None:
-        live_path.write_bytes(live.encode())
-    new_path.write_bytes(new.encode())
-    return subprocess.run([sys.executable, "-c", SCRIPT, str(live_path), str(new_path)],
-                          stdout=subprocess.PIPE, check=True).stdout.decode()
+SYSTEM = "Look for a system keyspace, and into Cassandra's directories"
 
 
 def changed_lines(diff):
@@ -92,6 +88,42 @@ def test_secrets_masked_in_the_diff(tmp_path, live, new, shown):
     assert changed_lines(preview(tmp_path, "cassandra.yaml", live, new)) == shown
 
 
+@pytest.mark.parametrize("name, live, new", [
+    ("cassandra.yaml", "a: 1\nkeystore_password: |\n  OLDLEAK\nb: 2\n",
+     "a: 1\nkeystore_password: |\n  NEWLEAK\nb: 2\n"),  # (its key a context line)
+    ("cassandra.yaml", "  keystore_password: x\n    OLDLEAK\n  b: 2\n", "  keystore_password: x\n    NEWLEAK\n  b: 2\n"),
+    ("cassandra.yaml", "keystore_password: \"OLDLEAK1\n  OLDLEAK2\n  END\"\nnext: 1\n",
+     "keystore_password: \"NEWLEAK1\n  NEWLEAK2\n  END\"\nnext: 1\n"),
+    ("cassandra.yaml", "keystore_password:\n  - OLDLEAK\nnext: 1\n", "keystore_password:\n  - NEWLEAK\nnext: 1\n"),
+    ("cassandra.yaml", "sse_c_key: OLDLEAK\nca_key: OLDLEAK\n", "sse_c_key: NEWLEAK\nca_key: NEWLEAK\n"),
+    ("cassandra.yaml", "\"keystore_password\": \"OLDLEAK1\n  OLDLEAK2\"\n", "'keystore_password': NEWLEAK\n"),
+    ("cassandra-env.sh", 'export TRUSTSTORE_PASSWORD="x\nOLDLEAK"\n', 'export TRUSTSTORE_PASSWORD="x\nNEWLEAK"\n'),
+    ("cassandra-rackdc.properties", "ldap_password=x\\\n  OLDLEAK\n", "ldap_password=x\\\n  NEWLEAK\n"),
+    ("cassandra.yaml", "keystore_password: |\r\n  OLDLEAK\r\nb: 2\r\n", "keystore_password: |\n  NEWLEAK\nb: 2\n"),
+])
+def test_a_secret_value_on_several_lines_masked_in_the_diff(tmp_path, name, live, new):
+    out = preview(tmp_path, name, live, new)
+    assert out and "LEAK" not in out, out
+    if "\r" in live:  # a CRLF line masked keeps its \r (bash reads it)
+        assert "-  ****\r" in changed_lines(out)
+
+
+@pytest.mark.parametrize("live, new", [
+    ("a: 1\nb: 2\nc: 3\n", "a: 1\nb: 3\nc: 3\nd: 4\n"),
+    ("".join("k%d: %d\n" % (i, i) for i in range(30)), "".join("k%d: %d\n" % (i, i * (i % 7 != 0)) for i in range(32))),
+    ("x: 1\r\ny: 2\n", "x: 1\ny: 2"),
+    ("a: 1\n", ""),
+    ("# keystore_password: cassandra\nnum_tokens: 16\n", "# keystore_password: cassandra\nnum_tokens: 8\n"),
+])
+def test_the_diff_is_unified_diff(tmp_path, live, new):
+    # (its lines masked one at a time, the hunks as difflib's unified_diff makes them)
+    want = list(difflib.unified_diff(live.splitlines(True), new.splitlines(True), "x (live)", "(new)"))
+    want = "".join(line if line.endswith(("\n", "\r")) else line + "\n" for line in want).rstrip("\r\n")
+    want = re.sub(r"(keystore_password: ).*", r"\1****", want)
+    got = preview(tmp_path, "cassandra.yaml", live, new)
+    assert got.split("\n", 1)[1] == want.split("\n", 1)[1]  # (the live file's path in the first line)
+
+
 # an ASCII locale (LANG=C, no UTF-8 mode, as on Python 3.6) and a UTF-8 one
 LOCALES = [dict(os.environ, LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0"), dict(os.environ, LC_ALL="C.UTF-8")]
 
@@ -100,10 +132,7 @@ LOCALES = [dict(os.environ, LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
 @pytest.mark.parametrize("live", [b"# caf\xe9\nnum_tokens: 16\n", u"# caf\xe9\nnum_tokens: 16\n".encode("utf-8")])
 def test_diff_reads_any_live_file(tmp_path, env, live):
     # a Latin-1 comment, or any UTF-8 text under an ASCII locale: read as UTF-8, a bad byte replaced
-    (tmp_path / "live").write_bytes(live)
-    (tmp_path / "new").write_bytes(u"# caf\xe9\nnum_tokens: 8\n".encode("utf-8"))
-    out = subprocess.run([sys.executable, "-c", SCRIPT, str(tmp_path / "live"), str(tmp_path / "new")],
-                         stdout=subprocess.PIPE, check=True, env=env).stdout.decode("utf-8")
+    out = preview(tmp_path, "cassandra.yaml", live, u"# caf\xe9\nnum_tokens: 8\n", env=env)
     assert {"-num_tokens: 16", "+num_tokens: 8"} <= set(changed_lines(out))
 
 
@@ -111,21 +140,15 @@ def test_diff_of_a_path_not_in_utf8(tmp_path):
     # the live path is in the diff header: the output stays valid UTF-8 with an undecodable byte there
     d = os.path.join(str(tmp_path).encode(), b"caf\xe9")
     os.mkdir(d)
-    for name, text in ((b"live", b"num_tokens: 16\n"), (b"new", b"num_tokens: 8\n")):
-        with open(os.path.join(d, name), "wb") as f:
-            f.write(text)
-    out = subprocess.run([sys.executable.encode(), b"-c", SCRIPT.encode(), os.path.join(d, b"live"), os.path.join(d, b"new")],
-                         stdout=subprocess.PIPE, check=True, env=LOCALES[0]).stdout.decode("utf-8")
+    with open(os.path.join(d, b"cassandra.yaml"), "wb") as f:
+        f.write(b"num_tokens: 16\n")
+    out = compare(d, {"cassandra.yaml": "num_tokens: 8\n"}, env=LOCALES[0])["preview"][0]["stdout"]
     assert {"-num_tokens: 16", "+num_tokens: 8"} <= set(changed_lines(out))
-
-
-VALIDATE = task("Check the new cassandra.yaml is valid YAML")["ansible.builtin.command"]["argv"][2]
 
 
 @pytest.mark.parametrize("env", LOCALES)
 def test_yaml_validation_of_utf8_text(tmp_path, env):
-    (tmp_path / "cassandra.yaml").write_bytes(u"cluster_name: 'caf\xe9'\n".encode("utf-8"))
-    subprocess.run([sys.executable, "-c", VALIDATE, str(tmp_path / "cassandra.yaml")], check=True, env=env)
+    assert compare(tmp_path, {"cassandra.yaml": u"cluster_name: 'caf\xe9'\n"}, env=env)["yaml_error"] is None
 
 
 @pytest.mark.parametrize("text, error", [
@@ -133,12 +156,15 @@ def test_yaml_validation_of_utf8_text(tmp_path, env):
     ("cluster_name: 'X'\nkeystore_password: a: Secret-Value\n", "the new cassandra.yaml is not valid YAML (line 2)"),
 ])
 def test_yaml_validation(tmp_path, text, error):
-    (tmp_path / "cassandra.yaml").write_text(text)
-    out = subprocess.run([sys.executable, "-c", VALIDATE, str(tmp_path / "cassandra.yaml")],
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
-    assert (out.returncode == 0) is (error is None)
-    if error:  # its line only, never the text (it may hold a password)
-        assert out.stderr.strip() == error and "Secret-Value" not in out.stdout + out.stderr
+    answer = compare(tmp_path, {"cassandra.yaml": text})
+    assert answer["yaml_error"] == error  # its line only, never the text (it may hold a password)
+    # the run stops on it, before any file is written; on an error of the compare itself too
+    check = task("Check the new cassandra.yaml is valid YAML")
+    for read, stops, said in ((answer, error is not None, error), ({"error": "OSError: x"}, True, "OSError: x")):
+        variables = task_vars(check, cassandra_config_compare={"stdout": json.dumps(read)})
+        assert render("{{ %s }}" % check["when"], **variables) is stops
+        if stops:
+            assert render(check["ansible.builtin.fail"]["msg"], **variables) == said
 
 
 def task_vars(t, **variables):
@@ -158,11 +184,11 @@ def live_paths(text):
     return render(t["ansible.builtin.set_fact"]["_cassandra_config_live_paths"], **v)
 
 
-INVENTORY = dict(inventory_hostname="node1", cassandra_data_file_directories=["/var/lib/cassandra/data"],
+INVENTORY = dict(inventory_hostname="node1", cassandra_cluster_name="my_cluster", cassandra_data_file_directories=["/var/lib/cassandra/data"],
                  cassandra_extra_settings={}, cassandra_conf_dir="/etc/cassandra",
                  _cassandra_config_default_data_dir="/var/lib/cassandra/data",
                  cassandra_commitlog_dir="/var/lib/cassandra/commitlog", cassandra_saved_caches_dir="/var/lib/cassandra/saved_caches",
-                 cassandra_hints_dir="/var/lib/cassandra/hints")
+                 cassandra_hints_dir="/var/lib/cassandra/hints", _cassandra_config_more_dirs=[])
 
 
 def stat_result(d, isdir):
@@ -175,15 +201,15 @@ def stat_result(d, isdir):
 
 
 def initialized_facts(live=None, readable=True, isdir=os.path.isdir, services=None, **inventory):
-    """The facts of "Tell whether this node was already initialized": the role's templates, the modules simulated."""
+    """The facts of "Tell whether this node is blank": the role's templates, the modules simulated."""
     v = dict(INVENTORY, **inventory)
-    v["cassandra_config_live_stat"] = {"stat": {"exists": live is not None}}
+    v["cassandra_config_live_yaml_stat"] = {"stat": {"exists": live is not None}}
     v["cassandra_config_live"] = {"content": base64.b64encode(live.encode()).decode()} if live is not None and readable else {}
     v["_cassandra_config_live_paths"] = live_paths(live if readable else None)
-    items = render(task("Look for the system keyspace of an initialized node")["loop"], **v)
+    items = render(task(SYSTEM)["vars"]["_system"], **v)
     v["cassandra_config_system"] = {"results": [stat_result(d, isdir) for d in items]}
     v["ansible_facts"] = {"services": services or {}}
-    t = task("Tell whether this node was already initialized")
+    t = task("Tell whether this node is blank")
     v = task_vars(t, **v)
     return {k: render(val, **v) for k, val in t["ansible.builtin.set_fact"].items()}
 
@@ -246,8 +272,9 @@ def test_live_path_with_a_brace_never_kept(text):
     assert facts["_cassandra_config_initialized_why"] == '/old/system, a path with "{" in the live cassandra.yaml'
 
 
-@pytest.mark.parametrize("name", ["Read the live cassandra.yaml", "List the absolute paths of the live cassandra.yaml",
-                                  "Look for the system keyspace of an initialized node"])
+@pytest.mark.parametrize("name", ["Read the node's config files and directories", "Note what was read",
+                                  "List the absolute paths of the live cassandra.yaml", SYSTEM, "Note what was found in the directories",
+                                  "Render the config files", "Diff them against the live files", "Note the comparison"])
 def test_live_file_never_shown(name):
     # a secret, or a PEM key line, may start with "/"
     assert task(name)["no_log"] is True
@@ -271,14 +298,14 @@ def test_plain_path_with_spaces(text, path):
 def test_live_file_not_readable():
     facts = initialized_facts("data_file_directories: [/x]\n", readable=False, isdir=lambda d: False)
     assert facts["_cassandra_config_initialized"] is True
-    assert facts["_cassandra_config_initialized_why"] == "the live cassandra.yaml not readable"
+    assert facts["_cassandra_config_initialized_why"] == "the live cassandra.yaml can not be read"
     assert facts["_cassandra_config_reset"] == ""  # nothing found to empty
 
 
 @pytest.mark.parametrize("extra, local", [({"local_system_data_file_directory": "/sys"}, ["/sys"]), ({}, []),
                                           ({"local_system_data_file_directory": None}, [])])
 def test_candidate_dirs(extra, local):
-    items = render(task("Look for the system keyspace of an initialized node")["loop"], cassandra_data_file_directories=["/d1/"],
+    items = render(task(SYSTEM)["vars"]["_system"], cassandra_data_file_directories=["/d1/"],
                    cassandra_extra_settings=extra, cassandra_conf_dir="/opt/c/conf", _cassandra_config_default_data_dir="/var/lib/cassandra/data",
                    _cassandra_config_live_paths=["/d1", "{"])
     assert items == ["/d1"] + local + ["/var/lib/cassandra/data", "/opt/c/data/data"]
@@ -313,10 +340,36 @@ def raising(errno_, path):
     (40, True),  # too many symlinks: not checked
 ])
 def test_stat_errors(errno_, initialized):
-    assert task("Look for the system keyspace of an initialized node")["environment"] == {"LC_ALL": "C"}
+    assert task(SYSTEM)["environment"] == {"LC_ALL": "C"}
     facts = initialized_facts("data_file_directories: [/x]\n", isdir=raising(errno_, "/x"))
     assert facts["_cassandra_config_initialized"] is initialized
     assert facts["_cassandra_config_initialized_why"] == ("a data dir that could not be checked" if initialized else "")
+
+
+def test_stat_errors_read_on_the_node(tmp_path):
+    # what the stat module registers (failed_when: false: its msg, no stat), in English whatever the locale
+    (tmp_path / "file").write_text("a keystore")
+    (tmp_path / "old" / "system").mkdir(parents=True)
+    candidates = [str(tmp_path / "file"), str(tmp_path / ("x" * 300)), str(tmp_path / "old"), str(tmp_path / "new")]
+    env = dict(os.environ, LC_ALL="C")
+    found = config_read({"step": "dirs", "system": candidates, "tries": [], "foreign": [], "user": "root"}, env=env)["system"]
+    assert [r["item"] for r in found] == candidates
+    assert [r.get("msg") for r in found] == ["Not a directory", "File name too long", None, None]
+    assert found[2]["stat"]["isdir"] is True and found[3]["stat"] == {"exists": False}
+    v = dict(INVENTORY, cassandra_config_system={"results": found}, cassandra_config_live_yaml_stat={"stat": {"exists": False}},
+             cassandra_config_live={}, _cassandra_config_live_paths=[], ansible_facts={"services": {}})
+    t = task("Tell whether this node is blank")
+    v = task_vars(t, **v)
+    assert render(t["ansible.builtin.set_fact"]["_cassandra_config_initialized_why"], **v) == str(tmp_path / "old" / "system")
+
+
+@pytest.mark.parametrize("state, services, running", [
+    ("running", {}, True), ("", {"cassandra.service": {"state": "running"}}, False), ("stopped", {}, False),
+    ("unread", {"cassandra.service": {"state": "running"}}, True),  # not read with the node (not systemd): service_facts
+])
+def test_running_read_with_the_node(state, services, running):
+    facts = initialized_facts(None, isdir=lambda d: False, services=services, _cassandra_config_unit_state=state)
+    assert facts["_cassandra_config_initialized"] is running
 
 
 def test_reset_hint_lists_the_dirs():
@@ -341,15 +394,34 @@ def refusal(task_name, **variables):
 
 def test_identity_refusal_says_where_and_how_to_reset():
     msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
-                  cassandra_config_identity={"stdout": '["cluster_name: Test Cluster -> Prod"]'},
+                  cassandra_config_identity={"stdout": '["cluster_name: Test Cluster -> Prod"]'}, cassandra_cluster_name="Prod",
                   _cassandra_config_initialized_why="/var/lib/cassandra/data/system", _cassandra_config_reset="RESET-HINT.")
-    assert msg.startswith("node1 was already initialized (/var/lib/cassandra/data/system) and these settings would change: "
+    assert msg.startswith("node1 is not blank (/var/lib/cassandra/data/system) and these settings would change: "
                           "cluster_name: Test Cluster -> Prod. A node keeps them for life: ")
     assert msg.endswith("set cassandra_config_force_identity_change: true. RESET-HINT.")
 
 
+def test_identity_refusal_asks_first_whether_the_inventory_is_loaded():
+    # the role default against a joined node's name: most likely group_vars not read
+    msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
+                  cassandra_config_identity={"stdout": '["cluster_name: my_cluster -> Test Cluster"]'},
+                  cassandra_cluster_name="Test Cluster",
+                  _cassandra_config_initialized_why="Cassandra is running", _cassandra_config_reset="RESET-HINT.")
+    assert msg.startswith("node1 is not blank (Cassandra is running) and these settings would change: "
+                          "cluster_name: my_cluster -> Test Cluster. cassandra_cluster_name is the role default 'Test Cluster':"
+                          " are the inventory's group_vars loaded? Check with ansible-inventory -i <inventory> --host node1"
+                          " (group_vars are read next to the inventory file or directory given, not in its subdirectories)."
+                          " A node keeps them for life: ")
+    # another setting, or another name: no such hint
+    for changes, name in (('["num_tokens: 16 -> 1"]', "Test Cluster"), ('["cluster_name: a -> b"]', "b")):
+        msg = refusal("Refuse to change the identity of a joined node", inventory_hostname="node1",
+                      cassandra_config_identity={"stdout": changes}, cassandra_cluster_name=name,
+                      _cassandra_config_initialized_why="x", _cassandra_config_reset="")
+        assert "group_vars" not in msg
+
+
 @pytest.mark.parametrize("initialized, expected", [
-    (True, "Config changes not confirmed on node1 (already initialized: Cassandra is running). Run interactively"
+    (True, "Config changes not confirmed on node1 (not blank: Cassandra is running). Run interactively"
            " and answer 'yes', or set cassandra_config_confirm: false to apply without asking."),
     (False, "Config changes not confirmed on node1. Run interactively"
             " and answer 'yes', or set cassandra_config_confirm: false to apply without asking."),
@@ -360,43 +432,11 @@ def test_confirmation_refusal_says_where(initialized, expected):
                    _cassandra_config_initialized_why="Cassandra is running", _cassandra_config_reset="RESET-HINT.") == expected
 
 
-IDENTITY = task("Compare the settings a joined node must keep")["ansible.builtin.command"]["argv"][2]
-
-
-@pytest.mark.parametrize("live, new, changes", [
-    ("cluster_name: \"it's\"\nnum_tokens: 16\n", "cluster_name: 'it''s'\nnum_tokens: 16\n", []),
-    ("cluster_name: 'X' # prod\nnum_tokens: 16 # fixed\n", "cluster_name: 'X'\nnum_tokens: 16\n", []),
-    ("cluster_name: 'X'\ninitial_token: 0\n", "cluster_name: 'X'\nnum_tokens: 1\ninitial_token: 0\n", []),
-    ("cluster_name: \"say \\\"hi\\\" a\\\\b\"\n", "cluster_name: 'say \"hi\" a\\b'\n", []),
-    ("cluster_name: 'X'\nnum_tokens: 16\n", "cluster_name: 'Y'\nnum_tokens: 256\n",
-     ["cluster_name: X -> Y", "num_tokens: 16 -> 256"]),
-])
-def test_identity_compared_as_yaml_reads_it(tmp_path, live, new, changes):
-    assert identity_changes(tmp_path, live, new) == changes
-
-
-def identity_changes(tmp_path, live, new, live_rackdc="dc=d\n", new_rackdc="dc=d\n"):
-    for name, text in (("live.yaml", live), ("new.yaml", new), ("live.p", live_rackdc), ("new.p", new_rackdc)):
-        (tmp_path / name).write_text(text)
-    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in ("live.yaml", "new.yaml", "live.p", "new.p")],
-                         stdout=subprocess.PIPE, universal_newlines=True, check=True)
-    return json.loads(out.stdout)
-
-
 @pytest.mark.parametrize("env", LOCALES)
 def test_identity_reads_any_live_file(tmp_path, env):
-    for name, text in (("live.yaml", b"# caf\xe9\ncluster_name: 'X'\n"), ("new.yaml", u"# caf\xe9\ncluster_name: 'Y'\n".encode("utf-8")),
-                       ("live.p", u"dc=d\xe9\n".encode("utf-8")), ("new.p", b"dc=d\xe9\n")):
-        (tmp_path / name).write_bytes(text)
-    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in ("live.yaml", "new.yaml", "live.p", "new.p")],
-                         stdout=subprocess.PIPE, check=True, env=env)
-    assert json.loads(out.stdout.decode()) == [u"cluster_name: X -> Y", u"dc: d\xe9 -> d\ufffd"]
-
-
-def test_rack_comment_is_part_of_the_value(tmp_path):
-    # properties have no inline comment: the snitch's rack is "r1 # old"
-    assert identity_changes(tmp_path, "num_tokens: 16\n", "num_tokens: 16\n", "rack=r1 # old\n", "rack=r1\n") == [
-        "rack: r1 # old -> r1"]
+    # (the new rackdc file kept on the node, read there: a Latin-1 byte replaced)
+    assert identity_changes(tmp_path, b"# caf\xe9\ncluster_name: 'X'\n", u"# caf\xe9\ncluster_name: 'Y'\n",
+                            u"dc=d\xe9\n".encode("utf-8"), b"dc=d\xe9\n", env=env) == [u"cluster_name: X -> Y", u"dc: d\xe9 -> d\ufffd"]
 
 
 @pytest.mark.parametrize("live_rackdc, new_rackdc, changes", [
@@ -408,23 +448,6 @@ def test_rack_comment_is_part_of_the_value(tmp_path):
 ])
 def test_cloud_snitch_names_kept(tmp_path, live_rackdc, new_rackdc, changes):
     assert identity_changes(tmp_path, "num_tokens: 16\n", "num_tokens: 16\n", live_rackdc, new_rackdc) == changes
-
-
-@pytest.mark.parametrize("live, changes", [
-    # a comment after the value, other quotes: the same identity
-    ("cluster_name: Prod Cluster   # prod\nnum_tokens: 16  # vnodes\n", []),
-    ('cluster_name: "Prod Cluster"\nnum_tokens: 16\n', []),
-    ("cluster_name: 'Prod Cluster'\nnum_tokens: 8\nnum_tokens: 16\n", []),  # set twice: the last one
-    ("cluster_name: Other\nnum_tokens: 16\n", ["cluster_name: Other -> Prod Cluster"]),
-])
-def test_identity_of_a_joined_node_as_cassandra_reads_it(tmp_path, live, changes):
-    (tmp_path / "live.yaml").write_text(live)
-    (tmp_path / "new.yaml").write_text("cluster_name: 'Prod Cluster'\nnum_tokens: 16\n")
-    for name in ("live.properties", "new.properties"):
-        (tmp_path / name).write_text("dc=dc1\nrack=r1\n")
-    out = subprocess.run([sys.executable, "-c", IDENTITY] + [str(tmp_path / n) for n in (
-        "live.yaml", "new.yaml", "live.properties", "new.properties")], stdout=subprocess.PIPE, check=True).stdout
-    assert json.loads(out) == changes
 
 
 @pytest.mark.parametrize("live, new, changes", [
@@ -456,10 +479,12 @@ def task_that(name):
     ("yes", False, "diff", True), (False, True, "diff", False), ("no", True, "diff", False),
     (True, True, "", False), ("auto", True, "", False),  # nothing changes: nothing to ask
 ])
-def test_confirm_values(confirm, initialized, diff, ask):
+@pytest.mark.parametrize("kept", [[], ["cassandra.yaml"]])  # a file left as it is: nothing to ask either
+def test_confirm_values(confirm, initialized, diff, ask, kept):
     template = task("List the files to change and whether to ask first")["ansible.builtin.set_fact"]["_cassandra_config_ask"]
-    assert render(template, cassandra_config_confirm=confirm, _cassandra_config_initialized=initialized,
-                  cassandra_config_preview={"results": [{"stdout": diff}]}) is ask
+    assert render(template, cassandra_config_confirm=confirm, _cassandra_config_initialized=initialized, _kept=kept,
+                  cassandra_config_preview={"results": [{"stdout": diff, "cassandra_config_file": "cassandra.yaml"}]}) is (
+        ask and not kept)
 
 
 @pytest.mark.parametrize("confirm, valid", [("auto", True), (True, True), ("false", True), ("yes", True), ("always", False),
@@ -483,7 +508,7 @@ def test_installed_series(installed, series, ok):
     ({"cassandra.service": {"state": "stopped"}}, False), ({}, False),
 ])
 def test_restart_warning_on_a_running_node(services, warn):
-    when = task("Warn that a restart is needed")["when"][1]
+    when = [w for w in task("Warn that a restart is needed")["when"] if "services" in w][0]
     assert render("{{ %s }}" % when, ansible_facts={"services": services}) is warn
 
 
@@ -518,3 +543,72 @@ def test_seed_refused_when_the_dir_in_use_is_missing(tmp_path):
     out = seed(tmp_path / "gone", tmp_path / "ansible.conf")
     assert out.returncode == 1 and "conf dir in use (%s) missing" % (tmp_path / "gone") in out.stderr
     assert not (tmp_path / "ansible.conf").exists()
+
+
+def test_system_keyspace_loop_renders_before_the_live_paths_are_listed():
+    # --check before the package is installed: the block is skipped, but a loop is templated before its condition
+    # (an undefined is skipped with it, a list + undefined fails the run)
+    v = dict(INVENTORY)
+    assert render(task(SYSTEM)["vars"]["_system"], **v)
+
+
+def test_last_line_without_newline_not_joined(tmp_path):
+    # difflib leaves such a line unterminated: the next one is not glued to it
+    assert changed_lines(preview(tmp_path, "cassandra.yaml", "a: 1\nb: 2", "a: 1\nb: 3\n")) == ["-b: 2", "+b: 3"]
+
+
+@pytest.mark.parametrize("identity, stops", [(None, False), ({"rc": 0, "changes": []}, False),
+                                             ({"rc": 1, "error": "ValueError: x"}, True)])
+def test_identity_compare_that_failed_stops_the_run(identity, stops):
+    # none on a node not initialized (a new node): nothing to stop on
+    t = task("Stop when the settings a joined node must keep could not be compared")
+    variables = {"cassandra_config_compare": {"stdout": json.dumps({"identity": identity})}, "inventory_hostname": "node1"}
+    assert render("{{ %s }}" % t["when"], **variables) is stops
+    if stops:
+        assert render(t["ansible.builtin.fail"]["msg"], **variables).endswith("could not be compared: ValueError: x")
+
+
+@pytest.mark.parametrize("read, state, fallback", [(None, "unread", True), ("running", "running", False), ("", "", False)])
+def test_unit_state_read_with_the_node_or_by_service_facts(read, state, fallback):
+    # not systemd (None): service_facts reads it; a var of a null value would read as '' before ansible-core 2.19
+    t = task("Note what was read")
+    assert render(t["ansible.builtin.set_fact"]["_cassandra_config_unit_state"], _read={"running": read}) == state
+    assert render("{{ %s }}" % task("Look for a running Cassandra")["when"], _cassandra_config_unit_state=state) is fallback
+
+
+# secret values over several lines, each a leak an audit found
+BLOCK_SECRETS_AFTER_AUDIT = [
+    "  keystore_password: |  # PEM password: see vault\n    LEAK1\n    LEAK2\n  next: 1",
+    "keystore_password: | # rotate the password: yearly\n  LEAK1\n  LEAK2\nnext: 1",
+    "keystore_password:  # old_password: x\n    LEAK1\nnext: 1",
+    "export KS_PASSWORD=\"LEAK0 # a password: x\nLEAK1\"\nnext=1",
+    "keystore_password: !!str \"LEAK1\nLEAK2\"\nnext: 1",
+    "keystore_password: &a 'LEAK1\nLEAK2'\nnext: 1",
+    "export KS_PASSWORD=$'LEAK1\nLEAK2'\nnext=1",
+    "JVM_OPTS=\"$JVM_OPTS -Da.password=x -Db.password='LEAK1\nLEAK2'\"\nnext=1",
+    "<password>LEAK1</password>\n<next>1</next>",
+    "<password><![CDATA[LEAK1]]></password>\n<next>1</next>",
+    "JVM_OPTS=\"$JVM_OPTS -Dx.password:$x\n  LEAK1\"\nnext=1",  # $ after a colon, inside a shell quote
+    "  <secretKey attr=\"1\">LEAK1</secretKey>\n<next>1</next>",
+    "ldap_password=x\\\r\n  LEAK1\r\nnext=1",  # a CRLF line continued by its backslash
+    "password: $abc\n  LEAK1\nother: 1",  # a YAML plain value starting with $: its more indented lines
+    "password: $(x\n  LEAK1\nother: 1",
+    "password: &a\n- LEAK1\nother: 1",  # an anchor alone: the list under the key
+    "password: !!seq\n- LEAK1\nother: 1",
+]
+
+
+@pytest.mark.parametrize("text", BLOCK_SECRETS_AFTER_AUDIT)
+def test_the_role_masks_every_line_of_a_secret_value_as_the_collection(tmp_path, text):
+    # config_read masks on the node: every line of the value hidden in a new file's diff
+    name = "logback.xml" if text.lstrip().startswith("<") else "cassandra-env.sh" if "=" in text else "cassandra.yaml"
+    out = preview(tmp_path, name, None, text + "\n")
+    assert out and "LEAK" not in out, out
+    assert text.rsplit("\n", maxsplit=1)[-1] in out  # the next setting shown
+
+
+def test_a_password_file_s_path_is_shown(tmp_path):
+    # a path, not a secret: its change said
+    live = 'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"\n'
+    out = preview(tmp_path, "cassandra-env.sh", live, live.replace("/etc/cassandra/", "/etc/other/"))
+    assert "+JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/other/jmxremote.password\"" in out, out

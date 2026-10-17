@@ -42,13 +42,13 @@ num_tokens: {{ cassandra_num_tokens }}
 
 # Replica factor is explicitly set, regardless of keyspace or datacenter.
 # This is the replica factor within the datacenter, like NTS.
-allocate_tokens_for_local_replication_factor: {{ cassandra_allocate_tokens_for_local_replication_factor }}
+{{ '# ' if cassandra_allocate_tokens_for_local_replication_factor | string in ['', 'None'] else '' }}allocate_tokens_for_local_replication_factor: {{ cassandra_allocate_tokens_for_local_replication_factor or '3' }}
 
 # initial_token allows you to specify tokens manually.  While you can use it with
 # vnodes (num_tokens > 1, above) -- in which case you should provide a 
 # comma-separated list -- it's primarily used when adding nodes to legacy clusters 
 # that do not have vnodes enabled.
-# initial_token:
+{{ '# ' if cassandra_initial_token | string in ['', 'None'] else '' }}initial_token:{{ (' ' ~ cassandra_initial_token) if cassandra_initial_token | string not in ['', 'None'] else '' }}
 
 # May either be "true" or "false" to enable globally
 hinted_handoff_enabled: {{ cassandra_hinted_handoff_enabled | lower }}
@@ -185,7 +185,7 @@ roles_validity_in_ms: {{ cassandra_roles_validity_in_ms }}
 # completes. If roles_validity_in_ms is non-zero, then this must be
 # also.
 # Defaults to the same value as roles_validity_in_ms.
-# roles_update_interval_in_ms: 2000
+{{ '# ' if cassandra_roles_update_interval_in_ms | string in ['', 'None'] else '' }}roles_update_interval_in_ms: {{ cassandra_roles_update_interval_in_ms if cassandra_roles_update_interval_in_ms | string not in ['', 'None'] else '2000' }}
 
 # Validity period for permissions cache (fetching permissions can be an
 # expensive operation depending on the authorizer, CassandraAuthorizer is
@@ -199,7 +199,7 @@ permissions_validity_in_ms: {{ cassandra_permissions_validity_in_ms }}
 # completes. If permissions_validity_in_ms is non-zero, then this must be
 # also.
 # Defaults to the same value as permissions_validity_in_ms.
-# permissions_update_interval_in_ms: 2000
+{{ '# ' if cassandra_permissions_update_interval_in_ms | string in ['', 'None'] else '' }}permissions_update_interval_in_ms: {{ cassandra_permissions_update_interval_in_ms if cassandra_permissions_update_interval_in_ms | string not in ['', 'None'] else '2000' }}
 
 # Validity period for credentials cache. This cache is tightly coupled to
 # the provided PasswordAuthenticator implementation of IAuthenticator. If
@@ -218,7 +218,7 @@ credentials_validity_in_ms: {{ cassandra_credentials_validity_in_ms }}
 # completes. If credentials_validity_in_ms is non-zero, then this must be
 # also.
 # Defaults to the same value as credentials_validity_in_ms.
-# credentials_update_interval_in_ms: 2000
+{{ '# ' if cassandra_credentials_update_interval_in_ms | string in ['', 'None'] else '' }}credentials_update_interval_in_ms: {{ cassandra_credentials_update_interval_in_ms if cassandra_credentials_update_interval_in_ms | string not in ['', 'None'] else '2000' }}
 
 # The partitioner is responsible for distributing groups of rows (by
 # partition key) across nodes in the cluster. The partitioner can NOT be
@@ -260,7 +260,7 @@ cdc_enabled: {{ cassandra_cdc_enabled | lower }}
 # segment contains mutations for a CDC-enabled table. This should be placed on a
 # separate spindle than the data directories. If not set, the default directory is
 # $CASSANDRA_HOME/data/cdc_raw.
-# cdc_raw_directory: /var/lib/cassandra/cdc_raw
+{{ '' if cassandra_cdc_raw_dir else '# ' }}cdc_raw_directory: {{ cassandra_cdc_raw_dir or '/var/lib/cassandra/cdc_raw' }}
 
 # Policy for data disk failures:
 #
@@ -538,7 +538,7 @@ concurrent_materialized_view_writes: {{ cassandra_concurrent_materialized_view_w
 # overhead which is roughly 128 bytes per chunk (i.e. 0.2% of the reserved size
 # if the default 64k chunk size is used).
 # Memory is only allocated when needed.
-# file_cache_size_in_mb: 512
+{{ '# ' if cassandra_file_cache_size_in_mb | string in ['', 'None'] else '' }}file_cache_size_in_mb: {{ cassandra_file_cache_size_in_mb if cassandra_file_cache_size_in_mb | string not in ['', 'None'] else '512' }}
 
 # Flag indicating whether to allocate on or off heap when the sstable buffer
 # pool is exhausted, that is when it has exceeded the maximum memory
@@ -556,8 +556,8 @@ concurrent_materialized_view_writes: {{ cassandra_concurrent_materialized_view_w
 # accepting writes when the limit is exceeded until a flush completes,
 # and will trigger a flush based on memtable_cleanup_threshold
 # If omitted, Cassandra will set both to 1/4 the size of the heap.
-# memtable_heap_space_in_mb: 2048
-# memtable_offheap_space_in_mb: 2048
+{{ '# ' if cassandra_memtable_heap_space_in_mb | string in ['', 'None'] else '' }}memtable_heap_space_in_mb: {{ cassandra_memtable_heap_space_in_mb if cassandra_memtable_heap_space_in_mb | string not in ['', 'None'] else '2048' }}
+{{ '# ' if cassandra_memtable_offheap_space_in_mb | string in ['', 'None'] else '' }}memtable_offheap_space_in_mb: {{ cassandra_memtable_offheap_space_in_mb if cassandra_memtable_offheap_space_in_mb | string not in ['', 'None'] else '2048' }}
 
 # memtable_cleanup_threshold is deprecated. The default calculation
 # is the only reasonable choice. See the comments on  memtable_flush_writers
@@ -658,7 +658,7 @@ memtable_allocation_type: {{ cassandra_memtable_allocation_type }}
 # and flush size and frequency. More is not better you just need enough flush writers
 # to never stall waiting for flushing to free memory.
 #
-#memtable_flush_writers: 2
+{{ '#' if cassandra_memtable_flush_writers | string in ['', 'None'] else '' }}memtable_flush_writers: {{ cassandra_memtable_flush_writers if cassandra_memtable_flush_writers | string not in ['', 'None'] else '2' }}
 
 # Total space to use for change-data-capture logs on disk.
 #
@@ -904,7 +904,7 @@ column_index_cache_size_in_kb: {{ cassandra_column_index_cache_size_in_kb }}
 # 
 # If your data directories are backed by SSD, you should increase this
 # to the number of cores.
-#concurrent_compactors: 1
+{{ '#' if cassandra_concurrent_compactors | string in ['', 'None'] else '' }}concurrent_compactors: {{ cassandra_concurrent_compactors if cassandra_concurrent_compactors | string not in ['', 'None'] else '1' }}
 
 # Number of simultaneous repair validations to allow. If not set or set to
 # a value less than 1, it defaults to the value of concurrent_compactors.
@@ -941,21 +941,21 @@ sstable_preemptive_open_interval_in_mb: {{ cassandra_sstable_preemptive_open_int
 # When unset, the default is enabled. While this feature tries to keep the
 # disks balanced, it cannot guarantee it. This feature will be automatically
 # disabled if internode encryption is enabled.
-# stream_entire_sstables: true
+{{ '# ' if cassandra_stream_entire_sstables | string in ['', 'None'] else '' }}stream_entire_sstables: {{ 'true' if cassandra_stream_entire_sstables | string in ['', 'None'] else (cassandra_stream_entire_sstables | string | lower) }}
 
 # Throttles all outbound streaming file transfers on this node to the
 # given total throughput in Mbps. This is necessary because Cassandra does
 # mostly sequential IO when streaming data during bootstrap or repair, which
 # can lead to saturating the network connection and degrading rpc performance.
 # When unset, the default is 200 Mbps or 25 MB/s.
-# stream_throughput_outbound_megabits_per_sec: 200
+{{ '# ' if cassandra_stream_throughput_outbound_megabits_per_sec | string in ['', 'None'] else '' }}stream_throughput_outbound_megabits_per_sec: {{ cassandra_stream_throughput_outbound_megabits_per_sec if cassandra_stream_throughput_outbound_megabits_per_sec | string not in ['', 'None'] else '200' }}
 
 # Throttles all streaming file transfer between the datacenters,
 # this setting allows users to throttle inter dc stream throughput in addition
 # to throttling all network stream traffic as configured with
 # stream_throughput_outbound_megabits_per_sec
 # When unset, the default is 200 Mbps or 25 MB/s
-# inter_dc_stream_throughput_outbound_megabits_per_sec: 200
+{{ '# ' if cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec | string in ['', 'None'] else '' }}inter_dc_stream_throughput_outbound_megabits_per_sec: {{ cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec if cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec | string not in ['', 'None'] else '200' }}
 
 # Server side timeouts for requests. The server will return a timeout exception
 # to the client if it can't complete an operation within the corresponding
@@ -1009,7 +1009,7 @@ request_timeout_in_ms: {{ cassandra_request_timeout_in_ms }}
 
 # The amount of time unacknowledged data is allowed on a streaming connection.
 # The default is 5 minutes. Increase it or set it to 0 in order to increase the timeout.
-# internode_streaming_tcp_user_timeout_in_ms: 300000
+{{ '# ' if cassandra_internode_streaming_tcp_user_timeout_in_ms | string in ['', 'None'] else '' }}internode_streaming_tcp_user_timeout_in_ms: {{ cassandra_internode_streaming_tcp_user_timeout_in_ms if cassandra_internode_streaming_tcp_user_timeout_in_ms | string not in ['', 'None'] else '300000' }}
 
 # Global, per-endpoint and per-connection limits imposed on messages queued for delivery to other nodes
 # and waiting to be processed on arrival from other nodes in the cluster.  These limits are applied to the on-wire
@@ -1060,7 +1060,7 @@ slow_query_log_timeout_in_ms: {{ cassandra_slow_query_log_timeout_in_ms }}
 # Limit number of connections per host for streaming
 # Increase this when you notice that joins are CPU-bound rather that network
 # bound (for example a few nodes with big files).
-# streaming_connections_per_host: 1
+{{ '# ' if cassandra_streaming_connections_per_host | string in ['', 'None'] else '' }}streaming_connections_per_host: {{ cassandra_streaming_connections_per_host if cassandra_streaming_connections_per_host | string not in ['', 'None'] else '1' }}
 
 
 # phi value that must be reached for a host to be marked down.
@@ -1364,12 +1364,12 @@ compaction_large_partition_warning_threshold_mb: {{ cassandra_compaction_large_p
 
 # GC Pauses greater than 200 ms will be logged at INFO level
 # This threshold can be adjusted to minimize logging if necessary
-# gc_log_threshold_in_ms: 200
+{{ '# ' if cassandra_gc_log_threshold_in_ms | string in ['', 'None'] else '' }}gc_log_threshold_in_ms: {{ cassandra_gc_log_threshold_in_ms if cassandra_gc_log_threshold_in_ms | string not in ['', 'None'] else '200' }}
 
 # GC Pauses greater than gc_warn_threshold_in_ms will be logged at WARN level
 # Adjust the threshold based on your application throughput requirement. Setting to 0
 # will deactivate the feature.
-# gc_warn_threshold_in_ms: 1000
+{{ '# ' if cassandra_gc_warn_threshold_in_ms | string in ['', 'None'] else '' }}gc_warn_threshold_in_ms: {{ cassandra_gc_warn_threshold_in_ms if cassandra_gc_warn_threshold_in_ms | string not in ['', 'None'] else '1000' }}
 
 # Maximum size of any value in SSTables. Safety measure to detect SSTable corruption
 # early. Any value size larger than this threshold will result into marking an SSTable
@@ -1392,7 +1392,7 @@ compaction_large_partition_warning_threshold_mb: {{ cassandra_compaction_large_p
 audit_logging_options:
     enabled: {{ cassandra_audit_logging_enabled | lower }}
     logger:
-      - class_name: {{ cassandra_audit_logger_class_name }}
+      - class_name: {{ cassandra_audit_logger_class_name }}{{ ('\n' ~ cassandra_extra_settings.audit_logging_options | to_nice_yaml(indent=2) | trim | indent(4, true)) if cassandra_extra_settings.audit_logging_options | default(none) is mapping and cassandra_extra_settings.audit_logging_options else '' }}
     # audit_logs_dir:
     # included_keyspaces:
     # excluded_keyspaces: system, system_schema, system_virtual_schema
@@ -1478,7 +1478,21 @@ enable_transient_replication: {{ cassandra_enable_transient_replication | lower 
 # Enables the used of 'ALTER ... DROP COMPACT STORAGE' statements on this node.
 # 'ALTER ... DROP COMPACT STORAGE' is considered experimental and is not recommended for production use.
 enable_drop_compact_storage: {{ cassandra_enable_drop_compact_storage | lower }}
-{% if cassandra_extra_settings %}
+{% if cassandra_disk_access_mode or cassandra_auto_bootstrap is not none and not cassandra_auto_bootstrap | bool %}
+
+# Settings the stock file has no line for (their variables)
+{% endif %}
+{% if cassandra_disk_access_mode %}
+disk_access_mode: {{ cassandra_disk_access_mode }}
+{% endif %}
+{% if cassandra_auto_bootstrap is not none and not cassandra_auto_bootstrap | bool %}
+auto_bootstrap: {{ (cassandra_auto_bootstrap | bool) | lower }}
+{% endif %}
+{% set _extra = {} %}
+{% for key, value in cassandra_extra_settings.items() if key not in _cassandra_config_extra_sections %}
+{% set _ = _extra.update({key: value}) %}
+{% endfor %}
+{% if _extra %}
 
 # Settings no variable covers (cassandra_extra_settings)
-{{ cassandra_extra_settings | to_nice_yaml(indent=2) }}{% endif %}
+{{ _extra | to_nice_yaml(indent=2) }}{% endif %}

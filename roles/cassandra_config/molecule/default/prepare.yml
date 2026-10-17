@@ -23,17 +23,10 @@
         system: true
         create_home: false
 
-    - name: Create another service group (cassandra_group), for the JMX users case
+    - name: Create a group for a service account outside the cassandra group
       ansible.builtin.group:
         name: dbgrp
         system: true
-
-    - name: Create another service user (cassandra_user), for the JMX users case
-      ansible.builtin.user:
-        name: dbsvc
-        group: dbgrp
-        system: true
-        create_home: false
 
     - name: Create config dirs (normally created by the Cassandra package)
       ansible.builtin.file:
@@ -56,7 +49,7 @@
         - /tmp/cassandra-identity
         - /tmp/cassandra-secret
         - /tmp/cassandra-access
-        - /tmp/cassandra-no-account
+        - /tmp/cassandra-perms
         - /tmp/initialized-node/system
         - /tmp/cassandra-new-node
 

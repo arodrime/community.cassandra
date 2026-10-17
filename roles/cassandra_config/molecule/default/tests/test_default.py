@@ -135,7 +135,8 @@ def test_commitlog_group_mode_without_window_refused(host):
 def test_defaults_file_mode(host, name):
     f = host.file(f"{conf_dir(host)}/{name}")
 
-    assert f.mode == 0o640
+    # cassandra.yaml, the JVM options and cassandra-env.sh may hold passwords; the others none
+    assert f.mode == (0o640 if name in ("cassandra.yaml", "cassandra-env.sh") or name.startswith("jvm") else 0o644)
     assert f.user == "root"
     assert f.group == "cassandra"
 
@@ -265,14 +266,25 @@ def test_jmx_users(host):
     access = host.file("/etc/cassandra/jmxremote.access")
     env = host.file("/tmp/cassandra-access/cassandra-env.sh").content_string
 
-    assert (password.mode, password.user, password.group) == (0o400, "dbsvc", "dbgrp")  # cassandra_user/group
+    assert password.mode == 0o400 and password.user == "cassandra"
     assert host.run("cat /etc/cassandra/jmxremote.password").stdout.split("\n")[:2] == [
         "monitor Mon1tor-Secret", "admin Adm1n-Secret"]
-    assert (access.mode, access.user, access.group) == (0o400, "dbsvc", "dbgrp")
+    assert access.mode == 0o400
     assert "monitor readonly" in host.run("cat /etc/cassandra/jmxremote.access").stdout
     assert "admin readwrite \\" in host.run("cat /etc/cassandra/jmxremote.access").stdout
     assert '\nJVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"' in env
     assert "LOCAL_JMX=no" in env
+
+
+def test_cqlsh_credentials(host):
+    cqlshrc = host.file("/root/.cassandra/cqlshrc")
+    credentials = host.file("/root/.cassandra/credentials")
+
+    assert cqlshrc.mode == 0o600 and credentials.mode == 0o600
+    assert "hostname = 10.9.9.9" in cqlshrc.content_string
+    assert "credentials = /root/.cassandra/credentials" in cqlshrc.content_string
+    assert "password" not in cqlshrc.content_string  # 4.1+: only in the credentials file
+    assert "password = App-Cql-Secret" in credentials.content_string
 
 
 def test_replaced_file_backed_up(host):
@@ -291,24 +303,12 @@ def test_missing_data_dir_created(host):
         assert d.is_directory and d.user == "root" and d.mode == 0o755
 
 
-@pytest.mark.parametrize("name", FILES)
-def test_service_account_config_files(host, name):
-    # cassandra_group: dbgrp, the config files follow it (cassandra_config_group)
-    f = host.file(f"/tmp/cassandra-access/{name}")
-
-    assert (f.user, f.group, f.mode) == ("root", "dbgrp", 0o640)
-
-
-@pytest.mark.parametrize("path", ["/data/account/data", "/data/account/log", "/data/account/commitlog"])
-def test_service_account_dirs(host, path):
-    d = host.file(path)
-
-    assert d.is_directory and (d.user, d.group, d.mode) == ("dbsvc", "dbgrp", 0o750)
-
-
-def test_missing_account_refused_before_writing(host):
-    # nosuchuser, and dbsvc outside the cassandra group: nothing written, no
-    # directory created, the JMX users of the case before kept
-    assert host.run("ls -A /tmp/cassandra-no-account").stdout == ""
-    assert not host.file("/data/no-account").exists
-    assert "intruder" not in host.run("cat /etc/cassandra/jmxremote.password /etc/cassandra/jmxremote.access").stdout
+def test_owner_and_mode_set_on_a_file_whose_content_is_kept(host):
+    env = host.file("/tmp/cassandra-perms/cassandra-env.sh")
+    # same settings as the role's: its content kept, its owner, group and mode set
+    assert "# hand comment" in env.content_string
+    assert (env.user, env.group, env.mode) == ("root", "dbgrp", 0o640)
+    conf = host.file("/tmp/cassandra-perms/cassandra.yaml")
+    assert (conf.user, conf.group, conf.mode) == ("root", "dbgrp", 0o640)
+    logback = host.file("/tmp/cassandra-perms/logback.xml")
+    assert (logback.user, logback.group, logback.mode) == ("root", "dbgrp", 0o600)

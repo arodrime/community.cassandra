@@ -6,7 +6,7 @@ argument_specs:
     - Templates C(cassandra.yaml), C(cassandra-env.sh), the JVM options files, C(cassandra-rackdc.properties) and C(logback.xml)
       for Cassandra 4.0, 4.1 and 5.0.
     - Rendered with the defaults, the files match the stock ones, except for the values the deb and rpm packages change.
-    - Shows a diff of every file before changing it, and asks for confirmation on a node that is already initialized.
+    - Shows a diff of every file before changing it, and asks for confirmation on a node that is not blank.
     options:
       cassandra_version:
         type: str
@@ -23,20 +23,6 @@ argument_specs:
         - Directory the files are written to.
         - 'Defaults to where the package makes Cassandra read its config: C(/etc/cassandra/conf) on RedHat family systems,
           C(/etc/cassandra) on Debian and Ubuntu. Keep the default with a package install.'
-      cassandra_user:
-        type: str
-        default: cassandra
-        description:
-        - Account the Cassandra service runs as (the deb and rpm packages create and use C(cassandra)); it must exist and
-          be in O(cassandra_group). The role does not create it nor set it in the service unit.
-        - Owner of the data, commitlog, hints, saved caches and log directories the role creates, and of the JMX users
-          files.
-      cassandra_group:
-        type: str
-        default: cassandra
-        description:
-        - A group of the account the Cassandra service runs as (set it with O(cassandra_user)), by name.
-        - Group of those directories and files, and of the config files (O(cassandra_config_group)).
       cassandra_rpm_conf_alternative:
         type: str
         default: /etc/cassandra/ansible.conf
@@ -54,12 +40,50 @@ argument_specs:
         default: auto
         description:
         - Show the diff and ask for confirmation before changing the files.
-        - V(auto) asks only on a node that was already initialized (a C(system) keyspace in
+        - V(auto) asks only on a node that is not blank (a C(system) keyspace in
           O(cassandra_data_file_directories), its C(local_system_data_file_directory), C(/var/lib/cassandra/data), a tarball's
           C(data/data), or any absolute path written in the live C(cassandra.yaml) outside comment lines; a live file it
           cannot read; or Cassandra running). A refusal says where, and how to start over a node that never
           held real data. V(true) asks whenever a file changes, V(false) never does. Any other
           value is refused. Without a terminal to answer, a required confirmation fails the run.
+      cassandra_config_normalize:
+        type: bool
+        default: false
+        description:
+        - On a node that is not blank, a file with the same settings as the role's is left as it is (e.g. written
+          by hand, without the role's header), read as Cassandra, bash, the JVM and logback read them, so comments,
+          layout, the order of the JVM options and quotes that change nothing do not count. V(true) rewrites it.
+          The C(import_cluster) self-check uses the same test.
+      cassandra_config_storage_dir:
+        type: str
+        default: ""
+        description:
+          - Where the directories a C(cassandra.yaml) leaves out are (the node's C(-Dcassandra.storagedir), e.g.
+            C($CASSANDRA_HOME/data) for a tarball), for the "same settings" test of O(cassandra_config_normalize).
+          - Empty, the running Cassandra's. C(import_cluster) sets it for such files.
+      cassandra_config_keep_files:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Config files left as they are on a node that is not blank that has them, neither written nor compared, e.g. a
+            C(logback.xml) with appenders no variable covers. Names of the conf dir's files (C(cassandra.yaml),
+            C(cassandra-env.sh), C(jvm-server.options), C(jvm<N>-server.options), C(cassandra-rackdc.properties),
+            C(logback.xml)), or C(jmxremote.password) and C(jmxremote.access) (the files of
+            O(cassandra_jmx_users)). A node without the file, or a new one, gets the role's (on a node already initialized, with a
+            warning that the hand edits of a file deleted are lost).
+          - C(import_cluster) sets it with C(import_cluster_keep_hand_edits) for the files with hand edits no
+            variable covers.
+      cassandra_config_template_overrides:
+        type: dict
+        default: {}
+        description:
+          - 'Your own template for a config file, instead of the role''s, e.g. C({cassandra-env.sh:
+            "{{ inventory_dir }}/templates/cassandra-env.sh.j2"}). Keys are the names of
+            O(cassandra_config_keep_files); values the absolute path of a template on the controller.'
+          - Rendered with the same variables, then written, compared, shown (secrets masked) and reported as the
+            role's own file, with the same owner and mode, in C(--check) too. A name the role does not write, a
+            relative or missing path, or a file also in O(cassandra_config_keep_files) is refused.
       cassandra_data_dir:
         type: path
         default: /var/lib/cassandra/data
@@ -76,10 +100,21 @@ argument_specs:
         description:
         - C(num_tokens) in C(cassandra.yaml).
       cassandra_allocate_tokens_for_local_replication_factor:
-        type: int
-        default: 3
+        type: raw
         description:
-        - C(allocate_tokens_for_local_replication_factor) in C(cassandra.yaml).
+        - C(allocate_tokens_for_local_replication_factor) in C(cassandra.yaml), an integer.
+        - Default C(3) with vnodes (I(cassandra_num_tokens) above 1), C('') with one token per node.
+        - C('') leaves the line commented out.
+      cassandra_initial_token:
+        type: raw
+        default: ''
+        description:
+        - C(initial_token) in C(cassandra.yaml), commented out when C('').
+        - With one token per node (I(cassandra_num_tokens=1)), the node's token. Cassandra reads it at the
+          node's first start only.
+        - When C('') on a node that has joined (its system keyspace exists), the value its C(cassandra.yaml)
+          already has is kept.
+        - The playbooks that create a cluster or add nodes can work it out when it is not set (see the guide).
       cassandra_hinted_handoff_enabled:
         type: bool
         default: true
@@ -170,6 +205,18 @@ argument_specs:
         default: false
         description:
         - C(cdc_enabled) in C(cassandra.yaml).
+      cassandra_auto_bootstrap:
+        type: bool
+        default: true
+        description:
+        - C(auto_bootstrap) in C(cassandra.yaml), written only when V(false). Cassandra reads it at a node's first
+          start only. V(false) joins the ring without streaming the node's data, which then answers reads it has no
+          data for.
+        - The collection sets it itself where that is safe (C(add_datacenter)'s new nodes, which rebuild next;
+          C(add_node) and C(replace_node) stream). The C(preflight) playbook and the C(import_cluster) report warn
+          about V(false) in the inventory, which C(import_cluster) keeps in the C(host_vars) of a node whose
+          C(cassandra.yaml) has it.
+        - Once it is removed, the next run drops the line (C(auto_bootstrap) V(true) is the same as no line).
       cassandra_disk_failure_policy:
         type: str
         default: stop
@@ -256,6 +303,11 @@ argument_specs:
         description:
         - 'Seed nodes: a list, or a comma separated string, of addresses (C(host) or C(host:port)).'
         - Same list on every node of the cluster. A new node joining an existing cluster must not be in it.
+      cassandra_config_reload_seeds:
+        type: bool
+        default: true
+        description:
+        - Run C(nodetool reloadseeds) when the seed list changed on a running node.
       cassandra_concurrent_reads:
         type: int
         default: 32
@@ -670,6 +722,138 @@ argument_specs:
         - C(NONE) (5.0 formats and features) suits a new cluster. A cluster
           upgraded from 4.x sets C(CASSANDRA_4), then moves through
           C(UPGRADING) to C(NONE) with rolling restarts.
+      cassandra_disk_access_mode:
+        type: str
+        default: ''
+        description:
+        - C(disk_access_mode) in C(cassandra.yaml), e.g. C(mmap_index_only). Left commented out (Cassandra's
+          default) when empty.
+        - 4.x takes C(auto), C(mmap), C(mmap_index_only) or C(standard); 5.0 also C(legacy), 4.x's C(auto) (5.0's
+          C(auto) is C(mmap_index_only)). On 4.x, whose stock file has no line for it, it is written at the end of
+          the file.
+      cassandra_file_cache_size:
+        type: str
+        default: ''
+        description:
+        - C(file_cache_size) in C(cassandra.yaml) (4.1+), e.g. C(512MiB). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_memtable_heap_space:
+        type: str
+        default: ''
+        description:
+        - C(memtable_heap_space) in C(cassandra.yaml) (4.1+), e.g. C(2048MiB). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_memtable_offheap_space:
+        type: str
+        default: ''
+        description:
+        - C(memtable_offheap_space) in C(cassandra.yaml) (4.1+), e.g. C(2048MiB). Left commented out
+          (Cassandra's default) when empty.
+        - Used with an off-heap O(cassandra_memtable_allocation_type).
+      cassandra_memtable_flush_writers:
+        type: raw
+        default: ''
+        description:
+        - C(memtable_flush_writers) in C(cassandra.yaml), e.g. C(2). Left commented out (Cassandra's default)
+          when empty.
+      cassandra_concurrent_compactors:
+        type: raw
+        default: ''
+        description:
+        - C(concurrent_compactors) in C(cassandra.yaml), e.g. C(4). Left commented out (Cassandra's default) when empty.
+      cassandra_stream_entire_sstables:
+        type: raw
+        default: ''
+        description:
+        - C(stream_entire_sstables) in C(cassandra.yaml), e.g. C(false). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(stream_throughput_outbound) in C(cassandra.yaml) (4.1+), e.g. C(24MiB/s). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_inter_dc_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(inter_dc_stream_throughput_outbound) in C(cassandra.yaml) (4.1+), e.g. C(24MiB/s). Left commented
+          out (Cassandra's default) when empty.
+      cassandra_entire_sstable_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(entire_sstable_stream_throughput_outbound) in C(cassandra.yaml) (4.1+, refused on 4.0), e.g.
+          C(24MiB/s). Left commented out (Cassandra's default) when empty.
+      cassandra_entire_sstable_inter_dc_stream_throughput_outbound:
+        type: str
+        default: ''
+        description:
+        - C(entire_sstable_inter_dc_stream_throughput_outbound) in C(cassandra.yaml) (4.1+, refused on 4.0),
+          e.g. C(24MiB/s). Left commented out (Cassandra's default) when empty.
+      cassandra_streaming_connections_per_host:
+        type: raw
+        default: ''
+        description:
+        - C(streaming_connections_per_host) in C(cassandra.yaml), e.g. C(1). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_internode_streaming_tcp_user_timeout:
+        type: str
+        default: ''
+        description:
+        - C(internode_streaming_tcp_user_timeout) in C(cassandra.yaml) (4.1+), e.g. C(300000ms). Left
+          commented out (Cassandra's default) when empty.
+      cassandra_roles_update_interval:
+        type: str
+        default: ''
+        description:
+        - C(roles_update_interval) in C(cassandra.yaml) (4.1+), e.g. C(2000ms). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_permissions_update_interval:
+        type: str
+        default: ''
+        description:
+        - C(permissions_update_interval) in C(cassandra.yaml) (4.1+), e.g. C(2000ms). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_credentials_update_interval:
+        type: str
+        default: ''
+        description:
+        - C(credentials_update_interval) in C(cassandra.yaml) (4.1+), e.g. C(2000ms). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_gc_log_threshold:
+        type: str
+        default: ''
+        description:
+        - C(gc_log_threshold) in C(cassandra.yaml) (4.1+), e.g. C(200ms). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_gc_warn_threshold:
+        type: str
+        default: ''
+        description:
+        - C(gc_warn_threshold) in C(cassandra.yaml) (4.1+), e.g. C(1000ms). Left commented out (Cassandra's
+          default) when empty.
+      cassandra_sstable_format:
+        type: str
+        default: ''
+        choices: ['', big, bti]
+        description:
+        - C(sstable.selected_format) in C(cassandra.yaml) (5.0 only, refused on 4.x). Left commented out
+          (Cassandra's default, V(big)) when empty.
+        - V(bti) needs O(cassandra_storage_compatibility_mode) V(UPGRADING) or V(NONE). New SSTables are written in
+          that format; the existing ones are read as they are.
+      cassandra_partition_size_warn_threshold:
+        type: str
+        default: ''
+        description:
+        - C(partition_size_warn_threshold) in C(cassandra.yaml) (5.0 only, refused on 4.x), e.g. C(100MiB).
+          Left commented out (Cassandra's default) when empty.
+      cassandra_partition_size_fail_threshold:
+        type: str
+        default: ''
+        description:
+        - C(partition_size_fail_threshold) in C(cassandra.yaml) (5.0 only, refused on 4.x), e.g. C(1GiB). Left
+          commented out (Cassandra's default) when empty.
       cassandra_hints_dir:
         type: path
         default: /var/lib/cassandra/hints
@@ -685,6 +869,14 @@ argument_specs:
         default: /var/lib/cassandra/saved_caches
         description:
         - C(saved_caches_directory) in C(cassandra.yaml).
+      cassandra_cdc_raw_dir:
+        type: str
+        default: ''
+        description:
+        - C(cdc_raw_directory) in C(cassandra.yaml). Left commented out when empty (C(<storage dir>/cdc_raw),
+          C(/var/lib/cassandra/cdc_raw) with the packages).
+        - Created and owned like the data directories when set, or when O(cassandra_cdc_enabled) is on (then the
+          packages' C(/var/lib/cassandra/cdc_raw), or C(<cassandra_config_storage_dir>/cdc_raw)).
       cassandra_server_keystore_password:
         type: str
         description:
@@ -733,9 +925,9 @@ argument_specs:
         - C(client_encryption_options.truststore_password). Left commented out when empty.
       cassandra_column_index_size:
         type: str
-        default: 64KiB
         description:
-        - C(column_index_size) in C(cassandra.yaml) (4.1 only).
+        - C(column_index_size) in C(cassandra.yaml) (4.1, 5.0). Defaults to 4.1's stock value C(64KiB); on 5.0 to
+          empty, which leaves the line commented out (a default that suits the SSTable format).
       cassandra_scripted_user_defined_functions_enabled:
         type: bool
         default: false
@@ -959,6 +1151,72 @@ argument_specs:
         default: false
         description:
         - C(enable_drop_compact_storage) in C(cassandra.yaml) (4.0 only).
+      cassandra_file_cache_size_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(file_cache_size_in_mb) in C(cassandra.yaml) (4.0 only), e.g. C(512). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_memtable_heap_space_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(memtable_heap_space_in_mb) in C(cassandra.yaml) (4.0 only), e.g. C(2048). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_memtable_offheap_space_in_mb:
+        type: raw
+        default: ''
+        description:
+        - C(memtable_offheap_space_in_mb) in C(cassandra.yaml) (4.0 only), e.g. C(2048). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_stream_throughput_outbound_megabits_per_sec:
+        type: raw
+        default: ''
+        description:
+        - C(stream_throughput_outbound_megabits_per_sec) in C(cassandra.yaml) (4.0 only), e.g. C(200). Left
+          commented out (Cassandra's default) when empty.
+      cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec:
+        type: raw
+        default: ''
+        description:
+        - C(inter_dc_stream_throughput_outbound_megabits_per_sec) in C(cassandra.yaml) (4.0 only), e.g.
+          C(200). Left commented out (Cassandra's default) when empty.
+      cassandra_internode_streaming_tcp_user_timeout_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(internode_streaming_tcp_user_timeout_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(300000). Left
+          commented out (Cassandra's default) when empty.
+      cassandra_roles_update_interval_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(roles_update_interval_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(2000). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_permissions_update_interval_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(permissions_update_interval_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(2000). Left commented
+          out (Cassandra's default) when empty.
+      cassandra_credentials_update_interval_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(credentials_update_interval_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(2000). Left commented
+          out (Cassandra's default) when empty.
+      cassandra_gc_log_threshold_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(gc_log_threshold_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(200). Left commented out
+          (Cassandra's default) when empty.
+      cassandra_gc_warn_threshold_in_ms:
+        type: raw
+        default: ''
+        description:
+        - C(gc_warn_threshold_in_ms) in C(cassandra.yaml) (4.0 only), e.g. C(1000). Left commented out
+          (Cassandra's default) when empty.
       cassandra_log_dir:
         type: path
         default: /var/log/cassandra
@@ -982,10 +1240,15 @@ argument_specs:
         description:
         - 'C(MAX_DIRECT_MEMORY_SIZE) in C(cassandra-env.sh) (5.0). Empty: stock default.'
       cassandra_heap_dump_dir:
-        type: path
-        default: $CASSANDRA_LOG_DIR
+        type: str
         description:
-        - C(CASSANDRA_HEAPDUMP_DIR) in C(cassandra-env.sh) (5.0).
+        - Where the JVM writes a heap dump on OutOfMemoryError (C(-XX:HeapDumpPath), through C(CASSANDRA_HEAPDUMP_DIR)
+          in C(cassandra-env.sh); a C(CASSANDRA_HEAPDUMP_DIR) the environment gives still wins).
+        - An absolute path is also C(heap_dump_path) in 5.0's C(cassandra.yaml) (the one-shot dump on an uncaught
+          exception; Cassandra uses C(-XX:HeapDumpPath) first, so the role does not compare that line), and the role
+          creates it like the data directories (an existing one it owns, as them).
+        - Defaults to the stock behaviour, C($CASSANDRA_LOG_DIR) on 5.0 (where it must not be empty) and empty on 4.x
+          (no C(-XX:HeapDumpPath), the JVM's working directory).
       cassandra_local_jmx:
         type: bool
         default: true
@@ -1001,6 +1264,14 @@ argument_specs:
         default: ''
         description:
         - C(java.rmi.server.hostname) for remote JMX. Left commented out when empty.
+      cassandra_env_extra_lines:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Lines added at the end of C(cassandra-env.sh), as they are, e.g. C(export X=1) or
+          C(JVM_OPTS="$JVM_OPTS -Dname=value") for an option no variable covers.
+        - C(import_cluster) carries there the lines a node has after the file's last one.
       cassandra_jvm_gc:
         type: str
         choices:
@@ -1057,7 +1328,8 @@ argument_specs:
         default: {}
         description:
         - 'Settings no variable covers, written as-is at the end of C(cassandra.yaml), e.g. C({commitlog_total_space: 8192MiB}).'
-        - Keys the template already has are refused (set them with their variable). Cassandra refuses unknown keys at startup.
+        - Keys the template already has are refused (set them with their variable). Cassandra refuses unknown keys at startup;
+          so does the role, before writing anything, for a key the installed release (else the series) does not accept.
       cassandra_jvm_extra_options:
         type: list
         elements: str
@@ -1086,12 +1358,24 @@ argument_specs:
         type: str
         default: dc1
         description:
-        - Datacenter in C(cassandra-rackdc.properties), usually set per datacenter group.
+        - The node's datacenter, usually set per datacenter group. Written in C(cassandra-rackdc.properties)
+          unless O(cassandra_rackdc_dc) is set.
       cassandra_rack:
         type: str
         default: rack1
         description:
-        - Rack in C(cassandra-rackdc.properties), usually set per node.
+        - The node's rack, usually set per rack group. Written in C(cassandra-rackdc.properties)
+          unless O(cassandra_rackdc_rack) is set.
+      cassandra_rackdc_dc:
+        type: str
+        description:
+        - C(dc) in C(cassandra-rackdc.properties), defaults to O(cassandra_dc). Of Cassandra's snitches only
+          C(GossipingPropertyFileSnitch) reads it, and then it must be O(cassandra_dc); under another snitch the file
+          may name another datacenter than the node's (C(import_cluster) keeps the node's own line then).
+      cassandra_rackdc_rack:
+        type: str
+        description:
+        - C(rack) in C(cassandra-rackdc.properties), defaults to O(cassandra_rack). See O(cassandra_rackdc_dc).
       cassandra_prefer_local:
         type: bool
         default: false
@@ -1112,6 +1396,14 @@ argument_specs:
         default: true
         description:
         - Write C(debug.log).
+      cassandra_logback_extra_lines:
+        type: list
+        elements: str
+        default: []
+        description:
+        - Lines added at the end of C(logback.xml)'s C(<configuration>), after the C(org.apache.cassandra) logger, as
+          they are, e.g. C(<logger name="com.example" level="WARN"/>).
+        - C(import_cluster) carries there the lines a node has at that place.
       cassandra_log_console:
         type: bool
         default: false
@@ -1119,25 +1411,62 @@ argument_specs:
         - Also send the logs to stdout (the C(STDOUT) appender of C(logback.xml)).
           Under systemd that is a second copy of C(system.log) in journald; JVM
           errors before logback starts go to stdout either way.
+      cassandra_user:
+        type: str
+        default: cassandra
+        description:
+        - The account Cassandra runs as (C(cassandra_service) runs it so). It owns
+          the directories the role creates and the JMX users' files. The role does
+          not create it.
+      cassandra_group:
+        type: str
+        default: cassandra
+        description:
+        - The group Cassandra runs as. Group of the directories the role creates,
+          the JMX users' files and, by default, the config files.
       cassandra_config_user:
         type: str
         default: root
         description:
-        - Owner of the config files; it must exist. With the default, the service reads them but cannot rewrite them.
+        - Owner of the config files.
       cassandra_config_group:
         type: str
         description:
-        - Group of the config files (Cassandra reads them through it); it must exist. Defaults to O(cassandra_group).
+        - Group of the config files (Cassandra reads them through it). Defaults
+          to O(cassandra_group).
       cassandra_config_mode:
         type: str
         default: "0640"
         description:
-        - Mode of the config files. C(cassandra.yaml) may hold keystore passwords.
+        - Mode of C(cassandra.yaml), which may hold keystore passwords, of the
+          C(jvm*-server.options) files, whose extra options may too (e.g.
+          C(-Djavax.net.ssl.keyStorePassword=)), and of C(cassandra-env.sh),
+          whose extra lines may too (C(nodetool) reads the JMX port in it, run
+          as root or by a user of O(cassandra_config_group)). Octal, quoted.
+      cassandra_config_public_mode:
+        type: str
+        default: "0644"
+        description:
+        - Mode of the other config files (C(cassandra-rackdc.properties),
+          C(logback.xml)), which hold no secret. Octal, quoted.
+      cassandra_config_file_permissions:
+        type: dict
+        default: {}
+        description:
+        - >-
+          Per file, over the above, C({file name: {owner, group, mode}}) (any of
+          the three), e.g. C({logback.xml: {mode: "0600"}}). Also for
+          C(jmxremote.password) and C(jmxremote.access) (default O(cassandra_user),
+          O(cassandra_group), C(0400); the JVM refuses a password file its group
+          or others can read or write). Another file name is refused. Modes in
+          octal, quoted.
+        - C(import_cluster) writes it for the files whose owner, group or mode
+          differ from the others on a node.
       cassandra_config_force_identity_change:
         type: bool
         default: false
         description:
-        - Change C(cluster_name), C(num_tokens), C(initial_token), C(partitioner),
+        - Change C(cluster_name), C(num_tokens), C(partitioner),
           C(endpoint_snitch), C(dc), C(rack), C(dc_suffix) or C(ec2_naming_scheme) of a node that already joined a
           cluster, or move C(storage_compatibility_mode) by more than one step. Refused otherwise; only for a
           documented procedure (e.g. a snitch migration).
@@ -1147,11 +1476,35 @@ argument_specs:
         default: []
         description:
         - Remote JMX users (with O(cassandra_local_jmx) false), written to
-          C(/etc/cassandra/jmxremote.password) and C(jmxremote.access), readable
-          by O(cassandra_user) only. Each item has C(name), C(password) and C(access)
+          O(cassandra_jmx_remote_password_file) and O(cassandra_jmx_remote_access_file), readable
+          by cassandra only. Each item has C(name), C(password) and C(access)
           (C(readwrite), the default, or C(readonly)). A C(readwrite) user also gets the C(create) and
-          C(unregister) rights of the JDK's controlRole, unless C(create_unregister) is false. Keep the passwords
-          in a vault.
+          C(unregister) rights of the JDK's controlRole, unless C(create_unregister) is false. Other rights
+          are written as they are (C(readwrite) then C(create <classes>) and C(unregister), as the JDK takes them, e.g.
+          C(readwrite unregister)). An item without C(password) gets rights
+          only, no password line (like the JDK's stock controlRole). Keep the passwords in a vault.
+      cassandra_jmx_remote_password_file:
+        type: path
+        default: /etc/cassandra/jmxremote.password
+        description:
+        - The remote JMX password file C(cassandra-env.sh) points the JVM at
+          (C(-Dcom.sun.management.jmxremote.password.file)), where the role writes O(cassandra_jmx_users).
+          import_cluster reads the node's.
+      cassandra_jmx_remote_access_file:
+        type: path
+        default: /etc/cassandra/jmxremote.access
+        description:
+        - The remote JMX access file C(cassandra-env.sh) points the JVM at
+          (C(-Dcom.sun.management.jmxremote.access.file)), where the role writes the rights of
+          O(cassandra_jmx_users). import_cluster reads the node's.
+      cassandra_cqlsh_credentials:
+        type: list
+        elements: dict
+        default: []
+        description:
+        - cqlsh set up for OS users, mode 0600. Each item has C(os_user),
+          C(username) and C(password). C(~/.cassandra/cqlshrc) points cqlsh at
+          this node; from 4.1 the password is in C(~/.cassandra/credentials).
       cassandra_config_backup:
         type: bool
         default: true
@@ -1162,4 +1515,5 @@ argument_specs:
         elements: path
         description:
         - C(data_file_directories) in C(cassandra.yaml), one per disk (JBOD).
-          Defaults to O(cassandra_data_dir) alone. The system keyspaces live in the first one.
+          Defaults to O(cassandra_data_dir) alone, which should stay the first,
+          as the system keyspaces live there.

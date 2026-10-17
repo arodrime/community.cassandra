@@ -3,21 +3,197 @@
 # JVM refuses a password file others can read.
 - name: Write the JMX users
   when: cassandra_jmx_users | length > 0
+  vars:
+    # (no user with a password: an empty file; ansible-core 2.19+ renders an empty template as None)
+    _cassandra_jmx_password_content: "{{ lookup('ansible.builtin.template', 'jmxremote.password.j2') | default('', true) }}"
+    _cassandra_jmx_access_content: "{{ lookup('ansible.builtin.template', 'jmxremote.access.j2') | default('', true) }}"
   block:
-    - name: Write jmxremote.password
-      ansible.builtin.template:
-        src: jmxremote.password.j2
-        dest: /etc/cassandra/jmxremote.password
-        owner: "{{ cassandra_user }}"
-        group: "{{ cassandra_group }}"
-        mode: "0400"
+    # the JVM refuses an access file with other rights, and then opens no remote JMX
+    - name: Check the JMX users' rights
+      ansible.builtin.assert:
+        that: _bad | length == 0
+        fail_msg: >-
+          cassandra_jmx_users: {{ _bad | join(', ') }}: each item needs a name, and an access readonly, or
+          readwrite with only the JDK's create <classes> and unregister rights after it, on one line (e.g.
+          readwrite unregister)
+        quiet: true
+      vars:
+        _bad: >-
+          {%- set cls = '[A-Za-z0-9_$*]+([.][A-Za-z0-9_$*]+)*' -%}
+          {%- set rights = '(readonly|readwrite([ \t]+(unregister|create[ \t]+' ~ cls ~ '([ \t]*,[ \t]*' ~ cls
+                           ~ ')*))*)[ \t]*$' -%}
+          {%- set out = [] -%}
+          {%- for user in cassandra_jmx_users -%}
+          {%-   set access = user.access | default('readwrite') | string -%}
+          {%-   if user.name is not defined or access is search('[\r\n]') or access is not match(rights) -%}
+          {%-     set _ = out.append(user.name | default('an item without name')) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # Like the config files: on a node that is not blank, files with the same
+    # users and rights (other comments, spacing or order) are left as they are,
+    # and so are the ones it has in cassandra_config_keep_files
+    - name: Compare the JMX files with the users
+      ansible.builtin.command:
+        argv:
+          - "{{ _cassandra_config_python }}"
+          - -c
+          - |
+            import json, os, sys
+            def entries(text):
+                text = text.replace("\\\n", " ")  # access lines go on after a backslash
+                words = [line.split() for line in text.split("\n") if line.strip() and not line.lstrip().startswith(("#", "!"))]
+                return sorted([w[0]] + sorted(w[1:]) for w in words)
+            wanted = json.loads(sys.stdin.read())
+            same = []
+            for name in ("password", "access"):
+                path = wanted["paths"][name]
+                if os.path.exists(path) and ("jmxremote." + name in wanted["keep"] or not wanted["normalize"]
+                                             and entries(open(path).read()) == entries(wanted[name])):
+                    same.append(name)
+            print(json.dumps(same))
+        stdin: >-
+          {{ {'password': _cassandra_jmx_password_content, 'access': _cassandra_jmx_access_content,
+              'paths': {'password': cassandra_jmx_remote_password_file, 'access': cassandra_jmx_remote_access_file},
+              'keep': cassandra_config_keep_files, 'normalize': cassandra_config_normalize | bool} | to_json }}
+      register: cassandra_config_jmx_same
+      changed_when: false
+      check_mode: false
       no_log: true
-      diff: false
+      when: _cassandra_config_initialized | default(false) | bool
+
+    # what the copies below write, for apply_config and the report: a file missing, or (compared) not the
+    # same users and rights; said as such, never their content (passwords)
+    - name: List the JMX files to write
+      ansible.builtin.set_fact:
+        _cassandra_config_jmx_changes: "{{ _changes }}"
+        _cassandra_config_items: >-
+          {%- set out = [] -%}
+          {%- for c in _changes -%}
+          {%-   set _ = out.append({'item': c.path, 'before': 'absent' if c.missing else 'other users or rights',
+                                    'after': 'written whole', 'whole': true}) -%}
+          {%- endfor -%}
+          {{ _cassandra_config_items | default([]) + out }}
+      vars:
+        # (not compared: an empty list, and only the missing files listed; none would render as "None" on 2.16)
+        _compared: "{{ cassandra_config_jmx_same.stdout is defined }}"
+        _same: "{{ cassandra_config_jmx_same.stdout | from_json if cassandra_config_jmx_same.stdout is defined else [] }}"
+        _changes: >-
+          {%- set out = [] -%}
+          {%- for name in ['password', 'access'] -%}
+          {%-   set f = 'jmxremote.' ~ name -%}
+          {%-   set live = cassandra_config_live_stat.results | default([]) | selectattr('cassandra_config_file', 'equalto', f)
+                           | first | default({}) -%}
+          {%-   set missing = not (live.stat.exists | default(false)) -%}
+          {%-   if missing or (_compared | bool and name not in _same) -%}
+          {%-     set _ = out.append({'file': f, 'missing': missing,
+                                      'path': cassandra_jmx_remote_password_file if name == 'password'
+                                              else cassandra_jmx_remote_access_file}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # (a dir of their own, e.g. imported from a node: made on a new node; one already there left as it is)
+    - name: Create the directories of the JMX files
+      ansible.builtin.command:
+        argv: [mkdir, -p, -m, "0755", "{{ item }}"]
+        creates: "{{ item }}"
+      loop: "{{ [cassandra_jmx_remote_password_file | dirname, cassandra_jmx_remote_access_file | dirname] | unique }}"
+
+    - name: Write jmxremote.password
+      ansible.builtin.include_tasks: jmx_password.yml
+      when: "'password' not in cassandra_config_jmx_same.stdout | default('[]') | from_json"
 
     - name: Write jmxremote.access
-      ansible.builtin.template:
-        src: jmxremote.access.j2
-        dest: /etc/cassandra/jmxremote.access
-        owner: "{{ cassandra_user }}"
-        group: "{{ cassandra_group }}"
-        mode: "0400"
+      ansible.builtin.copy:
+        content: "{{ _cassandra_jmx_access_content }}"
+        dest: "{{ cassandra_jmx_remote_access_file }}"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+      vars:
+        _cassandra_config_perm_file: jmxremote.access
+      when: "'access' not in cassandra_config_jmx_same.stdout | default('[]') | from_json"
+
+    # their content stays, not their owner, group and mode
+    - name: Set the owner and mode of the JMX files left as they are
+      ansible.builtin.file:
+        path: "{{ cassandra_jmx_remote_password_file if item == 'password' else cassandra_jmx_remote_access_file }}"
+        owner: "{{ _cassandra_config_perm.owner }}"
+        group: "{{ _cassandra_config_perm.group }}"
+        mode: "{{ _cassandra_config_perm.mode }}"
+      loop: "{{ cassandra_config_jmx_same.stdout | default('[]') | from_json }}"
+      vars:
+        _cassandra_config_perm_file: jmxremote.{{ item }}
+
+    - name: Say which JMX files are kept as they are (cassandra_config_keep_files)
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ _kept | join(', ') }} left as they are (cassandra_config_keep_files)"
+      vars:
+        _kept: >-
+          {{ cassandra_config_jmx_same.stdout | default('[]') | from_json | map('regex_replace', '^', 'jmxremote.')
+             | select('in', cassandra_config_keep_files) | list }}
+      when: _kept | length > 0
+
+# cqlsh for OS users: ~/.cassandra/cqlshrc pointing at this node, with the CQL
+# credentials (4.1+: in a separate credentials file, as cqlsh wants)
+- name: Write the cqlsh credentials
+  when: cassandra_cqlsh_credentials | length > 0
+  vars:
+    _home: "{{ ansible_facts.getent_passwd[item.os_user][4] }}"
+  block:
+    - name: Find the users' home directories
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item.os_user }}"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+
+    - name: Create ~/.cassandra
+      ansible.builtin.file:
+        path: "{{ _home }}/.cassandra"
+        state: directory
+        owner: "{{ item.os_user }}"
+        mode: "0700"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+
+    - name: Write ~/.cassandra/cqlshrc
+      ansible.builtin.copy:
+        content: |
+          [authentication]
+          username = {{ item.username }}
+          {% if cassandra_version == '40x' %}
+          password = {{ item.password }}
+          {% else %}
+          credentials = {{ _home }}/.cassandra/credentials
+          {% endif %}
+
+          [connection]
+          hostname = {{ cassandra_rpc_address if cassandra_rpc_address not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+          port = {{ cassandra_native_transport_port }}
+        dest: "{{ _home }}/.cassandra/cqlshrc"
+        owner: "{{ item.os_user }}"
+        mode: "0600"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      loop_control:
+        label: "{{ item.os_user }}"
+      no_log: "{{ cassandra_version == '40x' }}"
+      diff: false
+
+    - name: Write ~/.cassandra/credentials (4.1+)
+      ansible.builtin.copy:
+        content: |
+          [PlainTextAuthProvider]
+          username = {{ item.username }}
+          password = {{ item.password }}
+        dest: "{{ _home }}/.cassandra/credentials"
+        owner: "{{ item.os_user }}"
+        mode: "0600"
+      loop: "{{ cassandra_cqlsh_credentials }}"
+      no_log: true
+      diff: false
+      when: cassandra_version != '40x'
