@@ -527,6 +527,7 @@ def test_the_jmx_message_is_not_followed_by_nodetool_line():
     ("/10.0.0.40", "10.0.0.4", False), ("[0:0:0:0:0:0:0:4]:7000", "0:0:0:0:0:0:0:4", True),
     # nodetool prints IPv6 in full, the inventory may write it compressed
     ("/0:0:0:0:0:0:0:4", "::4", True), ("[0:0:0:0:0:0:0:4]:7000", "::4", True), ("/0:0:0:0:0:0:0:5", "::4", False),
+    ("/0:0:0:0:0:0:0:4:7000", "0:0:0:0:0:0:0:4", True), ("/0:0:0:0:0:0:0:4:7000", "::4", True),
     ("  STATUS:12:removing,abc", "10.0.0.4", False)])
 def test_a_nodetool_field_is_an_address_however_written(field, address, same):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_health import _same_address
