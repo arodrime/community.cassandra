@@ -773,3 +773,12 @@ def test_replace_flag_in_a_hand_edit_warned_with_its_line():
                u" node is already bootstrapped: Cassandra refuses its next start with it; remove the line"
                u' JVM_OPTS="$JVM_OPTS -Dcassandra.replace_address=10.0.0.9" (kept on purpose? add replace_address to'
                u" cassandra_suspicious_ack)" in line for line in lines)
+
+
+def test_a_suspicious_setting_does_not_change_whom_the_other_settings_are_for():
+    # the WARNING names node1; the settings every node has are still for all of them
+    nodes = [node(i) for i in range(1, 4)]
+    nodes[0]["vars"]["cassandra_auto_bootstrap"] = False
+    lines = report(nodes)
+    row = [line for line in lines if line.strip().startswith("cassandra_num_tokens:")][0]
+    assert row.split()[-1] == "all", row
