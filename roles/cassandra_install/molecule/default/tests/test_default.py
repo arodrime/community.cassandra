@@ -20,6 +20,10 @@ def debian_only(os_family):
         pytest.skip("Debian family only")
 
 
+def is_ubuntu_2604(host):
+    return host.system_info.distribution == "ubuntu" and host.system_info.release == "26.04"
+
+
 def test_cassandra_available(host):
     cmd = host.run("cassandra -h")
     assert cmd.rc == 0
@@ -68,15 +72,35 @@ def test_cassandra_not_started_by_package(host):
     assert host.run("pgrep -f [C]assandraDaemon").rc != 0
 
 
-def test_no_cqlsh_python_override_on_50x(host):
-    # 5.0's cqlsh supports the system python3: no pointers written
-    assert not host.file("/etc/profile.d/cqlsh.sh").exists
-    assert not host.file("/etc/sudoers.d/cqlsh").exists
+def test_cqlsh_python_override_on_50x(host):
+    wrapper = host.file("/usr/local/bin/cqlsh")
+    if is_ubuntu_2604(host):
+        # python3 is 3.14, past 5.0's cqlsh (3.13 at most): python3.11 from deadsnakes
+        assert 'CQLSH_PYTHON:-/usr/bin/python3.11}' in wrapper.content_string
+        assert host.run("/usr/bin/python3.11 -V").rc == 0
+    else:
+        # 5.0's cqlsh supports the system python3: no pointers written
+        assert not host.file("/etc/profile.d/cqlsh.sh").exists
+        assert not host.file("/etc/sudoers.d/cqlsh").exists
 
 
 def test_cqlsh_installed_by_hand_kept(host):
+    if is_ubuntu_2604(host):
+        pytest.skip("the role's own wrapper there")
     # side_effect.yml put one in /usr/local/bin, without the role's marker
     assert "installed by hand" in host.file("/usr/local/bin/cqlsh").content_string
+
+
+def test_sudo_rs_on_ubuntu_2604(host):
+    if not is_ubuntu_2604(host):
+        pytest.skip("Ubuntu 26.04 only")
+    assert "sudo-rs" in host.run("sudo --version").stdout
+
+
+@pytest.mark.usefixtures("debian_only")
+def test_pinned_packages_held_on_debian(host):
+    held = host.run("apt-mark showhold").stdout.split()
+    assert "cassandra" in held
 
 
 def test_dsbulk_installed_like_the_tools(host):

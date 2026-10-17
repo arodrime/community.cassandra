@@ -1,0 +1,227 @@
+---
+# Java from a tarball (cassandra_java_tarball), or already unpacked by other
+# means (cassandra_java_home), instead of a package: made the system java,
+# which the cassandra script and nodetool run.
+# Written once the tarball is fully unpacked: a half-unpacked one is redone
+- name: Look for the unpacked Java
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacked"
+  register: cassandra_java_tarball_done
+
+# A Java given by its directory (cassandra_java_home, e.g. imported) that is
+# already there, and not left half unpacked by this role (.unpacking), was
+# installed by other means: kept, the tarball is for the nodes without it (new
+# nodes). Emptying it would pull the running node's Java.
+- name: Look for a Java already in cassandra_java_home
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/bin/java"
+  register: cassandra_java_home_present
+  when: cassandra_java_home != ""
+
+- name: Look for an unpack left half done
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacking"
+  register: cassandra_java_tarball_started
+  when: cassandra_java_home != ""
+
+- name: Unpack the Java tarball
+  when:
+    - cassandra_java_tarball != ""
+    - not cassandra_java_tarball_done.stat.exists
+    - not (cassandra_java_home_present.stat.exists | default(false)) or cassandra_java_tarball_started.stat.exists | default(false)
+  vars:
+    _local: "/var/tmp/{{ _cassandra_java_tarball_name }}"
+    _from_url: "{{ cassandra_java_tarball is match('https?://') }}"
+  block:
+    - name: The tarball can't be downloaded offline
+      ansible.builtin.assert:
+        that: not (cassandra_offline | bool and _from_url)
+        fail_msg: >-
+          cassandra_offline downloads nothing, and {{ _cassandra_java_home }} is not unpacked on {{ inventory_hostname }}:
+          give cassandra_java_tarball as a file on the controller, or unpack it there first.
+        quiet: true
+
+    - name: Install tar
+      ansible.builtin.package:
+        name: tar
+        state: present
+      retries: 3
+      when:
+        - not cassandra_offline | bool
+        - "'tar' not in _cassandra_install_before | default({})"  # installed: no repository read
+
+    - name: Download the Java tarball
+      ansible.builtin.get_url:
+        url: "{{ cassandra_java_tarball }}"
+        dest: "{{ _local }}"
+        checksum: "{{ cassandra_java_tarball_checksum | default(omit, true) }}"
+        url_username: "{{ cassandra_java_tarball_username | default(omit, true) }}"
+        url_password: "{{ cassandra_java_tarball_password | default(omit, true) }}"
+        force_basic_auth: "{{ cassandra_java_tarball_username != '' }}"
+        mode: "0644"
+      retries: 3
+      register: cassandra_java_tarball_download
+      until: cassandra_java_tarball_download is succeeded
+      when: _from_url
+
+    - name: Copy the Java tarball from the controller
+      ansible.builtin.copy:
+        src: "{{ cassandra_java_tarball }}"
+        dest: "{{ _local }}"
+        mode: "0644"
+      when: not _from_url
+
+    - name: Start from an empty Java directory
+      ansible.builtin.file:
+        path: "{{ _cassandra_java_home }}"
+        state: "{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Mark the unpack started
+      ansible.builtin.copy:
+        content: "{{ cassandra_java_tarball }}\n"
+        dest: "{{ _cassandra_java_home }}/.unpacking"
+        mode: "0644"
+      when: not ansible_check_mode  # the directory is not really made under --check
+
+    # Under --check nothing was downloaded or created
+    - name: Unpack Java
+      ansible.builtin.unarchive:
+        src: "{{ _local }}"
+        dest: "{{ _cassandra_java_home }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        owner: root
+        group: root
+      when: not ansible_check_mode
+
+    # Before it is marked unpacked: once the tarball is fixed, it is unpacked again
+    - name: Check the unpacked Java is cassandra_java_version
+      ansible.builtin.include_tasks: java_release.yml
+      vars:
+        _cassandra_java_release_of_tarball: true
+      when: not ansible_check_mode
+
+    - name: Mark it unpacked
+      ansible.builtin.copy:
+        content: "{{ cassandra_java_tarball }}\n"
+        dest: "{{ _cassandra_java_home }}/.unpacked"
+        mode: "0644"
+      when: not ansible_check_mode  # the directory is not really made under --check
+
+    - name: Remove the started mark
+      ansible.builtin.file:
+        path: "{{ _cassandra_java_home }}/.unpacking"
+        state: absent
+
+  always:
+    - name: Remove the tarball
+      ansible.builtin.file:
+        path: "{{ _local }}"
+        state: absent
+      changed_when: false
+
+- name: Look for its java
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/bin/java"
+  register: cassandra_java_home_java
+
+# Cassandra runs java as its own user: a tarball with private directories
+# (0700), or unpacked under a restrictive umask, leaves it no java. Only adds
+# read and traverse rights; a Java installed by other means is left as it is.
+- name: Let every user read and run the unpacked Java
+  ansible.builtin.file:
+    path: "{{ _cassandra_java_home }}"
+    state: directory
+    recurse: true
+    mode: go+rX
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_home_java.stat.exists
+    - cassandra_java_tarball_done.stat.exists or not (cassandra_java_home_present.stat.exists | default(false))
+      or cassandra_java_tarball_started.stat.exists | default(false)
+
+- name: A Java given by its directory must be there
+  ansible.builtin.assert:
+    that: cassandra_java_home_java.stat.exists
+    fail_msg: "cassandra_java_home is {{ _cassandra_java_home }}, and {{ inventory_hostname }} has no {{ _cassandra_java_home }}/bin/java."
+    quiet: true
+  when: cassandra_java_tarball == ""
+
+# Resolved, both: the directory itself may be a link (e.g. a "current" link)
+# -m: a /usr/bin/java that leads nowhere (an alternative of a removed Java)
+# still prints a line, so it is told apart from this one
+- name: Resolve the system java and this one
+  ansible.builtin.command:
+    argv: [readlink, -m, /usr/bin/java, "{{ _cassandra_java_home }}/bin/java"]
+  register: cassandra_java_resolved
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Under --check nothing is unpacked, so there is no java to point at yet.
+# Already pointing there (an alternative, or a plain link made by hand): left as is.
+# cassandra_java_set_default false: left as it is (Cassandra then needs JAVA_HOME).
+- name: Make it the system java
+  community.general.alternatives:
+    name: java
+    path: "{{ _cassandra_java_home }}/bin/java"
+    link: /usr/bin/java
+    priority: 100
+  when:
+    - cassandra_java_set_default | bool
+    - not (ansible_check_mode and not cassandra_java_home_java.stat.exists)
+    - cassandra_java_resolved.rc != 0 or cassandra_java_resolved.stdout_lines | length != 2
+      or cassandra_java_resolved.stdout_lines[0] != cassandra_java_resolved.stdout_lines[1]
+
+# The Debian/Ubuntu Cassandra package depends on a Java package or a
+# javaN-runtime virtual one: a local package provides the latter for the
+# tarball, so the Cassandra packages install normally.
+- name: Package that provides the tarball Java to apt (Debian & Ubuntu)
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - "'cassandra-java-tarball' not in _cassandra_install_before"
+    # an installed Cassandra (e.g. imported) has its Java dependency met already
+    - "'cassandra' not in _cassandra_install_before"
+  vars:
+    _build: /var/tmp/cassandra-java-tarball
+  block:
+    - name: Create its control directory
+      ansible.builtin.file:
+        path: "{{ _build }}/DEBIAN"
+        state: directory
+        mode: "0755"
+
+    - name: Write its control file
+      ansible.builtin.copy:
+        content: |
+          Package: cassandra-java-tarball
+          Version: 1.0
+          Architecture: all
+          Maintainer: community.cassandra
+          Provides: java8-runtime, java8-runtime-headless, java11-runtime, java11-runtime-headless, java17-runtime, java17-runtime-headless
+          Description: Java for Cassandra, installed from a tarball by community.cassandra
+        dest: "{{ _build }}/DEBIAN/control"
+        mode: "0644"
+
+    - name: Build it
+      ansible.builtin.command:
+        argv: [dpkg-deb, --build, "{{ _build }}", "{{ _build }}.deb"]
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Install it
+      ansible.builtin.apt:
+        deb: "{{ _build }}.deb"
+      when: not ansible_check_mode
+
+  always:
+    - name: Remove the build files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: ["{{ _build }}", "{{ _build }}.deb"]
+      changed_when: false

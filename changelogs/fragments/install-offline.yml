@@ -1,0 +1,2 @@
+minor_changes:
+  - "cassandra_install, cassandra_repository - new ``cassandra_offline`` for air-gapped hosts: nothing is downloaded; cassandra_repository leaves the repositories alone (``cassandra_repository_manage`` defaults to ``false``), and cassandra_install checks Java and the Cassandra packages instead of installing them, stopping with the list of what is missing (the cqlsh Python, jemalloc and dsbulk only give a warning)."

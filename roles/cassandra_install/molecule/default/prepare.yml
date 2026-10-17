@@ -19,3 +19,13 @@
         path: /usr/sbin/policy-rc.d
         state: absent
       when: ansible_facts['os_family'] == 'Debian'
+
+    # The image keeps the classic sudo; Ubuntu 26.04 itself defaults to sudo-rs
+    - name: Use sudo-rs, as Ubuntu 26.04 does
+      ansible.builtin.apt:
+        name: sudo-rs
+        state: present
+      retries: 3
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - ansible_facts['distribution_version'] is version('26.04', '>=')

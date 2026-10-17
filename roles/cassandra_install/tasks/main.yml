@@ -1,3 +1,13 @@
 ---
+# Under --check, the cassandra-<series> repositories that cassandra_repository
+# removes (install method packages) are still there, and one on a plain
+# directory breaks every dnf call: dnf leaves them out, as after the real run.
 - name: Install Cassandra
-  ansible.builtin.import_tasks: install.yml
+  module_defaults:
+    ansible.builtin.dnf:
+      disablerepo: "{{ _cassandra_repository_check_removed | default([]) }}"
+    ansible.legacy.dnf:
+      disablerepo: "{{ _cassandra_repository_check_removed | default([]) }}"
+  block:
+    - name: Install Cassandra
+      ansible.builtin.import_tasks: install.yml

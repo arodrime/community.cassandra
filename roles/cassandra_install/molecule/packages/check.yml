@@ -1,0 +1,14 @@
+---
+# Run by converge.yml with --check, on blank hosts
+- name: Install 5.0.6 (--check)
+  hosts: all
+  vars:
+    cassandra_install_method: packages
+    cassandra_install_url: http://127.0.0.1:8080/
+    cassandra_package_version: 5.0.6
+    cassandra_java_tarball: https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
+    cassandra_java_tarball_checksum: sha256:0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
+    cassandra_java_version: "17"
+  roles:
+    - role: community.cassandra.cassandra_repository
+    - role: community.cassandra.cassandra_install

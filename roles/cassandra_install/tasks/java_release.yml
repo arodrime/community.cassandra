@@ -1,0 +1,28 @@
+---
+# The Java in _cassandra_java_home is the major cassandra_java_version names
+# (JAVA_VERSION in its release file; a Java without one is not checked).
+# _cassandra_java_release_of_tarball: it was unpacked from cassandra_java_tarball
+- name: Read the Java's release file
+  ansible.builtin.slurp:
+    src: "{{ _cassandra_java_home }}/release"
+  register: cassandra_java_release
+  failed_when: false
+
+- name: The Java is cassandra_java_version
+  ansible.builtin.assert:
+    that: _found in ['', cassandra_java_version | community.cassandra.cassandra_java_major]
+    fail_msg: >-
+      {{ ('The Java tarball ' ~ _cassandra_java_tarball_name ~ ' (' ~ cassandra_java_tarball ~ ')')
+         if _cassandra_java_release_of_tarball | bool else _cassandra_java_home }} is Java {{ _found }}
+      (JAVA_VERSION in {{ _cassandra_java_home }}/release on {{ inventory_hostname }}),
+      not Java {{ cassandra_java_version }} (cassandra_java_version).
+      {{ ('Give a Java ' ~ cassandra_java_version ~ ' tarball (cassandra_java_tarballs["' ~ cassandra_java_version
+          ~ '"] or cassandra_java_tarball), or set cassandra_java_version to ' ~ _found ~ '.')
+         if _cassandra_java_release_of_tarball | bool
+         else ('Set cassandra_java_version to ' ~ _found ~ ' for this node, or remove its cassandra_java_home'
+               ~ ' (host_vars) to move it to the Java ' ~ cassandra_java_version ~ ' tarball.') }}
+    quiet: true
+  vars:
+    _found: >-
+      {{ (cassandra_java_release.content | b64decode | community.cassandra.cassandra_java_release_major)
+         if cassandra_java_release.content is defined else '' }}

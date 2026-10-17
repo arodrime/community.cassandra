@@ -1,0 +1,261 @@
+---
+argument_specs:
+  main:
+    short_description: Install Apache Cassandra and the Java it needs.
+    description:
+      - Installs the Java version the series is built for, then Cassandra.
+      - On Debian and Ubuntu, Cassandra is not started by the package install.
+      - Makes sure cqlsh runs with a Python it supports.
+    options:
+      cassandra_packages:
+        type: raw
+        default: cassandra
+        description:
+          - Package or list of packages to install. C(cassandra-tools) is added, see
+            O(cassandra_install_tools).
+      cassandra_install_tools:
+        type: bool
+        default: true
+        description:
+          - Install C(cassandra-tools) (the sstable tools) too.
+          - C(import_cluster) sets V(false) for the nodes without it.
+      cassandra_install_jemalloc:
+        type: bool
+        default: true
+        description:
+          - Install jemalloc, which C(bin/cassandra) preloads when it finds it (on the
+            RedHat family when a repository offers it, e.g. EPEL).
+          - C(import_cluster) sets V(false) for the nodes without it.
+      cassandra_package_hold:
+        type: bool
+        default: true
+        description:
+          - Debian and Ubuntu, hold the packages pinned to O(cassandra_package_version),
+            so routine upgrades leave them. A hold already there is never removed.
+          - C(import_cluster) sets V(false) for the nodes where they are not held.
+      cassandra_install_method:
+        type: str
+        default: repository
+        description:
+          - How the Cassandra packages are installed, the same in C(cassandra_repository)
+            and C(cassandra_install).
+          - V(repository), from the yum/apt repository C(cassandra_repository) adds at
+            O(cassandra_install_url) (Apache's, or a mirror of it). The URL is checked
+            first (C(repodata/repomd.xml), or the suite's C(InRelease) or C(Release)), and a
+            plain directory of package files is refused, nothing is added.
+          - V(packages), the package files are downloaded from O(cassandra_install_url),
+            a plain directory of files (e.g. a generic folder of a repository manager),
+            and installed (on the RedHat family without their Java dependency, like with a
+            Java tarball). No repository is added, and the
+            ones C(cassandra_repository) added earlier are removed.
+            C(cassandra_package_version) is required.
+      cassandra_install_url:
+        type: str
+        description:
+          - The repository (V(repository)), or the directory of the package files
+            (V(packages)).
+          - Defaults to Apache's repositories, C(https://redhat.cassandra.apache.org/<cassandra_version>/)
+            on the RedHat family, C(https://debian.cassandra.apache.org) on Debian and Ubuntu. Apache's RPM directory
+            (C(https://redhat.cassandra.apache.org/<series>/)) also works with V(packages);
+            its Debian files are under C(https://debian.cassandra.apache.org/pool/main/c/cassandra/).
+      cassandra_install_username:
+        type: str
+        default: ""
+        description:
+          - User for O(cassandra_install_url) when it needs credentials to read (an
+            account, or a service account with a token as O(cassandra_install_password)).
+      cassandra_install_password:
+        type: str
+        no_log: true
+        default: ""
+        description:
+          - Password or token for O(cassandra_install_username). Keep it in a vault.
+      cassandra_install_package_file:
+        type: str
+        description:
+          - With O(cassandra_install_method=packages), the name of each package file in
+            O(cassandra_install_url), where C({name}) is the package and C({version}) is
+            C(cassandra_package_version).
+          - Defaults to Apache's names, C({name}-{version}-1.noarch.rpm) and
+            C({name}_{version}_all.deb).
+      cassandra_install_checksums:
+        type: dict
+        default: {}
+        description:
+          - With O(cassandra_install_method=packages), the checksum of each file, by file
+            name (as C(sha256:<hex>), the get_url format). A file without one is not checked.
+      cassandra_version:
+        type: str
+        default: 50x
+        description:
+          - Release series, same values as for C(cassandra_repository).
+      cassandra_java_versions:
+        type: dict
+        default: {40x: "11", 41x: "11", 50x: "17"}
+        description:
+          - Java version for each series.
+      cassandra_java_version:
+        type: str
+        description:
+          - Java version to install. Defaults to the series' entry in O(cassandra_java_versions).
+          - Refused when the series does not support it (4.0 and 4.1 run on 8 or 11, 5.0 on 11 or 17),
+            unless O(cassandra_java_allow_unsupported).
+      cassandra_java_allow_unsupported:
+        type: bool
+        default: false
+        description:
+          - Install a O(cassandra_java_version) the series does not support (for example 21 with 5.0),
+            at your own risk.
+      cassandra_java_tarballs:
+        type: dict
+        default: {}
+        description:
+          - Java tarballs on offer, by major version (C("17")), each a dict with C(url) (a URL or a file
+            on the controller) and optionally C(checksum) (for example C(sha256:0123...), recommended),
+            C(username) and C(password). Typically set
+            once for every cluster, next to the mirror settings.
+          - O(cassandra_java_tarball) defaults to the C(url) of the O(cassandra_java_version) entry,
+            and O(cassandra_java_tarball_checksum) and the credentials to its own.
+          - With tarballs on offer, a O(cassandra_java_version) without one is refused, unless
+            O(cassandra_java_home) is set or O(cassandra_install_java) is false.
+      cassandra_java_package:
+        type: str
+        description:
+          - Java package name. Derived from the OS and O(cassandra_java_version).
+      cassandra_cqlsh_python:
+        type: str
+        default: ""
+        description:
+          - Python interpreter used by cqlsh.
+          - When empty, C(python3) is used if the series' cqlsh supports it,
+            otherwise C(python3.11) is installed next to it and cqlsh is pointed at it.
+          - On the RedHat family, the role stops when no repository offers C(python3.11) (EL 10 with Cassandra 4.x);
+            set this to a Python cqlsh supports, installed by other means.
+      cassandra_cqlsh_python_manage:
+        type: bool
+        default: true
+        description:
+          - V(false) leaves cqlsh's Python as it is on this node (no python3.11, cqlshlib link or wrapper added or
+            removed). The C(import_cluster) playbook sets it on the nodes whose cqlsh has no wrapper of this role.
+      cassandra_cqlsh_python_supported:
+        type: dict
+        default: {40x: ["3.6", "3.11"], 41x: ["3.6", "3.11"], 50x: ["3.8", "3.13"]}
+        description:
+          - Python versions supported by cqlsh, as C([min, max]) for each series.
+      cassandra_cqlsh_python_repo_uri:
+        type: str
+        default: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
+        description:
+          - Where C(python3.11) comes from on Ubuntu releases that don't ship it
+            (the deadsnakes PPA, signed by the key shipped in C(files/deadsnakes.asc)).
+            Set to an empty string to rely on the configured repositories.
+      cassandra_java_tarball:
+        type: str
+        description:
+          - Java from a tarball (a JDK or JRE C(.tar.gz)) instead of a package. A URL,
+            downloaded by the nodes, or a file on the controller.
+          - It is unpacked into O(cassandra_java_tarball_dir)C(/<tarball name>) and made the
+            system C(java) (alternatives), which the cassandra script and nodetool run.
+            The Cassandra packages are then installed without a Java package. On Debian/Ubuntu,
+            a local C(cassandra-java-tarball) package provides the Java they depend on; on the
+            RedHat family they are installed without their dependencies (C(rpm --nodeps)),
+            plus the ones they need to run (procps-ng, python3, shadow-utils).
+          - O(cassandra_java_version) must still name its major version; the C(release) file of
+            the unpacked Java must name it too, or the role stops.
+          - Defaults to the O(cassandra_java_tarballs) entry of O(cassandra_java_version), else none.
+      cassandra_java_home:
+        type: path
+        default: ""
+        description:
+          - Java already unpacked in this directory by other means, not a package. It is
+            made the system C(java), and the Cassandra packages are installed without a
+            Java package, as with O(cassandra_java_tarball). Its C(release) file, when it has
+            one, must name O(cassandra_java_version).
+          - import_cluster sets it for nodes whose running Java is not a package.
+      cassandra_java_tarball_checksum:
+        type: str
+        description:
+          - Checksum of the tarball, for example C(sha256:0123...). Recommended for a URL.
+          - Defaults to the checksum of the O(cassandra_java_tarballs) entry the tarball comes from, else none.
+      cassandra_java_tarball_dir:
+        type: path
+        default: /opt/cassandra-java
+        description:
+          - Where the tarballs are unpacked, each in its own directory.
+      cassandra_java_tarball_username:
+        type: str
+        description:
+          - User for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_username) when the
+            tarball is on the same host as O(cassandra_install_url), else none.
+      cassandra_java_tarball_password:
+        type: str
+        no_log: true
+        description:
+          - Password or token for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_password)
+            when the tarball is on the same host as O(cassandra_install_url), else none.
+      cassandra_java_set_default:
+        type: bool
+        default: true
+        description:
+          - Make O(cassandra_java_version) the default C(java) (alternatives)
+            when several JDKs are installed, or the Java of O(cassandra_java_home) or
+            O(cassandra_java_tarball) the system C(java). Cassandra and nodetool run it,
+            unless C(JAVA_HOME) says otherwise.
+          - V(false) leaves C(/usr/bin/java) as it is, e.g. the system Java of other
+            programs (Cassandra then needs C(JAVA_HOME) in its environment). C(import_cluster) sets it for the nodes whose
+            C(/usr/bin/java) is not the running Java.
+      cassandra_package_version:
+        type: str
+        default: ""
+        description:
+          - Exact Cassandra version (e.g. C(5.0.4)), so every node, including the
+            ones added later, runs the same one. Empty installs the repository's latest.
+          - An installed node is never moved to another version by this role
+            (that is an upgrade). On Debian and Ubuntu the pinned packages are held
+            (O(cassandra_package_hold)).
+      cassandra_offline:
+        type: bool
+        default: false
+        description:
+          - Air-gapped hosts, nothing is downloaded. Java (with O(cassandra_install_java))
+            and the Cassandra packages are checked instead of installed, and the role
+            stops with the list of what is missing. The Python cqlsh may need,
+            jemalloc and dsbulk are optional (a warning when missing).
+          - dsbulk is still installed from a copy on the node (O(cassandra_dsbulk_url)
+            C(file://...)).
+      cassandra_install_java:
+        type: bool
+        default: true
+        description:
+          - false when Java is installed by other means (an internal package,
+            the system image). The Cassandra package still needs a Java package
+            that satisfies its dependency.
+      cassandra_dsbulk_install:
+        type: bool
+        default: true
+        description:
+          - Install the DataStax Bulk Loader (dsbulk) like the packaged tools, in
+            C(/usr/share/dsbulk-<version>), with the links C(/usr/share/dsbulk) and
+            C(/usr/bin/dsbulk). The versions this role installed before are removed.
+          - A C(/usr/share/dsbulk) or C(/usr/bin/dsbulk) that is not a link (a dsbulk
+            installed by other means) fails the role; V(false) leaves dsbulk alone.
+      cassandra_dsbulk_version:
+        type: str
+        default: "1.11.2"
+        description:
+          - dsbulk release, quoted (e.g. C("1.11.2")). Set O(cassandra_dsbulk_checksum) with it.
+      cassandra_dsbulk_url:
+        type: str
+        description:
+          - Where the dsbulk tarball is downloaded from. Defaults to its GitHub release
+            for O(cassandra_dsbulk_version).
+          - A mirror (with C(cassandra_install_username) and C(cassandra_install_password)
+            when it is on the host of C(cassandra_install_url)), or a copy on the node
+            (C(file:///path/to/dsbulk-<version>.tar.gz)), the way to install it with
+            O(cassandra_offline).
+      cassandra_dsbulk_checksum:
+        type: str
+        default: "sha256:249e494c7820ee8f212c47531f77ddd6664404d78e4addadf16159d78c983e5e"
+        description:
+          - Checksum of the dsbulk tarball (C(sha256:...)), the default version's by
+            default. Empty means not checked.

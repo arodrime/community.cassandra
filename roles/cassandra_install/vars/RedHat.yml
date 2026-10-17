@@ -1,4 +1,0 @@
----
-cassandra_packages:
-  - cassandra
-  - cassandra-tools

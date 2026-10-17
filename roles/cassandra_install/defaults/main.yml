@@ -1,9 +1,52 @@
 ---
 # defaults file for cassandra_install
+# Package or list of packages to install; cassandra-tools is added (see
+# cassandra_install_tools)
 cassandra_packages: cassandra
+# Install cassandra-tools (sstable tools) too. import_cluster sets false for
+# the nodes without it.
+cassandra_install_tools: true
+# Install jemalloc, which bin/cassandra preloads when it finds it (RedHat
+# family: when a repository offers it, e.g. EPEL). import_cluster sets false
+# for the nodes without it.
+cassandra_install_jemalloc: true
+# Debian and Ubuntu: hold the packages pinned to cassandra_package_version,
+# so routine upgrades leave them. import_cluster sets false for the nodes
+# where they are not held (a hold already there is never removed).
+cassandra_package_hold: true
+_cassandra_packages: >-
+  {{ ([cassandra_packages] | flatten + (['cassandra-tools'] if cassandra_install_tools | bool else [])) | unique }}
 
 # Cassandra series, same values as cassandra_repository ("40x", "41x", "50x").
 cassandra_version: "50x"
+# Exact Cassandra version (e.g. "5.0.4"), so every node, including the ones
+# added later, runs the same one. "" installs the repository's latest. An
+# installed node is never moved to another version by this role (that is an
+# upgrade); on Debian and Ubuntu the pinned packages are also held.
+cassandra_package_version: ""
+
+# How the Cassandra packages are installed (same in cassandra_repository):
+#   repository  from the yum/apt repository cassandra_repository adds (or
+#               repositories set up by other means)
+#   packages    the package files, downloaded from cassandra_install_url (a
+#               plain directory of files, e.g. a generic folder of a repository
+#               manager), installed without their Java dependency;
+#               cassandra_package_version is then required
+cassandra_install_method: repository
+# The repository, or the directory of the package files: Apache's by default.
+cassandra_install_url: >-
+  {{ 'https://debian.cassandra.apache.org' if ansible_facts['os_family'] == 'Debian'
+     else 'https://redhat.cassandra.apache.org/' ~ cassandra_version ~ '/' }}
+# Credentials for that URL (keep the password in a vault)
+cassandra_install_username: ""
+cassandra_install_password: ""
+# packages: the name of each file in cassandra_install_url ({name}: the
+# package, {version}: cassandra_package_version), Apache's by default
+cassandra_install_package_file: "{{ '{name}_{version}_all.deb' if ansible_facts['os_family'] == 'Debian' else '{name}-{version}-1.noarch.rpm' }}"
+# packages: checksums of the files, by file name, e.g.
+# {"cassandra-5.0.7-1.noarch.rpm": "sha256:0123..."}; a file without one is
+# not checked
+cassandra_install_checksums: {}
 
 # Java installed before Cassandra, so the package's Java dependency is
 # already met and no other JVM gets pulled in. Defaults to the version
@@ -13,6 +56,63 @@ cassandra_java_versions:
   41x: "11"
   50x: "17"
 cassandra_java_version: "{{ cassandra_java_versions[cassandra_version] | default('17') }}"
+# true: install a Java the series does not support (e.g. 21 with 5.0; see
+# the cassandra_java filters for the supported ones), at your own risk
+cassandra_java_allow_unsupported: false
+# Java tarballs on offer, by major version, e.g. set once for every cluster:
+#   {"11": {"url": "https://mirror/jdk-11.tar.gz", "checksum": "sha256:..."},
+#    "17": {"url": ..., "checksum": ...}}
+# (username/password per entry, else the defaults below). A cluster then
+# only sets cassandra_java_version, and gets that tarball (an explicit
+# cassandra_java_tarball wins). With tarballs on offer, a version without
+# one is refused, unless cassandra_java_home is set or cassandra_install_java
+# is false. A cluster on Java packages sets it to {}.
+cassandra_java_tarballs: {}
+# Java from a tarball (a JDK or JRE .tar.gz) instead of a package: a URL
+# (downloaded by the nodes) or a file on the controller. It
+# is unpacked into cassandra_java_tarball_dir/<tarball name> and made the
+# system java; the Cassandra packages are then installed without their Java
+# dependency. cassandra_java_version must still name its major version.
+# Defaults to the cassandra_java_tarballs entry of cassandra_java_version
+# (none with cassandra_install_java false).
+cassandra_java_tarball: "{{ _cassandra_java_tarball_entry.url | default('') if cassandra_install_java | bool else '' }}"
+# e.g. "sha256:0123..." (recommended for a URL); defaults to the entry's
+cassandra_java_tarball_checksum: "{{ _cassandra_java_tarball_entry.checksum if _cassandra_java_tarball_from_entry else '' }}"
+cassandra_java_tarball_dir: /opt/cassandra-java
+# Credentials for the URL. By default the entry's, else cassandra_install_url's
+# when the tarball is on the same host (the mirror)
+cassandra_java_tarball_username: >-
+  {{ _cassandra_java_tarball_entry.username | default('') if _cassandra_java_tarball_own_credentials
+     else cassandra_install_username if _cassandra_java_tarball_on_mirror else '' }}
+cassandra_java_tarball_password: >-
+  {{ _cassandra_java_tarball_entry.password | default('') if _cassandra_java_tarball_own_credentials
+     else cassandra_install_password if _cassandra_java_tarball_on_mirror else '' }}
+_cassandra_java_tarball_entry: "{{ cassandra_java_tarballs | community.cassandra.cassandra_java_tarball(cassandra_java_version) }}"
+_cassandra_java_tarball_from_entry: >-
+  {{ cassandra_java_tarball != '' and cassandra_java_tarball == _cassandra_java_tarball_entry.url | default('') }}
+# an entry with a username or a password has its own credentials, both
+_cassandra_java_tarball_own_credentials: >-
+  {{ _cassandra_java_tarball_from_entry
+     and (_cassandra_java_tarball_entry.username is defined or _cassandra_java_tarball_entry.password is defined) }}
+_cassandra_java_tarball_on_mirror: >-
+  {{ cassandra_java_tarball is match('https?://')
+     and (cassandra_java_tarball | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
+_cassandra_java_tarball_name: "{{ cassandra_java_tarball | urlsplit('path') | basename }}"
+# Java already unpacked there by other means (not a package): made the system
+# java, and the Cassandra packages installed without a Java package, as with
+# a tarball. import_cluster sets it for nodes whose Java is not a package.
+cassandra_java_home: ""
+_cassandra_java_home: >-
+  {{ cassandra_java_home | regex_replace('/+$', '') if cassandra_java_home != ''
+     else ((cassandra_java_tarball_dir | regex_replace('/+$', '')) ~ '/'
+           ~ (_cassandra_java_tarball_name | regex_replace('[.](tar[.]gz|tgz|tar)$', '')))
+     if cassandra_java_tarball != '' else '' }}
+# false: Java is installed by other means (an internal package, the system
+# image); the Cassandra package still needs a Java package that satisfies its
+# dependency
+cassandra_install_java: true
+# Make cassandra_java_version the default java when several JDKs are installed
+cassandra_java_set_default: true
 cassandra_java_package: >-
   {{ ('openjdk-' ~ cassandra_java_version ~ '-jre-headless') if ansible_facts['os_family'] == 'Debian'
   else ('java-' ~ cassandra_java_version ~ '-amazon-corretto-headless') if ansible_facts['distribution'] == 'Amazon'
@@ -22,10 +122,14 @@ cassandra_java_package: >-
 # series' cqlsh supports, then python3.11 (fits every range) is installed
 # next to it. python3 itself is never changed.
 cassandra_cqlsh_python: ""
+# false: cqlsh's Python is left as it is on this node (no python3.11, cqlshlib
+# link or wrapper added or removed); import_cluster sets it on the nodes whose
+# cqlsh has no wrapper of this role
+cassandra_cqlsh_python_manage: true
 cassandra_cqlsh_python_supported:  # [min, max]
   40x: ["3.6", "3.11"]  # bundled six/driver break on 3.12
   41x: ["3.6", "3.11"]
-  50x: ["3.8", "3.13"]  # 3.6/3.7 still run, with a deprecation warning
+  50x: ["3.8", "3.13"]  # bin/cqlsh refuses 3.6/3.7
 # deadsnakes PPA, added on Ubuntu releases without python3.11 (24.04+), signed
 # by the key shipped with the role; "" to rely on the configured repos
 cassandra_cqlsh_python_repo_uri: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
@@ -34,8 +138,14 @@ cassandra_cqlsh_python_repo_uri: https://ppa.launchpadcontent.net/deadsnakes/ppa
 # with links /usr/share/dsbulk and /usr/bin/dsbulk, like the packaged tools.
 cassandra_dsbulk_install: true
 cassandra_dsbulk_version: "1.11.2"
-# A mirror or a copy on the node (file:///path/to/dsbulk-x.y.z.tar.gz) works too
+# A mirror (with cassandra_install_url's credentials when on its host) or a
+# copy on the node (file:///path/to/dsbulk-x.y.z.tar.gz, also offline)
 cassandra_dsbulk_url: "https://github.com/datastax/dsbulk/releases/download/{{ cassandra_dsbulk_version }}/dsbulk-{{ cassandra_dsbulk_version }}.tar.gz"
 # Checksum of the tarball, for the default version: set it with the version
 # ("" = not checked)
 cassandra_dsbulk_checksum: "sha256:249e494c7820ee8f212c47531f77ddd6664404d78e4addadf16159d78c983e5e"
+
+# Download nothing (air-gapped hosts): Java and the Cassandra packages are
+# checked, not installed, and the role stops with the list of what is missing
+# (the cqlsh Python, jemalloc and dsbulk: a warning).
+cassandra_offline: false

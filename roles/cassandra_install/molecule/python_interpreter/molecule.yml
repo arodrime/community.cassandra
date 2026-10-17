@@ -1,0 +1,44 @@
+---
+# python3.11 next to the system python3 (Ubuntu 26.04: for cqlsh; Rocky 9: as
+# other tools install it): the second run must still run the modules
+# with /usr/bin/python3 (ansible-core 2.17+ discovery finds python3.11 first;
+# on Ubuntu 26.04 up to 2.19, whose list has no python3.14)
+driver:
+  name: docker
+platforms:
+  - name: ubuntu2604
+    image: geerlingguy/docker-ubuntu2604-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+  - name: rockylinux9
+    image: geerlingguy/docker-rockylinux9-ansible
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    user: root
+provisioner:
+  name: ansible
+  inventory:
+    host_vars:
+      rockylinux9:
+        cassandra_cqlsh_python: /usr/bin/python3.11
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - cleanup
+    - destroy

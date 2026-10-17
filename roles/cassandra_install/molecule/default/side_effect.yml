@@ -9,11 +9,14 @@
         mode: "0755"
       when: ansible_facts['os_family'] == 'Debian'
 
+    # Not where the role needs its own wrapper there (Ubuntu 26.04's python3 is
+    # past 5.0's cqlsh)
     - name: Install a cqlsh by hand in /usr/local/bin
       ansible.builtin.copy:
         content: "#!/bin/sh\n# installed by hand\nexec /usr/bin/cqlsh \"$@\"\n"
         dest: /usr/local/bin/cqlsh
         mode: "0755"
+      when: not (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] is version('26.04', '>='))
 
     # dsbulk from a copy on the node (offline nodes), with its checksum
     - name: Put an older dsbulk on the node
@@ -240,8 +243,22 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_install
 
-    # dsbulk on Java 11 too (what 4.x nodes run), then back to Java 17 only
+    # dsbulk on Java 11 too (what 4.x nodes run), then back to Java 17 only.
+    # Where a repository offers Java 11 (not EL 10)
+    - name: Look up a Java 11 package
+      ansible.builtin.shell: >-
+        {% if ansible_facts['os_family'] == 'Debian' %}
+        apt-cache policy openjdk-11-jre-headless | grep -q 'Candidate: [0-9]'
+        {% else %}
+        dnf -q repoquery {{ 'java-11-amazon-corretto-headless' if ansible_facts['distribution'] == 'Amazon'
+                            else 'java-11-openjdk-headless' }} | grep -q .
+        {% endif %}
+      register: _java11_available
+      changed_when: false
+      failed_when: false
+
     - name: Run dsbulk with Java 11
+      when: _java11_available.rc == 0
       vars:
         # as cassandra_java_package in defaults/main.yml
         _java11_package: >-

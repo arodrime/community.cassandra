@@ -1,0 +1,10 @@
+minor_changes:
+  - "cassandra_install - ``cassandra_package_version`` pins the Cassandra version (the packages are held on Debian and Ubuntu); the role never changes the version of an installed node."
+  - "cassandra_install - ``cassandra_install_method: packages`` installs the package files of ``cassandra_package_version`` downloaded from ``cassandra_install_url`` (a plain directory, for example on a mirror) instead of a repository; ``cassandra_install_username`` and ``cassandra_install_password`` for a mirror that needs them."
+  - "cassandra_install - ``cassandra_install_tools``, ``cassandra_install_jemalloc`` and ``cassandra_package_hold`` (all ``true`` by default) leave out cassandra-tools, jemalloc and the package hold. ``cassandra_packages`` is now a role default (``cassandra``) that the inventory can set, cassandra-tools being added by ``cassandra_install_tools``; the role's OS variables (``vars/Debian.yml``, ``vars/RedHat.yml``) set it before and won over the inventory."
+  - "cassandra_install - a package already installed (python3.11, Java, the Cassandra packages without a version, jemalloc, tar, gzip) is not installed again, so a run where nothing is to install does not need the repositories to answer."
+  - "cassandra_install - ``cassandra_cqlsh_python_manage: false`` leaves the Python cqlsh runs with as it is."
+  - "cassandra_install - stops with a clear message when no repository offers the Java package (EL 10 has no Java 11 or 17, give a tarball there) or the python3.11 cqlsh needs."
+  - "cassandra_install - argument specs for the role's variables."
+bugfixes:
+  - "cassandra_install, cassandra_repository - once python3.11 is installed next to the system python3 (for cqlsh), the next runs keep running the modules with ``/usr/bin/python3``, unless ``ansible_python_interpreter`` is set. ansible-core's interpreter discovery picked python3.11 first, which has no python3-debian."

@@ -1,0 +1,112 @@
+---
+# The rpm installs cqlshlib for python3.6 only: link it into the Pythons
+# cqlsh may run with (CASSANDRA-19206).
+- name: Find the site-packages of the Pythons cqlsh may use (RedHat)
+  ansible.builtin.command: "{{ item }} -c \"import sysconfig; print(sysconfig.get_paths()['purelib'])\""
+  register: cassandra_cqlsh_purelibs
+  changed_when: false
+  check_mode: false  # read-only
+  failed_when: false
+  loop: "{{ (['python3', _cassandra_cqlsh_python] | select | unique) }}"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_cqlsh_python_manage | bool
+
+- name: Ensure those site-packages exist (RedHat)
+  ansible.builtin.file:
+    path: "{{ item.stdout }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ cassandra_cqlsh_purelibs.results | default([]) }}"
+  loop_control:
+    label: "{{ item.stdout | default('') }}"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_cqlsh_python_manage | bool
+    - item.rc == 0
+    - item.stdout != '/usr/lib/python3.6/site-packages'
+
+- name: Check for the packaged cqlshlib (absent under --check before install)
+  ansible.builtin.stat:
+    path: /usr/lib/python3.6/site-packages/cqlshlib
+  register: cassandra_cqlshlib_src
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Link cqlshlib into them (RedHat)
+  ansible.builtin.file:
+    src: /usr/lib/python3.6/site-packages/cqlshlib
+    dest: "{{ item.stdout }}/cqlshlib"
+    state: link
+  loop: "{{ cassandra_cqlsh_purelibs.results | default([]) }}"
+  loop_control:
+    label: "{{ item.stdout | default('') }}"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_cqlsh_python_manage | bool
+    - cassandra_cqlshlib_src.stat.exists or not ansible_check_mode
+    - item.rc == 0
+    - item.stdout != '/usr/lib/python3.6/site-packages'
+
+- name: Check for visudo (sudo installed)
+  ansible.builtin.stat:
+    path: /usr/sbin/visudo
+  register: cassandra_visudo
+
+# cqlsh honours CQLSH_PYTHON: wrapper for scripts/cron (/usr/local/bin comes
+# first in PATH), profile.d for login shells, env_keep for sudo.
+- name: Point cqlsh at its Python
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    mode: "{{ item.mode }}"
+    validate: "{{ item.validate | default(omit) }}"
+  loop:
+    - dest: /usr/local/bin/cqlsh
+      mode: "0755"
+      content: |
+        #!/bin/sh
+        # Managed by Ansible (cassandra_install): run the package's cqlsh with a Python it supports
+        CQLSH_PYTHON="${CQLSH_PYTHON:-{{ _cassandra_cqlsh_python }}}" exec /usr/bin/cqlsh "$@"
+    - dest: /etc/profile.d/cqlsh.sh
+      mode: "0644"
+      content: |
+        # Managed by Ansible (cassandra_install)
+        export CQLSH_PYTHON={{ _cassandra_cqlsh_python }}
+    - dest: /etc/sudoers.d/cqlsh
+      mode: "0440"
+      validate: /usr/sbin/visudo -cf %s
+      content: |
+        # Managed by Ansible (cassandra_install)
+        Defaults env_keep += "CQLSH_PYTHON"
+  loop_control:
+    label: "{{ item.dest }}"
+  register: cassandra_cqlsh_wrapper
+  when:
+    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_python != ''
+    - item.dest != '/etc/sudoers.d/cqlsh' or cassandra_visudo.stat.exists
+    # offline without python3.11: leave cqlsh as it is rather than point it at nothing
+    - not (cassandra_offline | bool and _cassandra_cqlsh_python == '/usr/bin/python3.11'
+           and 'python3.11' not in ansible_facts['packages'] | default({}))
+
+# Only the files written by this role (marker), e.g. not a pip-installed cqlsh
+- name: Find the cqlsh Python pointers written by this role
+  ansible.builtin.command: >-
+    grep -lF "Managed by Ansible (cassandra_install)"
+    /usr/local/bin/cqlsh /etc/profile.d/cqlsh.sh /etc/sudoers.d/cqlsh
+  register: cassandra_cqlsh_pointers
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when:
+    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_python == ''
+
+- name: Remove the cqlsh Python pointers when not needed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ cassandra_cqlsh_pointers.stdout_lines | default([]) }}"
+  when:
+    - cassandra_cqlsh_python_manage | bool
+    - _cassandra_cqlsh_python == ''

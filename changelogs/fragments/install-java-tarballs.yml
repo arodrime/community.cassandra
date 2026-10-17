@@ -1,0 +1,4 @@
+minor_changes:
+  - "cassandra_install - Java from a tarball (``cassandra_java_tarball`` with its checksum, or ``cassandra_java_tarballs`` offering one per major version, with optional credentials) or already unpacked (``cassandra_java_home``) instead of a package. The tarball's ``release`` file must name ``cassandra_java_version``; an unpack left half done is unpacked again."
+  - "cassandra_install - refuses a ``cassandra_java_version`` the series does not support (4.0 and 4.1 - 8 or 11, 5.0 - 11 or 17), unless ``cassandra_java_allow_unsupported`` is true."
+  - "cassandra_install - makes the series' Java the default ``java`` when several are installed (``cassandra_java_set_default``), and ``cassandra_install_java: false`` leaves Java to other means."
