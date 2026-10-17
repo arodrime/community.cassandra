@@ -20,6 +20,7 @@ except ImportError:
         return template
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -127,8 +128,7 @@ def test_role_installs_the_inventory_packages():
 
 
 def test_role_switches_gate_the_tasks():
-    with open(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "install.yml")) as f:
-        tasks = yaml.safe_load(f)
+    tasks = load_tasks(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "install.yml"))
     todo, found = list(tasks), {}
     while todo:
         t = todo.pop(0)

@@ -1,0 +1,123 @@
+---
+# Minimal images drop man pages; the JDK postinst then fails on its man1 alternatives
+- name: Ensure man1 directory exists (Debian JDK postinst)
+  ansible.builtin.file:
+    path: /usr/share/man/man1
+    state: directory
+    mode: "0755"
+  when: ansible_facts['os_family'] == 'Debian'
+
+# EL 10 has Java 21 and 25 packages only, none the Cassandra series run on (11,
+# 17): say so, rather than let dnf fail on the package name
+- name: Look up the Java package in the enabled repos (RedHat)
+  ansible.builtin.command:
+    # --check: without the repositories cassandra_repository removes
+    argv: >-
+      {{ ['dnf', '-q', 'repoquery'] + _cassandra_repository_check_removed | default([]) | map('regex_replace', '^', '--disablerepo=') | list
+         + ['--whatprovides', cassandra_java_package] }}
+  register: cassandra_java_query
+  changed_when: false
+  check_mode: false  # read-only
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
+    - not cassandra_offline | bool
+    - cassandra_java_package not in _cassandra_install_before
+
+- name: Stop when no repository offers the Java package (RedHat)
+  ansible.builtin.assert:
+    that: cassandra_java_query.stdout | trim != ''
+    fail_msg: >-
+      No repository of {{ inventory_hostname }} offers {{ cassandra_java_package }} (Java {{ cassandra_java_version }},
+      for Cassandra {{ cassandra_version }}){{ ': EL 10 has no Java 11 or 17 package'
+      if ansible_facts['distribution_major_version'] == '10' and cassandra_java_version | string in ['11', '17'] else '' }}.
+      Set cassandra_java_tarball (or a cassandra_java_tarballs entry) to a Java {{ cassandra_java_version }} tarball (e.g. Eclipse Temurin), or
+      cassandra_java_home to a Java {{ cassandra_java_version }} installed by other means.
+    quiet: true
+  when: cassandra_java_query is not skipped
+
+# Debian 12 and later have no Java 11, which Cassandra 4.x needs: say so
+# rather than let apt fail with "No package matching"
+- name: Java package availability (Debian)
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
+    - not cassandra_offline | bool
+  vars:
+    # the names without a version (pkg=1.2) or a range
+    _cassandra_install_java_names: "{{ [cassandra_java_package] | flatten | map('regex_replace', '[=<>].*$', '') | list }}"
+  block:
+    - name: Look up the Java package in the apt repositories (Debian)
+      ansible.builtin.command: >-
+        apt-cache policy {{ _cassandra_install_java_names | map('quote') | join(' ') }}
+      environment:
+        LC_ALL: C  # its labels are translated
+      register: cassandra_java_policy
+      changed_when: false
+      check_mode: false  # read-only
+
+    - name: Check the Java package is installed or available (Debian)
+      ansible.builtin.assert:
+        that:
+          - _missing | length == 0
+        fail_msg: >-
+          {{ _missing | join(', ') }}: not in the apt repositories of this
+          {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+          Set cassandra_java_tarball (or a cassandra_java_tarballs entry) to a Java {{ cassandra_java_version }} tarball,
+          or add a repository with a Java {{ cassandra_java_version }} and set cassandra_java_package
+          to its package (e.g. temurin-{{ cassandra_java_version }}-jdk from Adoptium).
+        quiet: true
+      vars:
+        # a package block of apt-cache policy, installed or with a candidate
+        _available_re: '(?m)^(\S+):\n\s+Installed: (?:(?!\(none\))|\(none\)\n\s+Candidate: (?!\(none\)))'
+        _missing: >-
+          {{ _cassandra_install_java_names
+          | difference(cassandra_java_policy.stdout | regex_findall(_available_re)) }}
+
+# Installed already (by its exact name: a pinned version is never skipped): no
+# package manager call, which reads every repository's metadata and fails when
+# a mirror is down though nothing is to install
+- name: Install Java
+  ansible.builtin.package:
+    name: "{{ cassandra_java_package }}"
+    state: present
+  retries: 3
+  when:
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
+    - not cassandra_offline | bool
+    - "[cassandra_java_package] | flatten | reject('in', _cassandra_install_before) | list | length > 0"
+
+- name: Java from a tarball, or already unpacked (cassandra_java_home)
+  ansible.builtin.include_tasks: java_tarball.yml
+  when: _cassandra_java_home != ''
+
+# Cassandra and nodetool run the default java: with several JDKs installed
+# (e.g. while moving to another Java), it must be this one
+- name: List the installed Javas
+  ansible.builtin.command: "{{ 'update-alternatives' if ansible_facts['os_family'] == 'Debian' else 'alternatives' }} --display java"
+  register: cassandra_java_alternatives
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
+    - cassandra_java_set_default | bool
+
+- name: Make it the default java
+  community.general.alternatives:
+    name: java
+    path: "{{ _path }}"
+  vars:
+    _path: >-
+      {{ cassandra_java_alternatives.stdout_lines | default([])
+         | select('match', '^/\S*java-(1\.)?' ~ cassandra_java_version ~ '[.-]\S*/bin/java ')
+         | map('regex_replace', ' .*$', '') | first | default('') }}
+  when:
+    - cassandra_install_java | bool
+    - _cassandra_java_home == ''
+    - cassandra_java_set_default | bool
+    - _path != ''

@@ -11,6 +11,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -71,7 +72,8 @@ def test_timesync_package_under_the_disablerepo_defaults():
 
 
 def test_jemalloc_query_leaves_them_out():
-    argv = task(load("cassandra_install", "install.yml"), "Look up jemalloc in the enabled repos (RedHat)")["ansible.builtin.command"]["argv"]
+    argv = task(load_tasks(os.path.join(ROLES, "cassandra_install", "tasks", "install.yml")),
+                "Look up jemalloc in the enabled repos (RedHat)")["ansible.builtin.command"]["argv"]
     assert render(argv) == ["dnf", "-q", "repoquery", "jemalloc"]
     assert render(argv, _cassandra_repository_check_removed=["cassandra-50x"]) == [
         "dnf", "-q", "repoquery", "--disablerepo=cassandra-50x", "jemalloc"]

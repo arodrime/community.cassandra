@@ -12,6 +12,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -63,6 +64,5 @@ def test_role_leaves_the_system_java():
     with open(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "java_tarball.yml")) as f:
         link = task("Make it the system java", yaml.safe_load(f))
     assert "cassandra_java_set_default | bool" in link["when"]
-    with open(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "install.yml")) as f:
-        alt = task("Make it the default java", yaml.safe_load(f))
+    alt = task("Make it the default java", load_tasks(os.path.join(ROOT, "roles", "cassandra_install", "tasks", "install.yml")))
     assert "cassandra_java_set_default | bool" in alt["when"]
