@@ -18,7 +18,7 @@
 
 # ===========================================================
 - name: feature only from Cassandra 4.0 onwards
-  meta: end_play
+  ansible.builtin.meta: end_play
   when: cassandra_version[0] | int < 4
 
 - name: Set maxhintwindow with module - Ensure we start from 10800000
@@ -31,8 +31,41 @@
   register: maxhintwindow
 
 - name: Assert starting status of maxhintwindow
-  assert:
+  ansible.builtin.assert:
     that: "'Current max hint window: 10800000 ms' == maxhintwindow.stdout"
+
+- name: Read maxhintwindow with module (no value)
+  community.cassandra.cassandra_maxhintwindow:
+  register: read_mode
+
+- name: Assert the module returned the starting maxhintwindow and changed nothing
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 10800000
+      - read_mode.unit == 'ms'
+      - read_mode.current_raw == maxhintwindow.stdout
+
+- name: Set maxhintwindow with module and get the value before the change
+  community.cassandra.cassandra_maxhintwindow:
+    value: 30800000
+  register: set_mode
+
+- name: Assert the set returned the value before the change
+  ansible.builtin.assert:
+    that:
+      - set_mode.changed == True
+      - set_mode.current == read_mode.current
+
+- name: Read maxhintwindow again with module
+  community.cassandra.cassandra_maxhintwindow:
+  register: read_mode
+
+- name: Assert the module read the new maxhintwindow
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 30800000
 
 - name: Set maxhintwindow with module
   community.cassandra.cassandra_maxhintwindow:
@@ -44,7 +77,7 @@
   register: maxhintwindow
 
 - name: Assert maxhintwindow is 20800000
-  assert:
+  ansible.builtin.assert:
     that: "'Current max hint window: 20800000 ms' == maxhintwindow.stdout"
 
 - name: Set throughput to 40800000
@@ -57,7 +90,7 @@
   register: maxhintwindow
 
 - name: Assert maxhintwindow is 40800000 ms
-  assert:
+  ansible.builtin.assert:
     that: "'Current max hint window: 40800000 ms' == maxhintwindow.stdout"
 
 - name: Test module with check_mode = true
@@ -68,7 +101,7 @@
   register: maxhintwindow
 
 - name: Assert maxhintwindow has changed (check_mode)
-  assert:
+  ansible.builtin.assert:
     that: maxhintwindow.changed == True
 
 - name: Get maxhintwindow
@@ -76,7 +109,7 @@
   register: maxhintwindow
 
 - name: Assert maxhintwindow is still 40800000 ms'
-  assert:
+  ansible.builtin.assert:
     that: "'Current max hint window: 40800000 ms' == maxhintwindow.stdout"
 
 - name: Set maxhintwindow back to 10800000 ms
@@ -89,7 +122,7 @@
   register: maxhintwindow
 
 - name: Assert maxhintwindow is again 10800000 ms
-  assert:
+  ansible.builtin.assert:
     that: "'Current max hint window: 10800000 ms' == maxhintwindow.stdout"
 
 - name: Set maxhintwindow 10800000 ms should not change
@@ -103,12 +136,12 @@
   register: maxhintwindow
 
 - name: Assert maxhintwindow is still 10800000 ms and module reports no change
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current max hint window: 10800000 ms' == maxhintwindow.stdout"
       - module_nochange.changed == False
 
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Set maxhintwindow 2048 KB/s when auth is enabled
@@ -126,7 +159,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert maxhintwindow is again 20800000 ms
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current max hint window: 20800000 ms' == maxhintwindow.stdout"
       - maxhintwindow.changed == True
@@ -146,7 +179,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert maxhintwindow is again  10800000 ms
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Current max hint window: 10800000 ms' == maxhintwindow.stdout"
       - maxhintwindow.changed == True
@@ -163,7 +196,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert failed login
-  assert:
+  ansible.builtin.assert:
     that:
       - login_status.failed == True
       - "'Invalid username or password' in login_status.stderr"
@@ -179,6 +212,6 @@
   when: cassandra_auth_tests == True
 
 - name: Assert no such file
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Error executing command' in nodetool_path_error.msg or 'No such file or directory' in nodetool_path_error.msg"

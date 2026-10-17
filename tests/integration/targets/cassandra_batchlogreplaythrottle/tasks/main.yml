@@ -18,7 +18,7 @@
 
 # ===========================================================
 - name: feature only from Cassandra 4.0 onwards
-  meta: end_play
+  ansible.builtin.meta: end_play
   when: cassandra_version[0] | int < 4
 
 - name: Set batchlogreplaythrottle with module - Ensure we start from 1024
@@ -31,8 +31,41 @@
   register: batchlogreplaythrottle
 
 - name: Assert starting status of batchlogreplaythrottle
-  assert:
+  ansible.builtin.assert:
     that: "'Batchlog replay throttle: 1024 KB/s' == batchlogreplaythrottle.stdout"
+
+- name: Read batchlogreplaythrottle with module (no value)
+  community.cassandra.cassandra_batchlogreplaythrottle:
+  register: read_mode
+
+- name: Assert the module returned the starting batchlogreplaythrottle and changed nothing
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 1024
+      - read_mode.unit == 'KB/s'
+      - read_mode.current_raw == batchlogreplaythrottle.stdout
+
+- name: Set batchlogreplaythrottle with module and get the value before the change
+  community.cassandra.cassandra_batchlogreplaythrottle:
+    value: 3072
+  register: set_mode
+
+- name: Assert the set returned the value before the change
+  ansible.builtin.assert:
+    that:
+      - set_mode.changed == True
+      - set_mode.current == read_mode.current
+
+- name: Read batchlogreplaythrottle again with module
+  community.cassandra.cassandra_batchlogreplaythrottle:
+  register: read_mode
+
+- name: Assert the module read the new batchlogreplaythrottle
+  ansible.builtin.assert:
+    that:
+      - read_mode.changed == False
+      - read_mode.current == 3072
 
 - name: Set batchlogreplaythrottle with module
   community.cassandra.cassandra_batchlogreplaythrottle:
@@ -44,7 +77,7 @@
   register: batchlogreplaythrottle
 
 - name: Assert batchlogreplaythrottle is 2048
-  assert:
+  ansible.builtin.assert:
     that: "'Batchlog replay throttle: 2048 KB/s' == batchlogreplaythrottle.stdout"
 
 - name: Set throughput to 4092
@@ -57,7 +90,7 @@
   register: batchlogreplaythrottle
 
 - name: Assert batchlogreplaythrottle is 4092 KB/s
-  assert:
+  ansible.builtin.assert:
     that: "'Batchlog replay throttle: 4092 KB/s' == batchlogreplaythrottle.stdout"
 
 - name: Test module with check_mode = true
@@ -68,7 +101,7 @@
   register: batchlogreplaythrottle
 
 - name: Assert batchlogreplaythrottle has changed (check_mode)
-  assert:
+  ansible.builtin.assert:
     that: batchlogreplaythrottle.changed == True
 
 - name: Get batchlogreplaythrottle
@@ -76,7 +109,7 @@
   register: batchlogreplaythrottle
 
 - name: Assert batchlogreplaythrottle is still 4092 KB/s'
-  assert:
+  ansible.builtin.assert:
     that: "'Batchlog replay throttle: 4092 KB/s' == batchlogreplaythrottle.stdout"
 
 - name: Set batchlogreplaythrottle back to 1024 KB/s
@@ -89,7 +122,7 @@
   register: batchlogreplaythrottle
 
 - name: Assert batchlogreplaythrottle is again 1024 KB/s
-  assert:
+  ansible.builtin.assert:
     that: "'Batchlog replay throttle: 1024 KB/s' == batchlogreplaythrottle.stdout"
 
 - name: Set batchlogreplaythrottle 1024 KB/s should not change
@@ -103,12 +136,12 @@
   register: batchlogreplaythrottle
 
 - name: Assert batchlogreplaythrottle is still 1024 KB/s and module reports no change
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Batchlog replay throttle: 1024 KB/s' == batchlogreplaythrottle.stdout"
       - module_nochange.changed == False
 
-- include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
+- ansible.builtin.include_tasks: ../../setup_cassandra/tasks/cassandra_auth.yml
   when: cassandra_auth_tests == True
 
 - name: Set batchlogreplaythrottle 2048 KB/s when auth is enabled
@@ -126,7 +159,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert batchlogreplaythrottle is again 2048 KB/s
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Batchlog replay throttle: 2048 KB/s' == batchlogreplaythrottle.stdout"
       - batchlogreplaythrottle.changed == True
@@ -146,7 +179,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert batchlogreplaythrottle is again 1024 KB/s 
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Batchlog replay throttle: 1024 KB/s' == batchlogreplaythrottle.stdout"
       - batchlogreplaythrottle.changed == True
@@ -163,7 +196,7 @@
   when: cassandra_auth_tests == True
 
 - name: Assert failed login
-  assert:
+  ansible.builtin.assert:
     that:
       - login_status.failed == True
       - "'Invalid username or password' in login_status.stderr"
@@ -179,6 +212,6 @@
   when: cassandra_auth_tests == True
 
 - name: Assert no such file
-  assert:
+  ansible.builtin.assert:
     that:
       - "'Error executing command' in nodetool_path_error.msg or 'No such file or directory' in nodetool_path_error.msg"
