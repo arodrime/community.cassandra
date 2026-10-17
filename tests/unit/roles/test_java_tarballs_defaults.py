@@ -94,3 +94,9 @@ def test_entry_with_a_user_only_gets_no_mirror_password():
     mirror = {"17": {"url": "https://mirror.example.com/java/jdk-17.tar.gz", "username": "java"}}
     resolved = resolve(cassandra_java_tarballs=mirror, cassandra_java_version="17")
     assert (resolved["cassandra_java_tarball_username"], resolved["cassandra_java_tarball_password"]) == ("java", "")
+
+
+def test_tarball_over_http_or_another_port_gets_no_mirror_credentials():
+    for url in ("http://mirror.example.com/java/jdk-17.tar.gz", "https://mirror.example.com:8443/java/jdk-17.tar.gz"):
+        resolved = resolve(cassandra_java_tarball=url)
+        assert (resolved["cassandra_java_tarball_username"], resolved["cassandra_java_tarball_password"]) == ("", ""), url

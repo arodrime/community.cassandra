@@ -41,7 +41,7 @@ argument_specs:
         description:
           - User for O(cassandra_install_url) when it needs credentials to read (an
             account, or a service account with a token as O(cassandra_install_password)).
-            Used for the repository, and for O(cassandra_repository_key_url) when it is on the same host.
+            Used for the repository, and for O(cassandra_repository_key_url) when it is on the same server (scheme, host and port).
             Defaults to O(cassandra_repository_username).
       cassandra_install_password:
         type: str

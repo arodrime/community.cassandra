@@ -7,10 +7,10 @@
   vars:
     _cassandra_install_dsbulk_home: "/usr/share/dsbulk-{{ cassandra_dsbulk_version }}"
     _from_network: "{{ cassandra_dsbulk_url is not match('file://') }}"
-    # the mirror's credentials, when dsbulk is on the mirror's host
+    # the mirror's credentials, when dsbulk is on the mirror (same scheme, host and port)
     _on_mirror: >-
-      {{ cassandra_dsbulk_url is match('https?://') and cassandra_install_username != ''
-         and (cassandra_dsbulk_url | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
+      {{ cassandra_install_username != ''
+         and cassandra_dsbulk_url | community.cassandra.cassandra_same_origin(cassandra_install_url) }}
   block:
     # It names a directory that is replaced or removed: a plain version only
     - name: Check the dsbulk version

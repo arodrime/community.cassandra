@@ -204,13 +204,13 @@ argument_specs:
         type: str
         description:
           - User for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_username) when the
-            tarball is on the same host as O(cassandra_install_url), else none.
+            tarball is on the same server (scheme, host and port) as O(cassandra_install_url), else none.
       cassandra_java_tarball_password:
         type: str
         no_log: true
         description:
           - Password or token for the tarball URL. Defaults to the O(cassandra_java_tarballs) entry's, else to O(cassandra_install_password)
-            when the tarball is on the same host as O(cassandra_install_url), else none.
+            when the tarball is on the same server (scheme, host and port) as O(cassandra_install_url), else none.
       cassandra_java_set_default:
         type: bool
         default: true
