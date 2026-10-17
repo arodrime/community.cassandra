@@ -7,7 +7,8 @@ cassandra_disk_mount_targets: the mount points of the tuned directories.
 cassandra_disk_state: what the role read of each device under sysfs.
 cassandra_disk_changes: what is to change on them.
 cassandra_disk_udev_rules: the lines of the role's udev rule.
-cassandra_disk_lv_read_ahead: the LVM read-ahead (lvchange --readahead) of a read-ahead in KB.
+cassandra_disk_lv_read_ahead (a function, the changes' own): the LVM read-ahead (lvchange --readahead) of a
+    read-ahead in KB.
 cassandra_disk_tuned_conflict: a warning when the active tuned profile sets another read-ahead.
 cassandra_disk_tuned_profile: the tuned profile that keeps the active one off the Cassandra devices.
 cassandra_disk_summary: how the data disks of the nodes are tuned, one summary for the run."""
@@ -468,7 +469,6 @@ class FilterModule(object):
             "cassandra_disk_state": cassandra_disk_state,
             "cassandra_disk_changes": cassandra_disk_changes,
             "cassandra_disk_udev_rules": cassandra_disk_udev_rules,
-            "cassandra_disk_lv_read_ahead": cassandra_disk_lv_read_ahead,
             "cassandra_disk_tuned_conflict": cassandra_disk_tuned_conflict,
             "cassandra_disk_tuned_profile": cassandra_disk_tuned_profile,
             "cassandra_disk_summary": cassandra_disk_summary,
