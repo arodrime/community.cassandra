@@ -90,7 +90,13 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
     """check: --check; asks: false when a question would be asked but
     cassandra_operation_confirm is false (said at the end); session: the
     tmux/screen warning, if any; asked_by: the playbook that showed the
-    whole plan and asked already (topology), said at the end."""
+    whole plan and asked already (topology), said at the end.
+    Input: spec (see the module's doc); output: the text, one string. e.g. ({operation: reset_node, cluster:
+    my_cluster, summary: "empty node7", blocks: [{title: "node7  10.0.0.7", lines: ["Cassandra stopped"]}], warnings:
+    [{label: "data loss", text: "node7: 12 entries DELETED", real_run: True}]}) -> the lines "reset_node on cluster
+    'my_cluster': empty node7", "", "  node7  10.0.0.7", "    Cassandra stopped", "", "WARNING - data loss: node7: 12
+    entries DELETED", joined; under check, "(A real run would also warn about: data loss.)" and the --check line
+    instead of the warning."""
     spec = spec or {}
     header = str(spec.get("operation") or "")
     if spec.get("cluster"):
@@ -147,6 +153,9 @@ def cassandra_screen(spec, check=False, asks=True, session="", asked_by=""):
 
 
 def cassandra_screen_title(name, preflight=None):
+    """A node's name, its preflight facts (address, cassandra_dc, cassandra_rack) -> the title of its block, what
+    is known of it. e.g. ("node7", {address: "10.0.0.7", cassandra_dc: "dc1", cassandra_rack: "rack1"}) ->
+    "node7  10.0.0.7  dc1 / rack1"."""
     p = preflight or {}
     parts = [str(name), str(p.get("address") or "")]
     if p.get("cassandra_dc"):
@@ -157,7 +166,11 @@ def cassandra_screen_title(name, preflight=None):
 def cassandra_reset_warnings(plans):
     """plans: [{name, plan}], plan: reset_node_plan.yml's _cassandra_node_reset_plan
     ({stop, disable, delete: [paths], dirs: [lines]}). A node with nothing to
-    delete but a Cassandra to stop or disable gets a "reset" warning instead."""
+    delete but a Cassandra to stop or disable gets a "reset" warning instead.
+    Output: [{label, real_run, text}] for cassandra_screen. e.g. [{name: node7, plan: {stop: True, delete: [2
+    paths], dirs: [...]}}, {name: node8, plan: {disable: True}}] -> [{label: "data loss", real_run: True, text: ["node7:
+    Cassandra stopped, then 2 entries DELETED for good (no snapshot, no backup), in:", {pre: [...]}]}, {label: "reset",
+    real_run: True, text: "node8: kept from starting at boot first (nothing to delete)"}]."""
     warnings = []
     for item in plans or []:
         plan = item.get("plan") or {}
@@ -288,7 +301,12 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
     group, seed: in the seed lists the nodes run with (dropped before it leaves); ring: cassandra_status' cluster_status, read from a node that
     stays; keyspaces: cassandra_keyspaces; peer: the node that stays, which
     the ring is checked from; replication_problems: the ones cassandra_decommission_force
-    lets through."""
+    lets through.
+    Output: a cassandra_screen spec {operation, summary, intro, blocks: [{title, lines, step}], after, warnings}.
+    e.g. ([{name: node3, state: normal}], node1 to node3 of dc1/r1, ring: <their loads>, peer="node1") -> {summary:
+    "remove node3", blocks: [{title: "node3  10.0.0.3  dc1 / r1", lines: ["not a seed", "load 1 GiB, owns 33.3%", "data
+    goes to the other nodes of dc1: node1, node2", ...], step: {node: node3, dc: dc1, rack: r1, text: "load 1 GiB, owns
+    33.3% -> node1, node2"}}], after: ["Afterwards dc1 keeps 2 nodes: node1, node2.", ...], ...}."""
     ring = ring or {}
     keyspaces = keyspaces or {}
     by_name = dict((n["name"], n) for n in nodes)
