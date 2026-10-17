@@ -1210,15 +1210,7 @@ def _prepare_texts(node, check):
         }.get(repository, "ok (already set)")
     ran = list(node.get("ran") or [])
     if "cassandra_install" in ran:
-        java = node.get("java") or {}
-        others = [_package(i) for i in items if _package(i) not in ("", "cassandra", str(java.get("package", "")))]
-        texts["install"] = _package_step("cassandra", node.get("cassandra"), items, check, also=others)
-        if not _on(java.get("managed", True)):
-            texts["java"] = "not managed (cassandra_install_java: false)"
-        elif java.get("home"):
-            texts["java"] = "%s from %s" % (java.get("version") or java.get("series", ""), java["home"])
-        elif java.get("package"):
-            texts["java"] = _package_step(java["package"], java.get("version"), items, check, label="")
+        texts.update(_install_texts(node, items, check))
     if ran:  # no report from cassandra_linux: it left the OS as it is
         if "cassandra_linux" in ran:
             texts["os tuning"] = _changes(int(node.get("os") or 0), check)
@@ -1226,53 +1218,84 @@ def _prepare_texts(node, check):
             texts["os tuning"] = "not managed (cassandra_linux_manage: false)"
     disks = node.get("disks") or {}
     if disks:
-        kb = "read-ahead %s KB " % disks["kb"] if str(disks.get("kb", "")) not in ("", "none") else ""
-        if _on(disks.get("changed")):
-            text = kb + ("would be set" if check else "set now")
-        elif disks.get("brief"):
-            text = kb + "already set"
-        else:
-            text = "nothing to tune"
-        if disks.get("warnings"):
-            text += " (%s below)" % plural(len(disks["warnings"]), "warning")
-        elif disks.get("info"):
-            text += " (see below)"
-        texts["data disks"] = text.strip()
+        texts["data disks"] = _disks_text(disks, check)
     if "cassandra_config" in ran:
-        config = list(node.get("config") or [])
-        templated = next((i for i in config if i.get("item") == "config files"), None)
-        files = [i for i in config if _FILE_CHANGED.search(str(i.get("after", "")))]
-        other = [i for i in config if i is not templated and i not in files]
-        if templated is not None:
-            text = "would write the files (%s)" % str(templated.get("before", "")).lower()
-        elif files:
-            text = ("would write %s" if check else "%s written") % plural(len(files), "file")
-        else:
-            text = "" if other else "ok (unchanged)"
-        if other:  # owners, modes, the RedHat conf link
-            text += (", " if text else "") + ("would make %s" if check else "%s") % plural(len(other), "other change")
-        texts["config"] = text
+        texts["config"] = _config_text(list(node.get("config") or []), check)
     for step, switch in (("firewall", "cassandra_manage_firewall"), ("medusa", "cassandra_medusa_enabled")):
         value = node.get(step)
         if value is None or not ran:
             continue
-        if value == "off":
-            texts[step] = "off (%s: false)" % switch
-        elif value == "not managed":  # turned on, the role's own switch off (the firewall's)
-            texts[step] = "not managed" + (" (cassandra_firewall_manage: false)" if step == "firewall" else "")
-        elif not isinstance(value, str):
-            changes = list(value)
-            medusa = next((i for i in changes if i.get("item") == "Medusa"), None)
-            if medusa is not None:
-                text = ("would install Medusa %s" if check else "Medusa %s installed now") % medusa.get("after")
-                texts[step] = text + ("" if len(changes) == 1 else " (+%s)" % plural(len(changes) - 1, "change"))
-            else:
-                texts[step] = _changes(len(changes), check)
+        text = _switched_text(step, value, switch, check)
+        if text is not None:
+            texts[step] = text
     seeds = node.get("seeds")
     if seeds:
         seeds = [s.strip() for s in seeds.split(",")] if isinstance(seeds, str) else list(seeds)
         texts["seeds"] = ("would join with " if check else "joins with ") + ", ".join(seeds)
     return texts
+
+
+def _install_texts(node, items, check):
+    """The install and java steps of a node cassandra_install ran on."""
+    texts = {}
+    java = node.get("java") or {}
+    others = [_package(i) for i in items if _package(i) not in ("", "cassandra", str(java.get("package", "")))]
+    texts["install"] = _package_step("cassandra", node.get("cassandra"), items, check, also=others)
+    if not _on(java.get("managed", True)):
+        texts["java"] = "not managed (cassandra_install_java: false)"
+    elif java.get("home"):
+        texts["java"] = "%s from %s" % (java.get("version") or java.get("series", ""), java["home"])
+    elif java.get("package"):
+        texts["java"] = _package_step(java["package"], java.get("version"), items, check, label="")
+    return texts
+
+
+def _disks_text(disks, check):
+    """The data disks step: cassandra_linux's disk summary."""
+    kb = "read-ahead %s KB " % disks["kb"] if str(disks.get("kb", "")) not in ("", "none") else ""
+    if _on(disks.get("changed")):
+        text = kb + ("would be set" if check else "set now")
+    elif disks.get("brief"):
+        text = kb + "already set"
+    else:
+        text = "nothing to tune"
+    if disks.get("warnings"):
+        text += " (%s below)" % plural(len(disks["warnings"]), "warning")
+    elif disks.get("info"):
+        text += " (see below)"
+    return text.strip()
+
+
+def _config_text(config, check):
+    """The config step: cassandra_config's change items."""
+    templated = next((i for i in config if i.get("item") == "config files"), None)
+    files = [i for i in config if _FILE_CHANGED.search(str(i.get("after", "")))]
+    other = [i for i in config if i is not templated and i not in files]
+    if templated is not None:
+        text = "would write the files (%s)" % str(templated.get("before", "")).lower()
+    elif files:
+        text = ("would write %s" if check else "%s written") % plural(len(files), "file")
+    else:
+        text = "" if other else "ok (unchanged)"
+    if other:  # owners, modes, the RedHat conf link
+        text += (", " if text else "") + ("would make %s" if check else "%s") % plural(len(other), "other change")
+    return text
+
+
+def _switched_text(step, value, switch, check):
+    """The firewall or medusa step: off, not managed, or its change items; None for another text."""
+    if value == "off":
+        return "off (%s: false)" % switch
+    if value == "not managed":  # turned on, the role's own switch off (the firewall's)
+        return "not managed" + (" (cassandra_firewall_manage: false)" if step == "firewall" else "")
+    if isinstance(value, str):
+        return None
+    changes = list(value)
+    medusa = next((i for i in changes if i.get("item") == "Medusa"), None)
+    if medusa is not None:
+        text = ("would install Medusa %s" if check else "Medusa %s installed now") % medusa.get("after")
+        return text + ("" if len(changes) == 1 else " (+%s)" % plural(len(changes) - 1, "change"))
+    return _changes(len(changes), check)
 
 
 def prepare_lines(hosts, check=False):
