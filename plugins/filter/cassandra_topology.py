@@ -30,10 +30,6 @@ def _ring_entries(ring):
     return out
 
 
-def _plural(count, word):
-    return "%d %s%s" % (count, word, "" if count == 1 else "s")
-
-
 def _seed_entries(seeds):
     """cassandra_seeds (a list or a comma-separated string) -> its entries."""
     if not seeds:
@@ -278,8 +274,8 @@ def cassandra_topology_plan(hosts, ring=None, token_auto="false", seeds=None):
             large_removals.append("%s removed whole (%s): no node left there" % (dc, out.nodes(names)))
         elif len(names) * 2 > size:
             large_removals.append("%d of %s of %s removed (%s): %s left to hold their data"
-                                  % (len(names), _plural(size, "node"), dc, out.nodes(names),
-                                     _plural(size - len(names), "node")))
+                                  % (len(names), out.plural(size, "node"), dc, out.nodes(names),
+                                     out.plural(size - len(names), "node")))
 
     # the seeds: cassandra_seeds applied live on every node once the adds are done, before the removals
     # a host to add may have a cassandra.yaml of its own (a package's): not a list the cluster runs with
