@@ -452,4 +452,3 @@ def move_order(ring, moves, size):
         pos[ready[0]] = ready[2] % size
         order.append(ready)
     return order
-
