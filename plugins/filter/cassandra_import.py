@@ -3152,6 +3152,135 @@ def _clusters_groups(text, cluster):
     return bool(groups) and all(g == cluster or g.startswith(cluster + "_") for g in groups)
 
 
+def _file_header(path, text, password, old_layout):
+    """The cluster a file's first line names (a vaulted one: once decrypted with password), "" for an earlier
+    release's file without that line laid out as the import writes it (its path added to old_layout), None for
+    none -> the cluster's name, "" or None."""
+    if text is not None and text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its line
+        text = _decrypt(text, password)
+    name = written_for(text)
+    if name is None and text is not None and _OWNABLE.match(path) and _vars_dir(path) != "group_vars/all" \
+            and old_import(text):
+        old_layout.add(path)
+        return ""  # an earlier release's, without its first line
+    return name
+
+
+def _inventory_files(headers, found, cluster, adopt, old_layout):
+    """The inventory files of the dir: the clusters' hosts files (the import's) and the user's own -> (clusters:
+    {path: (cluster, its names)}, own: {path: its names}, conflicts)."""
+    clusters, own, conflicts = {}, {}, []
+    if cluster in ("all", "ungrouped"):
+        conflicts.append("cluster group %s (from the cluster name): a group Ansible takes on its own,"
+                         " not one cluster's of an inventory dir" % cluster)
+    for path, name in sorted(headers.items()):
+        if any(p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)
+               for p in path.split("/")):
+            continue  # not read by Ansible as inventory
+        if name is None or path in old_layout and "/" not in path:
+            if path == cluster + ".yml" and found[path] is not None and (
+                    _cluster_tree(found[path], cluster) or adopt and _clusters_groups(found[path], cluster)):
+                clusters[path] = (cluster, _yaml_names(found[path]))  # replaced, the old one kept as <file>.<date>~
+            elif found[path] is not None:
+                own[path] = _own_names(path, found[path])
+        elif "/" in path or (path == "hosts.yml" and name != "hosts"):  # an import into a dir of its own
+            conflicts.append("%s: an import's hosts file of a dir of its own (an earlier layout), read by Ansible too:"
+                             " move it out of the inventory dir" % path)
+        elif path.endswith(".yml"):
+            clusters[path] = (name or path[:-len(".yml")], _yaml_names(found[path]))
+    return clusters, own, conflicts
+
+
+def _same_group_conflicts(found, headers, cluster, cluster_name):
+    """The same group for another cluster (names that differ only by case or punctuation): the cluster name of
+    group_vars/<cluster group>/main.yml (the import's or no one's) -> [conflict]."""
+    previous = "group_vars/%s/main.yml" % cluster
+    if cluster_name is None or found.get(previous) is None or headers[previous] not in (cluster, "", None):
+        return []
+    try:
+        data = yaml.load(found[previous], Loader=_TagsLoader)  # nosec B506: the loader builds no object
+    except yaml.YAMLError:
+        data = None
+    theirs = data.get("cassandra_cluster_name") if isinstance(data, dict) else None
+    templated = not isinstance(theirs, _Unsafe) and re.search(r"\{[{%]", str(theirs))  # the user's: not told
+    if theirs is not None and str(theirs) != str(cluster_name) and not templated:
+        return ["%s: cluster '%s', not '%s' (two clusters, one group %s)" % (previous, theirs, cluster_name, cluster)]
+    return []
+
+
+# What tells whose a file of the inventory dir is: its first line's cluster (headers), the clusters' hosts files,
+# the files laid out as an earlier release wrote them, this cluster's group, the paths this import writes, adopt,
+# the groups and hosts it writes (new_names)
+_Owners = namedtuple("_Owners", "headers clusters old_layout cluster written adopt new_names")
+
+
+def _named_by(owners, path, new=False):
+    """The clusters whose hosts file names the group or host of a group_vars or host_vars path (new: the
+    hosts this import writes count as this cluster's hosts file)."""
+    parts = path.split("/")
+    if len(parts) < 2 or parts[0] not in ("group_vars", "host_vars"):
+        return set()
+    item = os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1]  # group_vars/<group>.yml too
+    pick = 0 if parts[0] == "group_vars" else 1
+    return set(c for c, names in ([(owners.cluster, owners.new_names)] if new else []) + list(owners.clusters.values())
+               if item in names[pick])
+
+
+def _owner(owners, path):
+    """Whose a file is: a cluster's name, "" when not known (an earlier import's), None for no import's."""
+    name = owners.headers[path]
+    if name or name is None:
+        return name
+    if path in owners.clusters:  # a hosts file
+        return owners.clusters[path][0]
+    if "/" not in path:
+        return owners.cluster if path in owners.written else ""
+    found = _named_by(owners, path)
+    if not found and path in owners.old_layout:  # from before the first line (one cluster a dir): the hosts written
+        found = _named_by(owners, path, new=True)
+    if not found and owners.adopt and (path in owners.written or _named_by(owners, path, new=True)):
+        return owners.cluster
+    return found.pop() if len(found) == 1 else ""
+
+
+def _by_owner(owners, paths):
+    """The files sorted by whose they are -> (stale, kept, unsure, conflicts: the paths this import writes over
+    another's, adoptable: those of them adopt solves)."""
+    cluster, written = owners.cluster, owners.written
+    stale, kept, unsure, conflicts, adoptable = [], [], [], [], []
+    for path in sorted(paths):
+        who = _owner(owners, path)
+        if path in written:
+            if who not in (None, cluster):
+                conflicts.append("%s: written for %s" % (path, who) if who
+                                 else "%s: written by an earlier import, not known to be %s's" % (path, cluster))
+                if not who and not _named_by(owners, path):  # (named by several clusters' hosts files: not solved)
+                    adoptable.append(conflicts[-1])
+        elif who is None:
+            if not _named_by(owners, path) - set([cluster]):  # not in another cluster's group_vars or host_vars
+                kept.append(path)
+        elif who == cluster:
+            (stale if _OWNABLE.match(path) else kept).append(path)
+        elif who == "":
+            unsure.append(path)
+    return stale, kept, unsure, conflicts, adoptable
+
+
+def _shared_names(inventory, clusters, own, found, cluster):
+    """The groups and hosts this import writes that another cluster's hosts file or a file of the user's has too ->
+    (conflicts, adoptable: those of this cluster's own hosts file of no import)."""
+    conflicts, adoptable = [], []
+    groups, hosts = _inventory_names(inventory)
+    for path, (who, (their_groups, their_hosts)) in sorted(clusters.items()):
+        if who != cluster:
+            conflicts += ["%s: in %s too" % (name, path) for name in sorted((groups & their_groups) | (hosts & their_hosts))]
+    for path, (their_groups, dummy) in sorted(own.items()):  # a host may be in groups of the user's too
+        conflicts += ["group %s: in %s too" % (name, path) for name in sorted(groups & their_groups)]
+        if path == cluster + ".yml" and _clusters_groups(found[path] or "", cluster):  # its hosts file
+            adoptable += conflicts[len(conflicts) - len(groups & their_groups):]
+    return conflicts, adoptable
+
+
 def cassandra_inventory_leftovers(paths, read, written, cluster, password="", inventory=None, cluster_name=None,
                                   adopt=False):
     """paths: the files in the inventory dir, which holds every cluster, each
@@ -3186,104 +3315,17 @@ def cassandra_inventory_leftovers(paths, read, written, cluster, password="", in
     <file>.<date>~ when removed (known by their layout only, or adopted)."""
     found = dict((p, read.get(p)) for p in paths)
     old_layout = set()
-
-    def header(path):
-        text = found.get(path)
-        if text is not None and text.startswith("$ANSIBLE_VAULT"):  # the import's only if it decrypts to its line
-            text = _decrypt(text, password)
-        name = written_for(text)
-        if name is None and text is not None and _OWNABLE.match(path) and _vars_dir(path) != "group_vars/all" \
-                and old_import(text):
-            old_layout.add(path)
-            return ""  # an earlier release's, without its first line
-        return name
-
-    headers = dict((p, header(p)) for p in found)
-    # the clusters' hosts files (the import's), by cluster, and the user's own inventory files
-    clusters, own, conflicts = {}, {}, []
-    if cluster in ("all", "ungrouped"):
-        conflicts.append("cluster group %s (from the cluster name): a group Ansible takes on its own,"
-                         " not one cluster's of an inventory dir" % cluster)
-    for path, name in sorted(headers.items()):
-        if any(p in ("group_vars", "host_vars", "vars_plugins") or p.startswith(".") or _INVENTORY_IGNORED.search(p)
-               for p in path.split("/")):
-            continue  # not read by Ansible as inventory
-        if name is None or path in old_layout and "/" not in path:
-            if path == cluster + ".yml" and found[path] is not None and (
-                    _cluster_tree(found[path], cluster) or adopt and _clusters_groups(found[path], cluster)):
-                clusters[path] = (cluster, _yaml_names(found[path]))  # replaced, the old one kept as <file>.<date>~
-            elif found[path] is not None:
-                own[path] = _own_names(path, found[path])
-        elif "/" in path or (path == "hosts.yml" and name != "hosts"):  # an import into a dir of its own
-            conflicts.append("%s: an import's hosts file of a dir of its own (an earlier layout), read by Ansible too:"
-                             " move it out of the inventory dir" % path)
-        elif path.endswith(".yml"):
-            clusters[path] = (name or path[:-len(".yml")], _yaml_names(found[path]))
-    # the same group for another cluster (names that differ only by case or punctuation)
-    previous = "group_vars/%s/main.yml" % cluster
-    if cluster_name is not None and found.get(previous) is not None and headers[previous] in (cluster, "", None):
-        try:
-            data = yaml.load(found[previous], Loader=_TagsLoader)  # nosec B506: the loader builds no object
-        except yaml.YAMLError:
-            data = None
-        theirs = data.get("cassandra_cluster_name") if isinstance(data, dict) else None
-        templated = not isinstance(theirs, _Unsafe) and re.search(r"\{[{%]", str(theirs))  # the user's: not told
-        if theirs is not None and str(theirs) != str(cluster_name) and not templated:
-            conflicts.append("%s: cluster '%s', not '%s' (two clusters, one group %s)" % (previous, theirs, cluster_name, cluster))
-
+    headers = dict((p, _file_header(p, found.get(p), password, old_layout)) for p in found)
+    clusters, own, conflicts = _inventory_files(headers, found, cluster, adopt, old_layout)
+    conflicts += _same_group_conflicts(found, headers, cluster, cluster_name)
     new_names = _inventory_names(inventory) if inventory else (set(), set())
-
-    def named_by(path, new=False):
-        """The clusters whose hosts file names the group or host of a group_vars or host_vars path (new: the
-        hosts this import writes count as this cluster's hosts file)."""
-        parts = path.split("/")
-        if len(parts) < 2 or parts[0] not in ("group_vars", "host_vars"):
-            return set()
-        item = os.path.splitext(parts[1])[0] if len(parts) == 2 else parts[1]  # group_vars/<group>.yml too
-        pick = 0 if parts[0] == "group_vars" else 1
-        return set(c for c, names in ([(cluster, new_names)] if new else []) + list(clusters.values())
-                   if item in names[pick])
-
-    def owner(path):
-        name = headers[path]
-        if name or name is None:
-            return name
-        if path in clusters:  # a hosts file
-            return clusters[path][0]
-        if "/" not in path:
-            return cluster if path in written else ""
-        owners = named_by(path)
-        if not owners and path in old_layout:  # from before the first line (one cluster a dir): the hosts written
-            owners = named_by(path, new=True)
-        if not owners and adopt and (path in written or named_by(path, new=True)):
-            return cluster
-        return owners.pop() if len(owners) == 1 else ""
-
-    stale, kept, unsure, adoptable = [], [], [], []
-    for path in sorted(found):
-        who = owner(path)
-        if path in written:
-            if who not in (None, cluster):
-                conflicts.append("%s: written for %s" % (path, who) if who
-                                 else "%s: written by an earlier import, not known to be %s's" % (path, cluster))
-                if not who and not named_by(path):  # (named by several clusters' hosts files: not solved)
-                    adoptable.append(conflicts[-1])
-        elif who is None:
-            if not named_by(path) - set([cluster]):  # not in another cluster's group_vars or host_vars
-                kept.append(path)
-        elif who == cluster:
-            (stale if _OWNABLE.match(path) else kept).append(path)
-        elif who == "":
-            unsure.append(path)
+    owners = _Owners(headers, clusters, old_layout, cluster, written, adopt, new_names)
+    stale, kept, unsure, more, adoptable = _by_owner(owners, found)
+    conflicts += more
     if inventory:
-        groups, hosts = _inventory_names(inventory)
-        for path, (who, (their_groups, their_hosts)) in sorted(clusters.items()):
-            if who != cluster:
-                conflicts += ["%s: in %s too" % (name, path) for name in sorted((groups & their_groups) | (hosts & their_hosts))]
-        for path, (their_groups, dummy) in sorted(own.items()):  # a host may be in groups of the user's too
-            conflicts += ["group %s: in %s too" % (name, path) for name in sorted(groups & their_groups)]
-            if path == cluster + ".yml" and _clusters_groups(found[path] or "", cluster):  # its hosts file
-                adoptable += conflicts[len(conflicts) - len(groups & their_groups):]
+        more, more_adoptable = _shared_names(inventory, clusters, own, found, cluster)
+        conflicts += more
+        adoptable += more_adoptable
     replaced = sorted(p for p in found if p in written and (headers[p] is None or p in old_layout
                                                             or adopt and headers[p] == ""))
     return {"stale": stale, "kept": kept, "replaced": replaced, "unsure": unsure, "conflicts": conflicts,
