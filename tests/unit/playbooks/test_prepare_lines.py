@@ -309,7 +309,7 @@ def test_what_only_prints_never_stops_the_run():
 
 
 # read-only, or a step of another (the download, then its install)
-READS = ("_metadata", "_key_list", "_gpg", "_python_debian", "_key_download", "_auth_mark")
+READS = ("_metadata", "_key_list", "_gpg", "_gpg_check", "_python_debian", "_key_download", "_auth_mark")
 
 
 def test_every_change_of_the_repository_role_counts():

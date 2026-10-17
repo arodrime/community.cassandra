@@ -1,0 +1,2 @@
+bugfixes:
+  - "cassandra_repository - with ``cassandra_repository_key_url`` set, a run with ``--check`` failed with \"holds no key\": the keys were not downloaded under ``--check``, so their fingerprints could not be read. They are now downloaded to a temporary file and checked under ``--check`` too (not read when ``gpg`` is not installed yet)."
