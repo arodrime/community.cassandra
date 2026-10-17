@@ -169,6 +169,8 @@
     msg: >-
       {{ inventory_hostname }}: {{ _cassandra_config_changes | join(', ') }} changed while Cassandra is running;
       the new settings apply at the next restart (not done by this role).
+  vars:
+    cassandra_output: true
   when:
     - _cassandra_config_changes | length > 0  # not for an owner or mode alone
     - cassandra_config_applied.changed

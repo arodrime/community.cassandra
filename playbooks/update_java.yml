@@ -101,6 +101,7 @@
                 | zip(_other | map('extract', hostvars[inventory_hostname])) | map('join', ': ') | map('regex_replace', '^', '  ')
                 | list) }}
       vars:
+        cassandra_output: true
         _other: >-
           {{ hostvars[inventory_hostname] | select('match', '^cassandra_jvm(8|11|17)_')
              | reject('match', '^cassandra_jvm' ~ cassandra_java_version ~ '_') | list }}
@@ -111,6 +112,8 @@
         msg: >-
           WARNING - cassandra_jvm_gc is CMS, which Java 17 does not have: on Java 17 the node runs G1
           (jvm17-server.options). Check the heap settings for G1.
+      vars:
+        cassandra_output: true
       when:
         - cassandra_java_version | string == '17'
         - cassandra_jvm_gc == 'CMS'

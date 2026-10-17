@@ -452,6 +452,7 @@
           {{ ['WARNING - cassandra_service_health_force is set, going on with an unhealthy cluster:']
              + _problems | map('regex_replace', '^', '  ') | list }}
       vars:
+        cassandra_output: true
         _problems: "{{ cassandra_health_problems | reject('match', 'streams in progress on ') | list }}"
       run_once: true
       when:
@@ -464,6 +465,8 @@
         msg: >-
           {{ cassandra_health_problems | select('match', 'streams in progress on ') | list
              + ['left from the removal removenode force finished: they end or fail on their own (nodetool netstats).'] }}
+      vars:
+        cassandra_output: true
       run_once: true
       when:
         - _method == 'removenode_force'
