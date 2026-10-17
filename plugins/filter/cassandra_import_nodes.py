@@ -88,25 +88,19 @@ def _match(address, data, ordered):
     return address
 
 
-def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host, keep_hand_edits):
-    """The entry of the ring node item, read on host (hv: its variables, {} when none)."""
-    facts = _d(hv.get("ansible_facts"))
-    read = "import_cluster_config" in hv
-    config = _d(hv.get("import_cluster_config"))
-    unit = _d(hv.get("import_cluster_unit"))
-    keep = _d(hv.get("import_cluster_keep"))
-    medusa = _d(hv.get("import_cluster_medusa"))
-    perms = _d(hv.get("import_cluster_perms"))
-    series = hv.get("import_cluster_series")
+def _name(address, host, facts, given, host_names):
+    """The node's inventory name: its address (host_names ip, or a host without facts not given), else the fact
+    host_names (hostname, fqdn) or the host."""
+    if host_names == "ip" or ("hostname" not in facts and host not in given):
+        return address
+    return facts.get(host_names) or host
+
+
+def _java_vars(hv, facts, read, series, java_default):
+    """The Java variables of a node read: its Java when not the series' default, its home and package when not the
+    roles' ones, its support -> {variable: value}."""
     java = hv.get("import_cluster_java")
     os_family = facts.get("os_family", "")
-    address = item["address"]
-
-    if host_names == "ip" or ("hostname" not in facts and host not in given):
-        name = address
-    else:
-        name = facts.get(host_names) or host
-
     java_text = hv.get("import_cluster_java", "")
     java_package = ("openjdk-%s-jre-headless" % java_text if os_family == "Debian"
                     else "java-%s-amazon-corretto-headless" % java_text if facts.get("distribution", "") == "Amazon"
@@ -123,9 +117,11 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     supported = cassandra_java_supported(series)
     if read and supported and java not in supported:
         java_vars["cassandra_java_allow_unsupported"] = True
+    return java_vars
 
-    repo = hv.get("import_cluster_repo", {"manage": True, "vars": {}, "why": ""})
-    package = hv.get("import_cluster_package", "")
+
+def _package_vars(hv, read, repo, package):
+    """The install variables of a node read: its package version and method, its repository's -> {variable: value}."""
     pkg = {}
     if read and package:
         pkg["cassandra_package_version"] = re.sub(r"^([0-9]+\.[0-9]+\.[0-9]+).*$", r"\1", str(package))
@@ -133,7 +129,12 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         pkg["cassandra_install_method"] = "packages"
     if read:
         pkg.update(repo["vars"])
+    return pkg
 
+
+def _hand_kept(config, read, keep_hand_edits):
+    """The config files left as they are on the node: the hand-edited ones keep_hand_edits names, its jvm<N> files
+    not imported -> {"cassandra_config_keep_files": [file]}, {} for none."""
     hand_kept = []
     for line in (config.get("hand_edits", []) if read else []):
         f = re.sub(r"[:,].*$", "", str(line))
@@ -144,8 +145,12 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     # a jvm<N> file its Java does not read, whose options are not imported: left as it is on the node
     if read:
         hand_kept += [f for f in config.get("keep_files") or [] if f not in hand_kept]
-    hand_kept = {"cassandra_config_keep_files": hand_kept} if hand_kept else {}
+    return {"cassandra_config_keep_files": hand_kept} if hand_kept else {}
 
+
+def _installed(hv, read, package, os_family):
+    """What of the package install the roles leave as it is (tools, jemalloc, hold, DSBulk) or carry (the DSBulk
+    version) -> {variable: value}."""
     pkgs = hv.get("import_cluster_packages", {})
     installed = {}
     if read and package:
@@ -161,13 +166,19 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         installed["cassandra_dsbulk_version"] = dsbulk.group(1)
     elif read:
         installed["cassandra_dsbulk_install"] = False
+    return installed
 
-    env = _d(unit.get("env"))
+
+def _unit_env(hv, read, env):
+    """The unit's Environment carried (its CASSANDRA_LOG_DIR left out when it is the log directory) -> {name: value}."""
     if not read:
-        unit_env = {}
-    else:
-        drop = "CASSANDRA_LOG_DIR" if env.get("CASSANDRA_LOG_DIR", "") == hv.get("import_cluster_log_dir", "") else ""
-        unit_env = dict((k, v) for k, v in env.items() if k != drop)
+        return {}
+    drop = "CASSANDRA_LOG_DIR" if env.get("CASSANDRA_LOG_DIR", "") == hv.get("import_cluster_log_dir", "") else ""
+    return dict((k, v) for k, v in env.items() if k != drop)
+
+
+def _place_vars(hv, read, unit, unit_env, os_family):
+    """The directories and the unit's settings that are not the roles' defaults -> {variable: value}."""
     default_conf_dirs = (["/etc/cassandra/conf"] if os_family == "RedHat" else ["/etc/cassandra"] if os_family != ""
                          else ["/etc/cassandra", "/etc/cassandra/conf"])
     conf = {}
@@ -181,24 +192,49 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         conf["cassandra_service_enabled"] = False
     if unit_env:
         conf["cassandra_service_environment"] = unit_env
+    return conf
 
-    config_vars = _d(config.get("vars"))
+
+def _env_log_dir(read, keep, env, conf, config_vars):
+    """The log directory of cassandra.yaml's variables, kept when the unit is kept and its CASSANDRA_LOG_DIR set while
+    the directory found is another -> {"cassandra_log_dir": directory}, {} when not."""
     log_dir = config_vars.get("cassandra_log_dir", "/var/log/cassandra")
-    env_log_dir = ({"cassandra_log_dir": log_dir}
-                   if read and "cassandra_service_unit_manage" in keep and env.get("CASSANDRA_LOG_DIR", "") != ""
-                   and conf.get("cassandra_log_dir", "") not in ("", log_dir) else {})
-    java_bin, system_java = hv.get("import_cluster_java_bin", ""), hv.get("import_cluster_system_java", "")
-    java_link = ({"cassandra_java_set_default": False}
-                 if read and java_bin != "" and system_java != "" and system_java != java_bin else {})
+    return ({"cassandra_log_dir": log_dir}
+            if read and "cassandra_service_unit_manage" in keep and env.get("CASSANDRA_LOG_DIR", "") != ""
+            and conf.get("cassandra_log_dir", "") not in ("", log_dir) else {})
 
-    versions = "Cassandra %s, Java %s%s%s" % (
+
+def _java_link(hv, read):
+    """/usr/bin/java left as it is when it is another Java than the running one -> {"cassandra_java_set_default":
+    False}, {} when not."""
+    java_bin, system_java = hv.get("import_cluster_java_bin", ""), hv.get("import_cluster_system_java", "")
+    return ({"cassandra_java_set_default": False}
+            if read and java_bin != "" and system_java != "" and system_java != java_bin else {})
+
+
+def _merged(first, *more):
+    """A copy of the dict first updated with each of more in turn -> dict."""
+    out = dict(first)
+    for one in more:
+        out.update(one)
+    return out
+
+
+def _versions_note(hv, java_link):
+    """The note on the versions: Cassandra's, Java's (its home when not a package, its /usr/bin/java) -> text."""
+    java_bin, system_java = hv.get("import_cluster_java_bin", ""), hv.get("import_cluster_system_java", "")
+    return "Cassandra %s, Java %s%s%s" % (
         hv.get("import_cluster_version", "?"), hv.get("import_cluster_java", "?"),
         (" (not a package: %s)" % hv["import_cluster_java_home"]) if hv.get("import_cluster_java_home", "") else "",
         (", /usr/bin/java is %s: left as it is on this node (new nodes get the running Java as their system java)"
          % hv.get("import_cluster_system_java")) if java_link
         else ", /usr/bin/java is missing: the roles will point it at the running Java"
         if java_bin != "" and system_java == "" else "")
-    started = "started by %s, Restart=%s, at boot: %s%s%s%s)" % (
+
+
+def _started_note(unit, keep, unit_env):
+    """The note on how Cassandra is started: its unit, restart policy, boot, what becomes of it -> text."""
+    return "started by %s, Restart=%s, at boot: %s%s%s%s)" % (
         unit.get("file", "") or "no systemd unit", unit.get("restart", "") or "?", unit.get("boot", "") or "?",
         " (kept on this node; new nodes get the unit of cassandra_service, with the restart policy"
         if "cassandra_service_unit_manage" in keep
@@ -206,38 +242,36 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         (", its Environment %s as cassandra_service_environment" % ", ".join(unit_env)) if unit_env else "",
         (", NOT its EnvironmentFile %s: put what it sets in cassandra_service_environment" % unit["env_files"])
         if unit.get("env_files", "") else "")
-    install = (("package %s%s" % (package, " installed from a file, no configured repository offers it"
-                                  " (cassandra_install_method: packages; set cassandra_install_url, the directory of"
-                                  " the package files, for new nodes)"
-                                  if _bool(hv.get("import_cluster_package_from_file", False)) else ""))
-               if package else "NOT a package install: cassandra_install would install the package next to it")
 
+
+def _install_note(hv, package):
+    """The note on the install: its package (installed from a file?), or not a package -> text."""
+    return (("package %s%s" % (package, " installed from a file, no configured repository offers it"
+                                        " (cassandra_install_method: packages; set cassandra_install_url, the"
+                                        " directory of the package files, for new nodes)"
+                               if _bool(hv.get("import_cluster_package_from_file", False)) else ""))
+            if package else "NOT a package install: cassandra_install would install the package next to it")
+
+
+def _reason(item, hv):
+    """Why the node is not read (when it is not), in the words of where a node stands -> text."""
     running = _d(hv.get("import_cluster_running"))
     if "rc" not in running:
-        reason = "unreachable"
-    elif running["rc"] != 0:
+        return "unreachable"
+    if running["rc"] != 0:
         # in the words of where a node stands (cassandra_node_standing)
-        reason = (standing.WORDS["member_down"] if str(item.get("state", "")).startswith("D")
-                  else "Cassandra stopped there, %s in the ring (not seen down yet)" % item.get("state", "?"))
-    elif "import_cluster_error" in hv:
-        reason = hv["import_cluster_error"]
-    else:
-        reason = "unsupported version %s" % hv["import_cluster_version"]
+        return (standing.WORDS["member_down"] if str(item.get("state", "")).startswith("D")
+                else "Cassandra stopped there, %s in the ring (not seen down yet)" % item.get("state", "?"))
+    if "import_cluster_error" in hv:
+        return hv["import_cluster_error"]
+    return "unsupported version %s" % hv["import_cluster_version"]
 
-    if read:
-        node_vars = dict(config_vars)
-        for more in ({"cassandra_version": series}, java_vars, pkg, conf, jmx, _d(perms.get("vars")),
-                     _d(medusa.get("vars")), _d(_d(hv.get("import_cluster_os")).get("vars"))):
-            node_vars.update(more)
-        node_keep = dict(keep)
-        for more in (env_log_dir, java_link, {"cassandra_firewall_manage": False}, _d(medusa.get("keep")),
-                     _d(_d(hv.get("import_cluster_os")).get("keep")),
-                     {} if repo["manage"] else {"cassandra_repository_manage": False}, hand_kept, installed):
-            node_keep.update(more)
-    else:
-        node_vars, node_keep = {}, dict(NOT_READ_KEEP)
 
-    notes = ["%s, %s, config in %s" % (versions, install, hv.get("import_cluster_conf_dir", "?")), started]
+def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, first):
+    """The node's notes: first (its versions, install, unit), its permissions', Medusa's, the lines carried, how it
+    is reached, its repository, its JVM's, its files newer than Cassandra -> [text]."""
+    address = item["address"]
+    notes = list(first)
     notes += list(perms.get("notes", [])) + list(medusa.get("notes", []))
     notes += [CARRIED + line for line in (config.get("carried", []) if read else [])]
     if host != address and hv.get("ansible_host", address) != address and set_ansible_host:
@@ -253,6 +287,52 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
     if read and hv.get("import_cluster_newer_files", []):
         notes.append("%s written after Cassandra started: it may not run what they say. apply_config does not restart"
                      " it for them; rolling_restart applies them" % ", ".join(hv["import_cluster_newer_files"]))
+    return notes
+
+
+def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host, keep_hand_edits):
+    """The entry of the ring node item, read on host (hv: its variables, {} when none)."""
+    facts = _d(hv.get("ansible_facts"))
+    read = "import_cluster_config" in hv
+    config = _d(hv.get("import_cluster_config"))
+    unit = _d(hv.get("import_cluster_unit"))
+    keep = _d(hv.get("import_cluster_keep"))
+    medusa = _d(hv.get("import_cluster_medusa"))
+    perms = _d(hv.get("import_cluster_perms"))
+    series = hv.get("import_cluster_series")
+    os_family = facts.get("os_family", "")
+    address = item["address"]
+    name = _name(address, host, facts, given, host_names)
+    java_vars = _java_vars(hv, facts, read, series, java_default)
+    repo = hv.get("import_cluster_repo", {"manage": True, "vars": {}, "why": ""})
+    package = hv.get("import_cluster_package", "")
+    pkg = _package_vars(hv, read, repo, package)
+    hand_kept = _hand_kept(config, read, keep_hand_edits)
+    installed = _installed(hv, read, package, os_family)
+    env = _d(unit.get("env"))
+    unit_env = _unit_env(hv, read, env)
+    conf = _place_vars(hv, read, unit, unit_env, os_family)
+
+    config_vars = _d(config.get("vars"))
+    env_log_dir = _env_log_dir(read, keep, env, conf, config_vars)
+    java_link = _java_link(hv, read)
+    versions = _versions_note(hv, java_link)
+    started = _started_note(unit, keep, unit_env)
+    install = _install_note(hv, package)
+    reason = _reason(item, hv)
+
+    if read:
+        tuning = _d(hv.get("import_cluster_os"))
+        node_vars = _merged(config_vars, {"cassandra_version": series}, java_vars, pkg, conf, jmx,
+                            _d(perms.get("vars")), _d(medusa.get("vars")), _d(tuning.get("vars")))
+        node_keep = _merged(keep, env_log_dir, java_link, {"cassandra_firewall_manage": False}, _d(medusa.get("keep")),
+                            _d(tuning.get("keep")), {} if repo["manage"] else {"cassandra_repository_manage": False},
+                            hand_kept, installed)
+    else:
+        node_vars, node_keep = {}, dict(NOT_READ_KEEP)
+
+    first = ["%s, %s, config in %s" % (versions, install, hv.get("import_cluster_conf_dir", "?")), started]
+    notes = _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, first)
 
     return {
         "name": name,
