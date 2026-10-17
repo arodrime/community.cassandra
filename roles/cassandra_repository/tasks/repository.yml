@@ -135,14 +135,19 @@
         url: "{{ cassandra_repository_key_url }}"
         dest: "{{ _cassandra_repository_key_path }}.new"
         mode: "0644"
-        url_username: "{{ cassandra_install_username | default(omit, true) }}"
-        url_password: "{{ cassandra_install_password | default(omit, true) }}"
-        force_basic_auth: "{{ cassandra_install_username != '' }}"
+        url_username: "{{ cassandra_install_username if _on_mirror | bool else omit }}"
+        url_password: "{{ cassandra_install_password if _on_mirror | bool else omit }}"
+        force_basic_auth: "{{ _on_mirror | bool }}"
       retries: 3
       register: _cassandra_repository_key_download
       until: _cassandra_repository_key_download is succeeded
       changed_when: false  # a temp file: the install below reports the change
       check_mode: false  # read-only for the host's config: the check below needs the file
+      vars:
+        # the mirror's credentials, only when the keys are on the mirror's host (not sent to apache.org)
+        _on_mirror: >-
+          {{ cassandra_repository_key_url is match('https?://') and cassandra_install_username != ''
+             and (cassandra_repository_key_url | urlsplit('hostname')) == (cassandra_install_url | urlsplit('hostname')) }}
 
     # Minimal images (AlmaLinux 10) come without it; Amazon Linux's
     # gnupg2-minimal has it, and conflicts with gnupg2

@@ -90,3 +90,14 @@ def test_signing_keys_downloaded_and_read_under_check():
     assert render("{{ %s }}" % probe, _cassandra_repository_gpg_check={"skipped": True}) is True
     assert render("{{ %s }}" % probe, _cassandra_repository_gpg_check={"rc": 2}) is False
 
+
+def test_mirror_credentials_not_sent_to_another_host():
+    keys = load("cassandra_repository", "repository.yml")
+    download = task(keys, "Download the signing keys")
+    on_mirror = download["vars"]["_on_mirror"]
+    creds = dict(cassandra_install_username="reader", cassandra_install_url="https://mirror.example.com/cassandra/")
+    assert render(on_mirror, cassandra_repository_key_url="https://downloads.apache.org/cassandra/KEYS", **creds) is False
+    assert render(on_mirror, cassandra_repository_key_url="https://mirror.example.com/keys/KEYS", **creds) is True
+    assert render(on_mirror, cassandra_repository_key_url="file:///tmp/KEYS", **creds) is False
+    assert render(on_mirror, cassandra_repository_key_url="https://mirror.example.com/keys/KEYS",
+                  cassandra_install_username="", cassandra_install_url="https://mirror.example.com/") is False
