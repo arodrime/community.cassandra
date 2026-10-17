@@ -28,11 +28,33 @@ def header(name):
 
 
 REF_SERIES = "5.0"
+# Before the extra settings: the variables of keys the stock cassandra.yaml has no line for, under one header
+# (renders nothing at their defaults). (condition, line) each.
+DECLARED_HEADER = "# Settings the stock file has no line for (their variables)"
+AUTO_BOOTSTRAP = ("cassandra_auto_bootstrap is not none and not cassandra_auto_bootstrap | bool",
+                  "auto_bootstrap: {{ (cassandra_auto_bootstrap | bool) | lower }}")
+DISK_ACCESS_MODE = ("cassandra_disk_access_mode", "disk_access_mode: {{ cassandra_disk_access_mode }}")  # 5.0 has a line
+
+
+def declared_tail(settings):
+    out = "{%% if %s %%}\n\n%s\n{%% endif %%}\n" % (" or ".join(c for c, dummy in settings), DECLARED_HEADER)
+    return out + "".join("{%% if %s %%}\n%s\n{%% endif %%}\n" % (c, line) for c, line in settings)
+
+
+TAIL_4X = declared_tail([DISK_ACCESS_MODE, AUTO_BOOTSTRAP])
+TAIL = {"5.0": declared_tail([AUTO_BOOTSTRAP]), "4.1": TAIL_4X, "4.0": TAIL_4X}
 # Ends every cassandra.yaml template (renders nothing when empty)
-EXTRA = """{% if cassandra_extra_settings %}
+EXTRA = """{% set _extra = {} %}
+{% for key, value in cassandra_extra_settings.items() if key not in _cassandra_config_extra_sections %}
+{% set _ = _extra.update({key: value}) %}
+{% endfor %}
+{% if _extra %}
 
 # Settings no variable covers (cassandra_extra_settings)
-{{ cassandra_extra_settings | to_nice_yaml(indent=2) }}{% endif %}"""
+{{ _extra | to_nice_yaml(indent=2) }}{% endif %}"""
+# The sub-keys cassandra_extra_settings adds to audit_logging_options (_cassandra_config_extra_sections), after
+# its logger: indented as the section's other sub-keys (fixed for each series by section_indent)
+AUDIT_LINE = "- class_name: {{ cassandra_audit_logger_class_name }}{{ ('\\n' ~ cassandra_extra_settings.audit_logging_options"
 REF_TEMPLATE = os.path.join(HERE, "..", "roles", "cassandra_config", "templates", REF_SERIES, "cassandra.yaml.j2")
 
 
@@ -112,8 +134,8 @@ COMMON = {
          "#-Dcassandra.expiration_date_overflow_policy=REJECT" + append_list("cassandra_jvm_extra_options")),
     ],
     "cassandra-rackdc.properties": [
-        ("dc=dc1", "dc={{ cassandra_dc }}"),
-        ("rack=rack1", "rack={{ cassandra_rack }}"),
+        ("dc=dc1", "dc={{ cassandra_rackdc_dc }}"),
+        ("rack=rack1", "rack={{ cassandra_rackdc_rack }}"),
         ("# prefer_local=true", "{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true"),
     ],
     "logback.xml": [
@@ -123,7 +145,8 @@ COMMON = {
          '<appender-ref ref="ASYNCDEBUGLOG" />'
          "{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->"),
         ('  <logger name="org.apache.cassandra" level="DEBUG"/>',
-         '  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>'),
+         '  <logger name="org.apache.cassandra" level="{{ cassandra_log_level_cassandra }}"/>'
+         + append_list("cassandra_logback_extra_lines")),
         # off by default: under systemd a second copy of system.log in the journal
         ('    <appender-ref ref="STDOUT" />',
          "    {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref=\"STDOUT\" />"
@@ -139,10 +162,14 @@ ENV_COMMON = [
         'JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=@"', "<public name>", off="# "),
     ("    LOCAL_JMX=yes", "    LOCAL_JMX={{ 'yes' if cassandra_local_jmx else 'no' }}"),
     ('JMX_PORT="7199"', 'JMX_PORT="{{ cassandra_jmx_port }}"'),
-    # the access file cassandra_jmx_users writes
+    # the files cassandra_jmx_users writes: the access file on with them
+    ('JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"',
+     'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file={{ cassandra_jmx_remote_password_file }}"'),
     ('#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"',
      "{{ '' if cassandra_jmx_users else '#' }}"
-     'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access"'),
+     'JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.access.file={{ cassandra_jmx_remote_access_file }}"'),
+    # the file's last line: the lines cassandra_env_extra_lines adds after it
+    ('JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"', 'JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"' + append_list("cassandra_env_extra_lines")),
 ]
 
 
@@ -154,11 +181,19 @@ def gc_threads_rules(n):
     ]
 
 
+# 4.x: no heap dump dir unless the environment gives one; set, the one the environment gives still wins
+HEAP_DUMP_4X = ("# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR",
+                "{{ ('CASSANDRA_HEAPDUMP_DIR=\"${CASSANDRA_HEAPDUMP_DIR:-' ~ cassandra_heap_dump_dir"
+                " ~ '}\"  # set jvm HeapDumpPath with it') if cassandra_heap_dump_dir"
+                " else '# set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR' }}")
+
+
 def rules_4x(pause, tenuring_and_region):
     # Stock 4.x runs CMS (G1 commented out); heap and young gen set in pairs under CMS
     g1 = g1_lines_4x(pause, tenuring_and_region)
     return dict(COMMON, **{
         "cassandra-env.sh": ENV_COMMON + [
+            HEAP_DUMP_4X,
             opt("cassandra_heap_size", '#MAX_HEAP_SIZE="4G"', 'MAX_HEAP_SIZE="@"', "4G"),
             opt("cassandra_heap_newsize", '#HEAP_NEWSIZE="800M"', 'HEAP_NEWSIZE="@"', "800M"),
         ],
@@ -191,10 +226,33 @@ def sync_mode(mode, key, var, example=None):
     return "{{ '' if cassandra_commitlog_sync == '%s' else '# ' }}%s: {{ %s }}" % (mode, key, value)
 
 
+def opt_number(var, key, example, off="# "):
+    # A cassandra.yaml number commented out in stock: written once the variable is set, 0 included (unthrottled,
+    # switched off)
+    return ("%s%s: %s" % (off, key, example),
+            "{{ '%s' if %s | string in ['', 'None'] else '' }}%s: {{ %s if %s | string not in ['', 'None'] else '%s' }}"
+            % (off, var, key, var, var, example))
+
+
 # cassandra.yaml lines the derivation from 5.0 cannot map (4.0 keys carry the
 # unit in their name): applied to the derived template, same as RULES
 YAML_RULES = {
     "4.0": [
+        opt_number("cassandra_file_cache_size_in_mb", "file_cache_size_in_mb", "512"),
+        opt_number("cassandra_memtable_heap_space_in_mb", "memtable_heap_space_in_mb", "2048"),
+        opt_number("cassandra_memtable_offheap_space_in_mb", "memtable_offheap_space_in_mb", "2048"),
+        opt_number("cassandra_memtable_flush_writers", "memtable_flush_writers", "2", off="#"),
+        opt_number("cassandra_concurrent_compactors", "concurrent_compactors", "1", off="#"),
+        opt_number("cassandra_stream_throughput_outbound_megabits_per_sec", "stream_throughput_outbound_megabits_per_sec", "200"),
+        opt_number("cassandra_inter_dc_stream_throughput_outbound_megabits_per_sec",
+                   "inter_dc_stream_throughput_outbound_megabits_per_sec", "200"),
+        opt_number("cassandra_internode_streaming_tcp_user_timeout_in_ms", "internode_streaming_tcp_user_timeout_in_ms",
+                   "300000"),
+        opt_number("cassandra_roles_update_interval_in_ms", "roles_update_interval_in_ms", "2000"),
+        opt_number("cassandra_permissions_update_interval_in_ms", "permissions_update_interval_in_ms", "2000"),
+        opt_number("cassandra_credentials_update_interval_in_ms", "credentials_update_interval_in_ms", "2000"),
+        opt_number("cassandra_gc_log_threshold_in_ms", "gc_log_threshold_in_ms", "200"),
+        opt_number("cassandra_gc_warn_threshold_in_ms", "gc_warn_threshold_in_ms", "1000"),
         ("commitlog_sync_period_in_ms: {{ cassandra_commitlog_sync_period_in_ms }}",
          sync_mode("periodic", "commitlog_sync_period_in_ms", "cassandra_commitlog_sync_period_in_ms")),
         ("# commitlog_sync_group_window_in_ms: 1000",
@@ -301,6 +359,16 @@ def derive_yaml(ref_stock, ref_tpl, stock):
     return [quote_secret(line) for line in out], new_vars, conflicts
 
 
+def section_indent(lines):
+    """The audit_logging_options extra sub-keys indented as the section's own (2 spaces from 4.1 on, 4 in 4.0)."""
+    at = [i for i, line in enumerate(lines) if AUDIT_LINE in line]
+    assert len(at) == 1, "audit_logging_options: its logger line found %d times" % len(at)
+    start = max(i for i in range(at[0]) if lines[i].startswith("audit_logging_options:"))
+    child = next(line for line in lines[start + 1:] if line.strip() and not line.lstrip().startswith("#"))
+    lines[at[0]] = re.sub(r"indent\(\d+, true\)", "indent(%d, true)" % (len(child) - len(child.lstrip())),
+                          lines[at[0]])
+
+
 def main(series, stock_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     for name, rules in RULES[series].items():
@@ -315,13 +383,15 @@ def main(series, stock_dir, out_dir):
         assert ref_stock, "deriving cassandra.yaml needs the %s stock cassandra.yaml as 4th argument" % REF_SERIES
         with open(ref_stock) as a, open(REF_TEMPLATE) as b, open(os.path.join(stock_dir, "cassandra.yaml")) as c:
             ref_tpl = b.read()
-            assert ref_tpl.endswith(EXTRA), "reference template must end with the extra settings block"
-            ref_tpl = ref_tpl[:-len(EXTRA)].split("\n")
+            end = TAIL[REF_SERIES] + EXTRA
+            assert ref_tpl.endswith(end), "reference template must end with the declared tail and the extra settings block"
+            ref_tpl = ref_tpl[:-len(end)].split("\n")
             assert ref_tpl[0] == header("cassandra.yaml"), "reference template must start with the header"
             lines, new_vars, conflicts = derive_yaml(a.read().split("\n"), ref_tpl[1:], c.read().split("\n"))
         replace_lines("cassandra.yaml", lines, YAML_RULES.get(series, []))
+        section_indent(lines)
         with open(os.path.join(out_dir, "cassandra.yaml.j2"), "w") as f:
-            f.write("\n".join([header("cassandra.yaml")] + lines) + EXTRA)
+            f.write("\n".join([header("cassandra.yaml")] + lines) + TAIL[series] + EXTRA)
         print("# %s: new variables" % series)
         print(yaml.safe_dump(new_vars, sort_keys=False) if new_vars else "{}")
         print("# %s: stock value differs from %s for" % (series, REF_SERIES))
