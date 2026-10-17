@@ -125,9 +125,8 @@ def test_the_health_check_lets_that_node_only_be_down():
     assert cassandra_health_problems(view, 3, "n2", down_ok=down_ok) == ["10.0.0.3 (r1) is DN, seen from n1"]
 
 
-@pytest.mark.parametrize("action", ["restart", "reboot"])
-def test_its_drain_may_fail_on_a_stopped_node_only(action):
-    tasks = load("roles", "cassandra_service", "tasks", "action_%s.yml" % action)
+def test_its_drain_may_fail_on_a_stopped_node_only():
+    tasks = load("roles", "cassandra_service", "tasks", "drain.yml")
     stop = [t for t in tasks if t["name"] == "Stop when the node did not answer"][0]
     refused = {"failed": False, "msg": "", "stderr": "ConnectException: 'Connection refused (Connection refused)'"}
     other = {"failed": False, "msg": "Authentication failed"}
