@@ -722,7 +722,7 @@ all of them (here a ``group_vars/all`` file shared by the inventories), and each
 
 ``url`` may also be a file on the controller, and ``checksum`` is optional but recommended. Each tarball is unpacked
 in a directory named after its file: give each version a file of its own name. An entry may carry its own
-``username``/``password``; without them, a tarball on the same host as ``cassandra_install_url`` gets the mirror's
+``username``/``password``; without them, a tarball on the same server (scheme, host and port) as ``cassandra_install_url`` gets the mirror's
 credentials (see the air-gapped section). An explicit ``cassandra_java_tarball`` still wins. With tarballs on offer, a ``cassandra_java_version`` without one is
 refused (with the versions on offer), unless the node has ``cassandra_java_home`` or ``cassandra_install_java:
 false`` (Java set up by other means, no tarball taken). A cluster on Java packages moves
@@ -929,8 +929,9 @@ their OS repositories. Point the roles at it:
 ``cassandra_install_url`` sets the same, for the hosts' own OS family. A mirror that needs credentials to read (an
 account, or a service account and its token) takes them in ``cassandra_install_username`` and
 ``cassandra_install_password`` (keep the password in a vault; ``cassandra_repository_username``/``_password``, their
-older names, still work). A Java tarball on the same host (``cassandra_java_tarball``, see Java above) uses them too,
-unless ``cassandra_java_tarball_username``/``_password`` are set; a tarball elsewhere gets no credentials.
+older names, still work). A Java tarball, dsbulk or the signing keys on the same server (scheme, host and port:
+``cassandra_java_tarball``, see Java above) use them too (the tarball: unless
+``cassandra_java_tarball_username``/``_password`` are set); elsewhere, none of them gets credentials.
 ``cassandra_repository`` checks the URL is a repository before adding it (``repodata/repomd.xml``, or the suite's
 ``InRelease``/``Release``): a plain directory of package files is refused, rather than left as a repository that
 breaks every later ``dnf``/``apt`` call.
