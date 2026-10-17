@@ -10,12 +10,15 @@ import os
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
 except ImportError:
     def trust_as_template(template):
         return template
+
+load_collection_filters()
 
 PLAN = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "templates",
                     "new_node_checks_plan.j2")
@@ -120,3 +123,14 @@ def test_ubuntu_2404_medusa_virtualenv_on_python3():
     out = plan("3.12")
     assert out["problems"] == []
     assert "python3-venv" in needs(out) and "python3.11-venv" not in needs(out)
+
+
+def test_signing_keys_get_the_mirror_credentials_on_the_mirror_only():
+    def auth(url):
+        out = plan("3.12.3", cassandra_repository_manage=True, cassandra_repository_key_url=url,
+                   cassandra_install_url="https://mirror.example.com/cassandra")
+        return next(u["auth"] for u in out["urls"] if u["name"] == "Cassandra signing keys")
+    assert auth("https://mirror.example.com/keys/KEYS") == "repository"
+    for url in ("https://downloads.apache.org/cassandra/KEYS", "http://mirror.example.com/keys/KEYS",
+                "https://mirror.example.com:8443/keys/KEYS"):
+        assert auth(url) == "none", url

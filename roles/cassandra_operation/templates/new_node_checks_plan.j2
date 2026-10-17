@@ -61,7 +61,10 @@
                              'url': base ~ '/repodata/repomd.xml'}) -%}
 {%-   endif -%}
 {%-   if cassandra_repository_key_url != '' -%}
-{%-     set _ = urls.append({'name': 'Cassandra signing keys', 'auth': 'repository', 'url': cassandra_repository_key_url}) -%}
+{#-     the mirror's credentials only for keys on the mirror itself (scheme, host and port) -#}
+{%-     set _ = urls.append({'name': 'Cassandra signing keys', 'url': cassandra_repository_key_url,
+                             'auth': 'repository' if cassandra_repository_key_url
+                                     | community.cassandra.cassandra_same_origin(cassandra_install_url) else 'none'}) -%}
 {%-   endif -%}
 {%- endif -%}
 {%- if offline or not (cassandra_repository_manage | bool or files_method) -%}

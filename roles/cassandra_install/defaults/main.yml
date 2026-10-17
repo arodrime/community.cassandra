@@ -136,7 +136,7 @@ cassandra_cqlsh_python_repo_uri: https://ppa.launchpadcontent.net/deadsnakes/ppa
 # with links /usr/share/dsbulk and /usr/bin/dsbulk, like the packaged tools.
 cassandra_dsbulk_install: true
 cassandra_dsbulk_version: "1.11.2"
-# A mirror (with cassandra_install_url's credentials when on its host) or a
+# A mirror (with cassandra_install_url's credentials when on the same server) or a
 # copy on the node (file:///path/to/dsbulk-x.y.z.tar.gz, also offline)
 cassandra_dsbulk_url: "https://github.com/datastax/dsbulk/releases/download/{{ cassandra_dsbulk_version }}/dsbulk-{{ cassandra_dsbulk_version }}.tar.gz"
 # Checksum of the tarball, for the default version: set it with the version

@@ -250,8 +250,8 @@ argument_specs:
         description:
           - Where the dsbulk tarball is downloaded from. Defaults to its GitHub release
             for O(cassandra_dsbulk_version).
-          - A mirror (with C(cassandra_install_username) and C(cassandra_install_password)
-            when it is on the host of C(cassandra_install_url)), or a copy on the node
+          - A mirror (with O(cassandra_install_username) and O(cassandra_install_password)
+            when it has the scheme, host and port of O(cassandra_install_url)), or a copy on the node
             (C(file:///path/to/dsbulk-<version>.tar.gz)), the way to install it with
             O(cassandra_offline).
       cassandra_dsbulk_checksum:
