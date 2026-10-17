@@ -775,7 +775,8 @@ def cassandra_help(model, playbooks=None, topic="", header="", markdown=False, c
     header the comment that starts its playbook; markdown: RUNBOOK.md, in
     runbook_dir (default the inventory's dir); flow: the lines for the ops
     callback (laid out at the terminal's width there), else laid out at WIDTH;
-    cut false: each command whole on one line (a list of lines to copy from)."""
+    cut false: each command whole on one line (a list of lines to copy from).
+    -> the help text: its sections under rules, the commands filled for this inventory."""
     model = model or {}
     cwd = os.getcwd() if cwd is None else cwd
     playbooks = list(playbooks or [op["name"] for op in OPERATIONS])
@@ -990,6 +991,8 @@ def header_paragraphs(header):
 
 
 def cassandra_help_runbook(model, runbook_dir=""):
+    """model: lookup community.cassandra.cassandra_inventory -> the text of RUNBOOK.md (cassandra_help with
+    markdown true), written to runbook_dir (default: the inventory's dir)."""
     first = ((model or {}).get("sources") or [""])[0]
     if not runbook_dir and not os.path.exists(first):
         raise AnsibleFilterError("help_write: the inventory %s is not a file or a dir to write RUNBOOK.md next to"

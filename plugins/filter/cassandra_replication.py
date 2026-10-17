@@ -24,6 +24,8 @@ from ansible.errors import AnsibleFilterError
 
 
 def cassandra_keyspaces(stdout):
+    """cqlsh's JSON rows of system_schema.keyspaces -> {keyspace: {class, rf: {dc: replicas}}}: a row of ks,
+    NetworkTopologyStrategy dc1 3 -> {"ks": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3}}}."""
     keyspaces = {}
     for line in stdout.splitlines():
         line = line.strip()
@@ -46,7 +48,8 @@ def cassandra_keyspaces(stdout):
 
 
 def cassandra_replication_problems(keyspaces, nodes_left):
-    """nodes_left: {dc: number of nodes the DC keeps}."""
+    """nodes_left: {dc: number of nodes the DC keeps}. keyspaces: cassandra_keyspaces' -> the
+    problems: ks with 3 replicas in dc1, {"dc1": 2} -> ["ks needs 3 replicas in dc1, which would keep 2 node(s)"]."""
     problems = []
     total = sum(nodes_left.values())
     for name in sorted(keyspaces):
@@ -63,7 +66,9 @@ def cassandra_replication_problems(keyspaces, nodes_left):
 
 def cassandra_rack_down_problems(keyspaces, dc, racks):
     """NetworkTopologyStrategy puts a DC's replicas on distinct racks when it has
-    at least as many racks as replicas: then one rack down is one replica down."""
+    at least as many racks as replicas: then one rack down is one replica down.
+    -> {problems, warnings}: ks 3 replicas
+    in dc1 of 2 racks -> problems ["ks has 3 replicas in dc1, which has 2 rack(s): a rack holds more than one of them"]."""
     problems, warnings = [], []
     for name in sorted(keyspaces):
         rf = keyspaces[name]["rf"]
@@ -83,6 +88,9 @@ def _cql_replication(rf):
 
 
 def cassandra_replication_alter(keyspaces, dc, add=None, remove=False):
+    """The CQL that gives keyspaces replicas in dc (add: {keyspace: replicas}) or takes them out of it
+    (remove): ks NetworkTopologyStrategy dc1 3, "dc2", add={"ks": 3} -> ['ALTER KEYSPACE "ks" WITH replication =
+    {'class': 'NetworkTopologyStrategy', 'dc1': 3, 'dc2': 3};']."""
     statements = []
     if remove:
         for name in sorted(keyspaces):

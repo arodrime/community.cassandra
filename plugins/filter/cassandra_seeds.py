@@ -16,7 +16,8 @@ def cassandra_seed_layout(nodes):
     """nodes: [{'name', 'address', 'dc', 'rack', 'seed'}] in inventory order.
     The seed rule of preflight and help (plugin_utils cassandra_output
     seed_layout): {'lines': one per datacenter, 'problems': the warnings,
-    'notes', 'suggested': [addresses] (empty when there is no warning)}."""
+    'notes', 'suggested': [addresses] (empty when there is no warning)}.
+    Example: lines ["Seeds  dc1  node1 (rack1), node4 (rack2)  ok"]."""
     return out.seed_layout(nodes)
 
 

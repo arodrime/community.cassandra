@@ -78,7 +78,10 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
     FAILED, CHECK), then the nodes grouped by outcome, their times.
     operation: the playbook's name, else from action (the
     cassandra_service_node_action of the run), else from the actions
-    recorded."""
+    recorded.
+    -> lines: "rolling_restart done in 100s" on
+    node4, 110s on node5 -> ["DONE  rolling_restart  my_cluster  2 restarted", "  node4, node5  restarted  (1m40s..1m50s
+    each)"]."""
     outcomes, actions = [], []
     for item in results or []:
         said, done = outcome(item.get("node"), item.get("result"))
@@ -131,7 +134,8 @@ def cassandra_reset_recap(nodes, check=False, cluster="", add_command=""):
 
 def cassandra_differs(values, setting, group=""):
     """values: {node: value} of a setting that must be the same on every node
-    (preflight). Why the run stops, the values by nodes, where to fix it."""
+    (preflight). Why the run stops, the values by nodes, where to fix it.
+    -> the lines that stop the run: why, then each value with its nodes."""
     by_value, shown_as = {}, {}
     for node, value in (values or {}).items():
         by_value.setdefault(str(value), []).append(node)  # as the assert compares them

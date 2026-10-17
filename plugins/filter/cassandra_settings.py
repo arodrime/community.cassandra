@@ -412,7 +412,8 @@ def same_settings(name, live, new, storage_dir=""):
 
 
 def cassandra_same_settings(live, new, name, storage_dir=""):
-    """Filter: see the module. No live file (None or ''): False."""
+    """Filter: see the module. No live file (None or ''): False. "a: 1\n", "a: 1  # x\n",
+    "cassandra.yaml" -> true."""
     if not live:
         return False
     return same_settings(str(name), str(live), str(new), str(storage_dir or ""))
@@ -439,7 +440,7 @@ def yaml_rejected(keys, version):
 
 
 def cassandra_yaml_rejected(keys, version):
-    """Filter: see yaml_rejected; keys: a list, or a dict (its keys)."""
+    """Filter: see yaml_rejected; keys: a list, or a dict (its keys). ["fake_key", "num_tokens"], "4.1.5" -> ["fake_key"]."""
     return yaml_rejected(list(keys or []), version)
 
 

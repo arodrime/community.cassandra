@@ -35,12 +35,13 @@ def cassandra_java_major(version):
 
 
 def cassandra_java_supported(series):
-    """The Java majors series (40x, 41x, 50x) supports, [] when unknown."""
+    """The Java majors series (40x, 41x, 50x) supports, [] when unknown. "50x" -> ["11", "17"]."""
     return list(SUPPORTED.get(str(series), []))
 
 
 def cassandra_java_check(version, series, allow_unsupported=False):
-    """'' when Cassandra series runs on Java version, else why not."""
+    """'' when Cassandra series runs on Java version, else why not. "17", "50x" -> ''; "8", "50x" -> "Cassandra 50x runs on
+    Java 11 or 17, not 8 (cassandra_java_version). ..."."""
     supported = cassandra_java_supported(series)
     if not supported:
         return "Unknown Cassandra series %s (one of %s)." % (series, ", ".join(sorted(SUPPORTED)))
@@ -54,7 +55,8 @@ def cassandra_java_check(version, series, allow_unsupported=False):
 def cassandra_java_tarball(tarballs, version):
     """The entry of cassandra_java_tarballs for Java version ({url, checksum,
     and optionally username, password}), {} when there is none. Keys may be
-    strings or numbers ("17" or 17)."""
+    strings or numbers ("17" or 17).
+    {"17": {"url": u, "checksum": c}}, "17.0.2" -> {"url": u, "checksum": c}."""
     if not tarballs:
         return {}
     if not isinstance(tarballs, dict):
@@ -82,7 +84,8 @@ def cassandra_java_tarball(tarballs, version):
 
 def cassandra_java_release_major(content):
     """The Java major of a JDK or JRE release file (JAVA_VERSION="17.0.12"),
-    '' when it names none."""
+    '' when it names none.
+    'JAVA_VERSION="17.0.12"' -> "17"."""
     match = re.search(r'^JAVA_VERSION="?([^"\s]+)"?\s*$', content or "", re.MULTILINE)
     return cassandra_java_major(match.group(1)) if match else ""
 

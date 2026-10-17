@@ -55,6 +55,8 @@ def cassandra_jvm_option_checks(variables, series, java="", refusals=False, kept
 
 
 def cassandra_jvm_options_file(series, java):
+    """The jvm<N>-server.options a Java reads besides jvm-server.options, '' when not known: "50x", "17" ->
+    "jvm17-server.options"."""
     return jvm.options_file(str(series), java)
 
 

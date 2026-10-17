@@ -60,7 +60,10 @@ def cassandra_failure_repos(result):
 def cassandra_failure_cause(result, task=""):
     """The cause of a failure in one short line: "Install python3.11:
     repository 'epel' unreachable (a mirror problem on the node)", else
-    the task and the first line of its error, cut at _WIDTH."""
+    the task and the first line of its error, cut at _WIDTH.
+    Example: a dnf error on
+    repo 'epel', task "Install python3.11" -> "Install python3.11: repository 'epel' unreachable (a repository or
+    mirror problem on the node)"."""
     repos = cassandra_failure_repos(result)
     if repos:  # our own words: never cut
         cause = "%s %s unreachable (a repository or mirror problem on the node)" % (
@@ -78,7 +81,9 @@ def cassandra_failure_report(failures, operation="", cluster="", what="could not
     that share it, then the TO DO: the repository check (a repository
     problem), the cqlsh Python way out (python311: a python3.11 install
     failed), and the run again (rerun: its command). ad_hoc: the ansible
-    command that starts the check (by default the one of rerun: its -i)."""
+    command that starts the check (by default the one of rerun: its -i).
+    -> lines: "FAILED  add_node  c  node4 could not be prepared: nothing was started", "  node4  Install
+    python3.11: repository 'epel' unreachable (...)", then TO DO."""
     ad_hoc = ad_hoc or (re.sub(r"^ansible-playbook", "ansible", rerun.split(" community.cassandra.")[0]) if rerun
                         else "ansible")
     groups = []

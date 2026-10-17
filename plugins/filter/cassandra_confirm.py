@@ -32,7 +32,8 @@ def _seconds(reply):
 
 def cassandra_confirm_answer(reply):
     """reply: the registered result of pause. yes/y and no/n in any case,
-    around spaces; an empty answer returned at once means no terminal."""
+    around spaces; an empty answer returned at once means no terminal.
+    -> "go" or "stop": {"user_input": " Y "} -> "go"."""
     reply = reply or {}
     answer = str(reply.get("user_input") or "").strip().lower()
     if answer in ("yes", "y"):

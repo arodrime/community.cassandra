@@ -37,6 +37,8 @@ def _parse(text):
 
 
 def cassandra_medusa_ini(text):
+    """medusa.ini's text -> {section: {key: value}}, keys lower case, {} when unreadable:
+    "[storage]\nbucket_name = b" -> {"storage": {"bucket_name": "b"}}."""
     try:
         return _parse(text)
     except configparser.Error:
@@ -59,7 +61,9 @@ def _shown(key, value):
 
 
 def cassandra_medusa_ini_changes(old_text, new_text, name="medusa.ini"):
-    """What writing new_text over old_text changes; old_text "" is a missing file."""
+    """What writing new_text over old_text changes; old_text "" is a missing file.
+    -> [{item, before, after}],
+    secrets masked: bucket_name a -> b: [{"item": "medusa.ini [storage] bucket_name", "before": "a", "after": "b"}]."""
     try:
         new = _flat(_parse(new_text))
     except configparser.Error:

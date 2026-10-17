@@ -236,7 +236,10 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
     read); account: {user, group} Cassandra runs as ('': not read); series:
     40x, 41x, 50x; dirs: {path: stat} of the data, commitlog, hints,
     saved_caches and log directories; jmx: the JMX users are imported (the
-    role writes their files)."""
+    role writes their files).
+    -> {vars: the variables that keep them,
+    notes, files: {name: {owner, group, mode, uid, gid}, or None when not read}}; e.g. every file
+    root:cassandra 0640 -> no variable."""
     if series not in SERIES:
         raise AnsibleFilterError("cassandra_permissions_import: unsupported series %s" % series)
     files = dict((name, st) for name, st in (files or {}).items() if jmx or name not in JMX_FILES)

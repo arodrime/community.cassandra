@@ -91,7 +91,9 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
     them (find, not recursive). A dir whose expected mount (fstab or enabled
     mount unit) is not mounted would land on the file system below it.
     reset: the node is reset first (reset_node.yml), a directory not empty is
-    only a warning. Adds 'data_free': the bytes free on the data directories' file systems."""
+    only a warning. Adds 'data_free': the bytes free on the data directories' file systems.
+    -> {problems, warnings, info,
+    data_free}, e.g. problems ["data directory /var/lib/cassandra/data: 305.1 MiB free on /var/lib/cassandra, ..."]."""
     actual = dict((_norm(m["mount"]), m) for m in mounts or [] if m.get("mount"))
     expected = _unit_mounts(unit_files)
     expected.update(_fstab_mounts(fstab))
@@ -156,7 +158,8 @@ def cassandra_new_node_load(cluster_status, dc, rack, free, address=""):
     """cluster_status: cassandra_status result's; free: bytes free for the
     data directories. Warns when the nodes of the same rack (else datacenter)
     hold more than half of it on average: the node gets about as much, and
-    compactions need room on top."""
+    compactions need room on top.
+    -> {problems, warnings, info}: a warning when the node would get more than half its free space."""
     nodes = [n for n in (cluster_status or {}).get(dc, {}).get("nodes", []) if n.get("address") != address]
     same_rack = [n for n in nodes if n.get("rack") == rack]
     group, where = (same_rack, "rack %s (%s)" % (rack, dc)) if same_rack else (nodes, "datacenter %s" % dc)
@@ -203,7 +206,8 @@ def cassandra_new_node_packages(needs, installed, query="", os_family="RedHat", 
     must be there), 'either' (installed or available) or 'warn' (offline, only
     worth a warning); installed: ansible_facts['packages'] (None: unknown, then only
     warnings); query_ok: false
-    when the repositories could not be read (then only a warning)."""
+    when the repositories could not be read (then only a warning).
+    -> {problems, warnings, info}: a package missing offline is a problem."""
     available = _available(query, os_family)
     problems, warnings, info = [], [], []
     for need in needs:
@@ -248,7 +252,8 @@ def cassandra_new_node_network(reached, own_ports, ss_output=None, running=False
     ss -ltn output (None: could not run it); reset: the node is reset first
     (reset_node.yml stops a running Cassandra: only a warning, its ports too);
     reset_stops: false when the reset never stops Cassandra (add_node's resets
-    only a node where it is down): running is a problem then."""
+    only a node where it is down): running is a problem then.
+    -> {problems, warnings, info}: a seed not reached, a port of its own already taken."""
     problems, warnings, info = [], [], []
     reset = reset and (reset_stops or not running)
     if running and reset:
@@ -335,7 +340,8 @@ def cassandra_new_node_kept_setup(switches, installed, imported=False, allow=Fal
     the switches it sets for a node it found. A blank host with those
     switches would be half set up: a host rebuilt under that node's name,
     its host_vars left as they were. Switches an operator set (no marker)
-    are theirs. allow: the operator sets that host up another way."""
+    are theirs. allow: the operator sets that host up another way.
+    -> {problems, warnings, info}: the switches of a host rebuilt under an imported node's name."""
     off = [(name, what) for name, what in KEPT_SETUP if not boolean(switches.get(name, True))]
     if not off:
         return _result()

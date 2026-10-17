@@ -151,7 +151,8 @@ def cassandra_node_reset_dirs(inventory, live_yaml=None, mounts=None, protected=
     'addresses': [...], 'cluster_name': ...}: the directories to empty
     (inventory and live file merged), the reasons not to touch any of them,
     the addresses and the cluster name (None: no live file, or unreadable)
-    the live file gives this node."""
+    the live file gives this node.
+    Example: [["data", "/var/lib/cassandra/data"]] -> {"dirs": [{"path": "/var/lib/cassandra/data", ...}], ...}."""
     mount_points = _mount_points(mounts)
     found, problems, addresses, live_cluster = [], [], [], None
     for kind, path in inventory or []:
@@ -189,7 +190,8 @@ def cassandra_node_reset_real(result, real, mounts=None, protected=None):
     """result: cassandra_node_reset_dirs' output; real: {path: the path with
     its links resolved (realpath)}. A directory that is a link, or below one,
     is checked again where it really is, and so is the nesting. Each
-    directory gets 'real': where it really is (its path when not a link)."""
+    directory gets 'real': where it really is (its path when not a link).
+    -> result, each directory with its real path and the checks done again there."""
     mount_points = _mount_points(mounts)
     problems = list(result.get("problems") or [])
     dirs = []
@@ -276,7 +278,8 @@ def cassandra_cluster_reset_check(answers, addresses_of, group="", running=None)
 def cassandra_reset_choice(value):
     """cassandra_add_node_reset as one word: 'auto' (the default: only a
     node that can't hold anything of value), 'true' (given: also a former
-    member of this cluster) or 'false' (refuse every node with data)."""
+    member of this cluster) or 'false' (refuse every node with data).
+    "yes" -> "true", "" -> "auto"."""
     word = str("auto" if value is None else value).strip().lower()
     if word in ("false", "no", "off", "0", "n", "f"):
         return "false"
@@ -301,7 +304,8 @@ def cassandra_add_node_refusal(refused, cluster="", operation="add_node", target
     targets: cassandra_target_nodes (a list, or names with commas);
     inventory, hosts, cwd, default_inventory: as cassandra_command takes
     them; asked_by: the playbook that runs add_node's plays (topology: run
-    again as is, no target list). [] when nothing is refused."""
+    again as is, no target list). [] when nothing is refused.
+    -> lines: the refusal block, then TO DO with the commands."""
     refused = [r for r in refused or [] if r]
     if not refused:
         return []
