@@ -10,6 +10,7 @@ import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -61,8 +62,7 @@ def test_preflight_shows_the_target_config_with_the_former_series_installed():
         todo += t.get("block", [])
     assert show["ansible.builtin.include_role"]["apply"]["check_mode"] is True
     assert show["vars"]["_cassandra_config_target_preview"] is True
-    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_config", "tasks", "main.yml")) as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_config", "tasks", "main.yml"))
     while todo:
         t = todo.pop(0)
         if t.get("name") == "Refuse the templates of another series than the one installed":

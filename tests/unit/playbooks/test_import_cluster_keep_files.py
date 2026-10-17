@@ -10,7 +10,6 @@ import os
 import re
 
 import pytest
-import yaml
 
 from ansible.errors import AnsibleFilterError
 from ansible.parsing.dataloader import DataLoader
@@ -30,6 +29,7 @@ except ImportError:
         return template
 
 from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 STOCK = os.path.join(ROOT, "roles", "cassandra_config", "molecule", "default", "files", "stock-5.0.9")
@@ -158,8 +158,7 @@ def check_heap():
 
 
 def test_role_leaves_them():
-    with open(os.path.join(ROOT, "roles", "cassandra_config", "tasks", "main.yml")) as f:
-        main = yaml.safe_load(f)
+    main = load_tasks(os.path.join(ROOT, "roles", "cassandra_config", "tasks", "main.yml"))
     block = next(t for t in main if t.get("name") == "Configure")["block"]
     note = next(t for t in block if t.get("name") == "List the files to change and whether to ask first")
     results = [{"item": "logback.xml", "stat": {"exists": True}}, {"item": "cassandra-env.sh", "stat": {"exists": False}}]

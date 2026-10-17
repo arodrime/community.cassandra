@@ -14,7 +14,6 @@ import time
 import warnings
 
 import pytest
-import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
@@ -32,14 +31,14 @@ with warnings.catch_warnings():  # already done under ansible-test
 
 from ansible_collections.community.cassandra.tests.unit.plugins.module_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
 
 
 def task(name):
-    with open(os.path.join(TASKS, "main.yml"), encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(TASKS, "main.yml"))
     while todo:
         t = todo.pop(0)
         if t.get("name") == name:

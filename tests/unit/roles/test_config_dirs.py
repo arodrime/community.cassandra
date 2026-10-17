@@ -8,7 +8,6 @@ __metaclass__ = type
 import os
 
 import pytest
-import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
@@ -20,6 +19,7 @@ except ImportError:
         return template
 
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import config_read
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks", "main.yml")
 READ = "Read the node's config files and directories"
@@ -28,8 +28,7 @@ NOTE = "Note what was found in the directories"
 
 
 def task(name):
-    with open(TASKS, encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(TASKS)
     while todo:
         t = todo.pop(0)
         if t.get("name") == name:

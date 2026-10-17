@@ -22,6 +22,7 @@ except ImportError:
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import same_settings
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 ROLE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config")
 with open(os.path.join(ROLE, "vars", "main.yml"), encoding="utf-8") as f:
@@ -31,8 +32,7 @@ with open(os.path.join(ROLE, "defaults", "main.yml"), encoding="utf-8") as f:
 
 
 def task(name):
-    with open(os.path.join(ROLE, "tasks", "main.yml"), encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(ROLE, "tasks", "main.yml"))
     while todo:
         t = todo.pop(0)
         if t.get("name") == name:
@@ -89,8 +89,7 @@ def test_refuses_a_value_that_is_not_a_dict():
 
 
 def test_runs_before_anything_is_read_or_changed():
-    with open(os.path.join(ROLE, "tasks", "main.yml"), encoding="utf-8") as f:
-        names = [t.get("name") for t in yaml.safe_load(f)]
+    names = [t.get("name") for t in load_tasks(os.path.join(ROLE, "tasks", "main.yml"))]
     assert names.index("Refuse template overrides the role cannot use") < names.index("Configure")
     assert "when" not in REFUSE  # always, under --check too
 

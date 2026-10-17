@@ -36,6 +36,7 @@ with warnings.catch_warnings():  # already done under ansible-test
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (  # noqa: E402 pylint: disable=wrong-import-position
     cassandra_apply_config_diff, cassandra_apply_config_outcomes, cassandra_apply_config_warnings)
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import SNITCHES, compare  # noqa: E402 pylint: disable=wrong-import-position
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402 pylint: disable=wrong-import-position
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -103,7 +104,7 @@ def set_facts(task, variables):
     return dict((k, value(v)) for k, v in task["ansible.builtin.set_fact"].items())
 
 
-ROLE = load("roles", "cassandra_config", "tasks", "main.yml")
+ROLE = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml"))
 ROLE_VARS = load("roles", "cassandra_config", "vars", "main.yml")
 FIND = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Find what each node needs"][0]
 HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"

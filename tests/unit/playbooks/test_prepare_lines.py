@@ -15,6 +15,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -231,7 +232,7 @@ def test_the_old_system_keyspace_warning_once_for_its_nodes():
 def test_the_roles_hold_back_what_the_lines_say():
     linux = named(load("roles", "cassandra_linux", "tasks", "main.yml"), "Say how the data disks are tuned")
     assert "not _cassandra_prepare_lines | default(false) | bool" in linux["when"]
-    config = named(load("roles", "cassandra_config", "tasks", "main.yml"), "Say what a new node leaves as it is")
+    config = named(load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "main.yml")), "Say what a new node leaves as it is")
     assert "not _cassandra_prepare_lines | default(false) | bool" in config["when"]
     # outside a prepare: the same WARNING, for its node
     msg = render(config["ansible.builtin.debug"]["msg"], inventory_hostname="node4",
