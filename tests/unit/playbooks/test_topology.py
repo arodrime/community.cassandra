@@ -240,7 +240,9 @@ def test_notes_kept_for_the_plan_not_printed_on_their_own():
     # the per-host dumps of the checks: not printed under topology
     with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"), encoding="utf-8") as f:
         text = f.read()
-    assert text.count("not _cassandra_notes_deferred | default(false) | bool") == 3
+    with open(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_read.yml"), encoding="utf-8") as f:
+        read = f.read()
+    assert (text + read).count("not _cassandra_notes_deferred | default(false) | bool") == 3
     # the stop: a verdict (printed as is) outside topology, unmarked there (topology says it in its refusal)
     checks = yaml.safe_load(text)
 

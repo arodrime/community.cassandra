@@ -150,7 +150,7 @@ def test_the_add_and_its_checks_use_the_join_seeds():
     config = task(prepare, "Write the config")
     assert config["vars"]["cassandra_seeds"] == "{{ _cassandra_join_seeds }}"
     assert task(add, "Start it")["vars"]["cassandra_service_allow_new_seed"] is True
-    checks = load("roles", "cassandra_service", "tasks", "new_node_checks.yml")
+    checks = load_tasks(os.path.join(TOP, "roles", "cassandra_service", "tasks", "new_node_checks.yml"))
     block = task(checks, "Check the host before installing anything")["block"]
     names = [t["name"] for t in flat(block)]
     assert names.index("Work out the seeds it joins with") < names.index("Work out what to check")
