@@ -1,0 +1,108 @@
+---
+# What changes on the disks, for the summary below and the change report (not
+# a scheduler the device refused, nor the LVM read-ahead lvchange failed to set)
+- name: Compare the disk tuning
+  ansible.builtin.set_fact:
+    _cassandra_disk_items: >-
+      {%- set out = [] -%}
+      {%- set refused = cassandra_data_scheduler_set.results | default([]) | rejectattr('skipped', 'defined')
+                        | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list -%}
+      {%- set failed = _cassandra_disk_lvm_failed | map(attribute='kname') | list -%}
+      {%- for c in _cassandra_disk_changes_seen if (c.report | default(true) or c.kname in failed)
+                                              and not (c.what == 'lvm' and c.kname in failed)
+                                              and not (c.what == 'scheduler' and c.kname in refused) -%}
+      {%-   set _ = out.append({'item': c.item, 'before': c.before, 'after': c.after}) -%}
+      {%- endfor -%}
+      {%- if cassandra_data_tuned_file is defined and cassandra_data_tuned_file is changed -%}
+      {%-   set _ = out.append({'item': _cassandra_disk_tuned_dir ~ '/' ~ _cassandra_disk_tuned.name ~ '/tuned.conf',
+                               'before': 'absent or different', 'after': 'present'}) -%}
+      {%- endif -%}
+      {%- if _cassandra_disk_tuned.name is defined and _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles
+             and not _cassandra_disk_tuned_deferred | bool
+             and (_cassandra_linux_check or cassandra_data_tuned_switch.rc | default(1) == 0) -%}
+      {%-   set _ = out.append({'item': 'tuned profiles', 'before': _cassandra_disk_tuned.active | join(' '),
+                               'after': _cassandra_disk_tuned.profiles | join(' ')}) -%}
+      {%- endif -%}
+      {%- if cassandra_data_disk_udev is changed -%}
+      {%-   set _ = out.append({'item': '/etc/udev/rules.d/64-cassandra-data-disk.rules', 'before': 'absent or different',
+                               'after': 'present'}) -%}
+      {%- endif -%}
+      {%- for r in [cassandra_data_disk_udev_absent | default({})] + cassandra_data_disk_udev_old.results | default([]) if r is changed -%}
+      {%-   set _ = out.append({'item': r.path | default(r.item | default('')), 'before': 'present', 'after': 'absent'}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+# How the disks are tuned, kept for the one summary of the run (main.yml):
+# what to act on (warnings; info: not tuned yet), and the explanations (notes,
+# shown with -v)
+- name: Keep how the data disks are tuned
+  ansible.builtin.set_fact:
+    _cassandra_disk_summary:
+      name: "{{ inventory_hostname }}"
+      kb: "{{ _cassandra_readahead_read_back }}"
+      changed: "{{ _cassandra_disk_items | length > 0 }}"
+      brief: "{{ _cassandra_disk_plan.brief | default([]) }}"
+      stacks: "{{ _cassandra_disk_plan.stacks | default([]) }}"
+      warnings: >-
+        {{ _cassandra_disk_plan.warnings | default([])
+           + (_cassandra_disk_lvm_failed | map(attribute='lv') | map('regex_replace', '^', 'lvchange failed on ')
+              | map('regex_replace', '$', ': its read-ahead is set now, kept by the udev rule') | list)
+           + (['tuned: no stable id for ' ~ _cassandra_disk_tuned.unmatched | join(', ')
+               ~ ': its profile still sets them'] if _tuned_ok | bool and _cassandra_disk_tuned.unmatched else [])
+           + (['tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | default([]) | join(' ') ~ ' failed: '
+               ~ (cassandra_data_tuned_switch.stderr | default('') or cassandra_data_tuned_switch.stdout | default('')).splitlines()
+                 | first | default('?')] if _tuned_failed | bool else [])
+           + ([('tuned profile switch pending (to ' ~ _cassandra_disk_tuned.profiles | join(' ') ~ ')'
+                if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles
+                else 'tuned profile ' ~ _cassandra_disk_tuned.name ~ ' updated, its reload pending')
+               ~ ': not done while Cassandra runs (tuned applies all its settings again, live). '
+               ~ ('Until then, tuned sets the read-ahead of the Cassandra devices back at each boot. '
+                  if _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles
+                  else 'Until then, tuned runs the profile it loaded (it reads the new one at the next boot). ')
+               ~ 'To do it: tuned-adm profile ' ~ _cassandra_disk_tuned.profiles | join(' ')
+               ~ ' on the node at a quiet time, or run again with -e cassandra_linux_tuned_switch_running=true.']
+              if _tuned_deferred | bool else [])
+           + ([_tuned_warn | regex_replace('^WARNING - ', '')] if _tuned_warn and not _tuned_ok | bool and not _tuned_deferred | bool
+              else []) }}
+      # (Cassandra not looked for, both *_running true: taken as running, the restart said; not when
+      # apply_config restarts it next: _cassandra_linux_restart_follows)
+      info: >-
+        {{ _cassandra_disk_plan.info | default([])
+           + (['the read-ahead of the LVM volumes is kept by the udev rule for now; LVM itself stores it at the'
+               ' next run with Cassandra stopped — nothing to do']
+              if _lvm_by_udev | length > 0 and _cassandra_data_lvm_here | bool else [])
+           + (['optional: restart Cassandra to read the files it has open with the new read-ahead']
+              if _cassandra_disk_changes_seen | selectattr('what', 'in', ['ra', 'lvm']) | list | length > 0
+                 and not _cassandra_linux_check and 'running' in cassandra_data_running.stdout | default('running')
+                 and not _cassandra_linux_restart_follows | default(false) | bool
+              else []) }}
+      notes: >-
+        {{ _cassandra_disk_plan.notes | default([])
+           + (['LVM volumes kept by the udev rule, not by LVM (not applied live, or lvm.conf activation/readahead'
+               ' "none"): LVM may set them back when it activates them']
+              if _lvm_by_udev | length > 0 and not _cassandra_data_lvm_here | bool else [])
+           + (['LVM volumes of the OS kept by the udev rule (never reloaded with lvchange): LVM may set them back'
+               ' when it activates them'] if _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm') | selectattr('os')
+               | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string) | list
+               | length > 0 else [])
+           + (['tuned: ' ~ ('would run' if _cassandra_linux_check else 'runs') ~ ' ' ~ _cassandra_disk_tuned.profiles | join(' ')
+               ~ ' (' ~ _cassandra_disk_tuned.name ~ ': nothing set on the Cassandra devices)'] if _tuned_ok | bool else []) }}
+  vars:
+    # LVM volumes (not the OS's) whose read-ahead LVM doesn't keep yet: the udev rule does
+    _lvm_by_udev: >-
+      {{ [] if _cassandra_data_lvchange_now | bool else _cassandra_disk_devices | selectattr('kind', 'equalto', 'lvm')
+         | rejectattr('os') | rejectattr('lv_read_ahead', 'equalto', (_cassandra_readahead_read_back | int * 2) | string)
+         | list }}
+    # (no rc: a timeout)
+    _tuned_failed: >-
+      {{ _cassandra_disk_tuned.name is defined and cassandra_data_tuned_switch is defined
+         and cassandra_data_tuned_switch is not skipped and cassandra_data_tuned_switch.rc | default(1) != 0 }}
+    _tuned_deferred: >-
+      {{ _cassandra_disk_tuned.name is defined and _cassandra_disk_tuned_deferred | bool
+         and (cassandra_data_tuned_file | default({}) is changed or _cassandra_disk_tuned.active != _cassandra_disk_tuned.profiles) }}
+    _tuned_ok: "{{ _cassandra_disk_tuned.name is defined and not _tuned_failed | bool and not _tuned_deferred | bool }}"
+    _tuned_warn: >-
+      {{ cassandra_data_tuned.stdout_lines | default([]) | community.cassandra.cassandra_disk_tuned_conflict(
+           _cassandra_readahead_read_back, _cassandra_disk_devices, _cassandra_disk_state | default({}),
+           cassandra_data_udev_info | default({}), cassandra_linux_tuned_manage | bool, _cassandra_linux_live | bool) }}
+  when: _cassandra_data_tuned_here | bool
