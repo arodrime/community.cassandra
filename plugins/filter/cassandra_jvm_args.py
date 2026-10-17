@@ -509,7 +509,7 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
         return {"why": str(exc)} if env_has_candidates(live[ENV], role[ENV]) else None
     if not info["added"] and not info["heap_lines"]:
         return None
-    end, dropped, keep = info["end"], [], []
+    end = info["end"]
     # the heap cassandra-env.sh gets, set where the role writes it
     heap_vars = {}
     for name, value in info["live_heap"].items():
@@ -517,38 +517,9 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
             if value is not None and _plain_value(value) is None:
                 return {"why": "cassandra-env.sh sets %s from what only the shell knows" % name}
             heap_vars[HEAP_VARS[name][series]] = value or ""
-    dropped += ["%s line %d: %s: set after the last use of %s (no effect), left out" % (
-        ENV, line["n"], out.mask(line["text"]), SET.match(line["text"]).group(1)) for line in info["dead"]]
-    for line in info["added"]:
-        for k, option in enumerate(line["options"]):
-            later = _later(args, line["at"] + k, end)
-            if later is None:
-                keep.append(option)
-            else:
-                dropped.append("%s line %d: %s: %s by %s later, left out" % (
-                    ENV, line["n"], out.mask(option), "set again" if args[later] == option else "overridden",
-                    out.mask(args[later])))
+    keep, dropped = _kept_options(info, args)
     extras_var = "cassandra_%s_extra_options" % dep.split("-", maxsplit=1)[0]
-    # -Xms and -Xmx alike: the heap variables; else (or when that is not the same) every option in the extra options
-    last = dict((_jvm_name(o), o) for o in keep if _jvm_name(o) in HEAP_OPTIONS)
-    last = dict((k, o) for k, o in last.items() if o.startswith(k) or (k == "MaxDirectMemorySize" and "=" in o))
-    by_vars, to_vars = dict(heap_vars), []
-    if "-Xmx" in last and "-Xms" in last and last["-Xmx"][4:] == last["-Xms"][4:]:
-        by_vars["cassandra_heap_size"] = last["-Xmx"][4:]
-        to_vars += [last["-Xms"], last["-Xmx"]]
-    if "-Xmn" in last and HEAP_VARS["HEAP_NEWSIZE"].get(series):
-        by_vars["cassandra_heap_newsize"] = last["-Xmn"][4:]
-        to_vars.append(last["-Xmn"])
-    if "MaxDirectMemorySize" in last and HEAP_VARS["MAX_DIRECT_MEMORY_SIZE"].get(series):
-        by_vars["cassandra_max_direct_memory_size"] = last["MaxDirectMemorySize"].split("=", 1)[1]
-        to_vars.append(last["MaxDirectMemorySize"])
-    if by_vars.get("cassandra_heap_size") and HEAP_VARS["HEAP_NEWSIZE"].get(series) \
-            and not by_vars.get("cassandra_heap_newsize") and not variables.get("cassandra_heap_newsize") \
-            and not info["greps"].get("+UseG1GC"):
-        # without G1, MAX_HEAP_SIZE needs HEAP_NEWSIZE: the young generation the JVM runs with
-        xmn = [a for a in args[1:end] if a.startswith("-Xmn")]
-        if xmn:
-            by_vars["cassandra_heap_newsize"] = xmn[-1][4:]
+    by_vars, to_vars = _heap_options_vars(keep, heap_vars, series, variables, info, args[1:end])
     tries = [(by_vars, [o for o in keep if o not in to_vars])] if to_vars else []
     tries.append((heap_vars, keep))
     why = "an option would not go to an options file"
@@ -571,6 +542,50 @@ def cassandra_jvm_args_adopt(cmdline, live, render, variables, series, java, nod
                 dropped += gone
             return {"vars": found, "moved": moved, "dropped": dropped}
     return {"why": why}
+
+
+def _kept_options(info, args):
+    """The options of cassandra-env.sh's added lines the JVM keeps (none set again later), and the report lines
+    of the ones left out (set again or overridden later, a heap assignment after its last use)."""
+    end, keep = info["end"], []
+    dropped = ["%s line %d: %s: set after the last use of %s (no effect), left out" % (
+        ENV, line["n"], out.mask(line["text"]), SET.match(line["text"]).group(1)) for line in info["dead"]]
+    for line in info["added"]:
+        for k, option in enumerate(line["options"]):
+            later = _later(args, line["at"] + k, end)
+            if later is None:
+                keep.append(option)
+            else:
+                dropped.append("%s line %d: %s: %s by %s later, left out" % (
+                    ENV, line["n"], out.mask(option), "set again" if args[later] == option else "overridden",
+                    out.mask(args[later])))
+    return keep, dropped
+
+
+def _heap_options_vars(keep, heap_vars, series, variables, info, before_main):
+    """The heap options kept (-Xms and -Xmx alike, -Xmn, MaxDirectMemorySize) as the heap variables, over
+    heap_vars -> (the variables, the options they replace); before_main: the JVM's arguments up to its main class.
+    Else (or when that is not the same) every option goes to the extra options."""
+    last = dict((_jvm_name(o), o) for o in keep if _jvm_name(o) in HEAP_OPTIONS)
+    last = dict((k, o) for k, o in last.items() if o.startswith(k) or (k == "MaxDirectMemorySize" and "=" in o))
+    by_vars, to_vars = dict(heap_vars), []
+    if "-Xmx" in last and "-Xms" in last and last["-Xmx"][4:] == last["-Xms"][4:]:
+        by_vars["cassandra_heap_size"] = last["-Xmx"][4:]
+        to_vars += [last["-Xms"], last["-Xmx"]]
+    if "-Xmn" in last and HEAP_VARS["HEAP_NEWSIZE"].get(series):
+        by_vars["cassandra_heap_newsize"] = last["-Xmn"][4:]
+        to_vars.append(last["-Xmn"])
+    if "MaxDirectMemorySize" in last and HEAP_VARS["MAX_DIRECT_MEMORY_SIZE"].get(series):
+        by_vars["cassandra_max_direct_memory_size"] = last["MaxDirectMemorySize"].split("=", 1)[1]
+        to_vars.append(last["MaxDirectMemorySize"])
+    if by_vars.get("cassandra_heap_size") and HEAP_VARS["HEAP_NEWSIZE"].get(series) \
+            and not by_vars.get("cassandra_heap_newsize") and not variables.get("cassandra_heap_newsize") \
+            and not info["greps"].get("+UseG1GC"):
+        # without G1, MAX_HEAP_SIZE needs HEAP_NEWSIZE: the young generation the JVM runs with
+        xmn = [a for a in before_main if a.startswith("-Xmn")]
+        if xmn:
+            by_vars["cassandra_heap_newsize"] = xmn[-1][4:]
+    return by_vars, to_vars
 
 
 def env_has_candidates(live, role):
