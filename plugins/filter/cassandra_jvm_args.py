@@ -35,6 +35,7 @@ import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     JVM_LISTS, JVM_UNLOCK, shell_words)
+from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
 
 MAIN_CLASS = "org.apache.cassandra.service.CassandraDaemon"
@@ -114,18 +115,7 @@ class NotSame(Exception):
 
 def options_file(series, java):
     """The jvm<N>-server.options the running Java reads (cassandra.in.sh), None when not known."""
-    major = _major(java)
-    if not major:
-        return None
-    if series == "50x":
-        return "jvm17-server.options" if major >= 17 else "jvm11-server.options"
-    return "jvm11-server.options" if major >= 11 else "jvm8-server.options"
-
-
-def _major(java):
-    """The Java major version: 17 for 17, 8 for 1.8 (or 1.8.0_392); 0 when not one."""
-    found = re.match(r"(?:1\.(\d+)(?:\D.*)?|(\d+))$", str(java))
-    return int(found.group(1) or found.group(2)) if found else 0
+    return jvm.options_file(series, java) or None
 
 
 def _arguments(cmdline):
@@ -668,7 +658,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
     dep = options_file(series, java)
     if dep is None:
         return lines
-    major = _major(java)
+    major = jvm.java_major(java)
     for name in sorted(live):
         m = re.match(r"^jvm(\d+)-server\.options$", name)
         if m and name != dep and not ("\r" in live[name]):
