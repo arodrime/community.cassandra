@@ -59,7 +59,9 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
     [{kind, text (its sentence), ...}]: kind state (address, rack, state,
     seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
-    schema (msg)."""
+    schema (msg).
+    e.g. (the same) -> [{kind: "state", address: "10.0.0.4", rack: "r1", state: "DN", seen_from: "node1", text:
+    "node4 (10.0.0.4, r1) is DN, seen from node1"}]."""
     names = _by_ip(names)
     found = []
     for view in views:
@@ -128,7 +130,9 @@ def cassandra_health_waiting(findings, names=None):
     restarted), a nodetool status that failed with JMX not answering (refused, timed out) on a node another
     one sees down (names: {address: inventory name}); each one once, whatever view saw it. The others (a ring
     of another size, streams, a schema disagreement, nodetool failing on a node seen up...) are not waited
-    for: alone, they stop the run at once; with one of these, at the end of the wait."""
+    for: alone, they stop the run at once; with one of these, at the end of the wait.
+    Input: cassandra_health_findings' result; output: the findings kept. e.g. [<10.0.0.4 DN>, <the ring has 3
+    nodes, the inventory 4>] -> [<10.0.0.4 DN>]."""
     findings = findings or []
     down = set((names or {}).get(f.get("address"), f.get("address")) for f in findings
                if f.get("kind") == "state" and str(f.get("state", ""))[:1] == "D")
@@ -148,7 +152,9 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
                                done=False):
     """The progress line of the wait for waiting (cassandra_health_waiting's): "[2/5] node2 restart  waiting for
     node4 (10.0.0.4) DN to come back  1m30s/10m"; names: {address: inventory name}; waited, timeout: seconds; done:
-    the line once nothing is waited for any more ("[2/5] node2 restart  all back after 1m40s")."""
+    the line once nothing is waited for any more ("[2/5] node2 restart  all back after 1m40s").
+    e.g. ([<10.0.0.4 DN>], names={"10.0.0.4": "node4"}, waited=90, timeout=600, index=2, steps=5, node="node2",
+    operation="restart") -> "[2/5] node2 restart  waiting for node4 (10.0.0.4) DN to come back  1m30s/10m"."""
     if int(steps or 0):
         head = "[%d/%d] %s %s" % (int(index), int(steps), node, operation)
     else:
@@ -183,7 +189,9 @@ _MODE_STATE = {"JOINING": "UJ", "MOVING": "UM", "LEAVING": "UL"}
 def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node="", operation="", done=False):
     """The progress line of the wait for a node to be NORMAL (wait_normal.yml): "[2/5] node2 restart  waiting for
     NORMAL (UJ\u2192UN)  1m10s/10m"; mode: netstats' (JOINING, MOVING, LEAVING as their status letters, another one
-    as itself: "(mode STARTING)", empty: "(no JMX answer yet)"); done: "[2/5] node2 restart  NORMAL after 1m20s"."""
+    as itself: "(mode STARTING)", empty: "(no JMX answer yet)"); done: "[2/5] node2 restart  NORMAL after 1m20s".
+    e.g. ("JOINING", waited=70, timeout=600, index=2, steps=5, node="node2", operation="restart") -> "[2/5] node2
+    restart  waiting for NORMAL (UJ\u2192UN)  1m10s/10m"."""
     mode = str(mode or "").upper()
     head = ("[%d/%d] %s %s" % (int(index), int(steps), node, operation) if int(steps or 0)
             else ("%s %s" % (node, operation)).strip())
@@ -203,7 +211,9 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
     bootstrap still running). leaving_ok: addresses expected up and leaving (a
     decommission still running). names: {address: inventory name}
     (cassandra_host_addresses), a node of the ring named by it. Returns a
-    list of problems."""
+    list of problems.
+    e.g. ([{from: node1, result: <a ring where 10.0.0.4 is DN>}], 2, "node1", names={"10.0.0.4": "node4"}) ->
+    ["node4 (10.0.0.4, r1) is DN, seen from node1"]."""
     return [f["text"] for f in cassandra_health_findings(
         views, expected, node, gossip=gossip, binary=binary, netstats=netstats, schema=schema, ports=ports,
         down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok, names=names)]
@@ -310,7 +320,11 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     problems (count), lines}: "HEALTHY  my_cluster  6 nodes  6 UN, schema
     agreed, no streams, ports open" or "NOT HEALTHY  my_cluster  6 nodes
     checked, 2 problems", a line per problem, then a TO DO (a node down
-    and not reached: one item)."""
+    and not reached: one item).
+    e.g. ({node1: [<10.0.0.4 DN>]}, "my_cluster", ["node1", "node4"], unreachable=["node4"]) -> {healthy: False,
+    problems: 2, lines: ["NOT HEALTHY  my_cluster  1 node checked, 2 problems", "  ring:  node4 10.0.0.4 (r1) DN   seen
+    from node1", "  ssh:   not reached by Ansible: node4", "TO DO", "  1. bring node4 back (not reached over SSH, down
+    in the ring): ..."]}."""
     names = _by_ip(names)  # nodetool prints IPv6 uncompressed
     unreachable = [h for h in hosts if h in (unreachable or [])]
     checked = [h for h in hosts if h not in unreachable]
@@ -358,7 +372,8 @@ def cassandra_leaving_state(netstats, ring, address):
     usual checks decide), 'leaving' (a decommission in progress, to wait for;
     in_ring false once it has announced it left), 'decommissioned' (gone from
     the ring, Cassandra running or not: to stop and disable), 'failed' (an
-    operator's job, reason says why)."""
+    operator's job, reason says why).
+    e.g. ({mode: "LEAVING"}, <a ring with 10.0.0.1 UN>, "10.0.0.1") -> {state: "leaving", in_ring: True, reason: ""}."""
     mode = (netstats or {}).get("mode") or ""
     if not (ring or {}).get("cluster_status"):
         return {"state": "normal", "in_ring": True, "reason": ""}  # the health check reports it
@@ -437,7 +452,9 @@ def cassandra_removal_state(ring, address, removal_status, gossip="", tokens="")
     it), 'busy' (a node is removing another node, or one it can't tell,
     several are removing, or other nodes are leaving: reason says which),
     'orphan' (being removed but no node of the run is coordinating it:
-    elsewhere, or its coordinator restarted), 'unknown' (no ring) or 'start'."""
+    elsewhere, or its coordinator restarted), 'unknown' (no ring) or 'start'.
+    e.g. (<a ring with 10.0.0.4 DN>, "10.0.0.4", {node1: ""}) -> {state: "start", on: "", reason: ""}; "10.0.0.9"
+    (not in the ring) -> {state: "absent", on: "", reason: ""}."""
     if not (ring or {}).get("cluster_status"):
         return {"state": "unknown", "on": "", "reason": ""}
     nodes = _nodes(ring["cluster_status"])
@@ -478,7 +495,9 @@ def cassandra_removal_force_target(rings, address, removal):
     L), and nothing on a node that does not show the dead node DL (only the
     coordinator of a removal does). rings: {host: cassandra_status result read
     on it}, in the order of the run; removal: cassandra_removal_state's.
-    Returns {'on': the host, 'reason': ''} or {'on': '', 'reason': why not}."""
+    Returns {'on': the host, 'reason': ''} or {'on': '', 'reason': why not}.
+    e.g. ({node1: <a ring where node1 shows 10.0.0.4 DL>}, "10.0.0.4", {state: "orphan"}) -> {on: "node1",
+    reason: ""}."""
     removal = removal or {}
     if removal.get("state") == "busy":
         return {"on": "", "reason": "%s: removenode force would finish that too. Wait for it (nodetool removenode"
