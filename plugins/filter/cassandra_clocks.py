@@ -41,7 +41,7 @@ __metaclass__ = type
 import re
 
 from ansible.errors import AnsibleFilterError
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output
 
 
 # a node no daemon reports on: the dates collected over SSH, only this coarse

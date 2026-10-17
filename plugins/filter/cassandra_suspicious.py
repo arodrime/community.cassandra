@@ -12,7 +12,7 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 DASH = u"—"
 ACK = "cassandra_suspicious_ack"

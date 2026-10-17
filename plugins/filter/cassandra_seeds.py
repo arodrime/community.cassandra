@@ -9,12 +9,12 @@ the token allocator accepts."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 
 def cassandra_seed_layout(nodes):
     """nodes: [{'name', 'address', 'dc', 'rack', 'seed'}] in inventory order.
-    The seed rule of preflight and help (module_utils cassandra_output
+    The seed rule of preflight and help (plugin_utils cassandra_output
     seed_layout): {'lines': one per datacenter, 'problems': the warnings,
     'notes', 'suggested': [addresses] (empty when there is no warning)}."""
     return out.seed_layout(nodes)

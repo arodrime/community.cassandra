@@ -19,7 +19,7 @@ from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.callback.ops import rule_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_help import (
     GUIDE, OPERATIONS, OPTION_ROOM, _common, _option_text, cassandra_help, cassandra_help_runbook)
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     FLOW, NBSP, command_words, is_command, laid_out)
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")

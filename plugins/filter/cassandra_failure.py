@@ -10,7 +10,7 @@ __metaclass__ = type
 
 import re
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # the longest cause shown: an error's first line in full, its why and its way out (only a raw dump is cut;
 # the whole error with -v)

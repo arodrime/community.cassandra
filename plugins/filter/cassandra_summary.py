@@ -16,7 +16,7 @@ __metaclass__ = type
 
 import re
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # cassandra_service_node_action (the first word of a result) -> its playbook
 PLAYBOOKS = {"add": "add_node", "decommission": "decommission_node", "restart": "rolling_restart",

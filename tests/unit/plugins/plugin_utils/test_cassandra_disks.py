@@ -4,7 +4,7 @@ __metaclass__ = type
 import json
 import os
 
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disks import (
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_disks import (
     _dirs,
     ARROW,
     parse_lsblk,

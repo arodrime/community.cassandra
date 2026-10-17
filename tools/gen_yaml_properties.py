@@ -15,7 +15,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "plugins", "module_utils", "cassandra_yaml_properties.py")
+OUT = os.path.join(HERE, "..", "plugins", "plugin_utils", "cassandra_yaml_properties.py")
 
 
 def _code(src):

@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 GIB = 1024 ** 3
 P = out.PARAGRAPH  # a blank line between two paragraphs of a block
@@ -1182,7 +1182,7 @@ def test_seeds_reload_todo():
 
 
 def test_a_node_range_longer_than_its_room_cut_after_its_dots():
-    from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import wrap_list
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import wrap_list
     text = "db-node-1.example.net..db-node-3.example.net, db-node-5.example.net"
     assert wrap_list(text, 30) == ["db-node-1.example.net..", "db-node-3.example.net,", "db-node-5.example.net"]
     assert wrap_list(text, 50) == ["db-node-1.example.net..db-node-3.example.net,", "db-node-5.example.net"]

@@ -26,7 +26,7 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.module_utils.six.moves.urllib.parse import urlsplit, urlunsplit
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import size as _size, sizes as _sizes
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import size as _size, sizes as _sizes
 
 GIB = 1024 ** 3
 UNITS = {"bytes": 1, "b": 1, "kib": 1024, "kb": 1024, "mib": 1024 ** 2, "mb": 1024 ** 2,

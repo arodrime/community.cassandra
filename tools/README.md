@@ -35,7 +35,7 @@ To move a series to a newer release (e.g. 5.0.9 to 5.0.10), or to add a series:
 gen_yaml_properties.py
 ----------------------
 
-Writes `plugins/module_utils/cassandra_yaml_properties.py`: the top-level
+Writes `plugins/plugin_utils/cassandra_yaml_properties.py`: the top-level
 `cassandra.yaml` keys each release accepts (Cassandra 4.0+ refuses to start on
 any other). They come from each release's `Config.java`: its public fields,
 neither static nor transient, and the former names its `@Replaces`

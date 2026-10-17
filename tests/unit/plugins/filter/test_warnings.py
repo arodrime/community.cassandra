@@ -14,7 +14,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
 from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import cassandra_clock_refusal
 from ansible_collections.community.cassandra.plugins.filter.cassandra_disks import cassandra_disk_summary
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_screen
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 TOP = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 

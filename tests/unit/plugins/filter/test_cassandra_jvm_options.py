@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The JVM options checks (module_utils cassandra_jvm_options and its filter):
+# The JVM options checks (plugin_utils cassandra_jvm_options and its filter):
 # which jvm<N>-server.options each Java reads, and the table of options worth a
 # warning, or refused before a Java change.
 
@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import (
     cassandra_jvm_option_checks, cassandra_jvm_options_file)
 

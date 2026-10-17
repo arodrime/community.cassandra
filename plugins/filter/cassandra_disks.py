@@ -1,6 +1,6 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""Filters behind cassandra_linux's disk tuning (see module_utils/cassandra_disks).
+"""Filters behind cassandra_linux's disk tuning (see plugin_utils/cassandra_disks).
 
 cassandra_disk_plan: the devices under the Cassandra directories, and which to tune.
 cassandra_disk_mount_targets: the mount points of the tuned directories.
@@ -21,8 +21,8 @@ from collections import OrderedDict
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_disks import (
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_disks import (
     loop_results,
     mount_targets,
     plan,

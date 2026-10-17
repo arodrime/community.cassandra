@@ -7,7 +7,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_failure import (
     cassandra_failure_cause, cassandra_failure_repos, cassandra_failure_report)
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import PARAGRAPH as P
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH as P
 
 # what the dnf module says when a repository's mirror can't be reached (EL 8)
 EPEL = {"msg": "Failed to download metadata for repo 'epel': Cannot download repomd.xml: Cannot download "

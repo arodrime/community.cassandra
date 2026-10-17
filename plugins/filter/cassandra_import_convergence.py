@@ -25,7 +25,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
     ARROW_RIGHT, DASH, REPORT_WIDTH, SCREEN_VALUE, _aligned, _column, _cut, _fill, _sections, _who, _whole)
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # the files cassandra_config writes from its series' templates: a change in one is a restart (apply_config's rule);
 # the JMX files' templates are not a series' (cassandra_jmx_users: _kind)

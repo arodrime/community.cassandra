@@ -12,7 +12,7 @@ ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 # the functions that print one size
 SIZE = {"size", "_size", "_gib", "cassandra_size"}
 # where the helpers live, and the filter that exposes size(count, scale) to templates
-ALLOWED = {os.path.join("plugins", "module_utils", "cassandra_output.py"): None,
+ALLOWED = {os.path.join("plugins", "plugin_utils", "cassandra_output.py"): None,
            os.path.join("plugins", "filter", "cassandra_output.py"): {"cassandra_size"}}
 # two sizes side by side that are not a done/total pair: (file, text of the line)
 NOT_PAIRS = {(os.path.join("plugins", "filter", "cassandra_new_node.py"), "on average (nodetool status), this host has")}

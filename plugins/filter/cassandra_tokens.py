@@ -28,7 +28,7 @@ from functools import wraps
 
 from ansible.errors import AnsibleFilterError
 from ansible_collections.community.cassandra.plugins.filter.cassandra_ring import _bytes, _host_of, _ip
-from ansible_collections.community.cassandra.plugins.module_utils.cassandra_output import size as _size, sizes as _sizes
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import size as _size, sizes as _sizes
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_tokens import (
     TokenError, balanced_positions, dc_offset, move_order, ownership, parse_token, partitioner_range,
     plan_balanced, plan_bisect, position, rack_order, token_of, tolerance, transfer)

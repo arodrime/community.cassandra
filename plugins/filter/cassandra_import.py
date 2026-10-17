@@ -48,8 +48,8 @@ from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
     DEFAULT_WHEN_ABSENT, NOT_COMPARED, QUANTITY_KEYS, canonical_quantity, former_keys, former_names, former_value,
     jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_jvm_options as jvm
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 EXPR = re.compile(r"(\{\{.*?\}\})")
@@ -77,7 +77,7 @@ IDENTITY_OPTIONAL = {"cassandra_seed_provider_class_name": ("seed_provider", 0, 
 # Read the same way, whatever the layout of their section (moved, indented otherwise, flow style)
 BY_PATH = {"cassandra_sstable_format": ("sstable", "selected_format")}
 INTEGERS = ("cassandra_num_tokens", "cassandra_allocate_tokens_for_local_replication_factor")
-# Same masking as cassandra_config's diff preview (module_utils cassandra_output)
+# Same masking as cassandra_config's diff preview (plugin_utils cassandra_output)
 SECRET, SECRET_VALUE, _mask, _secret = out.SECRET, out.SECRET_VALUE, out.mask, out.secret
 
 

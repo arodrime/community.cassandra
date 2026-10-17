@@ -278,7 +278,7 @@
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | length > 0
 
     # the JVM options the node's Java reads (cassandra_java_version, else the series' default) in the files the role
-    # writes: one worth a look (module_utils cassandra_jvm_options: -Xss far from the usual range,
+    # writes: one worth a look (plugin_utils cassandra_jvm_options: -Xss far from the usual range,
     # -XX:-UseBiasedLocking on Java 17)
     - name: Find the JVM options worth a look
       ansible.builtin.set_fact:

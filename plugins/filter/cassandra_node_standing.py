@@ -28,7 +28,7 @@ import posixpath
 
 import yaml
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output
 
 # The states, each with the one phrase the operator reads for it
 # (docs/docsite/rst/guide_output.rst lists them)

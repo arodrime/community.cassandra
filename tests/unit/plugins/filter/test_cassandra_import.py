@@ -655,8 +655,8 @@ def test_password_in_a_value_is_a_secret():
 
 def test_every_value_hidden_on_screen_goes_to_secrets_yml():
     # the import files a value in secrets.yml by the rule the output hides it by: none in clear in main.yml
-    from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
-    from ansible_collections.community.cassandra.tests.unit.plugins.module_utils.test_cassandra_output import SECRETS
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+    from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import SECRETS
     variables = dict(("v%d_%s" % (i, key), value) for i, (key, value) in enumerate(SECRETS))
     variables["cassandra_cluster_name"] = "Prod"
     files = cassandra_inventory_files({"group_vars": {"c": variables}, "host_vars": {}})

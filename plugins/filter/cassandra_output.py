@@ -1,6 +1,6 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""The operator output blocks of module_utils/cassandra_output.py as
+"""The operator output blocks of plugin_utils/cassandra_output.py as
 filters, for the playbooks (docs/docsite/rst/guide_output.rst). Each one
 returns text lines, which a debug task marked cassandra_output: true prints.
 
@@ -29,7 +29,7 @@ import os
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.utils.display import Display
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 SCREEN_WIDTH = 160  # the screen's width when no width is known (Ansible's display gives one: 79 in a log)
 
@@ -93,7 +93,7 @@ def cassandra_by_nodes(pairs, full=False, every="all"):
 
 
 def cassandra_plan(spec, check=False):
-    """spec: the arguments of module_utils cassandra_output.plan as a dict."""
+    """spec: the arguments of plugin_utils cassandra_output.plan as a dict."""
     spec = dict(spec or {})
     return out.plan(spec.pop("operation", ""), check=check, **spec)
 
@@ -207,20 +207,20 @@ def cassandra_reimport_hosts(group, hosts="", env_cluster="", files=True, others
 
 
 def cassandra_phase(name, names=None, node="", what="", count=None):
-    """A phase line (module_utils cassandra_output PHASES): 'decommission' |
+    """A phase line (plugin_utils cassandra_output PHASES): 'decommission' |
     cassandra_phase(node='node3') -> "Decommissioning node3..."."""
     return out.phase(name, names=names, node=node, what=what, count=count)
 
 
 def cassandra_prepare_lines(hosts, check=False):
     """What the prepare of new nodes did, a line per step and group of nodes
-    (module_utils cassandra_output prepare_lines)."""
+    (plugin_utils cassandra_output prepare_lines)."""
     return out.prepare_lines(hosts, check=boolean(check, strict=False))
 
 
 def cassandra_left_system_warning(hosts):
     """The WARNING about an old system keyspace left outside the data
-    directories of new nodes (module_utils cassandra_output left_system_warning)."""
+    directories of new nodes (plugin_utils cassandra_output left_system_warning)."""
     return out.left_system_warning(hosts)
 
 

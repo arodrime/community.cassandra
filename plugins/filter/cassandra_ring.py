@@ -15,7 +15,7 @@ import ipaddress
 import re
 import socket
 
-from ansible_collections.community.cassandra.plugins.module_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 _STATES = [("U", "up"), ("D", "down"), ("J", "joining"), ("L", "leaving"), ("M", "moving")]
 _IP = re.compile(r"^[0-9.]+$|:")
