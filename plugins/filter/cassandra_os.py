@@ -142,6 +142,65 @@ def _sysctl(recs, wanted, own):
     """-> lines, carried vars, carried lines."""
     role = dict((k, v) for k, v in (wanted.get("sysctl") or {}).items())
     role_file = wanted.get("sysctl_file") or "/etc/sysctl.d/60-cassandra.conf"
+    files, live, link, order, effective = _sysctl_read(recs)
+    # a file named for Cassandra holds Cassandra's settings, all of them
+    owners = _owners(recs)
+    cassandra_files = [p for p in order if "cassandra" in os.path.basename(p).lower() and _admin(p, owners)]
+    extra = sorted({k for p in cassandra_files for k, dummy in files[p]} - set(role))
+    relevant = list(role) + extra
+    # a node the role set up keeps its own file's values, and only them (the role run again changes nothing)
+    own_values = dict(files.get(role_file, [])) if own else None
+    if own:
+        relevant = list(role) + sorted(set(own_values) - set(role))
+    lines = _sysctl_lines(files, order, effective, live, link, role, relevant, owners)
+    carried, won_by = _sysctl_carried(role, relevant, effective, owners, own, own_values, role_file)
+    out, notes = {}, []
+    if not won_by and not own:
+        return lines, out, notes
+    target = _sysctl_target(won_by, order, link, own, own_values, role_file)
+    if own and not own_values and won_by:
+        # the role would add a key to the target file (and drop /etc/sysctl.conf's): only the target's are carried
+        others = sorted(k for k, path in won_by.items() if path != target)
+        for key in others:
+            del carried[key]
+        if others:
+            notes.append("NOT carried: %s, set in other files than %s (the role would move them there)"
+                         % (", ".join(others), target))
+    if own:
+        notes += _sysctl_lost(carried, effective, target)
+    changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
+    missing = [k for k in role if k not in carried]
+    if changed or missing:
+        out["cassandra_linux_sysctl"] = carried
+        notes.append("cassandra_linux_sysctl: %s, as these nodes have them%s" % (
+            ", ".join("%s %s" % (k, _norm(carried[k])) for k in changed) or "the same values",
+            (" (without %s, as in their file)" % ", ".join(missing)) if missing
+            else " (the role's other keys at their default)"))
+    if target != role_file:
+        out["cassandra_linux_sysctl_file"] = target
+        notes.append("cassandra_linux_sysctl_file: %s, the file these nodes set them in: the role writes its keys"
+                     " there (line by line, the file's other lines kept) instead of a second file that %s"
+                     % (target, "this one would override" if os.path.basename(target) > os.path.basename(role_file)
+                        else "could override it"))
+    return lines, out, notes
+
+
+def _sysctl_target(won_by, order, link, own, own_values, role_file):
+    """The file the role is to write its keys in: its own on a node it set up, else the file that sets most of
+    them (the last read on a tie; not /etc/sysctl.conf when systemd-sysctl does not read it)."""
+    if own and (own_values or not won_by):
+        return role_file
+    counts = {}
+    for path in won_by.values():
+        counts[path] = counts.get(path, 0) + 1
+    candidates = [p for p in counts if link or p != SYSCTL_CONF] or [role_file]
+    return max(candidates, key=lambda p: (counts.get(p, 0), order.index(p) if p in order else -1))
+
+
+def _sysctl_read(recs):
+    """The sysctl records -> (files: {path: [(key, value)]} in the order read, live: {key: value}, link: the link
+    to /etc/sysctl.conf in /etc/sysctl.d (None), order: the files in the order read, effective: {key: (value,
+    the file it comes from)})."""
     files = {}
     for kind, rest in recs:
         if kind == "sysctl":
@@ -158,16 +217,12 @@ def _sysctl(recs, wanted, own):
     for path in order:
         for key, value in files[path]:
             effective[key] = (value, path)
-    # a file named for Cassandra holds Cassandra's settings, all of them
-    owners = _owners(recs)
-    cassandra_files = [p for p in order if "cassandra" in os.path.basename(p).lower() and _admin(p, owners)]
-    extra = sorted({k for p in cassandra_files for k, dummy in files[p]} - set(role))
-    relevant = list(role) + extra
-    # a node the role set up keeps its own file's values, and only them (the role run again changes nothing)
-    own_values = dict(files.get(role_file, [])) if own else None
-    if own:
-        relevant = list(role) + sorted(set(own_values) - set(role))
+    return files, live, link, order, effective
 
+
+def _sysctl_lines(files, order, effective, live, link, role, relevant, owners):
+    """The report's lines: each relevant setting of each file (against the role's, the file it loses to), a live
+    value the files do not give, /etc/sysctl.conf not read at boot."""
     lines = []
     for path in order:
         for key, value in files[path]:
@@ -186,72 +241,43 @@ def _sysctl(recs, wanted, own):
             lines.append("sysctl live: %s = %s (%s)" % (
                 key, value, ("files say %s" % effective[key][0]) if key in effective
                 else "no file sets it; cassandra_linux: %s" % _norm(role[key])))
-
     if SYSCTL_CONF in order and not link and any(k in relevant for k, dummy in files[SYSCTL_CONF]):
         lines.append("sysctl %s: no link to it in /etc/sysctl.d, systemd-sysctl does not read it at boot" % SYSCTL_CONF)
+    return lines
 
-    # Carried: the value the node gets from the admin's files
+
+def _sysctl_carried(role, relevant, effective, owners, own, own_values, role_file):
+    """-> (the values the node gets from the admin's files, {key: the file each one comes from})."""
     if own and own_values:  # exactly its own file (a key it lacks would be added)
         carried = dict((k, _typed(v)) for k, v in own_values.items())
-        won_by = dict.fromkeys(carried, role_file)
-    elif own:
+        return carried, dict.fromkeys(carried, role_file)
+    if own:
         # nothing in the role's file (another cassandra_linux_sysctl_file, an older role): the role's
         # keys an admin file sets, in that file; the others not written (the role's defaults would be)
         carried, won_by = {}, {}
-        for key in role:
-            if key in effective and _admin(effective[key][1], owners):
-                carried[key] = _typed(effective[key][0])
-                won_by[key] = effective[key][1]
+        keys = role
     else:
         carried, won_by = dict(role), {}
-        for key in relevant:
-            if key in effective and _admin(effective[key][1], owners):
-                carried[key] = _typed(effective[key][0])
-                won_by[key] = effective[key][1]
-    out, notes = {}, []
-    if not won_by and not own:
-        return lines, out, notes
-    counts = {}
-    for path in won_by.values():
-        counts[path] = counts.get(path, 0) + 1
-    # the file that sets most of them (the last read on a tie)
-    # (not /etc/sysctl.conf when systemd-sysctl does not read it)
-    candidates = [p for p in counts if link or p != SYSCTL_CONF] or [role_file]
-    target = role_file if own and (own_values or not won_by) else \
-        max(candidates, key=lambda p: (counts.get(p, 0), order.index(p) if p in order else -1))
-    if own and not own_values and won_by:
-        # the role would add a key to the target file (and drop /etc/sysctl.conf's): only the target's are carried
-        others = sorted(k for k, path in won_by.items() if path != target)
-        for key in others:
-            del carried[key]
-        if others:
-            notes.append("NOT carried: %s, set in other files than %s (the role would move them there)"
-                         % (", ".join(others), target))
-    if own:
-        # the role's own file loses to another one: running the role again resets the live value (and
-        # takes the line out of /etc/sysctl.conf)
-        for key in sorted(carried):
-            won = effective.get(key, (None, None))[1]
-            if won and won != target and (won == SYSCTL_CONF or _norm(effective[key][0]) != _norm(carried[key])):
-                notes.append("CHANGE on these nodes if the roles run: %s = %s in %s wins over %s (the role sets"
-                             " %s live%s): make them the same first" % (
-                                 key, effective[key][0], won, target, _norm(carried[key]),
-                                 ", and removes it from %s" % SYSCTL_CONF if won == SYSCTL_CONF else ""))
-    changed = sorted(k for k in carried if k not in role or _norm(carried[k]) != _norm(role[k]))
-    missing = [k for k in role if k not in carried]
-    if changed or missing:
-        out["cassandra_linux_sysctl"] = carried
-        notes.append("cassandra_linux_sysctl: %s, as these nodes have them%s" % (
-            ", ".join("%s %s" % (k, _norm(carried[k])) for k in changed) or "the same values",
-            (" (without %s, as in their file)" % ", ".join(missing)) if missing
-            else " (the role's other keys at their default)"))
-    if target != role_file:
-        out["cassandra_linux_sysctl_file"] = target
-        notes.append("cassandra_linux_sysctl_file: %s, the file these nodes set them in: the role writes its keys"
-                     " there (line by line, the file's other lines kept) instead of a second file that %s"
-                     % (target, "this one would override" if os.path.basename(target) > os.path.basename(role_file)
-                        else "could override it"))
-    return lines, out, notes
+        keys = relevant
+    for key in keys:
+        if key in effective and _admin(effective[key][1], owners):
+            carried[key] = _typed(effective[key][0])
+            won_by[key] = effective[key][1]
+    return carried, won_by
+
+
+def _sysctl_lost(carried, effective, target):
+    """A node the role set up whose own file loses to another one: running the role again resets the live value
+    (and takes the line out of /etc/sysctl.conf)."""
+    notes = []
+    for key in sorted(carried):
+        won = effective.get(key, (None, None))[1]
+        if won and won != target and (won == SYSCTL_CONF or _norm(effective[key][0]) != _norm(carried[key])):
+            notes.append("CHANGE on these nodes if the roles run: %s = %s in %s wins over %s (the role sets"
+                         " %s live%s): make them the same first" % (
+                             key, effective[key][0], won, target, _norm(carried[key]),
+                             ", and removes it from %s" % SYSCTL_CONF if won == SYSCTL_CONF else ""))
+    return notes
 
 
 # --- limits ---
