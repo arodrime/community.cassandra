@@ -326,22 +326,7 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _refused: >-
-          {%- set l = [] -%}
-          {%- for h in _new if hostvars[h]._cassandra_node_reset_plan.problems | default([]) -%}
-          {%-   set p = hostvars[h]._cassandra_node_reset_plan -%}
-          {%-   set c = hostvars[h]._cassandra_node_reset_check | default({}) -%}
-          {%-   set f = hostvars[h]._cassandra_preflight | default({}) -%}
-          {%-   set other = p.problems | reject('in', c.problems | default([])) | list -%}
-          {%-   set why = ([c.why] if c.problems | default([]) else []) + (['reset refused: ' ~ other | join('; ')] if other else []) -%}
-          {%-   set _ = l.append({'name': h, 'title': h ~ ((' (' ~ f.cassandra_dc ~ '/' ~ f.cassandra_rack | default('?') ~ ')')
-                                                         if f.cassandra_dc | default('') else ''),
-                                  'holds': c.holds | default(''), 'why': why | join('; '),
-                                  'way': c.way | default('') if c.problems | default([]) else
-                                         'the directories above could not all be checked: fix that (root, the live cassandra.yaml)',
-                                  'former': c.former | default(false) and not other}) -%}
-          {%- endfor -%}
-          {{ l }}
+        _refused: "{{ _new | community.cassandra.cassandra_add_node_reset_refusals(hostvars) }}"
         _cmd:
           targets: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) }}"
           asked_by: "{{ _cassandra_screen_asked_by | default('') }}"
@@ -381,31 +366,7 @@
         _medusa: >-
           {{ (_new + _joining) | map('extract', hostvars) | selectattr('cassandra_medusa_enabled', 'defined')
              | map(attribute='cassandra_medusa_enabled') | map('bool') | select | list | length > 0 }}
-        _blocks: >-
-          {%- set l = [] -%}
-          {%- for h in _new -%}
-          {%-   set p = hostvars[h]._cassandra_preflight -%}
-          {%-   set m = hostvars[h] -%}
-          {%-   set lines = [] -%}
-          {%-   for e in cassandra_add_node_plan.estimate | selectattr('host', 'equalto', h) -%}
-          {%-     set _ = lines.append('about ' ~ e.bytes | community.cassandra.cassandra_size ~ ' to stream (' ~ e.basis ~ ')') -%}
-          {%-   endfor -%}
-          {%-   if m._cassandra_service_is_seed | default(false) | bool -%}
-          {%-     set _ = lines.append('in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed'
-                                       ~ ' once it is up (cassandra_seeds applied live on every node, unless a datacenter would'
-                                       ~ ' need seeds picked: then change_seeds)') -%}
-          {%-   endif -%}
-          {%-   if m.cassandra_medusa_enabled | default(false) | bool -%}
-          {%-     set _ = lines.append('Medusa fqdn ' ~ ((m.cassandra_medusa_fqdn if m.cassandra_medusa_fqdn is defined
-                    else (((m.ansible_facts.hostname | default(h)) ~ '.' ~ m.cassandra_medusa_fqdn_domain)
-                          if m.cassandra_medusa_fqdn_domain | default('') else '')) or '(Medusa works it out)')) -%}
-          {%-   endif -%}
-          {%-   if m._cassandra_node_reset_plan.line | default('') -%}
-          {%-     set _ = lines.append(m._cassandra_node_reset_plan.line) -%}
-          {%-   endif -%}
-          {%-   set _ = l.append({'title': h | community.cassandra.cassandra_screen_title(p), 'lines': lines}) -%}
-          {%- endfor -%}
-          {{ l }}
+        _blocks: "{{ _new | community.cassandra.cassandra_add_node_blocks(hostvars, cassandra_add_node_plan.estimate) }}"
         cassandra_screen_session_warning: true
         cassandra_screen_question: >-
           {{ ('Add ' ~ _new | join(', ') ~ '?') if _new else ('Wait for ' ~ _joining | join(', ') ~ '?') if _joining
