@@ -75,7 +75,7 @@ def main():
         module.exit_json(**result)
     else:
         fail_nodetool(module, result, "truncatehints", rc, out, err,
-                      ("The hints may still be there: check the node's system.log, then run it again"))
+                      "The hints may still be there: check the node's system.log, then run it again")
 
 
 if __name__ == '__main__':
