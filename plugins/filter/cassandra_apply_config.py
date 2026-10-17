@@ -694,6 +694,33 @@ def _read_ahead_todo(nodes, restart_command, width=None):
     return [""] + out.fit(lines[:-1], width) + lines[-1:]
 
 
+def _recap_verdict(counts, check, cluster, seconds):
+    """The outcomes counted, --check, the cluster, the run's seconds -> the recap's verdict line: "CHECK
+    apply_config  my_cluster  2 would apply, 3 nothing to apply (12s)" (DONE, FAILED when a node failed)."""
+    verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
+    said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
+    if seconds is not None:
+        said += " (%s)" % out.duration(seconds)
+    return "  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)
+
+
+def _recap_warnings(nodes, check, refused, planned, width):
+    """The nodes, --check, the refusal, the nodes whose warnings the plan showed, the width -> the recap's warning
+    lines: how many the plan showed above (and for which nodes), then the others' (no plan: all of them, the
+    refusal too)."""
+    planned = [str(n) for n in planned] if planned else None  # (none: no plan; a template renders it "" or None)
+    seen = [n for n in nodes or [] if planned is not None and str(n["name"]) in planned]  # their warnings in the plan
+    others = [n for n in nodes or [] if n not in seen]
+    count = len(cassandra_apply_config_warnings(seen)) + (1 if check and refused and planned is not None else 0)
+    warned = [n["name"] for n in seen if any(out.is_warning(x) for x in n.get("notes") or [])]
+    also = "the refusal" if check and refused and planned is not None else ""
+    lines = [""] + out.warnings_above(count, names=warned, also=also) if count else []
+    texts = ["%s: %s" % (w["label"], w["text"]) for w in cassandra_apply_config_warnings(others)]
+    if check and refused and planned is None:
+        texts.append(["a real run is refused, before changing anything: %s" % refused[0]] + list(refused[1:]))
+    return lines + ([""] + out.fit(out.warning_lines(texts), _width(width)) if texts else [])
+
+
 def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, diff=None, refused=None, planned=None, width=None,
                                  restart_command=""):
     """nodes: [{name, todo, done, os, os_done, then, result, notes}] in inventory order:
@@ -720,24 +747,10 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     whose read-ahead was set live."""
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
     lines, counts = _grouped(nodes, check, width=width)
-    verdict = "CHECK" if check else ("FAILED" if counts.get("failed") else "DONE")
-    said = ", ".join("%d %s" % (n, word) for word, n in counts.items()) or "no node"
-    if seconds is not None:
-        said += " (%s)" % out.duration(seconds)
-    shown = ["  ".join(x for x in (verdict, "apply_config", str(cluster or ""), said) if x)]
+    shown = [_recap_verdict(counts, check, cluster, seconds)]
     if check and diff:
         shown += [""] + list(diff) + [""]
-    planned = [str(n) for n in planned] if planned else None  # (none: no plan; a template renders it "" or None)
-    seen = [n for n in nodes or [] if planned is not None and str(n["name"]) in planned]  # their warnings in the plan
-    others = [n for n in nodes or [] if n not in seen]
-    count = len(cassandra_apply_config_warnings(seen)) + (1 if check and refused and planned is not None else 0)
-    warned = [n["name"] for n in seen if any(out.is_warning(x) for x in n.get("notes") or [])]
-    also = "the refusal" if check and refused and planned is not None else ""
-    lines = lines + ([""] + out.warnings_above(count, names=warned, also=also) if count else [])
-    texts = ["%s: %s" % (w["label"], w["text"]) for w in cassandra_apply_config_warnings(others)]
-    if check and refused and planned is None:
-        texts.append(["a real run is refused, before changing anything: %s" % refused[0]] + list(refused[1:]))
-    lines = lines + ([""] + out.fit(out.warning_lines(texts), _width(width)) if texts else [])
+    lines = lines + _recap_warnings(nodes, check, refused, planned, width)
     return shown + lines + ([] if check else _read_ahead_todo(nodes, restart_command, _width(width)))
 
 
