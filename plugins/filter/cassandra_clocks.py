@@ -292,7 +292,10 @@ def _query(lines):
 
 
 def cassandra_clock_probe(text):
-    """What clock_probe.yml printed on a node -> what its time sync says (see the module's doc)."""
+    """What clock_probe.yml printed on a node -> what its time sync says (see the module's doc).
+    e.g. a probe whose ==units== section says "chronyd|active|enabled|loaded" and whose chronyc tracking says
+    "0.000012000 seconds fast" -> {daemon: "chrony", service: "chronyd", active: True, synchronised: True, source:
+    "192.0.2.1", offset: 1.2e-05, bound: 0.0007, ...}."""
     s = _sections(text)
     units = parse_units(s.get("units", []))
     out = {"daemon": "", "service": "", "active": False, "installed": False, "enabled": False, "masked": False,
@@ -340,7 +343,9 @@ def cassandra_clock_settled(probe, max_ms=50, synchronised_only=False):
     """Whether waiting longer can change the verdict of this probe: a daemon running but not synchronised yet,
     still converging (an error bound over CONVERGING_S, or chrony's skew over CONVERGING_SKEW_PPM: just started),
     or still correcting an offset (its own error bound within the threshold), is not settled. synchronised_only:
-    settled once synchronised (a step follows)."""
+    settled once synchronised (a step follows).
+    Input: a cassandra_clock_probe result; output: bool. e.g. a probe synchronised, 0.012 ms off -> True;
+    chronyd synchronised but 200 ms off, its error bound 1 ms (still slewing) -> False."""
     if not isinstance(probe, dict):
         raise AnsibleFilterError("cassandra_clock_settled: a cassandra_clock_probe result is expected")
     why = _bad(probe, float(max_ms) / 1000)
@@ -356,7 +361,9 @@ def cassandra_clock_settled(probe, max_ms=50, synchronised_only=False):
 
 def cassandra_clock_wait_line(probe, node, timeout, max_ms=50):
     """The progress line of a wait for a clock not settled (cassandra_clock_settled false): what it waits for,
-    and for how long at most. "node4: chronyd converging (\u00b162.04 s), waiting up to 3m"."""
+    and for how long at most. "node4: chronyd converging (\u00b162.04 s), waiting up to 3m".
+    Input: a probe, the node, the timeout (seconds); output: the line. e.g. (a probe not synchronised, "node4",
+    180) -> "node4: chronyd not synchronised yet, waiting up to 3m"."""
     if not isinstance(probe, dict):
         raise AnsibleFilterError("cassandra_clock_wait_line: a cassandra_clock_probe result is expected")
     service = probe.get("service") or "its time sync"
@@ -370,7 +377,8 @@ def cassandra_clock_wait_line(probe, node, timeout, max_ms=50):
 
 
 def cassandra_clock_in_sync(probe, max_ms=50):
-    """Whether a probe says the node is in sync: synchronised, its offset plus the error bound within max_ms."""
+    """Whether a probe says the node is in sync: synchronised, its offset plus the error bound within max_ms.
+    Input: a cassandra_clock_probe result; output: bool. e.g. 0.012 ms off, bound 0.7 ms -> True; 200 ms off -> False."""
     if not isinstance(probe, dict):
         raise AnsibleFilterError("cassandra_clock_in_sync: a cassandra_clock_probe result is expected")
     return not _bad(probe, float(max_ms) / 1000)
@@ -657,7 +665,10 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
     own)}] -> {nodes: [{node, verdict, ahead, offset, how, text, why, action, ...}], ok: bool, warnings: [str],
     notes: [str], spread}. A node is ok when its daemon is synchronised and its offset plus the daemon's error
     bound is within max_ms; with no daemon to ask (a container: the host's clock), when the dates collected over
-    SSH put it within coarse_ms of the others."""
+    SSH put it within coarse_ms of the others.
+    e.g. [{node: node1, probe: <0.012 ms off>, running: True}, {node: node2, probe: <200 ms ahead>, ...}] ->
+    {nodes: [{node: node1, verdict: ok, action: none, ...}, {node: node2, verdict: off, action: slew, ...}],
+    ok: False, ...}."""
     max_s, step_s, coarse_s = float(max_ms) / 1000, float(step_ms) / 1000, float(coarse_ms) / 1000
     nodes = [dict(n) for n in nodes or []]
     for n in nodes:
@@ -721,7 +732,10 @@ ACTION_WORDS = {"none": "", "slew": "being corrected by its daemon (slew)", "sta
 
 def cassandra_clock_lines(verdicts, actions=True):
     """The verdicts -> one line per node: name, verdict, what its time sync says, then (actions) what sync_clocks
-    does about it."""
+    does about it.
+    Input: cassandra_clock_verdicts' result; output: [str]. e.g. -> ["  node1  ok   chronyd, synchronised to
+    192.0.2.1, +0.0 ms (\u00b10.7 ms)", "  node2  OFF  chronyd, ...: ahead of its source by 200.0 ms, more than 50.0 ms
+    \u2192 being corrected by its daemon (slew)"]."""
     rows = []
     for v in (verdicts or {}).get("nodes", []):
         what = v["text"] + ((": " + v["why"]) if v["verdict"] != "ok" and v["why"] and v["why"] not in v["text"] else "")
@@ -737,7 +751,9 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would
     refuse), the nodes not in sync, why, and the way out; [] when every node is. check, later_ok (a check before
     cassandra_linux ran): a node not running with no time sync, which cassandra_linux would set up, is left to the
-    check after it. unread: {node: why} of the nodes that answered but whose clock could not be read: refused."""
+    check after it. unread: {node: why} of the nodes that answered but whose clock could not be read: refused.
+    Output: [str]. e.g. (verdicts with node2 off, cluster="my_cluster") -> ["REFUSED  clocks  my_cluster  nothing
+    was started", "  node2  OFF  chronyd, ...", "", ..., "TO DO", ...]."""
     verdicts = verdicts or {}
     bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"]
     bad += [{"node": n, "verdict": "unread", "text": "its clock could not be read", "why": str(why or ""),
