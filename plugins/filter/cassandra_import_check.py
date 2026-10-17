@@ -289,7 +289,7 @@ def _render(variables, facts, live, conf_dir=""):
     errors = []
     try:
         overrides = value("cassandra_config_template_overrides") or {}
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:  # pylint: disable=broad-except  # any template error, said by its type (no value)
         overrides = {}
         errors.append("cassandra_config_template_overrides: cannot be read with these variables (%s)" % type(exc).__name__)
     if not isinstance(overrides, dict):
@@ -323,7 +323,7 @@ def _render(variables, facts, live, conf_dir=""):
     for name, path in wanted:
         try:
             rendered[name] = lookup.run([os.path.join(ROLES, path)], variables=ctx)[0] or ""  # (2.19+: None when empty)
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:  # pylint: disable=broad-except  # a template error: said by its type (no value)
             errors.append("%s: the roles could not write it with these variables (%s)" % (name, type(exc).__name__))
     # owner, group and mode cassandra_config gives its files (not the unit's nor medusa.ini's), the ones it keeps
     # as they are too
@@ -336,7 +336,7 @@ def _render(variables, facts, live, conf_dir=""):
                 permissions[name] = cassandra_file_permissions(name, settings)
     except AnsibleFilterError as exc:  # cassandra_file_permissions': a file name or a mode, no secret
         errors.append("owner, group and mode: %s" % exc)
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:  # pylint: disable=broad-except  # a template error: said by its type (no value)
         errors.append("owner, group and mode: the roles could not work them out with these variables (%s)"
                       % type(exc).__name__)
     # the environment Cassandra would get from the unit: the roles' one, else the node's, kept

@@ -148,7 +148,7 @@ def _masked(value, mask=VAULTED):
 def _template(templar, value):
     try:
         return templar.template(value)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # any template error: the text as written
         return value
 
 
@@ -195,7 +195,8 @@ def read(sources, given=None, basedir=None, env=None):
         loader.set_basedir(basedir)
     inventory = InventoryManager(loader=loader, sources=sources)
     manager = VariableManager(loader=loader, inventory=inventory)
-    # the -e variables are left out: the run's loader read (and decrypted) them already
+    # the -e variables are left out: the run's loader read (and decrypted) them already. No public API builds a
+    # VariableManager without the run's -e (it loads them in __init__ from context.CLIARGS): its own attribute
     manager._extra_vars = {}  # pylint: disable=protected-access
     groups = dict((name, [h.name for h in group.get_hosts()]) for name, group in inventory.groups.items())
     try:
@@ -269,7 +270,7 @@ def _origin(name):
     """Where the configuration's value comes from: 'cfg' (a configuration file), 'env', 'default' (Ansible's)."""
     try:
         origin = str(C.config.get_config_value_and_origin(name)[1])
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # an ansible-core without this config API: origin unknown
         return ""
     return "env" if origin.startswith("env") else origin if origin in ("default", "") else "cfg"
 
