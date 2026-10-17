@@ -7,6 +7,7 @@ cassandra_output: true prints.
 cassandra_node_list: names -> "node1..node3, node5".
 cassandra_size, cassandra_duration: bytes, seconds -> "1.5 GiB", "1h02m".
 cassandra_progress_line: a cassandra_stream_progress state -> the progress line and the line of the other ends.
+cassandra_normal_wait_line: the progress line of the wait for a node to be NORMAL.
 cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
 cassandra_prepare_lines, cassandra_left_system_warning: what the prepare of new nodes did.
 cassandra_command, cassandra_todo, cassandra_removed_todo, cassandra_seeds_todo, cassandra_seeds_reload_todo,
@@ -100,6 +101,26 @@ def cassandra_progress_line(state, index=0, steps=0, node="", operation="", mode
                              status=status, warn=warn, disk=state.get("disk_grown", 0),
                              frozen=state.get("now", 0) - state.get("netstats_at", state.get("now", 0)),
                              width=terminal_width())
+
+
+# the modes (netstats) nodetool status shows as a state of its own: as its letters (UJ, then UN once NORMAL)
+_MODE_STATE = {"JOINING": "UJ", "MOVING": "UM", "LEAVING": "UL"}
+
+
+def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node="", operation="", done=False):
+    """The progress line of the wait for a node to be NORMAL (wait_normal.yml): "[2/5] node2 restart  waiting for
+    NORMAL (UJ\u2192UN)  1m10s/10m"; mode: netstats' (JOINING, MOVING, LEAVING as their status letters, another one
+    as itself: "(mode STARTING)", empty: "(no JMX answer yet)"); done: "[2/5] node2 restart  NORMAL after 1m20s".
+    e.g. ("JOINING", waited=70, timeout=600, index=2, steps=5, node="node2", operation="restart") -> "[2/5] node2
+    restart  waiting for NORMAL (UJ\u2192UN)  1m10s/10m"."""
+    mode = str(mode or "").upper()
+    head = ("[%d/%d] %s %s" % (int(index), int(steps), node, operation) if int(steps or 0)
+            else ("%s %s" % (node, operation)).strip())
+    if done:
+        return "  ".join(x for x in [head, "NORMAL after %s" % out.duration(waited)] if x)
+    state = (u"%s\u2192UN" % _MODE_STATE[mode]) if mode in _MODE_STATE else ("mode %s" % mode) if mode else "no JMX answer yet"
+    return "  ".join(x for x in [head, "waiting for NORMAL (%s)" % state,
+                                 "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
 
 
 def _same_sources(a, b):
@@ -202,6 +223,7 @@ class FilterModule(object):
             "cassandra_size": cassandra_size,
             "cassandra_duration": cassandra_duration,
             "cassandra_progress_line": cassandra_progress_line,
+            "cassandra_normal_wait_line": cassandra_normal_wait_line,
             "cassandra_command": cassandra_command,
             "cassandra_seeds_reload_todo": cassandra_seeds_reload_todo,
             "cassandra_todo": cassandra_todo,

@@ -5,8 +5,8 @@
 cassandra_health_findings: the same as data, for cassandra_health_report:
 the health_check playbook's report, a line per problem (each one once,
 whatever node saw it), the verdict first.
-cassandra_health_wait_line, cassandra_normal_wait_line: the progress lines of
-the wait for nodes down to come back, for a node to be NORMAL.
+cassandra_health_wait_line: the progress line of the wait for nodes down to
+come back.
 cassandra_leaving_state: where a node given to decommission_node stands.
 cassandra_removal_state: where a dead node given to remove_dead_node stands.
 cassandra_removal_force_target: the node to run removenode force on."""
@@ -179,26 +179,6 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
             cause = _PASSING.search(str(f.get("error", "")))
             parts.append("nodetool status on %s to answer%s" % (f["on"], " (JMX: %s)" % cause.group(1) if cause else ""))
     return "  ".join(x for x in [head, "waiting for " + "; ".join(parts) if parts else "",
-                                 "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
-
-
-# the modes (netstats) nodetool status shows as a state of its own: as its letters (UJ, then UN once NORMAL)
-_MODE_STATE = {"JOINING": "UJ", "MOVING": "UM", "LEAVING": "UL"}
-
-
-def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node="", operation="", done=False):
-    """The progress line of the wait for a node to be NORMAL (wait_normal.yml): "[2/5] node2 restart  waiting for
-    NORMAL (UJ\u2192UN)  1m10s/10m"; mode: netstats' (JOINING, MOVING, LEAVING as their status letters, another one
-    as itself: "(mode STARTING)", empty: "(no JMX answer yet)"); done: "[2/5] node2 restart  NORMAL after 1m20s".
-    e.g. ("JOINING", waited=70, timeout=600, index=2, steps=5, node="node2", operation="restart") -> "[2/5] node2
-    restart  waiting for NORMAL (UJ\u2192UN)  1m10s/10m"."""
-    mode = str(mode or "").upper()
-    head = ("[%d/%d] %s %s" % (int(index), int(steps), node, operation) if int(steps or 0)
-            else ("%s %s" % (node, operation)).strip())
-    if done:
-        return "  ".join(x for x in [head, "NORMAL after %s" % out.duration(waited)] if x)
-    state = (u"%s\u2192UN" % _MODE_STATE[mode]) if mode in _MODE_STATE else ("mode %s" % mode) if mode else "no JMX answer yet"
-    return "  ".join(x for x in [head, "waiting for NORMAL (%s)" % state,
                                  "%s/%s" % (out.duration(waited), out.duration(timeout, short=True))] if x)
 
 
@@ -545,7 +525,6 @@ class FilterModule(object):
                 "cassandra_health_findings": cassandra_health_findings,
                 "cassandra_health_waiting": cassandra_health_waiting,
                 "cassandra_health_wait_line": cassandra_health_wait_line,
-                "cassandra_normal_wait_line": cassandra_normal_wait_line,
                 "cassandra_health_report": cassandra_health_report,
                 "cassandra_leaving_state": cassandra_leaving_state,
                 "cassandra_removal_state": cassandra_removal_state,

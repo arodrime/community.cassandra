@@ -14,7 +14,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from ansible_collections.community.cassandra.plugins.callback.ops import PROGRESS_COLOR, colour
-from ansible_collections.community.cassandra.plugins.filter.cassandra_health import cassandra_normal_wait_line
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_normal_wait_line
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
