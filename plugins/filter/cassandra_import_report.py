@@ -653,7 +653,8 @@ def cassandra_import_self_check_advice(layout, self_check, report_file="", error
     terminal's by default, SCREEN_MOST at most) -> the lines of the run's stop on a failed self-check:
     "SELF-CHECK FAILED  <cluster group>  ...", what differs grouped by what makes it pass, HOW TO MAKE IT PASS,
     where the details are; from GROUPS_FROM nodes on (cassandra_output), the node lists by the NODE GROUPS of the
-    summary above it, defined again under the verdict. Blank lines between them. Secrets never shown."""
+    summary above it, defined again under the verdict. Blank lines between them. Secrets never shown.
+    e.g. -> ["SELF-CHECK FAILED  my_cluster  the inventory would change 1 setting on 2 nodes ...", "", ...]."""
     width = int(width) if width else min(terminal_width(), SCREEN_MOST)
     groups = report_sections(layout, self_check)["groups"]  # (the summary's, just above)
     verdict, paragraphs = _self_check_lines(
@@ -1064,7 +1065,9 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     (cassandra_import_convergence's, the screen's or the report's), before where the full report is on the screen,
     before NOT READ in the report. Returns the lines.
     From GROUPS_FROM nodes on (cassandra_output), the node lists are by NODE GROUPS defined at the top, the same
-    in the screen and the report; DETAILS names every node."""
+    in the screen and the report; DETAILS names every node.
+    e.g. -> ["IMPORT big_cluster \u2014 88 nodes read / 88 \u2014 SELF-CHECK PASSED", "Written: inventories/big.yml,
+    group_vars/big_cluster*/, ...", "", "TO DO (2)", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
