@@ -1,0 +1,12 @@
+minor_changes:
+  - "cassandra_linux - the data disk tuning is on by default (``cassandra_linux_tune_data_disk: true``) and follows the data and commitlog filesystems down through LVM volumes, md RAID, dm-crypt, multipath and partitions to the disks; the top device, whose read-ahead the kernel uses for the files, is tuned, and the devices under it too. Data on an OS filesystem (``/var/lib/cassandra`` on the root disk) is tuned all the same, LVM volumes of the OS kept by the udev rule only; ``cassandra_data_tune_os_volumes: false`` leaves those disks alone. Set ``cassandra_linux_tune_data_disk: false`` to leave the disks as they are."
+  - "cassandra_linux - the read-ahead of an LVM volume is also stored in LVM (``lvchange``), only while Cassandra is stopped unless ``cassandra_data_lvchange_running`` is true; the udev rule keeps it meanwhile."
+  - "cassandra_linux - when the tuned profile in use would set the read-ahead or the IO scheduler of the Cassandra devices at each boot (RHEL's ``throughput-performance`` and ``virtual-guest``), tuned runs a profile of the role, ``cassandra-disks``, after it that leaves those devices alone (``cassandra_linux_tuned_manage``)."
+  - "cassandra_linux - one summary of the data disks for the run: the nodes with the same filesystems and devices grouped, whether the read-ahead was already set, set now or would be set under ``--check``, then what to act on."
+  - "cassandra_linux - kernel settings go to ``/etc/sysctl.d/60-cassandra.conf`` (``cassandra_linux_sysctl``) and limits to ``/etc/security/limits.d/cassandra.conf`` (``cassandra_linux_limits``); the same settings are removed from ``/etc/sysctl.conf`` and ``limits.conf``."
+  - "cassandra_linux - the swap lines of ``/etc/fstab`` are removed whatever their mount point; swap is turned off live only when what it holds fits twice in the memory available, else the role says it is left on."
+  - "cassandra_linux - ``cassandra_linux_manage: false`` leaves the OS settings of the node as they are."
+  - "cassandra_linux - argument specs for the role's variables."
+  - "cassandra_linux - the ``nofile`` limit of the Cassandra user is now 1048576 (it was 100000), in ``cassandra_linux_limits``."
+  - "cassandra_linux - ``cassandra_linux_timesync`` (default ``true``) installs and enables the time sync service; an installed chrony is kept on Debian and Ubuntu."
+  - "cassandra_linux, cassandra_firewall - ``cassandra_offline: true`` installs no package (the time sync service, the firewall): what is missing is reported."

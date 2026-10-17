@@ -13,6 +13,28 @@
 
   tasks:
 
+  # EL 10's chronyd (4.8, Type=notify) fails "Could not send notification to
+  # $NOTIFY_SOCKET" in containers on recent host kernels (GitHub runners,
+  # 6.17), systemd-notify itself works there: run it as on EL 9, forking.
+  # A real EL 10 host runs its own kernel. Test scaffolding only.
+  - name: chronyd drop-in directory (EL 10 containers)
+    ansible.builtin.file:
+      path: /etc/systemd/system/chronyd.service.d
+      state: directory
+      mode: "0755"
+    when:
+      - ansible_facts['os_family'] == 'RedHat'
+      - ansible_facts['distribution_major_version'] == '10'
+
+  - name: chronyd forking (EL 10 containers)
+    ansible.builtin.copy:
+      content: "[Service]\nType=forking\nExecStart=\nExecStart=/usr/sbin/chronyd $OPTIONS\n"
+      dest: /etc/systemd/system/chronyd.service.d/forking.conf
+      mode: "0644"
+    when:
+      - ansible_facts['os_family'] == 'RedHat'
+      - ansible_facts['distribution_major_version'] == '10'
+
   - name: Clean package manager cache
     ansible.builtin.shell: dnf clean all || yum clean all
     when: ansible_facts['os_family'] == 'RedHat'
@@ -23,7 +45,6 @@
 
   # Fake sysfs tree for the disk tuning tests: the container is privileged,
   # so the real /sys/block is the host's and must never be written to.
-  # sdz: an SSD, sdy: a spinning disk (keeps its scheduler)
   - name: Create fake sysfs queue dirs
     ansible.builtin.file:
       path: "/tmp/fake-sys/block/{{ item }}/queue"
@@ -33,16 +54,23 @@
   - name: Seed fake sysfs queue attributes with stock-like values
     ansible.builtin.copy:
       content: "{{ item.1.value }}"
-      dest: "/tmp/fake-sys/block/{{ item.0.disk }}/queue/{{ item.1.name }}"
-    loop: "{{ _seed }}"
-    vars:
-      _seed:
-        - [{disk: sdz}, {name: read_ahead_kb, value: "128\n"}]
-        - [{disk: sdz}, {name: scheduler, value: "[mq-deadline] none\n"}]
-        - [{disk: sdz}, {name: rotational, value: "0\n"}]
-        - [{disk: sdy}, {name: read_ahead_kb, value: "128\n"}]
-        - [{disk: sdy}, {name: scheduler, value: "[mq-deadline] none\n"}]
-        - [{disk: sdy}, {name: rotational, value: "1\n"}]
+      dest: "/tmp/fake-sys/block/{{ item.0 }}/queue/{{ item.1.name }}"
+    loop: "{{ ['sdz', 'sdy'] | product([{'name': 'read_ahead_kb', 'value': '128\n'}, {'name': 'scheduler', 'value': '[mq-deadline] none\n'}]) | list }}"
+
+  # sdz: an SSD, sdy: a spinning disk (keeps its scheduler)
+  - name: Seed the fake disks' types
+    ansible.builtin.copy:
+      content: "{{ item.value }}"
+      dest: "/tmp/fake-sys/block/{{ item.disk }}/queue/rotational"
+    loop:
+      - {disk: sdz, value: "0\n"}
+      - {disk: sdy, value: "1\n"}
+
+  # findmnt then resolves it to the container's overlay: not a disk, not tuned
+  - name: Create the data directory
+    ansible.builtin.file:
+      path: /var/lib/cassandra/data
+      state: directory
 
   # UBI repos don't carry chrony (real RHEL does, via subscription): pull it
   # from the matching Rocky BaseOS instead. Test scaffolding only.
@@ -55,3 +83,28 @@
       gpgkey: "https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-{{ ansible_facts['distribution_major_version'] }}"
       includepkgs: chrony
     when: ansible_facts['distribution'] == 'RedHat'
+
+  # What earlier versions of the role wrote (the role moves it to drop-in files)
+  - name: Old sysctl line
+    ansible.builtin.lineinfile:
+      path: /etc/sysctl.conf
+      line: vm.swappiness=60
+      create: true
+      mode: "0644"
+
+  - name: Old limits block
+    ansible.builtin.blockinfile:
+      path: /etc/security/limits.conf
+      block: |
+        cassandra - nofile 100000
+      marker: "#<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+      create: true
+      mode: "0644"
+
+  # An installer's swap line, its mount point none (the role removes it by type)
+  - name: Swap line in fstab
+    ansible.builtin.lineinfile:
+      path: /etc/fstab
+      line: UUID=0000-0000 none swap sw 0 0
+      create: true
+      mode: "0644"
