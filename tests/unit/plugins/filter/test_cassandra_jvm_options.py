@@ -162,3 +162,9 @@ def test_the_default_java_is_cassandra_install_s():
     with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_install", "defaults",
                            "main.yml")) as f:
         assert yaml.safe_load(f)["cassandra_java_versions"] == DEFAULT_JAVA
+
+
+def test_the_import_cleanup_says_of_biased_locking_what_the_checks_say():
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args
+    assert cassandra_jvm_args.OBSOLETE["UseBiasedLocking"][1] in jvm.check(
+        [("-XX:-UseBiasedLocking", "x", "x")], "21", refusals=True)[0]

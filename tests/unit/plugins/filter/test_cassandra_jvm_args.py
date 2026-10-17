@@ -292,8 +292,8 @@ def test_cleanup_says_what_the_jvm_does_not_use(tmp_path):
     assert cleanup == [
         "jvm11-server.options: -Xmx4G: not read, Java 17 reads jvm17-server.options",
         "jvm-server.options: -XX:+UseConcMarkSweepGC: ignored since Java 14 (CMS removed)",
-        "jvm17-server.options: -XX:-UseBiasedLocking: Java 17's default since Java 15 (deprecated, ignored from Java"
-        " 18)",
+        "jvm17-server.options: -XX:-UseBiasedLocking: Java 17's default anyway; biased locking is deprecated on Java 17 (a"
+        " warning at each start), and gone after it: the JVM does not start with it on Java 21",
         "jvm17-server.options: -Xss1024M: overridden by -Xss768k (jvm17-server.options line %d)"
         % (files["jvm17-server.options"].split("\n").index("-Xss768k") + 1)]
     # nothing moved: the files stay as they are, the self-check passes
