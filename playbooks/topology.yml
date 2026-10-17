@@ -259,31 +259,8 @@
       run_once: true
       vars:
         _tp_hosts: >-
-          {%- set l = [] -%}
-          {%- for h in groups[_tp_group] -%}
-          {%-   set v = hostvars[h] -%}
-          {%-   set p = v._cassandra_preflight | default({}) -%}
-          {%-   set absent = h in _tp_absent -%}
-          {%-   set reachable = (h in ansible_play_hosts_all) if not absent else v._cassandra_topology_reachable | default(false) | bool -%}
-          {%-   set _ = l.append({'name': h, 'absent': absent, 'reachable': reachable,
-                                  'address': p.ring_address | default(v._cassandra_topology_address | default(''), true),
-                                  'dc': p.cassandra_dc | default('?'), 'rack': p.cassandra_rack | default('?'),
-                                  'seed': v._cassandra_service_is_seed | default(false) | bool,
-                                  'names': v._cassandra_service_names | default([h]), 'live': p.live_seeds | default(''),
-                                  'entry': p.address | default(''),
-                                  'running': v._cassandra_preflight_running | default(false) | bool,
-                                  'state': (v.cassandra_leaving_node.state | default(none)) if absent
-                                           else v.cassandra_new_node_state | default(none),
-                                  'refused': v._cassandra_topology_refused | default(''),
-                                  'single': _tp_single | bool, 'token': p.cassandra_initial_token | default(''),
-                                  'info': v._cassandra_new_node_check.info | default([]) if not absent else [],
-                                  'checks': v._cassandra_new_node_check.warnings | default([]) if not absent else [],
-                                  'reset': v._cassandra_node_reset_plan | default(none)
-                                           if not absent and v._cassandra_node_reset_plan is defined
-                                              and (v._cassandra_node_reset_plan.delete or v._cassandra_node_reset_plan.stop | bool
-                                                   or v._cassandra_node_reset_plan.disable | bool) else none}) -%}
-          {%- endfor -%}
-          {{ l }}
+          {{ groups[_tp_group] | community.cassandra.cassandra_topology_hosts(hostvars, ansible_play_hosts_all, _tp_absent,
+                                                                             _tp_single | bool) }}
 
     # Without the replication (no CQL access), a removal can't be checked: refused below
     # On one host without run_once: a run_once task that fails in a rescued block drops the other
