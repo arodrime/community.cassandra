@@ -18,7 +18,8 @@ import re
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import JMX_CAUSES
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import (
+    address_part, compressed_address as _ip, same_address)
 
 
 def _by_ip(names):
@@ -365,8 +366,7 @@ def cassandra_leaving_state(netstats, ring, address):
 def _same_address(field, address):
     """True when a nodetool field ("/10.0.0.4", "host/10.0.0.4", "10.0.0.4:7000",
     "[0:0:0:0:0:0:0:4]:7000") is address."""
-    peer = field.strip().split("/")[-1].replace("[", "").replace("]", "")
-    return re.fullmatch(re.escape(address) + r"(:\d+)?", peer) is not None
+    return same_address(address_part(field.strip().split("/")[-1]), address)
 
 
 def _gossip_removing(gossip, address):

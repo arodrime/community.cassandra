@@ -1,6 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import pytest
+
 from ansible_collections.community.cassandra.plugins.filter.cassandra_health import (
     cassandra_health_findings, cassandra_health_problems, cassandra_health_report, cassandra_leaving_state,
     cassandra_removal_force_target, cassandra_removal_state)
@@ -518,3 +520,14 @@ def test_the_jmx_message_is_not_followed_by_nodetool_line():
            " its JMX listens on another port (cassandra_jmx_port). Check: systemctl status cassandra, and its system.log")
     err = "nodetool: Failed to connect to '127.0.0.1:7199' - ConnectException: 'Connection refused'.\n"
     assert _error({"failed": True, "msg": msg, "stderr": err}) == msg
+
+
+@pytest.mark.parametrize("field, address, same", [
+    ("/10.0.0.4", "10.0.0.4", True), ("host/10.0.0.4", "10.0.0.4", True), ("10.0.0.4:7000", "10.0.0.4", True),
+    ("/10.0.0.40", "10.0.0.4", False), ("[0:0:0:0:0:0:0:4]:7000", "0:0:0:0:0:0:0:4", True),
+    # nodetool prints IPv6 in full, the inventory may write it compressed
+    ("/0:0:0:0:0:0:0:4", "::4", True), ("[0:0:0:0:0:0:0:4]:7000", "::4", True), ("/0:0:0:0:0:0:0:5", "::4", False),
+    ("  STATUS:12:removing,abc", "10.0.0.4", False)])
+def test_a_nodetool_field_is_an_address_however_written(field, address, same):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_health import _same_address
+    assert _same_address(field, address) is same
