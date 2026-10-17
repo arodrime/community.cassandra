@@ -423,76 +423,54 @@ def cassandra_topology_steps(plan, hosts):
     return steps
 
 
-def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replication_problems=None, force=False,
-                              names=None, cluster="", version="", check=False, session="", confirm=True, notes=None):
-    """The plan screen (OUTPUT_UX Q5): "PLAN  topology  cluster (Cassandra x)
-    N steps, one node at a time", the steps in order, the facts (each
-    datacenter once done, what is left to do by hand), the WARNING lines,
-    then the question line (none when confirm: confirm.yml's prompt comes
-    right after; --check: nothing will be changed). Returns the lines.
-    plan: cassandra_topology_plan's; hosts: its hosts; ring: cluster_status;
-    keyspaces: cassandra_keyspaces (None: unknown); replication_problems: the
-    datacenters left with fewer nodes than replicas (shown when force:
-    cassandra_decommission_force); names: {address: host} of the ring's
-    nodes; session: the tmux/screen warning (a real run only); notes: the
-    lines the checks kept for the plan (note.yml, "WARNING - ..." or a note).
-    The checks of the hosts to add (hosts' info, checks: new_node_checks.yml)
-    are NOTE and WARNING lines too, one per text, with the hosts it is about.
-    Every note is on one line, said once."""
-    by_name = dict((h["name"], h) for h in hosts)
-    ring = ring or {}
-    steps = cassandra_topology_steps(plan, hosts)
-    seeds = plan.get("seeds") or {}
+def _adding(hosts, plan):
+    """The hosts, the plan -> the hosts to add as cassandra_add_node_plan takes them, in order."""
+    return [{"host": h["name"], "address": h.get("address"), "dc": h.get("dc"), "rack": h.get("rack"),
+             "in_ring": h["name"] in plan["joining"], "state": "joining" if h["name"] in plan["joining"] else "new"}
+            for h in hosts if h["name"] in plan["add"]]
 
-    adding = [{"host": h["name"], "address": h.get("address"), "dc": h.get("dc"), "rack": h.get("rack"),
-               "in_ring": h["name"] in plan["joining"], "state": "joining" if h["name"] in plan["joining"] else "new"}
-              for h in hosts if h["name"] in plan["add"]]
-    estimate = {}
-    if adding:  # streamed while the nodes to remove are still there
-        add_plan = cassandra_add_node_plan(ring, adding, hosts=names or {}, keyspaces=keyspaces)
-        estimate = dict((e["host"], e) for e in add_plan["estimate"])
-    for step, name in zip(steps, plan["add"]):
-        h = by_name[name]
-        if name in plan["joining"]:
-            parts = ["still bootstrapping (UJ, an earlier run): waited for"]
-        else:
-            e = estimate.get(name)
-            parts = ["bootstrap, ~%s to stream (%s)" % (out.size(e["bytes"]), e["basis"]) if e else "bootstrap"]
-            if h.get("single"):
-                parts.append("token %s" % (h["token"] if h.get("token") else "from cassandra_token_auto"))
-            if h.get("reset"):  # add_node's line for it: "<node>: has data (...) - will be reset"
-                line = str(h["reset"].get("line") or "")
-                parts.append(line.split(": ", 1)[1] if ": has data " in line else "will be reset first")
-            if seeds.get("step") and name in [a.split(" ")[0] for a in seeds.get("added") or []]:
-                parts.append("joins as a regular node, a seed at the seed step")
-        step["text"] = "; ".join(parts)
-    if seeds.get("step"):
-        seed_step = steps[len(plan["add"])]
-        seed_step["text"] += "  written and reloaded live on every node, no restart"
 
-    if plan["remove"]:
-        # where the data goes, as the ring is once the adds are done
-        states = [{"name": n, "state": "decommissioned" if n in plan["finish"] else
-                   "leaving" if n in plan["leaving"] else "normal"} for n in plan["remove"]]
-        nodes = [{"name": h["name"], "address": h.get("address"), "dc": h.get("dc"), "rack": h.get("rack"),
-                  "seed": h["name"] in seeds.get("old_hosts", [])} for h in hosts]
-        ring_after = {}
-        for dc, info in ring.items():
-            ring_after[dc] = {"nodes": list((info or {}).get("nodes") or [])}
-        for a in adding:
-            if not a["in_ring"]:
-                ring_after.setdefault(a["dc"], {"nodes": []})["nodes"].append(
-                    {"address": a["address"], "rack": a["rack"], "status": "U", "state": "N"})
-        peers = [h["name"] for h in hosts if not h.get("absent")]
-        decommission = cassandra_decommission_screen(states, nodes, ring=ring_after, keyspaces=keyspaces,
-                                                     peer=peers[0] if peers else "")
-        for step, block in zip(steps[len(steps) - len(plan["remove"]):], decommission["blocks"]):
-            step["text"] = block["step"]["text"]
+def _add_text(name, h, plan, estimate, seeds):
+    """A host to add, the plan, {host: what it streams}, the seed change -> the text of its step."""
+    if name in plan["joining"]:
+        return "still bootstrapping (UJ, an earlier run): waited for"
+    e = estimate.get(name)
+    parts = ["bootstrap, ~%s to stream (%s)" % (out.size(e["bytes"]), e["basis"]) if e else "bootstrap"]
+    if h.get("single"):
+        parts.append("token %s" % (h["token"] if h.get("token") else "from cassandra_token_auto"))
+    if h.get("reset"):  # add_node's line for it: "<node>: has data (...) - will be reset"
+        line = str(h["reset"].get("line") or "")
+        parts.append(line.split(": ", 1)[1] if ": has data " in line else "will be reset first")
+    if seeds.get("step") and name in [a.split(" ")[0] for a in seeds.get("added") or []]:
+        parts.append("joins as a regular node, a seed at the seed step")
+    return "; ".join(parts)
 
-    # the facts: each datacenter once done, then what is left to do by hand
-    facts = []
+
+def _remove_texts(plan, hosts, ring, adding, keyspaces, seeds):
+    """The plan, the hosts, the ring, the hosts to add, cassandra_keyspaces, the seed change -> the texts of the
+    removal steps, in order: where the data goes, as the ring is once the adds are done."""
+    states = [{"name": n, "state": "decommissioned" if n in plan["finish"] else
+               "leaving" if n in plan["leaving"] else "normal"} for n in plan["remove"]]
+    nodes = [{"name": h["name"], "address": h.get("address"), "dc": h.get("dc"), "rack": h.get("rack"),
+              "seed": h["name"] in seeds.get("old_hosts", [])} for h in hosts]
+    ring_after = {}
+    for dc, info in ring.items():
+        ring_after[dc] = {"nodes": list((info or {}).get("nodes") or [])}
+    for a in adding:
+        if not a["in_ring"]:
+            ring_after.setdefault(a["dc"], {"nodes": []})["nodes"].append(
+                {"address": a["address"], "rack": a["rack"], "status": "U", "state": "N"})
+    peers = [h["name"] for h in hosts if not h.get("absent")]
+    decommission = cassandra_decommission_screen(states, nodes, ring=ring_after, keyspaces=keyspaces,
+                                                 peer=peers[0] if peers else "")
+    return [block["step"]["text"] for block in decommission["blocks"]]
+
+
+def _dc_facts(plan, hosts, by_name, keyspaces):
+    """The plan, the hosts (and by name), cassandra_keyspaces -> (the facts of each datacenter the plan touches,
+    once done: its nodes, racks, highest RF; the warnings of its racks left uneven)."""
+    facts, rack_warnings = [], []
     touched = sorted(set(by_name[n].get("dc") for n in plan["add"] + plan["remove"]))
-    rack_warnings = []
     for dc in touched:
         left = [h["name"] for h in hosts if not h.get("absent") and h.get("dc") == dc]
         racks = {}
@@ -514,6 +492,13 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
                 " bigger share (1/%d against 1/%d)" % (
                     dc, ", ".join("%s %d" % (r, c) for r, c in sorted(racks.items())), min(racks.values()),
                     max(racks.values())))
+    return facts, rack_warnings
+
+
+def _left_facts(plan, seeds):
+    """The plan, the seed change -> the facts of what is left: the seeds written again, the hosts already out,
+    what to do by hand once done, the cleanup."""
+    facts = []
     if seeds.get("step") and not (seeds.get("removed") or seeds.get("added")):
         facts.append(["seeds", "written again on %s, the same seeds: %s" % (out.nodes(seeds.get("differ")), seeds["new"])])
     if plan["gone"]:
@@ -526,32 +511,32 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
                               " the inventory: the commands at the end" % (
                                   out.nodes(done, keep_order=True), "" if len(done) == 1 else "s",
                                   "it" if len(done) == 1 else "them")])
-
-    def grouped(key):
-        """[(text, hosts)] of the hosts to add, in order, each text once."""
-        found = []
-        for h in hosts:
-            if h["name"] in plan["add"]:
-                for text in h.get(key) or []:
-                    same = [f for f in found if f[0] == text]
-                    if same:
-                        same[0][1].append(h["name"])
-                    else:
-                        found.append((text, [h["name"]]))
-        return found
-
     if plan["add"]:
         facts.append(["cleanup", "of the nodes that hand data over: its command is printed after the adds (topology"
                                  " runs none, the removals move data again)"])
+    return facts
 
-    for text, names_of in grouped("info"):
-        facts.append("NOTE  %s: %s" % (out.nodes(names_of), text))
-    kept = [str(n).strip() for n in notes or [] if str(n).strip()]
-    facts.extend("NOTE  " + n for n in kept if not out.is_warning(n))
 
-    # the warnings, just above the question
+def _grouped(hosts, plan, key):
+    """The hosts, the plan, a key of the hosts' (info, checks) -> [(text, hosts)] of the hosts to add, in order,
+    each text once."""
+    found = []
+    for h in hosts:
+        if h["name"] in plan["add"]:
+            for text in h.get(key) or []:
+                same = [f for f in found if f[0] == text]
+                if same:
+                    same[0][1].append(h["name"])
+                else:
+                    found.append((text, [h["name"]]))
+    return found
+
+
+def _screen_warnings(plan, hosts, seeds, kept, rack_warnings, force, replication_problems):
+    """The plan, the hosts, the seed change, the checks' notes, the racks' warnings, cassandra_decommission_force,
+    the datacenters left with too few nodes -> the WARNING lines of the screen, in order (not deduplicated)."""
     warnings = [out.warning_text(n) for n in kept if out.is_warning(n)]
-    warnings.extend("%s: %s" % (out.nodes(names_of), text) for text, names_of in grouped("checks"))
+    warnings.extend("%s: %s" % (out.nodes(names_of), text) for text, names_of in _grouped(hosts, plan, "checks"))
     if seeds.get("removed") or seeds.get("added"):  # a seed change topology applies on its own
         warnings.append("the seeds will change on every node: %s -> %s (from cassandra_seeds in the inventory%s)"
                         % (",".join(seeds["old"]) or "(none)", seeds["new"],
@@ -565,6 +550,12 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
     if force and replication_problems:
         warnings.append("cassandra_decommission_force is true: the removal goes on although too few nodes are left,"
                         " those replicas are lost and QUORUM can fail: %s" % "; ".join(replication_problems))
+    return warnings
+
+
+def _real_run(hosts, plan, session):
+    """The hosts, the plan, the tmux/screen warning -> [(label, warning)] only a real run gives: the resets of the
+    hosts to add, not inside tmux or screen."""
     real_run = []
     resets = [{"name": h["name"], "plan": h["reset"]} for h in hosts if h["name"] in plan["add"] and h.get("reset")]
     for reset in cassandra_reset_warnings(resets):
@@ -574,6 +565,56 @@ def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replicatio
         real_run.append((reset["label"], "\n".join(["%s: %s" % (reset["label"], first)] + ["  " + d for d in dirs])))
     if str(session or "").strip():
         real_run.append(("not inside tmux or screen", str(session).strip()))
+    return real_run
+
+
+def cassandra_topology_screen(plan, hosts, ring=None, keyspaces=None, replication_problems=None, force=False,
+                              names=None, cluster="", version="", check=False, session="", confirm=True, notes=None):
+    """The plan screen (OUTPUT_UX Q5): "PLAN  topology  cluster (Cassandra x)
+    N steps, one node at a time", the steps in order, the facts (each
+    datacenter once done, what is left to do by hand), the WARNING lines,
+    then the question line (none when confirm: confirm.yml's prompt comes
+    right after; --check: nothing will be changed). Returns the lines.
+    plan: cassandra_topology_plan's; hosts: its hosts; ring: cluster_status;
+    keyspaces: cassandra_keyspaces (None: unknown); replication_problems: the
+    datacenters left with fewer nodes than replicas (shown when force:
+    cassandra_decommission_force); names: {address: host} of the ring's
+    nodes; session: the tmux/screen warning (a real run only); notes: the
+    lines the checks kept for the plan (note.yml, "WARNING - ..." or a note).
+    The checks of the hosts to add (hosts' info, checks: new_node_checks.yml)
+    are NOTE and WARNING lines too, one per text, with the hosts it is about.
+    Every note is on one line, said once."""
+    by_name = dict((h["name"], h) for h in hosts)
+    ring = ring or {}
+    steps = cassandra_topology_steps(plan, hosts)
+    seeds = plan.get("seeds") or {}
+
+    adding = _adding(hosts, plan)
+    estimate = {}
+    if adding:  # streamed while the nodes to remove are still there
+        add_plan = cassandra_add_node_plan(ring, adding, hosts=names or {}, keyspaces=keyspaces)
+        estimate = dict((e["host"], e) for e in add_plan["estimate"])
+    for step, name in zip(steps, plan["add"]):
+        step["text"] = _add_text(name, by_name[name], plan, estimate, seeds)
+    if seeds.get("step"):
+        seed_step = steps[len(plan["add"])]
+        seed_step["text"] += "  written and reloaded live on every node, no restart"
+    if plan["remove"]:
+        texts = _remove_texts(plan, hosts, ring, adding, keyspaces, seeds)
+        for step, text in zip(steps[len(steps) - len(plan["remove"]):], texts):
+            step["text"] = text
+
+    # the facts: each datacenter once done, then what is left to do by hand
+    facts, rack_warnings = _dc_facts(plan, hosts, by_name, keyspaces)
+    facts += _left_facts(plan, seeds)
+    for text, names_of in _grouped(hosts, plan, "info"):
+        facts.append("NOTE  %s: %s" % (out.nodes(names_of), text))
+    kept = [str(n).strip() for n in notes or [] if str(n).strip()]
+    facts.extend("NOTE  " + n for n in kept if not out.is_warning(n))
+
+    # the warnings, just above the question
+    warnings = _screen_warnings(plan, hosts, seeds, kept, rack_warnings, force, replication_problems)
+    real_run = _real_run(hosts, plan, session)
     if check:
         if real_run:
             facts.append(["real run", "would also warn about: %s" % ", ".join(sorted(set(r[0] for r in real_run)))])
