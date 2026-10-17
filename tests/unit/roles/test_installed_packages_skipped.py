@@ -9,10 +9,10 @@ __metaclass__ = type
 import os
 
 import pytest
-import yaml
 
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -24,8 +24,7 @@ ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 
 
 def tasks(role, name):
-    with open(os.path.join(ROLES, role, "tasks", name), encoding="utf-8") as f:
-        todo = list(yaml.safe_load(f))
+    todo = load_tasks(os.path.join(ROLES, role, "tasks", name))
     while todo:
         task = todo.pop(0)
         todo = list(task.get("block", [])) + list(task.get("rescue", [])) + list(task.get("always", [])) + todo
