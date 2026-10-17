@@ -1,0 +1,2 @@
+breaking_changes:
+  - "cassandra_cqlsh - cqlsh runs with its arguments as given, without a shell in between, so a value with a space, a quote, a backslash, ``$`` or ``~`` (a password) is passed as is. ``~`` is no longer expanded in ``cqlsh_cmd`` (``$VAR`` still is): give the full path. ``file`` and ``cqlshrc`` are now of type ``path``."

@@ -52,7 +52,7 @@ options:
   file:
     description:
       - Path to a file containing cql commands.
-    type: str
+    type: path
   execute:
     description:
       - cqlsh command to execute.
@@ -65,7 +65,7 @@ options:
   cqlshrc:
     description:
       - Specify an alternative cqlshrc file location.
-    type: str
+    type: path
   cqlversion:
     description:
       - Specify a particular CQL version.
@@ -107,6 +107,7 @@ options:
   cqlsh_cmd:
     description:
       - cqlsh executable.
+      - Split into words as a shell does, C($VAR) expanded, C(~) not (give the full path or C($HOME/...)).
     type: str
     default: "cqlsh"
   transform:
@@ -193,6 +194,8 @@ rc:
 
 from ansible.module_utils.basic import AnsibleModule
 import json
+import os
+import shlex
 __metaclass__ = type
 
 
@@ -202,19 +205,26 @@ def add_arg_to_cmd(cmd_list, param_name, param_value, is_bool=False):
     @param_name - Param name / flag.
     @param_value - Value of the parameter
     @is_bool - Flag is a boolean and has no value.
+    The value goes as is in one argument, --name=value: no shell nor shlex
+    splits or unquotes it (a password with a space, a quote or a backslash),
+    and one starting with a dash is not taken for an option.
     """
     if is_bool is False and param_value is not None:
-        cmd_list.append(param_name)
-        if param_name == "--execute":
-            if "'" in param_value:
-                cmd_list.append('"{0}"'.format(param_value))
-            else:
-                cmd_list.append("'{0}'".format(param_value))
-        else:
-            cmd_list.append(param_value)
+        cmd_list.append("{0}={1}".format(param_name, param_value))
     elif is_bool is True:
         cmd_list.append(param_name)
     return cmd_list
+
+
+def shown_cmd(args):
+    """The command line for the debug output, the password left out."""
+    shown = list(args)
+    for i, arg in enumerate(shown):
+        if arg.startswith("--password="):
+            shown[i] = "--password=********"
+        elif arg == "--password" and i + 1 < len(shown):  # (additional_args)
+            shown[i + 1] = "********"
+    return " ".join(shown)
 
 
 def transform_output(output, transform_type, split_char):
@@ -262,10 +272,10 @@ def main():
         username=dict(type='str', aliases=['login_user']),
         password=dict(type='str', no_log=True, aliases=['login_password']),
         keyspace=dict(type='str', no_log=False),
-        file=dict(type='str'),
+        file=dict(type='path'),
         execute=dict(type='str'),
         encoding=dict(type='str', default='utf-8'),
-        cqlshrc=dict(type='str'),
+        cqlshrc=dict(type='path'),
         cqlversion=dict(type='str'),
         protocol_version=dict(type='str'),
         connect_timeout=dict(type='int', default=5),
@@ -284,8 +294,7 @@ def main():
         supports_check_mode=False,
     )
 
-    args = [
-        module.params['cqlsh_cmd'],
+    args = [os.path.expandvars(word) for word in shlex.split(module.params['cqlsh_cmd'])] + [
         module.params['cqlsh_host'],
         module.params['cqlsh_port'],
     ]
@@ -309,23 +318,25 @@ def main():
     if additional_args is not None:
         for key, value in additional_args.items():
             if isinstance(value, bool):
-                args.append(" --{0}".format(key))
+                args.append("--{0}".format(key))
             elif isinstance(value, str) or isinstance(value, int):
-                args.append(" --{0} {1}".format(key, value))
+                # two arguments: the bin/cqlsh wrapper takes --python <path> that way only
+                args.extend(["--{0}".format(key), str(value)])
 
     rc = None
     out = ''
     err = ''
     result = {}
-    cmd = " ".join(str(item) for item in args)
+    args = [str(item) for item in args]
 
-    (rc, out, err) = module.run_command(cmd, check_rc=False)
+    # an argv list, run without a shell; no $VAR or ~ expanded in the values (a password)
+    (rc, out, err) = module.run_command(args, check_rc=False, expand_user_and_vars=False)
 
     if module.params['debug']:
         result['out'] = out
         result['err'] = err
         result['rc'] = rc
-        result['cmd'] = cmd
+        result['cmd'] = shown_cmd(args)
 
     if rc != 0:
         module.fail_json(msg="module execution failed", **result)
