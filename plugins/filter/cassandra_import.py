@@ -35,6 +35,7 @@ import shlex
 import sys
 import traceback
 import xml.etree.ElementTree as ET
+from collections import namedtuple
 
 import jinja2
 import jinja2.sandbox
@@ -202,6 +203,189 @@ def _yaml_string(cap):
     return value if isinstance(value, str) and not re.search(r"[\r\n]", value) else None
 
 
+# What _read_line gathers from a line's expressions: the values read (found), the switches that turn a line on or
+# off (flags, values: the value a switched line gives), the values of a choice (gc: {variable: {values}}), the
+# values written for one value of another variable (chosen: {variable: (that variable, its value, the placeholder,
+# the text)})
+_Seen = namedtuple("_Seen", "found flags values gc chosen")
+
+
+def _read_var(m, e, cap, seen):
+    """{{ x }}: its value."""
+    seen.found[e] = _value(cap)
+
+
+def _read_lower(m, e, cap, seen):
+    """{{ x | lower }}, {{ (x | bool) | lower }}: a boolean, however YAML writes it."""
+    if cap.strip().lower() not in YAML_BOOLS:
+        return False  # quoted, or no boolean: left to the report
+    seen.found[e.strip("(").split()[0]] = YAML_BOOLS[cap.strip().lower()] == "true"  # YAML's true, however written
+
+
+def _read_switch(m, e, cap, seen):
+    """{{ '' if x else '# ' }}: the line switched on by x (x | default(y) too)."""
+    seen.flags[m.group(1)] = cap == ""
+
+
+def _read_comment_switch(m, e, cap, seen):
+    """{{ '# ' if x == '' else '' }} (or x | string in ['', 'None']): the line switched off by x unset."""
+    seen.flags[e.split()[3]] = cap == ""
+
+
+def _read_hash_switch(m, e, cap, seen):
+    """{{ '#' if x | string in ['', 'None'] else '' }}: the line switched off by x unset."""
+    seen.flags[e.split()[2]] = cap == ""
+
+
+def _read_set_value(m, e, cap, seen):
+    """{{ x if x | string not in ['', 'None'] else '...' }}: the value of a switched line."""
+    seen.values[e.split()[0]] = _value(cap)  # a number, 0 included
+
+
+def _read_true_unset(m, e, cap, seen):
+    """{{ 'true' if x ... else (x | string | lower) }}: the boolean of a switched line."""
+    seen.values[e.split()[2]] = cap == "true"
+
+
+def _read_spaced_text(m, e, cap, seen):
+    """{{ (' ' ~ x) if x | string not in ['', 'None'] else '' }}: its text, quotes undone."""
+    if cap:  # the text of the value, quotes undone
+        seen.found[m.group(1)] = re.sub(r"^(['\"])(.*)\1$", r"\2", cap[1:].strip())
+
+
+def _read_quoted(m, e, cap, seen):
+    """A password, quoted as the node does (QUOTED): its text."""
+    text = _yaml_string(cap)  # the password itself, however the node quotes it
+    if text is None:
+        return False
+    (seen.values if " or '" in e else seen.found)[m.group(1)] = text
+
+
+def _read_or_default(m, e, cap, seen):
+    """{{ x or '...' }}: the value of a switched line."""
+    seen.values[m.group(1)] = _value(cap)
+
+
+def _read_yes_no(m, e, cap, seen):
+    """{{ 'yes' if x else 'no' }}: a boolean."""
+    seen.found[e.split()[2]] = cap == "yes"
+
+
+def _read_string(m, e, cap, seen):
+    """{{ x if x is string else ... }}: its text."""
+    seen.found[e.split()[0]] = cap
+
+
+def _read_spaced_word(m, e, cap, seen):
+    """{{ (' ' + x) if x else '' }}: its text."""
+    seen.found[e.split()[2].rstrip(")")] = cap[1:]
+
+
+_PREFIXED_CHOICE = re.compile(r"'([^']*)' ~ %s if %s == '(\w+)' else '([^']*)'" % (V, V))
+
+
+def _read_prefixed_choice(m, e, cap, seen):
+    """{{ 'prefix' ~ x if y == 'name' else 'off' }}: x, and y's value name."""
+    prefix, var, gcvar, name, off = _PREFIXED_CHOICE.fullmatch(e).groups()
+    if cap != off and cap.startswith(prefix):
+        seen.found[var] = _value(cap[len(prefix):])
+        seen.gc.setdefault(gcvar, set()).add(name)
+
+
+def _read_choice(m, e, cap, seen):
+    """{{ 'on' if y == 'name' else 'off' }}: y's value name when on."""
+    on, gcvar, name, off = m.groups()
+    if cap == on:
+        seen.gc.setdefault(gcvar, set()).add(name)
+    elif cap != off:
+        return False
+
+
+_CHOSEN = re.compile(r"\w+ if (\w+) == '([^']*)' else '([^']*)'")
+
+
+def _read_chosen(m, e, cap, seen):
+    """{{ x if y == 'value' else 'placeholder' }}: x, once y is known."""
+    seen.chosen[e.split()[0]] = _CHOSEN.fullmatch(e).groups() + (cap,)
+
+
+def _read_between(m, e, cap, seen):
+    """{{ ('prefix' ~ x ~ 'suffix') if x else 'off' }}: x."""
+    # a value between two texts, another text when empty (4.x CASSANDRA_HEAPDUMP_DIR)
+    prefix, var, suffix, off = m.groups()
+    if cap == off:
+        seen.found[var] = ""
+    elif cap.startswith(prefix) and cap.endswith(suffix) and len(cap) > len(prefix) + len(suffix):
+        seen.found[var] = cap[len(prefix):len(cap) - len(suffix)]
+    else:
+        return False
+
+
+def _read_newline_list(m, e, cap, seen):
+    """{{ ('\\n' ~ ...) if x else '' }}: lines of a list, none on the node."""
+    if cap:
+        return False
+
+
+# the template expressions a line is read by, the first that matches: (pattern, reader); a reader adds what the
+# text (cap) the node has in its place says to seen, and returns False when the line cannot be read
+_LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
+    (r"(\w+)", _read_var),
+    (r"(\w+) \| lower|\((\w+) \| bool\) \| lower", _read_lower),
+    (r"'' if %s else '[^']*'" % V, _read_switch),
+    (r"'# ' if (\w+)(?: == ''| \| string in \['', 'None'\]) else ''", _read_comment_switch),
+    (r"'#' if (\w+) \| string in \['', 'None'\] else ''", _read_hash_switch),
+    (r"(\w+) if \1 \| string not in \['', 'None'\] else '[^']*'", _read_set_value),
+    (r"'true' if (\w+) \| string in \['', 'None'\] else \(\1 \| string \| lower\)", _read_true_unset),
+    (r"\(' ' ~ (\w+)\) if \w+ \| string not in \['', 'None'\] else ''", _read_spaced_text),
+    (QUOTED, _read_quoted),
+    (r"%s or '[^']*'" % V, _read_or_default),
+    (r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", _read_true_unset),
+    (r"'yes' if (\w+) else 'no'", _read_yes_no),
+    (r"(\w+) if \w+ is string else .*", _read_string),
+    (r"\(' ' \+ (\w+)\) if \w+ else ''", _read_spaced_word),
+    (r"'[^']*' ~ %s if %s == '(\w+)' else '([^']*)'" % (V, V), _read_prefixed_choice),
+    (r"'([^']*)' if %s == '(\w+)' else '([^']*)'" % V, _read_choice),
+    (r"(\w+) if (\w+) == '([^']*)' else '([^']*)'", _read_chosen),
+    (r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", _read_between),
+    (r"\('\\n' ~ .*\) if \w+ else ''", _read_newline_list),
+))
+
+
+def _read_expression(e, cap, seen):
+    """Reads the text cap the node has in place of the template expression e (its {{ }} off) into seen -> False
+    when the line cannot be read (an expression no reader knows, or a text it does not take)."""
+    for pattern, reader in _LINE_EXPRESSIONS:
+        m = pattern.fullmatch(e)
+        if m:
+            return reader(m, e, cap, seen) is not False
+    return False
+
+
+def _settled(seen, ctx):
+    """What seen says once every expression is read: the values written for one value of another variable, the
+    switched lines' values -> {variable: value}, None when a placeholder differs."""
+    found = seen.found
+    # a value written only for one value of another variable (the line on: '' if x == 'group' else '# '), else a
+    # placeholder: commitlog_sync_group_window
+    for var, (cond, val, off, cap) in seen.chosen.items():
+        if seen.gc.get(cond) == {val}:
+            found[var] = _value(cap)
+        elif cap != off:
+            return None
+    for var, on in seen.flags.items():
+        if not on:
+            found[var] = ""
+        elif var in seen.values:
+            found[var] = seen.values[var]
+        elif isinstance((ctx or {}).get(var), bool):  # a bool that only switches the line on (prefer_local=true)
+            found[var] = True
+        # else: a list or string that switches the line on (e.g. JMX users): its value
+        # can't be read from the line, so it is left to the report as a hand edit
+    found.update({k: next(iter(v)) for k, v in seen.gc.items() if len(v) == 1})
+    return found
+
+
 def _read_line(tpl, live, ctx=None):
     """Values a template line takes to render as the live line, or None.
     ctx: the role defaults, to tell a bool switch from other variables."""
@@ -211,89 +395,11 @@ def _read_line(tpl, live, ctx=None):
     m = re.fullmatch(pattern, live)
     if not m:
         return None
-    found, flags, values, gc, chosen = {}, {}, {}, {}, {}
+    seen = _Seen({}, {}, {}, {}, {})
     for expr, cap in zip(exprs, m.groups()):
-        e = expr[2:-2].strip()
-        if re.fullmatch(r"(\w+)", e):
-            found[e] = _value(cap)
-        elif re.fullmatch(r"(\w+) \| lower|\((\w+) \| bool\) \| lower", e):
-            if cap.strip().lower() not in YAML_BOOLS:
-                return None  # quoted, or no boolean: left to the report
-            found[e.strip("(").split()[0]] = YAML_BOOLS[cap.strip().lower()] == "true"  # YAML's true, however written
-        elif re.fullmatch(r"'' if %s else '[^']*'" % V, e):
-            flags[re.fullmatch(r"'' if %s else '[^']*'" % V, e).group(1)] = cap == ""
-        elif re.fullmatch(r"'# ' if (\w+)(?: == ''| \| string in \['', 'None'\]) else ''", e):
-            flags[e.split()[3]] = cap == ""
-        elif re.fullmatch(r"'#' if (\w+) \| string in \['', 'None'\] else ''", e):
-            flags[e.split()[2]] = cap == ""
-        elif re.fullmatch(r"(\w+) if \1 \| string not in \['', 'None'\] else '[^']*'", e):
-            values[e.split()[0]] = _value(cap)  # a number, 0 included
-        elif re.fullmatch(r"'true' if (\w+) \| string in \['', 'None'\] else \(\1 \| string \| lower\)", e):
-            values[e.split()[2]] = cap == "true"
-        elif re.fullmatch(r"\(' ' ~ (\w+)\) if \w+ \| string not in \['', 'None'\] else ''", e):
-            if cap:  # the text of the value, quotes undone
-                found[re.fullmatch(r"\(' ' ~ (\w+)\).*", e).group(1)] = re.sub(r"^(['\"])(.*)\1$", r"\2", cap[1:].strip())
-        elif re.fullmatch(QUOTED, e):
-            text = _yaml_string(cap)  # the password itself, however the node quotes it
-            if text is None:
-                return None
-            (values if " or '" in e else found)[re.fullmatch(QUOTED, e).group(1)] = text
-        elif re.fullmatch(r"%s or '[^']*'" % V, e):
-            values[re.fullmatch(r"%s or '[^']*'" % V, e).group(1)] = _value(cap)
-        elif re.fullmatch(r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", e):
-            values[e.split()[2]] = cap == "true"
-        elif re.fullmatch(r"'yes' if (\w+) else 'no'", e):
-            found[e.split()[2]] = cap == "yes"
-        elif re.fullmatch(r"(\w+) if \w+ is string else .*", e):
-            found[e.split()[0]] = cap
-        elif re.fullmatch(r"\(' ' \+ (\w+)\) if \w+ else ''", e):
-            found[e.split()[2].rstrip(")")] = cap[1:]
-        elif re.fullmatch(r"'[^']*' ~ %s if %s == '(\w+)' else '([^']*)'" % (V, V), e):
-            m2 = re.fullmatch(r"'([^']*)' ~ %s if %s == '(\w+)' else '([^']*)'" % (V, V), e)
-            prefix, var, gcvar, name, off = m2.groups()
-            if cap != off and cap.startswith(prefix):
-                found[var] = _value(cap[len(prefix):])
-                gc.setdefault(gcvar, set()).add(name)
-        elif re.fullmatch(r"'([^']*)' if %s == '(\w+)' else '([^']*)'" % V, e):
-            on, gcvar, name, off = re.fullmatch(r"'([^']*)' if %s == '(\w+)' else '([^']*)'" % V, e).groups()
-            if cap == on:
-                gc.setdefault(gcvar, set()).add(name)
-            elif cap != off:
-                return None
-        elif re.fullmatch(r"(\w+) if (\w+) == '([^']*)' else '([^']*)'", e):
-            chosen[e.split()[0]] = re.fullmatch(r"\w+ if (\w+) == '([^']*)' else '([^']*)'", e).groups() + (cap,)
-        elif re.fullmatch(r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", e):
-            # a value between two texts, another text when empty (4.x CASSANDRA_HEAPDUMP_DIR)
-            prefix, var, suffix, off = re.fullmatch(r"\('([^']*)' ~ (\w+) ~ '([^']*)'\) if \2 else '([^']*)'", e).groups()
-            if cap == off:
-                found[var] = ""
-            elif cap.startswith(prefix) and cap.endswith(suffix) and len(cap) > len(prefix) + len(suffix):
-                found[var] = cap[len(prefix):len(cap) - len(suffix)]
-            else:
-                return None
-        elif re.fullmatch(r"\('\\n' ~ .*\) if \w+ else ''", e):
-            if cap:
-                return None
-        else:
+        if not _read_expression(expr[2:-2].strip(), cap, seen):
             return None
-    # a value written only for one value of another variable (the line on: '' if x == 'group' else '# '), else a
-    # placeholder: commitlog_sync_group_window
-    for var, (cond, val, off, cap) in chosen.items():
-        if gc.get(cond) == {val}:
-            found[var] = _value(cap)
-        elif cap != off:
-            return None
-    for var, on in flags.items():
-        if not on:
-            found[var] = ""
-        elif var in values:
-            found[var] = values[var]
-        elif isinstance((ctx or {}).get(var), bool):  # a bool that only switches the line on (prefer_local=true)
-            found[var] = True
-        # else: a list or string that switches the line on (e.g. JMX users): its value
-        # can't be read from the line, so it is left to the report as a hand edit
-    found.update({k: next(iter(v)) for k, v in gc.items() if len(v) == 1})
-    return found
+    return _settled(seen, ctx)
 
 
 def _align(rendered, live):
