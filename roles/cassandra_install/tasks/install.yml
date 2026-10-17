@@ -2,6 +2,12 @@
 - name: Keep the modules on the system python3
   ansible.builtin.import_tasks: python_interpreter.yml
 
+# (the change report of an earlier run of the role for this host is not shown again)
+- name: Forget what an earlier run of the role found
+  ansible.builtin.set_fact:
+    _cassandra_install_items: []
+    _cassandra_install_dsbulk_change: {}
+
 - name: Check the install method
   ansible.builtin.assert:
     that:
