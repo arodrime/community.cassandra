@@ -64,7 +64,7 @@ from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCmd, nodetool_error
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCmd, fail_nodetool
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -131,17 +131,9 @@ def main():
         result['msg'] = "nodetool verify executed successfully"
         module.exit_json(**result)
     else:
-        error = nodetool_error(out, err)
-        result['error'] = error
-        result['rc'] = rc
-        result['changed'] = False
-        result['stdout'] = out
-        result['stderr'] = err
-        result['msg'] = ("nodetool verify did not execute successfully (rc {0}){1}. "
-                         "Verify found a problem or could not run: check the node's system.log for the SSTables it "
-                         "names"
-                         .format(rc, ": " + error if error else ""))
-        module.fail_json(**result)
+        fail_nodetool(module, result, "verify", rc, out, err,
+                      ("Verify found a problem or could not run: check the node's system.log for the SSTables it "
+                       "names"))
 
 
 if __name__ == '__main__':

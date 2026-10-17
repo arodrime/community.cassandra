@@ -42,3 +42,19 @@ def test_no_credentials():
     module = FakeModule()
     NodeToolCmd(module).nodetool_cmd("status")
     assert "--username" not in module.commands[0] and "--password" not in module.commands[0]
+
+
+def test_fail_nodetool_says_the_command_its_error_and_the_advice():
+    from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import fail_nodetool
+
+    class Module(object):
+        def fail_json(self, **kwargs):
+            self.failed = kwargs
+
+    module, result = Module(), {"stdout": "x"}
+    fail_nodetool(module, result, "flush", 2, "", "error: Disk full", "Check it, then run it again")
+    assert module.failed == {"error": "error: Disk full", "rc": 2, "changed": False, "stdout": "", "stderr": "error: Disk full",
+                             "msg": "nodetool flush did not execute successfully (rc 2): error: Disk full. Check it, then"
+                                    " run it again"}
+    fail_nodetool(module, {}, "drain", 1, "", "", "Restart it")
+    assert module.failed["msg"] == "nodetool drain did not execute successfully (rc 1). Restart it"

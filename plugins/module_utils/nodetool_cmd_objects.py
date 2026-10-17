@@ -24,6 +24,20 @@ def nodetool_error(out, err):
     return next((line for line in lines if line.startswith("error:")), lines[0] if lines else "").rstrip(".")
 
 
+def fail_nodetool(module, result, command, rc, out, err, advice):
+    """Fail the module on a nodetool command that did not succeed: result gets the error (nodetool_error's), rc,
+    stdout and stderr, msg says which command failed, its error and advice (what to check, a sentence)."""
+    error = nodetool_error(out, err)
+    result['error'] = error
+    result['rc'] = rc
+    result['changed'] = False
+    result['stdout'] = out
+    result['stderr'] = err
+    result['msg'] = "nodetool {0} did not execute successfully (rc {1}){2}. {3}".format(
+        command, rc, ": " + error if error else "", advice)
+    module.fail_json(**result)
+
+
 def cassandra_version_at_least(version_string, minimum_version):
     """Compare two "MAJOR.MINOR"-style Cassandra version strings, e.g.
     cassandra_version_at_least("5.0", "4.1") -> True.
