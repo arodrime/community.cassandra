@@ -53,6 +53,94 @@ def _auto_entry(h, wanted, hosts):
     return entry
 
 
+def _seed_owner(entry, hosts):
+    """A seed entry, the hosts -> the host it names (by a name or an address it answers to), None if none."""
+    bare = re.sub(r":[0-9]+$", "", entry)  # the port left out, as seed_facts.yml compares
+    return next((h for h in hosts if bare in (h.get("names") or []) or bare == h["name"]), None)
+
+
+def _seed_key(entry, hosts):
+    """A seed entry -> the name of the host it names, else the entry itself."""
+    h = _seed_owner(entry, hosts)
+    return h["name"] if h else entry
+
+
+def _seed_label(entry, hosts):
+    """A seed entry -> "name (dc/rack)" of the host it names, else the entry itself."""
+    h = _seed_owner(entry, hosts)
+    return "%s (%s/%s)" % (h["name"], h.get("dc") or "?", h.get("rack") or "?") if h else entry
+
+
+def _live_seeds(present):
+    """The hosts staying -> the entries of the seed lists they run with, each once, in order."""
+    old = []
+    for h in present:
+        for entry in _seed_entries(h.get("live")):
+            if entry not in old:
+                old.append(entry)
+    return old
+
+
+def _seeds_gone(old, wanted, hosts):
+    """The live seed entries, cassandra_seeds' entries, the hosts -> the hosts of the live seeds cassandra_seeds
+    leaves out."""
+    return [_seed_owner(e, hosts) for e in old
+            if _seed_key(e, hosts) not in [_seed_key(w, hosts) for w in wanted] and _seed_owner(e, hosts)]
+
+
+def _no_seed(dc, names):
+    """A datacenter, the seeds leaving it -> the words of it left with no seed."""
+    return "%s would be left with no seed (%s %s the seed list)" % (
+        dc, ", ".join(names), "leaves" if len(names) == 1 else "leave")
+
+
+def _pick_dc_seeds(members, old_keys):
+    """The hosts of a datacenter staying, the hosts of the live seed lists -> the seeds the seed rule picks among
+    the ones up (the ones it runs with as seeds first: a rerun picks the same), in the inventory's order."""
+    racks = {}
+    for h in members:
+        if h.get("up"):
+            racks.setdefault(h.get("rack"), []).append(dict(h, seed=h["name"] in old_keys))
+    picked = out.pick_seeds(racks, out.seed_target(len(members), len(set(h.get("rack") for h in members))))
+    order = [h["name"] for h in members]
+    picked.sort(key=lambda h: order.index(h["name"]))  # in the inventory's order: a rerun writes the same line
+    return picked
+
+
+def _auto_seed_warning(dc, leaving, picked, labels, old_keys):
+    """A datacenter given seeds of its own, the seeds leaving it, the hosts picked and their labels, the hosts of
+    the live seed lists -> the warning: the seeds kept or made there, live only."""
+    names = [h["name"] for h in picked]
+    dropped = [n for n in leaving if n not in names]
+    if dropped:
+        why = _no_seed(dc, dropped)
+    else:  # a rerun: the seeds picked before, still live
+        why = "cassandra_seeds has no node of %s" % dc
+    kept = [lab for h, lab in zip(picked, labels) if h["name"] in old_keys]
+    made = [lab for h, lab in zip(picked, labels) if h["name"] not in old_keys]
+    what = []
+    if kept:
+        what.append("%s kept as its seed%s" % (", ".join(kept), "" if len(kept) == 1 else "s"))
+    if made:
+        what.append("%s made its seed%s" % (", ".join(made), "" if len(made) == 1 else "s"))
+    return ("%s: %s, live only: put %s in cassandra_seeds (apply_config would put the inventory's list"
+            " back)" % (why, "; ".join(what), "it" if len(picked) == 1 else "them"))
+
+
+def _dc_seeds(dc, members, leaving, wanted, hosts, old_keys):
+    """A datacenter left with no seed, its hosts staying, the seeds leaving it, cassandra_seeds' entries, the
+    hosts, the hosts of the live seed lists -> ({dc, hosts, labels, entries} of the seeds picked there, the
+    warning), or (None, the problem) when none of its nodes is up to be one."""
+    picked = _pick_dc_seeds(members, old_keys)
+    if not picked:
+        return None, ("%s and none of its nodes is up to be one: put a node of %s in cassandra_seeds."
+                      % (_no_seed(dc, leaving), dc))
+    entries = [_auto_entry(h, wanted, hosts) for h in picked]
+    labels = ["%s (%s/%s)" % (h["name"], dc, h.get("rack") or "?") for h in picked]
+    return ({"dc": dc, "hosts": [h["name"] for h in picked], "labels": labels, "entries": entries},
+            _auto_seed_warning(dc, leaving, picked, labels, old_keys))
+
+
 def cassandra_seed_change(hosts, seeds):
     """hosts: [{name, absent, dc, rack, names: the names and addresses it
     answers to, live: the seed list of its cassandra.yaml ('' when unknown),
@@ -73,72 +161,29 @@ def cassandra_seed_change(hosts, seeds):
     wanted = _seed_entries(seeds)
     wanted_line = seeds if isinstance(seeds, str) else ",".join(wanted)
     present = [h for h in hosts if not h.get("absent")]
-    old = []
-    for h in present:
-        for entry in _seed_entries(h.get("live")):
-            if entry not in old:
-                old.append(entry)
-
-    def owner(entry):
-        bare = re.sub(r":[0-9]+$", "", entry)  # the port left out, as seed_facts.yml compares
-        return next((h for h in hosts if bare in (h.get("names") or []) or bare == h["name"]), None)
-
-    def key(entry):
-        h = owner(entry)
-        return h["name"] if h else entry
-
-    def label(entry):
-        h = owner(entry)
-        return "%s (%s/%s)" % (h["name"], h.get("dc") or "?", h.get("rack") or "?") if h else entry
-
-    old_keys = [key(e) for e in old]
+    old = _live_seeds(present)
+    old_keys = [_seed_key(e, hosts) for e in old]
     problems, warnings, auto = [], [], []
     if not wanted:
         problems.append("cassandra_seeds is empty: list a node of each datacenter (one per rack, two or three per"
                         " datacenter).")
     new_entries = list(wanted)
-    gone = [owner(e) for e in old if key(e) not in [key(w) for w in wanted] and owner(e)]
+    gone = _seeds_gone(old, wanted, hosts)
     for dc in sorted(set(h.get("dc") for h in gone)) if wanted else []:
         members = [h for h in present if h.get("dc") == dc]
-        if not members or [w for w in wanted if key(w) in [h["name"] for h in members]]:
+        if not members or [w for w in wanted if _seed_key(w, hosts) in [h["name"] for h in members]]:
             continue
-        leaving = [h["name"] for h in gone if h.get("dc") == dc]
-        why = "%s would be left with no seed (%s %s the seed list)" % (
-            dc, ", ".join(leaving), "leaves" if len(leaving) == 1 else "leave")
-        racks = {}
-        for h in members:
-            if h.get("up"):  # the ones it runs with as seeds first: a rerun picks the same
-                racks.setdefault(h.get("rack"), []).append(dict(h, seed=h["name"] in old_keys))
-        picked = out.pick_seeds(racks, out.seed_target(len(members), len(set(h.get("rack") for h in members))))
-        order = [h["name"] for h in members]
-        picked.sort(key=lambda h: order.index(h["name"]))  # in the inventory's order: a rerun writes the same line
+        picked, said = _dc_seeds(dc, members, [h["name"] for h in gone if h.get("dc") == dc], wanted, hosts, old_keys)
         if not picked:
-            problems.append("%s and none of its nodes is up to be one: put a node of %s in cassandra_seeds." % (why, dc))
+            problems.append(said)
             continue
-        entries = [_auto_entry(h, wanted, hosts) for h in picked]
-        labels = ["%s (%s/%s)" % (h["name"], dc, h.get("rack") or "?") for h in picked]
-        new_entries += entries
-        auto.append({"dc": dc, "hosts": [h["name"] for h in picked], "labels": labels, "entries": entries})
-        names = [h["name"] for h in picked]
-        dropped = [n for n in leaving if n not in names]
-        if dropped:
-            why = "%s would be left with no seed (%s %s the seed list)" % (
-                dc, ", ".join(dropped), "leaves" if len(dropped) == 1 else "leave")
-        else:  # a rerun: the seeds picked before, still live
-            why = "cassandra_seeds has no node of %s" % dc
-        kept = [lab for h, lab in zip(picked, labels) if h["name"] in old_keys]
-        made = [lab for h, lab in zip(picked, labels) if h["name"] not in old_keys]
-        what = []
-        if kept:
-            what.append("%s kept as its seed%s" % (", ".join(kept), "" if len(kept) == 1 else "s"))
-        if made:
-            what.append("%s made its seed%s" % (", ".join(made), "" if len(made) == 1 else "s"))
-        warnings.append("%s: %s, live only: put %s in cassandra_seeds (apply_config would put the inventory's list"
-                        " back)" % (why, "; ".join(what), "it" if len(picked) == 1 else "them"))
+        new_entries += picked["entries"]
+        auto.append(picked)
+        warnings.append(said)
     new_line = ",".join(new_entries) if auto else wanted_line
-    new_keys = [key(e) for e in new_entries]
-    removed = [label(e) for e in old if key(e) not in new_keys]
-    added = [label(e) for e in new_entries if key(e) not in old_keys]
+    new_keys = [_seed_key(e, hosts) for e in new_entries]
+    removed = [_seed_label(e, hosts) for e in old if _seed_key(e, hosts) not in new_keys]
+    added = [_seed_label(e, hosts) for e in new_entries if _seed_key(e, hosts) not in old_keys]
     differ = [h["name"] for h in present if h.get("live") and h["live"] != new_line]
     return {"new": new_line, "wanted": wanted_line, "old": old,
             "old_hosts": [k for k in old_keys if k in [h["name"] for h in hosts]],
