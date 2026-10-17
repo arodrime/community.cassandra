@@ -47,6 +47,88 @@ def _duration(seconds):
     return out.duration(seconds, short=True)
 
 
+def _stream_entry(result, s, before, done, peer, now):
+    """A view (its item: the host read), one of its sessions, what the previous call had of it (None: new), its
+    bytes and files done, the peer followed -> the session as the state keeps it."""
+    # read from the other side (peer): the other end is the host read, and the
+    # data goes the other way
+    way = {"receiving": "from", "sending": "to"}.get(s["direction"], "on")
+    if peer and way != "on":
+        way = "to" if way == "from" else "from"
+    moved = before is None or done > before["mark"]
+    return {"total": s["bytes_total"], "done": s["bytes_done"], "mark": done, "gone": False,
+            "moved": moved, "since": now if moved else before.get("since", now),
+            "files_total": s["files_total"], "files_done": s["files_done"], "way": way,
+            "other": str(result.get("item", "")) if peer else s["peer"]}
+
+
+def _read_sessions(views, streams, operations, peer, now):
+    """The netstats views, the sessions of the previous call (updated in place), the operations and peer
+    followed -> (the hosts that answered, the keys of the sessions shown now, whether one progressed)."""
+    progressed, answered, current = False, set(), set()
+    for result in views:
+        if result.get("failed") or result.get("skipped") or "sessions" not in result:
+            continue
+        answered.add(str(result.get("item", "")))
+        for s in result["sessions"]:
+            if operations and s["operation"] not in operations:
+                continue
+            if peer and s["peer"] != peer:
+                continue
+            key = "|".join([str(result.get("item", "")), s["plan_id"], s["peer"], s["direction"]])
+            current.add(key)
+            before = streams.get(key)
+            done = s["bytes_done"] + s["files_done"]
+            if before is None or done > before["mark"] or s["bytes_total"] != before["total"]:
+                progressed = True
+            streams[key] = _stream_entry(result, s, before, done, peer, now)
+    return answered, current, progressed
+
+
+def _finish_gone(streams, current, answered, now):
+    """The sessions (updated in place), the ones shown now, the hosts that answered -> whether one finished: a
+    finished session leaves netstats, counted as fully streamed (not when its host did not answer this time)."""
+    finished = False
+    if answered:
+        for key, stream in streams.items():
+            if key not in current and not stream["gone"] and key.split("|", 1)[0] in answered:
+                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"], moved=True, since=now)
+                finished = True
+    return finished
+
+
+def _disk_progress(state, disk, now, counted):
+    """The previous state, {host: bytes used} at this check, whether netstats showed progress -> (whether the
+    space used on the receiving node grew by _DISK_GROWTH while bytes were left: a file is being written,
+    netstats shows a whole SSTable's bytes once it is over; disk, disk_at, disk_grown of the new state)."""
+    # (a baseline from consecutive checks while bytes were left only: not one read before a quiet phase)
+    disk_before = dict(state.get("disk") or {}) if state.get("transferring") else {}
+    disk_now = dict((str(h), int(b)) for h, b in (disk or {}).items() if b is not None and str(b).strip().isdigit())
+    grown = sum(max(0, b - disk_before[h]) for h, b in disk_now.items() if h in disk_before)
+    disk_at = state.get("disk_at")
+    grew = False
+    if state.get("transferring") and grown >= _DISK_GROWTH:
+        grew, disk_at = True, now
+    disk_grown = 0 if counted else state.get("disk_grown", 0) + (grown if state.get("transferring") else 0)
+    disk_before.update(disk_now)
+    return grew, disk_before, disk_at, disk_grown
+
+
+def _window_rate(samples, answered, now, done):
+    """The [time, bytes done] samples of the previous checks, whether a view answered, the bytes done now ->
+    (the samples kept, the rate over the last _WINDOW seconds: bytes per second, None while unknown or when
+    nothing moved). A check without answer has no new count."""
+    samples = [list(x) for x in samples or []]
+    rate = None
+    if answered:
+        samples = _recent(samples, now)
+        oldest = samples[0] if samples else None
+        if oldest and now > oldest[0] and done > oldest[1]:
+            rate = (done - oldest[1]) / float(now - oldest[0])
+        samples = _recent(samples + [[now, done]], now)
+    return samples, rate
+
+
 def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=None, stall_time=1800, quiet_factor=1,
                               interval=30, early_interval=10, early_time=300, warn_time=300, disk=None):
     """views: the results of cassandra_netstats looped over hosts (item: the
@@ -87,53 +169,13 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     state = state or {}
     streams = dict((k, dict(v)) for k, v in (state.get("streams") or {}).items())
     start = state.get("start", now)
-    progressed = False
-    answered = set()
-    current = set()
-    for result in views:
-        if result.get("failed") or result.get("skipped") or "sessions" not in result:
-            continue
-        answered.add(str(result.get("item", "")))
-        for s in result["sessions"]:
-            if operations and s["operation"] not in operations:
-                continue
-            if peer and s["peer"] != peer:
-                continue
-            key = "|".join([str(result.get("item", "")), s["plan_id"], s["peer"], s["direction"]])
-            current.add(key)
-            before = streams.get(key)
-            done = s["bytes_done"] + s["files_done"]
-            if before is None or done > before["mark"] or s["bytes_total"] != before["total"]:
-                progressed = True
-            # read from the other side (peer): the other end is the host read, and the
-            # data goes the other way
-            way = {"receiving": "from", "sending": "to"}.get(s["direction"], "on")
-            if peer and way != "on":
-                way = "to" if way == "from" else "from"
-            moved = before is None or done > before["mark"]
-            streams[key] = {"total": s["bytes_total"], "done": s["bytes_done"], "mark": done, "gone": False,
-                            "moved": moved, "since": now if moved else before.get("since", now),
-                            "files_total": s["files_total"], "files_done": s["files_done"], "way": way,
-                            "other": str(result.get("item", "")) if peer else s["peer"]}
-    if answered:
-        for key, stream in streams.items():
-            if key not in current and not stream["gone"] and key.split("|", 1)[0] in answered:
-                # a finished session leaves netstats: count it as fully streamed (not when its
-                # host did not answer this time)
-                stream.update(gone=True, done=stream["total"], files_done=stream["files_total"], moved=True, since=now)
-                progressed = True
-    # the space used on the receiving node grew while bytes were left: a file is being written (netstats
-    # shows a whole SSTable's bytes once it is over)
+    answered, current, progressed = _read_sessions(views, streams, operations, peer, now)
+    if _finish_gone(streams, current, answered, now):
+        progressed = True
     counted = progressed
-    # (a baseline from consecutive checks while bytes were left only: not one read before a quiet phase)
-    disk_before = dict(state.get("disk") or {}) if state.get("transferring") else {}
-    disk_now = dict((str(h), int(b)) for h, b in (disk or {}).items() if b is not None and str(b).strip().isdigit())
-    grown = sum(max(0, b - disk_before[h]) for h, b in disk_now.items() if h in disk_before)
-    disk_at = state.get("disk_at")
-    if state.get("transferring") and grown >= _DISK_GROWTH:
-        progressed, disk_at = True, now
-    disk_grown = 0 if counted else state.get("disk_grown", 0) + (grown if state.get("transferring") else 0)
-    disk_before.update(disk_now)
+    grew, disk_seen, disk_at, disk_grown = _disk_progress(state, disk, now, counted)
+    if grew:
+        progressed = True
     netstats_at = now if counted or "netstats_at" not in state else state["netstats_at"]
     first = "last_progress" not in state
     last_progress = now if progressed or first else state["last_progress"]
@@ -148,19 +190,11 @@ def cassandra_stream_progress(views, state=None, now=0, operations=None, peer=No
     limit = int(stall_time) * (1 if transferring else int(quiet_factor))
     total = sum(s["total"] for s in streams.values())
     done = sum(s["done"] for s in streams.values())
-    samples = [list(x) for x in state.get("samples") or []]
-    rate = None
-    if answered:
-        # over the last _WINDOW seconds; a check without answer has no new count
-        samples = _recent(samples, now)
-        oldest = samples[0] if samples else None
-        if oldest and now > oldest[0] and done > oldest[1]:
-            rate = (done - oldest[1]) / float(now - oldest[0])
-        samples = _recent(samples + [[now, done]], now)
+    samples, rate = _window_rate(state.get("samples"), answered, now, done)
     return {
         "start": start, "now": now, "streams": streams, "progressed": progressed, "last_progress": last_progress,
         "idle_checks": idle_checks, "idle": idle, "limit": limit, "stalled": idle >= limit, "sessions": len(current),
-        "warn": min(int(warn_time), limit), "disk": disk_before, "disk_at": disk_at, "disk_grown": disk_grown,
+        "warn": min(int(warn_time), limit), "disk": disk_seen, "disk_at": disk_at, "disk_grown": disk_grown,
         "netstats_at": netstats_at,
         "transferring": transferring, "answered": bool(answered), "bytes_done": done, "bytes_total": total,
         "answered_hosts": sorted(set(state.get("answered_hosts") or []) | answered),
