@@ -1405,25 +1405,32 @@ def progress_line(index, total_steps, node, operation, mode="", done=0, total=0,
     if status == "done":
         line = "  ".join(x for x in [head, "done", done_total, elapsed] if x)
     elif status != "going" or (idle_text and not pause and total and done < total):  # before any stream: waiting
-        word = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED",
-                "jmx_refused": "JMX LOGIN REFUSED"}.get(
-            status, "STALLED" if status == "going" else status.upper())
+        word = _STATUS_WORDS.get(status, "STALLED" if status == "going" else status.upper())
         count_text = ("%s %s" % (word, idle_text)) if idle_text and word == "STALLED" else word
         line = "  ".join(x for x in [head, count_text, pct, done_total, elapsed] if x)
     elif not total:
         line = "  ".join(x for x in [head, "waiting for streams", quiet, elapsed] if x)
     else:
-        eta = ""
-        if speed and total > done:
-            left = (total - done) / float(speed)
-            eta = "ETA %s (%s)" % (_hhmm(now + left, now), duration(left, short=True))
-        elif total <= done:
-            eta = "all sent, finishing"
+        # a file sent whole shows on the receiving disk before netstats counts it
         on_disk = ("receiving (disk +%s in %s)" % (size(disk), duration(frozen, short=True))
                    if disk > 0 and frozen >= IDLE_SHOWN and not idle_text and total > done else "")
-        line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "", eta,
-                                     on_disk, quiet if total <= done else pause, elapsed] if x)
+        line = "  ".join(x for x in [head, _bar(done, total), pct, done_total, rate(speed) if speed else "",
+                                     _eta(done, total, speed, now), on_disk, quiet if total <= done else pause,
+                                     elapsed] if x)
     return [line] + peer_lines(peers, width)
+
+
+# progress_line's word for a status other than going
+_STATUS_WORDS = {"stalled": "STALLED", "failed": "FAILED", "too_long": "TOO LONG", "stopped": "STOPPED",
+                 "jmx_refused": "JMX LOGIN REFUSED"}
+
+
+def _eta(done, total, speed, now):
+    """When the bytes left are through at this speed: "ETA 13:33 (9m)"; all sent: "all sent, finishing"."""
+    if speed and total > done:
+        left = (total - done) / float(speed)
+        return "ETA %s (%s)" % (_hhmm(now + left, now), duration(left, short=True))
+    return "all sent, finishing" if total <= done else ""
 
 
 # above this many other ends, a line sums them up, only the ones behind detailed
@@ -1470,33 +1477,47 @@ def peer_lines(peers, width=None):
     peers = sorted(peers or [], key=lambda p: (_natural(p.get("name")), p.get("way") or "with"))
     if not peers:
         return []
-    out = []
+    out, left = [], []
     if len(peers) > PEERS_SUMMED:
-        going = [p for p in peers if p.get("stalled") or _percent(p) < 100]
-        average = sum(_percent(p) for p in going) / float(len(going)) if going else 100
-        behind = [p for p in going if p.get("stalled") or (average >= PEER_BEHIND and _percent(p) < average / 2.0)]
-        late = set(id(p) for p in behind)
-        fine = [p for p in going if id(p) not in late]
-        both = len(set(str(p.get("name")) for p in peers)) < len(peers)
-        parts = ["%d done" % (len(peers) - len(going))] if len(going) < len(peers) else []
-        if fine:
-            parts.append("%d ok (avg %d%%)" % (len(fine), sum(_percent(p) for p in fine) / float(len(fine))))
-        stalled = len([p for p in behind if p.get("stalled")])
-        parts += ["%d STALLED" % stalled] if stalled else []
-        parts += ["%d behind" % (len(behind) - stalled)] if len(behind) > stalled else []
-        summary = _PEER_INDENT + "%s: %s" % (plural(len(peers), "peer"), ", ".join(parts))
-        slowest = ["%s%s %d%%%s" % ((p.get("way") or "with") + " " if both else "", p.get("name"), _percent(p),
-                                    " STALLED" if p.get("stalled") else "") for p in sorted(going, key=_slowness)[:3]]
-        while slowest and len(summary + "; slowest: " + ", ".join(slowest)) > (width or PEER_WIDTH):
-            slowest.pop()  # as many as fit in the width
-        out += fit([summary + ("; slowest: " + ", ".join(slowest) if slowest else "")], width or PEER_WIDTH)
-        shown = set(id(p) for p in sorted(behind, key=_slowness)[:PEERS_DETAILED])
-        peers = [p for p in behind if id(p) in shown]  # by name
-        left = [p for p in behind if id(p) not in shown]
+        out, peers, left = _peers_summed(peers, width)
         if not peers:
             return out
-    else:
-        left = []
+    out += _peer_columns(peers, width)
+    if left:
+        stalled = len([p for p in left if p.get("stalled")])
+        counts = (["%d STALLED" % stalled] if stalled else []) + (["%d behind" % (len(left) - stalled)]
+                                                                  if len(left) > stalled else [])
+        out.append(_PEER_INDENT + "+%d more: %s" % (len(left), ", ".join(counts)))
+    return out
+
+
+def _peers_summed(peers, width):
+    """Above PEERS_SUMMED peers (sorted by name): (the line that sums them up, the ones behind detailed under it by
+    name, the ones behind left out)."""
+    going = [p for p in peers if p.get("stalled") or _percent(p) < 100]
+    average = sum(_percent(p) for p in going) / float(len(going)) if going else 100
+    behind = [p for p in going if p.get("stalled") or (average >= PEER_BEHIND and _percent(p) < average / 2.0)]
+    late = set(id(p) for p in behind)
+    fine = [p for p in going if id(p) not in late]
+    both = len(set(str(p.get("name")) for p in peers)) < len(peers)
+    parts = ["%d done" % (len(peers) - len(going))] if len(going) < len(peers) else []
+    if fine:
+        parts.append("%d ok (avg %d%%)" % (len(fine), sum(_percent(p) for p in fine) / float(len(fine))))
+    stalled = len([p for p in behind if p.get("stalled")])
+    parts += ["%d STALLED" % stalled] if stalled else []
+    parts += ["%d behind" % (len(behind) - stalled)] if len(behind) > stalled else []
+    summary = _PEER_INDENT + "%s: %s" % (plural(len(peers), "peer"), ", ".join(parts))
+    slowest = ["%s%s %d%%%s" % ((p.get("way") or "with") + " " if both else "", p.get("name"), _percent(p),
+                                " STALLED" if p.get("stalled") else "") for p in sorted(going, key=_slowness)[:3]]
+    while slowest and len(summary + "; slowest: " + ", ".join(slowest)) > (width or PEER_WIDTH):
+        slowest.pop()  # as many as fit in the width
+    lines = fit([summary + ("; slowest: " + ", ".join(slowest) if slowest else "")], width or PEER_WIDTH)
+    shown = set(id(p) for p in sorted(behind, key=_slowness)[:PEERS_DETAILED])
+    return lines, [p for p in behind if id(p) in shown], [p for p in behind if id(p) not in shown]
+
+
+def _peer_columns(peers, width):
+    """The peers in aligned columns, as many as fit in width (4 at most)."""
     cells = [(p.get("way") or "with", str(p.get("name")), amount(p.get("done", 0), p.get("total", 0)),
               "%d%%" % _percent(p), _peer_state(p)) for p in peers]
     widths = [max(len(c[i]) for c in cells) for i in range(4)]
@@ -1506,14 +1527,8 @@ def peer_lines(peers, width=None):
     cell = max(len(t) for t in texts)
     room = (width or PEER_WIDTH) - len(_PEER_INDENT) + len(_PEER_GAP)
     per_line = max(1, min(4, room // (cell + len(_PEER_GAP))))
-    for at in range(0, len(texts), per_line):
-        out.append((_PEER_INDENT + _PEER_GAP.join(t.ljust(cell) for t in texts[at:at + per_line])).rstrip())
-    if left:
-        stalled = len([p for p in left if p.get("stalled")])
-        counts = (["%d STALLED" % stalled] if stalled else []) + (["%d behind" % (len(left) - stalled)]
-                                                                  if len(left) > stalled else [])
-        out.append(_PEER_INDENT + "+%d more: %s" % (len(left), ", ".join(counts)))
-    return out
+    return [(_PEER_INDENT + _PEER_GAP.join(t.ljust(cell) for t in texts[at:at + per_line])).rstrip()
+            for at in range(0, len(texts), per_line)]
 
 
 # --- end of run ----------------------------------------------------------------------------
