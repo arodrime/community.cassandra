@@ -212,7 +212,11 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     places: {host: [dc, rack]} of the hosts, from the inventory: an
     unreachable host matched by no address is taken for the one ring node
     no host has in its place (marked "host?"). Returns the report as a list
-    of lines."""
+    of lines.
+    e.g. (node1 to node3 of dc1/r1, node3 DN; inventory {node1: ["10.0.0.1"], ...}, cluster="my_cluster",
+    seen_from="node1") -> ["my_cluster  (seen from node1, ring = inventory, 3 nodes)", "", "Datacenter: dc1", "", " --
+    Address   Load ...", " UN  10.0.0.1  1 GiB  16            h1       r1    node1", ..., " DN  10.0.0.3  ...  node3
+    \u2190 down", "", "  dc1   3 nodes   2 up, 1 down   load 3.0 GiB", "", "1 NODE DOWN: node3 (dc1/r1)"]."""
     cluster_status = cluster_status or {}
     ring = [(dc, n) for dc in cluster_status for n in cluster_status[dc].get("nodes", [])]
     owner = hosts_by_address(inventory, [_ip(n["address"]) for dc, n in ring])
