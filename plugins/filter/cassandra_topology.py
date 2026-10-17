@@ -446,7 +446,7 @@ def _add_text(name, h, plan, estimate, seeds):
     if h.get("reset"):  # add_node's line for it: "<node>: has data (...) - will be reset"
         line = str(h["reset"].get("line") or "")
         parts.append(line.split(": ", 1)[1] if ": has data " in line else "will be reset first")
-    if seeds.get("step") and name in [a.split(" ")[0] for a in seeds.get("added") or []]:
+    if seeds.get("step") and name in [a.split(" ", 1)[0] for a in seeds.get("added") or []]:
         parts.append("joins as a regular node, a seed at the seed step")
     return "; ".join(parts)
 
@@ -549,7 +549,7 @@ def _screen_warnings(plan, hosts, seeds, kept, rack_warnings, force, replication
     warnings.extend(plan.get("large_removals") or [])
     warnings.extend(rack_warnings)
     warnings.extend("%s is in the ring but in no host of the inventory: never touched (an address mistyped, a host"
-                    " missing, or a dead node: remove_dead_node -e cassandra_target_nodes=%s)" % (u, u.split(" ")[0])
+                    " missing, or a dead node: remove_dead_node -e cassandra_target_nodes=%s)" % (u, u.split(" ", 1)[0])
                     for u in plan["unknown"])
     warnings.extend(w.rstrip(".") for w in plan["warnings"])
     if force and replication_problems:

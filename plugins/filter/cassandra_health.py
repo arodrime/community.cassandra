@@ -406,7 +406,7 @@ def cassandra_leaving_state(netstats, ring, address):
 def _same_address(field, address):
     """True when a nodetool field ("/10.0.0.4", "host/10.0.0.4", "10.0.0.4:7000",
     "[0:0:0:0:0:0:0:4]:7000") is address."""
-    return same_address(address_part(field.strip().split("/")[-1]), address)
+    return same_address(address_part(field.strip().rsplit("/", 1)[-1]), address)
 
 
 def _gossip_removing(gossip, address):

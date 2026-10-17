@@ -54,8 +54,8 @@ _DM_KNAME = re.compile(r" \(dm-\d+\)$")
 
 # what follows the write, by cassandra_apply_config_then: (--check or the plan, real run)
 THEN = {"restart": ("then restart", "restarted"), "start": ("then start", "started"),
-         "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart"),
-         "os": ("no restart", "no restart")}
+        "write": ("left stopped", "left stopped"), "none": ("no restart", "no restart"),
+        "os": ("no restart", "no restart")}
 # said in the plan only, before the question
 _WHY = {"start": "its Cassandra is not running: started once written (down over max_hint_window? repair it)",
         "write": "its Cassandra is stopped: left stopped, reads its config when it starts",
