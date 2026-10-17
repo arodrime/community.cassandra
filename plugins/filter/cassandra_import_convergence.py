@@ -19,12 +19,12 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import FILES, _THEN
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import FILES, THEN
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    IDENTITY, KEEP, PER_NODE, ROLE, SERIES, _chains, _hand_edits_kept, _template_vars, _undefined)
+    IDENTITY, KEEP, PER_NODE, ROLE, SERIES, group_chains, hand_edits_kept, template_vars, undefined_name)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
-    ARROW_RIGHT, DASH, REPORT_WIDTH, SCREEN_VALUE, _aligned, _column, _cut, _fill, _sections, _who, _whole)
+    ARROW_RIGHT, DASH, REPORT_WIDTH, SCREEN_VALUE, aligned_rows, name_column, cut_text, fill_text, report_sections, who_text, unbreakable)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # the files cassandra_config writes from its series' templates: a change in one is a restart (apply_config's rule);
@@ -55,9 +55,9 @@ SCREEN_ACTIONS = 5  # the actions the end of the run shows (the report: every on
 LIMIT_MOST = 10  # a check --limit to the nodes that change, up to this many (more: the whole cluster)
 # what a change does, by kind: (the order of the actions, the safest first; what the report says; what the screen
 # says; apply_config --check --diff shows it)
-_KINDS = {"none": (0, _THEN["none"][0], _THEN["none"][0], True),
-          "os": (0, "%s (cassandra_linux, applied live)" % _THEN["os"][0], _THEN["os"][0], True),
-          "restart": (1, _THEN["restart"][0], _THEN["restart"][0], True),
+_KINDS = {"none": (0, THEN["none"][0], THEN["none"][0], True),
+          "os": (0, "%s (cassandra_linux, applied live)" % THEN["os"][0], THEN["os"][0], True),
+          "restart": (1, THEN["restart"][0], THEN["restart"][0], True),
           "seeds": (1, "no restart (change_seeds applies it live)", "no restart (change_seeds)", True),
           # apply_config's rule: jmxremote.password is read at each JMX login, jmxremote.access at start
           "jmx": (1, "then restart for a user or a right (jmxremote.access, read at start); passwords only: no restart"
@@ -99,7 +99,7 @@ def _kind(key):
         return "os"
     if key == "cassandra_jmx_users":  # (jmxremote.password and .access, whose templates are not a series')
         return "jmx"
-    if any(key in _template_vars(name) for name in TEMPLATES):
+    if any(key in template_vars(name) for name in TEMPLATES):
         return "keystore" if re.search(r"keystore|truststore", key) else "restart"
     return "unknown"
 
@@ -119,7 +119,7 @@ def _shared(layout, path):
     if parts[0] != "group_vars":
         return False
     group = re.sub(r"\.(ya?ml|json)$", "", parts[1])
-    return group not in set(g for chain in _chains(layout.get("hosts") or {}).values() for g in chain)
+    return group not in set(g for chain in group_chains(layout.get("hosts") or {}).values() for g in chain)
 
 
 def _places(layout, key, path=None, target=_ABSENT, same=False):
@@ -313,7 +313,7 @@ def _kept_files(read):
     [nodes])])], the same edits on several nodes once."""
     found, order = {}, []
     for n in read:
-        kept, dummy = _hand_edits_kept(n)
+        kept, dummy = hand_edits_kept(n)
         per_file = {}
         current = None
         for line in kept:
@@ -336,13 +336,13 @@ def _kept_files(read):
 def _screen_rows(rows, indent, width):
     """[(name, text)] -> lines: the names in a column, the texts right of it; a row too long for a line on two, the
     text under its name, a little further in."""
-    column = _column([name for name, dummy in rows])
+    column = name_column([name for name, dummy in rows])
     lines = []
     for name, text in rows:
         if len(name) < column and len(indent) + column + len(text) <= width:
-            lines += _aligned([(name, text)], indent, width, column)
+            lines += aligned_rows([(name, text)], indent, width, column)
         else:
-            lines += _fill(name, width, indent, "  ") + _fill(text, width, indent + "  ", "  ")
+            lines += fill_text(name, width, indent, "  ") + fill_text(text, width, indent + "  ", "  ")
     return lines
 
 
@@ -350,7 +350,7 @@ def _values_text(item, who):
     """2 (84 nodes)   1 (5: db101..db105)   6 (1: db113)."""
     parts = []
     for i, (text, nodes) in enumerate(item["values"]):
-        shown = _whole(_shown(text))
+        shown = unbreakable(_shown(text))
         parts.append("%s%s(%s)" % (shown, out.NBSP, out.plural(len(nodes), "node") if i == 0
                                    else "%d:%s%s" % (len(nodes), out.NBSP, who(nodes))))
     return "   ".join(parts)
@@ -440,14 +440,14 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
     for name, variants in kept:
         nodes = [n for dummy, members in variants for n in members]
         several = ", %d variants" % len(variants) if len(variants) > 1 else ""
-        lines += _fill("%s   kept on %s%s" % (name, who(nodes), several), width, "  ", "    ")
+        lines += fill_text("%s   kept on %s%s" % (name, who(nodes), several), width, "  ", "    ")
         carried, loose = set(), 0
         for i, (edits, members) in enumerate(variants):
             blocks = _blocks(edits)
             if len(variants) > 1:
-                lines += _fill("variant %d on %s:" % (i + 1, who(members)), width, "    ", "  ")
+                lines += fill_text("variant %d on %s:" % (i + 1, who(members)), width, "    ", "  ")
             if not blocks:
-                lines += _fill("no edit read (kept by the inventory)", width, "      ")
+                lines += fill_text("no edit read (kept by the inventory)", width, "      ")
             for where, removed, added in blocks:
                 carries = []
                 for line in added:
@@ -462,7 +462,7 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                     loose += 1
                     carries.append("no variable (a line taken out)")
                 text = "%s:  %s" % (where or "note", "   ".join(["- " + r for r in removed] + ["+ " + a for a in added]))
-                lines += _fill("%s   %s %s" % (text, ARROW_RIGHT, "; ".join(carries) or "no effect (a comment)"),
+                lines += fill_text("%s   %s %s" % (text, ARROW_RIGHT, "; ".join(carries) or "no effect (a comment)"),
                                width, "      ", "    ")
         alone = "host_vars/%s/" % nodes[0] if len(nodes) == 1 else \
             "host_vars of %s (%s)" % (out.plural(len(nodes), "node"), out.full_list(nodes))
@@ -476,11 +476,11 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
         how = ("set %s in %s%s" % (", ".join(sorted(carried)), place,
                                    "; undo the edits no variable carries on the nodes, or keep the file" if loose else "")
                if carried else "no variable carries these edits: undo them on the nodes, or keep the file")
-        lines += _fill("%s to give it back to the roles: %s; then take %s out of cassandra_config_keep_files (%s):"
+        lines += fill_text("%s to give it back to the roles: %s; then take %s out of cassandra_config_keep_files (%s):"
                        " apply_config writes it, then restarts the node; check first: %s (what its diff still shows,"
                        " the roles would revert)" % (ARROW_RIGHT, how, name,
                                                      "the same host_vars" if place.startswith(alone) else alone,
-                                                     _whole(_check(nodes, "restart", inventory, hosts, cwd))),
+                                                     unbreakable(_check(nodes, "restart", inventory, hosts, cwd))),
                        width, "    ", "  ")
     return lines
 
@@ -502,7 +502,7 @@ def cassandra_import_convergence(layout, self_check=None, screen=False, report_f
         return _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd, width,
                             boolean(self_check_ok, strict=False))
     except Exception as exc:  # pylint: disable=broad-except
-        if _undefined(exc):
+        if undefined_name(exc):
             raise
         return ["CONVERGENCE  not worked out (%s in cassandra_import_convergence; the inventory and the rest of the"
                 " report are not affected)" % type(exc).__name__]
@@ -516,15 +516,15 @@ def _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd,
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
     if not read:
         return []
-    data = _sections(layout, self_check)
+    data = report_sections(layout, self_check)
     groups = data["groups"]
 
     def who(members):
-        return _who(members, None, groups, full)
+        return who_text(members, None, groups, full)
 
     # the inventory's own groups (a DC's, a rack's) by their nodes read: a value on exactly these nodes says it
     in_group = {}
-    for host, chain in _chains(layout.get("hosts") or {}).items():
+    for host, chain in group_chains(layout.get("hosts") or {}).items():
         for group in chain[1:]:
             in_group.setdefault(group, set()).add(host)
     named = dict((frozenset(m & set(n["name"] for n in read)), g) for g, m in sorted(in_group.items(), reverse=True))
@@ -549,26 +549,26 @@ def _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd,
     if screen:
         lines = out.fit(["CONVERGENCE  " + score], width)
         if not self_check_ok:  # (its stop below says how to make it pass)
-            return lines + _fill("The self-check first: the inventory does not reproduce the nodes yet", width,
+            return lines + fill_text("The self-check first: the inventory does not reproduce the nodes yet", width,
                                  "  ", "  ")
         if items:
             shown = items[:SCREEN_ACTIONS]
             lines.append("  Next (%s, the safest first, then the fewest nodes):" % (
                 "%d of %d" % (len(shown), len(items)) if len(items) > len(shown) else out.plural(len(items), "setting")))
-            rows = [(i["name"], "%s for all   %s" % (_whole(_cut(_shown(i["target"]), SCREEN_VALUE)), _then_text(i, True)))
+            rows = [(i["name"], "%s for all   %s" % (unbreakable(cut_text(_shown(i["target"]), SCREEN_VALUE)), _then_text(i, True)))
                     for i in shown]
             lines += _screen_rows(rows, "    ", width)
             kinds = set("seeds" if i["kind"] == "seeds" else "restart" for i in shown if _KINDS[i["kind"]][3])
             commands = [_check([], k, inventory, hosts, cwd) for k in ("restart", "seeds") if k in kinds]
             if commands:
-                lines += _fill("Check each one before it is applied: %s" % ", or ".join(_whole(c) for c in commands)
+                lines += fill_text("Check each one before it is applied: %s" % ", or ".join(unbreakable(c) for c in commands)
                                + (" (the seeds)" if len(commands) > 1 else ""), width, "  ", "  ")
         if kept:
-            lines += _fill("Kept by hand: %s" % "; ".join(
+            lines += fill_text("Kept by hand: %s" % "; ".join(
                 "%s on %s" % (name, who([n for dummy, m in variants for n in m])) for name, variants in kept),
                 width, "  ", "  ")
         if items or kept:
-            lines += _fill("The files to edit, the commands, the hand edits: %s, section CONVERGENCE" % (
+            lines += fill_text("The files to edit, the commands, the hand edits: %s, section CONVERGENCE" % (
                 out.path_from(report_file, cwd) if report_file else "the report"), width, "  ", "  ")
         return lines
 
@@ -576,33 +576,33 @@ def _convergence(layout, self_check, screen, report_file, inventory, hosts, cwd,
     if items:
         score += "; %s to change, on %s" % (out.plural(sum(len(i["changing"]) for i in items), "node value"),
                                             out.plural(len(set(n for i in items for n in i["changing"])), "node"))
-    lines += _fill(score, width, "  ", "  ")
+    lines += fill_text(score, width, "  ", "  ")
     if not self_check_ok:
-        lines += _fill("The self-check first (SELF-CHECK above): the inventory does not reproduce the nodes yet, what"
+        lines += fill_text("The self-check first (SELF-CHECK above): the inventory does not reproduce the nodes yet, what"
                        " follows is from what the nodes have", width, "  ", "  ")
     names = [n["name"] for n in read]
     left = sorted(set(data["variable"][p] for p, values in data["settings"]
                       if data["variable"][p] in NOT_COUNTED and not _common(values, names)))
     if left:
-        lines += _fill("Not counted, per node by nature or kept by each node for life: %s" % ", ".join(left),
+        lines += fill_text("Not counted, per node by nature or kept by each node for life: %s" % ", ".join(left),
                        width, "  ", "  ")
     switches = sorted(set(k for n in nodes for k in n.get("keep") or {} if k in KEEP))
     if switches:
-        lines += _fill("Also in host_vars: %s (LEFT AS IT IS above)" % ", ".join("%s: false" % k for k in switches),
+        lines += fill_text("Also in host_vars: %s (LEFT AS IT IS above)" % ", ".join("%s: false" % k for k in switches),
                        width, "  ", "  ")
     if items:
         lines += ["", "  SETTINGS THAT DIFFER %s the safest change first, then the fewest nodes" % DASH]
-        lines += _fill("Each one: edit the files it names, review it with its check, run that without --check, then"
+        lines += fill_text("Each one: edit the files it names, review it with its check, run that without --check, then"
                        " import again: once every node has the value, the import keeps it in group_vars/%s/ and the"
                        " line goes away." % cluster, width, "  ", "  ")
         for item in items:
-            lines += _aligned([(item["name"], _values_text(item, who_named))], "  ", width)
-            lines += _fill(_action(item, layout), width, "      ", "  ")
+            lines += aligned_rows([(item["name"], _values_text(item, who_named))], "  ", width)
+            lines += fill_text(_action(item, layout), width, "      ", "  ")
             # (a file of yours named: it reaches other nodes too, the whole cluster checked)
             reach = [] if any(p.startswith("yours: ") for p in _places(layout, item["key"])) else item["changing"]
-            check = _whole(_check(reach, item["kind"], inventory, hosts, cwd)) if _KINDS[item["kind"]][3] \
+            check = unbreakable(_check(reach, item["kind"], inventory, hosts, cwd)) if _KINDS[item["kind"]][3] \
                 else "none, apply_config does not show it"
-            lines += _fill("%s; check: %s" % (_then_text(item), check), width, "      ", "  ")
+            lines += fill_text("%s; check: %s" % (_then_text(item), check), width, "      ", "  ")
     if kept:
         lines += ["", "  KEPT BY HAND %s cassandra_config_keep_files: left as their node has them" % DASH]
         lines += _kept_lines(kept, layout, read, who_named, width, inventory, hosts, cwd)

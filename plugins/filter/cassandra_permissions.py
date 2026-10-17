@@ -126,7 +126,7 @@ def permission_differences(wanted, found):
     return out
 
 
-def _stat(result):
+def stat_fields(result):
     """An ansible.builtin.stat result's stat -> {owner, group, mode, uid, gid} (a name, else the number)."""
     return {"owner": str(result.get("pw_name") or result.get("uid")), "group": str(result.get("gr_name") or result.get("gid")),
             "mode": mode_text(result.get("mode")), "uid": result.get("uid"), "gid": result.get("gid")}
@@ -141,7 +141,7 @@ def cassandra_permission_changes(results, settings, name_key="cassandra_config_f
         st = r.get("stat") or {}
         if not st.get("exists"):
             continue
-        found, wanted = _stat(st), cassandra_file_permissions(r[name_key], settings)
+        found, wanted = stat_fields(st), cassandra_file_permissions(r[name_key], settings)
         if _differ(wanted, found):
             out.append({"item": "%s (owner:group mode)" % st.get("path"),
                         "before": "%s:%s %s" % (found["owner"], found["group"], found["mode"]),
@@ -190,7 +190,7 @@ def cassandra_dir_permission_changes(results, user, group):
         kind, path = r["item"]
         if os.path.normpath(str(path)) in SYSTEM_DIRS:
             continue  # a mistyped path: never given to Cassandra
-        found = _stat(st)
+        found = stat_fields(st)
         if not re.match(r"^[0-7]{4}$", found["mode"]) or _usable(found, user, group):
             continue
         wanted = {"owner": str(user), "group": str(group), "mode": "%04o" % (int(found["mode"], 8) | 0o700)}
@@ -242,7 +242,7 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
     if series not in SERIES:
         raise AnsibleFilterError("cassandra_permissions_import: unsupported series %s" % series)
     files = dict((name, st) for name, st in (files or {}).items() if jmx or name not in JMX_FILES)
-    found = dict((name, _stat(st)) for name, st in files.items() if (st or {}).get("exists"))
+    found = dict((name, stat_fields(st)) for name, st in files.items() if (st or {}).get("exists"))
     # a stat that failed (no exists at all): None, for the self-check
     unread = dict((name, None) for name, st in files.items() if not st)
     out, notes = {}, []
@@ -297,7 +297,7 @@ def cassandra_permissions_import(files, account, series, dirs=None, jmx=True):
         st = dirs[path] or {}
         if not st.get("exists"):
             continue
-        d = _stat(st)
+        d = stat_fields(st)
         if not (same_owner(user, d["owner"], d["uid"]) and same_owner(group, d["group"], d["gid"])):
             odd.append("%s %s:%s %s" % (path, d["owner"], d["group"], d["mode"]))
     if odd:

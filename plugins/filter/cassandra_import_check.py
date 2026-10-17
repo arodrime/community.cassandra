@@ -51,7 +51,7 @@ except ImportError:  # before, any string not marked unsafe
     def trust_as_template(value):
         return value
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import import (
-    Unsafe, _hidden, _mask, _secret, _undefined, _values_hidden)
+    Unsafe, error_without_message, undefined_name, values_hidden)
 from ansible_collections.community.cassandra.plugins.filter import cassandra_jvm_args as jvm_args
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
@@ -74,7 +74,7 @@ with open(os.path.join(ROLES, "cassandra_config", "vars", "main.yml")) as _vars:
     CONFIG_FILES = set(f for files in yaml.safe_load(_vars)["_cassandra_config_files"].values() for f in files)
 
 
-@_values_hidden
+@values_hidden
 def cassandra_inventory_host_vars(files, hosts, name):
     """The variables `name` gets from the inventory files (the import's, and the
     user's own: group_vars/all...), as Ansible merges them: all, parent groups
@@ -145,9 +145,9 @@ def _groups_of(group, name, chain):
 def _shown(key, value):
     if value is None:
         return "nothing"
-    if _secret(str(key), value):  # the one rule (cassandra_output): what secrets.yml holds, hidden on screen
+    if _out.secret(str(key), value):  # the one rule (cassandra_output): what secrets.yml holds, hidden on screen
         return "****"
-    return _mask(json.dumps(value, default=str) if not isinstance(value, str) else repr(value))
+    return _out.mask(json.dumps(value, default=str) if not isinstance(value, str) else repr(value))
 
 
 def _unit(text):
@@ -344,7 +344,7 @@ def _render(variables, facts, live, conf_dir=""):
     return rendered, errors, value("cassandra_service_environment") if unit_managed else None, permissions
 
 
-@_values_hidden
+@values_hidden
 def cassandra_import_self_check(files, hosts, name, facts, live, node_environment=None, storage_dir="", java="",
                                 conf_dir="", permissions=None, release="", inventory_dir="", jvm=None):
     """files, hosts, name: the inventory files, the hosts file's data and the node's
@@ -366,7 +366,7 @@ def cassandra_import_self_check(files, hosts, name, facts, live, node_environmen
                        permissions, release, inventory_dir, jvm)
 
 
-@_values_hidden
+@values_hidden
 def cassandra_import_self_check_nodes(files, hosts, nodes, names, data, inventory_dir=""):
     """cassandra_import_self_check of each node read: files, hosts, inventory_dir as for it;
     nodes: cassandra_import_nodes; names: {address: its name in the hosts
@@ -382,12 +382,12 @@ def cassandra_import_self_check_nodes(files, hosts, nodes, names, data, inventor
         except Exception as exc:  # pylint: disable=broad-except
             # ours (their message shows no value) or a missing variable; not another filter's
             # error (2.19+: Ansible's wrapper is an AnsibleFilterError too)
-            if _undefined(exc) or (type(exc) is AnsibleFilterError  # pylint: disable=unidiomatic-typecheck
+            if undefined_name(exc) or (type(exc) is AnsibleFilterError  # pylint: disable=unidiomatic-typecheck
                                    and exc.__cause__ is None
                                    and str(exc).startswith("cassandra_")):
                 raise
             # which node, not the message (it may show a value read from it)
-            error = _hidden("cassandra_import_self_check_nodes", str(node.get("address")))
+            error = error_without_message("cassandra_import_self_check_nodes", str(node.get("address")))
         if error:
             raise error  # (out of the except: not chained to the message)
         if checked:

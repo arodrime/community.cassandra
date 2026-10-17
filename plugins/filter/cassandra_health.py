@@ -14,19 +14,11 @@ cassandra_removal_force_target: the node to run removenode force on."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import ipaddress
 import re
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import _JMX_CAUSES
-
-
-def _ip(address):
-    """One spelling per address: nodetool prints IPv6 uncompressed, the variables compressed."""
-    try:
-        return ipaddress.ip_address(u"%s" % address.split("%")[0]).compressed
-    except ValueError:
-        return address
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import JMX_CAUSES
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
 
 
 def _by_ip(names):
@@ -126,7 +118,7 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
 # yet) or not answering in time (too busy). Not the ones that do not go away waiting: a login refused, nodetool
 # missing, a JMX over SSL it can't speak, nodetool version failed (and a wrong JMX port: the node is seen up).
 _PASSING = re.compile(r"^nodetool gets no answer from JMX on \S* ?\((%s)\):" % "|".join(
-    re.escape(cause) for dummy, cause, dummy2 in _JMX_CAUSES[:2]))
+    re.escape(cause) for dummy, cause, dummy2 in JMX_CAUSES[:2]))
 
 
 def cassandra_health_waiting(findings, names=None):

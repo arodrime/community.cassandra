@@ -63,7 +63,7 @@ DATA_KEYS = ("data_file_directories", "local_system_data_file_directory")
 STORAGE_DIR = "/var/lib/cassandra"
 
 
-def _addr(address):
+def status_address(address):
     """An address of nodetool status, without a :port (nodetool -pp)."""
     a = str(address or "")
     return a.rsplit(":", 1)[0] if a.count(":") == 1 else a
@@ -73,7 +73,7 @@ def _loopback(address):
     return address.startswith("127.") or address in ("::1", "0:0:0:0:0:0:0:1", "localhost")
 
 
-def _nodes(status):
+def status_nodes(status):
     return [n for dc in (status or {}).values() if isinstance(dc, dict) for n in dc.get("nodes") or []]
 
 
@@ -122,7 +122,7 @@ def _no_ring(view):
 def _unknown_down(view):
     other, n = view["unknown_down"][0]
     return ("%s sees %s down (host ID %s), a node no host of the inventory has: maybe this node under an old address"
-            % (other, _addr(n.get("address")), n.get("host_id") or "?"))
+            % (other, status_address(n.get("address")), n.get("host_id") or "?"))
 
 
 def _unknown_dirs(live):
@@ -131,7 +131,7 @@ def _unknown_dirs(live):
 
 def mine(addresses):
     """This node's addresses, as nodetool status shows them (no port, no loopback)."""
-    return set(_addr(a) for a in addresses or [] if a and not _loopback(_addr(a)))
+    return set(status_address(a) for a in addresses or [] if a and not _loopback(status_address(a)))
 
 
 def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_data=False):
@@ -146,13 +146,13 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
     holds data (maybe this one under an old address)}."""
     me = mine(addresses)
     own = set(i for i in ids or [] if i)
-    replace = _addr(replace_address)
+    replace = status_address(replace_address)
     out = {"usable": [], "tried": [str(a.get("host")) for a in answers or [] if a.get("asked", True)], "entries": [],
            "replaced": [], "replaced_up": [], "unknown_down": []}
     for a in answers or []:
-        nodes = _nodes(a.get("status"))
-        own_addr = set(_addr(x) for x in a.get("addresses") or [])
-        if any(_addr(n.get("address")) in own_addr and n.get("status") == "U" and n.get("state") == "N" for n in nodes):
+        nodes = status_nodes(a.get("status"))
+        own_addr = set(status_address(x) for x in a.get("addresses") or [])
+        if any(status_address(n.get("address")) in own_addr and n.get("status") == "U" and n.get("state") == "N" for n in nodes):
             out["usable"].append((a.get("host"), nodes))
     # for a node holding data, a node alone in its ring (a host of the group not added yet, the package's own
     # instance) does not stand for the cluster while other nodes of the group did not answer (asked, or stopped:
@@ -160,7 +160,7 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
     # cluster adding its second node, a stock instance on 127.0.0.1 elsewhere in the group (never usable), do not
     # stop it. Several nodes each alone (a one-node cluster and a stray instance at a real address): unknown for any.
     silent = [a for a in answers or [] if not a.get("status")
-              or (len(_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, dummy in out["usable"]])]
+              or (len(status_nodes(a.get("status"))) > 1 and a.get("host") not in [h for h, dummy in out["usable"]])]
     out["lone"], out["silent"] = [], [str(a.get("host")) for a in silent]
     alone = [h for h, nodes in out["usable"] if len(nodes) <= 1]
     if (_true(has_data) and silent) or (len(alone) > 1 and len(alone) == len(out["usable"])):
@@ -169,7 +169,7 @@ def ring_view(answers, addresses, ids=(), replace_address="", known=None, has_da
         out["usable"] = [(h, nodes) for h, nodes in out["usable"] if len(nodes) > 1]
     for other, nodes in out["usable"]:
         for n in nodes:
-            address = _addr(n.get("address"))
+            address = status_address(n.get("address"))
             if address not in me and n.get("host_id") not in own:
                 if (_true(has_data) and n.get("status") == "D" and known is not None and address not in known
                         and address != replace):
@@ -189,7 +189,7 @@ def own_ids(addresses, host_id="", running=False, own=None):
     me = mine(addresses)
     ids = set([host_id] if host_id else [])
     if _true(running) and own:
-        ids |= set(n.get("host_id") for n in _nodes(own) if _addr(n.get("address")) in me and n.get("host_id"))
+        ids |= set(n.get("host_id") for n in status_nodes(own) if status_address(n.get("address")) in me and n.get("host_id"))
     return ids
 
 
@@ -206,8 +206,8 @@ def ring_problems(view, addresses, name, replace_address="", running=False, own=
                             " cluster is unknown. Check it, stop it (systemctl stop cassandra), then run again" % name)
         else:
             # alone in its ring (e.g. the package's stock config on a loopback address): not a member
-            others = sorted(set(_addr(n.get("address")) for n in _nodes(own)) - me)
-            if len(_nodes(own)) > 1 and others:
+            others = sorted(set(status_address(n.get("address")) for n in status_nodes(own)) - me)
+            if len(status_nodes(own)) > 1 and others:
                 problems.append("Cassandra runs on %s and its ring has other nodes (%s): it is a member of a cluster,"
                                 " never reset a live member" % (name, ", ".join(others[:5]) + (", ..." if len(others) > 5 else "")))
     if not view["usable"]:
@@ -215,14 +215,14 @@ def ring_problems(view, addresses, name, replace_address="", running=False, own=
     for other, n in view["unknown_down"]:
         problems.append("%s sees %s down (host ID %s), a node no host of the inventory has: if it is %s"
                         " under an old address, its data would be lost. Remove it first (remove_dead_node),"
-                        " or give the inventory host its address" % (other, _addr(n.get("address")), n.get("host_id") or "?", name))
+                        " or give the inventory host its address" % (other, status_address(n.get("address")), n.get("host_id") or "?", name))
     for other, n in view["replaced_up"]:
         problems.append("%s sees %s up (%s): only a dead node is replaced, never reset a live member"
-                        % (other, _addr(n.get("address")), _seen(n)))
+                        % (other, status_address(n.get("address")), _seen(n)))
     for other, n in view["entries"]:
         problems.append("%s sees %s in its ring (%s): %s is a member of the cluster, never reset it."
                         " A node leaves with decommission_node (remove_dead_node when dead), then can be reset"
-                        % (other, _addr(n.get("address")), _seen(n), name))
+                        % (other, status_address(n.get("address")), _seen(n), name))
     return sorted(set(problems), key=problems.index)
 
 
@@ -353,7 +353,7 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
             "problems": ring_problems(view, addresses, name, replace_address, jvm, own) if ring_read else []}
     # at one of its addresses first: another host ID there is a conflict, wherever its own host ID shows
     me = mine(addresses)
-    at_address = [e for e in view["entries"] + view["replaced_up"] if _addr(e[1].get("address")) in me]
+    at_address = [e for e in view["entries"] + view["replaced_up"] if status_address(e[1].get("address")) in me]
     # its own entry first, before a down one (a dead node's old address); another host ID up there stays a conflict
     at_address.sort(key=lambda e: 0 if e[1].get("status") == "U" and e[1].get("host_id") != my_id
                     else 1 if my_id and e[1].get("host_id") == my_id else 2)
@@ -363,7 +363,7 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
         e_id = n.get("host_id") or ""
         in_ring = "%s%s" % (n.get("status", "?"), n.get("state", "?"))
         ring.update({"in_ring": in_ring, "entry": n, "seen_by": other})
-        reasons.append("%s sees %s in its ring (%s)" % (other, _addr(n.get("address")), _seen(n)))
+        reasons.append("%s sees %s in its ring (%s)" % (other, status_address(n.get("address")), _seen(n)))
         if my_id and e_id and my_id != e_id:
             state = "address_conflict"
             reasons.append("its own host ID is %s" % my_id)
@@ -385,18 +385,18 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
         else:
             state = "member_busy"
     elif running:
-        others = sorted(set(_addr(x.get("address")) for x in _nodes(own)) - me)
-        cluster = set(others) & set(_addr(k) for k in known or [])
+        others = sorted(set(status_address(x.get("address")) for x in status_nodes(own)) - me)
+        cluster = set(others) & set(status_address(k) for k in known or [])
         if live_cluster is not None and live_cluster not in (cluster_name, STOCK_CLUSTER):
             state = "other_cluster"
             reasons.append("its cassandra.yaml names cluster '%s'" % live_cluster)
         elif not own and jvm:
             state = "unknown"
             reasons.append("Cassandra runs but nodetool status does not answer there")
-        elif len(_nodes(own)) > 1 and others and cluster:
+        elif len(status_nodes(own)) > 1 and others and cluster:
             state = "unknown"
             reasons.append("its own ring lists nodes of this cluster (%s), whose rings do not list it" % _names(cluster))
-        elif len(_nodes(own)) > 1 and others:
+        elif len(status_nodes(own)) > 1 and others:
             state = "other_cluster"
             reasons.append("Cassandra runs in another ring (%s)" % _names(others))
         elif not ring_read:
@@ -464,7 +464,7 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
             state = "failed_bootstrap"
             reasons.append("no user keyspace, cluster '%s'" % live_cluster)
     for other, n in view["replaced"]:
-        reasons.append("%s sees %s down (%s): the node being replaced" % (other, _addr(n.get("address")), _seen(n)))
+        reasons.append("%s sees %s down (%s): the node being replaced" % (other, status_address(n.get("address")), _seen(n)))
     return {"state": state, "words": WORDS[state], "reasons": reasons, "node": node, "name": name,
             "cluster_name": cluster_name, "blank": not evidence, "evidence": evidence, "holds_data": has_data,
             "has_system": has_system, "system": system, "held": held, "elsewhere": list(elsewhere or []),
@@ -507,7 +507,7 @@ def cassandra_node_add_state(state, choice="auto", address=""):
         return {"state": "replace", "refusal": (
             "a dead node with this address is in the ring (DN, host ID %s). Adding this node would be a replace, not"
             " an add: run replace_node (-e cassandra_target_nodes=%s -e cassandra_replace_address=%s)."
-            % (e_id, state.get("node"), address or _addr(entry.get("address"))))}
+            % (e_id, state.get("node"), address or status_address(entry.get("address"))))}
     if s == "member_down" and entry.get("state") == "J":
         return {"state": "down", "refusal": (
             "down in the middle of its bootstrap (%s, host ID %s): see why in its system.log. Once fixed, start over:"

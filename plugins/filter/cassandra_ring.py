@@ -11,29 +11,15 @@ inventory differ). Blank lines between the blocks."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import ipaddress
 import re
 import socket
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import compressed_address as _ip
 
 _STATES = [("U", "up"), ("D", "down"), ("J", "joining"), ("L", "leaving"), ("M", "moving")]
 _IP = re.compile(r"^[0-9.]+$|:")
 _DIFFER = "WARNING - ring and inventory differ"  # the verdict's second line, when they do
-
-
-def _bytes(load):
-    """nodetool's Load (FileUtils.stringifyFileSize, a comma as decimal mark in some locales) in bytes."""
-    return out.parse_size(load)
-
-
-def _ip(address):
-    """One spelling per address: nodetool prints IPv6 uncompressed
-    (2001:db8:0:0:0:0:0:1), the facts and the resolver compressed."""
-    try:
-        return ipaddress.ip_address(u"%s" % address.split("%")[0]).compressed
-    except ValueError:
-        return address
 
 
 def _resolved(name):
@@ -43,7 +29,7 @@ def _resolved(name):
         return []
 
 
-def _host_of(inventory, ring):
+def hosts_by_address(inventory, ring):
     """ring address -> inventory host: every address a host is known by, then,
     only while some ring address has no host, what the names of the hosts
     still unmatched resolve to on the controller (a host Ansible can't reach
@@ -82,7 +68,7 @@ def _counts(nodes):
 def _summary(name, nodes):
     """["rack1", "3 nodes", "2 up, 1 down", "1.5 GiB", " (1 unknown)"]: a row of the summary table."""
     counts = _counts(nodes)
-    sizes = [_bytes(n["load"]) for n in nodes]
+    sizes = [out.parse_size(n["load"]) for n in nodes]
     unknown = sizes.count(None)
     states = ", ".join("%d %s" % (counts[word], word) for dummy, word in _STATES if counts[word] or word == "up")
     return [name, out.plural(len(nodes), "node"), states, out.size(sum(x for x in sizes if x is not None)),
@@ -158,7 +144,7 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
     no host has in its place (marked "host?"). Returns the report as a list
     of lines."""
     cluster_status = cluster_status or {}
-    owner = _host_of(inventory, [_ip(n["address"]) for dc in cluster_status
+    owner = hosts_by_address(inventory, [_ip(n["address"]) for dc in cluster_status
                                  for n in cluster_status[dc].get("nodes", [])])
     elsewhere = {}
     for host in outside or {}:

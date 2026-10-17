@@ -23,6 +23,17 @@ def address_part(address):
     return address
 
 
+def compressed_address(address):
+    """One spelling per address: nodetool prints IPv6 in full (2001:db8:0:0:0:0:0:1), the facts and the resolver
+    compressed (2001:db8::1); a zone (%eth0) left out. Another text (a name): as it is."""
+    if ipaddress is None:
+        return address
+    try:
+        return ipaddress.ip_address(u'%s' % address.split('%')[0]).compressed
+    except ValueError:
+        return address
+
+
 def same_address(printed, ip_address):
     """Whether the address nodetool printed (IPv6 in full: 0:0:0:0:0:0:0:1) is
     ip_address, however that one is written (::1)."""
