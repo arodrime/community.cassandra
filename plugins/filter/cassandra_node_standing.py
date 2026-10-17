@@ -30,6 +30,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import address_part
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_keyspace_names import is_system_keyspace
 
 # The states, each with the one phrase the operator reads for it
 # (docs/docsite/rst/guide_output.rst lists them)
@@ -82,7 +83,7 @@ def _true(value):
 
 
 def _user_keyspace(name):
-    return not str(name).startswith("system") and name != "lost+found"
+    return not is_system_keyspace(name) and name != "lost+found"
 
 
 def _names(names, most=5):
