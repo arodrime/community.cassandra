@@ -26,11 +26,10 @@ import re
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.module_utils.six.moves.urllib.parse import urlsplit, urlunsplit
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import size as _size, sizes as _sizes
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
+    parse_size, size as _size, sizes as _sizes)
 
 GIB = 1024 ** 3
-UNITS = {"bytes": 1, "b": 1, "kib": 1024, "kb": 1024, "mib": 1024 ** 2, "mb": 1024 ** 2,
-         "gib": GIB, "gb": GIB, "tib": 1024 ** 4, "tb": 1024 ** 4, "pib": 1024 ** 5, "pb": 1024 ** 5}
 # mount units systemd mounts by itself (at boot, or from /etc/fstab)
 UNIT_STATES = ("enabled", "enabled-runtime", "generated", "linked", "linked-runtime")
 
@@ -149,11 +148,8 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
 
 
 def parse_load(load):
-    """nodetool status Load ('66.2 KiB', '1.5 TiB') -> bytes, None when unknown"""
-    m = re.match(r"^\s*([0-9.]+)\s*([A-Za-z]+)\s*$", str(load or ""))
-    if not m or m.group(2).lower() not in UNITS:
-        return None
-    return float(m.group(1)) * UNITS[m.group(2).lower()]
+    """nodetool status Load ('66.2 KiB', '1.5 TiB', '1,5 GiB' in some locales) -> bytes, None when unknown."""
+    return parse_size(load)
 
 
 def cassandra_new_node_load(cluster_status, dc, rack, free, address=""):
