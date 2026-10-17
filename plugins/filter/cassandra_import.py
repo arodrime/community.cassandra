@@ -1471,103 +1471,90 @@ def cassandra_config_import(live_files, cassandra_version, facts, conf_target=""
     raise error  # out of the except block: no chained message either
 
 
-def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None,
-                   release="", java="", keep_unread_jvm_options=False, cmdline="", running=None):
-    running = dict(running or {})
-    java, cmdline = java or running.get("java") or "", cmdline or running.get("cmdline") or ""
-    env, ctx, files = _load_role(cassandra_version, facts)
-    release, rejected = str(release or SERIES[cassandra_version]), []
-    found, from_shell = {}, set()
-    for name in files:
-        if name in live_files:
-            where[0] = name
-            got = _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
-            found.update(got)
-            if name.endswith(".sh"):
-                from_shell.update(got)
-    if "logback.xml" in live_files:
-        where[0] = "logback.xml"
-        found.update(_logback(live_files["logback.xml"]))
-    where[0] = "the JVM options files"
-    jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
-                                                       found, str(java or ""), keep_unread_jvm_options, cmdline)
-    where[0] = "cassandra.yaml"
-    if "cassandra.yaml" in live_files:
-        found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
-    if cassandra_version != "40x":
-        # a size, rate or duration in one unit whatever the node writes it in (100000000B/s, 2s): 200MiB/s, 2000ms
-        found.update((k, canonical_quantity(k[len("cassandra_"):], v)) for k, v in found.items()
-                     if k[len("cassandra_"):] in QUANTITY_KEYS)
-    changed = {k: v for k, v in found.items()
-               if not _same_value(v, _default(ctx, k))
-               and not (v == "" and _default(ctx, k) in ([], {}))  # a list/dict variable left empty
-               # a number the node does not give as one (e.g. JMX_PORT="${JMX_PORT:-7299}"): not a value
-               # for the variable, left to the report (the role would write the default)
-               and not (isinstance(_default(ctx, k), int) and not isinstance(_default(ctx, k), bool)
-                        and not isinstance(v, int))
-               # a shell expansion (CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"): not a value either,
-               # unless the variable is one (cassandra_heap_dump_dir: $CASSANDRA_LOG_DIR, on 4.x too)
-               and not (k in from_shell and isinstance(v, str) and re.search(r"[$`]", v)
-                        and not re.search(r"[$`]", str(_default(ctx, k))) and k != "cassandra_heap_dump_dir")}
-    if storage_dir and "cassandra.yaml" in live_files:
-        # directories cassandra.yaml leaves out: under the JVM's -Dcassandra.storagedir
-        # (a tarball's is $CASSANDRA_HOME/data), where the role writes its defaults
-        try:
-            data = yaml.safe_load(live_files["cassandra.yaml"]) or {}
-        except yaml.YAMLError:
-            data = {}
-        for key, (var, sub) in STORAGE_DIRS.items():
-            path = "%s/%s" % (storage_dir.rstrip("/"), sub)
-            if isinstance(data, dict) and data.get(key) is None and var not in changed and path != _default(ctx, var):
-                found[var] = changed[var] = path
-        # cassandra_config keeps such a file where it has the same directories, also while Cassandra is down
-        if isinstance(data, dict) and any(data.get(key) is None for key in STORAGE_DIRS if key != "cdc_raw_directory"):
-            changed["cassandra_config_storage_dir"] = storage_dir
-        # with CDC on, the role creates the cdc_raw dir cassandra.yaml leaves out there too (else under the
-        # packages' /var/lib/cassandra)
-        elif isinstance(data, dict) and str(data.get("cdc_enabled")).lower() == "true" and data.get("cdc_raw_directory") is None \
-                and storage_dir.rstrip("/") != "/var/lib/cassandra":
-            changed["cassandra_config_storage_dir"] = storage_dir
-    render_dirs = None
-    if "cassandra.yaml" in live_files:
-        # JBOD: the template's single line expands to one line per directory
-        try:
-            dirs = (yaml.safe_load(live_files["cassandra.yaml"]) or {}).get("data_file_directories") or []
-        except yaml.YAMLError:
-            dirs = []
-        if len(dirs) > 1:
-            found["cassandra_data_dir"] = dirs[0]
-            found["cassandra_data_file_directories"] = dirs
-            changed["cassandra_data_dir"] = dirs[0]
-            changed["cassandra_data_file_directories"] = dirs
-        elif dirs and dirs[0] != _default(ctx, "cassandra_data_dir"):
-            # one directory, not the default one: cassandra_data_dir, the list follows it
-            found["cassandra_data_dir"] = changed["cassandra_data_dir"] = dirs[0]
-            render_dirs = dirs
-        tpl = _render(env, cassandra_version, "cassandra.yaml", ctx)[0]
-        extras = _extra_settings(tpl, live_files["cassandra.yaml"].split("\n"))
-        # 4.1+: a key under its former name (a file from 4.0): its variable, which writes it under its new name
-        live_keys = set(key for key, dummy in _top_blocks(live_files["cassandra.yaml"].split("\n")))
-        for key, var in former_names(SERIES[cassandra_version]).items():
-            value = former_value(key, extras[key]) if key in extras else None
-            if value is not None and var[len("cassandra_"):] not in live_keys:
-                del extras[key]
-                found[var] = canonical_quantity(var[len("cassandra_"):], value)
-                if not _same_value(found[var], _default(ctx, var)):
-                    changed[var] = found[var]
-        # a key Cassandra rejects (e.g. added by hand since it started): not imported, the node would not restart
-        rejected = yaml_rejected(extras, release)
-        extras = dict((k, v) for k, v in extras.items() if str(k) not in rejected)
-        if extras:
-            changed["cassandra_extra_settings"] = extras
-    # remote JMX users: the password and access files the JVM reads (jmx_files: cassandra_jmx_files', read
-    # under the names jmxremote.password and .access), their paths kept for the role to write them there; the
-    # users only when the JVM reads both files and each user's rights are in the access file
-    where[0] = "jmxremote.password"
+def _changed_values(found, ctx, from_shell):
+    """The values found that are not the role defaults and are values for their variable -> {variable: value}."""
+    return {k: v for k, v in found.items()
+            if not _same_value(v, _default(ctx, k))
+            and not (v == "" and _default(ctx, k) in ([], {}))  # a list/dict variable left empty
+            # a number the node does not give as one (e.g. JMX_PORT="${JMX_PORT:-7299}"): not a value
+            # for the variable, left to the report (the role would write the default)
+            and not (isinstance(_default(ctx, k), int) and not isinstance(_default(ctx, k), bool)
+                     and not isinstance(v, int))
+            # a shell expansion (CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"): not a value either,
+            # unless the variable is one (cassandra_heap_dump_dir: $CASSANDRA_LOG_DIR, on 4.x too)
+            and not (k in from_shell and isinstance(v, str) and re.search(r"[$`]", v)
+                     and not re.search(r"[$`]", str(_default(ctx, k))) and k != "cassandra_heap_dump_dir")}
+
+
+def _storage_dirs(cassandra_yaml, storage_dir, ctx, changed):
+    """The directories cassandra.yaml leaves out: under the JVM's -Dcassandra.storagedir (a tarball's is
+    $CASSANDRA_HOME/data), where the role writes its defaults -> ({variable: directory} not in changed, the
+    storage dir to keep as cassandra_config_storage_dir or None)."""
+    try:
+        data = yaml.safe_load(cassandra_yaml) or {}
+    except yaml.YAMLError:
+        data = {}
+    dirs = {}
+    for key, (var, sub) in STORAGE_DIRS.items():
+        path = "%s/%s" % (storage_dir.rstrip("/"), sub)
+        if isinstance(data, dict) and data.get(key) is None and var not in changed and path != _default(ctx, var):
+            dirs[var] = path
+    # cassandra_config keeps such a file where it has the same directories, also while Cassandra is down
+    if isinstance(data, dict) and any(data.get(key) is None for key in STORAGE_DIRS if key != "cdc_raw_directory"):
+        return dirs, storage_dir
+    # with CDC on, the role creates the cdc_raw dir cassandra.yaml leaves out there too (else under the
+    # packages' /var/lib/cassandra)
+    if isinstance(data, dict) and str(data.get("cdc_enabled")).lower() == "true" and data.get("cdc_raw_directory") is None \
+            and storage_dir.rstrip("/") != "/var/lib/cassandra":
+        return dirs, storage_dir
+    return dirs, None
+
+
+def _data_dirs(cassandra_yaml, ctx):
+    """JBOD: the template's single line expands to one line per directory -> ({variable: value} found and changed,
+    the directories to render with, None when the template's)."""
+    try:
+        dirs = (yaml.safe_load(cassandra_yaml) or {}).get("data_file_directories") or []
+    except yaml.YAMLError:
+        dirs = []
+    if len(dirs) > 1:
+        return {"cassandra_data_dir": dirs[0], "cassandra_data_file_directories": dirs}, None
+    if dirs and dirs[0] != _default(ctx, "cassandra_data_dir"):
+        # one directory, not the default one: cassandra_data_dir, the list follows it
+        return {"cassandra_data_dir": dirs[0]}, dirs
+    return {}, None
+
+
+def _yaml_extras(env, series, ctx, cassandra_yaml, release, found, changed):
+    """cassandra.yaml's settings no variable covers: a key under its former name (a file from 4.0) to its variable
+    (found and changed updated), the keys Cassandra rejects left out -> (cassandra_extra_settings, the keys
+    rejected)."""
+    tpl = _render(env, series, "cassandra.yaml", ctx)[0]
+    extras = _extra_settings(tpl, cassandra_yaml.split("\n"))
+    # 4.1+: a key under its former name (a file from 4.0): its variable, which writes it under its new name
+    live_keys = set(key for key, dummy in _top_blocks(cassandra_yaml.split("\n")))
+    for key, var in former_names(SERIES[series]).items():
+        value = former_value(key, extras[key]) if key in extras else None
+        if value is not None and var[len("cassandra_"):] not in live_keys:
+            del extras[key]
+            found[var] = canonical_quantity(var[len("cassandra_"):], value)
+            if not _same_value(found[var], _default(ctx, var)):
+                changed[var] = found[var]
+    # a key Cassandra rejects (e.g. added by hand since it started): not imported, the node would not restart
+    rejected = yaml_rejected(extras, release)
+    return dict((k, v) for k, v in extras.items() if str(k) not in rejected), rejected
+
+
+def _jmx_import(env, live_files, jmx_files):
+    """The remote JMX users: the password and access files the JVM reads (jmx_files: cassandra_jmx_files', read
+    under the names jmxremote.password and .access; None: cassandra-env.sh's), their paths kept for the role to
+    write them there; the users only when the JVM reads both files and each user's rights are in the access file
+    -> (jmx_files completed, {variable: value}, notes)."""
     if jmx_files is None:  # not read by the caller: cassandra-env.sh's
         jmx_files = cassandra_jmx_files(live_files.get("cassandra-env.sh", ""),
                                         cassandra_yaml=live_files.get("cassandra.yaml", ""))
     jmx_files = dict({"password": "", "access": "", "from": "", "unknown": "", "jaas": ""}, **jmx_files)
+    changed = {}
     for kind in ("password", "access"):
         if jmx_files[kind] and jmx_files[kind] != JMX_FILE_DEFAULTS[kind]:
             changed["cassandra_jmx_remote_%s_file" % kind] = jmx_files[kind]
@@ -1591,6 +1578,86 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
                             " cassandra_jmx_users by hand" % (
                                 jmx_files["password"] or JMX_FILE_DEFAULTS["password"],
                                 (", " + jmx_files["access"]) if jmx_files["access"] else ", none given to the JVM"))
+    return jmx_files, changed, jmx_note
+
+
+def _inventory_vars(changed, found, ctx, live_files, facts, conf_target, series):
+    """The variables the inventory gets: changed, rackdc's dc= and rack= when the snitch does not read them, the
+    ones a node keeps for life, the RPM conf dir, the seeds as a list, the node's own address or name as the fact
+    that gives it -> {variable: value}."""
+    out = dict((k, v) for k, v in changed.items() if k not in RACKDC)
+    if "cassandra-rackdc.properties" in live_files and not _snitch_reads_rackdc(found.get("cassandra_endpoint_snitch")):
+        # the file's dc= and rack= as the node has them: its snitch doesn't read them, its dc and rack
+        # (the ring's) may differ (the layout drops them where they don't; a line the file lacks: the
+        # role writes the ring's). Else they are the ring's.
+        node_kv = _properties(live_files["cassandra-rackdc.properties"].split("\n"))
+        out.update((k, found.get(k, ctx[k])) for k, key in zip(RACKDC, ("dc", "rack")) if key in node_kv)
+    for key in ALWAYS:
+        if key != "cassandra_storage_compatibility_mode" or series == "50x":  # 5.0 setting
+            out[key] = found.get(key, ctx.get(key))
+    # RPM: the config stays where the node reads it (e.g. default.conf), rather
+    # than moving to the role's own alternative conf dir
+    if (facts.get("os_family") == "RedHat" and conf_target
+            and conf_target != ctx.get("cassandra_rpm_conf_alternative")):
+        out["cassandra_rpm_conf_alternative"] = ""
+    if isinstance(out.get("cassandra_seeds"), str):
+        out["cassandra_seeds"] = [s.strip() for s in out["cassandra_seeds"].split(",") if s.strip()]
+    ipv4 = (facts.get("default_ipv4") or {}).get("address")
+    for key in ADDRESSES:
+        if ipv4 and out.get(key) == ipv4:
+            out[key] = IPV4
+        elif facts.get("hostname") and out.get(key) == facts["hostname"]:
+            out[key] = HOSTNAME
+    return out
+
+
+def _config_import(live_files, cassandra_version, facts, where, conf_target="", storage_dir="", jmx_files=None,
+                   release="", java="", keep_unread_jvm_options=False, cmdline="", running=None):
+    """cassandra_config_import's work (where[0]: what it is reading, for its errors) -> its result."""
+    running = dict(running or {})
+    java, cmdline = java or running.get("java") or "", cmdline or running.get("cmdline") or ""
+    env, ctx, files = _load_role(cassandra_version, facts)
+    release, rejected = str(release or SERIES[cassandra_version]), []
+    found, from_shell = {}, set()
+    for name in files:  # (read here, not in a helper: an error in a file names _config_import)
+        if name in live_files:
+            where[0] = name
+            got = _import_file(env, cassandra_version, name, ctx, live_files[name].split("\n"))
+            found.update(got)
+            if name.endswith(".sh"):
+                from_shell.update(got)
+    if "logback.xml" in live_files:
+        where[0] = "logback.xml"
+        found.update(_logback(live_files["logback.xml"]))
+    where[0] = "the JVM options files"
+    jvm_notes, jvm_warnings, keep_files = _jvm_options(env, cassandra_version, ctx, [f for f in files if f in live_files],
+                                                       found, str(java or ""), keep_unread_jvm_options, cmdline)
+    where[0] = "cassandra.yaml"
+    if "cassandra.yaml" in live_files:
+        found.update(_identity(live_files["cassandra.yaml"], cassandra_version))
+    if cassandra_version != "40x":
+        # a size, rate or duration in one unit whatever the node writes it in (100000000B/s, 2s): 200MiB/s, 2000ms
+        found.update((k, canonical_quantity(k[len("cassandra_"):], v)) for k, v in found.items()
+                     if k[len("cassandra_"):] in QUANTITY_KEYS)
+    changed = _changed_values(found, ctx, from_shell)
+    if storage_dir and "cassandra.yaml" in live_files:
+        dirs, keep_storage = _storage_dirs(live_files["cassandra.yaml"], storage_dir, ctx, changed)
+        found.update(dirs)
+        changed.update(dirs)
+        if keep_storage:
+            changed["cassandra_config_storage_dir"] = keep_storage
+    render_dirs = None
+    if "cassandra.yaml" in live_files:
+        dirs, render_dirs = _data_dirs(live_files["cassandra.yaml"], ctx)
+        found.update(dirs)
+        changed.update(dirs)
+        extras, rejected = _yaml_extras(env, cassandra_version, ctx, live_files["cassandra.yaml"], release, found,
+                                        changed)
+        if extras:
+            changed["cassandra_extra_settings"] = extras
+    where[0] = "jmxremote.password"
+    jmx_files, jmx_vars, jmx_note = _jmx_import(env, live_files, jmx_files)
+    changed.update(jmx_vars)
     where[0] = "comparing the files with the role's"
     render = dict(ctx, **changed)
     if "cassandra.yaml" in live_files and render_dirs:
@@ -1610,30 +1677,8 @@ def _config_import(live_files, cassandra_version, facts, where, conf_target="", 
     carried = ["%s: %d line(s) at its end kept with %s" % (name, len(changed[key]), key)
                for key, name in (("cassandra_env_extra_lines", "cassandra-env.sh"),
                                  ("cassandra_logback_extra_lines", "logback.xml")) if changed.get(key)]
-    out = dict((k, v) for k, v in changed.items() if k not in RACKDC)
-    if "cassandra-rackdc.properties" in live_files and not _snitch_reads_rackdc(found.get("cassandra_endpoint_snitch")):
-        # the file's dc= and rack= as the node has them: its snitch doesn't read them, its dc and rack
-        # (the ring's) may differ (the layout drops them where they don't; a line the file lacks: the
-        # role writes the ring's). Else they are the ring's.
-        node_kv = _properties(live_files["cassandra-rackdc.properties"].split("\n"))
-        out.update((k, found.get(k, ctx[k])) for k, key in zip(RACKDC, ("dc", "rack")) if key in node_kv)
-    for key in ALWAYS:
-        if key != "cassandra_storage_compatibility_mode" or cassandra_version == "50x":  # 5.0 setting
-            out[key] = found.get(key, ctx.get(key))
-    # RPM: the config stays where the node reads it (e.g. default.conf), rather
-    # than moving to the role's own alternative conf dir
-    if (facts.get("os_family") == "RedHat" and conf_target
-            and conf_target != ctx.get("cassandra_rpm_conf_alternative")):
-        out["cassandra_rpm_conf_alternative"] = ""
-    if isinstance(out.get("cassandra_seeds"), str):
-        out["cassandra_seeds"] = [s.strip() for s in out["cassandra_seeds"].split(",") if s.strip()]
-    ipv4 = (facts.get("default_ipv4") or {}).get("address")
-    for key in ADDRESSES:
-        if ipv4 and out.get(key) == ipv4:
-            out[key] = IPV4
-        elif facts.get("hostname") and out.get(key) == facts["hostname"]:
-            out[key] = HOSTNAME
-    out, trusted, secrets = _move_secrets(out)
+    out, trusted, secrets = _move_secrets(_inventory_vars(changed, found, ctx, live_files, facts, conf_target,
+                                                          cassandra_version))
     return {"vars": out, "hand_edits": hand, "normalized": normalized, "comments": comments,
             "not_settings": {"keys": rejected, "release": release} if rejected else {}, "release": release,
             "trusted": trusted, "carried": carried + secrets,
