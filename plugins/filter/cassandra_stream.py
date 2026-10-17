@@ -1,12 +1,17 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""cassandra_stream_progress: the progress of a streaming operation (bootstrap,
-decommission, rebuild, removenode) from successive cassandra_netstats results,
-for the progress wait of roles/cassandra_service/tasks/stream_wait.yml;
-cassandra_stream_report: the lines that print it; cassandra_host_addresses:
-the inventory names of the addresses netstats shows; for the cleanups of a
-batch (cleanup_check.yml), cassandra_stream_progress_by_host and
-cassandra_cleanup_report: a block per node."""
+"""The progress and the checks of streaming operations (bootstrap, decommission, rebuild, removenode, cleanup).
+
+cassandra_stream_progress: successive cassandra_netstats results -> the progress state, for the wait of
+    roles/cassandra_service/tasks/stream_wait.yml; cassandra_stream_report: the lines that print it;
+    cassandra_stream_status, cassandra_stream_waiting: how the wait goes on.
+cassandra_host_addresses: the inventory names of the addresses netstats shows.
+cassandra_stream_progress_by_host, cassandra_cleanup_report, cassandra_cleanup_view: the cleanups of a batch
+    (cleanup_check.yml), a block per node.
+cassandra_add_node_plan: what adding nodes streams, and the cleanup after.
+cassandra_stream_own_error, cassandra_stream_own_stopped, cassandra_jmx_refused, cassandra_ring_seen: what a
+    node's own nodetool says (its error, Cassandra stopped, a JMX login refused, the ring it sees).
+"""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -604,7 +609,7 @@ def cassandra_stream_own_error(own):
     return "no answer" if own else ""
 
 
-def _own_stopped(own):
+def cassandra_stream_own_stopped(own):
     """Its own nodetool says Cassandra does not run there (JMX refuses the
     connection); not an unreachable host (ssh's own "Connection refused").
     Input: a cassandra_netstats result; output: bool. e.g. {failed: True, stderr: "... Connection refused"} -> True;
@@ -652,7 +657,7 @@ def cassandra_stream_status(state, join=False, leave=False, own=None, seen="", j
     own = own or {}
     mode = own.get("mode") or ""
     error = cassandra_stream_own_error(own) if own else ""
-    stopped = _own_stopped(own)
+    stopped = cassandra_stream_own_stopped(own)
     job = job if job else None
     finished = job is not None and int(job.get("finished") or 0) == 1
     if ((join and (mode == "NORMAL" or (error and not stopped and seen == "UN")))
@@ -732,7 +737,7 @@ def cassandra_stream_waiting(own, seen="", node="", join=False):
     seen="UJ", node="node4", join=True) -> ["      node4: its own nodetool does not answer (error: Authentication failed!
     Invalid username or password): done once the other nodes see it UN (they see it UJ)"]."""
     error = cassandra_stream_own_error(own)
-    if not join or not error or _own_stopped(own):
+    if not join or not error or cassandra_stream_own_stopped(own):
         return []
     return ["      %s: its own nodetool does not answer (%s): done once the other nodes see it UN (%s)"
             % (node or "this node", error, ("they see it " + seen) if seen else "not in their nodetool status yet")]
@@ -746,11 +751,10 @@ class FilterModule(object):
                 "cassandra_stream_progress_by_host": cassandra_stream_progress_by_host,
                 "cassandra_cleanup_report": cassandra_cleanup_report,
                 "cassandra_add_node_plan": cassandra_add_node_plan,
-                "cassandra_compactionstats": cassandra_compactionstats,
                 "cassandra_cleanup_view": cassandra_cleanup_view,
                 "cassandra_stream_own_error": cassandra_stream_own_error,
                 "cassandra_ring_seen": cassandra_ring_seen,
                 "cassandra_stream_status": cassandra_stream_status,
                 "cassandra_stream_waiting": cassandra_stream_waiting,
                 "cassandra_jmx_refused": cassandra_jmx_refused,
-                "cassandra_stream_own_stopped": _own_stopped}
+                "cassandra_stream_own_stopped": cassandra_stream_own_stopped}

@@ -802,3 +802,11 @@ def test_netstats_counting_more_than_the_total_shows_done_at_the_total():
     assert "      data:      329.8 / 329.8 MiB\n" in report(s)
     assert "(329.8 / 329.8 MiB)" in report(s)
     assert "329.8/329.8 MiB" in cassandra_progress_line(s, node="n4", operation="bootstrap")[0]
+
+
+def test_own_stopped_is_a_refused_jmx_not_an_unreachable_host():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_stream_own_stopped
+    assert cassandra_stream_own_stopped({"failed": True, "stderr": "nodetool: Failed to connect: Connection refused"})
+    assert not cassandra_stream_own_stopped({"unreachable": True, "msg": "ssh: connect to host n1: Connection refused"})
+    assert not cassandra_stream_own_stopped({"failed": True, "stderr": "error: Authentication failed"})
+    assert not cassandra_stream_own_stopped(None)
