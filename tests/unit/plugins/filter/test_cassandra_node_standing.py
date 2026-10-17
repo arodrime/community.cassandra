@@ -612,3 +612,11 @@ def test_the_guide_lists_every_state_with_its_words():
     for state, words in STATES:
         assert "``%s``" % state in guide, state
         assert words in guide, state
+
+
+def test_a_status_address_without_its_port():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_node_standing import status_address
+    assert status_address("10.0.0.1:7000") == "10.0.0.1"
+    assert status_address("[::1]:7000") == "::1"  # nodetool -pp's IPv6
+    assert status_address("0:0:0:0:0:0:0:1") == "0:0:0:0:0:0:0:1"
+    assert status_address(None) == ""

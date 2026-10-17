@@ -28,6 +28,7 @@ import posixpath
 
 import yaml
 
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import address_part
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output
 
 # The states, each with the one phrase the operator reads for it
@@ -64,9 +65,8 @@ STORAGE_DIR = "/var/lib/cassandra"
 
 
 def status_address(address):
-    """An address of nodetool status, without a :port (nodetool -pp)."""
-    a = str(address or "")
-    return a.rsplit(":", 1)[0] if a.count(":") == 1 else a
+    """An address of nodetool status, without a :port (nodetool -pp: 10.0.0.1:7000, [::1]:7000)."""
+    return address_part(str(address or ""))
 
 
 def _loopback(address):
