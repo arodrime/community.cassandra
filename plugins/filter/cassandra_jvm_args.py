@@ -65,8 +65,8 @@ _CMS = "ignored since Java 14 (CMS removed)"
 OBSOLETE = dict([(name, (14, _CMS)) for name in (
     "UseConcMarkSweepGC", "CMSParallelRemarkEnabled", "CMSInitiatingOccupancyFraction", "UseCMSInitiatingOccupancyOnly",
     "CMSWaitDuration", "CMSParallelInitialMarkEnabled", "CMSEdenChunksRecordAlways", "CMSClassUnloadingEnabled")] + [
-    ("UseBiasedLocking", (18, "ignored since Java 18 (biased locking removed)")),
-    ("BiasedLockingStartupDelay", (18, "ignored since Java 18 (biased locking removed)")),
+    ("UseBiasedLocking", (18, jvm.BIASED_GONE)),
+    ("BiasedLockingStartupDelay", (18, jvm.BIASED_GONE)),
     ("AggressiveOpts", (12, "ignored since Java 12")),
 ])
 
@@ -679,7 +679,7 @@ def cassandra_jvm_args_cleanup(live, default, role, series, java, cmdline="", mo
     lines += ["%s: %s: %s" % (where, out.mask(o), OBSOLETE[_jvm_name(o)][1]) for o, where in mine
               if _jvm_name(o) in OBSOLETE and major >= OBSOLETE[_jvm_name(o)][0]]
     # Java 15 to 17: biased locking off by default, -XX:-UseBiasedLocking sets it as it is
-    lines += ["%s: %s: Java %d's default since Java 15 (deprecated, ignored from Java 18)" % (where, o, major)
+    lines += ["%s: %s: Java %d's default anyway; %s" % (where, o, major, jvm.BIASED_DEPRECATED)
               for o, where in mine if o == "-XX:-UseBiasedLocking" and 15 <= major < 18]
     try:
         args = _arguments(cmdline)

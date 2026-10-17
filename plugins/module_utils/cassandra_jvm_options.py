@@ -73,11 +73,14 @@ def _stack_odd(option, dummy):
     return size(option) not in (None, 0) and not 160 * KIB <= size(option) <= 8 * MIB
 
 
+# One wording of biased locking for every check and report (only the Javas Cassandra runs on are named)
+BIASED_GONE = "biased locking is gone after Java 17: the JVM does not start with it"
+BIASED_DEPRECATED = ("biased locking is deprecated on Java 17 (a warning at each start), and gone after it: the JVM"
+                     " does not start with it on Java 21")
+
+
 def _biased_why(dummy, java):
-    if java > 17:
-        return "biased locking is gone after Java 17: the JVM does not start with it"
-    return ("biased locking is deprecated on Java 17 (a warning at each start), and gone after it: the JVM does not"
-            " start with it on Java 21")
+    return BIASED_GONE if java > 17 else BIASED_DEPRECATED
 
 
 def _from_java(major):
