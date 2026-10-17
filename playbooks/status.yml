@@ -1,0 +1,257 @@
+---
+# Show the ring as nodetool status sees it from one node, changing nothing.
+#
+#   ansible-playbook community.cassandra.status
+#
+# Read from the first node that answers: each datacenter's nodes with their
+# state and load, where the inventory and the ring differ, then the verdict
+# (ALL 5 NODES UP, 1 NODE DOWN: node1...).
+#
+# A down node is shown, not an error (health_check is the check): it fails
+# only when no node answers.
+- name: Check the cluster's group
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  tasks:
+    - name: Check the cluster's group
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: hosts_check.yml
+      tags: [always]  # its variables check under --tags too
+      vars:
+        _cassandra_preflight_target: status  # the nodes to read the ring from
+
+- name: Cluster status
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  # root (sudo) only to read the JMX password file when cassandra_jmx_password_file
+  # is set (the service account's, 0400): the play asks for it itself, no -b
+  # needed; nodetool needs no root otherwise
+  become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
+  ignore_unreachable: true  # a down server is part of the view
+  vars:
+    # the hosts Ansible reached (facts gathered now, not from a cache)
+    _reached: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set r = hostvars[h].cassandra_status_setup | default({'failed': true}) -%}
+      {%-   if not r.unreachable | default(false) and not r.failed | default(false) -%}
+      {%-     set _ = out.append(h) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _answers: >-
+      {{ cassandra_status_views | selectattr('result.cluster_status', 'defined') | selectattr('result.cluster_status') | list }}
+    _view: "{{ _answers | first }}"
+    # -e cassandra_target_nodes=<hosts>: the ring read from the first of them that
+    # answers, in their order; else from the first node of the group that answers
+    _targets: >-
+      {{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
+         if cassandra_target_nodes | default('', true) | length > 0 else [] }}
+    _asked: "{{ _targets if _targets else ansible_play_hosts_all }}"
+    _from: "{{ _asked | select('in', _reached) | first | default(_asked | first) }}"
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check each node has its own facts
+      ansible.builtin.assert:
+        that: _shared | length == 0
+        fail_msg: >-
+          ansible-core {{ ansible_version.full }} gave {{ _shared | join(', ') }} the facts of another node
+          (ansible/ansible#87148): a run_once task ran on them earlier in this run, before they had facts of their own
+          (in a play before this playbook?). Run this playbook on its own, or gather facts first in that play.
+          Nothing was changed.
+        quiet: true
+      run_once: true
+      tags: [always]
+      vars:
+        cassandra_output: true  # its message as is (the ops callback)
+        _shared: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] -%}  {#- the ones out of the play too: they may share them with these -#}
+          {%-   if hostvars[h].ansible_facts._cassandra_own_facts | default(h) != h -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # also run by the first play, which --limit skips
+    - name: No unknown variable
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: variables_check.yml
+      tags: [always]  # under --tags too
+
+    # the run's first line, here when --limit left the first play (localhost) out
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_banner.yml
+      tags: [always]  # under --tags too
+
+    - name: Gather the network facts
+      ansible.builtin.setup:
+        gather_subset: [network]
+      register: cassandra_status_setup
+      ignore_errors: true  # a host without facts is part of the view too
+
+    - name: Load the cassandra_service and cassandra_operation defaults (JMX access)
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_service, cassandra_operation]
+
+    - name: Check the options
+      ansible.builtin.assert:
+        that: >-
+          cassandra_target_nodes | default('', true) | length == 0
+          or (_targets | length > 0 and _targets | difference(ansible_play_hosts_all) | length == 0)
+        fail_msg: >-
+          cassandra_target_nodes must be hosts of {{ lookup('community.cassandra.cassandra_hosts') }},
+          not {{ cassandra_target_nodes | default('') }}
+        quiet: true
+      run_once: true
+
+    - name: Remember the addresses of this node
+      ansible.builtin.set_fact:
+        cassandra_status_addresses: >-
+          {{ ([inventory_hostname, ansible_host | default(''), cassandra_listen_address | default(''),
+               (cassandra_extra_settings | default({})).broadcast_address | default(''),
+               ansible_facts.default_ipv4.address | default('')]
+              + ansible_facts.all_ipv4_addresses | default([]) + ansible_facts.all_ipv6_addresses | default([]))
+             | select | unique | list }}
+      when: inventory_hostname in _reached
+
+    - name: Read the ring from {{ _from }}
+      community.cassandra.cassandra_status:
+        down: 10000  # read it whatever the state of the nodes
+        interval: 0  # the module sleeps this long after a ring with a down node
+        debug: true  # nodetool's output, for cassandra_status_raw
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      register: cassandra_status_ring
+      failed_when: false
+      timeout: 120  # a hung JMX: fails the task, then the other nodes are asked
+      ignore_errors: true
+      when:
+        - inventory_hostname == _from
+        - inventory_hostname in _reached
+
+    - name: Read the ring from the other nodes ({{ _from }} did not answer)
+      community.cassandra.cassandra_status:
+        down: 10000
+        interval: 0
+        debug: true
+      module_defaults:
+        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+      register: cassandra_status_ring_other
+      failed_when: false
+      timeout: 120
+      ignore_errors: true
+      when:
+        - not hostvars[_from].cassandra_status_ring.cluster_status | default({})
+        - inventory_hostname != _from
+        - inventory_hostname in _asked
+        - inventory_hostname in _reached
+
+    - name: Keep the first answer
+      ansible.builtin.set_fact:
+        cassandra_status_views: >-
+          {%- set out = [] -%}
+          {%- for h in [_from] + _asked | reject('equalto', _from) | list -%}
+          {%-   set r = {'msg': 'not reached by Ansible'} if h not in _reached
+                        else (hostvars[h].cassandra_status_ring if h == _from else hostvars[h].cassandra_status_ring_other)
+                             | default({}) -%}
+          {%-   if not r.skipped | default(false) and r != {} -%}
+          {%-     set _ = out.append({'from': h, 'result': r | dict2items
+                                  | selectattr('key', 'in', ['cluster_status', 'msg', 'stderr_list', 'stdout_list'])
+                                  | items2dict}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    # a down node is part of the view; the run fails only when no node answered
+    # (of cassandra_target_nodes, when given). JMX access: cassandra_jmx_port,
+    # cassandra_jmx_username, cassandra_jmx_password_file or _password
+    - name: Stop if no node answered
+      ansible.builtin.assert:
+        that: _answers | length > 0
+        fail_msg: >-
+          {{ ['nodetool status failed on every node asked. Is Cassandra running, and the JMX access right'
+              ~ ' (cassandra_jmx_port, cassandra_jmx_username, cassandra_jmx_password_file or _password)?']
+             + _errors }}
+        quiet: true
+      vars:
+        cassandra_output: true  # its message printed as is by the ops callback
+        _errors: >-
+          {%- set out = [] -%}
+          {%- for v in cassandra_status_views -%}
+          {%-   set _ = out.append(v.from ~ ': ' ~ (v.result.msg | default('no result') ~ ' '
+                                                    ~ (v.result.stderr_list | default([''], true) | last).splitlines() | first | default(''))
+                                                   | trim | truncate(400)) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    # -e cassandra_status_raw=true prints nodetool's own output too
+    - name: Show nodetool's output
+      ansible.builtin.debug:
+        msg: "{{ (_view.result.stdout_list | default([''], true) | last).splitlines() }}"
+      vars:
+        cassandra_output: true
+      when: cassandra_status_raw | default(false) | bool
+      run_once: true
+
+    # a header line (the node it is seen from, whether the ring and the group
+    # match), then per datacenter the nodetool table (a node not UN marked
+    # "<- down", "<- joining"...) and a summary per rack and datacenter (nodes
+    # up, down, joining, leaving, moving, total load), where the group and the
+    # ring differ (a ring node that is another host of the inventory is named),
+    # and last the verdict (ALL 5 NODES UP, 1 NODE DOWN: node1 (dc1/rack1),
+    # 1 NODE NOT REACHED: node3 (by Ansible: never ALL UP then), the nodes
+    # joining, leaving or moving; under it "WARNING - ring and inventory
+    # differ" when they do)
+    - name: Show the ring
+      ansible.builtin.debug:
+        msg: >-
+          {{ _view.result.cluster_status | community.cassandra.cassandra_ring_report(_addresses,
+               ansible_play_hosts_all | reject('in', _reached) | list, ansible_limit is defined,
+               group='group ' ~ lookup('community.cassandra.cassandra_hosts'), outside=_outside,
+               absent=query('community.cassandra.cassandra_nodes', state='absent'),
+               cluster=lookup('community.cassandra.cassandra_hosts'), seen_from=_view.from, places=_places) }}
+      vars:
+        cassandra_output: true
+        # the other hosts of the inventory, by the addresses it gives them
+        _outside: >-
+          {%- set out = {} -%}
+          {%- for h in groups['all'] | reject('in', ansible_play_hosts_all) -%}
+          {%-   set _ = out.update({h: [h, hostvars[h].ansible_host | default('')]}) -%}
+          {%- endfor -%}
+          {{ out }}
+        # a host not reached: what its variables say (ansible_host, the address it listens on or broadcasts)
+        _addresses: >-
+          {%- set out = {} -%}
+          {%- set known = ansible_play_hosts_all | reject('in', _reached) | list
+                          | community.cassandra.cassandra_host_addresses(hostvars) -%}
+          {%- for h in ansible_play_hosts_all -%}
+          {%-   set _ = out.update({h: hostvars[h].cassandra_status_addresses
+                                       | default(known | dict2items | selectattr('value', 'equalto', h) | map(attribute='key') | list)}) -%}
+          {%- endfor -%}
+          {{ out }}
+        # where the inventory puts each host: a host Ansible does not reach and no address of the ring
+        # matches is taken for the one ring node no host has in its datacenter and rack (shown "node3?")
+        _places: >-
+          {%- set out = {} -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].cassandra_dc | default('') and hostvars[h].cassandra_rack | default('') -%}
+          {%-   set _ = out.update({h: [hostvars[h].cassandra_dc, hostvars[h].cassandra_rack]}) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true

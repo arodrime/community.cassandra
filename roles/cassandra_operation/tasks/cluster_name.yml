@@ -1,0 +1,123 @@
+---
+# The cluster the nodes run is the inventory's: the name nodetool
+# describecluster reports is cassandra_cluster_name. A run whose inventory was
+# not loaded (e.g. group_vars next to another inventory source than the one
+# given) has the role defaults, and would write them to the nodes.
+# The description comes from cassandra_service_cluster_describe ({from, stdout},
+# read already), else from the first host of cassandra_service_cluster_candidates
+# where nodetool answers, read by the play's first host. None answering: not
+# checked, said so; refused when cassandra_cluster_name is the role default
+# (-e cassandra_accept_default_identity=true goes on), as with an inventory not
+# loaded the JMX login fails too. Included on every host of the play, not under run_once: a delegated
+# task under run_once that finds its host unreachable ends the play, even with
+# ignore_unreachable. A refusal stops every host.
+- name: Start from the description given, if any
+  ansible.builtin.set_fact:
+    _cassandra_cluster_found: "{{ cassandra_service_cluster_describe | default({}) }}"
+    _cassandra_cluster_errors: []
+
+- name: Read the cluster description from a running node
+  ansible.builtin.include_tasks: cluster_name_read.yml
+  loop: "{{ cassandra_service_cluster_candidates | default([]) }}"
+  loop_control:
+    loop_var: _cassandra_cluster_candidate
+  when:
+    - inventory_hostname == ansible_play_hosts | first
+    - not _cassandra_cluster_found
+
+- name: Say the cluster name is not checked
+  ansible.builtin.debug:
+    msg: >-
+      WARNING - no node of the cluster answered nodetool ({{ _errors | join('; ') }}):
+      the cluster name is not checked against cassandra_cluster_name ({{ cassandra_cluster_name }}).
+  run_once: true
+  vars:
+    cassandra_output: true
+    _errors: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_errors }}"
+  when:
+    - not hostvars[ansible_play_hosts | first]._cassandra_cluster_found
+    - cassandra_service_cluster_candidates | default([]) | length > 0
+
+- name: Refuse an unchecked cluster under the role default name
+  ansible.builtin.assert:
+    that: >-
+      hostvars[ansible_play_hosts | first]._cassandra_cluster_found | length > 0
+      or cassandra_service_cluster_candidates | default([]) | length == 0
+      or cassandra_cluster_name != 'Test Cluster'
+      or cassandra_accept_default_identity | default(false) | bool
+    fail_msg: >-
+      The cluster name could not be read (no node answered nodetool) and cassandra_cluster_name is the role default
+      'Test Cluster': are the inventory's group_vars loaded? Check with ansible-inventory -i <inventory> --host
+      {{ ansible_play_hosts | first }} (group_vars are read next to the inventory file or directory given, not in its
+      subdirectories). Nothing was changed. If the cluster's name really is 'Test Cluster', add
+      -e cassandra_accept_default_identity=true.
+    quiet: true
+  run_once: true
+
+# A JMX login refused on a node whose password file (written by cassandra_config) is gone: said so, the JVM
+# reads it at each login (by the play's first host, which read the description)
+- name: Look for the JMX password file on the node that refused the login
+  ansible.builtin.stat:
+    path: "{{ hostvars[_from].cassandra_jmx_remote_password_file | default('/etc/cassandra/jmxremote.password') }}"
+  register: cassandra_cluster_jmx_password_file
+  delegate_to: "{{ _from or inventory_hostname }}"  # (templated before the when)
+  check_mode: false  # reads only
+  failed_when: false  # only to tell the cause
+  when:
+    - inventory_hostname == ansible_play_hosts | first
+    - _found | length > 0 and _found.rc | default(0) != 0
+    - (_found.stderr | default('') ~ _found.stdout | default('')) is search(_jmx_refused)
+    - hostvars[_from].cassandra_jmx_users | default([]) | length > 0
+  vars:
+    _found: "{{ _cassandra_cluster_found }}"
+    _from: "{{ _found.from | default('') }}"
+    _jmx_refused: Invalid username or password|Authentication failed|Credentials required|FailedLoginException|Authentication error
+
+# The likely cause first: a name the inventory does not set (the role default)
+# is an inventory not loaded far more often than a node of another cluster
+- name: The running node belongs to this cluster
+  ansible.builtin.assert:
+    that: not _found or (_found.rc | default(0) == 0 and _name == cassandra_cluster_name)
+    fail_msg: "{{ _what }} (cassandra_cluster_name). Nothing was changed. {{ _hint }}"
+    quiet: true
+  run_once: true  # fails every host of the play
+  vars:
+    cassandra_output: true  # a verdict: its msg as is
+    _found: "{{ hostvars[ansible_play_hosts | first]._cassandra_cluster_found }}"
+    _from: "{{ _found.from | default('') }}"
+    _name: >-
+      {{ _found.stdout | default('') | regex_findall('(?m)^\s*Name: (.*)$') | first | default('') | trim }}
+    # nodetool's own error line (error: ...), else the first line that is not a Java stack trace line
+    _lines: >-
+      {{ ((_found.stderr | default('')).splitlines() | map('trim') | select | list
+          or (_found.stdout | default('')).splitlines() | map('trim') | select | list) }}
+    _error: >-
+      {{ (_lines | select('match', 'error:') | map('regex_replace', '^error: *', '') | list
+          or _lines | reject('match', '(at |-- StackTrace --)') | list) | first | default('no output') }}
+    _refused: "{{ (_found.stderr | default('') ~ _found.stdout | default('')) is search(_jmx_refused) }}"
+    _jmx_refused: Invalid username or password|Authentication failed|Credentials required|FailedLoginException|Authentication error
+    _what: >-
+      {{ (_from ~ " runs Cassandra for cluster '" ~ _name ~ "', not '" ~ cassandra_cluster_name ~ "'")
+         if _found.rc | default(0) == 0
+         else ('JMX login refused on ' ~ _from ~ ' (' ~ _error ~ '): check cassandra_jmx_username and'
+               ~ ' cassandra_jmx_password_file or cassandra_jmx_password; the cluster name is not checked against '
+               ~ "'" ~ cassandra_cluster_name ~ "'") if _refused | bool
+         else ('nodetool describecluster failed on ' ~ _from ~ ' (' ~ _error ~ "): the cluster name is not checked against '"
+               ~ cassandra_cluster_name ~ "'") }}
+    _hint: >-
+      {{ ("cassandra_cluster_name is the role default 'Test Cluster': are the inventory's group_vars loaded? Check with"
+          ~ ' ansible-inventory -i <inventory> --host ' ~ _from ~ ' (group_vars are read next to the inventory file'
+          ~ ' or directory given, not in its subdirectories).')
+         if cassandra_cluster_name == 'Test Cluster'
+         else ("'Test Cluster' is the package's stock name: is " ~ _from ~ ' a new host the package started with its'
+               ~ " stock config? Check it is the right host; if it never joined '" ~ cassandra_cluster_name
+               ~ "', the reset_node playbook makes it ready to join.")
+         if _name == 'Test Cluster' and _found.rc | default(0) == 0
+         else (_jmx_path ~ ' is missing on ' ~ _from ~ ': Cassandra reads it at each JMX login. No running node of'
+               ~ ' this run has it: restore it on one (or run without --limit, so that one that has it is read), then'
+               ~ ' apply_config writes it back on the others, no restart.')
+              if _refused | bool and _jmx_file.stat is defined and not _jmx_file.stat.exists | default(true)
+         else '' if _refused | bool
+         else 'Check the inventory (-i) and cassandra_cluster_name.' }}
+    _jmx_file: "{{ hostvars[ansible_play_hosts | first].cassandra_cluster_jmx_password_file | default({}) }}"
+    _jmx_path: "{{ hostvars[_from].cassandra_jmx_remote_password_file | default('/etc/cassandra/jmxremote.password') if _from else '' }}"

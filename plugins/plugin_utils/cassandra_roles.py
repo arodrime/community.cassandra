@@ -24,3 +24,8 @@ def role_file(role, kind="defaults"):
     """A role's defaults/main.yml (kind: defaults) or vars/main.yml (vars) as YAML reads it, a copy of its own
     (the caller may change it): each file is read once. role_file("cassandra_config")["cassandra_heap_size"] -> ''."""
     return copy.deepcopy(_loaded(role, kind))
+
+
+def roles_with_defaults():
+    """The roles that have a defaults/main.yml, sorted."""
+    return [r for r in sorted(os.listdir(ROLES)) if os.path.exists(os.path.join(ROLES, r, "defaults", "main.yml"))]

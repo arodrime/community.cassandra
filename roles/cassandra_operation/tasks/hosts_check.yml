@@ -1,0 +1,42 @@
+---
+# Run on localhost before any play on the cluster's group: a group name that
+# is not in the inventory would otherwise run on no host, or stop later on a
+# raw template error. The cluster is the group -e cassandra_hosts names, or
+# the one the CASSANDRA_CLUSTER environment variable names (both: the same
+# one, else refused), else the inventory's only cluster (lookup
+# community.cassandra.cassandra_hosts); several clusters and none named:
+# refused. A name close to a playbook variable (-e cassandra_host=...) is
+# pointed out. Then the run's first line names the cluster and how it was
+# picked (cluster_banner.yml). A run with --limit skips localhost, so this
+# check too: the lookup in the plays' hosts refuses the same, and the first
+# play on the nodes says the cluster.
+- name: Check cassandra_target_nodes
+  ansible.builtin.include_tasks: target_nodes_check.yml
+  tags: [always]  # its variables check under --tags too
+
+- name: Variables close to the playbooks' own
+  ansible.builtin.debug:
+    msg: "WARNING - {{ item.key }} is set: did you mean {{ item.value }}?"
+  loop: "{{ query('ansible.builtin.varnames', '^cas+andra_') | community.cassandra.cassandra_close_names(_known) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    cassandra_output: true
+    _known: "{{ _cassandra_playbook_variables }}"
+
+# the lookup's own refusal (a group not in the inventory, several clusters and none named, an unknown
+# CASSANDRA_CLUSTER...), the plays after never reached: in their hosts, the lookup can only fail with a
+# raw Ansible error (under --limit, where this play does not run)
+- name: The cluster is named, or the inventory holds one
+  ansible.builtin.assert:
+    that: _refusal | length == 0
+    fail_msg: "{{ _refusal }}"
+    quiet: true
+  run_once: true  # its msg as is, not "localhost: ..." (ops callback)
+  tags: [always]  # under --tags too
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _refusal: "{{ lookup('community.cassandra.cassandra_hosts', refusal=true) }}"
+
+- name: Say which cluster the run is on
+  ansible.builtin.import_tasks: cluster_banner.yml

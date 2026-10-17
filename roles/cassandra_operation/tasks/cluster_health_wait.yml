@@ -1,0 +1,40 @@
+---
+# One check of the wait for the nodes down (cluster_health.yml, through wait_loop.yml): what is waited for (a
+# progress line), the wait before the next read (cassandra_stream_early_check_interval seconds for the first
+# cassandra_stream_early_time seconds, then cassandra_stream_check_interval, as the bootstrap's; the read itself
+# takes seconds more), the read,
+# then whether it goes on: something still waited for, and time left (cassandra_service_health_timeout)
+- name: Say what is waited for
+  ansible.builtin.debug:
+    msg: >-
+      {{ _cassandra_health_waiting | community.cassandra.cassandra_health_wait_line(
+           names=_cassandra_health_names,
+           waited=now().timestamp() | int - _cassandra_health_wait_start | int, timeout=cassandra_service_health_timeout | int,
+           node=_cassandra_health_head.node, operation=_cassandra_health_head.operation) }}
+  vars:
+    cassandra_output: true  # a progress line (ops callback)
+
+# on the controller, quiet (pause prints "Pausing for ..." on a terminal, between the progress lines)
+- name: Wait before the next read
+  ansible.builtin.wait_for:
+    timeout: "{{ [1, [_interval | int, _left | int] | min] | max }}"
+  delegate_to: localhost
+  become: false  # the controller: no sudo there
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+    _waited: "{{ now().timestamp() | int - _cassandra_health_wait_start | int }}"
+    _left: "{{ cassandra_service_health_timeout | int - _waited | int }}"
+    _interval: >-
+      {{ cassandra_stream_early_check_interval if _waited | int < cassandra_stream_early_time | int
+         else cassandra_stream_check_interval }}
+
+- name: Read the cluster state again
+  ansible.builtin.include_tasks: cluster_health_read.yml
+  vars:
+    _cassandra_health_read_names: "{{ _cassandra_health_names }}"  # (read once, before the wait)
+
+- name: Note whether it still waits
+  ansible.builtin.set_fact:
+    _cassandra_health_going: >-
+      {{ _cassandra_health_waiting | length > 0
+         and now().timestamp() | int - _cassandra_health_wait_start | int < cassandra_service_health_timeout | int }}

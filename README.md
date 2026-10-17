@@ -19,7 +19,25 @@ These roles prepare servers with Debian-based and RHEL-based distributions to ru
 - `cassandra_firewall`- Manage the firewall on Cassandra nodes.
 - `cassandra_install`- Install Cassandra.
 - `cassandra_linux`- Configure Linux OS Settings for Cassandra.
+- `cassandra_operation`- Used by the playbooks: their task files (preflight checks, cluster health) and their settings; not run on its own.
 - `cassandra_repository`- Configures a package repository for Cassandra on Debian and RedHat based platforms.
+
+#### Playbooks
+
+Operations on a cluster, described by one inventory group (`-e cassandra_hosts=<group>`, or the cluster the
+environment variable `CASSANDRA_CLUSTER` names, both set: the same one; neither: the inventory's only cluster,
+else the run stops naming the clusters; no group name is a default; per-cluster settings such as
+`cassandra_seeds` in its group_vars). Run them with `ansible-playbook community.cassandra.<name>`: they ask for
+root on the nodes themselves where they need it (no `-b`, no `become` in `ansible.cfg`). Set
+`callback_result_format = yaml` in `ansible.cfg` (`[defaults]`) for readable messages.
+
+- `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables and about sensitive or suspicious settings: `auto_bootstrap` false, a replace flag left on a member of the ring, the heap size, `AllowAllAuthenticator` on an rpc address other hosts reach, a failure policy `ignore`; `cassandra_suspicious_ack` silences one a node keeps on purpose).
+- `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
+- `status`- Read-only view of the ring from one node (`nodetool status` per datacenter, a summary per rack and datacenter, inventory hosts missing from the ring and the reverse, the verdict last); fails only when no node answers (of `cassandra_target_nodes`, when given).
+
+```
+ansible-playbook -i inventory community.cassandra.status
+```
 
 #### Modules
 

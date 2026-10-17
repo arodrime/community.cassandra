@@ -1,0 +1,29 @@
+---
+# cassandra_target_nodes, the nodes an operation targets, checked before
+# anything is done (hosts_check.yml, preflight). _cassandra_preflight_target
+# says what the playbook does with them: status (the nodes to read the ring
+# from); unset, it takes none.
+- name: No unknown variable, none under a former name
+  ansible.builtin.import_tasks: variables_check.yml
+
+- name: Only where the playbook takes it
+  ansible.builtin.assert:
+    that: >-
+      not _given
+      or (cassandra_target_nodes is string and _kind != '' and _hosts | length > 0)
+    fail_msg: >-
+      {{ '' if not _given
+         else ('cassandra_target_nodes is a string: hosts or groups, comma-separated.') if cassandra_target_nodes is not string
+         else ('This playbook takes no cassandra_target_nodes (it runs on the whole group, or on what its own variables'
+          ~ ' name): run it without.') if _kind == ''
+         else ('cassandra_target_nodes: ' ~ cassandra_target_nodes | default('') | string ~ ' matches no host of the inventory.') }}
+      Nothing was changed.
+    quiet: true
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _given: "{{ cassandra_target_nodes | default('', true) | string | length > 0 }}"
+    _kind: "{{ _cassandra_preflight_target | default('') }}"
+    _hosts: >-
+      {{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes)
+         if _given and cassandra_target_nodes is string else [] }}
+  run_once: true

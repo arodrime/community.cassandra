@@ -1,0 +1,38 @@
+---
+# Run first by every playbook of the collection (target_nodes_check.yml), once,
+# on the controller: a -e variable under a prefix of the collection
+# (cassandra_, import_cluster_, help_) that no role or playbook knows (a typo)
+# would otherwise be silently ignored, and so would a variable under a former
+# name (inventory or -e).
+# Inventory variables are not checked for typos here (preflight warns about
+# them). -e cassandra_allow_unknown_variables=true lets the unknown ones through,
+# -e cassandra_allow_unknown_variables=<name>,<name> those ones only.
+- name: No unknown variable, none under a former name
+  ansible.builtin.assert:
+    that: _renamed | length == 0 and _unknown | length == 0
+    fail_msg: >-
+      {%- set out = ['REFUSED  variable names  nothing was changed'] -%}
+      {%- for name, now in _renamed.items() -%}
+      {%-   set _ = out.append('  ' ~ name ~ ' is renamed ' ~ now ~ ': set ' ~ now ~ ' instead.') -%}
+      {%- endfor -%}
+      {%- for name, close in _unknown.items() -%}
+      {%-   set _ = out.append('  -e ' ~ name ~ ': not a variable of this collection'
+                               ~ ((', did you mean ' ~ close ~ '?') if close else '.')) -%}
+      {%- endfor -%}
+      {%- if _unknown -%}
+      {%-   set _ = out.append('  Fix the name; for a variable of your own: -e cassandra_allow_unknown_variables=<name>[,<name>...] (or true).') -%}
+      {%- endif -%}
+      {{ out | join(_nl) }}
+    quiet: true
+  run_once: true
+  tags: [always]  # under --tags too
+  vars:
+    cassandra_output: true
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    _renamed: "{{ query('ansible.builtin.varnames', '^cassandra_') | community.cassandra.cassandra_renamed_names }}"
+    _extra: "{{ query('community.cassandra.cassandra_extra_vars') }}"
+    # given with -e only: one in the inventory would turn the check off for every run
+    _unknown: >-
+      {{ _extra | community.cassandra.cassandra_unknown_extra_vars(
+           _cassandra_playbook_variables | default([]),
+           allow=cassandra_allow_unknown_variables if 'cassandra_allow_unknown_variables' in _extra else false) }}

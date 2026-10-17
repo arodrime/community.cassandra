@@ -1,0 +1,128 @@
+---
+# Check the health of a cluster from every node, changing nothing.
+#
+#   ansible-playbook community.cassandra.health_check
+#
+# Each node checks the ring, gossip, the native transport, streams, schema
+# agreement and the ports. The report starts with the verdict, HEALTHY or NOT
+# HEALTHY, then each problem once and what to do.
+#
+# Fails on a problem (non-zero exit), so it can be scheduled.
+- name: Check the cluster's group
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  tasks:
+    - name: Check the cluster's group
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: hosts_check.yml
+      tags: [always]  # its variables check under --tags too
+
+- name: Cluster health
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: true
+  gather_subset: [network]
+  # root (sudo) only to read the JMX password file when cassandra_jmx_password_file
+  # is set (the service account's, 0400): the play asks for it itself, no -b
+  # needed; nodetool needs no root otherwise
+  become: "{{ cassandra_jmx_password_file | default('', true) | length > 0 }}"
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check each node has its own facts
+      ansible.builtin.assert:
+        that: _shared | length == 0
+        fail_msg: >-
+          ansible-core {{ ansible_version.full }} gave {{ _shared | join(', ') }} the facts of another node
+          (ansible/ansible#87148): a run_once task ran on them earlier in this run, before they had facts of their own
+          (in a play before this playbook?). Run this playbook on its own, or gather facts first in that play.
+          Nothing was changed.
+        quiet: true
+      run_once: true
+      tags: [always]
+      vars:
+        cassandra_output: true  # its message as is (the ops callback)
+        _shared: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] -%}  {#- the ones out of the play too: they may share them with these -#}
+          {%-   if hostvars[h].ansible_facts._cassandra_own_facts | default(h) != h -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # also run by the first play, which --limit skips
+    - name: No unknown variable
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: variables_check.yml
+      tags: [always]  # under --tags too
+
+    # the run's first line, here when --limit left the first play (localhost) out
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_banner.yml
+      tags: [always]  # under --tags too
+
+    - name: Load the cassandra_config defaults (ports)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    # the ring (every node up and normal, none joining, leaving or moving),
+    # gossip, native transport, streams, schema agreement, the storage and CQL ports
+    - name: Check the cluster from this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_health.yml
+      vars:
+        cassandra_service_health_report_only: true
+        _cassandra_health_no_wait: true  # a report: one read, no waiting for down nodes
+        cassandra_service_health_timeout: 5  # (its ports asked for 5s)
+
+    # the verdict first (HEALTHY or NOT HEALTHY), each problem once with the
+    # nodes that saw it, then what to do; fails the run (non-zero exit) when
+    # there is one
+    - name: Report
+      ansible.builtin.assert:
+        that: _report.healthy
+        fail_msg: "{{ _report.lines }}"
+        success_msg: "{{ _report.lines }}"
+        quiet: false
+      vars:
+        cassandra_output: true
+        # the hosts whose check ran (the others: not reached)
+        _checked: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_health_findings is defined -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+        _findings: >-
+          {%- set out = {} -%}
+          {%- for h in _checked -%}{%- set _ = out.update({h: hostvars[h].cassandra_health_findings}) -%}{%- endfor -%}
+          {{ out }}
+        _first_ring: >-
+          {{ (hostvars[_checked | first].cassandra_health_self | default({})).cluster_status | default({}, true)
+             if _checked else {} }}
+        _report: >-
+          {{ _findings | community.cassandra.cassandra_health_report(
+               lookup('community.cassandra.cassandra_hosts'), ansible_play_hosts_all,
+               unreachable=ansible_play_hosts_all | reject('in', _checked) | list,
+               absent=query('community.cassandra.cassandra_nodes', state='absent'),
+               names=(ansible_play_hosts_all + query('community.cassandra.cassandra_nodes', state='absent'))
+                     | community.cassandra.cassandra_host_addresses(hostvars), ring=_first_ring,
+               members=_first_ring.values() | map(attribute='nodes') | flatten | length if _first_ring else none,
+               topology_command='topology' | community.cassandra.cassandra_command(
+                 inventory=ansible_inventory_sources,
+                 default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+                 hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD'))) }}
+      run_once: true

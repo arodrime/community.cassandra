@@ -3,7 +3,8 @@ __metaclass__ = type
 
 # The cassandra.yaml settings that have a variable (some commented out in stock, some absent from it): refused in
 # cassandra_extra_settings (a dotted key by its first part), refused for a series without the key, BTI refused
-# before storage_compatibility_mode NONE, the directories created, auto_bootstrap false written whatever its spelling.
+# before storage_compatibility_mode NONE, the directories created, auto_bootstrap false warned about by preflight, and
+# the -e names check knowing them.
 
 import os
 
@@ -13,6 +14,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
@@ -226,6 +228,45 @@ def test_more_dirs_are_read_created_and_checked():
     assert [["cdc_raw dir", "/srv/cdc"], ["heap dump dir", "/srv/dumps"]] == render(read["dir_stats"], **variables)[-2:]
 
 
+# --- preflight ------------------------------------------------------------------
+
+PREFLIGHT = next(p for p in load("playbooks", "preflight.yml") if p.get("name") == "Cassandra preflight checks")
+SUSPICIOUS = task("Warn about sensitive or suspicious settings", PREFLIGHT["tasks"])
+WHY = ("a node that loses its data restarts empty without streaming it back; remove the setting (default true) unless"
+       " you know why it is there")
+
+
+@pytest.mark.parametrize("hostvars, warned", [
+    ({"n1": {}, "n2": {}}, ""),
+    ({"n1": {"cassandra_auto_bootstrap": True}, "n2": {"cassandra_auto_bootstrap": None}}, ""),
+    ({"n1": {"cassandra_auto_bootstrap": False}, "n2": {"cassandra_auto_bootstrap": "false"}, "n3": {}}, "n1, n2"),
+])
+def test_preflight_warns_about_auto_bootstrap_false(hostvars, warned):
+    # a WARNING (note.yml), never a refusal
+    assert SUSPICIOUS["ansible.builtin.include_role"]["tasks_from"] == "note.yml"
+    variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=list(hostvars), hostvars=hostvars)
+    found = render(SUSPICIOUS["vars"]["_found"], **variables)
+    assert found == (["WARNING - %s: auto_bootstrap: false \u2014 %s (kept on purpose? add auto_bootstrap_false to"
+                      " cassandra_suspicious_ack)" % (warned, WHY)] if warned else [])
+    assert render("{{ %s }}" % SUSPICIOUS["when"], **variables) is bool(warned)
+    assert not [t for t in PREFLIGHT["tasks"] if "auto_bootstrap" in str(t.get("ansible.builtin.assert", ""))]
+
+
+# --- -e names ------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["cassandra_auto_bootstrap", "cassandra_cdc_raw_dir", "cassandra_sstable_format",
+                                  "cassandra_stream_throughput_outbound",
+                                  "cassandra_stream_throughput_outbound_megabits_per_sec",
+                                  "cassandra_partition_size_fail_threshold", "cassandra_gc_warn_threshold_in_ms"])
+def test_extra_vars_check_knows_the_new_names(name):
+    assert cassandra_unknown_extra_vars([name], []) == {}
+
+
+def test_extra_vars_check_still_catches_a_typo():
+    assert cassandra_unknown_extra_vars(["cassandra_stream_throughput_outbund"], []) == {
+        "cassandra_stream_throughput_outbund": "cassandra_stream_throughput_outbound"}
+
+
 # --- auto_bootstrap --------------------------------------------------------------
 
 def test_auto_bootstrap_written_false_whatever_its_spelling():
@@ -233,3 +274,24 @@ def test_auto_bootstrap_written_false_whatever_its_spelling():
         text = render(open(os.path.join(ROLE, "templates", "5.0", "cassandra.yaml.j2")).read().split("{% set _extra")[0][-400:],
                       cassandra_auto_bootstrap=value, cassandra_disk_access_mode="")
         assert "auto_bootstrap: false" in text, value
+
+
+@pytest.mark.parametrize("ring, members_warned", [
+    (None, ""),  # the ring not read: a replace flag is not judged
+    ([("10.0.0.1", "U"), ("10.0.0.2", "U")], "n1"),  # n2 holds the flag but is not in the ring yet (replace_node's own)
+    ([("10.0.0.1", "U"), ("10.0.0.3", "D")], "n1"),  # n2 down at its address: maybe a replacement of it
+])
+def test_preflight_judges_a_replace_flag_on_the_ring_members(ring, members_warned):
+    hostvars = {"n1": {"_cassandra_preflight": {"ring_address": "10.0.0.1"}, "inventory_hostname": "n1",
+                       "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]},
+                "n2": {"_cassandra_preflight": {"ring_address": "10.0.0.3"}, "inventory_hostname": "n2",
+                       "cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.7"]}}
+    variables = dict(SUSPICIOUS["vars"], ansible_play_hosts=["n1", "n2"], hostvars=hostvars)
+    if ring is not None:
+        variables["cassandra_preflight_status"] = {"cluster_status": {"dc1": {"nodes": [
+            {"address": a, "status": st} for a, st in ring]}}}
+    found = render(SUSPICIOUS["vars"]["_found"], **variables)
+    assert [line.split(":")[0] for line in found] == (["WARNING - " + members_warned] if members_warned else [])
+    # after the ring is read
+    names = [t.get("name") for t in PREFLIGHT["tasks"]]
+    assert names.index("Warn about sensitive or suspicious settings") > names.index("Check the running cluster")

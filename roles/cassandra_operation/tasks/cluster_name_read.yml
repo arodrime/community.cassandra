@@ -1,0 +1,32 @@
+---
+# One host of cluster_name.yml's candidates, until one answers
+- name: Read the cluster description from {{ _cassandra_cluster_candidate }}
+  ansible.builtin.command: "{{ _cassandra_service_nodetool }} describecluster"
+  register: cassandra_cluster_read
+  delegate_to: "{{ _cassandra_cluster_candidate }}"
+  changed_when: false
+  failed_when: false  # not running there: the next one
+  ignore_unreachable: true
+  check_mode: false  # read-only; --check needs it too
+  no_log: "{{ cassandra_jmx_password | length > 0 }}"
+  when: not _cassandra_cluster_found
+
+- name: Keep it
+  ansible.builtin.set_fact:
+    _cassandra_cluster_found:
+      from: "{{ _cassandra_cluster_candidate }}"
+      stdout: "{{ cassandra_cluster_read.stdout }}"
+  when:
+    - not _cassandra_cluster_found
+    - cassandra_cluster_read.rc | default(1) == 0
+
+# its last line (e.g. a JMX login refused: the inventory's JMX settings not loaded either)
+- name: Keep why it did not answer
+  ansible.builtin.set_fact:
+    _cassandra_cluster_errors: >-
+      {{ _cassandra_cluster_errors + [_cassandra_cluster_candidate ~ ': '
+         ~ (cassandra_cluster_read.stderr | default('')).splitlines() | select | list
+           | last | default(cassandra_cluster_read.msg | default('no answer'))] }}
+  when:
+    - not _cassandra_cluster_found
+    - cassandra_cluster_read.rc | default(1) != 0

@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# cassandra_service refuses an account Cassandra runs as that
+# cassandra_service (and preflight) refuse an account Cassandra runs as that
 # could not read the config files cassandra_config writes: Cassandra would
 # stop at once on "cassandra-env.sh: Permission denied".
 
@@ -41,10 +41,11 @@ def condition(text, variables):
     return ENV.from_string("{%% if %s %%}True{%% else %%}False{%% endif %%}" % text).render(**variables) == "True"
 
 
-def check(account, check_mode=False, **inventory):
+def check(account, check_mode=False, must_exist=True, **inventory):
     """(passes, message) of the check, for what the node said (account: its key=value lines)."""
     v = {"cassandra_user": "cassandra", "cassandra_group": "cassandra", "cassandra_version": "50x",
-         "cassandra_service_unit_manage": True, "inventory_hostname": "n1", "ansible_check_mode": check_mode}
+         "cassandra_service_unit_manage": True, "inventory_hostname": "n1", "ansible_check_mode": check_mode,
+         "_cassandra_account_must_exist": must_exist}
     v.update(inventory)
     v.setdefault("cassandra_service_user", v["cassandra_user"])
     v.setdefault("cassandra_service_group", v["cassandra_group"])
@@ -94,10 +95,10 @@ def test_files_readable_by_all_pass():
     assert check(DEFAULT, cassandra_config_group="dbgrp", cassandra_config_mode="0644")[0]
 
 
-@pytest.mark.parametrize("check_mode, passes", [(False, False), (True, True)])
-def test_missing_user(check_mode, passes):
-    # --check on a blank host: no user yet
-    result = check(["user=dbsvc", "group=dbsvc", "nouser=yes"], check_mode)
+@pytest.mark.parametrize("check_mode, must_exist, passes", [(False, True, False), (True, True, True), (False, False, True)])
+def test_missing_user(check_mode, must_exist, passes):
+    # --check on a blank host, or preflight before a new node gets the package: no user yet
+    result = check(["user=dbsvc", "group=dbsvc", "nouser=yes"], check_mode, must_exist)
     assert result[0] is passes
     if not passes:
         assert result[1].startswith("the user dbsvc does not exist on n1")
@@ -135,6 +136,16 @@ def test_unreadable_config_filter():
 ])
 def test_permission_classes_in_kernel_order(files, unreadable):
     assert cassandra_unreadable_config("50x", dict(SETTINGS, files=files), ["cassandra"], ["dbgrp"])[:1] == unreadable
+
+
+def test_preflight_stops_the_whole_run_on_a_refused_node():
+    """Failing one host would let the operation go on without it."""
+    with open(os.path.join(ROLE, "..", "..", "playbooks", "preflight.yml")) as f:
+        plays = yaml.safe_load(f)
+    tasks = [t for play in plays for t in play.get("tasks", [])]
+    block = next(t for t in tasks if any(sub.get("ansible.builtin.include_role", {}).get("tasks_from") == "account_check.yml"
+                                         for sub in t.get("block", [])))
+    assert block["any_errors_fatal"] is True
 
 
 def test_checked_before_the_unit_is_written():

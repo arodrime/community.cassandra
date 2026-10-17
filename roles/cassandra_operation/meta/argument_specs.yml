@@ -1,0 +1,78 @@
+---
+argument_specs:
+  main:
+    short_description: The task files of the collection's playbooks (internal).
+    description:
+      - Not a role to run on its own (it has no main tasks), nor a stable interface. It holds the task
+        files the collection's playbooks include (the preflight checks, the cluster health), with the
+        defaults they read.
+      - The playbooks' settings below are set in the inventory as any role variable.
+    options:
+      cassandra_suspicious_ack:
+        type: list
+        elements: str
+        default: []
+        description:
+          - The sensitive or suspicious settings a node keeps on purpose, by the id of their row, whose WARNING the
+            C(preflight) playbook and the C(import_cluster) report leave out for it (per host or group).
+          - V(auto_bootstrap_false), V(replace_address) (a replace flag left on a member of the ring), V(heap_size)
+            (not set on a 4.x host with 64G of RAM, whose auto-sizing stops at 8G; under 2G, 32G or more, over half
+            the RAM), V(allow_all_authenticator) (with an rpc address other hosts reach), V(failure_policy_ignore).
+          - Each WARNING names the id that silences it; an id no check has gets a WARNING of its own.
+          - The RAM-based heap checks need the host's facts, read by C(preflight), not by C(import_cluster).
+      cassandra_node_state:
+        type: str
+        default: present
+        choices: [present, absent]
+        description:
+          - The state this host should be in, the inventory being the desired state of the cluster. C(absent)
+            (a host var, or a group var for a group of hosts) takes the host out of the cluster - every operation
+            playbook leaves it out (preflight, health checks and their node counts, rolling operations, status,
+            import), and the C(topology) playbook decommissions it if it is still in the ring.
+          - Delete the host from the inventory once C(topology) has removed it, or leave it marked absent.
+      cassandra_service_health_timeout:
+        type: int
+        default: 600
+        description:
+          - Operation playbooks, cluster health check. Seconds to wait for down nodes to come back (and this node's storage and CQL ports, gossip and
+            native transport to answer), read again every C(cassandra_stream_check_interval) seconds (sooner at
+            first, plus the time of a read) with a progress line.
+      cassandra_service_health_force:
+        type: bool
+        default: false
+        description:
+          - Go on although the cluster is not healthy. Risky, a second replica
+            down can make data unavailable.
+      cassandra_stream_check_interval:
+        type: int
+        default: 30
+        description:
+          - Seconds between two reads of the cluster health check's wait for nodes down
+            (C(cassandra_service_health_timeout)), after the first C(cassandra_stream_early_time) seconds, a progress
+            line each time. The streaming waits of the topology playbooks keep the same pace.
+      cassandra_stream_early_check_interval:
+        type: int
+        default: 10
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_stream_early_time:
+        type: int
+        default: 300
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_jmx_username:
+        type: str
+        default: ""
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_jmx_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_jmx_password_file:
+        type: str
+        default: ""
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).

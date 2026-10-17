@@ -1,0 +1,11 @@
+---
+# An operator note of a check (a "WARNING - ..." line, or several lines in one
+# string), printed as is (the ops callback's operator message).
+#   include_role: name=community.cassandra.cassandra_operation tasks_from=note.yml
+#   vars: _note: "WARNING - ..."
+- name: Say it
+  ansible.builtin.debug:
+    msg: "{{ _note }}"
+  run_once: true
+  vars:
+    cassandra_output: true
