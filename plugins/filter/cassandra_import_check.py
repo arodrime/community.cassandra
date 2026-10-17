@@ -270,6 +270,9 @@ def _render(variables, facts, live, conf_dir=""):
     when Medusa is on."""
     ctx = _trusted(dict(_defaults(), **variables))
     ctx["ansible_facts"] = facts
+    # the roles' templates rendered by Ansible itself (its template lookup, its filters and tests), with these
+    # variables and not the play's: a Templar of its own (public: ansible.template; 2.19+ trusts only the text
+    # marked so, trust_as_template), a DataLoader for the lookup's file reads
     loader = DataLoader()
     templar = Templar(loader=loader, variables=ctx)
     # outside a play (unit tests) only the short name resolves
