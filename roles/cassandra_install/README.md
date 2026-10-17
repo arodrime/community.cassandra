@@ -92,8 +92,8 @@ Role Variables
 * `cassandra_java_set_default` (default `true`): make `cassandra_java_version`
   the default `java` when several JDKs are installed, or the tarball /
   `cassandra_java_home` Java the system `java`. `false` leaves `/usr/bin/java`
-  as it is (Cassandra then needs `JAVA_HOME` in its environment);
-  `import_cluster` sets it for the nodes
+  as it is (Cassandra then needs `JAVA_HOME`, e.g. in
+  `cassandra_service_environment`); `import_cluster` sets it for the nodes
   whose `/usr/bin/java` is not the running Java.
 * `cassandra_java_version`: Java installed before Cassandra. Defaults to the
   series' version from `cassandra_java_versions` (11 for 4.x, 17 for 5.0).

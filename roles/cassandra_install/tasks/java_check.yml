@@ -1,6 +1,7 @@
 ---
-# cassandra_java_version: a Java the series runs on, and a tarball for it when
-# tarballs are on offer.
+# cassandra_java_version: a Java the series runs on, no JVM option it reads
+# that a move to it is refused with, and a tarball for it when tarballs are on
+# offer.
 - name: The series runs on this Java
   ansible.builtin.assert:
     that: _why == ''
@@ -10,6 +11,22 @@
     _why: >-
       {{ cassandra_java_version | community.cassandra.cassandra_java_check(cassandra_version,
                                                                           cassandra_java_allow_unsupported | bool) }}
+
+# A JVM option a move to that Java is refused with (plugin_utils cassandra_jvm_options, e.g.
+# -XX:-UseBiasedLocking after Java 17), in the files that Java reads: before anything changes
+- name: The JVM options suit this Java
+  ansible.builtin.assert:
+    that: _refused | length == 0
+    fail_msg: "{{ inventory_hostname }}: {{ _refused | join(' ') }}"
+    quiet: true
+  vars:
+    _refused: >-
+      {{ {'cassandra_jvm_extra_options': cassandra_jvm_extra_options | default([]),
+          'cassandra_jvm8_extra_options': cassandra_jvm8_extra_options | default([]),
+          'cassandra_jvm11_extra_options': cassandra_jvm11_extra_options | default([]),
+          'cassandra_jvm17_extra_options': cassandra_jvm17_extra_options | default([])}
+         | community.cassandra.cassandra_jvm_option_checks(cassandra_version, cassandra_java_version, refusals=true,
+                                                           kept=cassandra_config_keep_files | default([])) }}
 
 # A Java given by its directory (cassandra_java_home, e.g. imported) needs no tarball
 - name: A tarball on offer for this Java

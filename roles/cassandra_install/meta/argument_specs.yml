@@ -202,7 +202,8 @@ argument_specs:
             O(cassandra_java_tarball) the system C(java). Cassandra and nodetool run it,
             unless C(JAVA_HOME) says otherwise.
           - V(false) leaves C(/usr/bin/java) as it is, e.g. the system Java of other
-            programs (Cassandra then needs C(JAVA_HOME) in its environment). C(import_cluster) sets it for the nodes whose
+            programs (Cassandra then needs C(JAVA_HOME), e.g. in
+            C(cassandra_service_environment)). C(import_cluster) sets it for the nodes whose
             C(/usr/bin/java) is not the running Java.
       cassandra_package_version:
         type: str
