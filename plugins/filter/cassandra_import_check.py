@@ -60,6 +60,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles")
 SERIES = {"40x": "4.0", "41x": "4.1", "50x": "5.0"}
@@ -70,8 +71,7 @@ ASSIGN = re.compile(r"^(\w+)=(.*)$")
 # the heap's differences are named so (the report reads them back)
 HEAP_FILE = "heap (cassandra-env.sh, else the unit's Environment)"
 # the files cassandra_config writes, left as they are when their settings are the same
-with open(os.path.join(ROLES, "cassandra_config", "vars", "main.yml")) as _vars:
-    CONFIG_FILES = set(f for files in yaml.safe_load(_vars)["_cassandra_config_files"].values() for f in files)
+CONFIG_FILES = set(f for files in role_file("cassandra_config", "vars")["_cassandra_config_files"].values() for f in files)
 
 
 @values_hidden
@@ -257,10 +257,8 @@ def _compare(name, node, role, storage_dir="", left_out=()):
 def _defaults():
     ctx = {}
     for role in ("cassandra_config", "cassandra_service", "cassandra_medusa"):
-        with open(os.path.join(ROLES, role, "defaults", "main.yml")) as f:
-            ctx.update(yaml.safe_load(f) or {})
-    with open(os.path.join(ROLES, "cassandra_config", "vars", "main.yml")) as f:
-        ctx.update(yaml.safe_load(f) or {})
+        ctx.update(role_file(role) or {})
+    ctx.update(role_file("cassandra_config", "vars") or {})
     return ctx
 
 

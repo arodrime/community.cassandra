@@ -19,7 +19,6 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import functools
-import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -27,6 +26,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_yaml_properties as known
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 NULLS = ("", "~", "null", "Null", "NULL")
 BOOLS = {"true": "true", "yes": "true", "on": "true", "false": "false", "no": "false", "off": "false"}
@@ -55,8 +55,6 @@ DEFAULT_WHEN_ABSENT = {"auto_bootstrap": "true"}
 NOT_COMPARED = {"heap_dump_path": "the -XX:HeapDumpPath cassandra-env.sh gives wins"}
 
 
-ROLE_VARS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config", "vars",
-                         "main.yml")
 # The unit of the number a former name holds (Converters of Config.java's @Replaces), by the end of the name
 FORMER_UNITS = (("_megabits_per_sec", "megabits"), ("_in_mb", "MiB"), ("_mb", "MiB"), ("_in_kb", "KiB"),
                 ("_in_ms", "ms"))
@@ -69,8 +67,7 @@ def former_names(series):
     refuses both. 4.0: none."""
     if series == "4.0":
         return {}
-    with open(ROLE_VARS) as f:
-        role_vars = yaml.safe_load(f)
+    role_vars = role_file("cassandra_config", "vars")
     return dict(role_vars["_cassandra_config_old_names"], **role_vars["_cassandra_config_old_names_of"].get(series, {}))
 
 

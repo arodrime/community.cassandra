@@ -25,8 +25,6 @@ import os
 import re
 import shlex
 
-import yaml
-
 from ansible.errors import AnsibleFilterError
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_java import cassandra_java_major
@@ -34,6 +32,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_screen imp
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import (
     BULLET, NBSP, command as _full_command, command_flow, extra_var as _e, flow as _flow, is_command, laid_out,
     path_from as _path, seed_layout)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -238,8 +237,7 @@ _PLACEHOLDER = re.compile(r"(?<![\w-])(%s)(?![\w-])" % "|".join(PLACEHOLDERS))
 def _role_defaults():
     out = {}
     for role in ("cassandra_config", "cassandra_install"):
-        with open(os.path.join(_TOP, "roles", role, "defaults", "main.yml"), encoding="utf-8") as f:
-            out.update(yaml.safe_load(f) or {})
+        out.update(role_file(role) or {})
     return out
 
 

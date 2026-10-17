@@ -50,6 +50,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_settings i
     jvm_options_settings, quantity, same_settings, shell_words, xml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 
 ROLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "cassandra_config")
 EXPR = re.compile(r"(\{\{.*?\}\})")
@@ -142,10 +143,8 @@ def cassandra_ring_nodes(cluster_status):
 
 
 def _load_role(series, facts):
-    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
-        ctx = yaml.safe_load(f)
-    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
-        role_vars = yaml.safe_load(f)
+    ctx = role_file("cassandra_config")
+    role_vars = role_file("cassandra_config", "vars")
     files = role_vars["_cassandra_config_files"][SERIES[series]]
     ctx["cassandra_version"] = series
     ctx["ansible_facts"] = facts
@@ -588,8 +587,7 @@ def _same_setting(name, role, node):
 def _extra_sections():
     """{section: the sub-keys of its variables}: the cassandra.yaml sections the template writes whose other
     sub-keys cassandra_extra_settings adds (the role's _cassandra_config_extra_sections)."""
-    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
-        return yaml.safe_load(f)["_cassandra_config_extra_sections"]
+    return role_file("cassandra_config", "vars")["_cassandra_config_extra_sections"]
 
 
 _BLOCK_SCALAR = re.compile(r":\s+[|>][-+0-9]*\s*$")  # "key: |": the lines under it are its text
@@ -817,8 +815,7 @@ def _snitch_reads_rackdc(snitch):
     """False for the snitches that take the node's dc and rack from elsewhere than
     cassandra-rackdc.properties' dc= and rack= (the role's list); a snitch of
     another class may read them."""
-    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
-        unread = yaml.safe_load(f)["_cassandra_config_snitches_without_rackdc"]
+    unread = role_file("cassandra_config", "vars")["_cassandra_config_snitches_without_rackdc"]
     name = str(snitch or "").strip()
     prefix = "org.apache.cassandra.locator."  # a name without a dot is in that package
     return (name[len(prefix):] if name.startswith(prefix) else name) not in unread
@@ -2080,11 +2077,8 @@ ROLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "ro
 def _roles_defaults():
     """Every role's defaults (the variables a host gets when nothing sets them)."""
     out = {}
-    for role in sorted(os.listdir(ROLES)):
-        path = os.path.join(ROLES, role, "defaults", "main.yml")
-        if os.path.exists(path):
-            with open(path) as f:
-                out.update(yaml.safe_load(f) or {})
+    for role in roles_with_defaults():
+        out.update(role_file(role) or {})
     return out
 
 
@@ -3082,18 +3076,15 @@ def cassandra_import_kept_ansible_host(nodes, read, hosts_file, cluster_group, n
 def cassandra_config_ignored_vars(names, cassandra_version):
     if cassandra_version not in SERIES:
         raise AnsibleFilterError("cassandra_config_ignored_vars: unsupported series %s" % cassandra_version)
-    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
-        role_vars = set(yaml.safe_load(f))
-    with open(os.path.join(ROLE, "vars", "main.yml")) as f:
-        files = yaml.safe_load(f)["_cassandra_config_files"][SERIES[cassandra_version]]
+    role_vars = set(role_file("cassandra_config"))
+    files = role_file("cassandra_config", "vars")["_cassandra_config_files"][SERIES[cassandra_version]]
     used = set()
     for name in files:
         with open(os.path.join(ROLE, "templates", SERIES[cassandra_version], name + ".j2")) as f:
             used.update(re.findall(r"\b(cassandra_\w+)", f.read()))
     # variables other variables' defaults are built from count as used
-    with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
-        for value in yaml.safe_load(f).values():
-            used.update(re.findall(r"\b(cassandra_\w+)", str(value)))
+    for value in role_file("cassandra_config").values():
+        used.update(re.findall(r"\b(cassandra_\w+)", str(value)))
     tasks_dir = os.path.join(ROLE, "tasks")
     for name in os.listdir(tasks_dir):
         with open(os.path.join(tasks_dir, name)) as f:
