@@ -31,13 +31,19 @@ from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_disk
 
 
 def cassandra_disk_plan(lsblk, mounts, explicit=None, lvs=None, contents=None, tune_os=True):
+    """plan() (plugin_utils/cassandra_disks) of what the role read: lsblk -J, the findmnt loop of the Cassandra
+    directories, lvs -> {devices, stacks, brief, warnings, info, notes, unusable, os_skipped}. e.g. (lsblk -J, the
+    data directory on the LV rhel/cassandra, lvs, tune_os="false") -> {devices: [{kname: "dm-2", kind: "lvm", label:
+    "rhel-cassandra (dm-2)", ...}], ...}: its OS disk left alone."""
     # "false" from -e is a string: it must not tune the OS disk
     return plan(lsblk, mounts, explicit=explicit, lvs=lvs, contents=contents, tune_os=boolean(tune_os, strict=False))
 
 
 def cassandra_disk_state(results):
     """The results of the role's read of each device (key=value lines: ra,
-    sched, choices, rot, dm_uuid, dm_name, md_uuid) -> {kname: {key: value}}."""
+    sched, choices, rot, dm_uuid, dm_name, md_uuid) -> {kname: {key: value}}.
+    e.g. {results: [{item: sdb, stdout_lines: ["ra=4096", "sched=mq-deadline", "choices=4", "rot=1"]}]} -> {sdb:
+    {ra: "4096", sched: "mq-deadline", choices: "4", rot: "1"}}."""
     out = {}
     for r in loop_results(results):
         state = {}
@@ -50,7 +56,8 @@ def cassandra_disk_state(results):
 
 
 def cassandra_disk_lv_read_ahead(kb):
-    """LVM keeps its read-ahead in 512-byte sectors; 0 is "none"."""
+    """LVM keeps its read-ahead in 512-byte sectors; 0 is "none".
+    Input: KB; output: str. e.g. 4 -> "8"; "128" -> "256"; 0 -> "none"."""
     sectors = int(kb) * 2
     return str(sectors) if sectors else "none"
 
@@ -66,7 +73,9 @@ def cassandra_disk_changes(devices, state, read_back, lvm=True):
     """What is to change on the devices to tune: [{kname, what (lvm, ra or
     scheduler), item, before, after}], also the change report's items.
     read_back: the read-ahead in KB as the kernel keeps it (whole pages);
-    lvm: LVM volumes are set with lvchange."""
+    lvm: LVM volumes are set with lvchange.
+    e.g. ([{kname: sdb, kind: disk, label: sdb}], {sdb: {ra: "4096", rot: "1"}}, 4) -> [{kname: "sdb", what: "ra",
+    item: "read_ahead_kb sdb", before: "4096", after: "4", report: True}] (rotational: its scheduler kept)."""
     out = []
     read_back = int(read_back)
     for d in devices or []:
@@ -94,7 +103,11 @@ def cassandra_disk_udev_rules(devices, state, udev_info, readahead_kb, by_lvm=No
     scheduler to choose (multipath). A device with no stable id gets a comment, no rule. Paths of
     a multipath device sharing one id give one rule. by_name: see udev_match.
     A device-mapper device is left alone while suspended (a scheduler
-    written then would block until it resumes), as 10-dm.rules asks."""
+    written then would block until it resumes), as 10-dm.rules asks.
+    Output: [str]. e.g. ([sdb, a disk], {sdb: {...}}, <its udevadm info: ID_SERIAL=36000c29a>, 4) ->
+    ['ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_SERIAL}=="36000c29a",
+    ATTR{queue/read_ahead_kb}="4"', '... ENV{ID_SERIAL}=="36000c29a", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"'];
+    no stable id -> ["# sdb: no stable id to match it by, not kept across reboots"]."""
     props = dict((r.get("item"), dict(line.split("=", 1) for line in r.get("stdout_lines") or [] if "=" in line))
                  for r in loop_results(udev_info))
     lines, by_lvm = [], by_lvm or []
@@ -346,7 +359,10 @@ def cassandra_disk_tuned_profile(lines, devices, state, udev_info, kb):
     it), lines}. tuned merges the profiles it runs; this one
     adds a [disk] instance of a lower priority number (tuned gives each
     device to the first instance that matches it) that takes the Cassandra
-    devices, matched by their stable udev ids, and sets nothing on them."""
+    devices, matched by their stable udev ids, and sets nothing on them.
+    e.g. (that tuned, [sdb], ..., 4) -> {name: "cassandra-disks", base: ["virtual-guest"], active: ["virtual-guest"],
+    profiles: ["virtual-guest", "cassandra-disks"], unmatched: [], lines: [..., "[cassandra_disks]", "type=disk",
+    "priority=-100", "dynamic=0", "devices_udev_regex=^(ID_SERIAL=36000c29a)$"]}."""
     return _tuned(lines, devices, state, udev_info, kb)["profile"]
 
 
@@ -354,7 +370,11 @@ def cassandra_disk_tuned_conflict(lines, kb, devices=None, state=None, udev_info
     """A warning when the active tuned profile(s) set another read-ahead (or
     a scheduler) on a Cassandra device: "" otherwise, or when the role takes
     care of it (managed: cassandra_linux_tuned_manage; live: the role applies
-    settings live, cassandra_linux_apply_live)."""
+    settings live, cassandra_linux_apply_live).
+    Output: str. e.g. (virtual-guest active, its throughput-performance [disk] readahead=>4096; 4, [sdb], ...) ->
+    "WARNING - the active tuned profile (virtual-guest: [disk] readahead=>4096) sets sdb, and the other devices its [disk]
+    section takes, to a read-ahead of 4096 KB when tuned starts (at boot) or sees a new device, instead of the 4 KB set
+    here. cassandra_linux_tuned_manage: true keeps them off the Cassandra devices."; kb=8192 -> ""."""
     if devices is None:
         devices = [{"kname": "sdx", "kind": "disk", "label": "the disks"}]
     t = _tuned(lines, devices, state or {}, udev_info, kb)
@@ -435,7 +455,9 @@ def cassandra_disk_summary(nodes, check=False, verbose=False, said=None):
     what is worth knowing about each) and the notes. Then the lines to act
     on, each once with its nodes: what is not tuned yet (indented), and the
     problems (WARNING - ..., a blank line apart). said: {node: [warnings
-    said already]}, left out (apply_config's plan said them)."""
+    said already]}, left out (apply_config's plan said them).
+    Output: [str]. e.g. two nodes already set, the same stack -> ["Data disks: read-ahead 4 KB, already set (nothing
+    changed)", "  node1, node2:", "    /data/c/dev/{data,commitlog} \u2192 datavg-lv_data \u2192 sdb"]."""
     nodes = [n for n in nodes or [] if isinstance(n, dict) and n.get("name")]
     if not nodes:
         return []
