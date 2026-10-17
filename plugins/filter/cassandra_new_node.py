@@ -149,11 +149,6 @@ def cassandra_new_node_dirs(dirs, mounts, fstab="", unit_files="", found=None, m
     return result
 
 
-def parse_load(load):
-    """nodetool status Load ('66.2 KiB', '1.5 TiB', '1,5 GiB' in some locales) -> bytes, None when unknown."""
-    return parse_size(load)
-
-
 def cassandra_new_node_load(cluster_status, dc, rack, free, address=""):
     """cluster_status: cassandra_status result's; free: bytes free for the
     data directories. Warns when the nodes of the same rack (else datacenter)
@@ -163,7 +158,7 @@ def cassandra_new_node_load(cluster_status, dc, rack, free, address=""):
     nodes = [n for n in (cluster_status or {}).get(dc, {}).get("nodes", []) if n.get("address") != address]
     same_rack = [n for n in nodes if n.get("rack") == rack]
     group, where = (same_rack, "rack %s (%s)" % (rack, dc)) if same_rack else (nodes, "datacenter %s" % dc)
-    loads = [x for x in (parse_load(n.get("load")) for n in group) if x is not None]
+    loads = [x for x in (parse_size(n.get("load")) for n in group) if x is not None]
     if not loads:
         return _result(info=["no load known for the nodes of %s" % where])
     avg = sum(loads) / len(loads)
