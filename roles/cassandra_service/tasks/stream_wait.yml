@@ -37,33 +37,10 @@
 - name: Stop when it failed or stopped moving
   ansible.builtin.fail:
     msg: >-
-      {{ inventory_hostname }}, {{ _cassandra_stream_what }}:
-      {%- if _cassandra_stream_status == 'job_failed' %}
-      failed: {{ [_cassandra_stream_job_result.msg | default('')] | flatten | join(' ') }} {{ _cassandra_stream_job_result.stderr | default('') }}
-      {%- elif _cassandra_stream_status == 'job_lost' %}
-      the job running it can't be read ({{ _cassandra_stream_job_result.msg | default('') }}): check the node (nodetool netstats, system.log).
-      {%- elif _cassandra_stream_status == 'join_failed' %}
-      the bootstrap failed (Mode JOINING_FAILED): see why in its system.log.{{ (' ' ~ _cassandra_stream_advice) if _cassandra_stream_advice | default('') else '' }}
-      {%- elif _cassandra_stream_status == 'leave_failed' %}
-      the decommission failed (Mode DECOMMISSION_FAILED): see why in its system.log. Once fixed, nodetool decommission{{
-      ' --force' if cassandra_decommission_force | default(false) | bool else '' }} on it resumes it (the ranges already
-      streamed are skipped), or restart Cassandra on it to cancel it (it comes back UN).
-      {%- elif _cassandra_stream_status == 'stopped' %}
-      Cassandra stopped during the {{ _cassandra_stream_what }}: see why in its system.log.{{ (' ' ~ _cassandra_stream_advice) if _cassandra_stream_advice | default('') else '' }}
-      {%- elif _cassandra_stream_status == 'jmx_refused' %}
-      JMX login refused on {{ _cassandra_stream_refused | map(attribute='host') | join(', ') }}: check
-      cassandra_jmx_username/password (or cassandra_jmx_password_file) for {{ 'it' if _cassandra_stream_refused | length == 1 else 'them' }}
-      (nodetool: {{ (_cassandra_stream_refused | first).error }}). Nothing was stopped: the {{ _cassandra_stream_what }} goes on
-      by itself; once fixed, run the playbook again to follow it.
-      {%- elif _cassandra_stream_status == 'stalled' %}
-      no streaming progress for {{ _cassandra_stream_state.idle | default(0) | community.cassandra.cassandra_duration(true) }}
-      (cassandra_stream_stall_time {{ cassandra_stream_stall_time }}s). Nothing was
-      stopped: {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
-      {%- else %}
-      still going after {{ cassandra_stream_max_time }}s (cassandra_stream_max_time). Nothing was stopped:
-      {{ _cassandra_stream_advice | default('check nodetool netstats and system.log on the nodes.') }}
-      {%- endif %}
-      {%- if _cassandra_stream_status != 'jmx_refused' %}
-      Last progress: {{ _cassandra_stream_report | first }}
-      {%- endif %}
+      {{ _cassandra_stream_status | community.cassandra.cassandra_stream_failure(
+           inventory_hostname, _cassandra_stream_what, job=_cassandra_stream_job_result | default({}),
+           advice=_cassandra_stream_advice | default(none), force=cassandra_decommission_force | default(false) | bool,
+           refused=_cassandra_stream_refused | default([]), idle=_cassandra_stream_state.idle | default(0),
+           stall_time=cassandra_stream_stall_time, max_time=cassandra_stream_max_time,
+           last=_cassandra_stream_report | default([]) | first | default('')) }}
   when: _cassandra_stream_status not in ['done', 'going']
