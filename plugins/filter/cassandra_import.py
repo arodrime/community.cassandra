@@ -1029,9 +1029,86 @@ class _Shown(str):
         return [line.shown if isinstance(line, _Shown) else shown for line, shown in zip(lines, out.mask_lines(lines))]
 
 
+def _properties_leftovers(name, rendered, live_text):
+    """A key=value file: only the settings count, not comments, blank lines or order -> (hand: each setting that
+    differs, its values masked; normalized: the file rewritten with the same settings)."""
+    hand, normalized = [], []
+    role_kv, node_kv = _properties(rendered), _properties(live_text.split("\n"))
+    for key in sorted(set(role_kv) | set(node_kv)):
+        if role_kv.get(key) != node_kv.get(key):
+            hand.append("%s: %s" % (name, key))
+            hand += ["  - %s=%s" % (key, out.MASK if _secret(key, role_kv[key]) else _mask(role_kv[key]))] \
+                if key in role_kv else []
+            hand += ["  + %s=%s" % (key, out.MASK if _secret(key, node_kv[key]) else _mask(node_kv[key]))] \
+                if key in node_kv else []
+    if role_kv == node_kv and rendered != live_text.split("\n"):
+        normalized.append("%s: same settings, comments and layout rewritten" % name)
+    return hand, normalized
+
+
+def _yaml_compared(series, rendered, live, extras, rejected):
+    """cassandra.yaml's lines to compare: without the settings the stock file has no line for, the keys under their
+    former names, the extra settings and the keys rejected (masked first) -> (rendered, live, normalized: notes)."""
+    normalized = []
+    rendered, live, notes = _without_declared(series, rendered, live)
+    normalized += notes
+    rendered, live, notes = _without_former_names(rendered, live)
+    normalized += notes
+    if extras or rejected:
+        # masked before the lines of those keys go: a secret's value may go on past the lines dropped
+        rendered, live = _without_extras(_Shown.lines(rendered), _Shown.lines(live), extras, rejected)
+        sections = _extra_sections()
+        normalized += ["cassandra.yaml: %s kept with cassandra_extra_settings (written %s)" % (
+            k, "in its section" if k in sections else "at the end of the file") for k in sorted(extras)]
+    return rendered, live, normalized
+
+
+def _file_ops(name, rendered, live):
+    """The differences of a file's lines from the rendering (difflib opcodes), a JVM options file's options moved
+    only left out -> (opcodes, normalized: notes)."""
+    ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
+    moved = [op for op in ops if op[0] != "equal"
+             and _same_settings(name, rendered[op[1]:op[2]], live[op[3]:op[4]]) is None]
+    if name.endswith(".options") and moved and \
+            jvm_options_settings("\n".join(rendered)) == jvm_options_settings("\n".join(live)):
+        # the same options, a line at another place (the last of an option counts): cassandra_config
+        # leaves such a file as it is
+        return [op for op in ops if op not in moved], [
+            "%s: the same options, some at another place: left as it is (cassandra_config_normalize: true"
+            " rewrites it)" % name]
+    return ops, []
+
+
+def _difference_lines(name, rendered, live, ops):
+    """Each difference of a file: the same settings written another way (normalized, its comment lines counted),
+    else a hand edit, its lines masked as in the whole file -> (hand, normalized, comments: (file, line, node's
+    lines, role's lines))."""
+    hand, normalized, comments = [], [], []
+    # shown masked as in the whole file: a line of a secret's value (a YAML block, a quote left open) is
+    # masked even when its key is not in the lines that differ
+    shown_rendered, shown_live = _Shown.masked(rendered), _Shown.masked(live)
+    for op, i1, i2, j1, j2 in ops:
+        if op == "equal":
+            continue
+        pairs = _same_settings(name, rendered[i1:i2], live[j1:j2])
+        if pairs is not None:
+            at_r = _in_order(rendered[i1:i2], [r for r, n in pairs])
+            at_n = _in_order(live[j1:j2], [n for r, n in pairs])
+            normalized += ["%s: %s  (node: %s)" % (name, shown_rendered[i1 + r].strip(), shown_live[j1 + n].strip())
+                           for r, n in zip(at_r, at_n)]
+            if (i2 - i1) + (j2 - j1) > 2 * len(pairs):
+                # comment lines too, e.g. the stock comments of the release the file came from
+                comments.append((name, j1 + 1, j2 - j1, i2 - i1))
+            continue
+        hand.append("%s, line %d:" % (name, j1 + 1))
+        hand += ["  - " + line for line in shown_rendered[i1:i2]] + ["  + " + line for line in shown_live[j1:j2]]
+    return hand, normalized, comments
+
+
 def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
-    """rejected: the cassandra.yaml keys its Cassandra rejects; skip: files not compared here (the JVM's, its
-    arguments shown to be the same)."""
+    """What the role would still change in the node's files, rendered with ctx: rejected: the cassandra.yaml keys
+    its Cassandra rejects; skip: files not compared here (the JVM's, its arguments shown to be the same) -> (hand
+    edits, normalized lines, comment lines)."""
     hand, normalized, comments = [], [], []
     extras = ctx.get("cassandra_extra_settings") or {}
     for name in files:
@@ -1039,17 +1116,9 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
             continue
         rendered = _render(env, series, name, ctx)[1]
         if name.endswith(".properties"):
-            # key=value files: only the settings count, not comments, blank lines or order
-            role_kv, node_kv = _properties(rendered), _properties(live_files[name].split("\n"))
-            for key in sorted(set(role_kv) | set(node_kv)):
-                if role_kv.get(key) != node_kv.get(key):
-                    hand.append("%s: %s" % (name, key))
-                    hand += ["  - %s=%s" % (key, out.MASK if _secret(key, role_kv[key]) else _mask(role_kv[key]))] \
-                        if key in role_kv else []
-                    hand += ["  + %s=%s" % (key, out.MASK if _secret(key, node_kv[key]) else _mask(node_kv[key]))] \
-                        if key in node_kv else []
-            if role_kv == node_kv and rendered != live_files[name].split("\n"):
-                normalized.append("%s: same settings, comments and layout rewritten" % name)
+            more_hand, more_normalized = _properties_leftovers(name, rendered, live_files[name])
+            hand += more_hand
+            normalized += more_normalized
             continue
         if name.endswith(".xml") and _same_xml(live_files[name], "\n".join(rendered)):
             # logback.xml: its elements and attributes the same, comments and layout aside (as logback reads it)
@@ -1058,46 +1127,16 @@ def _leftovers(env, series, files, ctx, live_files, rejected=(), skip=()):
             continue
         live = _align(rendered, live_files[name].split("\n"))
         if name == "cassandra.yaml":
-            rendered, live, notes = _without_declared(series, rendered, live)
+            rendered, live, notes = _yaml_compared(series, rendered, live, extras, rejected)
             normalized += notes
-            rendered, live, notes = _without_former_names(rendered, live)
-            normalized += notes
-        if name == "cassandra.yaml" and (extras or rejected):
-            # masked before the lines of those keys go: a secret's value may go on past the lines dropped
-            rendered, live = _without_extras(_Shown.lines(rendered), _Shown.lines(live), extras, rejected)
-            sections = _extra_sections()
-            normalized += ["cassandra.yaml: %s kept with cassandra_extra_settings (written %s)" % (
-                k, "in its section" if k in sections else "at the end of the file") for k in sorted(extras)]
-        ops = difflib.SequenceMatcher(None, rendered, live, autojunk=False).get_opcodes()
-        moved = [op for op in ops if op[0] != "equal"
-                 and _same_settings(name, rendered[op[1]:op[2]], live[op[3]:op[4]]) is None]
-        if name.endswith(".options") and moved and \
-                jvm_options_settings("\n".join(rendered)) == jvm_options_settings("\n".join(live)):
-            # the same options, a line at another place (the last of an option counts): cassandra_config
-            # leaves such a file as it is
-            ops = [op for op in ops if op not in moved]
-            normalized.append("%s: the same options, some at another place: left as it is (cassandra_config_normalize: true"
-                              " rewrites it)" % name)
+        ops, notes = _file_ops(name, rendered, live)
+        normalized += notes
         if all(op == "equal" for op, i1, i2, j1, j2 in ops):
             continue
-        # shown masked as in the whole file: a line of a secret's value (a YAML block, a quote left open) is
-        # masked even when its key is not in the lines that differ
-        shown_rendered, shown_live = _Shown.masked(rendered), _Shown.masked(live)
-        for op, i1, i2, j1, j2 in ops:
-            if op == "equal":
-                continue
-            pairs = _same_settings(name, rendered[i1:i2], live[j1:j2])
-            if pairs is not None:
-                at_r = _in_order(rendered[i1:i2], [r for r, n in pairs])
-                at_n = _in_order(live[j1:j2], [n for r, n in pairs])
-                normalized += ["%s: %s  (node: %s)" % (name, shown_rendered[i1 + r].strip(), shown_live[j1 + n].strip())
-                               for r, n in zip(at_r, at_n)]
-                if (i2 - i1) + (j2 - j1) > 2 * len(pairs):
-                    # comment lines too, e.g. the stock comments of the release the file came from
-                    comments.append((name, j1 + 1, j2 - j1, i2 - i1))
-                continue
-            hand.append("%s, line %d:" % (name, j1 + 1))
-            hand += ["  - " + line for line in shown_rendered[i1:i2]] + ["  + " + line for line in shown_live[j1:j2]]
+        more_hand, more_normalized, more_comments = _difference_lines(name, rendered, live, ops)
+        hand += more_hand
+        normalized += more_normalized
+        comments += more_comments
     return hand, normalized, _comment_lines(comments)
 
 
