@@ -232,7 +232,9 @@ def cassandra_token_assign(nodes, partitioner, keyspaces=None, default_rf=DEFAUL
     nodes in it keep the token they have. The others get the plan only when
     every running node has the token the plan gives it (a create that stopped
     half way); otherwise the cluster exists and they are for add_node.
-    Returns {'tokens': {name: token} to give, 'lines', 'problems', 'warnings'}."""
+    Returns {'tokens': {name: token} to give, 'lines', 'problems', 'warnings'}.
+    e.g. (three nodes of dc1, no token, Murmur3Partitioner) -> {tokens: {node1: "-9223372036854775808", node2:
+    "-3074457345618258603", node3: "3074457345618258602"}, lines: [the ring table], problems: [], warnings: []}."""
     first, size = partitioner_range(partitioner)
     hosts = _addresses(hosts, ring)
     dcs = sorted(set(n["dc"] for n in nodes))
@@ -423,7 +425,10 @@ def cassandra_token_add_plan(ring, new_nodes, partitioner, keyspaces=None, defau
     hosts: {address: inventory name}.
     Returns {'bisect': {name: token}, 'balanced': {name: token}, 'moves':
     [{'name', 'dc', 'from', 'to'}] (balanced), 'balanced_problems', 'even':
-    {'bisect': bool, 'balanced': bool}, 'lines', 'problems', 'warnings'}."""
+    {'bisect': bool, 'balanced': bool}, 'lines', 'problems', 'warnings'}.
+    e.g. (node1 at -9223372036854775808, node2 at 0; node3 to add) -> {bisect: {node3: "-4611686018427387904"},
+    balanced: {node3: "-3074457345618258603"}, moves: [{name: node2, dc: dc1, from: "0", to: "3074457345618258602"}],
+    even: {bisect: True, balanced: True}, ...}."""
     first, size = partitioner_range(partitioner)
     hosts = _addresses(hosts, ring)
     in_ring = set(_ip(n["address"]) for dc in (ring or {}) for n in ring[dc])
@@ -601,7 +606,11 @@ def cassandra_token_move_plan(ring, partitioner, keyspaces=None, default_rf=DEFA
     another one still holds.
     Returns {'steps': [{'name', 'address', 'dc', 'from', 'to', 'gain': {name:
     share}, 'loss': {name: share}, 'gain_bytes': {name: bytes or None}}],
-    'cleanup': [names that lose ranges], 'lines', 'problems', 'warnings'}."""
+    'cleanup': [names that lose ranges], 'lines', 'problems', 'warnings'}.
+    e.g. (node1 at -9223372036854775808, node2 at 1000, node3 at 3074457345618258602; RF 1) -> {steps: [{name:
+    node2, from: "1000", to: "-3074457345618258603", gain: {node3: 0.1667}, ...}], cleanup: ["node2"], lines: [...,
+    "Moves, one at a time, in this order:", "  1. node2 (dc1): 1000 -> -3074457345618258603; streamed to node3 16.67%",
+    "Then a cleanup on the nodes that lose ranges: node2"], ...}."""
     first, size = partitioner_range(partitioner)
     hosts = _addresses(hosts, ring)
     names = dict((_node_name(hosts, n), _ip(n["address"])) for dc in (ring or {}) for n in ring[dc])
@@ -660,7 +669,10 @@ def cassandra_token_disk_problems(step, disks, min_free_percent=20):
     bytes, 'total': bytes}} of the data directories' file systems, or {name:
     {'paths': data directories, 'mounts': ansible_facts mounts}}. A node that
     receives data must keep min_free_percent of its disk free afterwards (it
-    keeps the ranges it gives away until a cleanup)."""
+    keeps the ranges it gives away until a cleanup).
+    Output: [str], [] when every node keeps enough free. e.g. ({name: node2, gain_bytes: {node3: 90 GiB}},
+    {node3: {free: 100 GiB, total: 200 GiB}}) -> ["node3 gets about 90.0 GiB from moving node2, it has 100.0 GiB free of
+    200.0 GiB: less than 20% would be left free (cassandra_move_min_free_percent)"]."""
     problems = []
     for name, size in sorted((step.get("gain_bytes") or {}).items()):
         disk = _disk((disks or {}).get(name))
