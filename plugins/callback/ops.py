@@ -512,6 +512,19 @@ class CallbackModule(DefaultCallback):
         elif self._gap or phase:
             self._line("")
         self._gap = False
+        self._print_lines(texts, first, headed, recap, color, info)
+        if ring:
+            self._rule(heavy=True)
+            for line in ring:
+                self._line(line, color=color or colour(line, None, self._progress, self._warning))
+        if recap or ring:
+            self._rule(heavy=True)
+        elif phase:
+            self._gap = True
+
+    def _print_lines(self, texts, first, headed, recap, color, info):
+        """A message's lines, each in its colour (its own mark, else the one of the less indented line above it);
+        in a screen (headed) or a recap, a rule between its blocks, and under a plan's first line."""
         shades = []  # (indent, colour) of the lines above, each less indented than the next
         for i, line in enumerate(texts):
             if (headed or recap) and not line:  # a blank line between paragraphs (not "") stays blank
@@ -532,14 +545,6 @@ class CallbackModule(DefaultCallback):
             if headed and first.startswith("PLAN") and i == texts.index(first) and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line
                 shades = []
-        if ring:
-            self._rule(heavy=True)
-            for line in ring:
-                self._line(line, color=color or colour(line, None, self._progress, self._warning))
-        if recap or ring:
-            self._rule(heavy=True)
-        elif phase:
-            self._gap = True
 
     def _shown(self):
         """Something else printed a line: a blank line may follow."""
