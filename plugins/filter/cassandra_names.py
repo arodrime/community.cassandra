@@ -22,6 +22,7 @@ import re
 import yaml
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 
 _ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "roles")
 _PLAYBOOKS = os.path.join(os.path.dirname(__file__), "..", "..", "playbooks")
@@ -51,9 +52,8 @@ def _role_variables():
             specs = (yaml.safe_load(f) or {}).get("argument_specs") or {}
         for entry in specs.values():
             names.update((entry or {}).get("options") or {})
-    for path in glob.glob(os.path.join(_ROLES, "*", "defaults", "main.yml")):
-        with open(path, encoding="utf-8") as f:
-            names.update(yaml.safe_load(f) or {})
+    for role in roles_with_defaults():
+        names.update(role_file(role) or {})
     return frozenset(names)
 
 
@@ -62,7 +62,7 @@ def cassandra_close_names(names, known, cutoff=0.9):
     the known name it is close to} for the names that are neither known nor
     a variable of the collection's roles (cassandra_rpc_address is not a
     misspelt cassandra_replace_address).
-    Example: ["cassandra_heap_sise"], [] ->
+    Example: ["cassandra_heap_sise"], ["cassandra_heap_size"] ->
     {"cassandra_heap_sise": "cassandra_heap_size"}."""
     close = {}
     ours = _role_variables()
