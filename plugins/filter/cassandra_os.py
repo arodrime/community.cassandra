@@ -493,34 +493,10 @@ def _disks(recs, wanted):
     found = plan(text, mounts, lvs=lvs)
     lines += ["disks: %s" % s for s in found["stacks"] + found["warnings"] + found["info"] + found["notes"]]
     for d in found["devices"]:
-        ra, rot, sched = d["ra"], d["rota"], d["sched"]
-        live.append(ra)
-        role_sched = "none" if rot == "0" else None
-        line = "%s %s (%s, %s): read_ahead_kb %s%s, scheduler %s%s" % (
-            "disk" if d["kind"] == "disk" else "device", d["label"], d["where"], "SSD" if rot == "0" else "rotational",
-            ra or "?", _vs(ra, role_ra, "cassandra_linux"),
-            sched or "none", _vs(sched, role_sched, "cassandra_linux") if role_sched else "")
-        if d["kind"] == "lvm":
-            want = int(role_ra) * 2 if role_ra is not None else None
-            line += ", LVM read-ahead %s%s" % (
-                d["lv_read_ahead"], _vs(d["lv_read_ahead"], want, "cassandra_linux") if want is not None else "")
-        lines.append(line)
-    rules, owners = {}, _owners(recs)
-    masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/udev/" in rest}
-    for kind, rest in recs:
-        if kind != "udev":
-            continue
-        path, line = _fields(rest, 2)
-        if os.path.basename(path) in masked:
-            continue
-        values = [int(v) for v in READAHEAD.findall(line)] + [int(v) // 2 for v in SETRA.findall(line)]
-        scheds = SCHEDULER.findall(line)
-        what = ", ".join(["read_ahead_kb %d%s" % (v, _vs(v, role_ra, "cassandra_linux")) for v in values]
-                         + ["scheduler %s" % s for s in scheds])
-        if what:
-            lines.append("udev %s: %s  [%s]" % (_label(path, owners), what, line.strip()))
-            if _admin(path, owners):
-                rules.setdefault(path, set()).update(values)
+        live.append(d["ra"])
+        lines.append(_device_line(d, role_ra))
+    udev_lines, rules = _udev_rules(recs, role_ra)
+    lines += udev_lines
     out, notes = {}, []
     values = set().union(*rules.values()) if rules else set()
     own_rule = next((rules[r] for r in OWN_UDEV_RULES if r in rules), None) \
@@ -549,6 +525,43 @@ def _disks(recs, wanted):
             notes.append("cassandra_data_disk_tuning: false on this node (host_vars), its data devices left as they are"
                          " (cassandra_linux would change %s): remove it to have them tuned" % "; ".join(changes))
     return lines, out, notes
+
+
+def _device_line(d, role_ra):
+    """A tuned device of plan()'s as it is now: read-ahead, scheduler, LVM read-ahead, against the role's."""
+    ra, rot, sched = d["ra"], d["rota"], d["sched"]
+    role_sched = "none" if rot == "0" else None
+    line = "%s %s (%s, %s): read_ahead_kb %s%s, scheduler %s%s" % (
+        "disk" if d["kind"] == "disk" else "device", d["label"], d["where"], "SSD" if rot == "0" else "rotational",
+        ra or "?", _vs(ra, role_ra, "cassandra_linux"),
+        sched or "none", _vs(sched, role_sched, "cassandra_linux") if role_sched else "")
+    if d["kind"] == "lvm":
+        want = int(role_ra) * 2 if role_ra is not None else None
+        line += ", LVM read-ahead %s%s" % (
+            d["lv_read_ahead"], _vs(d["lv_read_ahead"], want, "cassandra_linux") if want is not None else "")
+    return line
+
+
+def _udev_rules(recs, role_ra):
+    """The udev rules setting a read-ahead or a scheduler (a masked one left out) -> (their lines, {the admin's
+    rule file: the read-aheads it sets})."""
+    lines, rules, owners = [], {}, _owners(recs)
+    masked = {os.path.basename(rest) for kind, rest in recs if kind == "masked" and "/udev/" in rest}
+    for kind, rest in recs:
+        if kind != "udev":
+            continue
+        path, line = _fields(rest, 2)
+        if os.path.basename(path) in masked:
+            continue
+        values = [int(v) for v in READAHEAD.findall(line)] + [int(v) // 2 for v in SETRA.findall(line)]
+        scheds = SCHEDULER.findall(line)
+        what = ", ".join(["read_ahead_kb %d%s" % (v, _vs(v, role_ra, "cassandra_linux")) for v in values]
+                         + ["scheduler %s" % s for s in scheds])
+        if what:
+            lines.append("udev %s: %s  [%s]" % (_label(path, owners), what, line.strip()))
+            if _admin(path, owners):
+                rules.setdefault(path, set()).update(values)
+    return lines, rules
 
 
 def _disk_changes(recs, devices, kb):
