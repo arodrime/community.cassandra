@@ -185,7 +185,7 @@ def _same(given, env, groups, cluster_name):
     try:
         other = _named(env, groups, cluster_name)
     except ValueError as exc:
-        other, why = None, str(exc).split("\n")[0].replace("REFUSED  ", "")
+        other, why = None, str(exc).split("\n", maxsplit=1)[0].replace("REFUSED  ", "")
     if other == given:
         return
     said = ("it names the group %s" % other if other == env else "it is the cluster of the group %s" % other) if other \

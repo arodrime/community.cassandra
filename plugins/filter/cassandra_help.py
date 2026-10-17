@@ -439,8 +439,8 @@ def _command(op, model, cluster, cwd, extra=(), markdown=False):
             elif option == "-K":
                 user.append(option)
         if not cluster.hosts:  # no cluster named: one of its nodes, a dir of its own
-            return " ".join(["ansible-playbook", "-i NODE,"] + user + ["community.cassandra.import_cluster",
-                                                                     "-e import_cluster_dir=NEW_DIR"])
+            return " ".join(["ansible-playbook", "-i NODE,"] + user
+                            + ["community.cassandra.import_cluster", "-e import_cluster_dir=NEW_DIR"])
         # the inventory's connection settings and JMX login: -i ADDRESS, reads none of them
         # (ansible_ssh_common_args, a bastion: from ansible.cfg only)
         host = (cluster.present or cluster.hosts)[0]
