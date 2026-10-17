@@ -92,13 +92,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats as parse_sessions
-
-
-def parse_netstats(stdout):
-    """mode, and the stream session lines between the mode line and the read repair statistics."""
-    mode, streams, dummy = parse_sessions(stdout)
-    return mode, streams
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 
 
 def main():
@@ -122,7 +116,7 @@ def main():
         # stderr tells a stopped node (Connection refused) from others
         module.fail_json(name=cmd, msg="netstats command failed", **dict(result, stderr=err))
 
-    mode, streams, sessions = parse_sessions(out)
+    mode, streams, sessions = parse_netstats(out)
     result['stdout'] = out
     result['mode'] = mode
     result['streams'] = streams

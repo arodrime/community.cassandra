@@ -6,7 +6,7 @@ import os
 import pytest
 
 from ansible_collections.community.cassandra.plugins.modules import cassandra_netstats
-from ansible_collections.community.cassandra.plugins.modules.cassandra_netstats import parse_netstats
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_netstats import parse_netstats
 
 try:
     from unittest.mock import patch
@@ -82,18 +82,18 @@ def run_main(out, rc=0, err='', debug=False):
 
 
 def test_parse_normal_not_streaming():
-    assert parse_netstats(load_fixture("nodetool_netstats_normal.txt")) == ("NORMAL", [])
+    assert parse_netstats(load_fixture("nodetool_netstats_normal.txt"))[:2] == ("NORMAL", [])
 
 
 def test_parse_joining_streaming():
-    mode, streams = parse_netstats(load_fixture("nodetool_netstats_joining.txt"))
+    mode, streams = parse_netstats(load_fixture("nodetool_netstats_joining.txt"))[:2]
     assert mode == "JOINING"
     assert streams[0].startswith("Bootstrap ")
     assert len(streams) == 4
 
 
 def test_parse_node_down_output():
-    assert parse_netstats("") == ("", [])
+    assert parse_netstats("")[:2] == ("", [])
 
 
 def test_normal():
