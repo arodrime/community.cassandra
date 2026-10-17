@@ -2144,29 +2144,26 @@ def hand_edits_kept(node):
     return kept, edits
 
 
-@values_hidden
-def cassandra_inventory_layout(nodes, cluster_name):
-    """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
-    vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
-    'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead."""
-    cluster = _slug(cluster_name)
-    names = [n["name"] for n in nodes]
-    shared = sorted({name for name in names if names.count(name) > 1})
-    nodes = [dict(n, name=n.get("address") or n["name"]) if n["name"] in shared else n for n in nodes]
+def _cluster_group(cluster, dummy):
+    """The cluster's group (whatever the node) -> its name."""
+    return cluster
 
-    def clusterg(dummy):
-        return cluster
 
-    def dcg(n):
-        return "%s_%s" % (cluster, _slug(n["dc"]))
+def _dc_group(cluster, n):
+    """The group of node n's DC -> its name (<cluster>_<dc>)."""
+    return "%s_%s" % (cluster, _slug(n["dc"]))
 
-    def rackg(n):
-        return "%s_%s" % (dcg(n), _slug(n["rack"]))
 
-    levels = [clusterg, dcg, rackg]
+def _rack_group(cluster, n):
+    """The group of node n's rack -> its name (<cluster>_<dc>_<rack>)."""
+    return "%s_%s" % (_dc_group(cluster, n), _slug(n["rack"]))
 
+
+def _hosts_tree(nodes, cluster, dcg, rackg):
+    """The hosts file's data: the cluster's group, a group per DC, one per rack under it, the nodes in their rack
+    (their ansible_host) -> (hosts, group_vars: {group: {variable: value}} with each DC's and rack's)."""
     hosts = {"all": {"children": {cluster: {"children": {}}}}}
-    group_vars, host_vars = {cluster: {}}, {}
+    group_vars = {cluster: {}}
     for n in sorted(nodes, key=lambda n: (n["dc"], n["rack"], n["name"])):
         dcs = hosts["all"]["children"][cluster]["children"]
         racks = dcs.setdefault(dcg(n), {"children": {}})["children"]
@@ -2174,7 +2171,13 @@ def cassandra_inventory_layout(nodes, cluster_name):
         racks.setdefault(rackg(n), {"hosts": {}})["hosts"][n["name"]] = entry
         group_vars.setdefault(dcg(n), {})["cassandra_dc"] = n["dc"]
         group_vars.setdefault(rackg(n), {})["cassandra_rack"] = n["rack"]
+    return hosts, group_vars
 
+
+def _read_for_layout(nodes):
+    """The nodes read, their variables without rackdc's dc= and rack= where they are the ring's, Medusa's fqdn as a
+    domain when one rule gives every node its value -> (read, nodes (those read replaced by theirs), the nodes with
+    a Medusa fqdn, the domain or None)."""
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
     read = [dict(n, vars=_without_ring_rackdc(n)) for n in read]
     nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
@@ -2186,7 +2189,12 @@ def cassandra_inventory_layout(nodes, cluster_name):
         read = [dict(n, vars=dict([(k, v) for k, v in n["vars"].items() if k != "cassandra_medusa_fqdn"]
                                   + [("cassandra_medusa_fqdn_domain", domain)])) for n in read]
         nodes = [next((r for r in read if r["name"] == n["name"]), n) for n in nodes]
-    keys = sorted({k for n in read for k in n["vars"]} - {"cassandra_dc", "cassandra_rack"})
+    return read, nodes, medusa, domain
+
+
+def _name_templates(keys, read):
+    """The keys whose value comes from each node's name by one template: that template put in the nodes' variables
+    (in place) -> {key: template}."""
     templates = {}
     for key in keys:
         template = _name_template(key, [(n, n["vars"][key]) for n in read if key in n["vars"]])
@@ -2195,15 +2203,13 @@ def cassandra_inventory_layout(nodes, cluster_name):
             for n in read:
                 if key in n["vars"]:
                     n["vars"][key] = template
-    for key in [k for k in keys if k in NODE_LEVEL]:
-        for n in read:
-            if key in n["vars"]:
-                host_vars.setdefault(n["name"], {})[key] = n["vars"][key]
-    drift = [k for k in keys if k not in NODE_LEVEL and not _place(k, read, levels, group_vars, host_vars)
-             and k not in PER_NODE]
-    differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
-    differences += _differences(drift, read, dcg, rackg) or ["  none"]
+    return templates
 
+
+def _layout_notes(cluster_name, cluster, nodes, read, differences, host_vars, medusa, domain, templates, shared):
+    """The report's head: the cluster, its group, the differences between nodes, the secrets set per node, rackdc's
+    dc= and rack= kept, Medusa's fqdn, the values from each node's name, the names shared, the nodes not read ->
+    [line]."""
     report = ["Cluster %s: %d node(s), %d read" % (cluster_name, len(nodes), len(read)),
               "Inventory group: %s (the playbooks find it in an inventory of this cluster alone; with other clusters:"
               " -e cassandra_hosts=%s, or CASSANDRA_CLUSTER=%s)" % (cluster, cluster, cluster), ""]
@@ -2241,45 +2247,80 @@ def cassandra_inventory_layout(nodes, cluster_name):
         if left:
             report.append("  The roles leave their setup as it is (host_vars: %s false)" % ", ".join(left))
         report.append("")
+    return report
+
+
+def _node_report(n):
+    """A node read in the report: its notes, what the roles leave as it is on it, its hand edits (in files kept or
+    not), its comment lines, its lines the role writes another way -> [line]."""
+    report = ["== %s" % n["name"]]
+    report += ["  " + note for note in n.get("notes", [])]
+    other_way = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in SET_UP_BY_THE_ROLES)
+    if other_way:
+        report.append("  Set up another way, LEFT AS IT IS by the roles on this node (host_vars/%s/main.yml;"
+                      " remove a line to let the role take it over, after --check --diff; a host"
+                      " rebuilt under this name must lose them):" % n["name"])
+        report += ["    %s (%s: false)" % (KEEP[k], k) for k in KEEP if k in other_way]
+        report += ["    %s: %s, as this node has it" % (k, _show(k, v))
+                   for k, v in sorted(other_way.items()) if k not in KEEP]
+    for k in SET_UP_BY_THE_ROLES:
+        if k in (n.get("keep") or {}):
+            report.append("  Set up by the roles, LEFT AS IT IS on this node (host_vars/%s/main.yml): %s (%s: false;"
+                          " remove the line to have it done, after --check --diff)" % (n["name"], KEEP[k], k))
+    kept, edits = hand_edits_kept(n)
+    if kept:
+        report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
+                      " (cassandra_config_keep_files; nodes added later get the role's):")
+        report += ["    " + line for line in out.mask_hunks(kept)]
+    if edits:
+        report.append("  HAND EDITS no variable covers (cassandra_config would revert them):")
+        report += ["    " + line for line in out.mask_hunks(edits)]
+    if not n["hand_edits"]:
+        report.append("  No hand edit left: cassandra_config would not change the config.")
+    if n.get("comments"):
+        report.append("  Comments only, no setting (e.g. the stock comments of the release the file came from):"
+                      " no effect, kept unless the role rewrites the file for a setting:")
+        report += ["    " + line for line in n["comments"]]
+    if n["normalized"]:
+        report.append("  Same setting, written another way by the role (no effect; on a node that is not blank, a"
+                      " file whose settings are all the same is left as it is):")
+        report += ["    " + _mask(line) for line in n["normalized"]]
+    return report + [""]
+
+
+@values_hidden
+def cassandra_inventory_layout(nodes, cluster_name):
+    """nodes: [{name, address?, hostname?, dc, rack, ansible_host?, read: bool, reason?,
+    vars, hand_edits, normalized, comments?, notes}] -> {'cluster_group', 'cluster_name', 'hosts', 'group_vars', 'host_vars',
+    'differences', 'report', 'names' (address -> name in the hosts file)}. Nodes sharing a name are named by their address instead."""
+    cluster = _slug(cluster_name)
+    names = [n["name"] for n in nodes]
+    shared = sorted({name for name in names if names.count(name) > 1})
+    nodes = [dict(n, name=n.get("address") or n["name"]) if n["name"] in shared else n for n in nodes]
+    dcg, rackg = functools.partial(_dc_group, cluster), functools.partial(_rack_group, cluster)
+    levels = [functools.partial(_cluster_group, cluster), dcg, rackg]
+    hosts, group_vars = _hosts_tree(nodes, cluster, dcg, rackg)
+    host_vars = {}
+    read, nodes, medusa, domain = _read_for_layout(nodes)
+    keys = sorted({k for n in read for k in n["vars"]} - {"cassandra_dc", "cassandra_rack"})
+    templates = _name_templates(keys, read)
+    for key in [k for k in keys if k in NODE_LEVEL]:
+        for n in read:
+            if key in n["vars"]:
+                host_vars.setdefault(n["name"], {})[key] = n["vars"][key]
+    drift = [k for k in keys if k not in NODE_LEVEL and not _place(k, read, levels, group_vars, host_vars)
+             and k not in PER_NODE]
+    differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
+    differences += _differences(drift, read, dcg, rackg) or ["  none"]
+    report = _layout_notes(cluster_name, cluster, nodes, read, differences, host_vars, medusa, domain, templates,
+                           shared)
     for n in nodes:
         if n.get("keep"):
             host_vars.setdefault(n["name"], {}).update(n["keep"])
         if any(k in IMPORTED_FOR for k in n.get("keep") or {}):
             host_vars[n["name"]][IMPORTED] = True
     for n in read:
-        report.append("== %s" % n["name"])
-        report += ["  " + note for note in n.get("notes", [])]
-        other_way = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in SET_UP_BY_THE_ROLES)
-        if other_way:
-            report.append("  Set up another way, LEFT AS IT IS by the roles on this node (host_vars/%s/main.yml;"
-                          " remove a line to let the role take it over, after --check --diff; a host"
-                          " rebuilt under this name must lose them):" % n["name"])
-            report += ["    %s (%s: false)" % (KEEP[k], k) for k in KEEP if k in other_way]
-            report += ["    %s: %s, as this node has it" % (k, _show(k, v))
-                       for k, v in sorted(other_way.items()) if k not in KEEP]
-        for k in SET_UP_BY_THE_ROLES:
-            if k in (n.get("keep") or {}):
-                report.append("  Set up by the roles, LEFT AS IT IS on this node (host_vars/%s/main.yml): %s (%s: false;"
-                              " remove the line to have it done, after --check --diff)" % (n["name"], KEEP[k], k))
-        kept, edits = hand_edits_kept(n)
-        if kept:
-            report.append("  HAND EDITS no variable covers, in files LEFT AS THEY ARE on this node"
-                          " (cassandra_config_keep_files; nodes added later get the role's):")
-            report += ["    " + line for line in out.mask_hunks(kept)]
-        if edits:
-            report.append("  HAND EDITS no variable covers (cassandra_config would revert them):")
-            report += ["    " + line for line in out.mask_hunks(edits)]
-        if not n["hand_edits"]:
-            report.append("  No hand edit left: cassandra_config would not change the config.")
-        if n.get("comments"):
-            report.append("  Comments only, no setting (e.g. the stock comments of the release the file came from):"
-                          " no effect, kept unless the role rewrites the file for a setting:")
-            report += ["    " + line for line in n["comments"]]
-        if n["normalized"]:
-            report.append("  Same setting, written another way by the role (no effect; on a node that is not blank, a"
-                          " file whose settings are all the same is left as it is):")
-            report += ["    " + _mask(line) for line in n["normalized"]]
-        report.append("")
+        report += _node_report(n)
     report += _os_section(read)
     return {"cluster_group": cluster, "cluster_name": cluster_name, "hosts": hosts, "group_vars": group_vars,
             "host_vars": host_vars, "differences": "\n".join(differences), "report": "\n".join(report),
