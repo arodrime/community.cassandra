@@ -577,6 +577,90 @@ def cassandra_node_add_state(state, choice="auto", address=""):
     return {"state": "new", "refusal": ""}
 
 
+def _reset_problems(state, explicit):
+    """A node's state (holding data), whether the reset was asked (-e cassandra_add_node_reset=true) -> why add_node
+    may not empty it: [str], in the order the refusal gives them."""
+    live_cluster = state.get("live_cluster")
+    cluster_name = state.get("cluster_name")
+    users = state.get("users") or []
+    ours = state.get("ours")
+    problems = []
+    if state.get("running"):
+        problems.append("Cassandra runs on it: add_node resets only a node where Cassandra is down. Stop it"
+                        " (systemctl stop cassandra) if it holds nothing you need, then run add_node again")
+    problems.extend((state.get("ring") or {}).get("problems") or [])
+    if live_cluster is None:
+        problems.append("the cluster its data belongs to is unknown (no readable cassandra.yaml)")
+    elif live_cluster not in (cluster_name, STOCK_CLUSTER):
+        problems.append("its data is of cluster '%s', neither '%s' nor the package's stock '%s'"
+                        % (live_cluster, cluster_name, STOCK_CLUSTER))
+    elif state.get("peers") and not ours:
+        problems.append("its system.peers lists other nodes: a member of another '%s' ring" % live_cluster)
+    if users and live_cluster is not None:
+        if not ours:
+            problems.append("it holds user keyspaces (%s): only a failed bootstrap of this cluster may" % _names(users))
+        elif not state.get("cluster_keyspaces_known"):
+            problems.append("it holds user keyspaces (%s) and the cluster's keyspaces could not be read: whether they"
+                            " are a failed bootstrap's can't be checked" % _names(users))
+        elif state.get("foreign"):
+            problems.append("it holds keyspaces this cluster does not have (%s)" % _names(state["foreign"]))
+    if state.get("state") == "former_member" and not _true(explicit):
+        problems.append("it holds this cluster's keyspaces (%s) and no bootstrap add_node left unfinished: a former"
+                        " member of this cluster (removed with removenode?). The writes only it holds would be lost:"
+                        " snapshot or copy its data directories first if in doubt, then -e cassandra_add_node_reset=true"
+                        " resets it" % _names(users))
+    return problems
+
+
+def _ring_word(state, ring_probs):
+    """A node's state, its ring's problems -> where the ring has it, in a few words ("not in any ring", ...)."""
+    seen = [p for p in ring_probs if " sees " in p]
+    return ("in the ring of this cluster" if seen else "ring unknown" if ring_probs
+            else "in another ring" if state.get("peers") and not state.get("ours") else "not in any ring")
+
+
+def _holds(state, size, ring_word, former, problems):
+    """A node's state, the bytes in its directories, where the ring has it, whether a former member, why it may
+    not be reset -> (what it holds, for the plan's line: "node4: has data (...)"; the same in short, for
+    cassandra_add_node_refusal: "holds 12.0 GiB of cluster 'x' ..., not in the ring, stopped")."""
+    live_cluster = state.get("live_cluster")
+    users = state.get("users") or []
+    running = state.get("running")
+    held = ["%s" % cassandra_output.size(float(size or 0)), "cluster '%s'" % live_cluster if live_cluster is not None
+            else "cluster unknown"]
+    if users:
+        held.append("user keyspaces %s" % _names(users)
+                    + ((" (a former member of this cluster)" if former else " (a failed bootstrap of this cluster)")
+                       if state.get("ours") and not problems else ""))
+    held.extend([ring_word, "running" if running else "down"])
+    holds = "%s: has data (%s)" % (state.get("name") or state.get("node"), ", ".join(held))
+    short = "holds %s of %s%s, %s, %s" % (
+        cassandra_output.size(float(size or 0)), ("cluster '%s'" % live_cluster) if live_cluster is not None
+        else "an unknown cluster", (" (keyspaces %s)" % _names(users)) if users else "",
+        {"not in any ring": "not in the ring"}.get(ring_word, ring_word), "running" if running else "stopped")
+    return holds, short
+
+
+def _reset_way(state, ring_probs):
+    """A node's state (refused), its ring's problems -> the way out that works for the first reason it is refused
+    for."""
+    live_cluster = state.get("live_cluster")
+    if [p for p in ring_probs if " sees " in p]:
+        return "a member of this cluster: never reset it; take it out of cassandra_target_nodes"
+    if ring_probs:
+        return "its ring could not be checked: wait until the cluster's nodes answer"
+    if live_cluster is not None and live_cluster not in (state.get("cluster_name"), STOCK_CLUSTER):
+        return ("a node of another cluster: take it out of cassandra_target_nodes, or, if nothing it holds is needed,"
+                " empty its directories by hand (reset_node refuses another cluster's node)")
+    if state.get("running"):
+        return "if it holds nothing you need, stop Cassandra on it (systemctl stop cassandra): add_node then resets it"
+    if (state.get("users") and live_cluster is not None and state.get("ours")
+            and not state.get("cluster_keyspaces_known")):
+        return "let add_node read the cluster's keyspaces (CQL login: cassandra_cql_username, cassandra_cql_password)"
+    return ("check what it holds; if nothing is needed, empty it (reset_node), else take it out of"
+            " cassandra_target_nodes")
+
+
 def cassandra_add_node_reset_check(state, size=0, explicit=False):
     """add_node's reset of a new node holding data (cassandra_add_node_reset,
     on by default), from its state (cassandra_node_standing): done only for a
@@ -592,82 +676,21 @@ def cassandra_add_node_reset_check(state, size=0, explicit=False):
     refused only as a former member (reset_node or -e
     cassandra_add_node_reset=true empties it); way: what to do about the
     first reason it is refused for."""
-    title = state.get("name") or state.get("node")
     if not state.get("holds_data"):
         return {"reset": False, "problems": [], "line": "", "holds": "", "why": "", "former": False, "way": ""}
-    s = state.get("state")
-    running = state.get("running")
-    ring = state.get("ring") or {}
-    ring_probs = list(ring.get("problems") or [])
-    live_cluster = state.get("live_cluster")
-    cluster_name = state.get("cluster_name")
-    users = state.get("users") or []
-    ours = state.get("ours")
-    peers = state.get("peers")
-    problems = []
-    if running:
-        problems.append("Cassandra runs on it: add_node resets only a node where Cassandra is down. Stop it"
-                        " (systemctl stop cassandra) if it holds nothing you need, then run add_node again")
-    problems.extend(ring_probs)
-    if live_cluster is None:
-        problems.append("the cluster its data belongs to is unknown (no readable cassandra.yaml)")
-    elif live_cluster not in (cluster_name, STOCK_CLUSTER):
-        problems.append("its data is of cluster '%s', neither '%s' nor the package's stock '%s'"
-                        % (live_cluster, cluster_name, STOCK_CLUSTER))
-    elif peers and not ours:
-        problems.append("its system.peers lists other nodes: a member of another '%s' ring" % live_cluster)
-    if users and live_cluster is not None:
-        if not ours:
-            problems.append("it holds user keyspaces (%s): only a failed bootstrap of this cluster may" % _names(users))
-        elif not state.get("cluster_keyspaces_known"):
-            problems.append("it holds user keyspaces (%s) and the cluster's keyspaces could not be read: whether they"
-                            " are a failed bootstrap's can't be checked" % _names(users))
-        elif state.get("foreign"):
-            problems.append("it holds keyspaces this cluster does not have (%s)" % _names(state["foreign"]))
-    former = s == "former_member"
-    if former and not _true(explicit):
-        problems.append("it holds this cluster's keyspaces (%s) and no bootstrap add_node left unfinished: a former"
-                        " member of this cluster (removed with removenode?). The writes only it holds would be lost:"
-                        " snapshot or copy its data directories first if in doubt, then -e cassandra_add_node_reset=true"
-                        " resets it" % _names(users))
+    ring_probs = list((state.get("ring") or {}).get("problems") or [])
+    problems = _reset_problems(state, explicit)
+    former = state.get("state") == "former_member"
     # what its state allows, and nothing said against it
-    reset = (s == "failed_bootstrap" or (former and _true(explicit))) and not problems
+    reset = (state.get("state") == "failed_bootstrap" or (former and _true(explicit))) and not problems
     if not reset and not problems:
         # refused by its state for a reason the lines above do not give (e.g. a directory that can't be read)
         problems.extend([r for r in state.get("reasons") or [] if r != state.get("holding")] or [state.get("words")])
-    seen = [p for p in ring_probs if " sees " in p]
-    ring_word = ("in the ring of this cluster" if seen else "ring unknown" if ring_probs
-                 else "in another ring" if peers and not ours else "not in any ring")
-    held = ["%s" % cassandra_output.size(float(size or 0)), "cluster '%s'" % live_cluster if live_cluster is not None
-            else "cluster unknown"]
-    if users:
-        held.append("user keyspaces %s" % _names(users)
-                    + ((" (a former member of this cluster)" if former else " (a failed bootstrap of this cluster)")
-                       if ours and not problems else ""))
-    held.extend([ring_word, "running" if running else "down"])
-    holds = "%s: has data (%s)" % (title, ", ".join(held))
-    short = "holds %s of %s%s, %s, %s" % (
-        cassandra_output.size(float(size or 0)), ("cluster '%s'" % live_cluster) if live_cluster is not None
-        else "an unknown cluster", (" (keyspaces %s)" % _names(users)) if users else "",
-        {"not in any ring": "not in the ring"}.get(ring_word, ring_word), "running" if running else "stopped")
+    holds, short = _holds(state, size, _ring_word(state, ring_probs), former, problems)
     if not reset:
         only_former = former and len(problems) == 1
-        # the way out that works for the first reason, what it is refused for
-        if seen:
-            way = "a member of this cluster: never reset it; take it out of cassandra_target_nodes"
-        elif ring_probs:
-            way = "its ring could not be checked: wait until the cluster's nodes answer"
-        elif live_cluster is not None and live_cluster not in (cluster_name, STOCK_CLUSTER):
-            way = ("a node of another cluster: take it out of cassandra_target_nodes, or, if nothing it holds is needed,"
-                   " empty its directories by hand (reset_node refuses another cluster's node)")
-        elif running:
-            way = "if it holds nothing you need, stop Cassandra on it (systemctl stop cassandra): add_node then resets it"
-        elif users and live_cluster is not None and ours and not state.get("cluster_keyspaces_known"):
-            way = "let add_node read the cluster's keyspaces (CQL login: cassandra_cql_username, cassandra_cql_password)"
-        else:
-            way = ("check what it holds; if nothing is needed, empty it (reset_node), else take it out of"
-                   " cassandra_target_nodes")
-        return {"reset": False, "problems": problems, "holds": short, "former": only_former, "way": way,
+        return {"reset": False, "problems": problems, "holds": short, "former": only_former,
+                "way": _reset_way(state, ring_probs),
                 "why": ("a former member of this cluster: the writes only it holds would be lost if wiped" if only_former
                         else "; ".join(problems)),
                 "line": "%s: not reset automatically, %s. Nothing was changed: check what it holds; if nothing is"
