@@ -24,6 +24,7 @@ cassandra_node_reset_refusal: why reset_node may not empty a node.
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import collections
 import posixpath
 
 import yaml
@@ -286,6 +287,139 @@ def cassandra_node_data_dirs(inventory, live_yaml=None, usual=None):
     return {"own": own, "elsewhere": sorted(set(elsewhere), key=elsewhere.index), "problem": problem}
 
 
+# what cassandra_node_standing read on a node, normalised, for the helpers that decide its state
+_Facts = collections.namedtuple("_Facts", [
+    "name", "cluster_name", "running", "jvm", "own", "no_mbean", "my_id", "me", "known", "view", "ring_read",
+    "ring_known", "live", "live_cluster", "has_data", "has_system", "unreadable", "holding", "users", "ours", "peers",
+    "bootstrap_started", "foreign", "cluster_keyspaces"])
+
+
+def _evidence(system, held, unreadable, live, running):
+    """A node's system keyspaces, what its directories hold, what could not be read, its live cassandra.yaml's
+    state, whether Cassandra runs -> what makes it not blank (cassandra_config's question, create_cluster's new
+    cluster): [str]."""
+    evidence = list(system)
+    rest = [h for h in held if h not in system]
+    if rest:
+        evidence.append("%s in its Cassandra directories" % ", ".join(rest[:3]) + (", ..." if len(rest) > 3 else ""))
+    evidence += unreadable
+    if live in ("unreadable", "invalid") and not [u for u in unreadable if "cassandra.yaml" in u]:
+        evidence.append("the live cassandra.yaml can not be %s" % ("read" if live == "unreadable" else "parsed"))
+    if running:
+        evidence.append("Cassandra is running")
+    return evidence
+
+
+def _entry(view, me, my_id):
+    """ring_view's result, this node's addresses, its host ID -> its entry in the ring, (host, node) or None:
+    at one of its addresses first (another host ID there is a conflict, wherever its own host ID shows)."""
+    at_address = [e for e in view["entries"] + view["replaced_up"] if status_address(e[1].get("address")) in me]
+    # its own entry first, before a down one (a dead node's old address); another host ID up there stays a conflict
+    at_address.sort(key=lambda e: 0 if e[1].get("status") == "U" and e[1].get("host_id") != my_id
+                    else 1 if my_id and e[1].get("host_id") == my_id else 2)
+    return (at_address or view["entries"] or view["replaced_up"] or [None])[0]
+
+
+def _in_ring_state(entry, f):
+    """Its entry in the ring (host, node), the facts -> (state, reasons) of a node the ring has."""
+    other, n = entry
+    e_id = n.get("host_id") or ""
+    in_ring = "%s%s" % (n.get("status", "?"), n.get("state", "?"))
+    reasons = ["%s sees %s in its ring (%s)" % (other, status_address(n.get("address")), _seen(n))]
+    if f.my_id and e_id and f.my_id != e_id:
+        return "address_conflict", reasons + ["its own host ID is %s" % f.my_id]
+    if in_ring == "UN" and f.my_id and (f.has_system or f.my_id == e_id):
+        return "member", reasons
+    if in_ring == "UJ" and f.has_system and (f.my_id or _true(f.no_mbean)):
+        return "member_joining", reasons
+    if n.get("status") == "D" and f.jvm:
+        return "unknown", reasons + ["Cassandra runs here but the ring sees it down"]
+    if in_ring == "DN" and not f.has_system:
+        return "dead_address", reasons
+    if n.get("status") == "D":
+        return "member_down", reasons
+    if in_ring == "UN":
+        return "address_conflict", reasons + ["it does not answer (Cassandra stopped, or JMX unreachable)" if not f.my_id
+                                              else "its host ID %s, no system keyspace in its data directories" % f.my_id]
+    return "member_busy", reasons
+
+
+def _running_state(f):
+    """The facts of a node the ring does not have, Cassandra running -> (state, reasons): another cluster's, alone
+    in its own ring, or unknown."""
+    others = sorted(set(status_address(x.get("address")) for x in status_nodes(f.own)) - f.me)
+    cluster = set(others) & set(status_address(k) for k in f.known or [])
+    if f.live_cluster is not None and f.live_cluster not in (f.cluster_name, STOCK_CLUSTER):
+        state, reason = "other_cluster", "its cassandra.yaml names cluster '%s'" % f.live_cluster
+    elif not f.own and f.jvm:
+        state, reason = "unknown", "Cassandra runs but nodetool status does not answer there"
+    elif len(status_nodes(f.own)) > 1 and others and cluster:
+        state = "unknown"
+        reason = "its own ring lists nodes of this cluster (%s), whose rings do not list it" % _names(cluster)
+    elif len(status_nodes(f.own)) > 1 and others:
+        state, reason = "other_cluster", "Cassandra runs in another ring (%s)" % _names(others)
+    elif not f.ring_read:
+        state, reason = "unknown", "Cassandra is running (the ring was not read)"
+    elif not f.ring_known:
+        state, reason = "unknown", _no_ring(f.view)
+    elif f.has_data and f.view["unknown_down"]:
+        state, reason = "unknown", _unknown_down(f.view)
+    else:
+        state = "running_outside_ring"
+        reason = "Cassandra runs alone in its own ring" if f.jvm else "its cassandra unit is active, no JVM yet"
+    return state, [reason] + ([f.holding] if f.holding else [])
+
+
+def _data_state(f):
+    """The facts of a node holding data, Cassandra stopped, not in the ring as far as it was read -> (state,
+    reasons): whose data it is (never joined, a former member, another cluster's, unidentified), or unknown."""
+    reasons = [f.holding]
+    if not f.ring_read:
+        return "unknown", reasons + ["the ring was not read"]
+    if not f.ring_known:
+        return "unknown", reasons + [_no_ring(f.view)]
+    if f.view["unknown_down"]:
+        return "unknown", reasons + [_unknown_down(f.view)]
+    if f.unreadable or f.live in ("unreadable", "invalid"):
+        return "unknown", reasons + (f.unreadable or [_unknown_dirs(f.live)])
+    live_cluster, users = f.live_cluster, f.users
+    if live_cluster is None:
+        return "unidentified_data", reasons + ["the cluster its data belongs to is unknown (no readable cassandra.yaml)"]
+    if live_cluster not in (f.cluster_name, STOCK_CLUSTER):
+        return "other_cluster", reasons + ["its cassandra.yaml names cluster '%s'" % live_cluster]
+    if users and not f.ours:
+        return "unidentified_data", reasons + ["user keyspaces (%s) under the cluster name '%s'%s" % (
+            _names(users), live_cluster, ", the stock one" if live_cluster == STOCK_CLUSTER else "")]
+    if users and f.cluster_keyspaces is None:
+        return "unidentified_data", reasons + [
+            "user keyspaces (%s), and this cluster's keyspaces could not be read" % _names(users)]
+    if f.foreign:
+        return "unidentified_data", reasons + ["keyspaces this cluster does not have (%s)" % _names(f.foreign)]
+    if f.peers and not f.ours:
+        return "unidentified_data", reasons + [
+            "its system.peers lists other nodes: a member of another '%s' ring" % live_cluster]
+    if users and f.bootstrap_started:
+        return "failed_bootstrap", reasons + [
+            "this cluster's keyspaces (%s), of a bootstrap add_node started there and that never ended" % _names(users)]
+    if users:
+        return "former_member", reasons + [
+            "this cluster's keyspaces (%s), no bootstrap of add_node left unfinished there" % _names(users)]
+    return "failed_bootstrap", reasons + ["no user keyspace, cluster '%s'" % live_cluster]
+
+
+def _state(entry, f):
+    """Its entry in the ring (or None), the facts -> (state, reasons)."""
+    if entry:
+        return _in_ring_state(entry, f)
+    if f.running:
+        return _running_state(f)
+    if f.has_data:
+        return _data_state(f)
+    if f.unreadable or f.live in ("unreadable", "invalid"):
+        return "unknown", list(f.unreadable or [_unknown_dirs(f.live)])
+    return "blank", []
+
+
 def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=None, own=None, host_id="", no_mbean=False,
                             answers=None, addresses=None, known=None, replace_address="", live="absent",
                             live_cluster=None, held=None, system=None, elsewhere=None, unreadable=None, keyspaces=None,
@@ -334,7 +468,6 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
     unreadable = list(unreadable or [])
     system = list(system or [])
     has_data = len(held) > 0
-    has_system = len(system) > 0
     users = sorted(set(k for k in keyspaces or [] if _user_keyspace(k)))
     ids = own_ids(addresses, host_id, jvm, own)
     # its host ID: nodetool info's, else its own ring's at its addresses
@@ -344,149 +477,36 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
     ring_known = bool(view["usable"])
     # a cluster that kept the stock name: a stock node is not known to be one of its own
     ours = live_cluster is not None and live_cluster == cluster_name and cluster_name != STOCK_CLUSTER
-    peers = _true(peers)
-    bootstrap_started = _true(bootstrap_started)
-    foreign = [k for k in users if cluster_keyspaces is not None and k not in cluster_keyspaces]
-
+    me = mine(addresses)
+    f = _Facts(name=name, cluster_name=cluster_name, running=running, jvm=jvm, own=own, no_mbean=no_mbean, my_id=my_id,
+               me=me, known=known, view=view, ring_read=ring_read, ring_known=ring_known, live=live,
+               live_cluster=live_cluster, has_data=has_data, has_system=len(system) > 0, unreadable=unreadable,
+               holding="it holds data (%s)" % ", ".join((system or held)[:3]) if has_data else "", users=users,
+               ours=ours, peers=_true(peers), bootstrap_started=_true(bootstrap_started),
+               foreign=[k for k in users if cluster_keyspaces is not None and k not in cluster_keyspaces],
+               cluster_keyspaces=cluster_keyspaces)
     # what makes it not blank (cassandra_config's question, create_cluster's new cluster)
-    evidence = list(system)
-    rest = [h for h in held if h not in system]
-    if rest:
-        evidence.append("%s in its Cassandra directories" % ", ".join(rest[:3]) + (", ..." if len(rest) > 3 else ""))
-    evidence += unreadable
-    if live in ("unreadable", "invalid") and not [u for u in unreadable if "cassandra.yaml" in u]:
-        evidence.append("the live cassandra.yaml can not be %s" % ("read" if live == "unreadable" else "parsed"))
-    if running:
-        evidence.append("Cassandra is running")
-    holding = "it holds data (%s)" % ", ".join((system or held)[:3]) if has_data else ""
-
-    reasons = []
+    evidence = _evidence(system, held, unreadable, live, running)
     ring = {"read": ring_read, "known": ring_known, "in_ring": "", "entry": {}, "seen_by": "", "tried": view["tried"],
             # why it is unknown, when it is (the operator's words)
             "why": "" if ring_known else _unread_ring(view),
             # the first node of the cluster that answered UN, one not alone in its ring first: the ring add_node plans with
             "from": ([h for h, nodes in view["usable"] if len(nodes) > 1] + [h for h, dummy in view["usable"]] + [""])[0],
             "problems": ring_problems(view, addresses, name, replace_address, jvm, own) if ring_read else []}
-    # at one of its addresses first: another host ID there is a conflict, wherever its own host ID shows
-    me = mine(addresses)
-    at_address = [e for e in view["entries"] + view["replaced_up"] if status_address(e[1].get("address")) in me]
-    # its own entry first, before a down one (a dead node's old address); another host ID up there stays a conflict
-    at_address.sort(key=lambda e: 0 if e[1].get("status") == "U" and e[1].get("host_id") != my_id
-                    else 1 if my_id and e[1].get("host_id") == my_id else 2)
-    entry = (at_address or view["entries"] or view["replaced_up"] or [None])[0]
+    entry = _entry(view, me, my_id)
     if entry:
-        other, n = entry
-        e_id = n.get("host_id") or ""
-        in_ring = "%s%s" % (n.get("status", "?"), n.get("state", "?"))
-        ring.update({"in_ring": in_ring, "entry": n, "seen_by": other})
-        reasons.append("%s sees %s in its ring (%s)" % (other, status_address(n.get("address")), _seen(n)))
-        if my_id and e_id and my_id != e_id:
-            state = "address_conflict"
-            reasons.append("its own host ID is %s" % my_id)
-        elif in_ring == "UN" and my_id and (has_system or my_id == e_id):
-            state = "member"
-        elif in_ring == "UJ" and has_system and (my_id or _true(no_mbean)):
-            state = "member_joining"
-        elif n.get("status") == "D" and jvm:
-            state = "unknown"
-            reasons.append("Cassandra runs here but the ring sees it down")
-        elif in_ring == "DN" and not has_system:
-            state = "dead_address"
-        elif n.get("status") == "D":
-            state = "member_down"
-        elif in_ring == "UN":
-            state = "address_conflict"
-            reasons.append("it does not answer (Cassandra stopped, or JMX unreachable)" if not my_id
-                           else "its host ID %s, no system keyspace in its data directories" % my_id)
-        else:
-            state = "member_busy"
-    elif running:
-        others = sorted(set(status_address(x.get("address")) for x in status_nodes(own)) - me)
-        cluster = set(others) & set(status_address(k) for k in known or [])
-        if live_cluster is not None and live_cluster not in (cluster_name, STOCK_CLUSTER):
-            state = "other_cluster"
-            reasons.append("its cassandra.yaml names cluster '%s'" % live_cluster)
-        elif not own and jvm:
-            state = "unknown"
-            reasons.append("Cassandra runs but nodetool status does not answer there")
-        elif len(status_nodes(own)) > 1 and others and cluster:
-            state = "unknown"
-            reasons.append("its own ring lists nodes of this cluster (%s), whose rings do not list it" % _names(cluster))
-        elif len(status_nodes(own)) > 1 and others:
-            state = "other_cluster"
-            reasons.append("Cassandra runs in another ring (%s)" % _names(others))
-        elif not ring_read:
-            state = "unknown"
-            reasons.append("Cassandra is running (the ring was not read)")
-        elif not ring_known:
-            state = "unknown"
-            reasons.append(_no_ring(view))
-        elif has_data and view["unknown_down"]:
-            state = "unknown"
-            reasons.append(_unknown_down(view))
-        else:
-            state = "running_outside_ring"
-            reasons.append("Cassandra runs alone in its own ring" if jvm else "its cassandra unit is active, no JVM yet")
-        if holding:
-            reasons.append(holding)
-    elif not has_data:
-        if unreadable or live in ("unreadable", "invalid"):
-            state = "unknown"
-            reasons.extend(unreadable or [_unknown_dirs(live)])
-        else:
-            state = "blank"
-    else:
-        # holds data, Cassandra stopped, not in the ring as far as it was read
-        reasons.append(holding)
-        if not ring_read:
-            state = "unknown"
-            reasons.append("the ring was not read")
-        elif not ring_known:
-            state = "unknown"
-            reasons.append(_no_ring(view))
-        elif view["unknown_down"]:
-            state = "unknown"
-            reasons.append(_unknown_down(view))
-        elif unreadable or live in ("unreadable", "invalid"):
-            state = "unknown"
-            reasons.extend(unreadable or [_unknown_dirs(live)])
-        elif live_cluster is None:
-            state = "unidentified_data"
-            reasons.append("the cluster its data belongs to is unknown (no readable cassandra.yaml)")
-        elif live_cluster not in (cluster_name, STOCK_CLUSTER):
-            state = "other_cluster"
-            reasons.append("its cassandra.yaml names cluster '%s'" % live_cluster)
-        elif users and not ours:
-            state = "unidentified_data"
-            reasons.append("user keyspaces (%s) under the cluster name '%s'%s" % (
-                _names(users), live_cluster, ", the stock one" if live_cluster == STOCK_CLUSTER else ""))
-        elif users and cluster_keyspaces is None:
-            state = "unidentified_data"
-            reasons.append("user keyspaces (%s), and this cluster's keyspaces could not be read" % _names(users))
-        elif foreign:
-            state = "unidentified_data"
-            reasons.append("keyspaces this cluster does not have (%s)" % _names(foreign))
-        elif peers and not ours:
-            state = "unidentified_data"
-            reasons.append("its system.peers lists other nodes: a member of another '%s' ring" % live_cluster)
-        elif users and bootstrap_started:
-            state = "failed_bootstrap"
-            reasons.append("this cluster's keyspaces (%s), of a bootstrap add_node started there and that never ended"
-                           % _names(users))
-        elif users:
-            state = "former_member"
-            reasons.append("this cluster's keyspaces (%s), no bootstrap of add_node left unfinished there" % _names(users))
-        else:
-            state = "failed_bootstrap"
-            reasons.append("no user keyspace, cluster '%s'" % live_cluster)
+        ring.update({"in_ring": "%s%s" % (entry[1].get("status", "?"), entry[1].get("state", "?")), "entry": entry[1],
+                     "seen_by": entry[0]})
+    state, reasons = _state(entry, f)
     for other, n in view["replaced"]:
         reasons.append("%s sees %s down (%s): the node being replaced" % (other, status_address(n.get("address")), _seen(n)))
     return {"state": state, "words": WORDS[state], "reasons": reasons, "node": node, "name": name,
             "cluster_name": cluster_name, "blank": not evidence, "evidence": evidence, "holds_data": has_data,
-            "has_system": has_system, "system": system, "held": held, "elsewhere": list(elsewhere or []),
-            "unreadable": unreadable, "running": running, "ring": ring, "holding": holding, "users": users, "ours": ours,
-            "live": live, "live_cluster": live_cluster, "peers": peers, "bootstrap_started": bootstrap_started,
-            "host_id": my_id, "cluster_keyspaces_known": cluster_keyspaces is not None, "foreign": foreign}
+            "has_system": f.has_system, "system": system, "held": held, "elsewhere": list(elsewhere or []),
+            "unreadable": unreadable, "running": running, "ring": ring, "holding": f.holding, "users": users,
+            "ours": ours, "live": live, "live_cluster": live_cluster, "peers": f.peers,
+            "bootstrap_started": f.bootstrap_started, "host_id": my_id,
+            "cluster_keyspaces_known": cluster_keyspaces is not None, "foreign": f.foreign}
 
 
 def cassandra_node_add_state(state, choice="auto", address=""):
