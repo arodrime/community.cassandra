@@ -42,7 +42,7 @@ argument_specs:
         description:
           - User for O(cassandra_install_url) when it needs credentials to read (an
             account, or a service account with a token as O(cassandra_install_password)).
-            Used for the repository and for O(cassandra_repository_key_url).
+            Used for the repository, and for O(cassandra_repository_key_url) when it is on the same host.
           - On RedHat the credentials go in the yum repository file (then mode 0600),
             on Debian/Ubuntu in C(/etc/apt/auth.conf.d/cassandra.conf) (0600).
       cassandra_install_password:
