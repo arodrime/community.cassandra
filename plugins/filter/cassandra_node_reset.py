@@ -15,6 +15,10 @@ cassandra_node_reset_ring: whether the node may be reset, from the rings
 cassandra_node_standing.py, cassandra_add_node_reset_check.)
 cassandra_add_node_refusal: add_node's refusal of the new nodes it may not
     add or reset, one block, then what to do.
+cassandra_inventory_dirs: the Cassandra directories the inventory gives a
+    node, each with its kind (what a reset empties, node_standing_dirs.yml).
+cassandra_add_node_reset_refusals: the new nodes add_node may not reset,
+    each with why (the input of cassandra_add_node_refusal).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -355,6 +359,52 @@ def cassandra_add_node_refusal(refused, cluster="", operation="add_node", target
     return lines + [""] + cassandra_output.todo(items)
 
 
+def cassandra_inventory_dirs(data_dirs, commitlog, saved_caches, hints, extra=None, cdc_raw="", cdc_enabled=False,
+                             storage_dir=""):
+    """data_dirs: cassandra_data_file_directories; commitlog, saved_caches, hints: their cassandra_*_dir; extra:
+    cassandra_extra_settings; cdc_raw: cassandra_cdc_raw_dir; cdc_enabled: cassandra_cdc_enabled; storage_dir:
+    cassandra_config_storage_dir. -> [[kind, dir]]: data, commitlog, saved_caches, hints, the
+    local_system_data_file_directory of cassandra_extra_settings (data), and cdc_raw: cassandra_cdc_raw_dir,
+    else the cdc_raw_directory of cassandra_extra_settings (an inventory from before the variable), else with CDC
+    on, Cassandra's default under the storage dir."""
+    extra = extra or {}
+    out = [["data", d] for d in data_dirs]
+    out += [["commitlog", commitlog], ["saved_caches", saved_caches], ["hints", hints]]
+    if "local_system_data_file_directory" in extra:
+        out.append(["data", extra["local_system_data_file_directory"]])
+    if cdc_raw or "cdc_raw_directory" in extra:
+        out.append(["cdc_raw", cdc_raw or extra["cdc_raw_directory"]])
+    elif cdc_enabled:
+        top = (storage_dir or "/var/lib/cassandra")
+        out.append(["cdc_raw", (top.rstrip("/") or top[:1]) + "/cdc_raw"])
+    return out
+
+
+_UNCHECKED = "the directories above could not all be checked: fix that (root, the live cassandra.yaml)"
+
+
+def cassandra_add_node_reset_refusals(new, hostvars):
+    """new: the hosts to add; hostvars. -> [{name, title, holds, why, way, former}] for the hosts whose reset plan
+    (_cassandra_node_reset_plan) has problems: the reset check's (_cassandra_node_reset_check: why, the way out,
+    what the node holds, a former member) and the plan's others."""
+    refusals = []
+    for name in new:
+        v = hostvars[name]
+        plan = v.get("_cassandra_node_reset_plan") or {}
+        if not plan.get("problems"):
+            continue
+        check = v.get("_cassandra_node_reset_check") or {}
+        facts = v.get("_cassandra_preflight") or {}
+        checked = check.get("problems") or []
+        other = [p for p in plan["problems"] if p not in checked]
+        why = ([check.get("why", "")] if checked else []) + (["reset refused: " + "; ".join(other)] if other else [])
+        where = (" (%s/%s)" % (facts["cassandra_dc"], facts.get("cassandra_rack", "?"))) if facts.get("cassandra_dc") else ""
+        refusals.append({"name": name, "title": name + where, "holds": check.get("holds", ""), "why": "; ".join(why),
+                         "way": check.get("way", "") if checked else _UNCHECKED,
+                         "former": check.get("former", False) and not other})
+    return refusals
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -364,4 +414,6 @@ class FilterModule(object):
             "cassandra_node_reset_dirs": cassandra_node_reset_dirs,
             "cassandra_node_reset_real": cassandra_node_reset_real,
             "cassandra_node_reset_ring": cassandra_node_reset_ring,
+            "cassandra_inventory_dirs": cassandra_inventory_dirs,
+            "cassandra_add_node_reset_refusals": cassandra_add_node_reset_refusals,
         }

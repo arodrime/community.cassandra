@@ -16,6 +16,8 @@ cassandra_apply_config_warnings: the nodes -> their warnings, for the plan
 cassandra_apply_config_recap: the end of apply_config: a verdict line, then
     under --check the settings that differ and the outcomes, after a real run
     the outcomes (its plan showed the settings, before its question).
+cassandra_apply_config_down_ok: the other nodes the health checks of
+    apply_config let be down while a node is done (their ring addresses).
 """
 
 from __future__ import absolute_import, division, print_function
@@ -30,6 +32,7 @@ import re
 import shlex
 from collections import OrderedDict
 
+from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
@@ -763,6 +766,30 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     return shown + lines + ([] if check else _read_ahead_todo(nodes, restart_command, _width(width)))
 
 
+def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=False):
+    """nodes: the cluster's nodes, in the order apply_config does them; hostvars; host: the node done now; then: its
+    cassandra_apply_config_then; check: --check; batch: the nodes done at once (its first play), else one at a time.
+    -> the ring addresses of the other nodes planned (cassandra_apply_config_then) to be started (start) or left
+    stopped (write), which may be down. One at a time, a start node only until its turn (or when it is not to do,
+    or under --check: the nodes before it were not started), and none before a restart, which waits for every
+    other node up (except under --check). At once: a write node not before a restart (except under --check)."""
+    out = []
+    for name in nodes:
+        v = hostvars[name]
+        if name == host or "cassandra_apply_config_then" not in v:
+            continue
+        other = v["cassandra_apply_config_then"]
+        if batch:
+            down = other == "start" or (other == "write" and (then != "restart" or check))
+        else:
+            later = other == "start" and (nodes.index(name) > nodes.index(host) or check
+                                          or not to_bool(v.get("cassandra_apply_config_todo", False)))
+            down = later or (other == "write" and then != "restart")
+        if down:
+            out.append(v["_cassandra_preflight"]["ring_address"])
+    return out if batch or then != "restart" or check else []
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -770,4 +797,5 @@ class FilterModule(object):
             "cassandra_apply_config_outcomes": cassandra_apply_config_outcomes,
             "cassandra_apply_config_recap": cassandra_apply_config_recap,
             "cassandra_apply_config_warnings": cassandra_apply_config_warnings,
+            "cassandra_apply_config_down_ok": cassandra_apply_config_down_ok,
         }

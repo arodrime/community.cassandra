@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # As the reset renders it: tests/unit/roles/test_config_declared.py (test_reset_node_empties_the_cdc_raw_dir)
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_inventory_dirs import cassandra_inventory_dirs
+from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import cassandra_inventory_dirs
 
 
 def test_every_directory_with_its_kind():

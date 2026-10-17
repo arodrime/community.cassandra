@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # The texts themselves, as the tasks render them: tests/unit/roles/test_wait_failure_text.py
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_wait import (
+from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import (
     cassandra_cleanup_failure, cassandra_stream_failure)
 
 

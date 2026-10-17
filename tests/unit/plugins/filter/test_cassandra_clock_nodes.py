@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_clock_nodes import cassandra_clock_nodes
+from ansible_collections.community.cassandra.plugins.filter.cassandra_clocks import cassandra_clock_nodes
 
 
 def test_only_the_clocks_read_with_what_they_are_known_by():

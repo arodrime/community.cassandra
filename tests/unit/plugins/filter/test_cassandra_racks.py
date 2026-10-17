@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # The check as preflight renders it: tests/unit/playbooks/test_preflight_racks.py
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_racks import cassandra_rack_refusals
+from ansible_collections.community.cassandra.plugins.filter.cassandra_seeds import cassandra_rack_refusals
 
 
 def host(name, rack, address):

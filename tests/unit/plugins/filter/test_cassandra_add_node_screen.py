@@ -1,8 +1,8 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_add_node_screen import (
-    cassandra_add_node_blocks, cassandra_add_node_reset_refusals)
+from ansible_collections.community.cassandra.plugins.filter.cassandra_node_reset import cassandra_add_node_reset_refusals
+from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import cassandra_add_node_blocks
 
 
 def test_a_refusal_says_the_check_and_the_other_problems():

@@ -28,6 +28,7 @@ cassandra_decommission_screen: the blocks of decommission_node: each node
     to remove with its dc/rack, load and share, where its data goes, where
     it runs and is checked from, and how it ends; its "step": the same on
     one line ({node, dc, rack, text}, the plan of topology).
+cassandra_add_node_blocks: the lines of each new node on add_node's screen.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -37,6 +38,7 @@ import textwrap
 
 from collections.abc import Mapping
 
+from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 WIDTH = 100
@@ -335,6 +337,39 @@ def cassandra_decommission_screen(leaving, nodes, ring=None, keyspaces=None, pee
             "after": _decommission_after(order, by_name, members), "warnings": warnings}
 
 
+_SEED = ("in cassandra_seeds: joins as a regular node (a seed does not bootstrap), made a seed once it is up"
+         " (cassandra_seeds applied live on every node, unless a datacenter would need seeds picked: then change_seeds)")
+
+
+def _medusa_fqdn(name, v):
+    if "cassandra_medusa_fqdn" in v:
+        fqdn = v["cassandra_medusa_fqdn"]
+    elif v.get("cassandra_medusa_fqdn_domain", ""):
+        fqdn = "%s.%s" % ((v.get("ansible_facts") or {}).get("hostname", name), v["cassandra_medusa_fqdn_domain"])
+    else:
+        fqdn = ""
+    return fqdn or "(Medusa works it out)"
+
+
+def cassandra_add_node_blocks(new, hostvars, estimate):
+    """new: the hosts to add; hostvars; estimate: cassandra_add_node_plan's ({host, bytes, basis}). -> [{title,
+    lines}]: each new node's title and what the screen says of it (the data to stream, a seed made one once up,
+    its Medusa fqdn, its reset)."""
+    blocks = []
+    for name in new:
+        v = hostvars[name]
+        lines = ["about %s to stream (%s)" % (out.size(e["bytes"]), e["basis"]) for e in estimate if e["host"] == name]
+        if to_bool(v.get("_cassandra_service_is_seed", False)):
+            lines.append(_SEED)
+        if to_bool(v.get("cassandra_medusa_enabled", False)):
+            lines.append("Medusa fqdn " + _medusa_fqdn(name, v))
+        reset = (v.get("_cassandra_node_reset_plan") or {}).get("line", "")
+        if reset:
+            lines.append(reset)
+        blocks.append({"title": cassandra_screen_title(name, v["_cassandra_preflight"]), "lines": lines})
+    return blocks
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -342,4 +377,5 @@ class FilterModule(object):
             "cassandra_screen_title": cassandra_screen_title,
             "cassandra_decommission_screen": cassandra_decommission_screen,
             "cassandra_reset_warnings": cassandra_reset_warnings,
+            "cassandra_add_node_blocks": cassandra_add_node_blocks,
         }

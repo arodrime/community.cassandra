@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_topology_hosts import cassandra_topology_hosts
+from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import cassandra_topology_hosts
 
 
 def test_a_host_to_add_and_a_host_to_remove():

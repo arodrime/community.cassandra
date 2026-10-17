@@ -3,7 +3,7 @@ __metaclass__ = type
 
 # As apply_config renders it: tests/unit/playbooks/test_apply_config_permissions.py
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config_down_ok import cassandra_apply_config_down_ok
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_down_ok
 
 NODES = ["n1", "n2", "n3"]
 HOSTVARS = {"n1": {"cassandra_apply_config_then": "start", "cassandra_apply_config_todo": True,
