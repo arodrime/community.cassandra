@@ -44,7 +44,7 @@ from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple, nodetool_error
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandSimple, fail_nodetool
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -78,17 +78,9 @@ def main():
         result['msg'] = "nodetool drain executed successfully"
         module.exit_json(**result)
     else:
-        error = nodetool_error(out, err)
-        result['error'] = error
-        result['rc'] = rc
-        result['changed'] = False
-        result['stdout'] = out
-        result['stderr'] = err
-        result['msg'] = ("nodetool drain did not execute successfully (rc {0}){1}. "
-                         "If its Mode (nodetool netstats) is DRAINING or DRAINED, the node is out of the cluster: "
-                         "restart Cassandra on it. Else check its system.log, then drain it again"
-                         .format(rc, ": " + error if error else ""))
-        module.fail_json(**result)
+        fail_nodetool(module, result, "drain", rc, out, err,
+                      ("If its Mode (nodetool netstats) is DRAINING or DRAINED, the node is out of the cluster: "
+                       "restart Cassandra on it. Else check its system.log, then drain it again"))
 
 
 if __name__ == '__main__':

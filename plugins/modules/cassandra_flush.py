@@ -51,7 +51,7 @@ from ansible.module_utils.basic import AnsibleModule
 __metaclass__ = type
 
 
-from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandKeyspaceTable, nodetool_error
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import NodeToolCommandKeyspaceTable, fail_nodetool
 from ansible_collections.community.cassandra.plugins.module_utils.cassandra_common_options import cassandra_common_argument_spec
 
 
@@ -89,17 +89,9 @@ def main():
         result['msg'] = "nodetool flush executed successfully"
         module.exit_json(**result)
     else:
-        error = nodetool_error(out, err)
-        result['error'] = error
-        result['rc'] = rc
-        result['changed'] = False
-        result['stdout'] = out
-        result['stderr'] = err
-        result['msg'] = ("nodetool flush did not execute successfully (rc {0}){1}. "
-                         "The memtables may not be on disk yet: check the node's system.log (disk space), then run "
-                         "it again"
-                         .format(rc, ": " + error if error else ""))
-        module.fail_json(**result)
+        fail_nodetool(module, result, "flush", rc, out, err,
+                      ("The memtables may not be on disk yet: check the node's system.log (disk space), then run "
+                       "it again"))
 
 
 if __name__ == '__main__':
