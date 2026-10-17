@@ -427,7 +427,7 @@ def test_new_node_gets_the_domain_rule():
     assert fqdn_written(layout, {"name": "node9", "hostname": "node9"}) == "node9.int.example"
 
 
-GUARD = next(t for t in yaml.safe_load(open(os.path.join(ROLE, "tasks", "main.yml")))
+GUARD = next(t for t in yaml.safe_load(open(os.path.join(ROLE, "tasks", "config.yml")))
              if t.get("name") == "Keep this node's name in the backups")
 
 

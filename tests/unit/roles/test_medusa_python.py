@@ -8,10 +8,9 @@ __metaclass__ = type
 
 import os
 
-import yaml
-
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
 try:  # ansible-core 2.19+ renders trusted templates only
     from ansible.template import trust_as_template
@@ -25,8 +24,7 @@ SKIPPED = {"skipped": True, "changed": False}
 
 
 def block():
-    with open(TASKS, encoding="utf-8") as f:
-        return next(t for t in yaml.safe_load(f) if t.get("name") == "Prepare the Python")["block"]
+    return next(t for t in load_tasks(TASKS) if t.get("name") == "Prepare the Python")["block"]
 
 
 def task(name):

@@ -30,7 +30,7 @@ MARKED = [
     ("roles/cassandra_install/tasks/packages.yml", "Say what would be installed (--check)"),
     ("roles/cassandra_linux/tasks/timesync.yml", "Say the time sync service is missing (offline)"),
     ("roles/cassandra_linux/tasks/main.yml", "Say how the data disks are tuned"),
-    ("roles/cassandra_medusa/tasks/main.yml", "Say python3.11 is not offered yet (--check)"),
+    ("roles/cassandra_medusa/tasks/python.yml", "Say python3.11 is not offered yet (--check)"),
     ("roles/cassandra_medusa/tasks/main.yml", "Say another medusa comes first in the PATH"),
     ("roles/cassandra_repository/tasks/repository.yml", "Say the repository could not be checked"),
     ("roles/cassandra_service/tasks/action_move.yml", "Say which receiving nodes are not checked"),
