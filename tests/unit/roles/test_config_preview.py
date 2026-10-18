@@ -30,6 +30,7 @@ with warnings.catch_warnings():  # already done under ansible-test
     init_plugin_loader()  # the collection's filters (cassandra_node_standing), under plain pytest too
 
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import compare, config_read, identity_changes, preview  # noqa: E402
+from ansible_collections.community.cassandra.tests.unit.plugins.plugin_utils.test_cassandra_output import BLOCK_SECRETS_AFTER_AUDIT  # noqa: E402
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402
 
 TASKS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_config", "tasks")
@@ -574,28 +575,6 @@ def test_unit_state_read_with_the_node_or_by_service_facts(read, state, fallback
     t = task("Note what was read")
     assert render(t["ansible.builtin.set_fact"]["_cassandra_config_unit_state"], _read={"running": read}) == state
     assert render("{{ %s }}" % task("Look for a running Cassandra")["when"], _cassandra_config_unit_state=state) is fallback
-
-
-# secret values over several lines, each a leak an audit found
-BLOCK_SECRETS_AFTER_AUDIT = [
-    "  keystore_password: |  # PEM password: see vault\n    LEAK1\n    LEAK2\n  next: 1",
-    "keystore_password: | # rotate the password: yearly\n  LEAK1\n  LEAK2\nnext: 1",
-    "keystore_password:  # old_password: x\n    LEAK1\nnext: 1",
-    "export KS_PASSWORD=\"LEAK0 # a password: x\nLEAK1\"\nnext=1",
-    "keystore_password: !!str \"LEAK1\nLEAK2\"\nnext: 1",
-    "keystore_password: &a 'LEAK1\nLEAK2'\nnext: 1",
-    "export KS_PASSWORD=$'LEAK1\nLEAK2'\nnext=1",
-    "JVM_OPTS=\"$JVM_OPTS -Da.password=x -Db.password='LEAK1\nLEAK2'\"\nnext=1",
-    "<password>LEAK1</password>\n<next>1</next>",
-    "<password><![CDATA[LEAK1]]></password>\n<next>1</next>",
-    "JVM_OPTS=\"$JVM_OPTS -Dx.password:$x\n  LEAK1\"\nnext=1",  # $ after a colon, inside a shell quote
-    "  <secretKey attr=\"1\">LEAK1</secretKey>\n<next>1</next>",
-    "ldap_password=x\\\r\n  LEAK1\r\nnext=1",  # a CRLF line continued by its backslash
-    "password: $abc\n  LEAK1\nother: 1",  # a YAML plain value starting with $: its more indented lines
-    "password: $(x\n  LEAK1\nother: 1",
-    "password: &a\n- LEAK1\nother: 1",  # an anchor alone: the list under the key
-    "password: !!seq\n- LEAK1\nother: 1",
-]
 
 
 @pytest.mark.parametrize("text", BLOCK_SECRETS_AFTER_AUDIT)

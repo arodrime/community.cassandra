@@ -5,12 +5,17 @@ function returns text lines (or a string) that a debug task prints, nothing
 else. Pure Python, no Ansible.
 
 - sizes, durations, counts: size, parse_size, duration, count, plural;
-- node lists: nodes (node1..node5, node7), full_list;
+- node lists: nodes (node1..node5, node7), full_list; by groups on a large
+  cluster: node_groups, who, group_lines;
+- secrets: mask, shown;
+- a setting and its value per node: settings_lines (several, aligned, wrapped
+  in a width: wrap_value, wrap_list); lines fit in a terminal's width: fit;
+  laid out at the width where they are printed: flow;
 - warnings: warning, warning_lines (each once, a blank line between two),
   spaced paragraphs;
 - phase lines: phase, check_what;
 - the end of a node operation: recap;
-- what is left to do: command, extra_var, todo;
+- what is left to do: command, extra_var, todo, seeds_todo;
 - the seed rule of preflight: seed_layout."""
 
 from __future__ import absolute_import, division, print_function
@@ -20,6 +25,7 @@ import json
 import os
 import re
 import shlex
+import textwrap
 ARROW = u"←"  # the marker of a line that needs a look: "<- down", "<- differs"
 # A blank line between two paragraphs of one block: a single space (the
 # default callback's yaml format strips it). An empty line "" between two
@@ -163,10 +169,474 @@ def _ranges(names):
 
 # --- secrets -------------------------------------------------------------------------------
 
+# One rule for what is a secret: what the output hides (****).
+# A variable or setting whose value is a secret (sse_c_key, access_key: Medusa's; kspw, tspw: a keystore's and a
+# truststore's in a JVM option; ca_key, auth_token, a name ending in _pw or _pass)
+SECRET = re.compile(r"password|passwd|secret|sse_c_key|access_key|private_key|key_material|auth_token|ca_key"
+                    r"|_kspw$|_tspw$|_pw$|_pass$|^pw$|^pass$", re.I)
+_HIDDEN = SECRET
+MASK = "****"
+# A secret inside a line of text (a config file line, a JVM option): its name (as above, inside a longer one;
+# not a path: a name ending in file or path, e.g. -Dcom.sun.management.jmxremote.password.file), a quote between
+# the name and the colon (JSON, Python), then its value
+_HIDDEN_NAME = (r"(?<![\w.-])[\w.-]*(?:password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
+                r"|ca_key|_kspw|_tspw|_pw|_pass)[\w.-]*(?<![._-]file)(?<![._-]path)[\"']?")
+# (its name and the = or : after it: import_cluster takes the value out of a line)
+SECRET_NAME = r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)"
+_HIDDEN_KEY = (SECRET_NAME +
+               r"(\"(?:[^\"\\]|\\.)*\"?|'(?:[^']|'')*'?|")
+# an unquoted value runs to the end of the line (a comment aside), as a YAML plain scalar or a JVM option may hold
+# a comma; inside a flow mapping or JSON ({...} before it) it ends at the next comma or brace
+_HIDDEN_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|$))", re.M)
+_HIDDEN_FLOW_VALUE = re.compile(_HIDDEN_KEY + r"\S.*?(?=\s+#|,\s|[,}]|$))", re.M)
+# nodetool -pw, --password; -p only after cqlsh (elsewhere a port or mkdir -p)
+_HIDDEN_OPTION = re.compile(r"((?:^|\s)(?:-pw|--password)\s+|\bcqlsh\b[^\n]*?\s-p\s+)(\S+)", re.M)
+# the text of an XML element of a secret's name (logback.xml: <password>...</password>)
+# (its text up to its own closing tag: CDATA sections and comments, closed or not, child elements too)
+_ELEMENT_TEXT = r"<!\[CDATA\[(?:.*?\]\]>|.*)|<!--(?:.*?-->|.*)"
+_HIDDEN_ELEMENT = re.compile(r"(?i)(<(?P<name>" + _HIDDEN_NAME + r")(?:\s[^<>]*)?>)(\s*(?!</(?P=name)\s*>)(?:" + _ELEMENT_TEXT + r"|\S)"
+                             r"(?:" + _ELEMENT_TEXT + r"|(?!</(?P=name)\s*>).)*)")
+
+# a secret's name and what comes before its value, anywhere on a line
+_HIDDEN_KEY_ONLY = re.compile(r"(?i)(" + _HIDDEN_NAME + r"\s*[:=]\s*)")
+# a line without any of these words holds no secret setting (looked for first: the patterns above are slow)
+_HIDDEN_WORD = re.compile(r"(?i)password|passwd|secret|private_key|sse_c_key|access_key|key_material|auth_token"
+                          r"|ca_key|_kspw|_tspw|_pw|_pass")
+
+
+def _in_flow(before):
+    """True when text before a key leaves a flow mapping or JSON object open
+    (a "{" not closed, Jinja's "{{" aside)."""
+    before = before.replace("{{", "").replace("}}", "")
+    return before.count("{") > before.count("}")
+
+
+def _mask_flow(match):
+    """Inside an open {...}: the value up to the next comma or brace."""
+    return match.group(1) + MASK if _in_flow(match.string[:match.start()]) else match.group(0)
+
+
+def _mask_line(match):
+    """Elsewhere: the value up to the end of the line (a comment aside)."""
+    return match.group(0) if _in_flow(match.string[:match.start()]) else match.group(1) + MASK
+
+
+def _scan(text, depth=0, quote=None, brackets="[{"):
+    """(depth, quote) after text: the brackets ([ {; ( too for the shell) left
+    open and the quote (" or ') left open, from those before it. A quote opens
+    a value only where one starts (first, after a bracket, a comma, a colon, =,
+    a space or the shell's $: it's is a word); a comment (space #) ends the text."""
+    return _scan_to(text, depth, quote, brackets)[:2]
+
+
+def _scan_to(text, depth=0, quote=None, brackets="[{"):
+    """_scan, and where the text ends: its comment's #, else its length."""
+    closing = {"[": "]", "{": "}", "(": ")"}
+    closers = "".join(closing[b] for b in brackets)
+    i, prev = 0, " "
+    while i < len(text):
+        c = text[i]
+        if quote == '"':
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                quote = None
+        elif quote == "'":
+            if c == "'" and text[i + 1:i + 2] == "'":
+                i += 1
+            elif c == "'":
+                quote = None
+        elif c in "\"'" and prev in " \t[{(,:=$":
+            quote = c
+        elif c in brackets:
+            depth += 1
+        elif c in closers:
+            depth -= 1
+        elif c == "#" and prev in " \t":
+            break
+        prev = c
+        i += 1
+    return depth, quote, i
+
+
+def _odd_backslashes(text):
+    text = text.rstrip("\r")  # a CRLF line
+    return (len(text) - len(text.rstrip("\\"))) % 2 == 1
+
+
+def _goes_on(line):
+    """How the value of the line's secret (the first one whose value goes on)
+    goes on to the next lines, else
+    None: ("indent", column, list) for a YAML value (a block value key: |, a
+    plain value, or the value under key:, list: a "- " list at the key's column
+    too) on the lines indented more than the key; ("scan", depth, quote) for a
+    quote or brackets left open (a flow [ {, a flow mapping the value is in, a
+    shell array), brackets: the ones counted; ("backslash",) for a line ending with an odd number of
+    backslashes (a properties file, the shell). A commented-out key: none; a name in the line's comment
+    (key: |  # the password: ...) is not a key, nor one inside a value its line's first secret leaves open."""
+    if line.lstrip().startswith("#"):
+        return None
+    code = line[:_scan_to(line)[2]]  # the line without its comment
+    keys = list(_HIDDEN_KEY_ONLY.finditer(code))
+    # each key tried costs a scan of the line: the first ones, then the last (a line of many: a JSON file)
+    for key in (keys[:16] + keys[-1:]) if len(keys) > 17 else keys:
+        state = _goes_on_from(line, code, key)
+        if state is not None:
+            return state
+    return ("backslash",) if _odd_backslashes(line) else None
+
+
+def _goes_on_from(line, code, key):
+    """_goes_on for the secret key matched in code (line without its comment): None when its value ends on the
+    line."""
+    rest, colon, flow = code[key.end():], key.group(1).rstrip()[-1:] == ":", _in_flow(line[:key.start()])
+    # its value, after a YAML tag or anchor (key: !!str "..., key: &a '...)
+    value = re.sub(r"^(?:[!&]\S*(?:[ \t]+|$))+", "", rest) if colon else rest
+    before = _scan(line[:key.end()])[1]  # a quote open before the value (JVM_OPTS="... -Dx.password=")
+    if flow:
+        # in a flow mapping: the rest of it when it goes on to the next line with the value not ended on this one
+        depth, quote = _scan(line.replace("{{", "").replace("}}", ""))
+        opened = _scan(rest, 0, before)[0] > 0  # the value's own [ { left open
+        ended = re.search(r"[,}\]]", re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*'", "", rest))
+        if quote or (depth > 0 and (opened or not ended)):
+            return ("scan", depth, quote, "[{")
+    elif value[:1] and (value[:1] in "\"'[{(" or (not (colon and not before) and value[:1] == "$")):  # the shell's $' $( $"
+        brackets = "[{" if colon else "[{("
+        depth, quote = _scan(value, 0, before, brackets)
+        if depth > 0 or quote:
+            return ("scan", depth, quote, brackets)
+    elif colon and not before:
+        return ("indent", key.start(1), not value.strip())
+    return None
+
+
+def _still_on(state, line):
+    """The state after line, a line of the secret's value (False: line is not
+    one; a line after one ending with a backslash is, see mask)."""
+    if state[0] == "indent":
+        indent = len(line) - len(line.lstrip())
+        if not line.strip() or indent > state[1] or (state[2] and indent == state[1] and
+                                                     re.match(r"-(\s|$)", line.lstrip())):
+            return state
+        return False
+    if state[0] == "scan":
+        depth, quote = _scan(line, state[1], state[2], state[3])
+        return ("scan", depth, quote, state[3]) if depth > 0 or quote else None
+    return False
+
+
+def mask(text):
+    """text with the value of every secret setting in it as ****: key: value,
+    key=value, "key": "value", -pw value, --password value, and the lines its
+    value goes on to: a YAML block value (key: |), a plain value on more
+    indented lines, a value under key: (a mapping, a list), a quote or a flow
+    [ { left open, a line ending with a backslash."""
+    out = []
+    state = None  # how the value of the last secret goes on (_goes_on)
+    continued = False  # the line before, of the value, ends with a backslash: this one goes on with it
+    for line in str(text).split("\n"):
+        indent = len(line) - len(line.lstrip())
+        if state is not None:
+            after = _still_on(state, line)
+            if after is False and continued:
+                after = state
+            if after is None and _odd_backslashes(line):
+                after = ("backslash",)  # a quote closed, then a backslash: the next line too
+            if after is not False:
+                out.append(line[:indent] + MASK if line.strip() else line)
+                state, continued = after, _odd_backslashes(line)
+                continue
+        if not _HIDDEN_WORD.search(line):
+            state = None
+            out.append(_HIDDEN_OPTION.sub(r"\1" + MASK, line))
+            continue
+        state, continued = _goes_on(line), _odd_backslashes(line)
+        line = _HIDDEN_ELEMENT.sub(r"\1" + MASK, line)
+        line = _HIDDEN_VALUE.sub(_mask_line, _HIDDEN_FLOW_VALUE.sub(_mask_flow, line))
+        out.append(_HIDDEN_OPTION.sub(r"\1" + MASK, line))
+    return "\n".join(out)
+
+
+def hidden(key, value):
+    """True when value of key is (or holds) a secret: the output shows it as ****, import_cluster writes it to
+    secrets.yml. A name of SECRET (not a path: cassandra_jmx_password_file), or a secret inside the value (a
+    key: value, key=value, -pw value in a string, a dict or list that holds one); never an empty value."""
+    if isinstance(value, dict):
+        return any(hidden(str(k), v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return bool(_HIDDEN.search(key)) or any(hidden(key, v) for v in value)
+    if value == "" or value is None:
+        return False  # e.g. a password variable set to "" to leave it out
+    if isinstance(value, str) and mask(value) != value:
+        return True  # e.g. a unit's JVM_EXTRA_OPTS=-Djavax.net.ssl.keyStorePassword=...
+    return bool(_HIDDEN.search(key)) and not key.endswith("_file")
+
+
+def shown(key, value):
+    """value as the output shows it: **** for a secret, a string as is, the
+    rest as compact JSON."""
+    if hidden(str(key), value):
+        return MASK
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or value is None:
+        return json.dumps(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value, sort_keys=True, default=str)
+
+
 # --- a setting and its value per node ------------------------------------------------------
 
 
+def settings_lines(settings, indent="  ", max_value=30, max_label=40, max_nodes=30, width=None):
+    """Several settings, aligned: one column for their names, one for the
+    values, one for the nodes, then the notes ("<- differs"), the same
+    columns across all of them (import_cluster's report, apply_config).
+    settings: [(setting, [(value, nodes, note)])], a row per value (the
+    setting named on its first one), or a str: a heading line printed as is
+    between them (a file name). The value column is as wide as the longest
+    value, up to max_value (a longer one pushes its nodes only), the nodes
+    one up to max_nodes (a longer list pushes its note only); a name longer
+    than max_label on a line of its own, its values below. width: the lines
+    fit in it (a terminal's): names up to 35% of it, a longer value goes on
+    over lines when pushing its nodes does not fit, the nodes too, under
+    their column, never a name cut (see wrap_list); a note that does not fit
+    after them on a line of its own, under them."""
+    rows = [s for s in settings or [] if not isinstance(s, str)]
+    if not rows:
+        return [s for s in settings or [] if isinstance(s, str)]
+    if width:
+        max_label = min(56, max(16, int(width * 0.35)))
+    labels = [len("%s:" % name) for name, values in rows if values]
+    label = max([n for n in labels if n <= max_label] or [0])
+    lengths = [len(str(v[0])) for n, values in rows for v in values]
+    if width:  # the column of the values that fit in it, a longer one pushes its nodes
+        lengths = [n for n in lengths if n + 2 <= max_value] or [max_value - 2]
+    value_width = min(max(lengths or [0]) + 2, max_value)
+    if width:  # 20 columns at least left for the nodes
+        value_width = min(value_width, max(6, width - len(indent) - label - 24))  # (the nodes from width-22 on)
+    who = min(max([len(str(v[1])) for n, values in rows for v in values] or [0]), max_nodes)
+    out = []
+    for entry in settings:
+        if isinstance(entry, str):
+            out.append(entry)
+            continue
+        name, values = entry
+        head = "%s:" % name
+        if values and len(head) > label:
+            out.append(indent + head)
+            head = ""
+        for index, (value, names, note) in enumerate(values):
+            value, names = str(value), str(names)
+            first = (head if index == 0 else "").ljust(label)
+            if not width:
+                line = "%s%s %s %s" % (indent, first, value.ljust(value_width) if len(value) < value_width
+                                       else value + " ",
+                                       (names.ljust(who) if len(names) < who else names) + "   " + note if note
+                                       else names)
+                out.append(line.rstrip())
+                continue
+            out += _row_lines(indent + first, indent + " " * label, value, names, note, value_width, who, width)
+    return out
+
+
+def _row_lines(first, blank, value, names, note, value_width, who, width):
+    """One row of settings_lines in width: first, the line's start (indent and the setting's name), blank the
+    same as spaces; the value in its column, a longer one pushing the nodes as far as they fit, else on over lines;
+    the nodes on as many lines as they need, under their column; the note after the nodes, else on lines of its
+    own after the row's, under the nodes (further left when there is not room for it)."""
+    start = len(first) + 1
+    if len(value) >= value_width:  # pushes the nodes, as far as the line allows
+        value_width = max(value_width, min(len(value) + 1, width - start - min(len(names), 30) - 1))
+    values = wrap_value(value, value_width - 1)
+    at = start + value_width + 1  # the nodes' column
+    names = wrap_list(names, max(20, width - at))
+    lines = []
+    for i in range(max(len(values), len(names))):
+        lines.append("%s %s %s" % (first if i == 0 else blank, (values[i] if i < len(values) else "").ljust(value_width),
+                                   names[i] if i < len(names) else ""))
+    if note:
+        last = len(names) - 1
+        noted = lines[last] + " " * max(0, who - len(names[-1])) + "   " + note
+        if len(noted) > width and not names[-1]:  # no nodes (an inventory value no node is on): right after the value
+            noted = lines[last].rstrip() + "   " + note
+        if len(noted) <= width and last == len(lines) - 1:
+            lines[last] = noted
+        else:
+            hang = " " * min(at, max(4, width - len(note), width - 40))
+            lines += textwrap.wrap(note, width, initial_indent=hang, subsequent_indent=hang, break_long_words=False,
+                                   break_on_hyphens=False) or [hang + note]
+    return [line.rstrip() for line in lines]
+
+
+def wrap_value(text, room):
+    """A value on lines of at most room characters (one line when it fits): cut
+    at a space when there is one, else where it must."""
+    text = str(text)
+    room = max(1, int(room))
+    if len(text) <= room:
+        return [text]
+    return textwrap.wrap(text, room, break_long_words=True, break_on_hyphens=False, drop_whitespace=True) or [text]
+
+
+def wrap_list(text, room):
+    """A list of nodes or groups ("db11..db16, db21, G1 + db074") on lines of at
+    most room characters: cut after a ", " (the comma kept), before a " + " or
+    after "all except", a range longer than room after its "..", never inside
+    a name (one longer than room has a line of its own)."""
+    text = str(text)
+    if len(text) <= room:
+        return [text]
+    lead = "all except " if text.startswith("all except ") else ""  # a word of its own
+    parts = re.split(r"(, | \+ )", text[len(lead):])
+    words = ([lead.strip()] if lead else []) + [parts[0]]
+    for sep, word in zip(parts[1::2], parts[2::2]):
+        if sep == ", ":
+            words[-1] += ","
+            words.append(word)
+        else:
+            words.append("+ " + word)
+    pieces = []  # (word, glued: right after the one before it, no space: the end of a range)
+    for word in words:
+        first, dots, rest = word.partition("..")
+        if len(word) > room and dots and rest:
+            pieces += [(first + dots, False), (rest, True)]
+        else:
+            pieces.append((word, False))
+    lines, line = [], ""
+    for word, glued in pieces:
+        joined = (line + ("" if glued else " ") + word) if line else word
+        if line and len(joined) > room:
+            lines.append(line)
+            line = word
+        else:
+            line = joined
+    return lines + [line]
+
+
+def fit(lines, width):
+    """Lines no longer than width (a terminal's): a longer one goes on over
+    lines indented under its text ("  1. " of a numbered item, else its own
+    indent and 2 more), cut between words only (a path or a name longer than
+    width stays whole). None or 0: as they are."""
+    if not width:
+        return list(lines)
+    out = []
+    for line in lines:
+        if len(line) <= width:
+            out.append(line)
+            continue
+        lead = re.match(r"^(\s*)(\d+\.\s+)?", line)
+        hang = " " * (len(lead.group(0)) if lead.group(2) else len(lead.group(1)) + 2)
+        out += textwrap.wrap(line.lstrip(), width, initial_indent=lead.group(1), subsequent_indent=hang,
+                             break_long_words=False, break_on_hyphens=False) or [line]
+    return out
+
+
+# A line laid out where it is printed, at that width: "\x1f<hang>\x1f<text>" a
+# paragraph, its next lines from column hang; "\x1f<hang>\x1f<key>\x1f<text>"
+# a key (an option, an operation) and its text from column hang. NBSP: a space
+# never broken ("(default: false)"), printed as a space.
+FLOW = u"\x1f"
+
+
+def flow(hang, text, key=None):
+    """A line that laid_out lays out at the width of the screen: text, its
+    next lines from column hang; with key (its indent included): the key,
+    then text from column hang. A newline in them (an inventory's value) as a
+    space: one line."""
+    def one(value):
+        return re.sub(u"[\x1f\r\n]", " ", value)
+    if key is None:
+        return u"%s%d%s%s" % (FLOW, hang, FLOW, one(text))
+    return u"%s%d%s%s%s%s" % (FLOW, hang, FLOW, one(key), FLOW, one(text))
+
+
 # --- node groups -------------------------------------------------------------------------
+
+# From this many nodes on, a screen names the node lists of its rows by groups:
+# "G1 + db074", "all except db111"; a group has GROUP_LEAST nodes at least
+GROUPS_FROM = 12
+GROUP_LEAST = 3
+
+
+def node_groups(sets, all_nodes, least=GROUPS_FROM):
+    """The node groups of a screen of rows (a value and its nodes): the nodes
+    that are in the same lists (sets: the node list of each row) make a group,
+    so that each list is some groups and a few nodes (a list of one node is
+    its name, e.g. a value per node: not a split). [(label, [nodes])], G1
+    the largest; a group of GROUP_LEAST nodes at least, never every node; []
+    under least nodes (their names are short enough)."""
+    order = []
+    for name in all_nodes or []:
+        if str(name) not in order:
+            order.append(str(name))
+    if len(order) < least:
+        return []
+    every = set(order)
+    seen, kinds = set(), []
+    for names in sets or []:
+        kind = frozenset(str(n) for n in names) & every
+        if len(kind) > 1 and kind != every and kind not in seen:  # a node alone: its name
+            seen.add(kind)
+            kinds.append(kind)
+    atoms = {}
+    for name in order:
+        atoms.setdefault(tuple(name in kind for kind in kinds), []).append(name)
+    atoms.pop(tuple(False for kind in kinds), None)  # in no list (a node not read): named by no row
+    big = [sorted(a, key=_natural) for a in atoms.values() if GROUP_LEAST <= len(a) < len(order)]
+    big.sort(key=lambda a: (-len(a), _natural(a[0])))
+    return [("G%d" % (i + 1), a) for i, a in enumerate(big)]
+
+
+def who(names, all_nodes=None, groups=None, full=False, counted=True):
+    """A node list by the groups of node_groups: "all" (every one of
+    all_nodes), "G1 + G3 + db074", or "all except db111" when it is shorter;
+    the nodes outside a group as nodes() names them (full: every name;
+    counted: "6 nodes: " before more than 5)."""
+    names = [str(n) for n in names or []]
+    every = [str(n) for n in all_nodes or []]
+    if every and set(every) <= set(names):
+        return "all"
+
+    def union(members):
+        left, parts = set(members), []
+        for label, group in groups or []:
+            if set(group) <= left:
+                parts.append(label)
+                left -= set(group)
+        rest = sorted(left, key=_natural)
+        if rest:
+            plain = full_list(rest) if full else nodes(rest) if counted and not parts else _ranges(rest)
+            parts.append(plain)
+        return " + ".join(parts)
+
+    text = union(names)
+    if groups and every:
+        others = [n for n in every if n not in set(names)]
+        rest = union(others)
+        alternative = "all except " + ("(%s)" % rest if " + " in rest else rest)
+        if len(alternative) < len(text):
+            return alternative
+    return text
+
+
+def group_lines(groups, full=False, width=None, indent="  "):
+    """The groups who() names, defined once at the top of a screen:
+    "NODE GROUPS", then "  G1 = db11..db16, db21..db26 (12 nodes)", a long one
+    on over lines under its nodes (full: every name)."""
+    if not groups:
+        return []
+    lines = ["NODE GROUPS"]
+    for label, members in groups:
+        head = "%s%s = " % (indent, label)
+        text = "%s (%s)" % (full_list(members) if full else _ranges(sorted(members, key=_natural)),
+                            plural(len(members), "node"))
+        chunks = wrap_list(text, max(20, width - len(head))) if width else [text]
+        lines += [(head if i == 0 else " " * len(head)) + chunk for i, chunk in enumerate(chunks)]
+    return lines
+
 
 # --- plan ----------------------------------------------------------------------------------
 
@@ -226,6 +696,16 @@ def warning_lines(texts, seen=None, under=False):
             seen.add(key)
             blocks.append(lines)
     return spaced(blocks)
+
+
+def warnings_above(count, where="the plan", names=None, also=""):
+    """The recap's pointer to warnings printed earlier: "2 warnings in the plan
+    above (node2, node3)." (none: empty); names: the nodes they are for;
+    also: the others ("the refusal")."""
+    if not count:
+        return []
+    said = "; ".join(x for x in (nodes(names) if names else "", also) if x)
+    return ["%s in %s above%s." % (plural(count, "warning"), where, " (%s)" % said if said else "")]
 
 
 def spaced(paragraphs):
@@ -509,6 +989,19 @@ def todo(items, title="TO DO"):
     # an item on several lines: a blank line between two
     lines = spaced(entries) if any(len(e) > 1 for e in entries) else [line for e in entries for line in e]
     return [title] + lines if lines else []
+
+
+def seeds_todo(change, group=""):
+    """The TO DO item once seeds were picked for a datacenter its
+    cassandra_seeds left with none (cassandra_seed_change's auto): the line
+    to put in the inventory, else apply_config would write the inventory's
+    list back. None when nothing was picked."""
+    if not (change or {}).get("auto"):
+        return None
+    entries = [e.strip() for e in str(change["new"]).split(",") if e.strip()]
+    return {"text": "put the seeds the nodes now run with in the inventory (group_vars/%s/, or a re-import writes"
+                    " them), else apply_config puts cassandra_seeds back" % (group or "<cluster group>"),
+            "command": "cassandra_seeds: [%s]" % ", ".join('"%s"' % e for e in entries)}
 
 
 SEEDS_MIN, SEEDS_MAX = 2, 3  # per datacenter (OUTPUT Q7)

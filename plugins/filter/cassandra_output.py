@@ -7,7 +7,7 @@ cassandra_node_list: names -> "node1..node3, node5".
 cassandra_duration: seconds -> "1h02m".
 cassandra_normal_wait_line: the progress line of the wait for a node to be NORMAL.
 cassandra_phase, cassandra_check_what: a phase line, preflight's check line.
-cassandra_command: the command line that runs a playbook.
+cassandra_command, cassandra_todo, cassandra_seeds_todo: what is left to do, and the commands for it.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -15,7 +15,32 @@ __metaclass__ = type
 
 import os
 
+from ansible.utils.display import Display
+
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+
+SCREEN_WIDTH = 160  # the screen's width when no width is known (Ansible's display gives one: 79 in a log)
+
+
+def terminal_width():
+    """The width of the terminal the run shows in: Ansible's (its display's, as the ops callback; a worker has no
+    terminal of its own from ansible-core 2.19 on), else the terminal's (a column spared), else COLUMNS, else
+    SCREEN_WIDTH."""
+    try:
+        columns = int(getattr(Display(), "columns", 0) or 0)
+    except Exception:  # pylint: disable=broad-except  # no display to ask (outside a run): the other sources
+        columns = 0
+    if columns:
+        return max(60, columns)
+    for fd in (1, 2):
+        try:
+            return max(60, os.get_terminal_size(fd).columns - 1)
+        except (OSError, ValueError):
+            continue
+    try:
+        return max(60, int(os.environ.get("COLUMNS", "")) - 1)
+    except ValueError:
+        return SCREEN_WIDTH
 
 
 def cassandra_node_list(names, keep_order=False, full=False):
@@ -68,6 +93,12 @@ def cassandra_command(playbook, inventory=None, hosts=None, limit=None, extra=No
                        options=options, cwd=cwd)
 
 
+def cassandra_seeds_todo(change, group=""):
+    """cassandra_seed_change's result -> the TO DO item ({text, command}) when it picked seeds the inventory does
+    not have, None otherwise."""
+    return out.seeds_todo(change, group=group)
+
+
 def cassandra_phase(name, names=None, node="", what="", count=None):
     """A phase line (plugin_utils cassandra_output PHASES): 'decommission' |
     cassandra_phase(node='node3') -> "Decommissioning node3..."."""
@@ -81,6 +112,12 @@ def cassandra_check_what(present, kind="", targets=None, replacing="", run=None,
     return out.check_what(present, kind=kind or "", targets=targets, replacing=replacing or "", run=run, absent=absent)
 
 
+def cassandra_todo(items, title="TO DO"):
+    """[{text, command}] -> the TO DO block: [{"text": "restart n1", "command": "ansible-playbook x"}] ->
+    ["TO DO", "  1. restart n1:", "     ansible-playbook x"]."""
+    return out.todo(items, title=title)
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -88,6 +125,8 @@ class FilterModule(object):
             "cassandra_duration": cassandra_duration,
             "cassandra_normal_wait_line": cassandra_normal_wait_line,
             "cassandra_command": cassandra_command,
+            "cassandra_todo": cassandra_todo,
             "cassandra_phase": cassandra_phase,
             "cassandra_check_what": cassandra_check_what,
+            "cassandra_seeds_todo": cassandra_seeds_todo,
         }
