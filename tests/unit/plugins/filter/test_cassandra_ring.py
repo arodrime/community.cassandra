@@ -266,3 +266,10 @@ def test_header_and_verdict_states_and_mismatch():
                           "In the ring, not in this run (--limit): 10.0.0.9 (dc1, UN)", "",
                           u"ALL 3 NODES UP \u2014 1 JOINING: n1 \u2014 1 LEAVING: n2",
                           "WARNING - ring and inventory differ"]
+
+
+@pytest.mark.parametrize("address, expected", [
+    ("2001:db8:0:0:0:0:0:3", "2001:db8::3"), ("2001:db8::3", "2001:db8::3"), ("fe80:0:0:0:0:0:0:1%eth0", "fe80::1"),
+    ("192.0.2.3", "192.0.2.3"), ("node3.example", "node3.example")])
+def test_cassandra_ip_one_spelling_per_address(address, expected):
+    assert cassandra_ring.FilterModule().filters()["cassandra_ip"](address) == expected

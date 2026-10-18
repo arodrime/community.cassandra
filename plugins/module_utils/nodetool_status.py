@@ -29,7 +29,7 @@ def compressed_address(address):
     if ipaddress is None:
         return address
     try:
-        return ipaddress.ip_address(u'%s' % address.split('%')[0]).compressed
+        return ipaddress.ip_address(u'%s' % (u'%s' % address).split('%')[0]).compressed
     except ValueError:
         return address
 
