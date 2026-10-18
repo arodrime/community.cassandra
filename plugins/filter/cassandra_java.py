@@ -7,7 +7,8 @@ cassandra_java_supported: the Java majors a series supports.
 cassandra_java_check: why a series does not run on a Java ('' when it does).
 cassandra_java_tarball: the cassandra_java_tarballs entry of a Java major.
 cassandra_java_release_major: the Java major a JDK's release file names.
-cassandra_java_major: the major of a Java version ("1.8" -> "8", "17.0.2" -> "17")."""
+cassandra_java_major: the major of a Java version ("1.8" -> "8", "17.0.2" -> "17").
+cassandra_java_alternative: the alternatives entry that is the Java package's own java."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -90,6 +91,21 @@ def cassandra_java_release_major(content):
     return cassandra_java_major(match.group(1)) if match else ""
 
 
+def cassandra_java_alternative(alternatives, files, version):
+    """The java to make the default (alternatives --set): among the entries of alternatives --display java (its
+    lines, an entry starts with its path), the Java package's own java (files: the package's file list, its
+    .../bin/java), else a path naming Java version (java-17-..., java-1.8.0-...: the OpenJDK packages), else ''.
+    Temurin and Zulu packages (temurin-17-jdk-amd64, zulu17) name no version: their java is found by its files.
+    ["/usr/lib/jvm/temurin-17-jdk-amd64/bin/java - priority 1", ...], ["/usr/lib/jvm/temurin-17-jdk-amd64/bin/java",
+    ...], "17" -> "/usr/lib/jvm/temurin-17-jdk-amd64/bin/java"."""
+    entries = [line.split()[0] for line in alternatives or [] if str(line).startswith("/")]
+    own = [path for path in files or [] if str(path).endswith("/bin/java") and path in entries]
+    if own:
+        return own[0]
+    named = re.compile(r"^/\S*java-(1\.)?%s[.-]" % re.escape(cassandra_java_major(version)))
+    return next((path for path in entries if named.match(path)), "")
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -98,4 +114,5 @@ class FilterModule(object):
             "cassandra_java_tarball": cassandra_java_tarball,
             "cassandra_java_release_major": cassandra_java_release_major,
             "cassandra_java_major": cassandra_java_major,
+            "cassandra_java_alternative": cassandra_java_alternative,
         }

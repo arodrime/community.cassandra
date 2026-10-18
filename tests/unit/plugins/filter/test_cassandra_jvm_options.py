@@ -10,7 +10,22 @@ import re
 import pytest
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_jvm_options as jvm
-from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import cassandra_jvm_option_checks
+from ansible_collections.community.cassandra.plugins.filter.cassandra_jvm_options import (
+    cassandra_jvm_option_checks, cassandra_jvm_options_file, cassandra_jvm_options_variable)
+
+
+@pytest.mark.parametrize("series, java, name", [
+    ("40x", "8", "jvm8-server.options"), ("40x", "1.8", "jvm8-server.options"), ("41x", "11", "jvm11-server.options"),
+    # 4.x reads jvm11 on any Java after 8 (cassandra.in.sh)
+    ("41x", "17", "jvm11-server.options"),
+    ("50x", "11", "jvm11-server.options"), ("50x", "17", "jvm17-server.options"), ("50x", "21", "jvm17-server.options"),
+    ("50x", "", ""), ("60x", "17", ""),
+])
+def test_the_file_each_java_reads(series, java, name):
+    assert jvm.options_file(series, java) == name
+    assert cassandra_jvm_options_file(series, java) == name
+    if name:
+        assert cassandra_jvm_options_variable(name) == "cassandra_jvm%s_extra_options" % name[3:-15]
 
 
 @pytest.mark.parametrize("option, size", [
