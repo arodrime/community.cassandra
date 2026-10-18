@@ -1,0 +1,3 @@
+bugfixes:
+  - stop_rack playbook - the rack's own nodes were told apart in the ring by their private address, so with a ``broadcast_address`` a second run of a stopped rack was refused as "already down"; they are now matched by the address the ring has (IPv6 however it is written).
+  - stop_rack playbook - the checks went by the inventory's datacenter and rack names; a datacenter the ring names otherwise made every check find nothing, and a node whose inventory rack is not its rack in the ring was stopped with the rack. The playbook now refuses unless the ring has that datacenter and every node of the rack in that rack, counts the racks from the ring, and reads the ring on the checking node's own JMX port.

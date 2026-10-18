@@ -698,7 +698,9 @@ Rack maintenance
 each one drained with ``nodetool drain`` (a node that does not answer is stopped all the same) then stopped. With at least as many racks as replicas in the datacenter, one rack down is one
 replica down: it refuses a keyspace with more replicas in the datacenter than racks, a SimpleStrategy keyspace with
 RF above 1 (it ignores racks), and a node already down elsewhere in the datacenter; ``-e cassandra_rack_force=true``
-goes on despite any of them (``rolling_restart`` in rack mode too). With RF 2 it warns that
+goes on despite any of them (``rolling_restart`` in rack mode too). It also refuses, whatever ``cassandra_rack_force``,
+when the ring (``nodetool status``) does not have the datacenter, or a node of the rack in that rack, as the inventory
+names them (``cassandra_dc``, ``cassandra_rack``). With RF 2 it warns that
 (LOCAL_)QUORUM fails while the rack is down. ``start_rack`` starts the rack again and checks the cluster; repair the
 rack's nodes if they were down longer than ``max_hint_window``. It first checks the cluster name on a node of
 another rack; when none answers (or the rack is the whole cluster) and ``cassandra_cluster_name`` is the role default

@@ -17,7 +17,9 @@
 # one replica down. Refused when a keyspace would lose more than that (more
 # replicas in the datacenter than racks, SimpleStrategy with RF > 1) or when a
 # node is already down elsewhere in the datacenter; cassandra_rack_force: true
-# goes on anyway, at the risk of unavailable or lost data. CQL credentials,
+# goes on anyway, at the risk of unavailable or lost data. Refused, whatever
+# cassandra_rack_force, when the ring has the datacenter or a node of the rack
+# otherwise than the inventory (cassandra_dc, cassandra_rack). CQL credentials,
 # when authentication is on: cassandra_cql_username/_password.
 - name: Check that the rack can go down
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
@@ -30,8 +32,23 @@
     _rack_nodes: >-
       {{ _dc_nodes | selectattr('_cassandra_preflight.cassandra_rack', 'equalto', cassandra_target_rack)
          | map(attribute='inventory_hostname') | list }}
-    _racks: "{{ _dc_nodes | map(attribute='_cassandra_preflight.cassandra_rack') | unique | list }}"
     _checker: "{{ ansible_play_hosts_all | reject('in', _rack_nodes) | first | default('') }}"
+    # each node of the rack: the address the ring lists it by (its ring_address; when that is a name, the
+    # host's own addresses), one spelling each (nodetool prints IPv6 in full)
+    _rack_node_addresses: >-
+      {%- set out = {} -%}
+      {%- for h in _rack_nodes -%}
+      {%-   set a = hostvars[h]._cassandra_preflight.ring_address | community.cassandra.cassandra_ip -%}
+      {%-   set f = hostvars[h].ansible_facts | default({}) -%}
+      {%-   set more = [] if a is match('^[0-9.]+$|.*:') else f.all_ipv4_addresses | default([]) + f.all_ipv6_addresses | default([]) -%}
+      {%-   set _ = out.update({h: ([a] + more | map('community.cassandra.cassandra_ip') | list) | unique | list}) -%}
+      {%- endfor -%}
+      {{ out }}
+    # the rack's nodes as the ring has them
+    _ring_rack: >-
+      {{ (cassandra_rack_ring.cluster_status[cassandra_target_dc] | default({})).nodes | default([])
+         | selectattr('rack', 'equalto', cassandra_target_rack) | map(attribute='address')
+         | map('community.cassandra.cassandra_ip') | list }}
     # what forbids the stop (cassandra_rack_force goes on), and what only warns
     _problems: >-
       {{ _cassandra_rack_check.problems
@@ -70,11 +87,41 @@
       community.cassandra.cassandra_status:
         down: 10000  # read it whatever the state of the nodes
       module_defaults:
-        community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
+        community.cassandra.cassandra_status: >-
+          {{ _cassandra_service_jmx | combine({'port': hostvars[_checker].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}
       delegate_to: "{{ _checker }}"
       run_once: true
       register: cassandra_rack_ring
-      failed_when: cassandra_rack_ring.cluster_status is not defined
+      failed_when: cassandra_rack_ring.cluster_status is not mapping
+
+    # The checks below go by the ring's names: a datacenter or rack named otherwise in the inventory (a dc_suffix,
+    # an inventory edited after the nodes joined: a node keeps its rack for life) would check nothing
+    - name: The ring has the rack as the inventory says it
+      ansible.builtin.assert:
+        that: cassandra_target_dc in cassandra_rack_ring.cluster_status and _not_there | length == 0
+        fail_msg: >-
+          {{ ('The ring (nodetool status on ' ~ _checker ~ ') has no datacenter ' ~ cassandra_target_dc ~ ' (it has '
+              ~ cassandra_rack_ring.cluster_status.keys() | list | join(', ') ~ ').')
+             if cassandra_target_dc not in cassandra_rack_ring.cluster_status
+             else ('Not in ' ~ cassandra_target_dc ~ '/' ~ cassandra_target_rack ~ ' in the ring (nodetool status on ' ~ _checker
+                   ~ '): ' ~ _not_there | join(', ') ~ '.') }}
+          The inventory's cassandra_dc and cassandra_rack must be the ones the nodes joined with. Nothing was changed.
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _ring_all: >-
+          {{ cassandra_rack_ring.cluster_status.values() | map(attribute='nodes') | flatten | map(attribute='address')
+             | map('community.cassandra.cassandra_ip') | list }}
+        _not_there: >-
+          {%- set out = [] -%}
+          {%- for h in _rack_nodes -%}
+          {%-   set a = _rack_node_addresses[h] -%}
+          {%-   if not a | intersect(_ring_rack) -%}
+          {%-     set _ = out.append(h ~ ' (' ~ a | first ~ ('' if a | intersect(_ring_all) else ', not in the ring at all') ~ ')') -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
 
     - name: Read the keyspaces' replication from {{ _checker }}
       community.cassandra.cassandra_cqlsh:
@@ -101,13 +148,16 @@
         _cassandra_rack_down_here: >-
           {{ cassandra_rack_ring.cluster_status[cassandra_target_dc].nodes | default([])
              | selectattr('status', 'equalto', 'D') | map(attribute='address')
-             | reject('in', _rack_addresses) | list }}
+             | map('community.cassandra.cassandra_ip') | reject('in', _rack_addresses) | list }}
         _cassandra_rack_down_elsewhere: >-
           {{ cassandra_rack_ring.cluster_status | dict2items | rejectattr('key', 'equalto', cassandra_target_dc)
              | map(attribute='value.nodes') | flatten | selectattr('status', 'equalto', 'D')
              | map(attribute='address') | list }}
       vars:
-        _rack_addresses: "{{ _rack_nodes | map('extract', hostvars, ['_cassandra_preflight', 'address']) | list }}"
+        # only the ones in the rack in the ring: a host address that is another node's never hides that one
+        _rack_addresses: "{{ _rack_node_addresses.values() | flatten | intersect(_ring_rack) }}"
+        # the datacenter's racks as the ring has them
+        _racks: "{{ cassandra_rack_ring.cluster_status[cassandra_target_dc].nodes | map(attribute='rack') | unique | list }}"
       run_once: true
 
     - name: Refuse when a keyspace would lose more than one replica
