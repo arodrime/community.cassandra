@@ -1,0 +1,80 @@
+---
+# Before nodes start for the first time (create_cluster), on the
+# nodes of the play at once: each clock against its time source, as its daemon
+# reports it (offset plus the daemon's error bound within
+# cassandra_clock_max_offset_ms, a synchronised source), the nodes' sources
+# compared (unrelated ones: a WARNING). A node no daemon reports on (a
+# container: the host's clock) is compared with the others by the dates
+# collected over SSH, coarsely. A time sync just started (cassandra_linux) is
+# waited for, up to cassandra_clock_sync_timeout seconds. A node not in sync stops
+# the run with nothing started: why, then the way out (the sync_clocks
+# playbook, or the NTP config). --check installed and started nothing: what a
+# real run would refuse is said, not refused. cassandra_clock_check: false
+# skips it (clocks kept in sync by other means). _cassandra_clock_operation:
+# the playbook (its name in the way out).
+- name: Check the clocks before the starts
+  when: cassandra_clock_check | bool
+  block:
+    - name: Note where Cassandra runs
+      ansible.builtin.set_fact:
+        _cassandra_clock_running: "{{ _cassandra_preflight_running | default(false) | bool }}"
+
+    - name: Read and compare the clocks
+      ansible.builtin.include_tasks: clocks_read.yml
+      vars:
+        # --check started no time sync: nothing to wait for
+        _cassandra_clock_wait: "{{ 0 if ansible_check_mode else cassandra_clock_sync_timeout }}"
+
+    - name: Write what a start refused would say
+      ansible.builtin.set_fact:
+        _cassandra_clock_refusal: >-
+          {{ _cassandra_clock_verdicts | community.cassandra.cassandra_clock_refusal(
+               operation=_cassandra_clock_operation | default(''), check=ansible_check_mode,
+               unread=_unread,
+               cluster=(_cassandra_preflight | default({})).cassandra_cluster_name | default(''), command=_command) }}
+      run_once: true
+      vars:
+        # answered, but the read failed (not a wait that ran out: that one is judged)
+        _unread: >-
+          {%- set d = {} -%}
+          {%- for h in ansible_play_hosts if not hostvars[h]._cassandra_clock_read_ok | default(false) | bool
+                                              and not hostvars[h]._cassandra_clock_last.unreachable | default(false) -%}
+          {%-   set _ = d.update({h: hostvars[h]._cassandra_clock_last.msg | default('')}) -%}
+          {%- endfor -%}
+          {{ d }}
+        _command: >-
+          {{ 'sync_clocks' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+
+    - name: Refuse to start nodes whose clocks are not in sync
+      ansible.builtin.assert:
+        that: _cassandra_clock_refusal | length == 0 or ansible_check_mode
+        fail_msg: "{{ _cassandra_clock_refusal | join(_nl) }}"
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+
+    - name: Say what a real run would refuse (--check)
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_clock_refusal | join(_nl) }}"
+      run_once: true
+      when:
+        - _cassandra_clock_refusal | length > 0
+        - ansible_check_mode
+      vars:
+        cassandra_output: true
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+
+    - name: Say what is to know about the clocks
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_clock_verdicts.warnings | map('regex_replace', '^', 'WARNING - clocks: ') | join(_nl) }}"
+      run_once: true
+      when:
+        - _cassandra_clock_refusal | length == 0
+        - _cassandra_clock_verdicts.warnings | length > 0
+      vars:
+        cassandra_output: true
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)

@@ -330,3 +330,16 @@ def test_apply_config_counts_a_directory_owner_change():
     assert templar.template(trust_as_template(facts["cassandra_apply_config_todo"])) is True
     assert templar.template(trust_as_template(facts["cassandra_apply_config_then"])) == "none"
     assert templar.template(trust_as_template(facts["cassandra_apply_config_notes"])) == []
+
+
+def test_update_java_and_upgrade_screens():
+    t, play = task("update_java.yml", "Show the plan and confirm the run")
+    text = screen({"groups": {"cassandra_update_java_True": ["node2"]}, "cassandra_java_version": 17,
+                   "hostvars": {"node2": {"cassandra_update_java_running": "Java 11"}}}, t["vars"], play.get("vars"))
+    assert text == ("update_java: move node2 to Java 17\n\nMoves these nodes to the new Java, one at a time (install, config, drain, restart).\n\n"
+                    "  node2\n    runs Java 11")
+    t, play = task("upgrade.yml", "Show the plan and confirm")
+    text = screen({"cassandra_upgrade_from": "4.0.20", "cassandra_package_version": "4.1.5"}, t["vars"])
+    assert text.startswith("upgrade: phase prepare, 4.0.20 -> 4.1.5\n\nBefore the upgrade, check that:\n"
+                           "  - backups are paused")
+    assert text.endswith("\n\nprepare now snapshots every node (pre-upgrade-4.0.20) and copies its config.")

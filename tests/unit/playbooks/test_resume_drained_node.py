@@ -47,6 +47,9 @@ HOSTS = ["n1", "n2", "n3"]
     (False, "restart", "n2", ["n1"], False),        # not a resumed run
     (True, "reboot", "n1", [], True),
     (True, "apply_config", "n1", [], True),         # its restart drains the node
+    (True, "update_java", "n1", [], True),
+    (True, "sync_clock", "n1", [], True),           # sync_clocks' restart window
+    (True, "upgrade", "n1", [], False),             # its own phases, not this
     (True, "stop", "n1", [], False),                # an action that does not bring the node back
 ])
 def test_only_the_node_the_run_stopped_at(resume, action, host, done, candidate):

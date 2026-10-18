@@ -44,10 +44,18 @@ Set in the inventory, as any role variable.
   operation from its progress file, kept in `cassandra_rolling_progress_dir`
   (default: `.cassandra_progress` next to the inventory) for
   `cassandra_rolling_progress_days` (30).
+* The `upgrade` playbook's `sstables` phase (`nodetool upgradesstables`, one
+  node at a time): `cassandra_upgrade_sstables_jobs` (default 2, nodetool's;
+  0: every compaction thread), `cassandra_upgrade_sstables_timeout` (default
+  86400 seconds per node).
 * One token per node (`cassandra_num_tokens: 1`), `create_cluster`:
   `cassandra_token_rf` (default 3), the replication factor the shares shown
   assume when no keyspace gives one; `cassandra_token_allow_partial` (default
   `false`), tokens on only some nodes of a datacenter.
+* The clocks (`sync_clocks`, and the check before `create_cluster` starts
+  nodes): `cassandra_clock_max_offset_ms` (50), `cassandra_clock_step_ms`
+  (400), `cassandra_clock_sync_timeout` (180), `cassandra_clock_check`
+  (`true`).
 * `cassandra_cql_username` / `cassandra_cql_password`: CQL access for the
   checks that read the schema (the keyspaces' replication before a rack goes
   down), when authentication is on.

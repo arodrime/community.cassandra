@@ -2,7 +2,8 @@
 # One read of the cluster health (cluster_health.yml, which reads it again while it waits): the reads on this
 # node at once (async), those from the other node while they run, then what they found
 # (cassandra_health_findings, cassandra_health_problems). The caller's vars: _node_checks, _down_ok, _async,
-# _batch, _cassandra_health_wait_on, _cassandra_health_hosts.
+# _batch, _cassandra_health_wait_on, _cassandra_health_hosts. While an upgrade mixes versions
+# (cassandra_allow_mixed_versions), a schema disagreement is a warning, not a problem.
 - name: Read the cluster state
   module_defaults:
     community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
@@ -218,9 +219,21 @@
                  ports=cassandra_health_ports if _node_checks else None,
                  down_ok=_down_ok,
                  names=_cassandra_health_read_names if _cassandra_health_read_names is defined
-                       else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)) }}
+                       else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars),
+                 mixed_versions=cassandra_allow_mixed_versions | default(false) | bool,
+                 target=cassandra_package_version | default('')) }}
 
     # the same as sentences (cassandra_health_findings: as data, for the health_check report)
     - name: Word the problems
       ansible.builtin.set_fact:
-        cassandra_health_problems: "{{ cassandra_health_findings | map(attribute='text') | list }}"
+        cassandra_health_problems: "{{ cassandra_health_findings | rejectattr('kind', 'equalto', 'warning') | map(attribute='text') | list }}"
+
+    - name: Say the warnings
+      ansible.builtin.debug:
+        msg: "{{ _warnings | map('regex_replace', '^', 'WARNING - ') | join(_nl) }}"
+      run_once: "{{ _batch }}"
+      when: _warnings | length > 0
+      vars:
+        cassandra_output: true
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _warnings: "{{ cassandra_health_findings | selectattr('kind', 'equalto', 'warning') | map(attribute='text') | list }}"

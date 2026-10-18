@@ -85,7 +85,9 @@ def test_marked_phase_lines(path, at_least):
 
 
 @pytest.mark.parametrize("action, line", [("restart", "Restarting node5..."), ("reboot", "Rebooting node5..."),
-                                          ("apply_config", "Writing the config (node5)...")])
+                                          ("apply_config", "Writing the config (node5)..."),
+                                          ("update_java", "Updating Java on node5..."),
+                                          ("sync_clock", "Setting the clock of node5 (drained, stopped, started again)...")])
 def test_each_node_says_what_is_done_to_it(action, line):
     say = next(t for t in phases("roles", "cassandra_operation", "tasks", "node_operation.yml")
                if t["name"].startswith("Say what is done"))

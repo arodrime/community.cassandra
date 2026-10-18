@@ -2,19 +2,20 @@
 # The recap of a node operation: DONE, FAILED or CHECK, then the nodes grouped
 # by outcome (cassandra_op_recap). A node without result: not reached when it
 # was in the run (stopped before it, or unreachable), else left out of the run
-# (--limit). The operation's name from cassandra_service_node_action, else from
-# the actions recorded.
+# (--limit). cassandra_service_summary_operation: the playbook's name, else
+# from cassandra_service_node_action, else from the actions recorded.
 - name: Summary
   ansible.builtin.debug:
     msg: >-
       {{ _results | community.cassandra.cassandra_op_recap(check=ansible_check_mode,
                                                            cluster=cassandra_cluster_name | default(''),
+                                                           operation=cassandra_service_summary_operation | default(''),
                                                            action=cassandra_service_node_action | default('')) }}
   run_once: true
   vars:
     _results: >-
       {%- set out = [] -%}
-      {%- for h in query('community.cassandra.cassandra_nodes') -%}
+      {%- for h in cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes')) -%}
       {%-   set _ = out.append({'node': h, 'result': hostvars[h].cassandra_op_result
                                   | default('not reached' if h in ansible_play_hosts_all else 'not in this run (--limit)')}) -%}
       {%- endfor -%}
