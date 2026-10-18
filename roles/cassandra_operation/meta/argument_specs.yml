@@ -4,8 +4,8 @@ argument_specs:
     short_description: The task files of the collection's playbooks (internal).
     description:
       - Not a role to run on its own (it has no main tasks), nor a stable interface. It holds the task
-        files the collection's playbooks include (the preflight checks, the cluster health), with the
-        defaults they read.
+        files the collection's playbooks include (the preflight checks, the cluster health, rolling
+        operations, confirmation screens, progress files), with the defaults they read.
       - The playbooks' settings below are set in the inventory as any role variable.
     options:
       cassandra_suspicious_ack:
@@ -30,6 +30,19 @@ argument_specs:
             playbook leaves it out (preflight, health checks and their node counts, rolling operations, status,
             import), and the C(topology) playbook decommissions it if it is still in the ring.
           - Delete the host from the inventory once C(topology) has removed it, or leave it marked absent.
+      cassandra_token_rf:
+        type: int
+        default: 3
+        description:
+          - One token per node - the replication factor the shares C(create_cluster) shows
+            assume in a datacenter no keyspace is replicated to.
+            Otherwise the largest replication factor of the datacenter's keyspaces.
+      cassandra_token_allow_partial:
+        type: bool
+        default: false
+        description:
+          - One token per node, C(create_cluster) - a datacenter where only some nodes have
+            C(cassandra_initial_token) is refused; C(true) gives the others the middles of the largest ranges.
       cassandra_service_health_timeout:
         type: int
         default: 600
@@ -43,6 +56,74 @@ argument_specs:
         description:
           - Go on although the cluster is not healthy. Risky, a second replica
             down can make data unavailable.
+      cassandra_operation_confirm:
+        type: bool
+        default: true
+        description:
+          - Ask the operator before a risky operation. C(false) for non-interactive runs. C(--check) never asks
+            (nothing changes, the plan only).
+      cassandra_operation_drain:
+        type: bool
+        default: true
+        description:
+          - Rolling restarts and C(stop_rack) drain each node before stopping it (the role's unit drains
+            on stop too, a second drain is harmless). V(false) leaves it to the unit, except on a node whose own
+            unit is kept (C(cassandra_service_unit_manage=false)), which is drained anyway.
+      cassandra_rolling_resume:
+        type: bool
+        default: false
+        description:
+          - Resume the latest interrupted rolling operation of this cluster,
+            skipping the nodes already done.
+      cassandra_rolling_progress_dir:
+        type: path
+        default: ""
+        description:
+          - Where rolling operations keep their progress files, on the
+            controller. A relative path is from the current dir.
+          - Empty (default) means C(.cassandra_progress) in the inventory's
+            dir, or in the current dir when the inventory's dir is not writable
+            and has no C(.cassandra_progress) yet (or there is none, as with
+            C(-i host1,host2)). With several inventories, the one of the first
+            host of the play.
+      cassandra_rolling_progress_days:
+        type: int
+        default: 30
+        description:
+          - Progress files older than this are removed.
+      cassandra_cql_username:
+        type: str
+        default: ""
+        description:
+          - CQL user for the checks that read the schema (the keyspaces'
+            replication before a rack goes down), when authentication is on.
+      cassandra_cql_password:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Password of O(cassandra_cql_username).
+      cassandra_service_state:
+        type: str
+        default: started
+        choices: [started, stopped, restarted]
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_unit_manage:
+        type: bool
+        default: true
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_wait_timeout:
+        type: int
+        default: 600
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
+      cassandra_service_drain_timeout:
+        type: int
+        default: 120
+        description:
+          - Read by these task files too, with the same default (see the C(cassandra_service) role).
       cassandra_stream_check_interval:
         type: int
         default: 30

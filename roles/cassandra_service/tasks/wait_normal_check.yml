@@ -57,7 +57,7 @@
         msg: >-
           {{ cassandra_service_netstats.mode | default('') | community.cassandra.cassandra_normal_wait_line(
                waited=now().timestamp() | int - _cassandra_normal_start | int, timeout=cassandra_service_wait_timeout | int,
-               node=_head.node, operation=_head.operation) }}
+               index=_head.index, steps=_head.steps, node=_head.node, operation=_head.operation) }}
       vars:
         cassandra_output: true  # a progress line (ops callback)
         _head: "{{ _cassandra_normal_head }}"

@@ -1,0 +1,326 @@
+---
+# Build a cluster from blank hosts.
+#
+#   ansible-playbook community.cassandra.create_cluster
+#
+# Nodes prepared in parallel, then started one at a time, seeds first, each
+# one joined before the next. The identity settings (cluster name, snitch,
+# partitioner, number of tokens) must come from the inventory. The roles run:
+# cassandra_repository, cassandra_install, cassandra_linux, cassandra_config,
+# then cassandra_service; cassandra_firewall too with cassandra_manage_firewall: true.
+#
+# Re-running on a running cluster starts nothing.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+
+# A cluster keeps these for life: a role default that changes in a later
+# release must not silently change what the next node of this cluster gets
+- name: Refuse an identity left to the role defaults
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  become: true
+  vars:
+    # a cluster never started: every host of the group in the run (no --limit), checked by the preflight
+    # (it answered) and below, every one blank (where it stands, node_standing.yml: nothing in its
+    # Cassandra directories, Cassandra stopped), no system keyspace left in the package's default dir
+    # either (a cluster stopped as a whole is not new)
+    _group: "{{ query('community.cassandra.cassandra_nodes') | default([]) }}"
+    _new_cluster: >-
+      {%- set fresh = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   if v._cassandra_preflight_running is defined and not v._cassandra_preflight_running | bool
+              and v.cassandra_node_standing is defined and v.cassandra_node_standing.blank | bool
+              and v.cassandra_node_standing.elsewhere | length == 0 -%}
+      {%-     set _ = fresh.append(h) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ _group | difference(ansible_play_hosts_all) | length == 0 and fresh | length == ansible_play_hosts_all | length }}
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # what an earlier play (or playbook of this run) read may no longer stand: this step reads it again
+    - name: Read where the nodes stand again
+      ansible.builtin.set_fact:
+        _cassandra_node_standing_read: {}
+
+    - name: Load the cassandra_config defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Where the node stands
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: node_standing.yml
+
+    # Role defaults are not in hostvars: what is there came from the inventory or -e
+    - name: Check the identity settings come from the inventory
+      ansible.builtin.assert:
+        that: _missing | length == 0 or cassandra_accept_default_identity | default(false) | bool
+        fail_msg: |-
+          Left to the role defaults on {{ inventory_hostname }}: set them in the inventory (group_vars of the
+          cluster, dc and rack per host), or -e cassandra_accept_default_identity=true. Current values{{
+          ' (cassandra_storage_compatibility_mode is only needed once the cluster runs: NONE if create_cluster started it)'
+          if 'cassandra_storage_compatibility_mode' in _missing else '' }}:
+          {% for name in _missing %}
+            {{ name }}: {{ lookup('ansible.builtin.vars', name) | to_json }}
+          {% endfor %}
+        quiet: true
+      vars:
+        _names:
+          - cassandra_cluster_name
+          - cassandra_version
+          - cassandra_num_tokens
+          - cassandra_partitioner
+          - cassandra_endpoint_snitch
+          - cassandra_dc
+          - cassandra_rack
+        # the allocator's hint only matters with vnodes; the storage compatibility mode of a 5.0 cluster
+        # is required once it runs (an upgraded one may be in CASSANDRA_4), a new one gets NONE (below)
+        _all: >-
+          {{ _names + (['cassandra_storage_compatibility_mode'] if cassandra_version == '50x' and not _new_cluster | bool else [])
+             + (['cassandra_allocate_tokens_for_local_replication_factor'] if cassandra_num_tokens | int > 1 else []) }}
+        _missing: "{{ _all | reject('in', hostvars[inventory_hostname]) | list }}"
+
+    # The identity settings must come from the inventory, but a new 5.0 cluster
+    # may leave cassandra_storage_compatibility_mode out: NONE (CASSANDRA_4 and
+    # UPGRADING, steps of an upgrade, are refused on a new cluster).
+    # Only an upgraded cluster has a reason for another mode (CASSANDRA_4, then UPGRADING, then NONE)
+    - name: A new 5.0 cluster starts in storage compatibility mode NONE
+      ansible.builtin.assert:
+        that: _mode == 'NONE'
+        fail_msg: >-
+          cassandra_storage_compatibility_mode is {{ _mode }} on {{ inventory_hostname }}: a new 5.0 cluster has no older
+          sstables or nodes to stay compatible with, it starts in NONE (CASSANDRA_4 and UPGRADING are steps of an
+          upgrade from 4.x, see the upgrade playbook). Set NONE, or leave it out.
+        quiet: true
+      when:
+        - cassandra_version == '50x'
+        - _new_cluster | bool
+      vars:
+        _mode: "{{ hostvars[inventory_hostname].cassandra_storage_compatibility_mode | default('NONE') | string }}"
+
+    - name: Say a new 5.0 cluster starts in NONE
+      ansible.builtin.debug:
+        msg: >-
+          cassandra_storage_compatibility_mode is not in the inventory of {{ _unset | join(', ') }}: a new 5.0 cluster,
+          NONE (the role's default).
+      run_once: true
+      when:
+        - cassandra_version == '50x'
+        - _new_cluster | bool
+        - _unset | length > 0
+      vars:
+        _unset: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | rejectattr('cassandra_storage_compatibility_mode', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+
+# Each datacenter's nodes evenly spaced on the ring, racks taken in turn, the
+# datacenters 100 tokens apart (plugin_utils/cassandra_tokens.py). A node
+# that has cassandra_initial_token keeps it; a datacenter where only some
+# have one is refused unless cassandra_token_allow_partial (the others then
+# split the largest ranges). A rerun after a create that stopped half way
+# gives the same tokens: the nodes already running must have them.
+# One token per node (cassandra_num_tokens: 1): the nodes without
+# cassandra_initial_token get evenly spaced tokens, shown with each node's
+# share of the data, then confirmed (cassandra_operation_confirm).
+- name: Work out the tokens (one token per node)
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Work out the tokens
+      when: _cassandra_preflight.cassandra_num_tokens | int == 1
+      vars:
+        _plan: "{{ hostvars[ansible_play_hosts_all[0]].cassandra_token_plan | default({}) }}"
+        _running: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_preflight_running')
+             | map(attribute='inventory_hostname') | list }}
+      block:
+        - name: Load the cassandra_service and cassandra_operation defaults
+          ansible.builtin.include_role:
+            name: "community.cassandra.{{ item }}"
+            tasks_from: defaults.yml
+            public: true
+          loop: [cassandra_service, cassandra_operation]
+
+        - name: Read the tokens of the nodes already running
+          community.cassandra.cassandra_ring:
+          module_defaults:
+            community.cassandra.cassandra_ring: >-
+              {{ _cassandra_service_jmx | combine({'port': hostvars[_running | first | default(inventory_hostname)].cassandra_jmx_port
+                                                           | default(_cassandra_service_jmx.port) | int}) }}
+          register: cassandra_create_ring
+          delegate_to: "{{ _running | first | default(inventory_hostname) }}"  # templated even when skipped
+          run_once: true
+          when: _running | length > 0
+
+        - name: Plan the ring
+          ansible.builtin.set_fact:
+            cassandra_token_plan: >-
+              {{ _nodes | community.cassandra.cassandra_token_assign(_cassandra_preflight.cassandra_partitioner,
+                   default_rf=cassandra_token_rf | default(3), allow_partial=cassandra_token_allow_partial | default(false) | bool,
+                   ring=cassandra_create_ring.ring | default({}), hosts=_hosts) }}
+          vars:
+            _nodes: >-
+              {%- set l = [] -%}
+              {%- for h in ansible_play_hosts -%}
+              {%-   set p = hostvars[h]._cassandra_preflight -%}
+              {%-   set _ = l.append({'name': h, 'dc': p.cassandra_dc, 'rack': p.cassandra_rack, 'token': p.cassandra_initial_token}) -%}
+              {%- endfor -%}
+              {{ l }}
+            _hosts: >-
+              {{ dict(ansible_play_hosts | map('extract', hostvars, ['_cassandra_preflight', 'ring_address']) | zip(ansible_play_hosts)) }}
+          run_once: true
+
+        - name: Refuse a ring that can't be worked out
+          ansible.builtin.assert:
+            that: _plan.problems | length == 0
+            fail_msg: "{{ _plan.lines + _plan.warnings | map('regex_replace', '^', 'WARNING - tokens: ') | list + _plan.problems }}"
+            quiet: true
+          run_once: true
+
+        - name: Show the ring and confirm the tokens
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_operation
+            tasks_from: screen.yml
+          vars:
+            cassandra_screen_question: >-
+              {{ 'Give the nodes marked * these tokens?' if _plan.tokens | length > 0 and _running | length < ansible_play_hosts | length
+                 else '' }}
+            cassandra_screen:
+              operation: create_cluster
+              summary: the tokens of the new nodes (one token per node)
+              intro: ["The ring (RF of the shares: cassandra_token_rf):"]
+              after:
+                - pre: "{{ _plan.lines }}"
+              warnings:
+                - label: tokens
+                  each: "{{ _plan.warnings }}"
+
+        - name: Give the node its token
+          ansible.builtin.set_fact:
+            cassandra_initial_token: "{{ _plan.tokens[inventory_hostname] }}"
+          when: inventory_hostname in _plan.tokens
+
+# Every node at once (each role's own list of changes only with -v, or in
+# cassandra_change_report_dir)
+- name: Prepare the nodes
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  become: true
+  pre_tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'prepare_cluster' | community.cassandra.cassandra_phase(ansible_play_hosts_all) }}"
+      run_once: true
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+  roles:
+    - community.cassandra.cassandra_repository
+    - community.cassandra.cassandra_install
+    - community.cassandra.cassandra_linux
+    - community.cassandra.cassandra_config
+    - role: community.cassandra.cassandra_firewall
+      when: cassandra_manage_firewall | default(false) | bool
+
+# The token allocator refuses a node joining a rack already in the ring while
+# its datacenter has more than 1 rack but fewer than
+# cassandra_allocate_tokens_for_local_replication_factor: seeds first, but a
+# node of a new rack before one it would refuse
+- name: Order the starts
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  any_errors_fatal: true  # a node failing here: none is started
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Seeds first, racks in an order the token allocator accepts
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: cassandra_create_start_order
+      loop: >-
+        {{ ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight') | list
+           | community.cassandra.cassandra_start_order(_hint,
+               cassandra_preflight_status.cluster_status | default({}, true)) }}
+      run_once: true
+      changed_when: false
+      vars:
+        # one token per node: no allocator, any order
+        _hint: >-
+          {{ _cassandra_preflight.cassandra_allocate_tokens_for_local_replication_factor
+             if _cassandra_preflight.cassandra_num_tokens | int > 1 else '' }}
+
+# Seeds first (a node of a new rack earlier when the token allocator needs
+# it), each one joined before the next. Re-running it on a running cluster
+# starts nothing.
+- name: Start the nodes, one at a time
+  hosts: cassandra_create_start_order
+  serial: 1
+  become: true
+  pre_tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+  roles:
+    - community.cassandra.cassandra_service
+
+- name: Check the new cluster
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Say the cluster is not checked (--check)
+      ansible.builtin.debug:
+        msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
+      run_once: true
+      when: ansible_check_mode
+
+    - name: Check the whole cluster from one node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_health.yml
+      vars:
+        cassandra_service_health_expected_nodes: "{{ ansible_play_hosts_all | length }}"  # --limit may leave nodes out
+      when:
+        - inventory_hostname == ansible_play_hosts[0]
+        - not ansible_check_mode  # nothing was started

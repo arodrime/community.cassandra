@@ -137,7 +137,7 @@ def test_every_playbook_checks_first(playbook):
     assert "always" in first["tags"], playbook
 
 
-@pytest.mark.parametrize("playbook", ["status", "health_check"])
+@pytest.mark.parametrize("playbook", ["status", "health_check", "start_rack"])
 def test_checked_again_where_limit_skips_localhost(playbook):
     # their first play is localhost only: the first node play checks too, after the nodes' own facts
     nodes_play = load("playbooks", playbook + ".yml")[1]

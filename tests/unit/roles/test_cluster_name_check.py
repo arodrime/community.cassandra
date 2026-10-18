@@ -146,6 +146,16 @@ def test_no_node_answering_under_the_default_name_is_refused(tmp_path):
     assert rc == 0 and went_on == ["n0", "n9"], out
 
 
+def test_no_node_to_read_from_is_refused_when_required(tmp_path):
+    # start_rack on a rack that is the whole cluster (e.g. every node at the defaults dc1/rack1)
+    rc, out, asked, went_on = run(tmp_path, "Test Cluster", "my_cluster", candidates=(),
+                                  extra={"cassandra_service_cluster_required": True})
+    assert rc != 0 and "The cluster name could not be read (no other node to read it from) and cassandra_cluster_name" in out, out
+    assert went_on == []
+    rc, out, asked, went_on = run(tmp_path / "optional", "Test Cluster", "my_cluster", candidates=())
+    assert rc == 0 and went_on == ["n0", "n9"], out
+
+
 def test_a_description_that_failed_is_refused(tmp_path):
     describe = {"from": "n3", "rc": 1, "stdout": "",
                 "stderr": "error: Authentication failed! Credentials required\n-- StackTrace --\njava.lang.SecurityException: x"}
@@ -225,3 +235,11 @@ def test_the_playbooks_check_it_before_any_change():
     assert picked([]) == "n1"
     assert picked(["n1"]) == "n2"  # (not looked at: as before)
     assert picked(["n1", "n2", "n3"]) == "n2"  # none checked has it: the first running one
+    # start_rack, which writes the unit of the rack's nodes, checks it on the other nodes first
+    plays = load("playbooks", "start_rack.yml")
+    find = [p for p in plays if p["name"] == "Find the rack's nodes"][0]
+    check = [t for t in find["tasks"] if t["name"] == "Check the running nodes belong to this cluster"][0]
+    assert check["ansible.builtin.include_role"]["tasks_from"] == "cluster_name.yml" and "run_once" not in check
+    assert check["vars"]["cassandra_service_cluster_required"] is True
+    assert "reject('in', groups['cassandra_target_rack_nodes'])" in check["vars"]["cassandra_service_cluster_candidates"]
+    assert [p["name"] for p in plays].index("Find the rack's nodes") < [p["name"] for p in plays].index("Start the rack")

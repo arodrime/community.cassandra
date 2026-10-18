@@ -1,0 +1,160 @@
+---
+# Start the nodes of a rack that stop_rack stopped.
+#
+#   ansible-playbook community.cassandra.start_rack \
+#     -e cassandra_target_dc=dc1 -e cassandra_target_rack=rack2
+#
+# Each node started and waited for until it has joined, then the whole
+# cluster checked. Asks nothing; re-running is safe.
+#
+# Down longer than the hint window: repair the rack's nodes afterwards.
+- name: Check the cluster's group
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  tasks:
+    - name: Check the cluster's group
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: hosts_check.yml
+      tags: [always]  # its variables check under --tags too
+
+- name: Find the rack's nodes
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check each node has its own facts
+      ansible.builtin.assert:
+        that: _shared | length == 0
+        fail_msg: >-
+          ansible-core {{ ansible_version.full }} gave {{ _shared | join(', ') }} the facts of another node
+          (ansible/ansible#87148): a run_once task ran on them earlier in this run, before they had facts of their own
+          (in a play before this playbook?). Run this playbook on its own, or gather facts first in that play.
+          Nothing was changed.
+        quiet: true
+      run_once: true
+      tags: [always]
+      vars:
+        cassandra_output: true  # its message as is (the ops callback)
+        _shared: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] -%}  {#- the ones out of the play too: they may share them with these -#}
+          {%-   if hostvars[h].ansible_facts._cassandra_own_facts | default(h) != h -%}{%- set _ = out.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # also run by the first play, which --limit skips
+    - name: No unknown variable
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: variables_check.yml
+      tags: [always]  # under --tags too
+
+    # the run's first line, here when --limit left the first play (localhost) out
+    - name: Say which cluster the run is on
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_banner.yml
+      tags: [always]  # under --tags too
+
+    - name: Load the cassandra_config defaults (dc and rack)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+
+    - name: Group the rack's nodes
+      ansible.builtin.group_by:
+        key: cassandra_target_rack_nodes
+      when:
+        - cassandra_dc == cassandra_target_dc
+        - cassandra_rack == cassandra_target_rack
+      changed_when: false
+
+    - name: The rack has nodes
+      ansible.builtin.assert:
+        that: groups['cassandra_target_rack_nodes'] | default([]) | length > 0
+        fail_msg: "No node declares cassandra_dc={{ cassandra_target_dc | default('(not set)') }} and cassandra_rack={{ cassandra_target_rack | default('(not set)') }}"
+        quiet: true
+      run_once: true
+
+    # before the unit is written: an inventory not loaded has the role defaults.
+    # The cluster name is first checked on a node of another rack; when none
+    # answers (or the rack is the whole cluster) and cassandra_cluster_name is the
+    # role default 'Test Cluster', the run stops (-e cassandra_accept_default_identity=true
+    # goes on).
+    - name: Check the running nodes belong to this cluster
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_name.yml
+      vars:
+        cassandra_service_cluster_candidates: >-
+          {{ query('community.cassandra.cassandra_nodes') | reject('in', groups['cassandra_target_rack_nodes']) | list }}
+        cassandra_service_cluster_required: true  # the rack is the whole cluster: nothing to read it from
+
+- name: Start the rack
+  hosts: "{{ lookup('community.cassandra.cassandra_hosts') }}:&cassandra_target_rack_nodes"
+  gather_facts: true
+  gather_subset: [network]
+  become: true
+  any_errors_fatal: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check the run has root on the nodes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: root_check.yml
+
+    - name: Start Cassandra and wait until the node has joined
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+      vars:
+        cassandra_service_state: started
+
+# Run a repair of the rack's nodes afterwards if they were down longer than
+# cassandra_max_hint_window (3 hours by default; cassandra_max_hint_window_in_ms
+# on 4.0): hints stop being kept after that.
+- name: Check the cluster
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: true
+  gather_subset: [network]
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Say the cluster is not checked (--check)
+      ansible.builtin.debug:
+        msg: "--check: nothing was started, the cluster is not checked (the health_check playbook checks it)."
+      run_once: true
+      when: ansible_check_mode
+      vars:
+        cassandra_output: true
+
+    - name: Check the whole cluster from one node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_health.yml
+      when:
+        - inventory_hostname == ansible_play_hosts[0]
+        - not ansible_check_mode  # the rack was not started

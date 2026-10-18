@@ -8,7 +8,8 @@
 # where nodetool answers, read by the play's first host. None answering: not
 # checked, said so; refused when cassandra_cluster_name is the role default
 # (-e cassandra_accept_default_identity=true goes on), as with an inventory not
-# loaded the JMX login fails too. Included on every host of the play, not under run_once: a delegated
+# loaded the JMX login fails too; with no candidate, refused the same way when
+# cassandra_service_cluster_required is true. Included on every host of the play, not under run_once: a delegated
 # task under run_once that finds its host unreachable ends the play, even with
 # ignore_unreachable. A refusal stops every host.
 - name: Start from the description given, if any
@@ -42,11 +43,12 @@
   ansible.builtin.assert:
     that: >-
       hostvars[ansible_play_hosts | first]._cassandra_cluster_found | length > 0
-      or cassandra_service_cluster_candidates | default([]) | length == 0
+      or (cassandra_service_cluster_candidates | default([]) | length == 0 and not cassandra_service_cluster_required | default(false) | bool)
       or cassandra_cluster_name != 'Test Cluster'
       or cassandra_accept_default_identity | default(false) | bool
     fail_msg: >-
-      The cluster name could not be read (no node answered nodetool) and cassandra_cluster_name is the role default
+      The cluster name could not be read ({{ 'no node answered nodetool' if cassandra_service_cluster_candidates | default([])
+      else 'no other node to read it from' }}) and cassandra_cluster_name is the role default
       'Test Cluster': are the inventory's group_vars loaded? Check with ansible-inventory -i <inventory> --host
       {{ ansible_play_hosts | first }} (group_vars are read next to the inventory file or directory given, not in its
       subdirectories). Nothing was changed. If the cluster's name really is 'Test Cluster', add

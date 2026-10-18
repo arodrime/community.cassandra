@@ -84,8 +84,11 @@ def test_lookup_error():
 
 def test_playbooks_leave_the_absent_hosts_out():
     """The cluster's hosts come from cassandra_nodes; the whole group only where the hosts
-    marked absent belong (none of these playbooks)."""
-    allowed = set()
+    marked absent belong: the addresses where a node stands is read against."""
+    allowed = {
+        ("roles/cassandra_operation/tasks/node_standing_read.yml",
+         "      {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] | default([]) -%}"),
+    }
     found = set()
     for base in ("playbooks", "roles"):
         for root, dummy, files in os.walk(os.path.join(TOP, base)):

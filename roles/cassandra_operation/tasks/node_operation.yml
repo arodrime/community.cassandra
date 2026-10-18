@@ -1,0 +1,106 @@
+---
+# One node of a rolling operation: cluster health, the action
+# (action_<cassandra_service_node_action>.yml: restart, reboot), cluster health
+# again. On any failure, prints the summary and stops the whole run: no other
+# node is touched. Nodes listed in the progress file (progress.yml) are skipped.
+# A resumed run (cassandra_rolling_resume) may find the node it stopped at (the
+# first one not done) drained or stopped, DN for the others: when its own
+# netstats says so (Mode DRAINED, or JMX refusing the connection), it is
+# checked from another node only and may be down, and its action brings it
+# back. Any other node down, or that node down for another reason, still stops
+# the run; the second node the health checks read the ring from is never that one.
+- name: Skip a node the interrupted run already did
+  ansible.builtin.set_fact:
+    cassandra_op_result: "{{ cassandra_service_node_action }} skipped, done in the interrupted run"
+  when: inventory_hostname in cassandra_progress_done | default([])
+
+- name: "{{ cassandra_service_node_action }} {{ inventory_hostname }}"
+  when: inventory_hostname not in cassandra_progress_done | default([])
+  vars:
+    _cassandra_group_size: "{{ query('community.cassandra.cassandra_nodes') | length }}"
+    _cassandra_resume_candidate: >-
+      {{ cassandra_rolling_resume | default(false) | bool
+         and inventory_hostname == ansible_play_hosts_all | reject('in', cassandra_progress_done | default([])) | first | default('') }}
+    _cassandra_resumed_node: >-
+      {{ _cassandra_resume_candidate | bool
+         and (cassandra_service_resume_state.mode | default('') == 'DRAINED'
+              or 'Connection refused' in cassandra_service_resume_state.stderr | default('') ~ cassandra_service_resume_state.msg | default('')) }}
+  block:
+    - name: Note the start time
+      ansible.builtin.set_fact:
+        _cassandra_op_start: "{{ now().timestamp() | int }}"
+
+    # a phase line (ops callback): what is done to this node, none for a node already done
+    - name: Say what is done to {{ inventory_hostname }}
+      ansible.builtin.debug:
+        msg: "{{ cassandra_service_node_action | community.cassandra.cassandra_phase(inventory_hostname, node=inventory_hostname) }}"
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
+    - name: Read the state of the node the interrupted run stopped at
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _cassandra_service_jmx }}"
+      register: cassandra_service_resume_state
+      failed_when: false  # a stopped node: JMX refuses the connection
+      check_mode: false  # read-only
+      when: _cassandra_resume_candidate | bool
+
+    - name: Check the cluster before touching this node
+      ansible.builtin.include_tasks: cluster_health.yml
+      vars:
+        cassandra_service_health_node_checks: "{{ not _cassandra_resumed_node | bool }}"
+        cassandra_service_health_resumed_down: "{{ [_cassandra_preflight.ring_address] if _cassandra_resumed_node | bool else [] }}"
+        cassandra_service_health_expected_nodes: "{{ _cassandra_group_size }}"
+
+    - name: Run the action
+      ansible.builtin.include_tasks: "action_{{ cassandra_service_node_action }}.yml"
+
+    - name: Check the cluster with this node back
+      ansible.builtin.include_tasks: cluster_health.yml
+      vars:
+        # --check did not bring back the node a resumed run found down: still down
+        cassandra_service_health_node_checks: "{{ not (ansible_check_mode and _cassandra_resumed_node | bool) }}"
+        cassandra_service_health_resumed_down: >-
+          {{ [_cassandra_preflight.ring_address] if ansible_check_mode and _cassandra_resumed_node | bool else [] }}
+        cassandra_service_health_expected_nodes: "{{ _cassandra_group_size }}"
+
+    - name: Add the node to the progress file
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_progress_file }}"
+        line: "{{ inventory_hostname }}"
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+      when: cassandra_progress_file is defined and not ansible_check_mode  # --check made no file
+      diff: false  # the run's bookkeeping
+
+    # --check did nothing: what a real run would do, never "done"
+    - name: Record the result
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ ('would ' ~ cassandra_service_node_action ~ ' (--check: nothing was changed)') if ansible_check_mode
+             else (cassandra_service_node_action ~ ' done in ' ~ (now().timestamp() | int - _cassandra_op_start | int) ~ 's') }}
+        cassandra_op_done: true
+  rescue:
+    - name: Record the failure
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ cassandra_service_node_action }} FAILED after {{ now().timestamp() | int - _cassandra_op_start | default(now().timestamp()) | int }}s:
+          {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+
+    - name: Print the summary
+      ansible.builtin.include_tasks: summary.yml
+
+    - name: Stop here
+      vars:
+        cassandra_output: true  # a verdict: its msg as is
+      ansible.builtin.fail:
+        msg: >-
+          Stopped at {{ inventory_hostname }} ({{ ansible_failed_task.name | default('') }}): no other node was touched after it.
+          {{ ('Once fixed, resume with the same command plus -e cassandra_rolling_resume=true (progress: ' ~ cassandra_progress_file ~ ')')
+             if cassandra_progress_file is defined
+             else 'Once fixed, check where the cluster stands (the status playbook) before running it again.' }}

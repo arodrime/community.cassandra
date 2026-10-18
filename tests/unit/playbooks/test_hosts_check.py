@@ -160,7 +160,7 @@ def test_empty_group():
                         "Nothing was changed.")
 
 
-@pytest.mark.parametrize("playbook", ["preflight.yml", "health_check.yml", "status.yml"])
+@pytest.mark.parametrize("playbook", ["preflight.yml", "health_check.yml", "start_rack.yml", "status.yml"])
 def test_first_play_checks_the_group(playbook):
     first = load("playbooks", playbook)[0]
     assert first["hosts"] == "localhost"
@@ -171,7 +171,7 @@ def test_every_playbook_on_the_group_checks_it():
     """Every operation playbook, read-only ones included, picks its cluster by the same rule: its first play is the
     check (or preflight's, which starts with it); none names a group of its own (no cassandra_hosts default)."""
     names = sorted(n for n in os.listdir(os.path.join(TOP, "playbooks")) if n.endswith(".yml"))
-    assert len(names) >= 3
+    assert len(names) >= 8
     for name in names:
         plays = load("playbooks", name)
         text = str(plays)
@@ -198,7 +198,7 @@ def _checking():
 
 
 def test_the_checking_playbooks():
-    assert _checking() == ["health_check.yml", "preflight.yml", "status.yml"]
+    assert _checking() == ["health_check.yml", "preflight.yml", "start_rack.yml", "status.yml"]
 
 
 @pytest.mark.parametrize("playbook", _checking())

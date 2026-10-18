@@ -127,6 +127,19 @@ def test_racks_per_datacenter():
     assert render("{{ %s }}" % RACKS["ansible.builtin.assert"]["that"], item="dc2", **variables) is False
 
 
+def test_create_cluster_starts_in_the_order_preflight_checks():
+    # one play starts every node, in the order of the group filled with cassandra_start_order
+    with open(os.path.join(TOP, "playbooks", "create_cluster.yml"), encoding="utf-8") as f:
+        plays = yaml.safe_load(f)
+    order = next(p for p in plays if p.get("name") == "Order the starts")
+    task = next(t for t in order["tasks"] if "ansible.builtin.add_host" in t)
+    assert task["ansible.builtin.add_host"]["groups"] == "cassandra_create_start_order"
+    assert "community.cassandra.cassandra_start_order(" in task["loop"] and task["run_once"] is True
+    starts = [p for p in plays if "cassandra_service" in str(p.get("roles"))]
+    assert [(p["hosts"], p["serial"]) for p in starts] == [("cassandra_create_start_order", 1)]
+    assert "community.cassandra.cassandra_start_order(" in RACKS["vars"]["_refused"]
+
+
 @pytest.mark.parametrize("num_tokens, hint, checked", [
     (16, 3, True), ("16", "3", True), (16, "", False), (1, 3, False), ("1", "", False)])
 def test_racks_checked_for_the_allocator_only(num_tokens, hint, checked):

@@ -49,8 +49,10 @@ def render(template, **variables):
 def test_the_progress_line():
     assert cassandra_normal_wait_line("JOINING", waited=70, timeout=600, node="node2", operation="restart") == \
         u"node2 restart  waiting for NORMAL (UJ→UN)  1m10s/10m"
-    assert cassandra_normal_wait_line("STARTING", waited=5, timeout=600, node="node2", operation="restart") == \
-        "node2 restart  waiting for NORMAL (mode STARTING)  5s/10m"
+    # a rolling operation: [i/n], as its other progress lines
+    assert cassandra_normal_wait_line("STARTING", waited=5, timeout=600, index=2, steps=5, node="node2",
+                                      operation="restart") == \
+        "[2/5] node2 restart  waiting for NORMAL (mode STARTING)  5s/10m"
     # JMX not answering yet
     assert cassandra_normal_wait_line("", waited=10, timeout=600, node="node2", operation="start") == \
         "node2 start  waiting for NORMAL (no JMX answer yet)  10s/10m"
@@ -82,15 +84,19 @@ def test_reads_through_the_wait_loop_with_a_line_and_a_wait_each():
 
 def test_the_head_of_its_lines():
     head = task(load("wait_normal.yml"), "Note what is waited for")
-    facts = head["ansible.builtin.set_fact"]["_cassandra_normal_head"]
+    facts, variables = head["ansible.builtin.set_fact"]["_cassandra_normal_head"], head["vars"]
+    hosts = ["node1", "node2", "node3"]
 
     def shown(**given):
-        values = dict(inventory_hostname="node2", **given)
+        values = dict(variables, ansible_play_hosts_all=hosts, inventory_hostname="node2", **given)
+        values["_rolling"] = render(variables["_rolling"], **values)
         return dict((k, str(render(v, **values)).strip()) for k, v in facts.items())
 
-    # what the role does
+    assert shown(cassandra_service_node_action="restart") == {
+        "index": "2", "steps": "3", "node": "node2", "operation": "restart"}
+    # not a node operation (the role on its own): what the role does
     assert shown(cassandra_service_state="restarted")["operation"] == "restart"
-    assert shown(cassandra_service_state="started") == {"node": "node2", "operation": "start"}
+    assert shown(cassandra_service_state="started") == {"index": "0", "steps": "0", "node": "node2", "operation": "start"}
     assert shown(cassandra_service_state="started", cassandra_service_restart_on_change=True,
                  cassandra_service_unit={"changed": True})["operation"] == "restart"  # its unit changed: restarted
 

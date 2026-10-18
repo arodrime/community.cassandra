@@ -1,6 +1,6 @@
 ---
-# Checked before the unit is written: an account that cannot read the config
-# stops the run before Cassandra is started with it
+# Checked before the unit is written: a restart writes it before draining,
+# so an account that cannot read the config stops the run with the node running
 - name: Check the account Cassandra runs as can read the config
   ansible.builtin.include_tasks: account_check.yml
 

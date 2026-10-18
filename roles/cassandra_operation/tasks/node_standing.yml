@@ -1,0 +1,22 @@
+---
+# Where this node stands: cassandra_node_standing, worked out in one place
+# (plugins/filter/cassandra_node_standing.py, its STATES) from what
+# node_standing_read.yml read on it, once per step: each operation's checking
+# play reads it again (_cassandra_node_standing_read: {}). create_cluster
+# decides from it (a new cluster: every node blank). The rings are not read
+# here (a new cluster has none): what the node holds and runs only.
+- name: Read where {{ inventory_hostname }} stands
+  ansible.builtin.include_tasks: node_standing_read.yml
+  when: _cassandra_node_standing_read | default({}) | length == 0
+
+- name: Work out where {{ inventory_hostname }} stands
+  ansible.builtin.set_fact:
+    cassandra_node_standing: >-
+      {{ inventory_hostname | community.cassandra.cassandra_node_standing(_p.cassandra_cluster_name | default(cassandra_cluster_name),
+           title=inventory_hostname ~ ((' (' ~ _p.cassandra_dc ~ '/' ~ _p.cassandra_rack | default('?') ~ ')') if _p.cassandra_dc | default('') else ''),
+           running=_r.running, jvm=_r.jvm, answers=none, addresses=_r.addresses, known=_r.known,
+           live=_r.live, live_cluster=_cassandra_node_reset_listed.cluster_name, held=_r.held, system=_r.system, elsewhere=_r.elsewhere,
+           unreadable=_r.unreadable, keyspaces=_r.keyspaces, peers=_r.peers) }}
+  vars:
+    _r: "{{ _cassandra_node_standing_read }}"
+    _p: "{{ _cassandra_preflight | default({}) }}"

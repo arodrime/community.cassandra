@@ -1,0 +1,117 @@
+---
+# What node_standing.yml works out a node's state from, read once per step on the
+# node itself (each node at once): its Cassandra unit and JVM, its live
+# cassandra.yaml, what its Cassandra directories hold (the inventory's and the
+# live file's, links resolved). Read-only, under --check too.
+- name: Load the cassandra_config defaults (directories)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+    tasks_from: defaults.yml
+    public: true
+
+- name: Read the facts the state needs (addresses, mounts)
+  ansible.builtin.setup:
+    gather_subset: [network, hardware]
+  when: ansible_facts['mounts'] is not defined or ansible_facts['all_ipv4_addresses'] is not defined
+
+- name: Read the Cassandra unit
+  ansible.builtin.systemd_service:
+    name: cassandra
+  register: cassandra_node_reset_unit
+  failed_when: false
+  check_mode: false  # read-only
+
+# An init script's unit (systemd-sysv-generator) only says "generated": its rc links tell
+- name: Read whether the init script starts Cassandra at boot
+  ansible.builtin.command: systemctl is-enabled cassandra
+  register: cassandra_node_reset_sysv
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only
+  when: cassandra_node_reset_unit.status.UnitFileState | default('') == 'generated'
+
+- name: Look for a running Cassandra JVM
+  ansible.builtin.command: pgrep -f org.apache.cassandra.service.CassandraDaemon
+  register: cassandra_node_reset_jvm
+  changed_when: false
+  failed_when: cassandra_node_reset_jvm.rc > 1
+  check_mode: false  # read-only
+
+# The facts leave out some (e.g. ZFS datasets, tmpfs)
+- name: Read the mount points
+  ansible.builtin.slurp:
+    src: /proc/self/mounts
+  register: cassandra_node_reset_mounts
+  failed_when: false
+
+- name: Look for the live cassandra.yaml
+  ansible.builtin.stat:
+    path: "{{ cassandra_conf_dir }}/cassandra.yaml"
+    get_checksum: false
+  register: cassandra_node_reset_live_stat
+
+- name: Read the live cassandra.yaml
+  ansible.builtin.slurp:
+    src: "{{ cassandra_conf_dir }}/cassandra.yaml"
+  register: cassandra_node_reset_live
+  failed_when: false
+  no_log: true  # it may hold passwords
+  when: cassandra_node_reset_live_stat.stat.exists
+
+- name: Read what the directories hold
+  ansible.builtin.import_tasks: node_standing_dirs.yml
+
+- name: Keep what was read
+  ansible.builtin.set_fact:
+    _cassandra_node_standing_read:
+      running: "{{ cassandra_node_reset_jvm.rc == 0 or _active | bool }}"
+      jvm: "{{ cassandra_node_reset_jvm.rc == 0 }}"
+      active: "{{ _active | bool }}"
+      addresses: "{{ (_addresses_of[inventory_hostname] | default([]) + _cassandra_node_reset_listed.addresses) | unique }}"
+      known: "{{ _addresses_of.values() | flatten | unique }}"
+      live: >-
+        {{ 'absent' if not cassandra_node_reset_live_stat.stat.exists else 'unreadable' if cassandra_node_reset_live.content is not defined
+           else 'invalid' if _cassandra_node_standing_data_dirs.problem else 'read' }}
+      held: "{{ _held + _unlisted }}"
+      # the system keyspaces in the data directories its config uses (links resolved)
+      system: "{{ _held | select('in', _data_dirs | map('regex_replace', '$', '/system') | list) | list + _unlisted }}"
+      elsewhere: "{{ _found_apart | reject('in', _unlisted) | list }}"
+      unreadable: >-
+        {{ _unread + _cassandra_node_reset_dirs.problems | select('search', 'cassandra.yaml (can not be read|is not valid|is not a mapping)')
+           | list
+           + cassandra_node_standing_elsewhere.results | default([]) | selectattr('stat', 'undefined') | map(attribute='item')
+             | select('in', _cassandra_node_standing_data_dirs.own) | map('regex_replace', '$', ': can not be checked (without root?)')
+             | list }}
+      keyspaces: "{{ _held | select('regex', '^(' ~ _data_dirs | map('regex_escape') | join('|') ~ ')/[^/]+$') | map('basename') | list }}"
+      peers: >-
+        {{ cassandra_node_reset_peers.files | default([]) | map(attribute='path') | select('search', '/peers(_v2)?-[^/]*/') | list | length > 0 }}
+  vars:
+    _active: "{{ cassandra_node_reset_unit.status.ActiveState | default('') in ['active', 'activating', 'deactivating', 'reloading'] }}"
+    _held: "{{ cassandra_node_reset_found.files | default([]) | map(attribute='path') | reject('search', '/lost[+]found$') | list }}"
+    _found_apart: >-
+      {{ cassandra_node_standing_elsewhere.results | default([]) | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
+         | map(attribute='item') | map('regex_replace', '$', '/system') | list }}
+    # in a data directory of its config not listed (a path refused as too risky to empty)
+    _unlisted: >-
+      {{ _found_apart | select('in', _cassandra_node_standing_data_dirs.own | map('regex_replace', '$', '/system') | list) | list }}
+    _data_dirs: >-
+      {{ _cassandra_node_reset_dirs.dirs | selectattr('kinds', 'contains', 'data') | map(attribute='real') | list
+         + _cassandra_node_standing_data_dirs.own }}
+    # what could not be looked at
+    _unread: >-
+      {{ (cassandra_node_reset_found.skipped_paths | default({}) | dict2items
+          | rejectattr('value', 'search', 'not a directory|No such file')
+          | map(attribute='key') | map('regex_replace', '$', ': can not be read (without root?)') | list)
+         + (cassandra_node_reset_stat.results | default([]) | selectattr('stat', 'undefined')
+            | map(attribute='item') | map('regex_replace', '$', ': can not be checked (without root?)') | list) }}
+    _addresses_of: >-
+      {%- set out = {} -%}
+      {%- for h in groups[lookup('community.cassandra.cassandra_hosts')] | default([]) -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   set _ = out.update({h: (v.ansible_facts.all_ipv4_addresses | default([]) + v.ansible_facts.all_ipv6_addresses | default([])
+                                    + [v._cassandra_preflight.address | default(''), v._cassandra_preflight.ring_address | default(''),
+                                       v.cassandra_listen_address | default(''), v.ansible_host | default(''),
+                                       (v.cassandra_extra_settings | default({})).broadcast_address | default('')])
+                                   | select | reject('in', ['localhost', '127.0.0.1', '::1']) | unique | list}) -%}
+      {%- endfor -%}
+      {{ out }}

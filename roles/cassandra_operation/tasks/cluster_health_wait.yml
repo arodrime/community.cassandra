@@ -10,7 +10,8 @@
       {{ _cassandra_health_waiting | community.cassandra.cassandra_health_wait_line(
            names=_cassandra_health_names,
            waited=now().timestamp() | int - _cassandra_health_wait_start | int, timeout=cassandra_service_health_timeout | int,
-           node=_cassandra_health_head.node, operation=_cassandra_health_head.operation) }}
+           index=_cassandra_health_head.index, steps=_cassandra_health_head.steps, node=_cassandra_health_head.node,
+           operation=_cassandra_health_head.operation) }}
   vars:
     cassandra_output: true  # a progress line (ops callback)
 

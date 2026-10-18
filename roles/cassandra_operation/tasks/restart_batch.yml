@@ -1,0 +1,150 @@
+---
+# One rack of rolling_restart's rack mode, run once: cluster health, then
+# drain, restart and wait for every node of the rack at the same time,
+# progress recorded. Expects cassandra_restart_batch (host names).
+- name: Rack {{ cassandra_restart_batch | join(', ') }}
+  vars:
+    _todo: "{{ cassandra_restart_batch | reject('in', cassandra_progress_done | default([])) | list }}"
+    _jmx: "{{ _cassandra_service_jmx | combine({'port': hostvars[item].cassandra_jmx_port | default(_cassandra_service_jmx.port) | int}) }}"
+  when: _todo | length > 0
+  block:
+    - name: Note the start time
+      ansible.builtin.set_fact:
+        _cassandra_restart_start: "{{ now().timestamp() | int }}"
+
+    - name: Say what the batch does
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'restart_rack' | community.cassandra.cassandra_phase(_todo, what='rack ' ~ _p.cassandra_dc | default('?') ~ '/'
+               ~ _p.cassandra_rack | default('?')) }}
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+        _p: "{{ hostvars[_todo | first]._cassandra_preflight | default({}) }}"
+
+    - name: Check the cluster before the rack
+      ansible.builtin.include_tasks: cluster_health.yml
+
+    - name: Drain the rack's nodes
+      community.cassandra.cassandra_drain:
+      module_defaults:
+        community.cassandra.cassandra_drain: "{{ _jmx }}"
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+      register: cassandra_restart_drain
+      # best effort: a node not drained (an error, the timeout) is restarted all the same, never left drained and
+      # running (Cassandra flushes what it can on shutdown, the commitlog replays the rest)
+      failed_when: false
+      ignore_errors: true  # the timeout below
+      timeout: "{{ cassandra_service_drain_timeout | int }}"
+      # a kept unit may not drain
+      when: cassandra_operation_drain | bool or not hostvars[item].cassandra_service_unit_manage | default(true) | bool
+
+    # none answered (JMX not reached, its login refused): nothing was drained, nothing is restarted
+    - name: Stop when no node of the rack answered
+      ansible.builtin.fail:
+        msg: >-
+          No node of the rack answered the drain ({{ _tried | map(attribute='msg', default='') | first }}): nothing
+          was drained nor restarted.
+      when:
+        - _tried | length > 0
+        - _tried | selectattr('changed', 'defined') | selectattr('changed') | list | length == 0
+        - _tried | selectattr('rc', 'defined') | list | length == 0
+        # a timeout (maybe drained in part): timedout from ansible-core 2.18, its message before
+        - _tried | selectattr('timedout', 'defined') | list | length == 0
+        - _tried | map(attribute='msg', default='') | select('search', 'expected time frame|Timed out after') | list | length == 0
+      vars:
+        _tried: "{{ cassandra_restart_drain.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+
+    - name: Say the drains that did not work
+      ansible.builtin.debug:
+        msg: >-
+          WARNING - {{ item }} was not drained ({{ _said.error | default('', true) or _said.msg | default('no answer', true) }}): restarted
+          all the same.
+      loop: "{{ _tried | reject('changed') | map(attribute='item') | list }}"  # (names: not the results' timedout.frame, deprecated)
+      vars:
+        cassandra_output: true
+        _tried: "{{ cassandra_restart_drain.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+        _said: "{{ _tried | selectattr('item', 'equalto', item) | first }}"
+
+    - name: Restart them
+      ansible.builtin.systemd_service:
+        name: cassandra
+        state: restarted
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+
+    - name: Wait until they have joined (Mode NORMAL)
+      community.cassandra.cassandra_netstats:
+      module_defaults:
+        community.cassandra.cassandra_netstats: "{{ _jmx }}"
+      delegate_to: "{{ item }}"
+      loop: "{{ _todo }}"
+      register: cassandra_restart_netstats
+      until: cassandra_restart_netstats.mode | default('') == 'NORMAL'
+      retries: "{{ (cassandra_service_wait_timeout | int / 10) | int }}"
+      delay: 10
+
+    - name: Record the config they started with
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: config_snapshot.yml
+      args:
+        apply:
+          delegate_to: "{{ cassandra_restarted_node }}"
+      loop: "{{ _todo }}"
+      loop_control:
+        loop_var: cassandra_restarted_node
+      vars:
+        # that node's Python (the tasks' vars are this host's)
+        _cassandra_config_python: >-
+          {{ hostvars[cassandra_restarted_node].ansible_facts.python.executable | default('/usr/bin/python3') }}
+
+    - name: Add the rack to the progress file
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_progress_file }}"
+        line: "{{ item }}"
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+      loop: "{{ _todo }}"
+      when: cassandra_progress_file is defined and not ansible_check_mode  # --check made no file
+
+    - name: Record the result
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ 'would restart with its rack (--check: nothing was changed)' if ansible_check_mode
+             else ('restart done with its rack in ' ~ (now().timestamp() | int - _cassandra_restart_start | int) ~ 's') }}
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+  rescue:
+    # the node that failed, with its error; the others of the rack not finished (resumed, they are restarted again)
+    - name: Record the failure
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {%- set failed = ansible_failed_result.results | default([]) | selectattr('failed', 'defined') | selectattr('failed')
+                           | list -%}
+          {%- set own = failed | selectattr('item', 'equalto', item) | map(attribute='msg', default='not back in Mode NORMAL in time')
+                        | list -%}
+          {%- if own -%} restart FAILED: {{ own | first }}
+          {%- elif failed -%} restart not finished: the rack stopped at {{ failed | map(attribute='item') | join(', ') }}
+          {%- else -%} restart FAILED: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+          {%- endif %}
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ _todo }}"
+
+    - name: Print the summary
+      ansible.builtin.include_tasks: summary.yml
+
+    - name: Stop here
+      vars:
+        cassandra_output: true  # a verdict: its msg as is
+      ansible.builtin.fail:
+        msg: >-
+          Stopped at the rack {{ _todo | join(', ') }}: no later rack was restarted.
+          Once fixed, resume with the same command plus -e cassandra_rolling_resume=true
+          (progress: {{ cassandra_progress_file | default('none') }})

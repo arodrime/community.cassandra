@@ -375,7 +375,8 @@
 
         - name: Every seed is up
           ansible.builtin.assert:
-            that: _addr in _up
+            # a resumed rolling run: a member drained or stopped by the interrupted run
+            that: _addr in _up or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ (_absent | first ~ ' is marked cassandra_node_state: absent: take it out of cassandra_seeds in the'

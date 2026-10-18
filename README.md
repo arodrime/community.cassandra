@@ -31,11 +31,16 @@ else the run stops naming the clusters; no group name is a default; per-cluster 
 root on the nodes themselves where they need it (no `-b`, no `become` in `ansible.cfg`). Set
 `callback_result_format = yaml` in `ansible.cfg` (`[defaults]`) for readable messages.
 
+- `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables and about sensitive or suspicious settings: `auto_bootstrap` false, a replace flag left on a member of the ring, the heap size, `AllowAllAuthenticator` on an rpc address other hosts reach, a failure policy `ignore`; `cassandra_suspicious_ack` silences one a node keeps on purpose).
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
+- `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between (`-e cassandra_rolling_mode=rack`: a rack at a time, when the replication allows it; `-e cassandra_rolling_resume=true` resumes an interrupted run).
+- `rolling_reboot`- Same, rebooting the hosts (OS patching).
+- `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.
 - `status`- Read-only view of the ring from one node (`nodetool status` per datacenter, a summary per rack and datacenter, inventory hosts missing from the ring and the reverse, the verdict last); fails only when no node answers (of `cassandra_target_nodes`, when given).
 
 ```
+ansible-playbook -i inventory community.cassandra.create_cluster
 ansible-playbook -i inventory community.cassandra.status
 ```
 
@@ -66,6 +71,7 @@ ansible-playbook -i inventory community.cassandra.status
 - `cassandra_netstats`- Returns the mode of the node and whether it is streaming.
 - `cassandra_reload`-  Reloads various objects into the local node.
 - `cassandra_removenode`- Removes a node by the given host id from the cluster.
+- `cassandra_ring`- Returns the tokens of the ring, per datacenter.
 - `cassandra_role`- Manage roles on your Cassandra Cluster.
 - `cassandra_schema`- Validates the schema version as seen from the node.
 - `cassandra_status`- Validates the status of the cluster as seen from the node.

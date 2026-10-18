@@ -71,13 +71,25 @@ def test_the_words():
         assert line.endswith("...") and "\n" not in line, name
 
 
-@pytest.mark.parametrize("path, at_least", [(("playbooks", "preflight.yml"), 1)])
+@pytest.mark.parametrize("path, at_least", [
+    (("playbooks", "preflight.yml"), 1),
+    (("roles", "cassandra_operation", "tasks", "node_operation.yml"), 1),
+    (("roles", "cassandra_operation", "tasks", "restart_batch.yml"), 1)])
 def test_marked_phase_lines(path, at_least):
     found = phases(*path)
     assert len(found) >= at_least, path
     for task in found:
         # an operator message, a block of its own
         assert task["vars"]["cassandra_output"] is True and task["vars"]["cassandra_output_gap"] is True, task["name"]
+
+
+@pytest.mark.parametrize("action, line", [("restart", "Restarting node5..."), ("reboot", "Rebooting node5...")])
+def test_each_node_says_what_is_done_to_it(action, line):
+    say = next(t for t in phases("roles", "cassandra_operation", "tasks", "node_operation.yml")
+               if t["name"].startswith("Say what is done"))
+    variables = dict(say["vars"], inventory_hostname="node5", cassandra_service_node_action=action)
+    assert render(say["ansible.builtin.debug"]["msg"], **variables).strip() == line
+    assert "not ansible_check_mode" in say["when"]  # --check does none of it
 
 
 # preflight's check line: the cluster's members (a 3-node ring adding 2 used to print "5 nodes"), and the change

@@ -27,7 +27,7 @@ OWN = {"name": "Give each node its own facts", "tags": ["always"],
 # the first node play of each playbook run on its own checks it: a play before it in the same run (one of the
 # operator's) can have made the nodes share their facts already, which the task above does not undo
 FIRST_PLAYS = [("health_check.yml", "Cluster health"), ("preflight.yml", "Cassandra preflight checks"),
-               ("status.yml", "Cluster status")]
+               ("start_rack.yml", "Find the rack's nodes"), ("status.yml", "Cluster status")]
 
 CALLBACK = '''
 from __future__ import (absolute_import, division, print_function)
@@ -109,7 +109,7 @@ def node_plays():
 
 def test_every_node_play_gives_its_nodes_their_own_facts_first():
     plays = list(node_plays())
-    assert len(plays) >= 3
+    assert len(plays) >= 20
     for playbook, play in plays:
         # pre_tasks, then roles, then tasks: the first task of the play
         first = (play.get("pre_tasks") or ([] if play.get("roles") else play.get("tasks")) or [None])[0]

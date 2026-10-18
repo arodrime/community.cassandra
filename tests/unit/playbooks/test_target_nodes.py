@@ -51,8 +51,8 @@ IMPORTERS = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(TOP,
                    if load("playbooks", os.path.basename(p))[0].get("ansible.builtin.import_playbook") == "community.cassandra.preflight")
 
 
-def test_no_playbook_imports_preflight_yet():
-    assert IMPORTERS == []  # the operations that do come with the next playbooks
+def test_the_operations_import_preflight():
+    assert IMPORTERS == ["create_cluster", "rolling_reboot", "rolling_restart", "stop_rack"]  # none takes targets yet
 
 
 @pytest.mark.parametrize("playbook", IMPORTERS)
