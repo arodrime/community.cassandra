@@ -74,7 +74,7 @@
           {%-   set _ = out.append({'item': c.path, 'before': 'absent' if c.missing else 'other users or rights',
                                     'after': 'written whole', 'whole': true}) -%}
           {%- endfor -%}
-          {{ _cassandra_config_items | default([]) + out }}
+          {{ _cassandra_config_items | default([]) + out + _cassandra_config_jmx_written | default([]) }}
       vars:
         # (not compared: an empty list, and only the missing files listed; none would render as "None" on 2.16)
         _compared: "{{ cassandra_config_jmx_same.stdout is defined }}"

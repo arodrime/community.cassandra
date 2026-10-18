@@ -12,6 +12,7 @@
            waited=now().timestamp() | int - _cassandra_health_wait_start | int, timeout=cassandra_service_health_timeout | int,
            index=_cassandra_health_head.index, steps=_cassandra_health_head.steps, node=_cassandra_health_head.node,
            operation=_cassandra_health_head.operation) }}
+  run_once: "{{ _batch }}"
   vars:
     cassandra_output: true  # a progress line (ops callback)
 
@@ -20,6 +21,7 @@
   ansible.builtin.wait_for:
     timeout: "{{ [1, [_interval | int, _left | int] | min] | max }}"
   delegate_to: localhost
+  run_once: "{{ _batch }}"
   become: false  # the controller: no sudo there
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
@@ -39,3 +41,4 @@
     _cassandra_health_going: >-
       {{ _cassandra_health_waiting | length > 0
          and now().timestamp() | int - _cassandra_health_wait_start | int < cassandra_service_health_timeout | int }}
+  run_once: "{{ _batch }}"  # (a batch: on all its nodes)

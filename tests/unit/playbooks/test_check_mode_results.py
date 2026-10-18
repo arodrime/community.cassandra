@@ -29,6 +29,11 @@ def load(name):
         return yaml.safe_load(f)
 
 
+def defaults():
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "defaults", "main.yml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
@@ -47,13 +52,15 @@ def find(tasks, name):
 @pytest.mark.parametrize("action, check, expected", [
     ("restart", True, "would restart (--check: nothing was changed)"),
     ("reboot", True, "would reboot (--check: nothing was changed)"),
+    ("apply_config", True, "would apply the config (--check: nothing was changed)"),
     ("restart", False, "restart done in 12s"),
     ("reboot", False, "reboot done in 12s"),
 ])
 def test_node_result(action, check, expected):
     task = find(load("node_operation.yml"), "Record the result")
     result = render(task["ansible.builtin.set_fact"]["cassandra_op_result"], cassandra_service_node_action=action,
-                    ansible_check_mode=check, _cassandra_op_start=0, now=lambda: _Now(12))
+                    ansible_check_mode=check, _cassandra_op_start=0, now=lambda: _Now(12),
+                    _cassandra_service_would=defaults()["_cassandra_service_would"])
     assert result == expected
 
 

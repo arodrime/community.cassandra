@@ -117,18 +117,24 @@
     # internode TLS uses that same port since 4.0.
     - name: Look for other seeds already up
       ansible.builtin.wait_for:
-        host: "{{ item | regex_replace(':[0-9]+$', '') }}"
-        port: "{{ item | regex_search(':([0-9]+)$', '\\1') | default([cassandra_storage_port | default(7000)], true) | first }}"
+        host: "{{ item | community.cassandra.cassandra_seed_host }}"
+        port: "{{ item | community.cassandra.cassandra_seed_port | default(cassandra_storage_port | default(7000), true) }}"
         timeout: 3
       loop: "{{ _others }}"
       register: cassandra_service_seeds_up
       failed_when: false  # a seed that does not answer sets msg (timeout)
       vars:
-        _mine: "{{ [inventory_hostname, ansible_host | default('')] + ansible_facts['all_ipv4_addresses'] | default([]) }}"
+        _mine: >-
+          {{ [inventory_hostname, ansible_host | default('')]
+             + ansible_facts['all_ipv4_addresses'] | default([]) + ansible_facts['all_ipv6_addresses'] | default([]) }}
+        # the seed entries that are not this node (whatever port they carry)
         _others: >-
-          {{ ((cassandra_seeds | default([])) if cassandra_seeds | default([]) is not string else cassandra_seeds.split(','))
-             | map('trim') | select | reject('regex', '^(' ~ (_mine | select | map('regex_escape') | join('|')) ~ ')(:[0-9]+)?$')
-             | list }}
+          {%- set out = [] -%}
+          {%- for e in ((cassandra_seeds | default([])) if cassandra_seeds | default([]) is not string else cassandra_seeds.split(','))
+                       | map('trim') | select if e | community.cassandra.cassandra_seed_host not in _mine -%}
+          {%-   set _ = out.append(e) -%}
+          {%- endfor -%}
+          {{ out }}
       when:
         - _cassandra_service_is_seed | bool
         - not cassandra_service_was_initialized | bool
@@ -154,7 +160,7 @@
         _existing: >-
           {{ cassandra_service_seeds_up.results | default([]) | rejectattr('skipped', 'defined')
              | rejectattr('msg', 'defined')
-             | map(attribute='item') | map('regex_replace', ':[0-9]+$', '') | reject('in', _created_now) | list }}
+             | map(attribute='item') | map('community.cassandra.cassandra_seed_host') | reject('in', _created_now) | list }}
       when: _existing | length > 0
 
     - name: Start or restart cassandra

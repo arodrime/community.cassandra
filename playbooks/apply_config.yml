@@ -1,0 +1,859 @@
+---
+# Apply the inventory's config (and OS settings) to a running cluster.
+#
+#   ansible-playbook community.cassandra.apply_config
+#
+# The settings that differ are shown first, then one question. Only the nodes
+# that need it are touched, and only the ones whose change needs it are
+# restarted, one at a time, the cluster checked before and after each.
+#
+# --check shows the differences, changing nothing. The run stops at the first
+# problem; -e cassandra_rolling_resume=true resumes it.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    _cassandra_preflight_seeds_down_ok: true  # a seed of this run not running: written, maybe started
+
+# (a node that fails here would be left out of the plan: nothing done then)
+- name: Find what each node needs
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  any_errors_fatal: true
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Say what the run does
+      ansible.builtin.debug:
+        msg: "{{ 'compare_config' | community.cassandra.cassandra_phase(count=ansible_play_hosts_all | length) }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a phase line (ops callback)
+        cassandra_output_gap: true  # a block of its own
+
+    - name: Note when the run started
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_start: "{{ now().timestamp() | int }}"
+      run_once: true
+
+    # Check mode: shows the diffs, writes nothing
+    - name: Compare the config
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        public: true  # cassandra_conf_dir for the next task
+        apply:
+          check_mode: true
+      vars:
+        cassandra_config_confirm: false
+        _cassandra_config_no_question: true  # a preview (apply: check_mode asks anyway), whatever -e cassandra_config_confirm says
+        cassandra_config_reload_seeds: false
+        cassandra_change_report_dir: ""  # the real run reports
+        _cassandra_config_no_restart_warning: true
+        # the changes once: in the plan of a real run (before its question), in the recap under --check
+        _cassandra_config_quiet: true
+        _cassandra_change_report_quiet: true
+
+    # nothing on a node with cassandra_linux_manage false (its OS settings kept as they are)
+    - name: Compare the OS settings
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+        apply:
+          check_mode: true
+          diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # said in the OS settings view (-v: the file diffs too)
+      vars:
+        cassandra_change_report_dir: ""  # the real run reports
+        _cassandra_change_report_quiet: true
+        _cassandra_linux_quiet: true  # in the settings that differ
+        _cassandra_linux_compare: true  # (check mode applied to it, which ansible_check_mode does not tell)
+        _cassandra_linux_swap_said: true  # in the plan
+        _cassandra_linux_restart_window: true  # what is not done under a running Cassandra: a reason of its restart
+
+    - name: Look for a restart still pending
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: config_pending.yml
+
+    # A file written back with the content the running Cassandra started with (deleted or edited by hand
+    # since): no restart for it. Only when the record is that JVM's (its pid and start, recorded with it:
+    # a start outside the roles leaves the one of an earlier JVM), never cassandra.yaml (settings changed
+    # live since, seeds reloaded...), nor when the conf directory itself changes (rpm alternative)
+    - name: Note the files written back as the running Cassandra started with them
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_as_started: >-
+          {%- set out = [] -%}
+          {%- set conf = cassandra_conf_dir | trim | regex_replace('/+$', '') -%}
+          {%- for f in _cassandra_config_changes | default([]) if f in _new and f != 'cassandra.yaml' and not _switch -%}
+          {%-   for path, sum in _record.items() if path | basename == f and path | dirname | regex_replace('/+$', '') == conf -%}
+          {%-     if sum == _new[f] | hash('sha1') and f not in out -%}{%- set _ = out.append(f) -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      vars:
+        _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+        _new: "{{ _cassandra_config_new | default({}) }}"  # the files as cassandra_config renders them
+        _target: "{{ cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is defined
+                     and cassandra_config_conf_target is not skipped else '' }}"
+        _switch: >-
+          {{ _target | length > 0 and _target | regex_replace('/+$', '')
+             != cassandra_rpm_conf_alternative | default(_target) | regex_replace('/+$', '') }}
+
+    # no record of the files it started with: an edit made since may be applied or not
+    - name: Say which files changed since Cassandra started, with no record of the ones it started with
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ cassandra_config_unknown_files | join(', ') }} written after Cassandra started
+          (not by the roles, which keep a record of the files it starts with): not restarted for them. If they
+          changed a setting, run rolling_restart to apply it.
+      vars:
+        cassandra_output: true
+      when: cassandra_config_unknown_files | length > 0
+
+    # its unit not running: a JVM started another way still runs the config it read
+    - name: Look for a Cassandra JVM the unit did not start
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: jvm_started.yml
+      when: not _cassandra_preflight_running | default(true) | bool
+
+    # failed (it could not start, or crashed) or restarting after a failure: it was to run; else stopped on purpose
+    - name: Read the state of its unit
+      ansible.builtin.systemd_service:
+        name: cassandra
+      register: cassandra_apply_config_unit
+      failed_when: false  # no unit: not started by it
+      when: not _cassandra_preflight_running | default(true) | bool
+
+    # (one command per node) a node an interrupted run stopped in its restart window (the mark: its reasons); for a
+    # node whose time sync is to start: whether its unit can run here (its condition, e.g. no container for
+    # timesyncd), and its clock
+    # against its time source when chrony tells it (chronyd -Q: installed, not running; nothing that would start
+    # a daemon), "ahead" its offset in seconds, positive when its clock is ahead
+    - name: Read the clock and the mark of a restart in progress
+      ansible.builtin.shell: |
+        m=/run/cassandra-apply-config.restart
+        # (empty: by an earlier version, for its time sync only)
+        [ -e $m ] && echo "mark=yes" && { [ ! -s $m ] || grep -q 'time sync' $m; } && echo "mark_timesync=yes"
+        [ -n "$CASSANDRA_TIMESYNC" ] || exit 0
+        # (a unit not found, or never started since boot, says "no" too: no start tried, its timestamp 0)
+        systemctl show -p LoadState,ConditionResult,ConditionTimestampMonotonic "$CASSANDRA_TIMESYNC" 2>/dev/null \
+          | awk -F= '{v[$1] = $2} END {if (v["LoadState"] == "loaded" && v["ConditionResult"] == "no" &&
+                                            v["ConditionTimestampMonotonic"] != "0") print "condition=no"}'
+        if chronyc -n tracking >/dev/null 2>&1; then
+          chronyc -n tracking | awk -F': *' '/^Leap status/ && /Not synchronised/ {unsynced = 1}
+            /^System time/ {split($2, a, " "); ahead = (a[3] == "fast" ? "" : "-") a[1]}
+            END {if (ahead != "" && !unsynced) {print "ahead=" ahead; print "source=chrony"}}'
+        elif command -v chronyd >/dev/null 2>&1; then
+          o=$(timeout 30 chronyd -Q -t 20 2>&1 | sed -n 's/.*System clock wrong by \([-+0-9.e]*\) seconds.*/\1/p' | tail -1)
+          [ -n "$o" ] && awk -v o="$o" 'BEGIN {print "ahead=" (-o); print "source=chronyd -Q"}'
+        fi
+        exit 0
+      environment:
+        # the time sync service to start, if any (its item: the one not a package)
+        CASSANDRA_TIMESYNC: >-
+          {{ _cassandra_linux_items | default([]) | selectattr('timesync', 'defined') | map(attribute='item')
+             | reject('match', 'package ') | first | default('') }}
+      register: cassandra_apply_config_clock
+      changed_when: false
+      failed_when: false
+      check_mode: false  # reads only
+
+    # (not under --check) a mark left by a run stopped after the start
+    - name: Forget a mark of a restart done
+      ansible.builtin.file:
+        path: /run/cassandra-apply-config.restart
+        state: absent
+      when:
+        - "'mark=yes' in cassandra_apply_config_clock.stdout_lines | default([])"
+        - _cassandra_preflight_running | default(true) | bool
+        - not ansible_check_mode
+
+    # Only the nodes whose config changes, or whose running Cassandra did not start with its config files or
+    # its systemd unit (written by cassandra_config or cassandra_service, which do not restart, or by a run
+    # stopped before the restart), are touched. Cassandra reads its config at start: a node whose files only
+    # need another owner, group or mode is not restarted (the JMX password file is read at each login: its new
+    # owner and mode, or its content, apply at once, written first once the run is confirmed; the JMX access
+    # file is read at start: written back or changed, the node is restarted), nor one whose files are only
+    # written back as its running Cassandra
+    # started with them (deleted or edited by hand since; never cassandra.yaml, whose settings can change
+    # live). A node where Cassandra failed (e.g. it could not read its config) is started once its config is
+    # written; one stopped on purpose gets its config and stays stopped.
+    - name: Note what this node needs
+      ansible.builtin.set_fact:
+        cassandra_apply_config_todo: "{{ _todo }}"
+        cassandra_apply_config_then: "{{ _then }}"
+        cassandra_apply_config_unit_failed: "{{ _unit_failed }}"  # (the refusal below names it)
+        # checked again before the write (action_apply_config.yml): that JVM still runs
+        cassandra_apply_config_as_started: >-
+          {{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start,
+              'sha1': dict(_as_started | zip(_as_started | map('extract', _cassandra_config_new) | map('hash', 'sha1')))}
+             if _as_started else {} }}
+        # the OS settings that differ (applied live, on their own: no restart for them), and those applied live
+        # (not the time sync of a running Cassandra, nor what the role leaves to the restart: in its restart window)
+        cassandra_apply_config_os: "{{ _os | reject('in', _no_unit) | list }}"
+        cassandra_apply_config_os_live: >-
+          {{ _os | reject('in', _no_unit + _disks_window) | rejectattr('timesync', 'defined') | list if _timesync | bool
+             else _os | reject('in', _no_unit + _disks_window) | list }}
+        cassandra_apply_config_timesync: "{{ _timesync }}"
+        cassandra_apply_config_timesync_later: "{{ _timesync | bool or _no_unit | length > 0 }}"
+        # the disk settings done in its restart window (cassandra_linux's disk tuning, Cassandra stopped)
+        cassandra_apply_config_disks_window: "{{ _disks_window }}"
+        # why it is restarted when not for its config alone (said with the restart, in the plan and the recap)
+        cassandra_apply_config_why: "{{ _os_why }}"
+        # (said in the plan and the recap: that, else the JMX access file alone, read at start)
+        cassandra_apply_config_restart_why: >-
+          {{ _os_why or ('jmxremote.access: read at start'
+             if _running | bool and _rights | length > 0 and _files | reject('in', _as_started) | list | length == 0
+                and not _pending | bool else '') }}
+        cassandra_apply_config_os_window_only: >-
+          {{ (_timesync | bool or _disks_window | length > 0)
+             and not ((_files + _perms + _dirs + _jmx) | length > 0 or _pending | bool or _stopped | bool) }}
+        # stopped by an interrupted run in its window for its time sync: its clock let sync before the start
+        cassandra_apply_config_resumed_stop: "{{ _stopped | bool and _clock.mark_timesync is defined }}"
+        cassandra_apply_config_timesync_items: "{{ _os | selectattr('timesync', 'defined') | list }}"
+        # said under the node's outcome, in the plan and the recap (whatever the outcome); its WARNING lines in
+        # the plan's warnings only (the recap says how many)
+        cassandra_apply_config_notes: >-
+          {{ (['restart pending (' ~ _newer | join(', ') ~ ' changed since the running Cassandra started)']
+              if _pending | bool else [])
+             + ([_as_started | join(', ') ~ ' written back as the running Cassandra started with '
+                 ~ ('it' if _as_started | length == 1 else 'them') ~ ': no restart for ' ~ ('it' if _as_started | length == 1 else 'them')]
+                if _as_started and _running | bool else [])
+             + ([_same_newer | default([]) | join(', ') ~ ' changed since the running Cassandra started, same settings: no restart for '
+                 ~ ('it' if _same_newer | default([]) | length == 1 else 'them')]
+                if _same_newer | default([]) and _running | bool else [])
+             + (['stopped by an interrupted run in its restart window: started once written'] if _stopped | bool else [])
+             + (['WARNING - stopped by an interrupted run in its restart window: left stopped; to start it, run again with'
+                 ' -e cassandra_rolling_resume=true']
+                if not _running | bool and _clock.mark is defined and not _stopped | bool
+                else [])
+             + (['its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra'
+                 ' / journalctl -u cassandra there, fix it and start it)']
+                if _unit_failed | bool and not _running | bool and not _todo | bool else [])
+             + (_no_unit | map(attribute='item') | reject('match', 'package ') | map('regex_replace', '$',
+                ' cannot run here (the condition of its unit): left as it is') | list)
+             + ((['clock ' ~ ('%.3f' | format(_ahead | float | abs)) ~ ' s '
+                  ~ ('ahead of' if _ahead | float > 0 else 'behind' if _ahead | float < 0 else 'in step with')
+                  ~ ' its time source (' ~ _clock.source ~ ')'] if _clock.ahead is defined
+                 else ['clock offset to its time source not readable'])
+                + (['WARNING - clock ahead of its time source: writes made with future timestamps can mask later writes'
+                    ' until real time passes them'] if _ahead | float > 0.01 else [])
+                if _timesync | bool else [])
+             + (['read-ahead set live: the files Cassandra has open keep the old one until it restarts']
+                if _running | bool and _then != 'restart'
+                   and _os | map(attribute='item') | select('match', '(read_ahead_kb|LVM read-ahead) ') | list | length > 0
+                else [])
+             + _cassandra_config_dir_notes | default([])
+             + _cassandra_disk_summary.warnings | default([]) | map('regex_replace', '^', 'WARNING - data disks: ') | list
+             + (['WARNING - swap left on: what it holds would not fit easily in the memory available']
+                if _cassandra_linux_live | default(false) | bool and _cassandra_linux_before['swap|active'] | default(0) | int > 0
+                   and not _cassandra_linux_swapoff | default(true) | bool else [])
+             + (['WARNING - ' ~ _keep_missing | join(', ') ~ ' kept by hand (cassandra_config_keep_files) '
+                 ~ ('is' if _keep_missing | length == 1 else 'are') ~ ' missing: written back from the template, the hand'
+                 ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else []) }}
+        # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
+        cassandra_apply_config_kept_running: >-
+          {%- set out = ['an owner, group or mode: read at start'] if _perms + _dirs else [] -%}
+          {%- if 'jmxremote.password' in _jmx -%}{%- set _ = out.append('jmxremote.password: read at each JMX login') -%}{%- endif -%}
+          {%- if 'jmxremote.access' in _jmx and not _rights -%}{%- set _ = out.append('jmxremote.access: local JMX checks no login') -%}{%- endif -%}
+          {{ out if _jmx else [] }}
+      vars:
+        _files: "{{ _cassandra_config_changes | default([]) }}"
+        _keep_missing: "{{ _cassandra_config_keep_missing | default([]) }}"
+        # the JMX files written (missing, or other users or rights); the access file is read at start: written
+        # back or changed, the rights the running Cassandra has are not known to be these (local JMX logs in no one)
+        _jmx: "{{ _cassandra_config_jmx_changes | default([]) | map(attribute='file') | list }}"
+        _rights: >-
+          {{ _jmx | select('equalto', 'jmxremote.access') | list if not cassandra_local_jmx | default(false) | bool else [] }}
+        _os: "{{ _cassandra_linux_items | default([]) }}"
+        # (trusted for the JVM the record was written for: the same pid, the same start)
+        _jvm: "{{ (cassandra_pending_snapshot.content | b64decode | from_json)._jvm | default({})
+                  if cassandra_pending_snapshot.content is defined else {} }}"
+        _as_started: >-
+          {{ _cassandra_apply_config_as_started | default([])
+             if cassandra_jvm.start is defined and _jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
+                and (_jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 else [] }}
+        # the files changed since the start, but the ones written back as they were then
+        # a file changed since the start but left as it is by cassandra_config (same settings, only comments
+        # or spelling): nothing for Cassandra to pick up
+        _same: "{{ _cassandra_config_kept | default([]) | reject('in', cassandra_config_keep_files | default([])) | list }}"
+        _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | reject('in', _same) | list }}"
+        _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
+        _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
+        _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
+        # a node not running reads its files when it starts: pending only under a resumed run, taken for the
+        # node the interrupted run stopped (then started)
+        _same_newer: "{{ cassandra_config_newer_files | default([]) | select('in', _same) | list }}"
+        _pending: >-
+          {{ cassandra_config_restart_pending | bool and _newer | length > 0
+             and (_running | bool or cassandra_rolling_resume | default(false) | bool) }}
+        _unit: "{{ cassandra_apply_config_unit.status | default({}) }}"
+        # failed, or restarting after a failure; not a stop that ended failed (SIGTERM's 143 with no
+        # SuccessExitStatus=143 in a unit kept as it was, a timeout: a stop's, or a forking unit's start)
+        _unit_failed: >-
+          {{ _unit.ActiveState | default('') in ['failed', 'activating']
+             and _unit.Result | default('') != 'timeout' and _unit.ExecMainStatus | default('') | string != '143' }}
+        _clock: "{{ dict(cassandra_apply_config_clock.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
+        # time sync to install or start (not one only to enable, nor a unit that cannot run here: it would not start),
+        # on a node Cassandra runs on or is to be started: in its restart window, Cassandra stopped
+        _ts_items: >-
+          {{ [] if _clock.condition | default('') == 'no'
+             else _os | selectattr('timesync', 'defined') | rejectattr('before', 'equalto', 'active') | list }}
+        # stopped by an interrupted run in its restart window: started by the resumed run (as a restart pending)
+        _stopped: >-
+          {{ not _running | bool and _clock.mark is defined and cassandra_rolling_resume | default(false) | bool }}
+        # not running, started by this run anyway (its config written: see _then)
+        _starts: >-
+          {{ not _running | bool and (_pending | bool or _stopped | bool
+                                      or (_unit_failed | bool and (_files + _perms + _dirs) | length > 0)) }}
+        _timesync: "{{ _ts_items | length > 0 and (_running | bool or _starts | bool) }}"
+        _ahead: "{{ _clock.ahead | default(0) }}"
+        # what the role leaves to the restart of a running Cassandra (its tuned profile, the LVM read-ahead): in its
+        # restart window
+        _disks_window: "{{ _os | selectattr('restart', 'defined') | list if _running | bool else [] }}"
+        _os_why: >-
+          {{ ((['time sync'] if _timesync | bool else []) + _disks_window | map(attribute='restart') | unique | list) | join(', ') }}
+        # a time sync unit that cannot run here (its condition): left out, said
+        _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
+        _todo: >-
+          {{ _files | length > 0 or (_perms + _dirs + _jmx) | length > 0 or _pending | bool or _timesync | bool or _stopped | bool
+             or _disks_window | length > 0 }}
+        # Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone: read at
+        # start); not running: start (_starts: its unit failed and its config is written, e.g. it was unreadable;
+        # or the node a resumed run stopped), write (stopped on purpose, or failed with nothing to write: left as it is)
+        _then: >-
+          {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _rights | length > 0 or _pending | bool
+                            or _timesync | bool or _disks_window | length > 0
+              else 'none') if _running | bool
+             else 'start' if _starts | bool else 'write' }}
+
+    # a restart waits for every other node up (cluster health): a node not running that this run leaves
+    # down, or starts after the restart (nodes go in inventory order), would stop it halfway. A real run refuses
+    # here; --check (nothing restarted) goes on to show everything, the refusal said in its recap
+    - name: Note whether restarts are refused while a node is not running
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_refused: >-
+          {{ [] if not _down else
+             [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
+              ~ ' every other node up.',
+              [('Apply the config there first (--limit ' ~ _limit | join(',') ~ ') and start ' ~ _them ~ ' if stopped on purpose,'
+                ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'
+                if _limit else ''),
+               (_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
+                ~ ' / journalctl -u cassandra there, fix it and start it, then run again.' if _failed else ''),
+               ('A restart for the tuned profile or the LVM read-ahead can be left for later:'
+                ~ ' -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false.'
+                if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
+                   | select | list else '')] | select | join(' ')] }}
+      run_once: true
+      vars:
+        _restart: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].cassandra_apply_config_todo | bool
+                                            and hostvars[h].cassandra_apply_config_then == 'restart' -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+        _down: >-
+          {%- set out = [] -%}
+          {%- if _restart -%}
+          {%-   set first = ansible_play_hosts.index(_restart[0]) -%}
+          {%-   for h in ansible_play_hosts -%}
+          {%-     set v = hostvars[h] -%}
+          {%-     if v.cassandra_apply_config_then == 'write'
+                     or (v.cassandra_apply_config_then == 'start'
+                         and (not v.cassandra_apply_config_todo | bool or ansible_play_hosts.index(h) > first)) -%}
+          {%-       set _ = out.append(h) -%}
+          {%-     endif -%}
+          {%-   endfor -%}
+          {%- endif -%}
+          {{ out }}
+        # the nodes down whose unit failed with nothing to write: this run does not start them
+        _failed: >-
+          {%- set out = [] -%}
+          {%- for h in _down if hostvars[h].cassandra_apply_config_unit_failed | default(false) | bool -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+        # the other nodes down: their config applied with --limit, then started
+        _limit: "{{ _down | reject('in', _failed) | list }}"
+        _them: "{{ 'them' if _limit | length > 1 else 'it' }}"
+
+    - name: Refuse restarts while a node is not running
+      ansible.builtin.fail:
+        msg: "{{ _cassandra_apply_config_refused[0] }} Nothing was changed. {{ _cassandra_apply_config_refused[1] }}"
+      run_once: true
+      when:
+        - _cassandra_apply_config_refused | length > 0
+        - not ansible_check_mode
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+
+    # every node's value of the settings that differ somewhere: the live files that differ on a node (listed
+    # once for all), read on each one in one go (only shown masked; one not on this node or not readable: no
+    # value of its own shown)
+    - name: List the files that differ on a node
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_differ: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | map(attribute='_cassandra_config_items', default=[]) | flatten
+             | selectattr('diff', 'defined') | map(attribute='item') | map('basename') | unique | list }}
+      run_once: true
+
+    - name: Read the live files that differ on a node
+      ansible.builtin.command:
+        argv: >-
+          {{ [_cassandra_config_python, '-c', _read] + [cassandra_conf_dir] | product(_cassandra_apply_config_differ) | map('join', '/')
+             | list }}
+      register: cassandra_apply_config_read
+      changed_when: false
+      check_mode: false  # reads only
+      no_log: true  # passwords
+      when: _cassandra_apply_config_differ | length > 0
+      vars:
+        _read: |
+          import base64, json, os, sys
+          out = []
+          for path in sys.argv[1:]:
+              try:
+                  with open(path, "rb") as f:
+                      out.append([os.path.basename(path), base64.b64encode(f.read()).decode("ascii")])
+              except (IOError, OSError):
+                  out.append([os.path.basename(path), None])
+          sys.stdout.write(json.dumps(out))
+
+    # as a slurp per file registers them
+    - name: Note the live files that differ on a node
+      ansible.builtin.set_fact:
+        cassandra_apply_config_live:
+          results: >-
+            {%- set out = [] -%}
+            {%- for f, content in (cassandra_apply_config_read.stdout | from_json if cassandra_apply_config_read.stdout is defined else []) -%}
+            {%-   set _ = out.append({'cassandra_apply_config_file': f} | combine({'content': content} if content is not none else {})) -%}
+            {%- endfor -%}
+            {{ out }}
+      no_log: true  # passwords
+
+    # The settings that differ are shown first, each with the inventory's value and the nodes already on it,
+    # then the value of each node to change, and what each node gets (--check: the settings in the recap at
+    # the end); the whole run is confirmed once.
+    # setting-centric, the nodes grouped: in the plan of a real run (before its question), in the recap under --check
+    - name: Put the settings that differ side by side
+      ansible.builtin.set_fact:
+        # laid out at the terminal's width; with -v, a device-mapper device's dm-N too
+        cassandra_apply_config_diff: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_diff(width='terminal', verbose=ansible_verbosity | int > 0) }}
+      run_once: true
+      vars:
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set _ = out.append({'name': h, 'items': v._cassandra_config_items | default([]),
+                                    'live': v.cassandra_apply_config_live.results | default([]),
+                                    'stats': v.cassandra_config_live_stat.results | default([]),
+                                    'dir_stats': v.cassandra_config_dir_stat.results | default([]),
+                                    'os': v.cassandra_apply_config_os | default([])}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Group the nodes to do
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"
+      changed_when: false
+
+    # (what the question names)
+    - name: Group the nodes with OS settings done in their restart window
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_os_window_any_{{ cassandra_apply_config_why | length > 0 }}"
+      changed_when: false
+
+    - name: Group the nodes restarted for OS settings alone
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_os_window_only_{{ cassandra_apply_config_os_window_only | bool }}"
+      changed_when: false
+
+    - name: Group the nodes whose OS settings differ
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_os_{{ cassandra_apply_config_os_live | length > 0 }}"
+      changed_when: false
+
+    # the ones no restart or start takes down, and every one under --check (nothing is restarted): done at once
+    - name: Group the nodes to do at once
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_batch_{{ cassandra_apply_config_todo | bool and (ansible_check_mode or _then in ['none', 'write']) }}"
+      vars:
+        _then: "{{ cassandra_apply_config_then }}"
+      changed_when: false
+
+    - name: Nothing to do on this node
+      ansible.builtin.set_fact:
+        cassandra_op_result: "{{ 'not reached' if cassandra_apply_config_os_live | length > 0 else 'nothing to apply' }}"
+      when: not cassandra_apply_config_todo | bool
+
+    # the nodes whose warnings the plan shows: the recap points at them (said again only for the others)
+    - name: Note the nodes of the plan
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_planned: "{{ ansible_play_hosts }}"
+      run_once: true
+      when: _todo | length > 0
+
+    - name: Show the plan and confirm the run
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: screen.yml
+      when: _todo | length > 0
+      vars:
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
+                                    'os': v.cassandra_apply_config_os | default([]) | length > 0,
+                                    'why': v.cassandra_apply_config_restart_why | default(''),
+                                    'then': v.cassandra_apply_config_then | default(''),
+                                    'result': v.cassandra_op_result | default('nothing to apply'),
+                                    'notes': v.cassandra_apply_config_notes | default([]),
+                                    'kept_running': v.cassandra_apply_config_kept_running | default([]),
+                                    'unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool}) -%}
+          {%- endfor -%}
+          {{ out }}
+        cassandra_screen_question: "Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }}?"
+        cassandra_screen:
+          operation: apply_config
+          summary: "{{ 'would apply' if ansible_check_mode else 'apply' }} the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }}"
+          intro:
+            - >-
+              {{ '' if _config_nodes | length == 0
+                 else 'A real run would write the nodes not restarted at once, then each other node in turn, restarting
+                 or starting it as said below; the settings that differ are in the recap at the end.'
+                 if ansible_check_mode else
+                 'Writes the config on the nodes not restarted at once, then on the others one node at a time,
+                 restarting or starting each as said below.' }}
+            - >-
+              {{ ('The OS settings that differ ' ~ ('would be' if ansible_check_mode else 'are') ~ ' applied '
+                  ~ ('first, ' if _config_nodes | length > 0 else '') ~ 'on their nodes at once: live, no restart for them'
+                  ~ ('; they are in the recap at the end.' if ansible_check_mode and _config_nodes | length == 0 else '.'))
+                 if _os_nodes | length > 0 else '' }}{{ (' ' if _os_nodes else '')
+                 ~ 'What needs Cassandra stopped ' ~ ('would be' if ansible_check_mode else 'is')
+                 ~ ' done in the restart of its node, as said below.'
+                 if _window_any | default([]) | length > 0 else '' }}
+          # a real run: the settings that differ before its question (--check: in the recap, no question)
+          sections:
+            - "{{ [] if ansible_check_mode else [{'pre': cassandra_apply_config_diff | default([])}] }}"
+            - - pre: "{{ _nodes | community.cassandra.cassandra_apply_config_outcomes(plan=true, check=ansible_check_mode, width='terminal') }}"
+          # the nodes' warnings, each one once, then (--check) why a real run is refused; the recap says how many
+          warnings: >-
+            {{ _nodes | community.cassandra.cassandra_apply_config_warnings
+               + [{'label': 'refused',
+                   'text': ('a real run is refused, before changing anything: ' ~ _cassandra_apply_config_refused | join(' '))
+                           if ansible_check_mode and _cassandra_apply_config_refused | default([]) else ''}] }}
+
+    # first, once the run is confirmed: read at each JMX login (no restart), the checks before a node's turn
+    # log in with it; a node it fails on stops the run, as a write at its turn would
+    - name: Write the JMX password file where it is missing or other
+      any_errors_fatal: true
+      when:
+        - not ansible_check_mode
+        - _password | length > 0
+      vars:
+        _password: "{{ _cassandra_config_jmx_changes | default([]) | selectattr('file', 'equalto', 'jmxremote.password') | list }}"
+      block:
+        - name: Write the JMX password file where it is missing or other
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+            tasks_from: jmx_password.yml
+
+        # (reported with the node's other changes, at its turn: by then the same)
+        - name: Note it for the report of the node's turn
+          ansible.builtin.set_fact:
+            _cassandra_config_jmx_written: >-
+              {{ [{'item': _password[0].path, 'before': 'absent' if _password[0].missing else 'other users or rights',
+                   'after': 'written whole', 'whole': true}] }}
+      rescue:
+        # (its error hidden: the file holds passwords)
+        - name: Stop the run
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: its JMX password file {{ _password[0].path }} could not be written (its directory,
+              disk space?), nothing else was changed on it. The other nodes' password files may be written already
+              (read at each login: no restart needed). Fix it, then run again.
+  vars:
+    # (from the groups the nodes to do are put in: each node's when reads them, no other node's variables)
+    _os_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_True'] | default([])) | list }}"
+    _config_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
+    _todo: "{{ ansible_play_hosts | select('in', _config_nodes + _os_nodes) | list }}"
+    _what: >-
+      {{ 'config' if (_os_nodes + _window_any) | length == 0
+         else 'OS settings' if _config_nodes | reject('in', _window_only) | list | length == 0 else 'config and OS settings' }}
+    _window_only: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_window_only_True'] | default([])) | list }}"
+    _window_any: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_window_any_True'] | default([])) | list }}"
+
+- name: Set up the progress file
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
+  gather_facts: false
+  become: true
+  vars:
+    cassandra_service_node_action: apply_config
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: progress.yml
+
+    # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
+    # said by the summary of a run that stops before them (the nodes written at once go first, in their own play)
+    - name: Note the nodes not reached yet
+      ansible.builtin.set_fact:
+        cassandra_op_result: not reached
+
+# The OS settings of cassandra_linux (kernel settings, limits, THP, swap, time
+# sync, the read-ahead and scheduler of the data devices) too, except on a node
+# with cassandra_linux_manage false: the ones that differ are shown with the
+# config's, and applied first, on their nodes at once, live (no restart for
+# them: the files Cassandra has open keep their read-ahead until it restarts),
+# but those not done under a running Cassandra, done in its restart window
+# (drained, Cassandra stopped, done, started again; the reason of the restart
+# said): its time sync to install or start (its clock let sync, said with its
+# offset to its time source when it can be read), a tuned profile switch or
+# reload (cassandra_linux_tuned_switch_restart), the LVM read-ahead
+# (cassandra_data_lvchange_restart).
+# The OS settings that differ (cassandra_linux), on their nodes at once: they apply live, no restart for them
+# (what is not done under a running Cassandra: in its restart window; under --check: shown already, nothing to do)
+- name: Apply the OS settings, on these nodes at once
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_os_True'] | default([])) | list }}"
+  any_errors_fatal: true
+  gather_facts: false  # gathered by the preflight
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Apply the OS settings
+      when: not ansible_check_mode
+      block:
+        # the Cassandra directories the disk tuning looks under, as they were compared
+        - name: Load the cassandra_config defaults
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+            tasks_from: defaults.yml
+            public: true
+
+        # (its summary of the data disks said here, after the question: what was set, what is left for later)
+        - name: Apply the OS settings
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_linux
+            apply:
+              diff: "{{ ansible_diff_mode | bool and ansible_verbosity | int > 0 }}"  # said in the OS settings view before the question
+          vars:
+            _cassandra_change_report_quiet: true  # shown before the question
+            _cassandra_linux_swap_said: true  # in the plan
+            # the warnings of the data disks the plan said: not again
+            _cassandra_disk_warned: >-
+              {%- set said = {} -%}
+              {%- for h in ansible_play_hosts -%}
+              {%-   set _ = said.update({h: hostvars[h].cassandra_apply_config_notes | default([])
+                                            | select('match', 'WARNING - data disks: ')
+                                            | map('regex_replace', '^WARNING - data disks: ', '') | list}) -%}
+              {%- endfor -%}
+              {{ said }}
+            # in its restart window, or not at all (a unit that cannot run here)
+            _cassandra_linux_timesync_later: "{{ cassandra_apply_config_timesync_later }}"
+            # what the plan left to its restart window (anything else not done under a running Cassandra: said)
+            _cassandra_linux_restart_window: "{{ cassandra_apply_config_disks_window | length > 0 }}"
+            _cassandra_linux_restart_follows: >-
+              {{ cassandra_apply_config_todo | bool and cassandra_apply_config_then == 'restart' }}
+      rescue:
+        # (a node stopped because another one failed: ansible-core 2.17+ rescues it too)
+        - name: Record the failure
+          ansible.builtin.set_fact:
+            cassandra_op_result: >-
+              {{ ('OS settings FAILED: ' ~ [ansible_failed_result.msg | default('')] | flatten | join(' '))
+                 if ansible_failed_task is defined else 'OS settings not finished: the run stopped at another node' }}
+
+        - name: Print the summary
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_operation
+            tasks_from: summary.yml
+
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: >-
+              {{ ('Stopped at ' ~ inventory_hostname ~ ' (' ~ ansible_failed_task.name | default('') ~ '): no config was written, no node
+                  restarted; the OS settings of the other nodes may be applied in part. Once fixed, run apply_config again.')
+                 if ansible_failed_task is defined else 'Stopped with the node that failed.' }}
+          vars:
+            cassandra_output: true  # a verdict: its msg as is
+
+    # (--check: as a real run would have)
+    - name: Note the OS settings applied
+      ansible.builtin.set_fact:
+        cassandra_apply_config_os_done: true
+
+    # what the summary says of it if a node fails later (its config, if any, not reached yet)
+    - name: Note the result
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ (cassandra_op_result if ansible_check_mode else 'not reached, its OS settings applied') if cassandra_apply_config_todo | bool
+             else 'OS settings ' ~ ('would be applied (--check: nothing was changed)' if ansible_check_mode else 'applied') }}
+
+# The nodes whose Cassandra keeps running as it is (an owner, group or mode alone) or stays stopped (stopped on
+# purpose), and every node under --check: written at once, the cluster checked before and after (its ring and
+# schema read once for them)
+- name: Apply the config where nothing is restarted, on these nodes at once
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_batch_True'] | default([])) | list }}"
+  any_errors_fatal: true
+  gather_facts: false  # gathered by the preflight
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # once per node (the health checks read it many times, each time every node's variables)
+    - name: Note the other nodes that may stay down
+      ansible.builtin.set_fact:
+        # the other nodes where Cassandra is not running may stay down: those started later in the run, after
+        # these (or not to do: left down), those left stopped (for a restart under --check too: a real run refuses
+        # it, as the recap says)
+        _cassandra_apply_config_down_ok: >-
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
+               hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode, batch=true) }}
+
+    - name: Apply the config on these nodes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: apply_config
+        cassandra_service_node_batch: true
+        # --check: a node whose JMX password file is missing or other (a real run writes it first) refuses
+        # the JMX login: checked from the others
+        _no_login: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all if ansible_check_mode -%}  {#- (any such node is to do: in this play) -#}
+          {%-   if 'jmxremote.password' in hostvars[h]._cassandra_config_jmx_changes | default([]) | map(attribute='file') -%}
+          {%-     set _ = out.append(h) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+        cassandra_service_node_checks_before: "{{ inventory_hostname not in _no_login }}"
+        _cassandra_health_not_peers: "{{ _no_login | join(',') or cassandra_target_nodes | default('') }}"
+        cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok }}"
+        _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
+
+# The others one at a time: cluster checked, config written, node drained and
+# restarted, cluster checked again (--check: every node at once, in the play
+# above, nothing is restarted). The health checks let the nodes not running
+# that this run leaves down or starts later be down, except before a restart:
+# any other node down stops the run. Stops at the first problem.
+- name: Apply the config, one node at a time
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([]))
+       | reject('in', groups['cassandra_apply_config_batch_True'] | default([])) | list }}
+  serial: 1
+  gather_facts: false  # gathered by the preflight
+  any_errors_fatal: true
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # once per node (the health checks read it many times, each time every node's variables)
+    - name: Note the other nodes that may stay down
+      ansible.builtin.set_fact:
+        # the other nodes where Cassandra is not running may stay down while a node is written without
+        # being taken down (none, start, write): those started later in the run (or not to do), those left
+        # stopped; a restart waits for every other node up (under --check, the nodes before it were not started)
+        _cassandra_apply_config_down_ok: >-
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
+               hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode) }}
+
+    - name: Apply the config on this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: apply_config
+        cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok }}"
+        _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
+
+# What each node got; under --check, first the settings that differ (secrets masked), owner/mode changes included
+- name: Summary
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Print the changes
+      ansible.builtin.debug:
+        msg: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_recap(check=ansible_check_mode, cluster=cassandra_cluster_name | default(''),
+                                                                        seconds=(now().timestamp() | int - _start | int) if _start else none,
+                                                                        diff=_diff, refused=_refused, planned=_planned, width='terminal',
+                                                                        restart_command=_restart_command) }}
+      run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true  # a block of its own (ops callback)
+        _start: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_start', 'defined')
+             | map(attribute='_cassandra_apply_config_start') | first | default('') }}
+        # the nodes the plan showed the warnings of (none: no plan)
+        _planned: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_planned', 'defined')
+             | map(attribute='_cassandra_apply_config_planned') | first | default(none) }}
+        # --check: why a real run would refuse (a node not running, restarts to do)
+        _refused: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('_cassandra_apply_config_refused', 'defined')
+             | map(attribute='_cassandra_apply_config_refused') | first | default([]) }}
+        # (the TO DO of the nodes whose read-ahead was set live: the cluster named as this run named it)
+        _restart_command: >-
+          {{ 'rolling_restart' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources | default([]), default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+        # the settings that differ (said under --check only: a real run showed them before its question)
+        _diff: >-
+          {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars) | selectattr('cassandra_apply_config_diff', 'defined')
+             | map(attribute='cassandra_apply_config_diff') | first | default([]) }}
+        _nodes: >-
+          {%- set out = [] -%}
+          {%- for h in query('community.cassandra.cassandra_nodes') -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set _ = out.append({'name': h, 'todo': v.cassandra_apply_config_todo | default(false) | bool,
+                                    'os': v.cassandra_apply_config_os | default([]) | length > 0,
+                                    'why': v.cassandra_apply_config_restart_why | default(''),
+                                    'os_done': v.cassandra_apply_config_os_done | default(false),
+                                    'done': v.cassandra_op_done | default(false), 'then': v.cassandra_apply_config_then | default(''),
+                                    'result': v.cassandra_op_result | default('not reached' if h in ansible_play_hosts_all
+                                                                                else 'not in this run (--limit)'),
+                                    'notes': v.cassandra_apply_config_notes | default([])}) -%}
+          {%- endfor -%}
+          {{ out }}

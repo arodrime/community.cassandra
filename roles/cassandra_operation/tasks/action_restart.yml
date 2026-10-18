@@ -12,6 +12,13 @@
   vars:
     _cassandra_service_drain_then: restarted
 
+# apply_config: its OS settings done with Cassandra stopped (os_window.yml): its time sync, its disk settings
+- name: Apply the OS settings with Cassandra stopped
+  ansible.builtin.include_tasks: os_window.yml
+  when:
+    - _cassandra_restart_timesync | default(false) | bool or _cassandra_restart_disks | default(false) | bool
+    - not ansible_check_mode
+
 - name: Restart it and wait until it has joined
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_service

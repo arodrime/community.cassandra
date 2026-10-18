@@ -2,7 +2,7 @@
 # One read of the cluster health (cluster_health.yml, which reads it again while it waits): the reads on this
 # node at once (async), those from the other node while they run, then what they found
 # (cassandra_health_findings, cassandra_health_problems). The caller's vars: _node_checks, _down_ok, _async,
-# _cassandra_health_wait_on.
+# _batch, _cassandra_health_wait_on, _cassandra_health_hosts.
 - name: Read the cluster state
   module_defaults:
     community.cassandra.cassandra_status: "{{ _cassandra_service_jmx }}"
@@ -48,13 +48,16 @@
       when: _node_checks
 
     # while those run: the reads from the other node, one after the other there (the nodes of a parallel
-    # play all read from it)
+    # play all read from it); a batch reads them once, at once
     - name: Read the ring from {{ _cassandra_health_peer }}
       community.cassandra.cassandra_status:
         poll: 1
         down: "{{ _down_ok | length }}"
-      register: cassandra_health_peer
+      register: cassandra_health_peer_read
       delegate_to: "{{ _cassandra_health_peer }}"
+      run_once: "{{ _batch }}"
+      async: "{{ _async if _batch else 0 }}"
+      poll: 0
       changed_when: false
       failed_when: false
       check_mode: false  # read-only (async cannot run in check mode); --check needs it too
@@ -63,20 +66,24 @@
       community.cassandra.cassandra_schema:
         poll: 6
         interval: 10
-      register: cassandra_health_schema
+      register: cassandra_health_schema_read
       delegate_to: "{{ _cassandra_health_peer }}"
+      run_once: "{{ _batch }}"
+      async: "{{ _async if _batch else 0 }}"
+      poll: 0
       failed_when: false
       check_mode: false  # read-only; --check needs it too
 
     # Native transport listens on rpc_address (all interfaces for 0.0.0.0); --check waits for nothing, nor a
     # read cluster_health.yml reads again while it waits (a port not answering yet is waited for there, with its
-    # progress line)
+    # progress line; a node of a batch an interrupted run did, not waited for there, here)
     - name: Check the storage and CQL ports on this node
       ansible.builtin.wait_for:
         host: "{{ item.host }}"
         port: "{{ item.port }}"
         timeout: >-
-          {{ 5 if ansible_check_mode or _cassandra_health_wait_on | bool else cassandra_service_health_timeout }}
+          {{ 5 if ansible_check_mode or (_cassandra_health_wait_on | bool and inventory_hostname in _cassandra_health_hosts)
+             else cassandra_service_health_timeout }}
       loop:
         - name: storage
           host: "{{ _listen if _listen not in ['', 'localhost'] else ansible_facts['default_ipv4']['address'] | default('127.0.0.1') }}"
@@ -141,6 +148,51 @@
       failed_when: false
       check_mode: false
       when: _node_checks
+
+    - name: Wait for the ring read on {{ _cassandra_health_peer }}
+      ansible.builtin.async_status:
+        jid: "{{ cassandra_health_peer_read.ansible_job_id | default('') }}"
+      register: cassandra_health_peer_job
+      until: cassandra_health_peer_job.finished | default(1) | bool
+      retries: "{{ _async }}"
+      delay: 1
+      delegate_to: "{{ _cassandra_health_peer }}"
+      run_once: true
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: _batch
+
+    - name: Wait for the schema check
+      ansible.builtin.async_status:
+        jid: "{{ cassandra_health_schema_read.ansible_job_id | default('') }}"
+      register: cassandra_health_schema_job
+      until: cassandra_health_schema_job.finished | default(1) | bool
+      retries: "{{ _async }}"
+      delay: 1
+      delegate_to: "{{ _cassandra_health_peer }}"
+      run_once: true
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: _batch
+
+    - name: Note what was read from {{ _cassandra_health_peer }}
+      ansible.builtin.set_fact:
+        cassandra_health_peer: "{{ cassandra_health_peer_job if _batch else cassandra_health_peer_read }}"
+        cassandra_health_schema: "{{ cassandra_health_schema_job if _batch else cassandra_health_schema_read }}"
+
+    - name: Remove the files of the reads from {{ _cassandra_health_peer }}
+      ansible.builtin.command:
+        argv: >-
+          {{ ['rm', '-f', '--'] + [cassandra_health_peer_read, cassandra_health_schema_read] | selectattr('results_file', 'defined')
+             | map(attribute='results_file') | list }}
+      delegate_to: "{{ _cassandra_health_peer }}"
+      run_once: true
+      changed_when: false
+      failed_when: false  # only files
+      check_mode: false
+      when: _batch
 
     # (each left its result in a file of the async dir)
     - name: Remove the files of these reads

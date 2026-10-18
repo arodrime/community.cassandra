@@ -52,7 +52,8 @@ IMPORTERS = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(TOP,
 
 
 def test_the_operations_import_preflight():
-    assert IMPORTERS == ["create_cluster", "rolling_reboot", "rolling_restart", "stop_rack"]  # none takes targets yet
+    assert IMPORTERS == ["apply_config", "change_seeds", "create_cluster", "rolling_reboot", "rolling_restart",
+                         "stop_rack"]  # none takes targets yet
 
 
 @pytest.mark.parametrize("playbook", IMPORTERS)
@@ -75,7 +76,7 @@ CHECK = load("roles", "cassandra_operation", "tasks", "target_nodes_check.yml")[
     (None, "", {}, True),
     (None, "status", {}, True),
     ("", "", {}, True),
-    ("n2", "", {}, False),  # a playbook that takes none: it would be ignored
+    ("n2", "", {}, False),  # rolling_restart, apply_config...: it would be ignored
     (["n2"], "status", {}, False),  # a pattern string, as every query of it takes it
     (5, "status", {}, False),
     ("n9", "status", {}, False),  # matches no host
@@ -137,11 +138,16 @@ def test_status_reads_from_the_target_nodes(target, reached, from_, asked):
 HEALTH = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]
 
 
-def test_health_peer_is_another_node():
+@pytest.mark.parametrize("extra, peer", [
+    ({}, "n2"),
+    ({"cassandra_target_nodes": "n2"}, "n3"),  # a node the operation acts on is not the peer
+    ({"_cassandra_health_not_peers": "n2,n3"}, "n1"),  # apply_config: the nodes it cannot log in to; else this node
+])
+def test_health_peer_leaves_out_the_target_nodes(extra, peer):
     task = HEALTH["ansible.builtin.set_fact"]
     variables = dict(HEALTH["vars"], inventory_hostname="n1", groups={"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"]},
-                     cassandra_hosts="prod", hostvars={})
-    assert render(task["_cassandra_health_peer"], **variables) == "n2"
+                     cassandra_hosts="prod", hostvars={}, **extra)
+    assert render(task["_cassandra_health_peer"], **variables) == peer
 
 
 def test_a_former_name_set_for_any_node_refused_in_preflight():

@@ -34,6 +34,8 @@ root on the nodes themselves where they need it (no `-b`, no `become` in `ansibl
 - `create_cluster`- Prepares the nodes, then starts them one at a time, seeds first; with one token per node, works out evenly spaced tokens.
 - `preflight`- Checks the cluster before changing it (settings that must match on every node, racks per datacenter, seeds, the account Cassandra runs as can read the config; warns about unknown `cassandra_*` variables and about sensitive or suspicious settings: `auto_bootstrap` false, a replace flag left on a member of the ring, the heap size, `AllowAllAuthenticator` on an rpc address other hosts reach, a failure policy `ignore`; `cassandra_suspicious_ack` silences one a node keeps on purpose).
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
+- `apply_config`- Applies the inventory's config and OS settings (`cassandra_linux`'s): shows the settings that differ (the inventory's value, then each other value with its nodes), asks once, then applies the OS settings live on their nodes at once, and writes the nodes that need it: the ones it does not restart at once, then the others one at a time, restarting only those that need it.
+- `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between (`-e cassandra_rolling_mode=rack`: a rack at a time, when the replication allows it; `-e cassandra_rolling_resume=true` resumes an interrupted run).
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.

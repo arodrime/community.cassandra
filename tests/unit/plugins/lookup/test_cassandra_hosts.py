@@ -107,6 +107,9 @@ def test_runtime_groups_ignored():
     # group_by groups made by the playbooks hold every host at times
     groups = {"all": ["n1", "n2"], "orders": ["n1", "n2"], "orders_dc1": ["n1", "n2"],
               "cassandra_seed_True": ["n1", "n2"], "cassandra_seed_False": ["n1"], "cassandra_create_start_order": ["n1", "n2"],
+              "cassandra_apply_config_True": ["n1", "n2"], "cassandra_apply_config_batch_True": ["n1", "n2"],
+              "cassandra_apply_config_os_True": ["n1", "n2"], "cassandra_apply_config_os_window_only_True": ["n1", "n2"],
+              "cassandra_apply_config_os_window_any_True": ["n1", "n2"],
               "cassandra_target_rack_nodes": ["n1", "n2"]}
     assert cluster_group(None, groups) == "orders"
 
