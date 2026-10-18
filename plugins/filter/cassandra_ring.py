@@ -1,6 +1,9 @@
 # Copyright: Contributors to the community.cassandra collection
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""cassandra_ring_report: the cassandra_status module's cluster_status as
+"""cassandra_ip: an address in one spelling (IPv6 compressed, as the facts
+have it; nodetool prints it in full), anything else as is.
+
+cassandra_ring_report: the cassandra_status module's cluster_status as
 readable lines for the status playbook: a header line (the cluster, the node
 the ring is seen from), the nodes per datacenter as nodetool status shows them
 (the ones not UN marked), a summary table of its racks and the datacenter,
@@ -31,7 +34,7 @@ def _ip(address):
     """One spelling per address: nodetool prints IPv6 uncompressed
     (2001:db8:0:0:0:0:0:1), the facts and the resolver compressed."""
     try:
-        return ipaddress.ip_address(u"%s" % address.split("%")[0]).compressed
+        return ipaddress.ip_address(u"%s" % (u"%s" % address).split("%")[0]).compressed
     except ValueError:
         return address
 
@@ -232,4 +235,4 @@ def cassandra_ring_report(cluster_status, inventory, unreachable=None, limited=F
 
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_ring_report": cassandra_ring_report}
+        return {"cassandra_ring_report": cassandra_ring_report, "cassandra_ip": _ip}
