@@ -1,0 +1,47 @@
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+import pytest
+
+from ansible.errors import AnsibleFilterError
+from ansible_collections.community.cassandra.plugins.filter.cassandra_replication import cassandra_keyspaces, cassandra_rack_down_problems
+
+CQLSH = """
+ [json]
+-------------------------------------------------------------------------------------------------------------------
+ {"keyspace_name": "orders", "replication": {"class": "org.apache.cassandra.locator.NetworkTopologyStrategy", "dc1": "3", "dc2": "2"}}
+ {"keyspace_name": "system", "replication": {"class": "org.apache.cassandra.locator.LocalStrategy"}}
+ {"keyspace_name": "system_auth", "replication": {"class": "org.apache.cassandra.locator.SimpleStrategy", "replication_factor": "1"}}
+ {"keyspace_name": "system_traces", "replication": {"class": "org.apache.cassandra.locator.SimpleStrategy", "replication_factor": "2"}}
+
+(4 rows)
+"""
+
+
+def test_keyspaces():
+    assert cassandra_keyspaces(CQLSH) == {
+        "orders": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3, "dc2": 2}},
+        "system": {"class": "LocalStrategy", "rf": {}},
+        "system_auth": {"class": "SimpleStrategy", "rf": {"*": 1}},
+        "system_traces": {"class": "SimpleStrategy", "rf": {"*": 2}},
+    }
+
+
+def test_not_json():
+    with pytest.raises(AnsibleFilterError):
+        cassandra_keyspaces(" {not json")
+
+
+def test_rack_down_safe_with_three_racks():
+    out = cassandra_rack_down_problems(cassandra_keyspaces(CQLSH), "dc1", 3)
+    assert out["problems"] == ["system_traces uses SimpleStrategy with RF 2, which ignores racks: "
+                               "a rack down can hold several of its replicas"]
+    assert out["warnings"] == []
+
+
+def test_rack_down_too_few_racks_and_rf2_warning():
+    keyspaces = {"orders": {"class": "NetworkTopologyStrategy", "rf": {"dc1": 3, "dc2": 2}}}
+    assert cassandra_rack_down_problems(keyspaces, "dc1", 2)["problems"] == [
+        "orders has 3 replicas in dc1, which has 2 rack(s): a rack holds more than one of them"]
+    assert cassandra_rack_down_problems(keyspaces, "dc2", 3) == {
+        "problems": [], "warnings": ["orders has 2 replicas in dc2: with one down, (LOCAL_)QUORUM fails"]}

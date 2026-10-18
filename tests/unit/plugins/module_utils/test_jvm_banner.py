@@ -13,6 +13,7 @@ import pytest
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import (
     NodeToolCmd, NodeToolCommandSimple, strip_jvm_banner)
 from ansible_collections.community.cassandra.plugins.module_utils import nodetool_netstats, nodetool_status
+from ansible_collections.community.cassandra.plugins.module_utils.nodetool_ring import parse_ring
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_cmd_objects import parse_nodetool_get
 from ansible_collections.community.cassandra.plugins.modules.cassandra_status import cluster_up_down
 from ansible_collections.community.cassandra.plugins.modules.cassandra_netstats import parse_netstats
@@ -100,6 +101,16 @@ def test_gossipinfo(banner):
     assert nodetool_status.gossip_status(banner + out, "10.100.100.1") == "NORMAL"
     assert nodetool_status.gossip_status(banner + out, "10.100.100.2") == "shutdown"
     assert nodetool_status.gossip_status(banner + out, "10.100.100.3") is None
+
+
+@pytest.mark.parametrize("banner", BANNERS)
+def test_ring(banner):
+    out = ("\nDatacenter: dc1\n==========\nAddress        Rack   Status State   Load       Owns   Token\n"
+           "                                                                 3074457345618258602\n"
+           "10.100.100.1   rack1  Up     Normal  1.2 MiB    33.3%  -9223372036854775808\n"
+           "10.100.100.2   rack1  Up     Normal  1.1 MiB    33.3%  -3074457345618258603\n")
+    assert parse_ring(banner + out) == parse_ring(out)
+    assert len(parse_ring(out)["dc1"]) == 2
 
 
 @pytest.mark.parametrize("banner", BANNERS)

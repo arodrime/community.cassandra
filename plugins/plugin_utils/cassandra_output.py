@@ -9,6 +9,7 @@ else. Pure Python, no Ansible.
 - warnings: warning, warning_lines (each once, a blank line between two),
   spaced paragraphs;
 - phase lines: phase, check_what;
+- the end of a node operation: recap;
 - what is left to do: command, extra_var, todo;
 - the seed rule of preflight: seed_layout."""
 
@@ -170,6 +171,16 @@ def _ranges(names):
 # --- plan ----------------------------------------------------------------------------------
 
 
+def _table(rows, indent=""):
+    """Rows of cells, each column as wide as its widest cell, 2 spaces between."""
+    rows = [[str(c) for c in row] for row in rows]
+    if not rows:
+        return []
+    widths = [max(len(r[i]) if i < len(r) else 0 for r in rows) for i in range(max(len(r) for r in rows))]
+    return [(indent + "  ".join(c.ljust(widths[i]) for i, c in enumerate(r) if c or i < len(r) - 1)).rstrip()
+            for r in rows]
+
+
 # --- warnings --------------------------------------------------------------------------------
 
 # The one mark of a warning, everywhere: "WARNING - what"; the lines of a
@@ -326,6 +337,121 @@ def check_what(present, kind="", targets=None, replacing="", run=None, absent=No
 # --- progress ------------------------------------------------------------------------------
 
 # --- end of run ----------------------------------------------------------------------------
+
+_WOULD = {"restarted": "restart", "applied": "apply", "started": "start", "stopped": "stop", "removed": "remove",
+          "added": "add", "changed": "change", "upgraded": "upgrade", "reset": "reset", "moved": "move",
+          "cleaned up": "clean up", "decommissioned": "decommission", "replaced": "replace", "rebooted": "reboot",
+          "updated": "update", "written": "write", "drained": "drain", "disabled": "disable", "enabled": "enable",
+          "installed": "install", "imported": "import", "repaired": "repair", "created": "create"}
+
+
+def would(outcome):
+    """A done outcome as check mode says it: "applied, restarted" ->
+    "would apply, restart"; a word it does not know: "would be <word>"."""
+    words = [w.strip() for w in str(outcome).split(",") if w.strip()]
+    if not words:
+        return "would change nothing"
+    known = [_WOULD.get(w) for w in words]
+    if all(known):
+        return "would " + ", ".join(known)
+    return "would be " + ", ".join(words)
+
+
+def _median(numbers):
+    numbers = sorted(numbers)
+    middle = len(numbers) // 2
+    return numbers[middle] if len(numbers) % 2 else (numbers[middle - 1] + numbers[middle]) / 2.0
+
+
+def recap(operation, cluster, outcomes, check=False, seconds=None, extra=None, full=False, slow_factor=1.5):
+    """The end of a run (Q4). outcomes: [{node, outcome ('restarted',
+    'applied, restarted'...), status ('ok', 'failed', 'skipped'; default
+    ok), seconds (how long its part took), reason (failed or skipped),
+    said (the outcome as shown, when would() can't say it), dc, rack}] in
+    the order of the run. Line 1, the verdict: "DONE  op cluster  6
+    restarted (11m30s)", "FAILED  op  cluster  ..." when a node failed
+    (under check too), "CHECK  op  cluster  would restart 6 nodes  nothing
+    was changed" under check, "NOTHING TO DO" when no node did anything. Then the nodes grouped by identical outcome ("node1..node6
+    restarted  (1m49s..1m58s each)"), and a line of its own for a node more
+    than slow_factor times the median of its group (slow), a failed node (its
+    reason on the line under it) and the skipped ones, with the reason. extra: lines added after (the ring
+    after, versions...). full: every name (-v)."""
+    outcomes = list(outcomes or [])
+    for item in outcomes:
+        item.setdefault("status", "ok")
+    done = [o for o in outcomes if o["status"] == "ok"]
+    failed = [o for o in outcomes if o["status"] == "failed"]
+    skipped = [o for o in outcomes if o["status"] == "skipped"]
+
+    def said(o):
+        return o.get("said") or (would(o.get("outcome", "")) if check else str(o.get("outcome", "")))
+
+    groups = {}
+    for o in done:
+        groups.setdefault(said(o), []).append(o)
+    lines = [_recap_verdict(operation, cluster, groups, failed, skipped, check, seconds)]
+    rows = []
+    for word, members in groups.items():
+        rows += _recap_done_rows(word, members, check, full, slow_factor)
+    # a failure's reason on its own line under its row: the columns are not sized on it
+    under = {}
+    for o in failed:
+        if o.get("reason"):
+            under[len(rows)] = "    %s" % o["reason"]
+        rows.append([o["node"], "FAILED", ""])
+    reasons = {}
+    for o in skipped:
+        reasons.setdefault(o.get("reason") or "", []).append(o["node"])
+    for reason, names in reasons.items():
+        rows.append([nodes(names, keep_order=True, full=full), "not touched" + (" (%s)" % reason if reason else ""), ""])
+    for i, line in enumerate(_table(rows, "  ")):
+        lines += [line] + ([under[i]] if i in under else [])
+    if extra:
+        lines += [""] + list(extra)
+    return lines
+
+
+def _recap_verdict(operation, cluster, groups, failed, skipped, check, seconds):
+    """The recap's first line: verdict, operation, cluster, the counts by outcome (groups: {outcome as said:
+    [outcomes]}), the run's duration; under check, that nothing was changed."""
+    if check:
+        counts = [("%s on %s" if len(word.split()) > 2 and word != "would clean up" else "%s %s") % (word, plural(len(members), "node"))
+                  for word, members in groups.items()]
+    else:
+        counts = ["%d %s" % (len(members), word) for word, members in groups.items()]
+    counts += ["%d failed" % len(failed)] if failed else []
+    counts += ["%d not touched" % len(skipped)] if skipped else []
+    verdict = "FAILED" if failed else ("CHECK" if check else ("DONE" if groups else "NOTHING TO DO"))
+    head = "  ".join(x for x in [verdict, operation, cluster, ", ".join(counts) or "nothing to do"] if x)
+    if seconds is not None and not check:
+        head += " (%s)" % duration(seconds)
+    if check:
+        head += "   nothing was changed"
+    return head
+
+
+def _recap_done_rows(word, members, check, full, slow_factor):
+    """The rows of the nodes done with one same outcome (word): the usual ones together with their times, then
+    each one slower than slow_factor times the group's median on its own."""
+    times = [o["seconds"] for o in members if o.get("seconds") is not None]
+    middle = _median(times) if times else None
+    slow = [o for o in members if middle and len(times) > 1 and o.get("seconds") is not None
+            and o["seconds"] > slow_factor * middle]
+    usual = [o for o in members if o not in slow]
+    rows = []
+    if usual:
+        spread = sorted(o["seconds"] for o in usual if o.get("seconds") is not None)
+        note = ""
+        if spread and not check:
+            note = "(%s each)" % duration(spread[0]) if spread[0] == spread[-1] or len(usual) == 1 \
+                else "(%s..%s each)" % (duration(spread[0]), duration(spread[-1]))
+            if len(usual) == 1:
+                note = duration(spread[0])
+        rows.append([nodes([o["node"] for o in usual], keep_order=True, full=full), word, note])
+    for o in slow:
+        rows.append([o["node"], word, "%s  %s slow (median %s)" % (duration(o["seconds"]), ARROW, duration(middle))])
+    return rows
+
 
 # --- what is left to do --------------------------------------------------------------------
 

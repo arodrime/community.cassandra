@@ -6,7 +6,8 @@ import os
 
 import pytest
 
-from ansible_collections.community.cassandra.plugins.filter.cassandra_node_standing import STATES, cassandra_node_standing
+from ansible_collections.community.cassandra.plugins.filter.cassandra_node_standing import (
+    STATES, cassandra_node_data_dirs, cassandra_node_standing)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 
@@ -208,6 +209,24 @@ def test_a_member_by_its_host_id_under_another_address():
     assert "Cassandra runs here but the ring sees it down" in out["reasons"]
     up = dict(other, status="U")
     assert _state(answers=_answers(up), running=True, own=_ring(_me("U", "N")))["state"] == "member"
+
+
+def test_data_dirs_own_and_elsewhere():
+    out = cassandra_node_data_dirs(["/data/cassandra/", ""], "data_file_directories: [/data/cassandra, /data2]\n",
+                                   usual=["/var/lib/cassandra/data", "/data2"])
+    assert out == {"own": ["/data/cassandra", "/data2"], "elsewhere": ["/var/lib/cassandra/data"], "problem": ""}
+    # a live file without the key: Cassandra's default, the package's dir, is its own
+    out = cassandra_node_data_dirs(["/data/cassandra"], "num_tokens: 16\n", usual=["/var/lib/cassandra/data"])
+    assert out["own"] == ["/data/cassandra", "/var/lib/cassandra/data"] and out["elsewhere"] == []
+    out = cassandra_node_data_dirs(["/data/cassandra"], "local_system_data_file_directory: /fast/system\n")
+    assert out["own"] == ["/data/cassandra", "/var/lib/cassandra/data", "/fast/system"]
+    # no live file: the inventory's only
+    for live in (None, ""):
+        out = cassandra_node_data_dirs(["/data/cassandra"], live, usual=["/var/lib/cassandra/data"])
+        assert out == {"own": ["/data/cassandra"], "elsewhere": ["/var/lib/cassandra/data"], "problem": ""}
+    assert cassandra_node_data_dirs("/data/cassandra")["own"] == ["/data/cassandra"]
+    assert cassandra_node_data_dirs([], "a: [")["problem"].startswith("the live cassandra.yaml is not valid YAML")
+    assert cassandra_node_data_dirs([], "- a\n")["problem"] == "the live cassandra.yaml is not a mapping"
 
 
 def test_words():

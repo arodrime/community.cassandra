@@ -8,13 +8,21 @@ cassandra.yaml names.
 
 cassandra_node_standing: where a node stands, its state (STATES), with its
     reasons. cassandra_config asks its question on a node that is not blank
-    (its 'blank'); the node operations decide from the same states.
+    (its 'blank'); the node operations decide from the same states
+    (create_cluster: a new cluster, every node blank).
+cassandra_node_data_dirs: the data directories the config of a node uses,
+    and the usual ones it does not use (a system keyspace left there is not
+    this node's).
 """
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import collections
+import posixpath
+
+import yaml
+
 from ansible_collections.community.cassandra.plugins.module_utils.nodetool_status import address_part
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_keyspace_names import is_system_keyspace
 
@@ -43,6 +51,9 @@ STATES = (
 WORDS = dict(STATES)
 # the cluster name of the package's own cassandra.yaml (and Cassandra's default)
 STOCK_CLUSTER = "Test Cluster"
+# cassandra.yaml keys of a node's data directories (its system keyspace is in one of them)
+DATA_KEYS = ("data_file_directories", "local_system_data_file_directory")
+STORAGE_DIR = "/var/lib/cassandra"
 
 
 def status_address(address):
@@ -69,6 +80,11 @@ def _user_keyspace(name):
 def _names(names, most=5):
     names = sorted(names)
     return ", ".join(names[:most]) + (", ..." if len(names) > most else "")
+
+
+def _strip(path):
+    path = posixpath.normpath(str(path))
+    return "/" + path.lstrip("/") if path.startswith("/") else path
 
 
 def _seen(node):
@@ -215,6 +231,53 @@ def ring_problems(view, addresses, name, replace_address="", running=False, own=
                         " A node leaves with decommission_node (remove_dead_node when dead), then can be reset"
                         % (other, status_address(n.get("address")), _seen(n), name))
     return sorted(set(problems), key=problems.index)
+
+
+def _live_data_dirs(text):
+    """The data directories a live cassandra.yaml gives (Cassandra's default
+    for a key it leaves out), or a problem."""
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        return None, "the live cassandra.yaml is not valid YAML (%s)" % str(e).split("\n", 1)[0]
+    if not isinstance(data, dict):
+        return None, "the live cassandra.yaml is not a mapping"
+    out = []
+    for key in DATA_KEYS:
+        value = data.get(key)
+        if value is None or value == []:
+            if key == "data_file_directories":
+                out.append(posixpath.join(STORAGE_DIR, "data"))  # Cassandra's own default (the package's)
+            continue
+        for v in value if isinstance(value, list) else [value]:
+            out.append(v if isinstance(v, str) else str(v))
+    return out, ""
+
+
+def cassandra_node_data_dirs(inventory, live_yaml=None, usual=None):
+    """inventory: the data directories of the inventory
+    (cassandra_data_file_directories, local_system_data_file_directory);
+    live_yaml: the text of the live cassandra.yaml (None or '': no such
+    file); usual: other places a system keyspace is often left (the
+    package's /var/lib/cassandra/data, a tarball's data/data).
+    Returns {'own': the data directories the config uses (the inventory's,
+    the live file's), 'elsewhere': the usual ones it does not use,
+    'problem': why the live file can't be parsed ('' when it can)}. A reset
+    empties the 'own' ones (and the other directories): a node emptied is
+    blank.
+    e.g. (["/data/cassandra"], a live cassandra.yaml with data_file_directories: [/data2],
+    ["/var/lib/cassandra/data"]) -> {own: ["/data/cassandra", "/data2"], elsewhere: ["/var/lib/cassandra/data"],
+    problem: ""}."""
+    own, problem = [], ""
+    for d in [inventory] if isinstance(inventory, str) else inventory or []:
+        if d and str(d).strip():
+            own.append(_strip(d))
+    if live_yaml:  # None or '' (Ansible before 2.19 may turn a none into ''): no live file
+        live, problem = _live_data_dirs(live_yaml)
+        own.extend(_strip(d) for d in live or [] if d and str(d).strip())
+    own = sorted(set(own), key=own.index)
+    elsewhere = [d for d in (_strip(u) for u in usual or [] if u and str(u).strip()) if d not in own]
+    return {"own": own, "elsewhere": sorted(set(elsewhere), key=elsewhere.index), "problem": problem}
 
 
 # what cassandra_node_standing read on a node, normalised, for the helpers that decide its state
@@ -446,5 +509,6 @@ def cassandra_node_standing(node, cluster_name, title="", running=False, jvm=Non
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_node_data_dirs": cassandra_node_data_dirs,
             "cassandra_node_standing": cassandra_node_standing,
         }

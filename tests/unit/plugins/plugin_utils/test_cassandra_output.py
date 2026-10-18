@@ -114,3 +114,51 @@ def test_todo():
                      {"text": "cleanup the nodes that gave data", "command": "ansible-playbook x"}]) == [
         "TO DO", "  1. remove node7 from the inventory", P, "  2. cleanup the nodes that gave data:",
         "     ansible-playbook x"]
+
+
+# --- recap ---
+
+def restarts(times):
+    return [{"node": "node%d" % (i + 1), "outcome": "restarted", "seconds": t} for i, t in enumerate(times)]
+
+
+def test_recap_grouped_with_the_slow_node_apart():
+    lines = out.recap("rolling_restart", "my_cluster", restarts([109, 112, 400, 115, 118, 110]), seconds=690)
+    assert lines == ["DONE  rolling_restart  my_cluster  6 restarted (11m30s)",
+                     "  node1, node2, node4..node6  restarted  (1m49s..1m58s each)",
+                     "  node3                       restarted  6m40s  %s slow (median 1m53s)" % out.ARROW]
+
+
+def test_recap_no_outlier_under_the_factor_and_one_node():
+    assert out.recap("rolling_restart", "c", restarts([100, 140]))[1:] == ["  node1, node2  restarted  (1m40s..2m20s each)"]
+    assert out.recap("rolling_restart", "c", restarts([100]))[1:] == ["  node1  restarted  1m40s"]
+
+
+def test_recap_failed_and_skipped():
+    lines = out.recap("rolling_restart", "my_cluster", restarts([100]) + [
+        {"node": "node2", "status": "failed", "reason": "not UN after 10m"},
+        {"node": "node3", "status": "skipped", "reason": "after the failure"},
+        {"node": "node4", "status": "skipped", "reason": "after the failure"}])
+    assert lines == ["FAILED  rolling_restart  my_cluster  1 restarted, 1 failed, 2 not touched",
+                     "  node1         restarted                        1m40s",
+                     "  node2         FAILED",
+                     "    not UN after 10m",
+                     "  node3, node4  not touched (after the failure)"]
+
+
+def test_recap_columns_not_stretched_by_a_long_reason():
+    reason = "Cluster not healthy, nothing more is done: " + "x" * 300
+    lines = out.recap("rolling_restart", "c", restarts([96]) + [{"node": "node2", "status": "failed", "reason": reason}])
+    assert lines[1:] == ["  node1  restarted  1m36s", "  node2  FAILED", "    " + reason]
+
+
+def test_recap_check_mode_says_would_and_nothing_changed():
+    lines = out.recap("apply_config", "my_cluster", [{"node": "node%d" % i, "outcome": "applied, restarted",
+                                                      "seconds": 3} for i in range(1, 5)], check=True, seconds=20,
+                      extra=["  cassandra.yaml"])
+    assert lines == ["CHECK  apply_config  my_cluster  would apply, restart on 4 nodes   nothing was changed",
+                     "  node1..node4  would apply, restart",
+                     "",
+                     "  cassandra.yaml"]
+    assert out.would("restarted") == "would restart" and out.would("frobbed") == "would be frobbed"
+    assert out.recap("x", "c", []) == ["NOTHING TO DO  x  c  nothing to do"]
