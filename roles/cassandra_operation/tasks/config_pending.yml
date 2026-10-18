@@ -1,0 +1,111 @@
+---
+# Whether the running Cassandra still has to pick up a config change (or a
+# change of its systemd unit): the files cassandra_config writes (not the
+# keystores, backups or other files of the conf dir) and the unit differ from
+# the ones it started with, recorded by config_snapshot.yml at each start, or
+# by config_seed.yml before the roles change a node started another way. A
+# unit missing from a record (recorded before it was, or written since that
+# start) is compared with the JVM start. With no record (e.g. a node just
+# imported, which the roles have not changed), or a record of another JVM
+# (restarted by hand since: it read the files as they were then, which the
+# record does not say), nothing is pending: a file written after its JVM
+# started is only listed in cassandra_config_unknown_files, as what Cassandra
+# read then is unknown. Sets cassandra_config_restart_pending.
+- name: Load the cassandra_service defaults (the conf dir, the record)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: defaults.yml
+    public: true
+
+# In one go (a task each would cost a round trip each), as ansible.builtin.find
+# (the files of the patterns, not hidden, not links), stat (the unit, not
+# followed) and slurp (the record) register them
+- name: Checksum the config files and the unit, read the checksums recorded at the last start
+  ansible.builtin.command:
+    argv: >-
+      {{ [_cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')), '-c', _read,
+          _cassandra_service_conf_dir, '/etc/systemd/system/cassandra.service', _cassandra_service_config_snapshot]
+         + _cassandra_service_config_files }}
+  register: cassandra_pending_read
+  changed_when: false
+  check_mode: false  # reads only
+  vars:
+    _read: |
+      import base64, fnmatch, hashlib, json, os, stat, sys
+      conf, unit, record = [os.path.expanduser(os.path.expandvars(p)) for p in sys.argv[1:4]]
+      def sha1(path):
+          digest = hashlib.sha1()
+          with open(path, "rb") as f:
+              for block in iter(lambda: f.read(65536), b""):
+                  digest.update(block)
+          return digest.hexdigest()
+      files = []
+      for name in (sorted(os.listdir(conf)) if os.path.isdir(conf) else []):
+          path = os.path.normpath(os.path.join(conf, name))
+          if name.startswith(".") or not any(fnmatch.fnmatch(name, p) for p in sys.argv[4:]):
+              continue
+          try:
+              st = os.lstat(path)
+          except OSError:
+              continue
+          if stat.S_ISREG(st.st_mode):
+              files.append({"path": path, "ctime": st.st_ctime, "mtime": st.st_mtime, "checksum": sha1(path)})
+      try:
+          st = os.lstat(unit)
+          unit_stat = {"exists": True, "path": unit, "ctime": st.st_ctime, "mtime": st.st_mtime}
+          if stat.S_ISREG(st.st_mode) and os.access(unit, os.R_OK):
+              unit_stat["checksum"] = sha1(unit)
+      except OSError:
+          unit_stat = {"exists": False}
+      try:
+          with open(record, "rb") as f:
+              content = base64.b64encode(f.read()).decode("ascii")
+      except (IOError, OSError):
+          content = None
+      print(json.dumps({"files": files, "unit": unit_stat, "record": content}))
+
+- name: Note the checksums read
+  ansible.builtin.set_fact:
+    cassandra_pending_files: {files: "{{ _read.files }}"}
+    cassandra_pending_unit_file: {stat: "{{ _read.unit }}"}
+    cassandra_pending_snapshot: "{{ {'content': _read.record} if _read.record is not none else {'failed': true} }}"
+  vars:
+    _read: "{{ cassandra_pending_read.stdout | from_json }}"
+
+# (the record is trusted for that JVM only)
+- name: Read when the running Cassandra started
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+    tasks_from: jvm_started.yml
+
+- name: Note whether a restart is pending
+  ansible.builtin.set_fact:
+    cassandra_config_restart_pending: "{{ _changed | length > 0 }}"
+    cassandra_config_newer_files: "{{ _changed }}"
+    cassandra_config_unknown_files: "{{ _unknown }}"
+  vars:
+    _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+    # the record is the running JVM's (the same pid and start, written with it): else as no record
+    _record_current: >-
+      {{ cassandra_pending_snapshot.content is defined and cassandra_jvm.start is defined
+         and _record._jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
+         and (_record._jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 }}
+    _started: "{{ _record if _record_current | bool else {} }}"
+    _files: "{{ cassandra_pending_files.files + ([cassandra_pending_unit_file.stat] if cassandra_pending_unit_file.stat.exists else []) }}"
+    _newer: "{{ _files | selectattr('ctime', '>', cassandra_jvm.start | float) | map(attribute='path') | list if cassandra_jvm.start is defined else [] }}"
+    _changed: >-
+      {%- set out = [] -%}
+      {%- for f in _files if _record_current | bool -%}
+      {%-   if f.path in _started or f.path != cassandra_pending_unit_file.stat.path | default('') -%}
+      {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
+      {%-   elif f.path in _newer -%}
+      {%-     set _ = out.append(f.path | basename) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out | sort }}
+    _unknown: >-
+      {%- set out = [] -%}
+      {%- for f in _files if not _record_current | bool and f.path in _newer -%}
+      {%-   set _ = out.append(f.path | basename) -%}
+      {%- endfor -%}
+      {{ out | sort }}

@@ -139,7 +139,7 @@ def test_permission_classes_in_kernel_order(files, unreadable):
 
 
 def test_preflight_stops_the_whole_run_on_a_refused_node():
-    """Failing one host would let the operation go on without it."""
+    """Failing one host would let the operation go on without it (apply_config, stop_rack...)."""
     with open(os.path.join(ROLE, "..", "..", "playbooks", "preflight.yml")) as f:
         plays = yaml.safe_load(f)
     tasks = [t for play in plays for t in play.get("tasks", [])]

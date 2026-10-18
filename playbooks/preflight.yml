@@ -194,7 +194,8 @@
         cassandra_service_cluster_candidates: >-
           {{ [] if _cassandra_preflight_running_nodes | length > 0 else _cassandra_preflight_peers }}
 
-    # before any operation; a node refused stops the whole run, not just that node
+    # before any operation (apply_config writes the config before it restarts);
+    # a node refused stops the whole run, not just that node
     - name: Check the account Cassandra runs as can read the config
       any_errors_fatal: true
       block:
@@ -375,8 +376,12 @@
 
         - name: Every seed is up
           ansible.builtin.assert:
-            # a resumed rolling run: a member drained or stopped by the interrupted run
-            that: _addr in _up or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
+            # a resumed rolling run: a member drained or stopped by the interrupted run; apply_config: a member
+            # of this run not running, which it writes (each node's own check before it stops on any other)
+            that: >-
+              _addr in _up
+              or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
+              or (_cassandra_preflight_seeds_down_ok | default(false) | bool and _addr in _all and _addr in _stopped)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).
               {{ (_absent | first ~ ' is marked cassandra_node_state: absent: take it out of cassandra_seeds in the'
@@ -392,7 +397,7 @@
             _absent: >-
               {%- set out = [] -%}
               {%- for h in query('community.cassandra.cassandra_nodes', state='absent')
-                    if item | regex_replace(':[0-9]+$', '') in [h, hostvars[h].ansible_host | default(h)] -%}
+                    if item | community.cassandra.cassandra_seed_host in [h, hostvars[h].ansible_host | default(h)] -%}
               {%-   set _ = out.append(h) -%}
               {%- endfor -%}
               {{ out }}
@@ -406,6 +411,9 @@
             _all: >-
               {{ cassandra_preflight_status.cluster_status.values() | map(attribute='nodes') | flatten
                  | map(attribute='address') | list }}
+            _stopped: >-
+              {{ ansible_play_hosts | map('extract', hostvars) | rejectattr('_cassandra_preflight_running')
+                 | map(attribute='_cassandra_preflight.address') | list }}
           loop: "{{ _cassandra_service_seeds }}"
 
         # Streaming and schema changes between versions are not supported;

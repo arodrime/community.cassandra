@@ -1,0 +1,177 @@
+---
+# apply_config, a node with OS settings not done under a running Cassandra:
+# done with Cassandra stopped (action_restart.yml after the drain,
+# action_apply_config.yml before a start), one node at a time:
+# - its time sync to install or start (a clock stepped under a running
+#   Cassandra dates its writes wrongly), the clock let sync before Cassandra
+#   starts;
+# - _cassandra_restart_disks: what cassandra_linux's disk tuning leaves to the
+#   restart (a tuned profile switch or reload: tuned applies all its settings
+#   again, live; lvchange --readahead: the volume reloaded), that disk tuning
+#   run again, Cassandra stopped.
+# A mark in /run (gone at reboot), the reasons in it, lets a resumed run start
+# a node stopped here; a failure starts Cassandra again, without them, and
+# stops the run.
+# _cassandra_timesync_wait_only: the node an interrupted run stopped here, its
+# time sync started already: only its clock let sync.
+- name: OS settings with Cassandra stopped
+  vars:
+    # the rescue: Cassandra started again (restarted: also when its stop failed, drained), not next to a JVM the
+    # unit did not start
+    _restart: >-
+      {{ cassandra_service_window_jvm.rc | default(1) != 0 or cassandra_service_window_no_jvm is not defined }}
+    # the service the compare found to start (its item, not the package's); else the one there
+    _service: >-
+      {{ cassandra_apply_config_timesync_items | default([]) | map(attribute='item') | reject('match', 'package ')
+         | first | default('') }}
+    _timesync: "{{ cassandra_apply_config_timesync | default(false) | bool }}"
+    _disks: "{{ _cassandra_restart_disks | default(false) | bool }}"
+    _why: "{{ cassandra_apply_config_why | default('', true) or 'time sync' }}"
+  block:
+    - name: Mark the node stopped by this run
+      ansible.builtin.copy:
+        dest: /run/cassandra-apply-config.restart
+        content: "{{ _why }}\n"
+        mode: "0600"
+      when: not _cassandra_timesync_wait_only | default(false) | bool
+
+    - name: Stop Cassandra
+      ansible.builtin.systemd_service:
+        name: cassandra
+        state: stopped
+      when: not _cassandra_timesync_wait_only | default(false) | bool
+
+    # a JVM the unit did not start (started by hand) is not stopped with it
+    - name: Check no Cassandra JVM still runs
+      ansible.builtin.command:
+        argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
+      changed_when: false
+      failed_when: cassandra_service_window_no_jvm.rc != 1  # (1: none; a pgrep error: not known)
+      register: cassandra_service_window_no_jvm
+
+    # (the Cassandra directories it looks under, as the compare did)
+    - name: Load the cassandra_config defaults
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: defaults.yml
+        public: true
+      when: _disks | bool
+
+    # Cassandra stopped: the tuned profile switched or reloaded, lvchange run, what follows from them set again
+    - name: Apply the disk settings left to the restart
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+        tasks_from: disks.yml
+      vars:
+        _cassandra_linux_in_window: true  # what tuned-adm or lvchange refuses noted: no restart for it again this boot
+      when: _disks | bool
+
+    # (tuned-adm or lvchange refused: not a failure, the role keeps the devices set as it can; the plan said the rest)
+    - name: Say what the disk settings left undone
+      ansible.builtin.debug:
+        msg: "{{ _refused | map('regex_replace', '^', 'WARNING - ' ~ inventory_hostname ~ ': data disks: ') | list }}"
+      when:
+        - _disks | bool
+        - _refused | length > 0
+      vars:
+        cassandra_output: true
+        _refused: >-
+          {{ _cassandra_disk_summary.warnings | default([]) | select('match', '^(lvchange failed on |tuned-adm profile .* failed: )')
+             | list }}
+
+    # (after the disks: a clock it steps would date the profile tuned is to load again ahead)
+    - name: Install and start the time sync
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+        tasks_from: timesync.yml
+      when:
+        - _timesync | bool
+        - not _cassandra_timesync_wait_only | default(false) | bool
+
+    # chrony: synced, its correction under 0.1 s; timesyncd: synchronized (2 min at most)
+    - name: Let the clock sync
+      ansible.builtin.shell: |
+        case $CASSANDRA_TIMESYNC in
+          chrony*) s=chrony ;;
+          systemd-timesyncd) s=timesyncd ;;
+          *) command -v chronyc >/dev/null 2>&1 && s=chrony || s=timesyncd ;;
+        esac
+        for i in $(seq 1 24); do
+          if [ $s = chrony ]; then chronyc -n waitsync 1 0.1 >/dev/null 2>&1 && exit 0
+          else [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ] && exit 0; fi
+          sleep 5
+        done
+        exit 1
+      environment:
+        CASSANDRA_TIMESYNC: "{{ _service }}"
+      register: cassandra_service_clock_sync
+      changed_when: false
+      failed_when: false
+      when: _timesync | bool or _cassandra_timesync_wait_only | default(false) | bool
+
+    - name: Say the clock is not synced yet
+      ansible.builtin.debug:
+        msg: >-
+          WARNING - {{ inventory_hostname }}: its clock not synced after 2 minutes: Cassandra started all the same; its
+          clock may still be stepped when its time source answers. Check it (chronyc sources, timedatectl
+          timesync-status).
+      when: cassandra_service_clock_sync.rc | default(0) != 0
+      vars:
+        cassandra_output: true
+  rescue:
+    # (pgrep: no shell, whose own command line would match)
+    - name: Look for a Cassandra JVM
+      ansible.builtin.command:
+        argv: [pgrep, -f, org.apache.cassandra.service.CassandraDaemon]
+      register: cassandra_service_window_jvm
+      changed_when: false
+      failed_when: false
+
+    # (restarted: also a node still running, drained, when the stop is what failed; not another JVM's)
+    - name: Start Cassandra again, without them
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: main.yml
+        rolespec_validate: false  # as the include it was: no argument check
+      vars:
+        cassandra_service_state: restarted
+      when: _restart | bool
+
+    # (kept on a node left down: a resumed run starts it once fixed)
+    - name: Forget the mark of the stop
+      ansible.builtin.file:
+        path: /run/cassandra-apply-config.restart
+        state: absent
+      when: _restart | bool
+
+    - name: Stop the run
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: {{ ('a Cassandra JVM the unit did not start still runs: its ' ~ _why ~ ' left alone')
+             if (cassandra_service_window_no_jvm | default({})) is failed else 'its ' ~ _why ~ ' with Cassandra stopped failed' }}
+          ({{ ansible_failed_task.name | default('') }}: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}){{
+          ', Cassandra started again without them. Fix it, then run apply_config again' if _restart | bool
+          else ', Cassandra not started. Fix it, then resume: the same command plus -e cassandra_rolling_resume=true' }}.
+
+# (their own files: the OS settings applied at once have cassandra_linux's)
+- name: Report the time sync
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_linux_timesync
+    cassandra_change_report_items: >-
+      {{ cassandra_apply_config_timesync_items | default([]) | map('dict2items')
+         | map('rejectattr', 'key', 'equalto', 'timesync') | map('items2dict') | list }}
+    _cassandra_change_report_quiet: true  # shown before the question
+  when:
+    - cassandra_apply_config_timesync | default(false) | bool
+    - not _cassandra_timesync_wait_only | default(false) | bool
+
+- name: Report the disk settings done in the window
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_linux_disks
+    cassandra_change_report_items: "{{ _cassandra_disk_items | default([]) }}"
+    _cassandra_change_report_quiet: true  # shown before the question
+  when: _cassandra_restart_disks | default(false) | bool

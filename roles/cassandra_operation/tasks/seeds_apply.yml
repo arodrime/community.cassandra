@@ -1,0 +1,191 @@
+---
+# Applies cassandra_seeds on this node, live (no restart): only the seeds line
+# of cassandra.yaml is written, then a running Cassandra reloads it (nodetool
+# reloadseeds). change_seeds, and add_node, decommission_node and topology
+# when the seeds change with the nodes. A failed reload: a WARNING, the run goes
+# on (the list applies at the next restart; _cassandra_seeds_reload_failed, for
+# the TO DO), except for change_seeds (_cassandra_seeds_reload_required: every
+# running node reloaded, a failure fails).
+- name: Load the cassandra_config defaults (the seeds) and cassandra_service's (the conf dir)
+  ansible.builtin.include_role:
+    name: "community.cassandra.{{ item }}"
+    tasks_from: defaults.yml
+    public: true
+  loop: [cassandra_config, cassandra_service]
+
+- name: Apply the seed list
+  vars:
+    _seeds_file: "{{ _cassandra_service_conf_dir }}/cassandra.yaml"
+    _seeds_new: "{{ cassandra_seeds if cassandra_seeds is string else cassandra_seeds | join(',') }}"  # as the template writes it
+  block:
+    - name: Checksum cassandra.yaml before the change
+      ansible.builtin.stat:
+        path: "{{ _seeds_file }}"
+      register: cassandra_seeds_file_before
+
+    # read now: a node added by this run was not running at the preflight
+    - name: Check whether Cassandra is running
+      ansible.builtin.service_facts:
+
+    # a reload owed by an earlier run: it wrote the list, then stopped before the reload, or the reload failed
+    - name: Look for a reload left to do
+      ansible.builtin.stat:
+        path: "{{ _cassandra_service_seeds_reload_mark }}"
+      register: cassandra_seeds_mark
+
+    - name: Tell whether the seed list changes
+      ansible.builtin.replace:
+        path: "{{ _seeds_file }}"
+        regexp: '^(\s*- seeds:\s*).*$'
+        replace: '\g<1>"{{ _seeds_new }}"'
+      check_mode: true
+      diff: false  # the write below shows it
+      register: cassandra_seeds_change
+
+    # before the write: a run stopped right after it still leaves the reload owed
+    - name: Mark the reload as owed
+      ansible.builtin.copy:
+        content: "{{ _seeds_new }}\n"
+        dest: "{{ _cassandra_service_seeds_reload_mark }}"
+        mode: "0600"
+      changed_when: false
+      failed_when: false  # no mark (no /var/lib/cassandra): the reload below is done all the same
+      diff: false
+      when:
+        - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+        - not ansible_check_mode
+        - cassandra_seeds_change is changed  # it would write
+
+    - name: Write the new seed list
+      ansible.builtin.replace:
+        path: "{{ _seeds_file }}"
+        regexp: '^(\s*- seeds:\s*).*$'
+        replace: '\g<1>"{{ _seeds_new }}"'
+      register: cassandra_seeds_written
+
+    # the file itself, not the preflight's live list: a node added by this run had no cassandra.yaml then, and its
+    # file may hold the new list already (nothing to rewrite, nothing to stop on). A read (grep): no module reads
+    # a line without fetching the file
+    - name: Look for the seeds line
+      ansible.builtin.command: grep -qE '^\s*- seeds:' "{{ _seeds_file }}"
+      register: cassandra_seeds_line
+      changed_when: false
+      failed_when: false  # rc 1: no line, the stop below says
+      check_mode: false
+
+    # a seed provider written another way (e.g. parameters: [{seeds: "..."}]): nothing matched, the old list stays
+    - name: Stop when cassandra.yaml has no seeds line to rewrite
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: {{ _seeds_file }} has no '- seeds:' line the role can rewrite (its seed provider is
+          written another way). Write the list there by hand, in the parameters of SimpleSeedProvider
+          (- seeds: "{{ _seeds_new }}"), then run again.
+      when: cassandra_seeds_line.rc != 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+
+    # Only where the list was written now or a reload is owed (change_seeds: every running node): a node whose
+    # list did not change is not touched. Changed only if the live list moves.
+    - name: Reload the seeds on the running node
+      when:
+        - ansible_facts.services['cassandra.service'].state | default('') == 'running'
+        - not ansible_check_mode
+        - cassandra_seeds_written is changed or cassandra_seeds_mark.stat.exists
+          or _cassandra_seeds_reload_required | default(false) | bool
+      vars:
+        # the reload's own verdict: its result is never "failed" (failed_when: false), its msg says
+        _seeds_reload_bad: "{{ cassandra_seeds_reload.msg | default('') != 'nodetool reloadseeds executed successfully' }}"
+        # nodetool's "Failed to reload the seed node list": the seed provider could not load cassandra.yaml again
+        _seeds_yaml_bad: "{{ cassandra_seeds_reload.stdout | default('') is search('Failed to reload the seed node list') }}"
+        # said as a WARNING; change_seeds stops with it (every running node reloaded is its job)
+        _seeds_reload_warning: >-
+          WARNING - {{ inventory_hostname }}: the new seed list is written in cassandra.yaml but nodetool reloadseeds
+          failed: {{ _cassandra_seeds_reload_failed | default('') }}{{
+          '. The running node cannot load its cassandra.yaml again (system.log: Error while getting seed node list
+          says why, e.g. a key it does not know): fix the file before any restart, or the node will not start; then run:'
+          if _seeds_yaml_bad | bool else
+          '. The list applies at the next restart of the node, or fix the cause and run:' }}
+          {{ 'change_seeds' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+      block:
+        - name: Read the live seed list
+          ansible.builtin.command: "{{ _cassandra_service_nodetool }} getseeds"
+          register: cassandra_seeds_live
+          changed_when: false
+          failed_when: false  # only to tell whether the live list moves: the reload says what went wrong
+
+        # SimpleSeedProvider re-reads the whole cassandra.yaml, as at startup: a file the running node can no longer
+        # load (a key it does not know, a hand edit, unreadable) fails here, and would fail its next start too
+        - name: Reload the seeds
+          community.cassandra.cassandra_reload:
+            reload: seeds
+          module_defaults:
+            community.cassandra.cassandra_reload: "{{ _cassandra_service_jmx }}"
+          register: cassandra_seeds_reload
+          changed_when: false
+          failed_when: false  # said below (a WARNING, or the stop of change_seeds): never the raw module failure
+
+        - name: Read the reloaded seed list
+          ansible.builtin.command: "{{ _cassandra_service_nodetool }} getseeds"
+          register: cassandra_seeds_reloaded
+          changed_when: cassandra_seeds_reloaded.stdout != cassandra_seeds_live.stdout
+          failed_when: false  # the reload succeeded: only to tell whether the live list moved
+          when: not _seeds_reload_bad | bool
+
+        - name: Clear the mark of the owed reload
+          ansible.builtin.file:
+            path: "{{ _cassandra_service_seeds_reload_mark }}"
+            state: absent
+          changed_when: false
+          failed_when: false  # left: the next run reloads once more
+          when: not _seeds_reload_bad | bool
+
+        # '' once reloaded (the TO DO names the nodes left with an error)
+        - name: Note how the reload went
+          ansible.builtin.set_fact:
+            _cassandra_seeds_reload_failed: "{{ cassandra_seeds_reload.error | default(cassandra_seeds_reload.msg, true) if _seeds_reload_bad | bool else '' }}"
+
+        - name: Say the reload failed
+          ansible.builtin.debug:
+            msg: "{{ _seeds_reload_warning }}"
+          when:
+            - _seeds_reload_bad | bool
+            - not _cassandra_seeds_reload_required | default(false) | bool  # change_seeds stops with it below
+          vars:
+            cassandra_output: true
+
+        - name: Stop here, change_seeds reloads every running node
+          ansible.builtin.fail:
+            msg: "{{ _seeds_reload_warning }}"
+          when:
+            - _seeds_reload_bad | bool
+            - _cassandra_seeds_reload_required | default(false) | bool
+          vars:
+            cassandra_output: true  # a verdict: its msg as is (ops callback)
+
+        # The seeds are live: unless cassandra.yaml already had another change
+        # waiting for a restart, it now matches what the node runs (apply_config)
+        - name: Read the config the node started with
+          ansible.builtin.slurp:
+            path: "{{ _cassandra_service_config_snapshot }}"
+          register: cassandra_seeds_snapshot
+          failed_when: false
+          when: not _seeds_reload_bad | bool  # else the new list waits for the restart
+
+        - name: Checksum cassandra.yaml after the change
+          ansible.builtin.stat:
+            path: "{{ _seeds_file }}"
+          register: cassandra_seeds_file_after
+          when: cassandra_seeds_snapshot.content is defined
+
+        - name: Record the live seeds in it
+          ansible.builtin.copy:
+            content: "{{ _seeds_started | combine({_seeds_file: cassandra_seeds_file_after.stat.checksum}) | to_nice_json }}"
+            dest: "{{ _cassandra_service_config_snapshot }}"
+            mode: "0600"  # root only: the checksum of the JMX password file
+          vars:
+            _seeds_started: "{{ cassandra_seeds_snapshot.content | b64decode | from_json }}"
+          when:
+            - cassandra_seeds_snapshot.content is defined
+            - _seeds_started[_seeds_file] | default('') == cassandra_seeds_file_before.stat.checksum

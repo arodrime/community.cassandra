@@ -97,7 +97,9 @@ NAME_ONE = "-e cassandra_hosts=<group>, or %s=<group or cluster name> in your sh
 
 # groups the playbooks make with group_by/add_host while they run: never the
 # cluster group, even when they hold every host
-RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|create_start_order|seed_(True|False))$")
+RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|create_start_order"
+                     r"|(seed|apply_config|apply_config_batch|apply_config_os|apply_config_os_window_any"
+                     r"|apply_config_os_window_only)_(True|False))$")
 
 
 def _candidates(groups):

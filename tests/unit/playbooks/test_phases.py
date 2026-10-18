@@ -72,9 +72,10 @@ def test_the_words():
 
 
 @pytest.mark.parametrize("path, at_least", [
-    (("playbooks", "preflight.yml"), 1),
+    (("playbooks", "preflight.yml"), 1), (("playbooks", "apply_config.yml"), 1),
     (("roles", "cassandra_operation", "tasks", "node_operation.yml"), 1),
-    (("roles", "cassandra_operation", "tasks", "restart_batch.yml"), 1)])
+    (("roles", "cassandra_operation", "tasks", "restart_batch.yml"), 1),
+    (("roles", "cassandra_operation", "tasks", "action_apply_config.yml"), 1)])
 def test_marked_phase_lines(path, at_least):
     found = phases(*path)
     assert len(found) >= at_least, path
@@ -83,11 +84,13 @@ def test_marked_phase_lines(path, at_least):
         assert task["vars"]["cassandra_output"] is True and task["vars"]["cassandra_output_gap"] is True, task["name"]
 
 
-@pytest.mark.parametrize("action, line", [("restart", "Restarting node5..."), ("reboot", "Rebooting node5...")])
+@pytest.mark.parametrize("action, line", [("restart", "Restarting node5..."), ("reboot", "Rebooting node5..."),
+                                          ("apply_config", "Writing the config (node5)...")])
 def test_each_node_says_what_is_done_to_it(action, line):
     say = next(t for t in phases("roles", "cassandra_operation", "tasks", "node_operation.yml")
                if t["name"].startswith("Say what is done"))
     variables = dict(say["vars"], inventory_hostname="node5", cassandra_service_node_action=action)
+    variables["_phase"] = render(say["vars"]["_phase"], **variables)
     assert render(say["ansible.builtin.debug"]["msg"], **variables).strip() == line
     assert "not ansible_check_mode" in say["when"]  # --check does none of it
 
@@ -109,7 +112,7 @@ def check_line(present=None, absent=(), run=None, **extra):
 
 
 @pytest.mark.parametrize("extra, absent, run, line", [
-    # every node of the group
+    # rolling_restart, apply_config...: every node of the group
     ({}, (), None, "Checking the cluster (5 nodes)..."),
     # a host marked absent is not counted
     ({}, ("node6",), None, "Checking the cluster (5 nodes)..."),

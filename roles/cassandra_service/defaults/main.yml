@@ -84,9 +84,12 @@ _cassandra_service_config_perms:
   files: "{{ cassandra_config_file_permissions | default({}) }}"
   user: "{{ cassandra_service_user }}"
   user_group: "{{ cassandra_service_group }}"
-# Where the config Cassandra runs with is, and the checksums it started with
+# Where the config Cassandra runs with is (no trailing slash: the record below keys
+# its files by their normalised path), and the checksums it started with. Read by
+# cassandra_operation's task files too (include_role: tasks_from: defaults.yml)
 _cassandra_service_conf_dir: >-
-  {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra') }}
+  {{ cassandra_conf_dir | default('/etc/cassandra/conf' if ansible_facts['os_family'] == 'RedHat' else '/etc/cassandra')
+     | trim | regex_replace('/+$', '') }}
 _cassandra_service_config_snapshot: /var/lib/cassandra/.ansible_config_at_start.json
 # Where a node that started once keeps its system keyspace (system/): a data dir
 # (cassandra_data_file_directories, cassandra_data_dir) or, 4.1+, local_system_data_file_directory

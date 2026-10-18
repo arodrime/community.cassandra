@@ -13,7 +13,7 @@
       - "{{ _cassandra_config_python | default(ansible_facts['python']['executable'] | default('/usr/bin/python3')) }}"
       - -c
       - "{{ _record }}"
-      - "{{ _cassandra_service_conf_dir | trim }}"
+      - "{{ _cassandra_service_conf_dir }}"
       - /etc/systemd/system/cassandra.service
       - "{{ _cassandra_service_config_snapshot }}"
   changed_when: true

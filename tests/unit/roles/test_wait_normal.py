@@ -94,6 +94,9 @@ def test_the_head_of_its_lines():
 
     assert shown(cassandra_service_node_action="restart") == {
         "index": "2", "steps": "3", "node": "node2", "operation": "restart"}
+    assert shown(cassandra_service_node_action="apply_config")["operation"] == "write_config"
+    # a batch (nodes done at once): its own line per node, no [i/n]
+    assert shown(cassandra_service_node_action="apply_config", cassandra_service_node_batch=True)["steps"] == "0"
     # not a node operation (the role on its own): what the role does
     assert shown(cassandra_service_state="restarted")["operation"] == "restart"
     assert shown(cassandra_service_state="started") == {"index": "0", "steps": "0", "node": "node2", "operation": "start"}
