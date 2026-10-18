@@ -24,6 +24,6 @@
          | rejectattr('_cassandra_preflight.ring_address', 'in', _join_members)
          | map(attribute='_cassandra_service_names', default=[]) | flatten | list }}
     _join_kept: >-
-      {{ _join_seeds | zip(_join_seeds | map('regex_replace', ':[0-9]+$', '')) | rejectattr(1, 'in', _join_pending)
+      {{ _join_seeds | zip(_join_seeds | map('community.cassandra.cassandra_seed_host')) | rejectattr(1, 'in', _join_pending)
          | map(attribute=0) | list }}
     _join_up: "{{ _join_ring | selectattr('status', 'equalto', 'U') | selectattr('state', 'equalto', 'N') | map(attribute='address') | list }}"

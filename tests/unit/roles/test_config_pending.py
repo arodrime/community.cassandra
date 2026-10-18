@@ -3,8 +3,9 @@ __metaclass__ = type
 
 # apply_config restarts a node only for a config change Cassandra has not
 # picked up: the files cassandra_config writes, compared by content with the
-# ones it started with. A node with no record of them (imported) restarts for
-# nothing; files written since its JVM started are only listed.
+# ones it started with. A node with no record of them (imported), or whose
+# record is another JVM's (restarted by hand since), restarts for nothing;
+# files written since its JVM started are only listed.
 
 import base64
 import hashlib
@@ -58,16 +59,22 @@ def render(template, variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-def pending(snapshot, files, jvm=None):
+JVM = {"pid": "42", "start": "100.50", "exe": "/usr/bin/java"}  # the running JVM, as jvm_started.yml finds it
+
+
+def pending(snapshot, files, jvm=None, recorded=("42", 100.5)):
+    """(the files pending, the ones unknown) for a record (snapshot, written for the JVM recorded: pid, start;
+    None: an older record without it) and the files found, with jvm running (JVM by default, {} when none)."""
+    if snapshot is not None and recorded is not None:
+        snapshot = dict(snapshot, _jvm={"pid": recorded[0], "start": recorded[1]})
     variables = {
         "cassandra_pending_files": {"files": [{"path": p, "checksum": c, "ctime": m} for p, c, m in files]},
         "cassandra_pending_snapshot": ({"content": base64.b64encode(json.dumps(snapshot).encode()).decode()}
                                        if snapshot is not None else {}),
+        "cassandra_pending_unit_file": {"stat": {"exists": False}},
+        "cassandra_jvm": JVM if jvm is None else jvm,
     }
-    variables["cassandra_pending_unit_file"] = {"stat": {"exists": False}}
-    if jvm is not None:
-        variables["cassandra_jvm"] = jvm
-    for name in ("_started", "_files", "_newer"):
+    for name in ("_record", "_record_current", "_started", "_files", "_newer"):
         variables[name] = trust_as_template(NOTE["vars"][name])
     return render(NOTE["vars"]["_changed"], variables), render(NOTE["vars"]["_unknown"], variables)
 
@@ -117,12 +124,26 @@ def test_recorded_without_the_file_is_pending():
 
 def test_no_record_is_not_pending():
     # imported: written after the JVM started, its content then is unknown: listed, not restarted
-    jvm = {"pid": "42", "start": "100.50", "exe": "/usr/bin/java"}
-    assert pending(None, [(YAML, "y1", 100.2), (ENV, "e1", 100.7)], jvm) == ([], ["cassandra-env.sh"])
+    assert pending(None, [(YAML, "y1", 100.2), (ENV, "e1", 100.7)]) == ([], ["cassandra-env.sh"])
 
 
 def test_no_record_and_no_jvm():
     assert pending(None, [(YAML, "y1", 100.2)], {}) == ([], [])
+
+
+@pytest.mark.parametrize("recorded", [("41", 100.5), ("42", 60.0), None])
+def test_a_record_of_another_jvm_is_not_trusted(recorded):
+    # restarted by hand since the record (another pid, the same pid after a reboot, or an older record that
+    # does not say): the running Cassandra read the files as they were then, which the record does not say:
+    # as no record, a file written since its JVM started only listed
+    files = [(YAML, "y2", 100.2), (ENV, "e2", 100.7)]
+    assert pending({YAML: "y1", ENV: "e1"}, files, recorded=recorded) == ([], ["cassandra-env.sh"])
+    assert pending({YAML: "y1", ENV: "e1"}, files) == (["cassandra-env.sh", "cassandra.yaml"], [])  # the same JVM
+    assert pending({YAML: "y1", ENV: "e1"}, files, recorded=("42", 101.9)) == (["cassandra-env.sh", "cassandra.yaml"], [])
+    # the JVM is always read: the record is trusted for it only
+    read = task("config_pending.yml", "Read when the running Cassandra started")
+    assert read["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "jvm_started.yml"}
+    assert "when" not in read
 
 
 def test_seed_leaves_out_the_files_written_since_the_start():

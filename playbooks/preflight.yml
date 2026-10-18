@@ -456,7 +456,7 @@
             _absent: >-
               {%- set out = [] -%}
               {%- for h in query('community.cassandra.cassandra_nodes', state='absent')
-                    if item | regex_replace(':[0-9]+$', '') in [h, hostvars[h].ansible_host | default(h)] -%}
+                    if item | community.cassandra.cassandra_seed_host in [h, hostvars[h].ansible_host | default(h)] -%}
               {%-   set _ = out.append(h) -%}
               {%- endfor -%}
               {{ out }}

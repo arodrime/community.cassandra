@@ -19,7 +19,6 @@ from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_con
     FIND, find, render, with_task_vars)
 
 AS_STARTED = find(FIND["tasks"], "Note the files written back as the running Cassandra started with them")
-READ_START = find(FIND["tasks"], "Read when the running Cassandra started (files written back as it started with them)")
 NOTE = find(FIND["tasks"], "Note what this node needs")
 CONF = "/etc/cassandra/conf"
 OPTIONS = "jvm17-server.options"
@@ -31,7 +30,7 @@ def sha1(text):
 
 
 def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), start=100.0, pending=False, newer=(),
-          running=True, conf=CONF, target=None, full=False):
+          running=True, conf=CONF, target=None, full=False, kept=(), keep_files=()):
     """(then, notes) of a running node whose files in changes are written with new {name: text}; recorded:
     the JVM (pid, start) the record was written for (None: an older record, without it)."""
     new = {OPTIONS: STARTED_WITH, "cassandra.yaml": "num_tokens: 16\n"} if new is None else new
@@ -46,6 +45,7 @@ def needs(changes=(OPTIONS,), new=None, record=None, recorded=("42", 100.0), sta
                  "cassandra_config_conf_target": {"stat": {"lnk_source": target}} if target else {"skipped": True},
                  "_cassandra_config_perm_changes": [], "_cassandra_config_dir_notes": [],
                  "cassandra_config_restart_pending": pending, "cassandra_config_newer_files": list(newer),
+                 "_cassandra_config_kept": list(kept), "cassandra_config_keep_files": list(keep_files),
                  "_cassandra_preflight_running": running, "cassandra_apply_config_unit": {"skipped": True},
                  "cassandra_jvm": {"pid": "42", "start": "%.2f" % start} if start is not None else {}}
     variables = with_task_vars(AS_STARTED, variables)
@@ -81,12 +81,10 @@ def test_restarted_whenever_the_running_cassandra_may_not_have_that_content(case
     assert needs(**case)[0] == "restart"
 
 
-def test_the_start_is_read_only_when_a_file_is_written_back():
-    assert READ_START["ansible.builtin.include_role"]["tasks_from"] == "jvm_started.yml"
-    assert READ_START["when"] == ["_cassandra_apply_config_as_started | length > 0", "cassandra_jvm.start is not defined"]
+def test_the_files_written_back_are_noted_before_the_decision():
     names = [t.get("name") for t in FIND["tasks"]]
     assert names.index("Look for a restart still pending") < names.index(AS_STARTED["name"]) \
-        < names.index(READ_START["name"]) < names.index("Note what this node needs")
+        < names.index("Note what this node needs")
 
 
 def test_the_jvm_is_checked_again_before_the_write():
@@ -116,9 +114,9 @@ def test_the_files_written_back_are_checked_after_the_write():
     assert names.index("Write the config") < names.index("Check the files written back")
     check = action[names.index("Check the files written back")]
     # restarted during the write?
-    assert check["block"][1]["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config",
-                                                                 "tasks_from": "jvm_started.yml"}
-    stop = check["block"][2]
+    read = next(t for t in check["block"] if t["name"] == "Read the running Cassandra once written")
+    assert read["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config", "tasks_from": "jvm_started.yml"}
+    stop = next(t for t in check["block"] if t["name"] == "Stop if one differs from what Cassandra started with")
     plan = needs(full=True)[2]
     same = {"pid": "42", "start": "100.00"}
     for written, jvm, ok in ((sha1(STARTED_WITH), same, True), (sha1("-Xss512k\n"), same, False), (None, same, False),
@@ -156,3 +154,12 @@ def test_the_play_level_tasks_use_no_role_private_default():
         if any(k in t for k in ("ansible.builtin.include_role", "ansible.builtin.include_tasks", "ansible.builtin.import_role")):
             continue
         assert "_cassandra_service_" not in str(t), t.get("name")
+
+
+def test_a_file_left_as_it_is_with_the_same_settings_is_no_restart():
+    # a comment added by hand to the options file: cassandra_config leaves the file (same settings), so nothing
+    # for Cassandra to pick up; a file kept on the operator's word (cassandra_config_keep_files) still is
+    same = needs(changes=(), pending=True, newer=[OPTIONS], kept=[OPTIONS])
+    assert same == ("none", [OPTIONS + " changed since the running Cassandra started, same settings: no restart for it"])
+    kept = needs(changes=(), pending=True, newer=[OPTIONS], kept=[OPTIONS], keep_files=[OPTIONS])
+    assert kept[0] == "restart" and kept[1][0].startswith("restart pending (" + OPTIONS)

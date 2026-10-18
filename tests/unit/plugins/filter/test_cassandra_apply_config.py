@@ -321,6 +321,10 @@ def test_the_outcomes_grouped_in_the_plan():
         "node1  will apply, then start (its Cassandra is not running: started once written (down over"
         " max_hint_window? repair it))",
         "node2  will apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)"]
+    # left stopped because its unit failed (nothing written that would start it): not "stopped on purpose"
+    nodes = [{"name": "node3", "todo": True, "then": "write", "unit_failed": True}]
+    assert cassandra_apply_config_outcomes(nodes, plan=True) == [
+        "node3  will apply, left stopped (its cassandra unit failed: left as it is)"]
     # a file written back as the running Cassandra started with it: its note says why (not "an owner... only")
     note = "jvm-server.options written back as the running Cassandra started with it: no restart for it"
     nodes = [{"name": "node1", "todo": True, "then": "none", "notes": [note]}]

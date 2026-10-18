@@ -9,12 +9,10 @@ __metaclass__ = type
 
 import os
 import re
-import warnings
 
 import yaml
 
 from ansible.parsing.dataloader import DataLoader
-from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
@@ -24,9 +22,9 @@ except ImportError:
     def trust_as_template(template):
         return template
 
-with warnings.catch_warnings():  # already done under ansible-test
-    warnings.simplefilter("ignore")
-    init_plugin_loader()  # the inventory_hostnames and cassandra_nodes lookups, under plain pytest too
+from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
+
+load_collection_filters()  # the collection's lookups and filters, under plain pytest too
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -341,6 +339,10 @@ def test_preflight_names_a_seed_marked_absent():
     assert render(SEED_UP["ansible.builtin.assert"]["fail_msg"], **variables).strip().endswith(
         "n2b is marked cassandra_node_state: absent: take it out of cassandra_seeds in the inventory (topology then"
         " drops it from the seed lists before it removes it).")
+    # an IPv6 seed: not cut at its last colon, the port in brackets left out
+    hostvars["n2b"]["ansible_host"] = "2001:db8::22"
+    for item in ("2001:db8::22", "[2001:db8::22]:7000", "[2001:db8::22]"):
+        assert render(SEED_UP["vars"]["_absent"], **dict(variables, item=item)) == ["n2b"], item
 
 
 def _var_names(node):
@@ -530,10 +532,31 @@ def test_the_reload_only_where_the_list_changed_or_a_reload_is_owed():
     assert names.index("Tell whether the seed list changes") < names.index("Mark the reload as owed") \
         < names.index("Write the new seed list") < names.index("Reload the seeds") < names.index("Clear the mark of the owed reload")
     mark = task(SEEDS_APPLY, "Mark the reload as owed")
-    assert task(SEEDS_APPLY, "Tell whether the seed list changes")["check_mode"] is True
+    probe = task(SEEDS_APPLY, "Tell whether the seed list changes")
+    assert probe["check_mode"] is True and "changed_when" not in probe  # its own changed says whether it would write
     would = mark["when"][2]
     assert render("{{ %s }}" % would, cassandra_seeds_change={"changed": True, "msg": "1 replacements made"}) is True
     assert render("{{ %s }}" % would, cassandra_seeds_change={"changed": False, "msg": ""}) is False
+
+
+def test_a_cassandra_yaml_with_no_seeds_line_to_rewrite_stops_the_node():
+    # the seed provider written another way (parameters: [{seeds: "..."}]): nothing matched, the old list would stay
+    # with the node "ok"
+    names = [t["name"] for t in flat(SEEDS_APPLY)]
+    stop = task(SEEDS_APPLY, "Stop when cassandra.yaml has no seeds line to rewrite")
+    assert names.index("Write the new seed list") < names.index(stop["name"]) < names.index("Reload the seeds on the running node")
+    assert "ansible.builtin.fail" in stop
+    assert stop["vars"]["cassandra_output"] is True  # a verdict: its msg as is (ops callback)
+    for changed, live, expected in ((False, "10.0.0.1", True), (False, "10.0.0.1,10.0.0.2", False), (True, "10.0.0.1", False),
+                                    (False, "", True)):
+        variables = {"cassandra_seeds_change": {"changed": changed}, "_cassandra_preflight": {"live_seeds": live},
+                     "_seeds_new": "10.0.0.1,10.0.0.2"}
+        assert all(render("{{ %s }}" % w, **variables) for w in stop["when"]) is expected, (changed, live)
+    msg = render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="n1", _seeds_file="/etc/cassandra/cassandra.yaml",
+                 _seeds_new="10.0.0.1,10.0.0.2", _cassandra_preflight={"live_seeds": "10.0.0.1"})
+    assert msg == ("n1: /etc/cassandra/cassandra.yaml has no '- seeds:' line the role can rewrite (its seed provider is written"
+                   " another way). Write the list there by hand, in the parameters of SimpleSeedProvider"
+                   ' (- seeds: "10.0.0.1,10.0.0.2"), then run again.')
 
 
 def test_a_failed_reload_warns_and_goes_on_except_for_change_seeds():
@@ -547,34 +570,44 @@ def test_a_failed_reload_warns_and_goes_on_except_for_change_seeds():
     module_failure = {"failed": False, "rc": 1, "msg": "MODULE FAILURE"}
     for result, expected in ((failed, True), (ok, False), (module_failure, True)):
         assert render(bad, cassandra_seeds_reload=result) is expected, result
-    when = reload["failed_when"]
-    assert render("{{ %s }}" % when, _seeds_reload_bad=True) is False
-    assert render("{{ %s }}" % when, _seeds_reload_bad=True, _cassandra_seeds_reload_required=True) is True
-    assert render("{{ %s }}" % when, _seeds_reload_bad=False, _cassandra_seeds_reload_required=True) is False
+    # the module task never fails by itself: the WARNING below says why and what to run, then change_seeds stops
+    assert reload["failed_when"] is False
+    stop = task(block, "Stop here, change_seeds reloads every running node")
+    assert "ansible.builtin.fail" in stop
+    names = [t["name"] for t in block]
+    assert names.index("Note how the reload went") < names.index("Say the reload failed") < names.index(stop["name"])
+    for bad, required, expected in ((True, False, False), (True, True, True), (False, True, False)):
+        variables = {"_seeds_reload_bad": bad}
+        if required:
+            variables["_cassandra_seeds_reload_required"] = True
+        assert all(render("{{ %s }}" % w, **variables) for w in stop["when"]) is expected, (bad, required)
     for name in ("Read the reloaded seed list", "Clear the mark of the owed reload", "Read the config the node started with"):
         assert task(block, name)["when"] == "not _seeds_reload_bad | bool", name
-    assert task(block, "Say the reload failed")["when"] == "_seeds_reload_bad | bool"
+    assert task(block, "Say the reload failed")["when"] == [
+        "_seeds_reload_bad | bool", "not _cassandra_seeds_reload_required | default(false) | bool"]  # not twice: the stop says it
+    # the same text (the cause, the command to run again) as the WARNING
+    assert stop["ansible.builtin.fail"]["msg"] == task(block, "Say the reload failed")["ansible.builtin.debug"]["msg"] \
+        == "{{ _seeds_reload_warning }}"
     note = task(block, "Note how the reload went")["ansible.builtin.set_fact"]["_cassandra_seeds_reload_failed"]
     assert render(note, cassandra_seeds_reload=failed, _seeds_reload_bad=True) == "Failed to reload the seed node list"
     assert render(note, cassandra_seeds_reload=ok, _seeds_reload_bad=False) == ""  # a later success clears it
     yaml_bad = task(SEEDS_APPLY, "Reload the seeds on the running node")["vars"]["_seeds_yaml_bad"]
     assert render(yaml_bad, cassandra_seeds_reload=dict(failed, stdout="Failed to reload the seed node list.")) is True
     assert render(yaml_bad, cassandra_seeds_reload={"error": "error: Authentication failed", "stdout": ""}) is False
-    say = task(block, "Say the reload failed")
+    say = task(SEEDS_APPLY, "Reload the seeds on the running node")["vars"]["_seeds_reload_warning"]
     variables = dict(inventory_hostname="n1", ansible_inventory_sources=["/w/inventories"], cassandra_hosts="prod")
-    text = render(say["ansible.builtin.debug"]["msg"], _seeds_yaml_bad=True,
-                  _cassandra_seeds_reload_failed="Failed to reload the seed node list", **variables)
+    text = render(say, _seeds_yaml_bad=True, _cassandra_seeds_reload_failed="Failed to reload the seed node list", **variables)
     assert text.startswith("WARNING - n1: the new seed list is written in cassandra.yaml but nodetool reloadseeds failed:"
                            " Failed to reload the seed node list. The running node cannot load its cassandra.yaml again"
                            " (system.log: Error while getting seed node list says why, e.g. a key it does not know): fix"
                            " the file before any restart, or the node will not start; then run: ansible-playbook")
     assert text.endswith("community.cassandra.change_seeds -e cassandra_hosts=prod")
-    text = render(say["ansible.builtin.debug"]["msg"], _seeds_yaml_bad=False,
-                  _cassandra_seeds_reload_failed="error: Authentication failed", **variables)
+    text = render(say, _seeds_yaml_bad=False, _cassandra_seeds_reload_failed="error: Authentication failed", **variables)
     assert "failed: error: Authentication failed. The list applies at the next restart of the node, or fix the cause and run:" \
         in text
     apply = task(play("change_seeds.yml", "Update the seed list")["tasks"], "Apply the new seed list")
     assert apply["vars"]["_cassandra_seeds_reload_required"] is True
+    assert play("change_seeds.yml", "Update the seed list")["any_errors_fatal"] is True  # one node's failed reload stops the run
 
 
 def test_the_todo_names_the_seed_lists_left_to_reload():

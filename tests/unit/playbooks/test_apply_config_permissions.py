@@ -134,8 +134,18 @@ def test_a_node_that_failed_to_start_is_started_once_written(unit):
     perms = perm_changes(LIVE, **INVENTORY)
     assert note(perms=perms, running=False, unit=unit) == (True, "start", [])
     assert note(changes=["cassandra.yaml"], running=False, unit=unit)[:2] == (True, "start")
-    # not running, nothing to change: left as it is
-    assert note(running=False, unit=unit)[0] is False
+    # not running, nothing to change: left as it is (not "start": it is in no play, the refusal names it)
+    assert note(running=False, unit=unit)[:2] == (False, "write")
+
+
+def test_a_failed_unit_with_nothing_to_apply_is_said_under_the_node():
+    # crashed (e.g. an OOM), the inventory unchanged: nothing to write, so this run does not start it; said in the plan
+    # and the recap, where it would read as "nothing to apply" alone
+    assert note(running=False, unit="failed") == (False, "write", [
+        "its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra"
+        " / journalctl -u cassandra there, fix it and start it)"])
+    assert note(running=False) == (False, "write", [])  # stopped on purpose: nothing to say
+    assert note(running=False, unit="failed", result="timeout") == (False, "write", [])  # a stop that timed out: no failure
 
 
 def test_a_node_stopped_on_purpose_is_written_and_left_stopped():

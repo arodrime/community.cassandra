@@ -32,7 +32,7 @@ import re
 import shlex
 from collections import OrderedDict
 
-from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import terminal_width
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import stat_fields
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import DEFAULT_WHEN_ABSENT, BOOLS
@@ -609,6 +609,8 @@ def _outcome(node, check, plan):
         kept_running = node.get("kept_running") if then == "none" else None  # its own reasons, when given
         if plan and kept_running:
             text += " (%s)" % "; ".join(kept_running)
+        elif plan and then == "write" and node.get("unit_failed"):  # not stopped on purpose: this run does not start it
+            text += " (its cassandra unit failed: left as it is)"
         elif plan and then in _WHY and not (then == "none" and written_back):
             text += " (%s)" % _WHY[then]
         return text, word
@@ -652,11 +654,12 @@ def _grouped(nodes, check=False, plan=False, width=None):
 
 
 def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None):
-    """nodes: [{name, todo, done, os, os_done, then, result, notes, kept_running}] in inventory order ->
+    """nodes: [{name, todo, done, os, os_done, then, result, notes, kept_running, unit_failed}] in inventory order ->
     what each one gets, the nodes with the same outcome on one line
     ("node2, node4  would apply, then restart"), its notes under it. plan:
     before the run (every node to do "will apply", "would apply" under check,
-    with why it is not restarted: kept_running, its reasons, else the usual one). width: the lines fit in it ("terminal": the terminal's).
+    with why it is not restarted: kept_running, its reasons, else the usual one; a node left stopped whose unit
+    failed, unit_failed, is not "stopped on purpose"). width: the lines fit in it ("terminal": the terminal's).
     e.g. ([{name: node1, todo: False}, {name: node2, todo: True, done: True, then: restart}], check=True) ->
     ["node2  would apply, then restart", "node1  nothing to apply"]."""
     return _grouped(nodes, check, plan, width)[0]
@@ -783,7 +786,7 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
             down = other == "start" or (other == "write" and (then != "restart" or check))
         else:
             later = other == "start" and (nodes.index(name) > nodes.index(host) or check
-                                          or not to_bool(v.get("cassandra_apply_config_todo", False)))
+                                          or not boolean(v.get("cassandra_apply_config_todo", False), strict=False))
             down = later or (other == "write" and then != "restart")
         if down:
             out.append(v["_cassandra_preflight"]["ring_address"])

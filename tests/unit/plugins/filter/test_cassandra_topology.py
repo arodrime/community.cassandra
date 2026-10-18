@@ -4,7 +4,8 @@ __metaclass__ = type
 # The plan of the playbook topology: the inventory is the desired state.
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_topology import (
-    cassandra_seed_change, cassandra_topology_plan, cassandra_topology_screen, cassandra_topology_steps)
+    FilterModule, cassandra_seed_change, cassandra_seed_host, cassandra_seed_port, cassandra_topology_plan,
+    cassandra_topology_screen, cassandra_topology_steps)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_output import PARAGRAPH
 
 
@@ -391,6 +392,44 @@ def test_seed_change_gives_a_datacenter_left_with_no_seed_its_own():
         h["absent"] = True
     assert cassandra_seed_change(hosts, ["10.0.0.1"])["problems"] == []
     assert cassandra_seed_change(hosts, [])["problems"][0].startswith("cassandra_seeds is empty")
+
+
+def test_seed_change_reads_ipv6_entries():
+    # an IPv6 seed, alone, with its port in brackets, or bracketed alone: matched to its host (not cut at a colon)
+    v6 = ["2001:db8::1", "2001:db8::2", "2001:db8::4"]
+    hosts = [seeded(1, address=v6[0], names=["node1", v6[0]], live="2001:db8::1,[2001:db8::4]:7000", up=True),
+             seeded(2, address=v6[1], names=["node2", v6[1]], live="2001:db8::1,[2001:db8::4]:7000", up=True),
+             seeded(4, address=v6[2], names=["node4", v6[2]], live="2001:db8::1,[2001:db8::4]:7000", dc="dc2", absent=True),
+             seeded(5, address="2001:db8::5", names=["node5", "2001:db8::5"], live="", dc="dc2", up=True)]
+    for entry in ("2001:db8::1", "[2001:db8::1]:7000", "[2001:db8::1]"):
+        change = cassandra_seed_change(hosts, [entry, "2001:db8::5"])
+        assert change["old_hosts"] == ["node1", "node4"] and change["removed"] == ["node4 (dc2/r1)"], entry
+        assert change["added"] == ["node5 (dc2/r1)"] and change["auto"] == [], entry
+    # the guard of a datacenter left with no seed sees the IPv6 seed leave: dc2 gets seeds of its own
+    change = cassandra_seed_change(hosts, ["2001:db8::1"])
+    assert change["removed"] == ["node4 (dc2/r1)"] and change["auto"][0]["hosts"] == ["node5"]
+    assert change["new"] == "2001:db8::1,2001:db8::5"
+    # written with the port the wanted entries carry, in brackets
+    change = cassandra_seed_change(hosts, ["[2001:db8::1]:7000"])
+    assert change["auto"][0]["entries"] == ["[2001:db8::5]:7000"] and change["new"] == "[2001:db8::1]:7000,[2001:db8::5]:7000"
+    # a seed of another datacenter wanted with no port: as is
+    assert cassandra_seed_change(hosts, ["2001:db8::1", "10.0.0.9:7000"])["auto"][0]["entries"] == ["2001:db8::5"]
+
+
+def test_seed_change_with_a_host_of_no_datacenter():
+    hosts = [seeded(1, up=True), seeded(2, dc=None, absent=True), seeded(3, dc=None, up=True)]
+    change = cassandra_seed_change(hosts, ["10.0.0.1"])  # node2 leaves the list: no crash on its missing dc
+    assert change["removed"] == ["node2 (?/r1)"] and change["problems"] == []
+
+
+def test_seed_host_and_port():
+    # what the roles compare a seed entry by (seed_facts.yml) and probe (the wait for the other seeds)
+    for entry, host, port in (("10.0.0.1", "10.0.0.1", None), ("10.0.0.1:7000", "10.0.0.1", "7000"), ("node1", "node1", None),
+                              ("node1:7000", "node1", "7000"), (" 10.0.0.1:7000 ", "10.0.0.1", "7000"),
+                              ("2001:db8::4", "2001:db8::4", None), ("[2001:db8::4]:7000", "2001:db8::4", "7000"),
+                              ("[2001:db8::4]", "2001:db8::4", None), ("::1", "::1", None)):
+        assert (cassandra_seed_host(entry), cassandra_seed_port(entry)) == (host, port), entry
+    assert set(FilterModule().filters()) >= {"cassandra_seed_host", "cassandra_seed_port"}
 
 
 def test_plan_replaces_a_seed_in_one_run():

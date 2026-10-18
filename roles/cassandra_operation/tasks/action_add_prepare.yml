@@ -18,7 +18,7 @@
   vars:
     _own: >-
       {{ ((_cassandra_join_seeds.split(',') if _cassandra_join_seeds is string else _cassandra_join_seeds) | map('trim')
-          | map('regex_replace', ':[0-9]+$', '') | list) | intersect(_cassandra_service_names | default([inventory_hostname])) }}
+          | map('community.cassandra.cassandra_seed_host') | list) | intersect(_cassandra_service_names | default([inventory_hostname])) }}
 
 - name: Forget what an earlier prepare did
   ansible.builtin.include_tasks: prepare_reset.yml

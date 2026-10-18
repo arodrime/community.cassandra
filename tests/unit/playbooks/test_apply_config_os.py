@@ -195,7 +195,7 @@ def test_the_disk_warnings_said_under_the_node():
     variables = {"cassandra_config_newer_files": [], "_newer": [], "_as_started": [], "_pending": False, "_running": True,
                  "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_disk_summary": {"warnings": ["tuned: not switched"]},
-                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": []}
+                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False}
     assert render(notes, variables) == ["WARNING - data disks: tuned: not switched"]
 
 
@@ -249,7 +249,7 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     variables = {"cassandra_config_newer_files": [], "_newer": [], "_as_started": [], "_pending": False, "_running": True,
                  "_then": "none", "_os": [],
                  "_cassandra_config_dir_notes": [], "_cassandra_linux_before": {"swap|active": "1"},
-                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": []}
+                 "_stopped": False, "_timesync": False, "_no_unit": [], "_keep_missing": [], "_unit_failed": False, "_todo": False}
     if live is not None:  # (not set on a node with cassandra_linux_manage false)
         variables.update({"_cassandra_linux_live": live, "_cassandra_linux_swapoff": swapoff})
     warned = [n for n in render(notes, variables) if n.startswith("WARNING - swap left on")]
@@ -625,7 +625,7 @@ def test_a_refusal_for_a_node_down_names_the_opt_outs_for_a_disk_restart():
         "n1": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "restart",
                "cassandra_apply_config_disks_window": [TUNED]},
         "n2": {"cassandra_apply_config_todo": False, "cassandra_apply_config_then": "write"}}}
-    for name in ("_restart", "_down", "_them"):
+    for name in ("_restart", "_down", "_failed", "_limit", "_them"):
         variables[name] = render(task["vars"][name], variables)
     refused = render(task["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
     assert refused[1].endswith("A restart for the tuned profile or the LVM read-ahead can be left for later:"

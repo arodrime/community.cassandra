@@ -104,14 +104,6 @@
           {{ _target | length > 0 and _target | regex_replace('/+$', '')
              != cassandra_rpm_conf_alternative | default(_target) | regex_replace('/+$', '') }}
 
-    - name: Read when the running Cassandra started (files written back as it started with them)
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_config
-        tasks_from: jvm_started.yml
-      when:
-        - _cassandra_apply_config_as_started | length > 0
-        - cassandra_jvm.start is not defined
-
     # no record of the files it started with: an edit made since may be applied or not
     - name: Say which files changed since Cassandra started, with no record of the ones it started with
       ansible.builtin.debug:
@@ -194,11 +186,9 @@
     # written; one stopped on purpose gets its config and stays stopped.
     - name: Note what this node needs
       ansible.builtin.set_fact:
-        cassandra_apply_config_todo: >-
-          {{ _files | length > 0 or (_perms + _dirs + _jmx) | length > 0 or _pending | bool or _timesync | bool or _stopped | bool
-             or _disks_window | length > 0 }}
+        cassandra_apply_config_todo: "{{ _todo }}"
         cassandra_apply_config_then: "{{ _then }}"
-        cassandra_apply_config_pending: "{{ _pending }}"
+        cassandra_apply_config_unit_failed: "{{ _unit_failed }}"  # (the refusal below names it)
         # checked again before the write (action_apply_config.yml): that JVM still runs
         cassandra_apply_config_as_started: >-
           {{ {'files': _as_started, 'pid': cassandra_jvm.pid, 'start': cassandra_jvm.start,
@@ -235,11 +225,17 @@
              + ([_as_started | join(', ') ~ ' written back as the running Cassandra started with '
                  ~ ('it' if _as_started | length == 1 else 'them') ~ ': no restart for ' ~ ('it' if _as_started | length == 1 else 'them')]
                 if _as_started and _running | bool else [])
+             + ([_same_newer | default([]) | join(', ') ~ ' changed since the running Cassandra started, same settings: no restart for '
+                 ~ ('it' if _same_newer | default([]) | length == 1 else 'them')]
+                if _same_newer | default([]) and _running | bool else [])
              + (['stopped by an interrupted run in its restart window: started once written'] if _stopped | bool else [])
              + (['WARNING - stopped by an interrupted run in its restart window: left stopped; to start it, run again with'
                  ' -e cassandra_rolling_resume=true']
                 if not _running | bool and _clock.mark is defined and not _stopped | bool
                 else [])
+             + (['its cassandra unit failed and nothing is to apply: not started by this run (see systemctl status cassandra'
+                 ' / journalctl -u cassandra there, fix it and start it)']
+                if _unit_failed | bool and not _running | bool and not _todo | bool else [])
              + (_no_unit | map(attribute='item') | reject('match', 'package ') | map('regex_replace', '$',
                 ' cannot run here (the condition of its unit): left as it is') | list)
              + ((['clock ' ~ ('%.3f' | format(_ahead | float | abs)) ~ ' s '
@@ -284,12 +280,16 @@
              if cassandra_jvm.start is defined and _jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
                 and (_jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 else [] }}
         # the files changed since the start, but the ones written back as they were then
-        _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | list }}"
+        # a file changed since the start but left as it is by cassandra_config (same settings, only comments
+        # or spelling): nothing for Cassandra to pick up
+        _same: "{{ _cassandra_config_kept | default([]) | reject('in', cassandra_config_keep_files | default([])) | list }}"
+        _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | reject('in', _same) | list }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
         _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
         _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
         # a node not running reads its files when it starts: pending only under a resumed run, taken for the
         # node the interrupted run stopped (then started)
+        _same_newer: "{{ cassandra_config_newer_files | default([]) | select('in', _same) | list }}"
         _pending: >-
           {{ cassandra_config_restart_pending | bool and _newer | length > 0
              and (_running | bool or cassandra_rolling_resume | default(false) | bool) }}
@@ -321,14 +321,17 @@
           {{ ((['time sync'] if _timesync | bool else []) + _disks_window | map(attribute='restart') | unique | list) | join(', ') }}
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
+        _todo: >-
+          {{ _files | length > 0 or (_perms + _dirs + _jmx) | length > 0 or _pending | bool or _timesync | bool or _stopped | bool
+             or _disks_window | length > 0 }}
         # Cassandra running: restart (new settings or a restart pending), none (an owner or mode alone: read at
-        # start); not running: start (its unit failed: it could not start, e.g. its config unreadable; or the node
-        # a resumed run stopped), write (stopped on purpose: left stopped)
+        # start); not running: start (_starts: its unit failed and its config is written, e.g. it was unreadable;
+        # or the node a resumed run stopped), write (stopped on purpose, or failed with nothing to write: left as it is)
         _then: >-
           {{ ('restart' if _files | reject('in', _as_started) | list | length > 0 or _rights | length > 0 or _pending | bool
                             or _timesync | bool or _disks_window | length > 0
               else 'none') if _running | bool
-             else 'start' if _unit_failed | bool or _pending | bool or _stopped | bool else 'write' }}
+             else 'start' if _starts | bool else 'write' }}
 
     # a restart waits for every other node up (cluster health): a node not running that this run leaves
     # down, or starts after the restart (nodes go in inventory order), would stop it halfway. A real run refuses
@@ -339,12 +342,15 @@
           {{ [] if not _down else
              [_down | join(', ') ~ ': Cassandra not running, and ' ~ _restart | join(', ') ~ ' would be restarted, which needs'
               ~ ' every other node up.',
-              'Apply the config there first (--limit ' ~ _down | join(',') ~ ') and start ' ~ _them ~ ' if stopped on purpose,'
-              ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'
-              ~ (' A restart for the tuned profile or the LVM read-ahead can be left for later:'
-                 ~ ' -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false.'
-                 if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
-                    | select | list else '')] }}
+              [('Apply the config there first (--limit ' ~ _limit | join(',') ~ ') and start ' ~ _them ~ ' if stopped on purpose,'
+                ~ ' or, if an interrupted run stopped ' ~ _them ~ ', resume it (-e cassandra_rolling_resume=true); then run again.'
+                if _limit else ''),
+               (_failed | join(', ') ~ ': the cassandra unit failed and nothing is to apply: see systemctl status cassandra'
+                ~ ' / journalctl -u cassandra there, fix it and start it, then run again.' if _failed else ''),
+               ('A restart for the tuned profile or the LVM read-ahead can be left for later:'
+                ~ ' -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false.'
+                if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
+                   | select | list else '')] | select | join(' ')] }}
       run_once: true
       vars:
         _restart: >-
@@ -368,7 +374,16 @@
           {%-   endfor -%}
           {%- endif -%}
           {{ out }}
-        _them: "{{ 'them' if _down | length > 1 else 'it' }}"
+        # the nodes down whose unit failed with nothing to write: this run does not start them
+        _failed: >-
+          {%- set out = [] -%}
+          {%- for h in _down if hostvars[h].cassandra_apply_config_unit_failed | default(false) | bool -%}
+          {%-   set _ = out.append(h) -%}
+          {%- endfor -%}
+          {{ out }}
+        # the other nodes down: their config applied with --limit, then started
+        _limit: "{{ _down | reject('in', _failed) | list }}"
+        _them: "{{ 'them' if _limit | length > 1 else 'it' }}"
 
     - name: Refuse restarts while a node is not running
       ansible.builtin.fail:
@@ -504,7 +519,8 @@
                                     'then': v.cassandra_apply_config_then | default(''),
                                     'result': v.cassandra_op_result | default('nothing to apply'),
                                     'notes': v.cassandra_apply_config_notes | default([]),
-                                    'kept_running': v.cassandra_apply_config_kept_running | default([])}) -%}
+                                    'kept_running': v.cassandra_apply_config_kept_running | default([]),
+                                    'unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool}) -%}
           {%- endfor -%}
           {{ out }}
         cassandra_screen_question: "Apply the {{ _what }} on {{ _todo | community.cassandra.cassandra_node_list }}?"

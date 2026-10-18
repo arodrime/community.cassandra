@@ -93,9 +93,15 @@
     - cassandra_apply_config_then | default('restart') == 'none'
     - not ansible_check_mode
   block:
+    - name: Load the cassandra_service defaults (the conf dir)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_service
+        tasks_from: defaults.yml
+        public: true
+
     - name: Checksum the files written back
       ansible.builtin.stat:
-        path: "{{ _cassandra_service_conf_dir | trim | regex_replace('/+$', '') }}/{{ item }}"
+        path: "{{ _cassandra_service_conf_dir }}/{{ item }}"
         checksum_algorithm: sha1
         get_mime: false
         get_attributes: false

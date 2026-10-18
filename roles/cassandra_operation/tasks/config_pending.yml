@@ -6,10 +6,17 @@
 # by config_seed.yml before the roles change a node started another way. A
 # unit missing from a record (recorded before it was, or written since that
 # start) is compared with the JVM start. With no record (e.g. a node just
-# imported, which the roles have not changed), nothing is pending: a file
-# written after its JVM started is only listed in
-# cassandra_config_unknown_files, as what Cassandra read then is unknown.
-# Sets cassandra_config_restart_pending.
+# imported, which the roles have not changed), or a record of another JVM
+# (restarted by hand since: it read the files as they were then, which the
+# record does not say), nothing is pending: a file written after its JVM
+# started is only listed in cassandra_config_unknown_files, as what Cassandra
+# read then is unknown. Sets cassandra_config_restart_pending.
+- name: Load the cassandra_service defaults (the conf dir, the record)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: defaults.yml
+    public: true
+
 # In one go (a task each would cost a round trip each), as ansible.builtin.find
 # (the files of the patterns, not hidden, not links), stat (the unit, not
 # followed) and slurp (the record) register them
@@ -65,15 +72,11 @@
   vars:
     _read: "{{ cassandra_pending_read.stdout | from_json }}"
 
-# (or none for the unit)
-- name: Read when the running Cassandra started (no checksums recorded)
+# (the record is trusted for that JVM only)
+- name: Read when the running Cassandra started
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_config
     tasks_from: jvm_started.yml
-  when: >-
-    cassandra_pending_snapshot.content is not defined
-    or (cassandra_pending_unit_file.stat.exists
-        and cassandra_pending_unit_file.stat.path not in cassandra_pending_snapshot.content | b64decode | from_json)
 
 - name: Note whether a restart is pending
   ansible.builtin.set_fact:
@@ -81,12 +84,18 @@
     cassandra_config_newer_files: "{{ _changed }}"
     cassandra_config_unknown_files: "{{ _unknown }}"
   vars:
-    _started: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+    _record: "{{ cassandra_pending_snapshot.content | b64decode | from_json if cassandra_pending_snapshot.content is defined else {} }}"
+    # the record is the running JVM's (the same pid and start, written with it): else as no record
+    _record_current: >-
+      {{ cassandra_pending_snapshot.content is defined and cassandra_jvm.start is defined
+         and _record._jvm.pid | default('') | string == cassandra_jvm.pid | default('-') | string
+         and (_record._jvm.start | default(0) | float - cassandra_jvm.start | float) | abs < 2 }}
+    _started: "{{ _record if _record_current | bool else {} }}"
     _files: "{{ cassandra_pending_files.files + ([cassandra_pending_unit_file.stat] if cassandra_pending_unit_file.stat.exists else []) }}"
     _newer: "{{ _files | selectattr('ctime', '>', cassandra_jvm.start | float) | map(attribute='path') | list if cassandra_jvm.start is defined else [] }}"
     _changed: >-
       {%- set out = [] -%}
-      {%- for f in _files if cassandra_pending_snapshot.content is defined -%}
+      {%- for f in _files if _record_current | bool -%}
       {%-   if f.path in _started or f.path != cassandra_pending_unit_file.stat.path | default('') -%}
       {%-     if _started.get(f.path) != f.checksum -%}{%- set _ = out.append(f.path | basename) -%}{%- endif -%}
       {%-   elif f.path in _newer -%}
@@ -96,7 +105,7 @@
       {{ out | sort }}
     _unknown: >-
       {%- set out = [] -%}
-      {%- for f in _files if cassandra_pending_snapshot.content is not defined and f.path in _newer -%}
+      {%- for f in _files if not _record_current | bool and f.path in _newer -%}
       {%-   set _ = out.append(f.path | basename) -%}
       {%- endfor -%}
       {{ out | sort }}

@@ -43,7 +43,7 @@ __metaclass__ = type
 import re
 
 from ansible.errors import AnsibleFilterError
-from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output
 
 
@@ -787,7 +787,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
 
 
 def _flag(v, name, default):
-    return to_bool(v.get(name, default))
+    return boolean(v.get(name, default), strict=False)
 
 
 def cassandra_clock_nodes(hosts, hostvars):

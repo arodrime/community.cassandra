@@ -379,6 +379,14 @@ def test_under_check_a_node_refusing_the_jmx_login_is_checked_from_the_others():
              "ansible_play_hosts_all": ["n1", "n2", "n3"]})
         assert variables["cassandra_service_node_checks_before"] in ((True, "True") if before else (False, "False"))
         assert variables["_cassandra_health_not_peers"] == not_peers
+    # what node_operation.yml makes of it: no check of the node's own before its action
+    operation = load("roles", "cassandra_operation", "tasks", "node_operation.yml")[1]
+    before = find(operation["block"], "Check the cluster before touching this node")
+    checks = before["vars"]["cassandra_service_health_node_checks"]
+    assert render(checks, {"_cassandra_down_node": False, "cassandra_service_node_checks_before": False}) is False
+    assert render(checks, {"_cassandra_down_node": False, "cassandra_service_node_checks_before": True}) is True
+    assert render(checks, {"_cassandra_down_node": False}) is True
+    assert render(checks, {"_cassandra_down_node": True, "cassandra_service_node_checks_before": True}) is False
 
 
 def test_other_jmx_rights_restart_the_node(tmp_path):

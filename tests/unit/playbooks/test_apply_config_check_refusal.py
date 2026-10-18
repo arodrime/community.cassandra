@@ -15,6 +15,7 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_outcomes
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_recap
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
 
@@ -95,6 +96,43 @@ def test_the_refusal_reason_and_its_way_out():
     t = task("Note whether restarts are refused while a node is not running")
     variables = dict(trust(t["vars"]), hostvars=started, ansible_play_hosts=sorted(started))
     assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == []
+
+
+def test_the_refusal_names_a_failed_unit_this_run_does_not_start():
+    # node7's unit failed and nothing is to apply there: in no play (then write, not to do), so --limit node7
+    # would do nothing: the way out is on the node
+    failed = {"cassandra_apply_config_todo": False, "cassandra_apply_config_then": "write", "cassandra_apply_config_unit_failed": True,
+              "_cassandra_preflight": {"ring_address": "10.0.0.7"}}
+    hostvars = dict(HOSTVARS, node7=failed)
+    t = task("Note whether restarts are refused while a node is not running")
+    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    reason, way = render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables)
+    assert reason == "node5, node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up."
+    # --limit names node5 only (the config applied there, started if stopped on purpose); node7's way out is on the node
+    failed_way = ("node7: the cassandra unit failed and nothing is to apply: see systemctl status cassandra / journalctl -u"
+                  " cassandra there, fix it and start it, then run again.")
+    assert way == WAY + " " + failed_way
+    # node7 the only node down: no --limit sentence (nothing to apply there)
+    hostvars.pop("node5")
+    variables = dict(trust(t["vars"]), hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    assert render(t["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [
+        "node7: Cassandra not running, and node1, node2 would be restarted, which needs every other node up.", failed_way]
+    # the fact the refusal reads, set with the node's needs
+    note = task("Note what this node needs")
+    assert note["ansible.builtin.set_fact"]["cassandra_apply_config_unit_failed"] == "{{ _unit_failed }}"
+
+
+def test_the_plan_says_a_failed_unit_left_stopped_is_not_stopped_on_purpose():
+    # node7's unit failed, only its JMX files to write (nothing that starts it): left stopped, but not on purpose
+    hostvars = dict(HOSTVARS, node7={"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write",
+                                     "cassandra_apply_config_unit_failed": True})
+    t = task("Show the plan and confirm the run")
+    nodes = render(t["vars"]["_nodes"], dict(hostvars=hostvars, ansible_play_hosts=sorted(hostvars)))
+    assert [n["unit_failed"] for n in nodes] == [False, False, False, False, True]
+    assert cassandra_apply_config_outcomes(nodes, plan=True)[1:] == [
+        "node5  will apply, left stopped (its Cassandra is stopped: left stopped, reads its config when it starts)",
+        "node7  will apply, left stopped (its cassandra unit failed: left as it is)",
+        "node3  nothing to apply"]
 
 
 def test_a_real_run_refuses_before_any_change_check_goes_on():

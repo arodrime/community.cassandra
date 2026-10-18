@@ -38,7 +38,7 @@ import textwrap
 
 from collections.abc import Mapping
 
-from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 WIDTH = 100
@@ -359,9 +359,9 @@ def cassandra_add_node_blocks(new, hostvars, estimate):
     for name in new:
         v = hostvars[name]
         lines = ["about %s to stream (%s)" % (out.size(e["bytes"]), e["basis"]) for e in estimate if e["host"] == name]
-        if to_bool(v.get("_cassandra_service_is_seed", False)):
+        if boolean(v.get("_cassandra_service_is_seed", False), strict=False):
             lines.append(_SEED)
-        if to_bool(v.get("cassandra_medusa_enabled", False)):
+        if boolean(v.get("cassandra_medusa_enabled", False), strict=False):
             lines.append("Medusa fqdn " + _medusa_fqdn(name, v))
         reset = (v.get("_cassandra_node_reset_plan") or {}).get("line", "")
         if reset:

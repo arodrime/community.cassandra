@@ -6,6 +6,9 @@ cassandra_topology_plan: the hosts of the cluster's group (the ones marked
     cassandra_node_state: absent too) and the ring -> what to add, what to
     remove, in which order, and why not (the refusals).
 cassandra_topology_screen: the plan -> the lines of the plan screen.
+cassandra_seed_host, cassandra_seed_port: a seed entry's host and port
+    ("[2001:db8::4]:7000" -> "2001:db8::4", "7000"), as the roles compare an
+    entry with a node's names.
 cassandra_seed_change: the hosts' live seed lists and cassandra_seeds -> the
     seed change to apply (topology, add_node, decommission_node).
 cassandra_topology_hosts: what the topology playbook knows of each host of
@@ -18,7 +21,7 @@ __metaclass__ = type
 
 import re
 
-from ansible.plugins.filter.core import to_bool  # the bool filter, as the expressions these replace used
+from ansible.module_utils.parsing.convert_bool import boolean
 from ansible_collections.community.cassandra.plugins.filter.cassandra_screen import (
     cassandra_decommission_screen, cassandra_reset_warnings)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_stream import cassandra_add_node_plan
@@ -43,23 +46,48 @@ def _seed_entries(seeds):
     return [str(s).strip() for s in seeds if str(s).strip()]
 
 
+def _host_port(entry):
+    """A seed entry -> (its host, its port or None): "10.0.0.1:7000", "node1", "[2001:db8::4]:7000" (an IPv6
+    address with a port is written in brackets), "2001:db8::4" (an IPv6 address alone: no port)."""
+    bracketed = re.match(r"^\[(.*)\](?::([0-9]+))?$", entry)
+    if bracketed:
+        return bracketed.group(1), bracketed.group(2)
+    if entry.count(":") > 1:
+        return entry, None
+    host, sep, port = entry.rpartition(":")
+    if sep and port.isdigit():
+        return host, port
+    return entry, None
+
+
+def cassandra_seed_host(entry):
+    """A seed entry -> its host: "10.0.0.1:7000" -> "10.0.0.1", "[2001:db8::4]:7000" -> "2001:db8::4",
+    "2001:db8::4" as is (an IPv6 address alone is not cut at its last colon)."""
+    return _host_port(str(entry).strip())[0]
+
+
+def cassandra_seed_port(entry):
+    """A seed entry -> its port, None when it has none: "10.0.0.1:7000" -> "7000", "2001:db8::4" -> None."""
+    return _host_port(str(entry).strip())[1]
+
+
 def _auto_entry(h, wanted, hosts):
     """The seed entry of host h, written as the entries of cassandra_seeds are (wanted): its inventory name
     when they are all inventory names, else its address (a name the nodes may not resolve otherwise); their
     port when they all have one."""
-    bare = [re.sub(r":[0-9]+$", "", e) for e in wanted]
+    bare = [_host_port(e)[0] for e in wanted]
     names = [x["name"] for x in hosts]
     by_name = bool(wanted) and all(b in names for b in bare)
     entry = h["name"] if by_name else (h.get("entry") or h.get("address") or h["name"])
-    ports = [re.search(r":([0-9]+)$", e) for e in wanted]
-    if wanted and all(ports) and len(set(m.group(1) for m in ports)) == 1 and not re.search(r":[0-9]+$", entry):
-        entry = "%s:%s" % (entry, ports[0].group(1))
+    ports = [_host_port(e)[1] for e in wanted]
+    if wanted and all(ports) and len(set(ports)) == 1 and _host_port(entry)[1] is None:
+        entry = "%s:%s" % ("[%s]" % entry if ":" in entry else entry, ports[0])
     return entry
 
 
 def _seed_owner(entry, hosts):
     """A seed entry, the hosts -> the host it names (by a name or an address it answers to), None if none."""
-    bare = re.sub(r":[0-9]+$", "", entry)  # the port left out, as seed_facts.yml compares
+    bare = _host_port(entry)[0]  # the port left out, as seed_facts.yml compares
     return next((h for h in hosts if bare in (h.get("names") or []) or bare == h["name"]), None)
 
 
@@ -176,7 +204,7 @@ def cassandra_seed_change(hosts, seeds):
                         " datacenter).")
     new_entries = list(wanted)
     gone = _seeds_gone(old, wanted, hosts)
-    for dc in sorted(set(h.get("dc") for h in gone)) if wanted else []:
+    for dc in sorted(set(h.get("dc") or "" for h in gone)) if wanted else []:
         members = [h for h in present if h.get("dc") == dc]
         if not members or [w for w in wanted if _seed_key(w, hosts) in [h["name"] for h in members]]:
             continue
@@ -649,7 +677,7 @@ def _reset(plan):
     """The reset plan of a host when it does something (deletes, stops or disables), else None."""
     if plan is None:
         return None
-    return plan if plan.get("delete") or to_bool(plan.get("stop")) or to_bool(plan.get("disable")) else None
+    return plan if plan.get("delete") or boolean(plan.get("stop"), strict=False) or boolean(plan.get("disable"), strict=False) else None
 
 
 def cassandra_topology_hosts(names, hostvars, play_hosts, absent, single):
@@ -667,12 +695,12 @@ def cassandra_topology_hosts(names, hostvars, play_hosts, absent, single):
         check = v.get("_cassandra_new_node_check") or {}
         out.append({
             "name": name, "absent": gone,
-            "reachable": to_bool(v.get("_cassandra_topology_reachable", False)) if gone else name in play_hosts,
+            "reachable": boolean(v.get("_cassandra_topology_reachable", False), strict=False) if gone else name in play_hosts,
             "address": p.get("ring_address") or v.get("_cassandra_topology_address", ""),
             "dc": p.get("cassandra_dc", "?"), "rack": p.get("cassandra_rack", "?"),
-            "seed": to_bool(v.get("_cassandra_service_is_seed", False)),
+            "seed": boolean(v.get("_cassandra_service_is_seed", False), strict=False),
             "names": v.get("_cassandra_service_names", [name]), "live": p.get("live_seeds", ""),
-            "entry": p.get("address", ""), "running": to_bool(v.get("_cassandra_preflight_running", False)),
+            "entry": p.get("address", ""), "running": boolean(v.get("_cassandra_preflight_running", False), strict=False),
             "state": (v.get("cassandra_leaving_node") or {}).get("state") if gone else v.get("cassandra_new_node_state"),
             "refused": v.get("_cassandra_topology_refused", ""), "single": single,
             "token": p.get("cassandra_initial_token", ""),
@@ -688,5 +716,7 @@ class FilterModule(object):
             "cassandra_topology_plan": cassandra_topology_plan,
             "cassandra_topology_screen": cassandra_topology_screen,
             "cassandra_seed_change": cassandra_seed_change,
+            "cassandra_seed_host": cassandra_seed_host,
+            "cassandra_seed_port": cassandra_seed_port,
             "cassandra_topology_hosts": cassandra_topology_hosts,
         }
