@@ -46,14 +46,14 @@ def render(template, **variables):
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(template))
 
 
-KINDS = {}
+KINDS = {"upgrade": "canary"}
 IMPORTERS = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(TOP, "playbooks", "*.yml"))
                    if load("playbooks", os.path.basename(p))[0].get("ansible.builtin.import_playbook") == "community.cassandra.preflight")
 
 
 def test_the_operations_import_preflight():
     assert IMPORTERS == ["apply_config", "change_seeds", "create_cluster", "rolling_reboot", "rolling_restart",
-                         "stop_rack"]  # none takes targets yet
+                         "stop_rack", "sync_clocks", "update_java", "upgrade"]
 
 
 @pytest.mark.parametrize("playbook", IMPORTERS)
@@ -81,6 +81,10 @@ CHECK = load("roles", "cassandra_operation", "tasks", "target_nodes_check.yml")[
     (5, "status", {}, False),
     ("n9", "status", {}, False),  # matches no host
     ("n2,n3", "status", {}, True),
+    (None, "canary", {"cassandra_upgrade_phase": "canary"}, True),
+    ("n2", "canary", {}, False),  # no phase given
+    ("n2", "canary", {"cassandra_upgrade_phase": "canary"}, True),
+    ("n2", "canary", {"cassandra_upgrade_phase": "prepare"}, False),
 ])
 def test_target_nodes_only_where_the_playbook_takes_them(target, kind, extra, ok):
     variables = dict(CHECK["vars"], groups={"all": ["n1", "n2", "n3"]}, **extra)
@@ -133,6 +137,31 @@ def test_status_reads_from_the_target_nodes(target, reached, from_, asked):
                      ansible_play_hosts_all=["n1", "n2", "n3"], groups={"all": ["n1", "n2", "n3"]})
     assert render("{{ _from }}", **variables) == from_
     assert render("{{ _asked }}", **variables) == asked
+
+
+UPGRADE = play("upgrade.yml", "Pick the nodes and their order")
+CANARY_CHECK = UPGRADE["tasks"][1]["ansible.builtin.assert"]  # (after the facts task)
+
+
+def canary(target, phase="canary"):
+    hostvars = dict((h, {"inventory_hostname": h, "_cassandra_service_is_seed": h == "n1",
+                         "_cassandra_preflight": {"cassandra_dc": "dc1", "cassandra_rack": "r1"}}) for h in ("n1", "n2", "n3"))
+    variables = dict(UPGRADE["vars"], cassandra_upgrade_phase=phase, hostvars=hostvars, cassandra_hosts="prod",
+                     ansible_play_hosts=["n1", "n2", "n3"], groups={"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"]})
+    if target is not None:
+        variables["cassandra_target_nodes"] = target
+    render(CANARY_CHECK["fail_msg"], **variables)  # rendered whether the assert passes or not
+    return render("{{ _canary }}", **variables), render("{{ %s }}" % CANARY_CHECK["that"], **variables)
+
+
+def test_upgrade_canary_is_the_target_node():
+    assert canary(None) == ("n2", True)  # the first non-seed
+    assert canary("") == ("n2", True)
+    assert canary("n3") == ("n3", True)
+    assert canary("n2,n3")[1] is False  # one node
+    assert canary("n9")[1] is False  # not a node of the run
+    assert canary("n3", phase="rolling")[1] is False  # the canary phase only
+    assert canary("", phase="rolling")[1] is True
 
 
 HEALTH = load("roles", "cassandra_operation", "tasks", "cluster_health.yml")[0]

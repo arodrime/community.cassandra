@@ -36,6 +36,9 @@ root on the nodes themselves where they need it (no `-b`, no `become` in `ansibl
 - `health_check`- Read-only health report of the cluster from every node; fails when there is a problem.
 - `apply_config`- Applies the inventory's config and OS settings (`cassandra_linux`'s): shows the settings that differ (the inventory's value, then each other value with its nodes), asks once, then applies the OS settings live on their nodes at once, and writes the nodes that need it: the ones it does not restart at once, then the others one at a time, restarting only those that need it.
 - `change_seeds`- Applies a new `cassandra_seeds` list to every node and reloads it without a restart.
+- `update_java`- Moves the cluster to the Java in `cassandra_java_version`, one node at a time.
+- `upgrade`- Upgrades the cluster in phases (preflight, prepare, canary, rolling, sstables, cleanup) to the version in the inventory.
+- `sync_clocks`- Shows each node's clock as its time sync daemon reports it (synchronised, source, offset, error bound) with a verdict, and brings time sync up where it is missing (live, or in a restart window for a running node whose clock needs a step); `create_cluster` checks the clocks the same way before starting nodes.
 - `rolling_restart`- Drains and restarts the nodes one at a time, waiting for the cluster to be up in between (`-e cassandra_rolling_mode=rack`: a rack at a time, when the replication allows it; `-e cassandra_rolling_resume=true` resumes an interrupted run).
 - `rolling_reboot`- Same, rebooting the hosts (OS patching).
 - `stop_rack` / `start_rack`- Stops, then starts, every node of one rack at once, when the replication allows losing that rack.

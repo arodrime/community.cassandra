@@ -1,0 +1,71 @@
+---
+# One node of the upgrade: drain and stop, the target series' repository and
+# package, its config, start, wait until joined, check the version it runs.
+- name: Drain the node
+  ansible.builtin.import_tasks: drain.yml
+  vars:
+    _cassandra_service_drain_then: flushed, then stopped
+
+# the new version replays as little of the old one's commitlog as it can (best effort: a node drained in part
+# may not flush, its start replays the commitlog)
+- name: Flush the node instead
+  community.cassandra.cassandra_flush:
+  module_defaults:
+    community.cassandra.cassandra_flush: "{{ _cassandra_service_jmx }}"
+  failed_when: false
+  ignore_errors: true  # the timeout below
+  timeout: "{{ cassandra_service_drain_timeout | int }}"
+  when: cassandra_service_drain is not skipped and not cassandra_service_drain.changed | default(false)
+
+- name: Stop Cassandra
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: stopped
+
+- name: Add the target series' repository
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_repository
+
+- name: Install the target version
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_install
+  vars:
+    _cassandra_install_upgrade: true
+
+- name: Write the target series' config
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+  vars:
+    cassandra_config_confirm: false  # previewed by the preflight phase, confirmed by the prepare phase
+    _cassandra_config_no_question: true  # whatever -e cassandra_config_confirm says
+    _cassandra_config_no_restart_warning: true
+
+- name: Start it and wait until it has joined
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: main.yml
+    rolespec_validate: false  # as the include it was: no argument check
+  vars:
+    _cassandra_change_report_quiet: "{{ ansible_verbosity | int == 0 }}"  # the recap says it (-v shows it)
+    cassandra_service_state: started
+
+# --check upgrades nothing: no new version to find
+- name: Read the version it runs
+  ansible.builtin.command: "{{ _cassandra_service_nodetool }} version"
+  register: cassandra_upgrade_version
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Check it runs the target version
+  ansible.builtin.assert:
+    that: >-
+      cassandra_upgrade_version.stdout is search('ReleaseVersion: ' ~ cassandra_package_version | regex_escape ~ '$', multiline=True)
+    fail_msg: "{{ inventory_hostname }} runs {{ cassandra_upgrade_version.stdout | default('') | trim }}, not {{ cassandra_package_version }}"
+    quiet: true
+  when: not ansible_check_mode
+
+# the versions are mixed from here until the last node: the plays' cassandra_allow_mixed_versions reads it
+- name: Note it as upgraded
+  ansible.builtin.set_fact:
+    cassandra_upgrade_done: true
+  when: not ansible_check_mode

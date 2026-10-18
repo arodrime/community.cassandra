@@ -15,7 +15,8 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 @pytest.mark.parametrize("playbook, group, count", [("apply_config.yml", "cassandra_apply_config_True", 2),
                                                     ("apply_config.yml", "cassandra_apply_config_batch_True", 2),
-                                                    ("apply_config.yml", "cassandra_apply_config_os_True", 1)])
+                                                    ("apply_config.yml", "cassandra_apply_config_os_True", 1),
+                                                    ("update_java.yml", "cassandra_update_java_True", 2)])
 def test_the_step_plays_take_a_list_of_hosts(playbook, group, count):
     with open(os.path.join(TOP, "playbooks", playbook), encoding="utf-8") as f:
         plays = yaml.safe_load(f)

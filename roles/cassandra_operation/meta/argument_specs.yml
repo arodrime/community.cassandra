@@ -56,6 +56,39 @@ argument_specs:
         description:
           - Go on although the cluster is not healthy. Risky, a second replica
             down can make data unavailable.
+      cassandra_clock_max_offset_ms:
+        type: int
+        default: 50
+        description:
+          - Clocks (the C(sync_clocks) playbook, and the check before C(create_cluster)
+            starts nodes). A node is in sync when its time sync daemon
+            says it is synchronised and its offset plus the daemon's error bound
+            (root delay and dispersion) is within this many milliseconds.
+          - A node no daemon reports on (a container, its clock the host's) is
+            compared with the others by dates collected over SSH, a coarse
+            measure (only a gap over a second counts there).
+      cassandra_clock_step_ms:
+        type: int
+        default: 400
+        description:
+          - A clock correction over this many milliseconds steps the clock instead
+            of slewing it (systemd-timesyncd steps past 400 ms). On a node where
+            Cassandra runs, C(sync_clocks) steps it in a restart window (drain,
+            stop, step, start), one node at a time.
+      cassandra_clock_sync_timeout:
+        type: int
+        default: 180
+        description:
+          - Seconds to wait for a time sync daemon just started to synchronise and
+            converge (its error bound shrinks with its first samples; chrony polls
+            about every 64 s at first).
+      cassandra_clock_check:
+        type: bool
+        default: true
+        description:
+          - Check the clocks before C(create_cluster) starts nodes
+            (refused when not in sync, nothing started). V(false) skips it, for
+            clocks kept in sync by other means.
       cassandra_operation_confirm:
         type: bool
         default: true
@@ -75,6 +108,17 @@ argument_specs:
         description:
           - Resume the latest interrupted rolling operation of this cluster,
             skipping the nodes already done.
+      cassandra_upgrade_sstables_jobs:
+        type: int
+        default: 2
+        description:
+          - The C(upgrade) playbook's C(sstables) phase, C(nodetool upgradesstables) one node at a time -
+            sstables rewritten at once (nodetool's default); V(0) uses every compaction thread.
+      cassandra_upgrade_sstables_timeout:
+        type: int
+        default: 86400
+        description:
+          - Seconds one node's C(nodetool upgradesstables) may take.
       cassandra_rolling_progress_dir:
         type: path
         default: ""

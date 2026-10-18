@@ -96,28 +96,53 @@
 
 # Cassandra and nodetool run the default java: with several JDKs installed
 # (e.g. while moving to another Java), it must be this one
-- name: List the installed Javas
-  ansible.builtin.command: "{{ 'update-alternatives' if ansible_facts['os_family'] == 'Debian' else 'alternatives' }} --display java"
-  register: cassandra_java_alternatives
-  changed_when: false
-  failed_when: false
-  check_mode: false
+- name: Make the Java package's java the default java
   when:
     - cassandra_install_java | bool
     - _cassandra_java_home == ''
     - cassandra_java_set_default | bool
-
-- name: Make it the default java
-  community.general.alternatives:
-    name: java
-    path: "{{ _path }}"
   vars:
+    # the package's own java among the alternatives (a temurin or zulu path does not name java-<N>), else one that does
     _path: >-
       {{ cassandra_java_alternatives.stdout_lines | default([])
-         | select('match', '^/\S*java-(1\.)?' ~ cassandra_java_version ~ '[.-]\S*/bin/java ')
-         | map('regex_replace', ' .*$', '') | first | default('') }}
-  when:
-    - cassandra_install_java | bool
-    - _cassandra_java_home == ''
-    - cassandra_java_set_default | bool
-    - _path != ''
+         | community.cassandra.cassandra_java_alternative(cassandra_java_files.stdout_lines | default([]), cassandra_java_version) }}
+  block:
+    - name: List the installed Javas
+      ansible.builtin.command: "{{ 'update-alternatives' if ansible_facts['os_family'] == 'Debian' else 'alternatives' }} --display java"
+      register: cassandra_java_alternatives
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: List the files of the Java package
+      ansible.builtin.command:
+        argv: >-
+          {{ (['dpkg', '-L'] if ansible_facts['os_family'] == 'Debian' else ['rpm', '-ql'])
+             + [cassandra_java_package] | flatten | map('regex_replace', '[=<>].*$', '') | list }}
+      register: cassandra_java_files
+      changed_when: false
+      failed_when: false  # not installed yet under --check
+      check_mode: false
+
+    - name: Stop when its java is not among the alternatives
+      ansible.builtin.assert:
+        that: _path != ''
+        fail_msg: >-
+          {{ cassandra_java_package }} is installed, but no java the alternatives list is its own, nor one named
+          java-{{ cassandra_java_version }} ({{ _entries | join(', ') if _entries else 'no alternative' }}).
+          Set cassandra_java_home to its home (made the default java the way a tarball is), or register it by hand
+          ({{ _command }} --install /usr/bin/java java <its home>/bin/java 1, then {{ _command }} --set java <its home>/bin/java)
+          and run this again.
+        quiet: true
+      vars:
+        _command: "{{ 'update-alternatives' if ansible_facts['os_family'] == 'Debian' else 'alternatives' }}"
+        _entries: "{{ cassandra_java_alternatives.stdout_lines | default([]) | select('match', '^/') | map('regex_replace', ' .*$', '') | list }}"
+      when:
+        - not ansible_check_mode  # the package may not be installed yet
+        - cassandra_java_files.rc | default(1) == 0  # nor when it is not (offline: the refusal below says it)
+
+    - name: Make it the default java
+      community.general.alternatives:
+        name: java
+        path: "{{ _path }}"
+      when: _path != ''

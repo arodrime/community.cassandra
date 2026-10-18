@@ -1,8 +1,9 @@
 ---
 # cassandra_target_nodes, the nodes an operation targets, checked before
 # anything is done (hosts_check.yml, preflight). _cassandra_preflight_target
-# says what the playbook does with them: status (the nodes to read the ring
-# from); unset, it takes none.
+# says what the playbook does with them: canary (upgrade: the node of its
+# canary phase) or status (the nodes to read the ring from); unset, it takes
+# none.
 - name: No unknown variable, none under a former name
   ansible.builtin.import_tasks: variables_check.yml
 
@@ -10,12 +11,17 @@
   ansible.builtin.assert:
     that: >-
       not _given
-      or (cassandra_target_nodes is string and _kind != '' and _hosts | length > 0)
+      or (cassandra_target_nodes is string and _kind != '' and _hosts | length > 0
+          and (_kind != 'canary' or cassandra_upgrade_phase | default('') == 'canary'))
     fail_msg: >-
       {{ '' if not _given
          else ('cassandra_target_nodes is a string: hosts or groups, comma-separated.') if cassandra_target_nodes is not string
          else ('This playbook takes no cassandra_target_nodes (it runs on the whole group, or on what its own variables'
           ~ ' name): run it without.') if _kind == ''
+         else ('cassandra_target_nodes picks the node of the canary phase (cassandra_upgrade_phase=canary): run '
+               ~ (('phase ' ~ cassandra_upgrade_phase) if cassandra_upgrade_phase | default('') else 'the others')
+               ~ ' without it.') if _kind == 'canary'
+                 and cassandra_upgrade_phase | default('') != 'canary'
          else ('cassandra_target_nodes: ' ~ cassandra_target_nodes | default('') | string ~ ' matches no host of the inventory.') }}
       Nothing was changed.
     quiet: true

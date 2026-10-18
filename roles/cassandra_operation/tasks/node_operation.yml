@@ -1,9 +1,9 @@
 ---
 # One node of a rolling operation: cluster health, the action
-# (action_<cassandra_service_node_action>.yml: restart, reboot, apply_config),
-# cluster health again. On any failure, prints the summary and stops the whole
-# run: no other node is touched. Nodes listed in the progress file
-# (progress.yml) are skipped.
+# (action_<cassandra_service_node_action>.yml: restart, reboot, apply_config,
+# update_java, sync_clock, upgrade, upgradesstables), cluster health again. On
+# any failure, prints the summary and stops the whole run: no other node is
+# touched. Nodes listed in the progress file (progress.yml) are skipped.
 # A resumed run (cassandra_rolling_resume) of an operation that drains a node
 # and restarts it may find the node it stopped at (the first one not done)
 # drained or stopped, DN for the others: when its own netstats says so (Mode
@@ -17,6 +17,8 @@
 # runs it on the hosts of a play at once (no serial), for an action that takes
 # no node down (apply_config's writes with no restart, anything under --check):
 # one phase line for them, the ring and the schema read once for them.
+# cassandra_service_resume_hint: what to do once fixed, when the playbook has
+# its own way to resume (sync_clocks).
 - name: Skip a node the interrupted run already did
   ansible.builtin.set_fact:
     cassandra_op_result: "{{ cassandra_service_node_action }} skipped, done in the interrupted run"
@@ -28,7 +30,7 @@
     _cassandra_group_size: "{{ query('community.cassandra.cassandra_nodes') | length }}"
     _cassandra_resume_candidate: >-
       {{ cassandra_rolling_resume | default(false) | bool
-         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config']
+         and cassandra_service_node_action in ['restart', 'reboot', 'apply_config', 'update_java', 'sync_clock']
          and inventory_hostname == ansible_play_hosts_all | reject('in', cassandra_progress_done | default([])) | first | default('') }}
     _cassandra_resumed_node: >-
       {{ _cassandra_resume_candidate | bool
@@ -143,9 +145,9 @@
           {{ ('Stopped at ' ~ inventory_hostname ~ ' (' ~ ansible_failed_task.name | default('') ~ '): '
               ~ ('no node was restarted; the nodes done at the same time: as said above. '
                  if cassandra_service_node_batch | default(false) | bool else 'no other node was touched after it. ')
-              ~ ('Once fixed, resume with the same command plus -e cassandra_rolling_resume=true (progress: '
-                 ~ cassandra_progress_file ~ ')'
-                 if cassandra_progress_file is defined
-                 else 'Once fixed, check where the cluster stands (the status playbook) before running it again.'))
+              ~ cassandra_service_resume_hint | default('Once fixed, resume with the same command plus -e cassandra_rolling_resume=true'
+                                                        if cassandra_progress_file is defined
+                                                        else 'Once fixed, check where the cluster stands (the status playbook) before running it again.')
+              ~ ((' (progress: ' ~ cassandra_progress_file ~ ')') if cassandra_progress_file is defined else ''))
              if ansible_failed_task is defined or not cassandra_service_node_batch | default(false) | bool
              else 'Stopped with the node that failed.' }}

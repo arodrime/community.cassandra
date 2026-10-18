@@ -11,7 +11,8 @@
   vars:
     ansible_become: false  # an inventory ansible_become beats the become keyword
     _prefix: "{{ lookup('community.cassandra.cassandra_hosts') }}-{{ cassandra_service_node_action }}-"
-    _progress_resuming: "{{ cassandra_rolling_resume }}"
+    # a play that must start over whatever -e cassandra_rolling_resume says (extra vars beat the others)
+    _progress_resuming: "{{ _cassandra_progress_resume | default(cassandra_rolling_resume) }}"
   block:
     - name: Check the inventory's dir
       ansible.builtin.stat:

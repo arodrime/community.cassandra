@@ -19,6 +19,18 @@
     - _cassandra_restart_timesync | default(false) | bool or _cassandra_restart_disks | default(false) | bool
     - not ansible_check_mode
 
+# a restart with something done while Cassandra is stopped (sync_clocks steps the clock: action_sync_clock.yml)
+- name: Do what is done while it is stopped
+  when: _cassandra_service_while_stopped | default('') | length > 0
+  block:
+    - name: Stop cassandra
+      ansible.builtin.systemd_service:
+        name: cassandra
+        state: stopped
+
+    - name: Run what is done while it is stopped
+      ansible.builtin.include_tasks: "{{ _cassandra_service_while_stopped }}"
+
 - name: Restart it and wait until it has joined
   ansible.builtin.include_role:
     name: community.cassandra.cassandra_service

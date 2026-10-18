@@ -36,6 +36,8 @@ cassandra_token_allow_partial: false
 # the words of an action in a --check result ("would restart")
 _cassandra_service_would:
   apply_config: apply the config
+  update_java: update Java
+  upgradesstables: upgrade the SSTables
 
 # The screens of long operations (screen.yml: session=) warn when the
 # controller's shell is not inside tmux or screen (a lost SSH session would stop the run)
@@ -49,6 +51,20 @@ _cassandra_session_warning: >-
 cassandra_service_health_timeout: 600  # seconds
 cassandra_service_health_force: false
 
+# The clocks of the nodes (sync_clocks, and the check before create_cluster
+# starts nodes): a node is in sync when its time sync daemon reports it
+# synchronised, its offset plus the daemon's error bound within
+# cassandra_clock_max_offset_ms (milliseconds). A correction over
+# cassandra_clock_step_ms steps the clock rather than slewing it (timesyncd
+# steps past 400 ms): on a node where Cassandra runs, sync_clocks does it in a
+# restart window. cassandra_clock_sync_timeout: seconds to wait for a time sync
+# just started (chrony's error bound only shrinks with its first polls, ~64 s
+# apart). cassandra_clock_check: false skips the check before the starts.
+cassandra_clock_max_offset_ms: 50
+cassandra_clock_step_ms: 400
+cassandra_clock_sync_timeout: 180
+cassandra_clock_check: true
+
 # CQL access for the checks that read the schema (the keyspaces' replication
 # before a rack goes down), when authentication is on
 cassandra_cql_username: ""
@@ -56,6 +72,8 @@ cassandra_cql_password: ""
 # seeds_apply's mark of a seed list written while the node runs, removed once reloaded:
 # a rerun reloads it (an earlier run stopped before the reload, or its reload failed)
 _cassandra_service_seeds_reload_mark: /var/lib/cassandra/.ansible_seeds_reload_owed
+# sync_clocks' mark of a restart window open on a node (Cassandra stopped for its clock)
+_cassandra_clock_window_mark: /var/lib/cassandra/.ansible_clock_window
 # The files of the conf dir cassandra_config writes: the config a restart picks up
 # (and the JMX access file, in the conf dir on Debian and Ubuntu; not the password
 # file, read at each login: a new one needs no restart)
@@ -85,11 +103,18 @@ cassandra_rolling_resume: false
 cassandra_rolling_progress_dir: ""
 cassandra_rolling_progress_days: 30
 
+# The upgrade playbook's sstables phase (nodetool upgradesstables, one node at a
+# time): sstables rewritten at once (nodetool's default; 0: every compaction
+# thread), and how long one node may take (seconds)
+cassandra_upgrade_sstables_jobs: 2
+cassandra_upgrade_sstables_timeout: 86400
+
 # The variables the playbooks are run with (-e): a name set close to one of them
 # is pointed out (hosts_check.yml), preflight warns about cassandra_*
 # variables no role or playbook knows, and a -e one under a prefix of the
 # collection that none knows stops the run (variables_check.yml; -e
 # cassandra_allow_unknown_variables=true lets it through)
 _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassandra_target_dc, cassandra_target_rack,
-                                cassandra_rolling_resume, cassandra_rolling_mode, cassandra_status_raw, cassandra_allow_down_nodes,
-                                cassandra_accept_default_identity, cassandra_allow_unknown_variables]
+                                cassandra_upgrade_phase, cassandra_rolling_resume, cassandra_rolling_mode, cassandra_status_raw,
+                                cassandra_allow_down_nodes, cassandra_allow_mixed_versions, cassandra_accept_default_identity,
+                                cassandra_allow_unknown_variables]

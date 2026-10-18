@@ -376,11 +376,14 @@
 
         - name: Every seed is up
           ansible.builtin.assert:
-            # a resumed rolling run: a member drained or stopped by the interrupted run; apply_config: a member
-            # of this run not running, which it writes (each node's own check before it stops on any other)
+            # a resumed rolling run: a member drained or stopped by the interrupted run; sync_clocks: any member
+            # down (e.g. a window left open, ended first; the check before each window stops on any other node
+            # down); apply_config: a member of this run not running, which it writes (each node's own check
+            # before it stops on any other)
             that: >-
               _addr in _up
               or (cassandra_rolling_resume | default(false) | bool and _addr in _all)
+              or (_cassandra_preflight_members_down_ok | default(false) | bool and _addr in _all)
               or (_cassandra_preflight_seeds_down_ok | default(false) | bool and _addr in _all and _addr in _stopped)
             fail_msg: >-
               Seed {{ item }} ({{ _addr }}) is not an up member of the cluster (nodetool status on {{ _from }}).

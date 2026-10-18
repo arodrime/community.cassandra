@@ -1,0 +1,335 @@
+---
+# Check the clock of every node and bring time sync up where it is missing.
+#
+#   ansible-playbook community.cassandra.sync_clocks --check
+#
+# Each node's clock as its time sync daemon reports it, with a verdict; --check
+# changes nothing. One screen, one question; small corrections are made live,
+# a running node whose clock needs a step gets a restart window, one node at a
+# time. What it cannot fix is said, to fix by hand; it schedules nothing.
+#
+# Re-running is safe: the clocks are read again, a window left open first.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    # any member seed down (e.g. one an interrupted window left drained or stopped): let through, the check before
+    # each window stops on any node down but that window's own
+    _cassandra_preflight_members_down_ok: true
+
+- name: Read the clocks
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  any_errors_fatal: true  # a node unreachable: none is changed
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Load the cassandra_service and cassandra_operation defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_service, cassandra_operation]
+
+    - name: Find the running Cassandra
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: jvm_started.yml
+
+    - name: Note where Cassandra runs
+      ansible.builtin.set_fact:
+        _cassandra_clock_running: "{{ cassandra_jvm.pid is defined }}"
+
+    # chrony, systemd-timesyncd or ntpd: synchronised, source, offset and error
+    # bound, read on every node at once. In sync: synchronised to a source, the
+    # offset plus the daemon's error bound within -e cassandra_clock_max_offset_ms=<ms>.
+    # The sources of the nodes are compared: unrelated ones, a WARNING. A node
+    # with no daemon to ask (a container: the host's clock) is compared with the
+    # others by dates collected over SSH, coarsely (a gap over a second counts).
+    - name: Read and compare the clocks
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: clocks_read.yml
+      vars:
+        _cassandra_clock_query: true  # chronyd -Q where chrony is installed but no daemon runs
+
+    # a restart window an interrupted run left open (its mark): the window again, which ends it (Cassandra
+    # started, or drained and restarted); never on a container (its clock is the host's). The mark on a node that
+    # runs with its clock in sync (the run interrupted after the start, or the node brought back by another
+    # playbook) is stale: removed (after the question), no window
+    - name: Note what this node needs
+      ansible.builtin.set_fact:
+        _cassandra_clock_verdict: "{{ _v }}"
+        _cassandra_clock_stale_mark: "{{ _stale }}"
+        _cassandra_clock_action: >-
+          {{ 'unread' if not _cassandra_clock_read_ok | bool
+             else 'window' if _cassandra_clock.window and not _cassandra_clock.container and not _stale
+             else _v.action | default('none') }}
+      vars:
+        _v: "{{ _cassandra_clock_verdicts.nodes | selectattr('node', 'equalto', inventory_hostname) | first | default({}) }}"
+        _stale: "{{ _cassandra_clock.window and _cassandra_clock_running | bool and _v.verdict | default('') == 'ok' }}"
+
+    - name: Refuse to go on when a clock could not be read
+      ansible.builtin.assert:
+        that: _unread | length == 0
+        fail_msg: >-
+          REFUSED  sync_clocks  the clock of {{ _unread | join(', ') }} could not be read{{ (': ' ~ _why | join('; '))
+          if _why else '' }}. Nothing was changed.
+        quiet: true
+      run_once: true
+      when: not ansible_check_mode  # --check: said in the recap
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _unread: "{{ ansible_play_hosts | map('extract', hostvars) | selectattr('_cassandra_clock_action', 'equalto', 'unread') | map(attribute='inventory_hostname') | list }}"
+        _why: >-
+          {{ _unread | map('extract', hostvars, ['_cassandra_clock_last', 'msg']) | map('default', '') | map('string')
+             | map('regex_replace', '\s+', ' ') | map('trim') | select | list }}
+
+    # live, on those nodes at once: where Cassandra does not run, and on a
+    # running node whose correction is small (within -e cassandra_clock_step_ms=<ms>,
+    # and within what its daemon slews by itself: the daemon slews it). A running
+    # node that needs a step (more, or unknown: a step moves the timestamps
+    # Cassandra writes) gets a restart window instead; ntpd is never stepped
+    # here (to fix by hand: its own start with -g, or chrony). A source that is
+    # unreachable or missing, a container's clock (the host's), a time sync left
+    # alone: said, to fix by hand, the run ends failed. Not monitoring: it
+    # schedules and alerts nothing.
+    - name: Group the nodes set live
+      ansible.builtin.group_by:
+        key: "cassandra_sync_clock_live_{{ _cassandra_clock_action in ['start', 'step', 'slew'] }}"
+      changed_when: false
+
+    - name: Group the nodes set in a restart window
+      ansible.builtin.group_by:
+        key: "cassandra_sync_clock_window_{{ _cassandra_clock_action == 'window' }}"
+      changed_when: false
+
+    - name: Group the windows an interrupted run left open
+      ansible.builtin.group_by:
+        key: "cassandra_sync_clock_window_left_{{ _cassandra_clock.window | bool and _cassandra_clock_action == 'window' }}"
+      changed_when: false
+
+    - name: Group the nodes with a stale window mark
+      ansible.builtin.group_by:
+        key: "cassandra_sync_clock_stale_mark_{{ _cassandra_clock_stale_mark | bool }}"
+      changed_when: false
+
+    # what the recap says of the nodes no play below touches (--check: of all of them)
+    - name: Note what is done to this node
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ 'already in sync' if _cassandra_clock_action == 'none'
+             else 'sync_clock refused: its clock could not be read' if _cassandra_clock_action == 'unread'
+             else ('would need a fix by hand: ' ~ _cassandra_clock_verdict.why) if _cassandra_clock_action == 'manual' and ansible_check_mode
+             else ('sync_clock refused: ' ~ _cassandra_clock_verdict.why ~ ' (to fix by hand)') if _cassandra_clock_action == 'manual'
+             else ('would ' ~ _would[_cassandra_clock_action] ~ ' (--check: nothing was changed)') if ansible_check_mode
+             else 'not reached' }}
+      vars:
+        _would:
+          start: start time sync
+          step: start time sync where missing and step the clock (Cassandra not running)
+          slew: wait while its daemon corrects the offset
+          window: set the clock in a restart window
+
+    # a node whose clock is ahead is said in a warning: what it stamped meanwhile
+    # carries future timestamps
+    - name: Show the clocks and confirm the run
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: screen.yml
+      vars:
+        _todo: >-
+          {{ (groups['cassandra_sync_clock_live_True'] | default([])) + (groups['cassandra_sync_clock_window_True'] | default([])) }}
+        _stale: "{{ groups['cassandra_sync_clock_stale_mark_True'] | default([]) }}"
+        cassandra_screen_question: >-
+          {{ ('Set the clocks of ' ~ _todo | join(', ') ~ '?') if _todo | length > 0
+             else ('Remove the window mark of ' ~ _stale | join(', ') ~ '?') if _stale | length > 0 else '' }}
+        cassandra_screen_session_warning: "{{ groups['cassandra_sync_clock_window_True'] | default([]) | length > 0 }}"
+        cassandra_screen:
+          operation: sync_clocks
+          summary: >-
+            {{ ('set the clocks of ' ~ _todo | join(', ')) if _todo | length > 0
+               else 'every clock in sync' if _cassandra_clock_verdicts.ok else 'nothing it can fix' }}
+          intro:
+            - >-
+              Each node's clock as its time sync daemon reports it. In sync: synchronised to a source, the offset plus
+              the daemon's error bound within {{ cassandra_clock_max_offset_ms }} ms (cassandra_clock_max_offset_ms).
+          after: >-
+            {{ [{'pre': _cassandra_clock_verdicts | community.cassandra.cassandra_clock_lines}]
+               + _cassandra_clock_verdicts.notes
+               + ((['Live, on those nodes at once: ' ~ groups['cassandra_sync_clock_live_True'] | join(', ') ~ '.'])
+                  if groups['cassandra_sync_clock_live_True'] | default([]) | length > 0 else [])
+               + ((['Left open by an interrupted run (Cassandra drained or stopped there), ended first: '
+                    ~ groups['cassandra_sync_clock_window_left_True'] | join(', ') ~ '.'])
+                  if groups['cassandra_sync_clock_window_left_True'] | default([]) | length > 0 else [])
+               + ((['In a restart window, one node at a time (cluster checked, drained, stopped, clock set, started,'
+                    ~ ' cluster checked): ' ~ groups['cassandra_sync_clock_window_True'] | join(', ') ~ '.'])
+                  if groups['cassandra_sync_clock_window_True'] | default([]) | length > 0 else [])
+               + ((['A window mark of an interrupted run (the node runs, its clock in sync), '
+                    ~ ('would be removed (--check)' if ansible_check_mode else 'removed') ~ ': ' ~ _stale | join(', ') ~ '.'])
+                  if _stale | length > 0 else []) }}
+          warnings:
+            - label: clocks
+              each: "{{ _cassandra_clock_verdicts.warnings }}"
+
+- name: Set the clocks live
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes')
+       | select('in', (groups['cassandra_sync_clock_live_True'] | default([])) + (groups['cassandra_sync_clock_stale_mark_True'] | default([]))) | list }}
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # the stale mark (said on the screen): the node runs, its clock is in sync, no window
+    - name: Remove the window mark of an interrupted run
+      ansible.builtin.file:
+        path: "{{ _cassandra_clock_window_mark }}"
+        state: absent
+      when: _cassandra_clock_stale_mark | bool
+
+    - name: Note the mark is gone
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ 'would remove the window mark of an interrupted run (already in sync) (--check: nothing was changed)' if ansible_check_mode
+             else 'sync_clock skipped, already in sync: a window mark of an interrupted run removed' }}
+      when: _cassandra_clock_stale_mark | bool
+
+    # time sync set up the cassandra_linux way: installed unless cassandra_offline,
+    # enabled, started; no NTP server configured (the site's chrony.conf stays);
+    # cassandra_linux_timesync: false leaves a node alone.
+    # -e cassandra_clock_sync_timeout=<seconds>: how long to wait for a time sync to synchronise
+    - name: Set the clock of this node
+      when:
+        - not ansible_check_mode
+        - _cassandra_clock_action in ['start', 'step', 'slew']  # not a node here for its stale mark only
+      block:
+        - name: Note the start time
+          ansible.builtin.set_fact:
+            _cassandra_clock_start: "{{ now().timestamp() | int }}"
+
+        - name: Set the clock
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_operation
+            tasks_from: clock_fix.yml
+
+        - name: Say a correction its daemon finishes
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }}: correction in progress (slewing {{ ((_cassandra_clock.offset | abs) * 1000) | round(1) }} ms,
+              {{ _cassandra_clock.service }} finishes it in a few minutes).
+          when: "'slewing' in _cassandra_clock_did"
+          vars:
+            cassandra_output: true
+
+        - name: Record the result
+          ansible.builtin.set_fact:
+            cassandra_op_result: >-
+              {{ ('sync_clock FAILED: ' ~ _cassandra_clock_fix_error) if _cassandra_clock_fix_error | length > 0
+                 else 'clock_' ~ (_cassandra_clock_did | join('_') or 'slew')
+                      ~ ' done in '
+                      ~ (now().timestamp() | int - _cassandra_clock_start | int) ~ 's' }}
+
+# a fresh progress file every run: the clocks read again say what is left to do
+- name: Set up the progress file
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_sync_clock_window_True'] | default([])) | list }}"
+  gather_facts: false
+  become: true
+  vars:
+    cassandra_service_node_action: sync_clock
+    _cassandra_progress_resume: false
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: progress.yml
+      when: not ansible_check_mode
+
+# cluster checked, drained, stopped, time sync up and synchronised, the clock
+# stepped (chronyc makestep; systemd-timesyncd steps at its sync), started,
+# cluster checked again.
+# A window an interrupted run left open first: node_operation lets that one be
+# down (drained or stopped). An interrupted run: run it again, the same command
+# (the clocks read again say what is left; a node it left drained or stopped
+# gets its window again, started).
+- name: Set the clocks in a restart window, one node at a time
+  hosts: >-
+    {{ (groups['cassandra_sync_clock_window_left_True'] | default([]) | select('in', query('community.cassandra.cassandra_nodes')) | list)
+       + (query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_sync_clock_window_True'] | default([]))
+          | reject('in', groups['cassandra_sync_clock_window_left_True'] | default([])) | list) }}
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  become: true
+  vars:
+    # a window left open: that node may be down (node_operation's resumed node, the first one not done)
+    cassandra_rolling_resume: "{{ inventory_hostname in groups['cassandra_sync_clock_window_left_True'] | default([]) }}"
+    cassandra_service_resume_hint: >-
+      Once fixed, run sync_clocks again, the same command: the clocks are read again, a node left drained or stopped
+      gets its window first.
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Set the clock of this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: node_operation.yml
+      when: not ansible_check_mode  # the plan said what it would do
+      vars:
+        cassandra_service_node_action: sync_clock
+
+- name: Summary
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_operation: sync_clocks
+
+    - name: Fail when a clock is still not in sync
+      ansible.builtin.assert:
+        that: _left | length == 0
+        fail_msg: >-
+          Not in sync: {{ _left | join(', ') }} (see above). Once fixed, run sync_clocks again to check.
+        quiet: true
+      run_once: true
+      when: not ansible_check_mode
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _left: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_op_result', 'defined')
+             | selectattr('cassandra_op_result', 'search', '^sync_clock (FAILED|refused)')
+             | map(attribute='inventory_hostname') | list }}

@@ -1,0 +1,17 @@
+---
+# The clocks of the play's nodes, read at once (clock_probe.yml, its
+# _cassandra_clock_wait and _cassandra_clock_query passed through), then
+# compared once: _cassandra_clock_verdicts on every node (filter
+# cassandra_clock_verdicts). _cassandra_clock_running: whether Cassandra runs
+# on a node (false when unset). A node whose clock could not be read is left
+# out of the comparison (_cassandra_clock_read_ok false).
+- name: Read the clock
+  ansible.builtin.include_tasks: clock_probe.yml
+
+- name: Compare the clocks
+  ansible.builtin.set_fact:
+    _cassandra_clock_verdicts: >-
+      {{ _nodes | community.cassandra.cassandra_clock_verdicts(cassandra_clock_max_offset_ms, cassandra_clock_step_ms) }}
+  run_once: true
+  vars:
+    _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_clock_nodes(hostvars) }}"

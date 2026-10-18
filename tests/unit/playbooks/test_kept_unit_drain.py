@@ -205,12 +205,13 @@ def test_rack_failure_names_the_node_that_failed(node, failure, said):
     assert render(record["ansible.builtin.set_fact"]["cassandra_op_result"], item=node, ansible_failed_result=failure) == said
 
 
-@pytest.mark.parametrize("file, then", [("action_restart.yml", "restarted"), ("action_reboot.yml", "rebooted")])
+@pytest.mark.parametrize("file, then", [("action_restart.yml", "restarted"), ("action_reboot.yml", "rebooted"),
+                                        ("action_upgrade.yml", "flushed, then stopped")])
 def test_the_actions_drain_the_same_way(file, then):
     imports = [t for t in load("roles", "cassandra_operation", "tasks", file) if t.get("name") == "Drain the node"]
     assert imports[0]["ansible.builtin.import_tasks"] == "drain.yml"
     assert imports[0]["vars"]["_cassandra_service_drain_then"] == then
-    assert "when" in imports[0]
+    assert ("when" in imports[0]) is (file != "action_upgrade.yml")  # an upgrade always drains
 
 
 @pytest.mark.parametrize("result, resumed, stops, warns", [

@@ -51,6 +51,12 @@ def test_operation_summary_is_a_recap():
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("DONE  rolling_reboot  my_cluster")
     variables.update(ansible_check_mode=True)
     assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("CHECK  rolling_reboot  my_cluster")
+    # the playbook's own name (upgrade: its phases act as upgrade and upgradesstables), the hosts it gives
+    variables.update(cassandra_service_summary_operation="upgrade", cassandra_service_node_action="upgradesstables",
+                     cassandra_service_summary_hosts=["n1", "n2"])
+    variables["_results"] = render(task["vars"]["_results"], **variables)
+    assert [r["node"] for r in variables["_results"]] == ["n1", "n2"]
+    assert render(task["ansible.builtin.debug"]["msg"], **variables)[0].startswith("CHECK  upgrade  my_cluster")
 
 
 def test_health_check_report_inputs_are_a_list_and_a_dict():

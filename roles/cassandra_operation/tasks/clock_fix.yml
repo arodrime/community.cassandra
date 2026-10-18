@@ -1,0 +1,100 @@
+---
+# What sync_clocks does to the clock of one node, its plan in
+# _cassandra_clock_action: start (time sync brought up, cassandra_linux's way:
+# installed unless cassandra_offline, enabled, started; no NTP config written,
+# the site's stays), slew (its daemon corrects a small offset: waited for), step
+# (Cassandra not running there, or stopped by the restart window,
+# action_sync_clock.yml): time sync brought up where missing, synchronised,
+# then the clock stepped (chronyc makestep; systemd-timesyncd steps by itself
+# past 400 ms when it syncs, restarted). Then the clock is read again; still
+# not in sync, _cassandra_clock_fix_error says why: nothing fails here, so the
+# restart window starts Cassandra again first. _cassandra_clock_did: what was
+# done (timesync started, clock stepped, still slewing: a slew is the daemon's
+# own work, minutes long, not waited for), for the recap.
+- name: Forget an earlier error
+  ansible.builtin.set_fact:
+    _cassandra_clock_fix_error: ""
+    _cassandra_clock_was_active: "{{ _cassandra_clock.active }}"
+
+- name: Set the clock
+  vars:
+    _step: "{{ _cassandra_clock_action in ['step', 'window'] }}"
+    # a slew takes minutes: timesyncd and ntpd correct through the kernel at most 0.5 ms per second, chrony spreads
+    # the correction over about three polls. Not waited for: the daemon is at it, said as in progress
+    _slewing: >-
+      {{ _cassandra_clock.synchronised and _cassandra_clock.offset is not none
+         and (_cassandra_clock.offset | abs) <= (cassandra_clock_step_ms | int / 1000 if _cassandra_clock.daemon == 'chrony' else 0.4)
+         and not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms) }}
+  block:
+    - name: Bring time sync up
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_linux
+        tasks_from: timesync.yml
+      vars:
+        _cassandra_timesync_required: true  # offline with nothing installed: refused, not a warning
+      when: not _cassandra_clock.active
+
+    - name: Wait for its daemon to synchronise
+      ansible.builtin.include_tasks: clock_probe.yml
+      vars:
+        _cassandra_clock_wait: "{{ 0 if _cassandra_clock_action == 'slew' else cassandra_clock_sync_timeout }}"
+        _cassandra_clock_synchronised_only: "{{ _step }}"
+
+    - name: Step the clock (chrony)
+      ansible.builtin.command:
+        argv: [chronyc, makestep]
+      register: _cassandra_clock_makestep
+      changed_when: true
+      when:
+        - _step | bool
+        - _cassandra_clock.daemon == 'chrony'
+        - _cassandra_clock.synchronised
+        - not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+
+    # its first sync after a start steps an offset over 400 ms
+    - name: Step the clock (systemd-timesyncd)
+      ansible.builtin.systemd_service:
+        name: systemd-timesyncd
+        state: restarted
+      register: _cassandra_clock_timesyncd_step
+      when:
+        - _step | bool
+        - _cassandra_clock.daemon == 'timesyncd'
+        - not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+
+    # a step: waited for again (timesyncd reports its next poll's offset); else once, the wait above was it
+    - name: Read the clock again
+      ansible.builtin.include_tasks: clock_probe.yml
+      vars:
+        _cassandra_clock_wait: >-
+          {{ cassandra_clock_sync_timeout if _cassandra_clock_makestep is changed or _cassandra_clock_timesyncd_step is changed
+             else 0 }}
+      when: >-
+        _cassandra_clock_makestep is changed or _cassandra_clock_timesyncd_step is changed
+        or not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+
+    - name: Note a clock still not in sync
+      ansible.builtin.set_fact:
+        _cassandra_clock_fix_error: >-
+          clock still not in sync after waiting up to {{ cassandra_clock_sync_timeout }}s: {{ _v.text }}{{ (': ' ~ _v.why) if _v.why and _v.why not in _v.text else '' }}
+      vars:
+        _v: >-
+          {{ (([{'node': inventory_hostname, 'probe': _cassandra_clock}]
+               | community.cassandra.cassandra_clock_verdicts(cassandra_clock_max_offset_ms, cassandra_clock_step_ms)).nodes | first) }}
+      when:
+        - not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms)
+        - not _slewing | bool
+  rescue:
+    - name: Note why the clock could not be set
+      ansible.builtin.set_fact:
+        _cassandra_clock_fix_error: >-
+          {{ ansible_failed_task.name | default('') }}: {{ [ansible_failed_result.msg | default('')] | flatten | join(' ') }}
+  always:
+    - name: Note what was done
+      ansible.builtin.set_fact:
+        _cassandra_clock_did: >-
+          {{ (['start'] if not _cassandra_clock_was_active | bool and cassandra_timesync_service_result | default({}) is changed
+              else [])
+             + (['step'] if _cassandra_clock_makestep | default({}) is changed or _cassandra_clock_timesyncd_step | default({}) is changed
+                else [])
+             + (['slewing'] if _slewing | default(false) | bool and _cassandra_clock_fix_error == '' else []) }}

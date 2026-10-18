@@ -1,0 +1,23 @@
+---
+# Before a move to another Java or series (update_java, upgrade): the options
+# file the node then reads (jvm<N>-server.options) must not be one
+# cassandra_config leaves as it is (cassandra_config_keep_files; import_cluster
+# keeps one the running Java does not read, its options not imported): it would
+# be read as it is, its options set by hand (a heap maybe, which wins over
+# cassandra_heap_size), or another series' file.
+#   vars: _cassandra_java_options_now: the file the node reads now ('': not
+#         known, or another series')
+- name: The options file of the new Java is the role's
+  ansible.builtin.assert:
+    that: >-
+      _file == '' or _file == _cassandra_java_options_now | default('')
+      or _file not in cassandra_config_keep_files | default([])
+    fail_msg: >-
+      {{ inventory_hostname }}: {{ _file }} is in cassandra_config_keep_files: left as it is, Cassandra
+      {{ cassandra_version }} on Java {{ cassandra_java_version }} would read it as it is (options set by hand, not
+      imported, e.g. a heap that wins over cassandra_heap_size). Take it out of cassandra_config_keep_files (host_vars)
+      so that the role writes it (its extra options: {{ _file | community.cassandra.cassandra_jvm_options_variable }}),
+      then run again. Nothing was changed.
+    quiet: true
+  vars:
+    _file: "{{ cassandra_version | community.cassandra.cassandra_jvm_options_file(cassandra_java_version) }}"

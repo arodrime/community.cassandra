@@ -53,6 +53,8 @@ def find(tasks, name):
     ("restart", True, "would restart (--check: nothing was changed)"),
     ("reboot", True, "would reboot (--check: nothing was changed)"),
     ("apply_config", True, "would apply the config (--check: nothing was changed)"),
+    ("update_java", True, "would update Java (--check: nothing was changed)"),
+    ("upgradesstables", True, "would upgrade the SSTables (--check: nothing was changed)"),
     ("restart", False, "restart done in 12s"),
     ("reboot", False, "reboot done in 12s"),
 ])

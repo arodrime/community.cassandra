@@ -1,7 +1,7 @@
 ---
 # cassandra_java_version: a Java the series runs on, no JVM option it reads
 # that a move to it is refused with, and a tarball for it when tarballs are on
-# offer.
+# offer. Also run by update_java and upgrade before they change anything.
 - name: The series runs on this Java
   ansible.builtin.assert:
     that: _why == ''

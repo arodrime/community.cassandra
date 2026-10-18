@@ -1,0 +1,637 @@
+---
+# Upgrade a running cluster to the version in the inventory, one phase per run.
+#
+#   ansible-playbook community.cassandra.upgrade -e cassandra_upgrade_phase=preflight
+#
+# Set the target in the cluster's group_vars first, then run the phases in
+# order: preflight, prepare, canary, rolling, sstables, cleanup. Each one says
+# the next; preflight changes nothing.
+#
+# The canary and rolling phases upgrade one node at a time, the cluster checked
+# around each one; a node already upgraded is skipped, so re-running resumes.
+- name: Preflight
+  ansible.builtin.import_playbook: community.cassandra.preflight
+  vars:
+    # the cluster is mixed from the canary's restart to the end of the rolling phase (the canary phase starts on
+    # one version: checked strictly)
+    cassandra_allow_mixed_versions: "{{ cassandra_upgrade_phase | default('') in ['rolling', 'sstables', 'cleanup'] }}"
+    _cassandra_preflight_target: canary  # what cassandra_target_nodes is
+
+- name: Upgrade checks
+  hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
+  any_errors_fatal: true  # one node refused: none is changed
+  gather_facts: true
+  gather_subset: [network, hardware]
+  become: true
+  vars:
+    _phase: "{{ cassandra_upgrade_phase | default('') }}"
+    _paths: {40x: [41x, 50x], 41x: [50x], 50x: []}
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # the phases, in order:
+    #   preflight  checks everything and shows the target config; changes nothing
+    #   prepare    snapshot + config copy on every node; asks (not under
+    #              --check) to confirm backups and repairs are paused and the
+    #              schema frozen
+    #   canary     upgrades one node, then stops: watch it
+    #   rolling    upgrades the others, one node at a time
+    #   sstables   rewrites the sstables in the new format, node by node
+    #              (cassandra_upgrade_sstables_jobs, cassandra_upgrade_sstables_timeout)
+    #   cleanup    removes the pre-upgrade snapshots
+    - name: Check the phase
+      ansible.builtin.assert:
+        that: _phase in ['preflight', 'prepare', 'canary', 'rolling', 'sstables', 'cleanup']
+        fail_msg: "Set cassandra_upgrade_phase: preflight, prepare, canary, rolling, sstables or cleanup"
+        quiet: true
+      run_once: true
+
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_install, cassandra_config, cassandra_service, cassandra_operation]
+
+    - name: An upgrade downloads the new packages
+      ansible.builtin.assert:
+        that: _offline | length == 0
+        fail_msg: >-
+          cassandra_offline is set on {{ _offline | join(', ') }}: an upgrade installs the new Cassandra packages,
+          which needs a repository (an internal mirror is enough: see the guide's air-gapped section). Nothing was done.
+        quiet: true
+      vars:
+        _offline: >-
+          {%- set out = [] -%}
+          {%- for host in ansible_play_hosts_all if hostvars[host].cassandra_offline | default(false) | bool -%}
+          {%-   set _ = out.append(host) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+      when: _phase in ['prepare', 'canary', 'rolling']
+
+    # Where the repositories are not managed by the roles (e.g. a node import_cluster
+    # found set up another way), the upgrade adds none: the target must be there already
+    - name: Look for the target packages in the repositories the roles don't manage
+      ansible.builtin.shell: >-
+        {% if ansible_facts['os_family'] == 'Debian' %}
+        apt-cache madison cassandra | awk -F'|' -v v={{ cassandra_package_version | quote }} '{gsub(/ /, "", $2)} $2 == v || index($2, v "-") == 1 {f=1} END {exit !f}'
+        {% else %}
+        dnf -q repoquery 'cassandra-{{ cassandra_package_version }}' 2>/dev/null | grep -q .
+        {% endif %}
+      register: cassandra_upgrade_available
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - _phase in ['preflight', 'prepare', 'canary', 'rolling']
+        - not cassandra_repository_manage | default(true) | bool
+        - not cassandra_offline | default(false) | bool
+        - cassandra_install_method == 'repository'
+
+    - name: The target packages are available
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          cassandra_repository_manage is false on {{ _missing | join(', ') }} (repositories set up another way, e.g.
+          found so by import_cluster) and they have no cassandra {{ cassandra_package_version }}: add the target
+          series' repository there, or remove cassandra_repository_manage from their host_vars so that the upgrade
+          adds it. Nothing was done.
+        quiet: true
+      vars:
+        _missing: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_available', 'defined')
+             | selectattr('cassandra_upgrade_available.rc', 'defined') | rejectattr('cassandra_upgrade_available.rc', 'equalto', 0)
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+
+    # cassandra_install_method packages: the node is stopped before its files
+    # are downloaded, they must be there first
+    - name: Look for the target package files
+      ansible.builtin.uri:
+        url: "{{ cassandra_install_url | regex_replace('/+$', '') }}/{{ cassandra_install_package_file | replace('{name}', item) | replace('{version}', cassandra_package_version) }}"
+        headers:
+          Range: bytes=0-0
+        status_code: [200, 206]
+        url_username: "{{ cassandra_install_username | default(omit, true) }}"
+        url_password: "{{ cassandra_install_password | default(omit, true) }}"
+        force_basic_auth: "{{ cassandra_install_username != '' }}"
+        timeout: 30
+      loop: "{{ _cassandra_packages }}"
+      register: cassandra_upgrade_files
+      failed_when: false
+      check_mode: false
+      no_log: "{{ cassandra_install_url is search('@|[?]') }}"  # credentials or a signature in the URL
+      when:
+        - _phase in ['preflight', 'prepare', 'canary', 'rolling']
+        - cassandra_install_method == 'packages'
+        - not cassandra_offline | default(false) | bool
+
+    - name: The target package files are there
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: >-
+          cassandra_install_method is packages and {{ _missing | join(', ') }} can't get the files of
+          {{ cassandra_package_version }} from cassandra_install_url (HTTP {{ _codes | join(', ') }}): put them there,
+          or check the URL and the credentials. Nothing was done.
+        quiet: true
+      vars:
+        _missing: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_files', 'defined')
+                if h.cassandra_upgrade_files.results | default([]) | rejectattr('skipped', 'defined')
+                   | rejectattr('status', 'in', [200, 206]) | list -%}
+          {%-   set _ = out.append(h.inventory_hostname) -%}
+          {%- endfor -%}
+          {{ out }}
+        # of the checks that ran (skipped ones, e.g. the repository method, have no status)
+        _codes: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('cassandra_upgrade_files', 'defined')
+             | map(attribute='cassandra_upgrade_files.results', default=[]) | flatten
+             | rejectattr('skipped', 'defined') | rejectattr('status', 'in', [200, 206]) | map(attribute='status') | unique | list }}
+      run_once: true
+
+    - name: Read the version each node runs
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} version"
+      register: cassandra_upgrade_running
+      changed_when: false
+      failed_when: false  # a node not running: said below
+      check_mode: false  # a read
+
+    # (an interrupted run may have left a node stopped: its package upgraded, its start failed, or Ctrl-C; or JMX
+    # refuses nodetool there: its last error line says which)
+    - name: Every node answers nodetool
+      ansible.builtin.assert:
+        that: _failed | length == 0
+        fail_msg: >-
+          {{ _failed | join('; ') }}. A node not running Cassandra: start it (systemctl start cassandra there, or
+          apply_config --limit <node>, which starts a node whose unit failed), then run this phase again; a node
+          already upgraded is skipped. Nothing was done.
+        quiet: true
+      vars:
+        _failed: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_upgrade_running.rc', 'defined')
+                | rejectattr('cassandra_upgrade_running.rc', 'equalto', 0) -%}
+          {%-   set said = h.cassandra_upgrade_running.stderr | default('') | trim or h.cassandra_upgrade_running.stdout | default('') | trim or 'no output' -%}
+          {%-   set _ = out.append('nodetool version failed on ' ~ h.inventory_hostname ~ ' (' ~ said.splitlines() | last ~ ')') -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: Note the versions
+      ansible.builtin.set_fact:
+        cassandra_upgrade_from: "{{ _running }}"
+        cassandra_upgrade_from_series: "{{ _running.split('.')[:2] | join('') ~ 'x' }}"
+        cassandra_upgrade_done: "{{ _running == cassandra_package_version }}"
+      vars:
+        _running: "{{ cassandra_upgrade_running.stdout | regex_search('ReleaseVersion: (\\S+)', '\\1') | first }}"
+
+    # the canary and rolling plays run on some of them: the mixed-versions flag reads them all
+    - name: Note the nodes of the run
+      ansible.builtin.set_fact:
+        cassandra_upgrade_run_nodes: "{{ ansible_play_hosts_all }}"
+
+    - name: This playbook upgrades from the series it knows
+      ansible.builtin.assert:
+        that: cassandra_upgrade_from_series in _paths
+        fail_msg: >-
+          {{ inventory_hostname }} runs {{ cassandra_upgrade_from }} (series {{ cassandra_upgrade_from_series }}):
+          this playbook upgrades from {{ _paths | join(', ') }} only. Nothing was done.
+        quiet: true
+
+    # the target, in the cluster's group_vars: cassandra_version (series, e.g.
+    # 50x), cassandra_package_version (e.g. 5.0.4) and cassandra_java_version (the
+    # Java to run: keep the current one, or change it in the same pass)
+    - name: Check the target
+      ansible.builtin.assert:
+        that:
+          - cassandra_package_version | default('') | length > 0
+          - "'cassandra_java_version' in hostvars[inventory_hostname]"
+          - cassandra_version in _paths[cassandra_upgrade_from_series] + [cassandra_upgrade_from_series]
+          - cassandra_upgrade_done | bool or cassandra_package_version is version(cassandra_upgrade_from, '>')
+        fail_msg: >-
+          Set the target in the inventory: cassandra_package_version (exact version, newer than the
+          {{ cassandra_upgrade_from }} this node runs), cassandra_version (from {{ cassandra_upgrade_from_series }}:
+          {{ (_paths[cassandra_upgrade_from_series] + [cassandra_upgrade_from_series]) | join(' or ') }}) and
+          cassandra_java_version, explicitly (one {{ cassandra_version }} runs on: {{ cassandra_version | community.cassandra.cassandra_java_supported | join(', ') }};
+          left to the default, it would change with the series).
+        quiet: true
+
+    - name: The target series runs on the target Java, a tarball on offer for it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_check.yml
+
+    # another series reads its options file as it is when cassandra_config keeps it
+    - name: The target reads an options file the role writes
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_install
+        tasks_from: java_options_kept.yml
+      vars:
+        _cassandra_java_options_now: ""
+      when: cassandra_upgrade_from_series != cassandra_version
+
+    - name: One version before the upgrade
+      ansible.builtin.assert:
+        that: ansible_play_hosts | map('extract', hostvars, 'cassandra_upgrade_from') | unique | list | length == 1
+        fail_msg: >-
+          The cluster runs several versions ({{ dict(ansible_play_hosts | zip(ansible_play_hosts
+          | map('extract', hostvars, 'cassandra_upgrade_from'))) }}): an earlier upgrade is not finished.
+        quiet: true
+      run_once: true
+      when: _phase in ['preflight', 'prepare', 'canary']
+
+    # 4.x -> 5.0: cassandra_storage_compatibility_mode: CASSANDRA_4 until the
+    # rolling phase is done, then UPGRADING, then NONE, each time in the inventory
+    # then with apply_config. NONE is the point of no return.
+    - name: 4.x to 5.0 keeps the 4.x formats until every node is upgraded
+      ansible.builtin.assert:
+        that: hostvars[inventory_hostname].cassandra_storage_compatibility_mode | default('') == 'CASSANDRA_4'
+        fail_msg: >-
+          Upgrading to 5.0 from {{ cassandra_upgrade_from }}: set cassandra_storage_compatibility_mode: CASSANDRA_4 in the
+          inventory for the whole upgrade. 5.0 nodes then keep writing what 4.x nodes can read; move to UPGRADING,
+          then NONE, only once every node runs 5.0 (with apply_config).
+        quiet: true
+      when:
+        - cassandra_version == '50x'
+        - cassandra_upgrade_from_series != '50x'
+        - _phase in ['preflight', 'prepare', 'canary', 'rolling']
+
+    - name: Settings the target series ignores
+      ansible.builtin.assert:
+        that: _ignored | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} sets {{ _ignored | join(', ') }}, which {{ cassandra_version }} does not have
+          (renamed or removed): replace them with their {{ cassandra_version }} names (see the cassandra_config defaults).
+        quiet: true
+      vars:
+        _ignored: >-
+          {{ hostvars[inventory_hostname] | select('match', '^cassandra_') | list
+             | community.cassandra.cassandra_config_ignored_vars(cassandra_version) }}
+      when: _phase in ['preflight', 'prepare', 'canary', 'rolling']
+
+    - name: Free space on the data disk
+      ansible.builtin.debug:
+        msg: >-
+          WARNING - {{ _mount.mount }} has {{ (100 * _mount.size_available / _mount.size_total) | round | int }}% free:
+          the snapshot shares files at first, but sstables rewritten after the upgrade need room.
+      vars:
+        cassandra_output: true
+        # the mount point holding cassandra_data_dir: the longest one that is a prefix of it
+        _mount: >-
+          {%- set best = {'mount': '', 'size_available': 1, 'size_total': 1} -%}
+          {%- for m in ansible_facts.mounts | sort(attribute='mount') -%}
+          {%-   if (cassandra_data_dir ~ '/').startswith(m.mount | regex_replace('/$', '') ~ '/') -%}
+          {%-     set _ = best.update(m) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ best }}
+      when:
+        - _phase in ['preflight', 'prepare']
+        - _mount.size_total > 1
+        - _mount.size_available / _mount.size_total < 0.3
+
+    - name: Show the target config (nothing is written)
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        apply:
+          check_mode: true
+      vars:
+        cassandra_config_confirm: false
+        _cassandra_config_no_question: true  # a preview, whatever -e cassandra_config_confirm says
+        cassandra_config_reload_seeds: false
+        cassandra_change_report_dir: ""
+        _cassandra_config_no_restart_warning: true
+        _cassandra_config_target_preview: true  # the former series is still installed
+      when: _phase == 'preflight'
+
+    - name: Say what the next phase is
+      ansible.builtin.debug:
+        msg: >-
+          Preflight OK: {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }} (Java {{ cassandra_java_version }}).
+          Review the config diffs above, then run -e cassandra_upgrade_phase=prepare.
+      run_once: true
+      when: _phase == 'preflight'
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+
+- name: Prepare
+  hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') == 'prepare' else 'localhost:!localhost' }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_config, cassandra_service, cassandra_operation]
+
+    - name: Show the plan and confirm
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: screen.yml
+      vars:
+        cassandra_screen_question: "Backups, repairs and schema changes paused: go on with the snapshots?"
+        cassandra_screen:
+          operation: upgrade
+          summary: "phase prepare, {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }}"
+          intro:
+            - "Before the upgrade, check that:"
+            - pre:
+                - "  - backups are paused (they would copy the snapshot and the new files twice),"
+                - "  - repairs are paused (streaming between versions is not supported),"
+                - "  - the schema is frozen (no CREATE/ALTER/DROP until the upgrade is over)."
+          after:
+            - "prepare now snapshots every node (pre-upgrade-{{ cassandra_upgrade_from }}) and copies its config."
+
+    # (nodetool refuses a tag that exists: one an interrupted prepare took is kept)
+    - name: List the snapshots
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} listsnapshots"
+      register: cassandra_upgrade_snapshots
+      changed_when: false
+      check_mode: false  # a read
+
+    - name: Snapshot every keyspace
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} snapshot -t pre-upgrade-{{ cassandra_upgrade_from }}"
+      changed_when: true
+      when: ('pre-upgrade-' ~ cassandra_upgrade_from) not in _tags
+      vars:
+        _tags: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
+
+    # (one from a weeks-old attempt is the operator's call: the date where nodetool prints one, and the way out)
+    - name: Say the snapshot is already there
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: snapshot {{ _tag }} already there (an earlier prepare took it{{ (', taken on ' ~ _dates[_tag])
+          if _tag in _dates else '' }}), kept. If it is stale (an old attempt from the same version): nodetool clearsnapshot
+          -t {{ _tag }} on {{ inventory_hostname }}, then run prepare again.
+      when: _tag in _tags
+      vars:
+        cassandra_output: true
+        _tag: "pre-upgrade-{{ cassandra_upgrade_from }}"
+        _tags: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
+        _dates: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_dates('pre-upgrade-') }}"
+
+    - name: Copy the config
+      ansible.builtin.copy:
+        src: "{{ cassandra_conf_dir }}/"
+        dest: "{{ cassandra_conf_dir }}.pre-upgrade-{{ cassandra_upgrade_from }}/"
+        remote_src: true
+        mode: preserve
+        force: false
+
+    - name: Say what the next phase is
+      ansible.builtin.debug:
+        msg: >-
+          Snapshots pre-upgrade-{{ cassandra_upgrade_from }} and config copies in {{ cassandra_conf_dir }}.pre-upgrade-{{
+          cassandra_upgrade_from }}. Next: -e cassandra_upgrade_phase=canary.
+      run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+
+# canary: -e cassandra_target_nodes=<node>, by default the first non-seed by
+# datacenter, rack and name (else the first node). rolling: the others, by
+# datacenter, rack and name (datacenter by datacenter, rack by rack), the
+# canary last (already upgraded: skipped, re-run it to resume)
+- name: Pick the nodes and their order
+  hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
+  gather_facts: false
+  become: true
+  vars:
+    _order: >-
+      {{ ansible_play_hosts | map('extract', hostvars) | sort(attribute='inventory_hostname')
+         | sort(attribute='_cassandra_preflight.cassandra_rack') | sort(attribute='_cassandra_preflight.cassandra_dc')
+         | map(attribute='inventory_hostname') | list }}
+    _target: "{{ query('ansible.builtin.inventory_hostnames', cassandra_target_nodes) if cassandra_target_nodes | default('') | length > 0 else [] }}"
+    _canary: >-
+      {{ _target | first | default(_order | reject('in', ansible_play_hosts | map('extract', hostvars)
+         | selectattr('_cassandra_service_is_seed') | map(attribute='inventory_hostname') | list) | first | default(_order[0])) }}
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # one node of the run, the canary phase's only (preflight refuses it in the other phases)
+    - name: Check the canary node
+      ansible.builtin.assert:
+        that: >-
+          cassandra_target_nodes | default('') | length == 0
+          or (cassandra_upgrade_phase == 'canary' and _target | length == 1 and _target[0] in ansible_play_hosts)
+        fail_msg: >-
+          {{ ('cassandra_target_nodes picks the node of the canary phase: run phase ' ~ cassandra_upgrade_phase ~ ' without it.')
+             if cassandra_upgrade_phase != 'canary'
+             else ('cassandra_target_nodes: one node of ' ~ lookup('community.cassandra.cassandra_hosts') ~ ' that runs here, not '
+                   ~ cassandra_target_nodes | default('') | string ~ '.') }}
+        quiet: true
+      run_once: true
+
+    # add_host keeps the order, the next plays follow it
+    - name: The node(s) of this phase, in order
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: cassandra_upgrade_nodes
+      loop: >-
+        {{ [_canary] if cassandra_upgrade_phase == 'canary'
+           else _order if cassandra_upgrade_phase == 'sstables'
+           else _order | reject('equalto', _canary) | list + [_canary] }}
+      run_once: true
+      changed_when: false
+
+- name: Upgrade, one node at a time
+  hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') in ['canary', 'rolling'] else 'localhost:!localhost' }}"
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  vars:
+    # mixed from the canary's restart on: a node's cassandra_upgrade_done turns true once it runs the target
+    # (action_upgrade.yml), read over every node of the run when each health check runs. The canary's check before
+    # its restart (nobody done yet) and the last rolling node's check after its own (everybody done) are strict:
+    # a schema disagreement stops them; between the two, it is a warning
+    cassandra_allow_mixed_versions: >-
+      {{ cassandra_upgrade_run_nodes | map('extract', hostvars, 'cassandra_upgrade_done') | map('bool') | unique | length > 1 }}
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    # first: the upgrade below turns cassandra_upgrade_done true
+    - name: Already upgraded
+      ansible.builtin.set_fact:
+        cassandra_op_result: "already on {{ cassandra_package_version }}"
+      when: cassandra_upgrade_done | bool
+
+    - name: Upgrade this node
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: upgrade
+      when: not cassandra_upgrade_done | bool
+
+- name: Set up the sstables progress file
+  hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') == 'sstables' else 'localhost:!localhost' }}"
+  gather_facts: false
+  become: true
+  vars:
+    cassandra_service_node_action: upgradesstables
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Set up the progress file
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: progress.yml
+
+- name: Rewrite the sstables, one node at a time
+  hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') == 'sstables' else 'localhost:!localhost' }}"
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Check every node runs the target version
+      ansible.builtin.assert:
+        that: ansible_play_hosts_all | map('extract', hostvars, 'cassandra_upgrade_done') | map('bool') | reject | list | length == 0
+        fail_msg: Run the rolling phase until every node runs {{ cassandra_package_version }} first.
+        quiet: true
+      run_once: true
+
+    - name: Rewrite this node's sstables
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: node_operation.yml
+      vars:
+        cassandra_service_node_action: upgradesstables
+
+- name: Cleanup
+  hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_upgrade_phase | default('') == 'cleanup' else 'localhost:!localhost' }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Load the role defaults
+      ansible.builtin.include_role:
+        name: "community.cassandra.{{ item }}"
+        tasks_from: defaults.yml
+        public: true
+      loop: [cassandra_config, cassandra_service, cassandra_operation]
+
+    # the snapshots are the way back until every node runs the target
+    - name: Check every node runs the target version
+      ansible.builtin.assert:
+        that: _left | length == 0
+        fail_msg: >-
+          {{ _left | join(', ') }} {{ 'does' if _left | length == 1 else 'do' }} not run {{ cassandra_package_version | default('') }}
+          yet: the pre-upgrade snapshots are kept until every node does. Run the rolling phase first (then sstables).
+          Nothing was removed.
+        quiet: true
+      run_once: true
+      vars:
+        _left: >-
+          {%- set out = [] -%}
+          {%- for host in ansible_play_hosts_all if not hostvars[host].cassandra_upgrade_done | default(false) | bool -%}
+          {%-   set _ = out.append(host) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # the tags each node has (named after the source version, which no node runs any more)
+    - name: List the snapshots
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} listsnapshots"
+      register: cassandra_upgrade_snapshots
+      changed_when: false
+      check_mode: false  # a read
+
+    - name: Remove the pre-upgrade snapshots
+      ansible.builtin.command: "{{ _cassandra_service_nodetool }} clearsnapshot -t {{ item }}"
+      loop: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
+      changed_when: true
+
+    - name: Say what was removed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ (_tags | length ~ ' pre-upgrade snapshot' ~ ('s' if _tags | length > 1 else '')
+                                        ~ (' would be removed (--check)' if ansible_check_mode else ' removed') ~ ': ' ~ _tags | join(', '))
+                                       if _tags | length > 0 else 'no pre-upgrade snapshot found' }}
+      vars:
+        cassandra_output: true
+        _tags: "{{ cassandra_upgrade_snapshots.stdout | community.cassandra.cassandra_snapshot_names('pre-upgrade-') }}"
+
+    - name: Say what is left to do
+      ansible.builtin.debug:
+        msg: >-
+          Upgrade over. Resume backups and repairs. The config copies ({{ cassandra_conf_dir }}.pre-upgrade-*) are kept;
+          remove them when you no longer need to roll back.
+      run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
+
+- name: Summary
+  hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') in ['canary', 'rolling', 'sstables'] else 'localhost:!localhost' }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Print the summary
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: summary.yml
+      vars:
+        cassandra_service_summary_hosts: "{{ ansible_play_hosts_all }}"
+        cassandra_service_summary_operation: upgrade
+
+    - name: Say what the next phase is
+      ansible.builtin.debug:
+        msg: >-
+          {{ {'canary': 'Watch the canary (logs, latencies, dropped messages in nodetool tpstats), then run -e cassandra_upgrade_phase=rolling.',
+              'rolling': 'Every node runs ' ~ cassandra_package_version ~ '. ' ~ ('Now set cassandra_storage_compatibility_mode: UPGRADING in the inventory and run apply_config, then NONE and apply_config again (NONE is the point of no return). ' if cassandra_version == '50x' and cassandra_upgrade_from_series != '50x' else '') ~ 'Then -e cassandra_upgrade_phase=sstables.',
+              'sstables': 'sstables rewritten. Last: -e cassandra_upgrade_phase=cleanup.'}[cassandra_upgrade_phase] }}
+      run_once: true
+      vars:
+        cassandra_output: true
+        cassandra_output_gap: true
