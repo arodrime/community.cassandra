@@ -457,9 +457,9 @@
       ansible.builtin.meta: end_play
       when: cassandra_create_cluster_reset | default(false) | bool and ansible_check_mode
 
-    # The clocks of the nodes (sync_clocks' check: each synchronised, within cassandra_clock_max_offset_ms of
-    # its source; else refused, nothing started; -e cassandra_clock_check=false skips it).
-    # before the first starts (time sync started by cassandra_linux, waited for): none when the clocks are apart
+    # The clocks before the first node starts: each synchronised and within cassandra_clock_max_offset_ms of
+    # its source (a time sync cassandra_linux just started is waited for), else refused with nothing started.
+    # Skipped when every node already runs, or with -e cassandra_clock_check=false.
     - name: Check the clocks
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation

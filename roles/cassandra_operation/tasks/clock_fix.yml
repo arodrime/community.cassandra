@@ -9,8 +9,8 @@
 # past 400 ms when it syncs, restarted). Then the clock is read again; still
 # not in sync, _cassandra_clock_fix_error says why: nothing fails here, so the
 # restart window starts Cassandra again first. _cassandra_clock_did: what was
-# done (timesync started, clock stepped, still slewing: timesyncd and ntpd
-# correct an offset under 400 ms through the kernel, minutes), for the recap.
+# done (timesync started, clock stepped, still slewing: a slew is the daemon's
+# own work, minutes long, not waited for), for the recap.
 - name: Forget an earlier error
   ansible.builtin.set_fact:
     _cassandra_clock_fix_error: ""
@@ -19,10 +19,11 @@
 - name: Set the clock
   vars:
     _step: "{{ _cassandra_clock_action in ['step', 'window'] }}"
-    # timesyncd and ntpd slew a small offset through the kernel, at most 0.5 ms per second: minutes, not waited for
+    # a slew takes minutes: timesyncd and ntpd correct through the kernel at most 0.5 ms per second, chrony spreads
+    # the correction over about three polls. Not waited for: the daemon is at it, said as in progress
     _slewing: >-
-      {{ _cassandra_clock.daemon in ['timesyncd', 'ntp'] and _cassandra_clock.synchronised
-         and _cassandra_clock.offset is not none and (_cassandra_clock.offset | abs) <= 0.4
+      {{ _cassandra_clock.synchronised and _cassandra_clock.offset is not none
+         and (_cassandra_clock.offset | abs) <= (cassandra_clock_step_ms | int / 1000 if _cassandra_clock.daemon == 'chrony' else 0.4)
          and not _cassandra_clock | community.cassandra.cassandra_clock_in_sync(cassandra_clock_max_offset_ms) }}
   block:
     - name: Bring time sync up
@@ -36,7 +37,7 @@
     - name: Wait for its daemon to synchronise
       ansible.builtin.include_tasks: clock_probe.yml
       vars:
-        _cassandra_clock_wait: "{{ 0 if _cassandra_clock_action == 'slew' and _cassandra_clock.daemon != 'chrony' else cassandra_clock_sync_timeout }}"
+        _cassandra_clock_wait: "{{ 0 if _cassandra_clock_action == 'slew' else cassandra_clock_sync_timeout }}"
         _cassandra_clock_synchronised_only: "{{ _step }}"
 
     - name: Step the clock (chrony)

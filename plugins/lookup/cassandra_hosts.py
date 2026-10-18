@@ -100,7 +100,7 @@ NAME_ONE = "-e cassandra_hosts=<group>, or %s=<group or cluster name> in your sh
 RUNTIME = re.compile(r"^cassandra_(target_rack_nodes|move_left_going|move_order|leaving_dc|create_start_order|topology_(add|remove|seeds)"
                      r"|upgrade_nodes|(seed|apply_config|apply_config_batch|apply_config_os|apply_config_os_window_any"
                      r"|apply_config_os_window_only|update_java"
-                     r"|sync_clock_live|sync_clock_window|window_left)_(True|False))$")
+                     r"|sync_clock_live|sync_clock_window|sync_clock_window_left|sync_clock_stale_mark)_(True|False))$")
 
 
 def _candidates(groups):

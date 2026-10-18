@@ -61,16 +61,20 @@
         _cassandra_clock_query: true  # chronyd -Q where chrony is installed but no daemon runs
 
     # a restart window an interrupted run left open (its mark): the window again, which ends it (Cassandra
-    # started, or drained and restarted); never on a container (its clock is the host's)
+    # started, or drained and restarted); never on a container (its clock is the host's). The mark on a node that
+    # runs with its clock in sync (the run interrupted after the start, or the node brought back by another
+    # playbook) is stale: removed (after the question), no window
     - name: Note what this node needs
       ansible.builtin.set_fact:
         _cassandra_clock_verdict: "{{ _v }}"
+        _cassandra_clock_stale_mark: "{{ _stale }}"
         _cassandra_clock_action: >-
           {{ 'unread' if not _cassandra_clock_read_ok | bool
-             else 'window' if _cassandra_clock.window and not _cassandra_clock.container
+             else 'window' if _cassandra_clock.window and not _cassandra_clock.container and not _stale
              else _v.action | default('none') }}
       vars:
         _v: "{{ _cassandra_clock_verdicts.nodes | selectattr('node', 'equalto', inventory_hostname) | first | default({}) }}"
+        _stale: "{{ _cassandra_clock.window and _cassandra_clock_running | bool and _v.verdict | default('') == 'ok' }}"
 
     - name: Refuse to go on when a clock could not be read
       ansible.builtin.assert:
@@ -109,7 +113,12 @@
 
     - name: Group the windows an interrupted run left open
       ansible.builtin.group_by:
-        key: "cassandra_window_left_{{ _cassandra_clock.window | bool and _cassandra_clock_action == 'window' }}"
+        key: "cassandra_sync_clock_window_left_{{ _cassandra_clock.window | bool and _cassandra_clock_action == 'window' }}"
+      changed_when: false
+
+    - name: Group the nodes with a stale window mark
+      ansible.builtin.group_by:
+        key: "cassandra_sync_clock_stale_mark_{{ _cassandra_clock_stale_mark | bool }}"
       changed_when: false
 
     # what the recap says of the nodes no play below touches (--check: of all of them)
@@ -138,8 +147,10 @@
       vars:
         _todo: >-
           {{ (groups['cassandra_sync_clock_live_True'] | default([])) + (groups['cassandra_sync_clock_window_True'] | default([])) }}
+        _stale: "{{ groups['cassandra_sync_clock_stale_mark_True'] | default([]) }}"
         cassandra_screen_question: >-
-          {{ ('Set the clocks of ' ~ _todo | join(', ') ~ '?') if _todo | length > 0 else '' }}
+          {{ ('Set the clocks of ' ~ _todo | join(', ') ~ '?') if _todo | length > 0
+             else ('Remove the window mark of ' ~ _stale | join(', ') ~ '?') if _stale | length > 0 else '' }}
         cassandra_screen_session_warning: "{{ groups['cassandra_sync_clock_window_True'] | default([]) | length > 0 }}"
         cassandra_screen:
           operation: sync_clocks
@@ -156,17 +167,22 @@
                + ((['Live, on those nodes at once: ' ~ groups['cassandra_sync_clock_live_True'] | join(', ') ~ '.'])
                   if groups['cassandra_sync_clock_live_True'] | default([]) | length > 0 else [])
                + ((['Left open by an interrupted run (Cassandra drained or stopped there), ended first: '
-                    ~ groups['cassandra_window_left_True'] | join(', ') ~ '.'])
-                  if groups['cassandra_window_left_True'] | default([]) | length > 0 else [])
+                    ~ groups['cassandra_sync_clock_window_left_True'] | join(', ') ~ '.'])
+                  if groups['cassandra_sync_clock_window_left_True'] | default([]) | length > 0 else [])
                + ((['In a restart window, one node at a time (cluster checked, drained, stopped, clock set, started,'
                     ~ ' cluster checked): ' ~ groups['cassandra_sync_clock_window_True'] | join(', ') ~ '.'])
-                  if groups['cassandra_sync_clock_window_True'] | default([]) | length > 0 else []) }}
+                  if groups['cassandra_sync_clock_window_True'] | default([]) | length > 0 else [])
+               + ((['A window mark of an interrupted run (the node runs, its clock in sync), '
+                    ~ ('would be removed (--check)' if ansible_check_mode else 'removed') ~ ': ' ~ _stale | join(', ') ~ '.'])
+                  if _stale | length > 0 else []) }}
           warnings:
             - label: clocks
               each: "{{ _cassandra_clock_verdicts.warnings }}"
 
 - name: Set the clocks live
-  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_sync_clock_live_True'] | default([])) | list }}"
+  hosts: >-
+    {{ query('community.cassandra.cassandra_nodes')
+       | select('in', (groups['cassandra_sync_clock_live_True'] | default([])) + (groups['cassandra_sync_clock_stale_mark_True'] | default([]))) | list }}
   gather_facts: false
   become: true
   tasks:
@@ -177,12 +193,28 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # the stale mark (said on the screen): the node runs, its clock is in sync, no window
+    - name: Remove the window mark of an interrupted run
+      ansible.builtin.file:
+        path: "{{ _cassandra_clock_window_mark }}"
+        state: absent
+      when: _cassandra_clock_stale_mark | bool
+
+    - name: Note the mark is gone
+      ansible.builtin.set_fact:
+        cassandra_op_result: >-
+          {{ 'would remove the window mark of an interrupted run (already in sync) (--check: nothing was changed)' if ansible_check_mode
+             else 'sync_clock skipped, already in sync: a window mark of an interrupted run removed' }}
+      when: _cassandra_clock_stale_mark | bool
+
     # time sync set up the cassandra_linux way: installed unless cassandra_offline,
     # enabled, started; no NTP server configured (the site's chrony.conf stays);
     # cassandra_linux_timesync: false leaves a node alone.
     # -e cassandra_clock_sync_timeout=<seconds>: how long to wait for a time sync to synchronise
     - name: Set the clock of this node
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - _cassandra_clock_action in ['start', 'step', 'slew']  # not a node here for its stale mark only
       block:
         - name: Note the start time
           ansible.builtin.set_fact:
@@ -192,6 +224,15 @@
           ansible.builtin.include_role:
             name: community.cassandra.cassandra_operation
             tasks_from: clock_fix.yml
+
+        - name: Say a correction its daemon finishes
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }}: correction in progress (slewing {{ ((_cassandra_clock.offset | abs) * 1000) | round(1) }} ms,
+              {{ _cassandra_clock.service }} finishes it in a few minutes).
+          when: "'slewing' in _cassandra_clock_did"
+          vars:
+            cassandra_output: true
 
         - name: Record the result
           ansible.builtin.set_fact:
@@ -232,16 +273,16 @@
 # gets its window again, started).
 - name: Set the clocks in a restart window, one node at a time
   hosts: >-
-    {{ (groups['cassandra_window_left_True'] | default([]) | select('in', query('community.cassandra.cassandra_nodes')) | list)
+    {{ (groups['cassandra_sync_clock_window_left_True'] | default([]) | select('in', query('community.cassandra.cassandra_nodes')) | list)
        + (query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_sync_clock_window_True'] | default([]))
-          | reject('in', groups['cassandra_window_left_True'] | default([])) | list) }}
+          | reject('in', groups['cassandra_sync_clock_window_left_True'] | default([])) | list) }}
   serial: 1
   any_errors_fatal: true
   gather_facts: false
   become: true
   vars:
     # a window left open: that node may be down (node_operation's resumed node, the first one not done)
-    cassandra_rolling_resume: "{{ inventory_hostname in groups['cassandra_window_left_True'] | default([]) }}"
+    cassandra_rolling_resume: "{{ inventory_hostname in groups['cassandra_sync_clock_window_left_True'] | default([]) }}"
     cassandra_service_resume_hint: >-
       Once fixed, run sync_clocks again, the same command: the clocks are read again, a node left drained or stopped
       gets its window first.

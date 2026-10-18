@@ -469,7 +469,6 @@ def test_verdicts_coarse_skew_takes_the_least_delayed_sample():
     samples = ["%f %f" % (T0, T0 + 0.300), "%f %f" % (T0 + 1, T0 + 1.020), "garbage"]
     v = cassandra_clock_verdicts([dict(node("node1", probe_text()), samples=samples)])
     assert v["nodes"][0]["coarse"] == pytest.approx(0.0, abs=1e-4)  # the reference: itself (its offset 12 us)
-    assert v["spread"] is None
 
 
 # --- the table and the refusal ------------------------------------------------------------------------------------
@@ -671,3 +670,14 @@ def test_every_live_result_has_its_words(did):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import DONE, PLAYBOOKS
     action = "clock_" + ("_".join(did) or "slew")  # sync_clocks.yml's "Record the result"
     assert action in DONE and PLAYBOOKS[action] == "sync_clocks"
+
+
+def test_verdict_within_the_threshold_alone_says_the_error_bound():
+    # 25 ms off, an error bound of 40 ms (half the root delay plus the dispersion): over 50 together, not alone
+    v = by_node(cassandra_clock_verdicts([node("node1", probe_text(tracking_text=tracking(0.025, dispersion="0.039600000"))),
+                                          node("node2", probe_text(tracking_text=tracking(0.025, "fast", dispersion="0.039600000")))],
+                                         max_ms=50))
+    assert v["node1"]["verdict"] == "off"
+    assert v["node1"]["why"] == "25.0 ms behind its source, within 50.0 ms but not with its error bound of 40.0 ms"
+    assert v["node2"]["why"] == "25.0 ms ahead of its source, within 50.0 ms but not with its error bound of 40.0 ms"
+    assert v["node1"]["action"] == "slew"

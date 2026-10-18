@@ -448,8 +448,12 @@ def _off(p, running, max_s, step_s):
                     " source is needed" % ms(p["bound"], False))
         v["action"] = "manual"
     else:
-        v["why"] = "%s its source by %s, more than %s" % ("ahead of" if v["ahead"] else "behind",
-                                                          ms(abs(p["offset"]), False), ms(max_s, False))
+        side = "ahead of" if v["ahead"] else "behind"
+        if abs(p["offset"]) > max_s:
+            v["why"] = "%s its source by %s, more than %s" % (side, ms(abs(p["offset"]), False), ms(max_s, False))
+        else:  # within the threshold alone, over it with the daemon's error bound
+            v["why"] = "%s %s its source, within %s but not with its error bound of %s" % (
+                ms(abs(p["offset"]), False), side, ms(max_s, False), ms(p.get("bound"), False))
         v["estimate"] = abs(p["offset"])
         # what the daemon slews by itself (timesyncd steps past 400 ms, ntpd past 128 ms, on their own)
         slews = min(step_s, {"timesyncd": 0.4, "ntp": 0.128}.get(p.get("daemon"), step_s))
@@ -666,7 +670,7 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
     """nodes: [{node, probe (cassandra_clock_probe), samples ([[controller, node] times]), running (Cassandra runs
     there), manage (cassandra_linux manages its time sync), offline (cassandra_offline), addresses (the node's
     own)}] -> {nodes: [{node, verdict, ahead, offset, how, text, why, action, ...}], ok: bool, warnings: [str],
-    notes: [str], spread}. A node is ok when its daemon is synchronised and its offset plus the daemon's error
+    notes: [str], max_ms}. A node is ok when its daemon is synchronised and its offset plus the daemon's error
     bound is within max_ms; with no daemon to ask (a container: the host's clock), when the dates collected over
     SSH put it within coarse_ms of the others.
     e.g. [{node: node1, probe: <0.012 ms off>, running: True}, {node: node2, probe: <200 ms ahead>, ...}] ->
@@ -691,9 +695,8 @@ def cassandra_clock_verdicts(nodes, max_ms=50, step_ms=400, coarse_ms=COARSE_MS)
             warnings.append("%s runs several time sync daemons (%s and %s): they fight over the clock, keep one"
                             % (n["node"], p["service"], ", ".join(p["others"])))
     warnings += _cluster_warnings(nodes, out, addresses, coarse_s)
-    spread = (max(skews) - min(skews)) if len(skews) > 1 else None
     return {"nodes": out, "ok": all(v["verdict"] == "ok" for v in out), "warnings": warnings,
-            "notes": _cluster_notes(out, coarse_s), "spread": spread, "max_ms": float(max_ms)}
+            "notes": _cluster_notes(out, coarse_s), "max_ms": float(max_ms)}
 
 
 def _start_limit(p, step_s):
@@ -751,10 +754,11 @@ def cassandra_clock_lines(verdicts, actions=True):
 
 
 def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False, unread=None):
-    """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would
-    refuse), the nodes not in sync, why, and the way out; [] when every node is. check, later_ok (a check before
-    cassandra_linux ran): a node not running with no time sync, which cassandra_linux would set up, is left to the
-    check after it. unread: {node: why} of the nodes that answered but whose clock could not be read: refused.
+    """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would refuse),
+    the nodes not in sync, why, and the way out; [] when every node is. check (--check started no time sync),
+    later_ok (a check before cassandra_linux ran: create_cluster's reset): a node not running with no time sync,
+    which cassandra_linux would set up, is left to the check after it. unread: {node: why} of the nodes that
+    answered but whose clock could not be read: refused.
     Output: [str]. e.g. (verdicts with node2 off, cluster="my_cluster") -> ["REFUSED  clocks  my_cluster  nothing
     was started", "  node2  OFF  chronyd, ...", "", ..., "TO DO", ...]."""
     verdicts = verdicts or {}

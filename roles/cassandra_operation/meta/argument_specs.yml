@@ -269,6 +269,17 @@ argument_specs:
         description:
           - Resume the latest interrupted rolling operation of this cluster,
             skipping the nodes already done.
+      cassandra_upgrade_sstables_jobs:
+        type: int
+        default: 2
+        description:
+          - The C(upgrade) playbook's C(sstables) phase, C(nodetool upgradesstables) one node at a time -
+            sstables rewritten at once (nodetool's default); V(0) uses every compaction thread.
+      cassandra_upgrade_sstables_timeout:
+        type: int
+        default: 86400
+        description:
+          - Seconds one node's C(nodetool upgradesstables) may take.
       cassandra_rolling_progress_dir:
         type: path
         default: ""

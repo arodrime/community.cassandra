@@ -532,3 +532,20 @@ def test_the_jmx_message_is_not_followed_by_nodetool_line():
 def test_a_nodetool_field_is_an_address_however_written(field, address, same):
     from ansible_collections.community.cassandra.plugins.filter.cassandra_health import _same_address
     assert _same_address(field, address) is same
+
+
+def test_schema_disagreement_is_a_warning_while_an_upgrade_mixes_versions():
+    ring = [node("10.0.0.1")]
+    differ = {"failed": True, "msg": "The cluster has not reached consensus on the schema"}
+    assert problems([view("n1", *ring)], expected=1, schema=differ) == [
+        "schema disagreement: The cluster has not reached consensus on the schema"]
+    assert problems([view("n1", *ring)], expected=1, schema=differ, mixed_versions=True, target="5.0.4") == []
+    found = cassandra_health_findings([view("n1", *ring)], 1, "n1", schema=differ, mixed_versions=True, target="5.0.4")
+    assert found == [{"kind": "warning", "what": "schema", "msg": differ["msg"],
+                      "text": "schema versions differ: expected while the versions are mixed, agreed again once every node runs 5.0.4"}]
+    assert cassandra_health_findings([view("n1", *ring)], 1, "n1", schema=differ, mixed_versions=True)[0]["text"].endswith(
+        "once every node runs the same version")
+    # the report counts no warning; a nodetool failure stays a problem
+    assert cassandra_health_report({"n1": found}, "c", ["n1"])["healthy"] is True
+    assert problems([view("n1", *ring)], expected=1, schema={"failed": True, "msg": "nodetool error: boom"}, mixed_versions=True) == [
+        "schema disagreement: nodetool error: boom"]

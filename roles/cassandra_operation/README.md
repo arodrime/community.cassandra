@@ -134,6 +134,10 @@ Set in the inventory, as any role variable.
   operation from its progress file, kept in `cassandra_rolling_progress_dir`
   (default: `.cassandra_progress` next to the inventory) for
   `cassandra_rolling_progress_days` (30).
+* The `upgrade` playbook's `sstables` phase (`nodetool upgradesstables`, one
+  node at a time): `cassandra_upgrade_sstables_jobs` (default 2, nodetool's;
+  0: every compaction thread), `cassandra_upgrade_sstables_timeout` (default
+  86400 seconds per node).
 * The clocks: `cassandra_clock_max_offset_ms` (50), `cassandra_clock_step_ms`
   (400), `cassandra_clock_sync_timeout` (180), `cassandra_clock_check`
   (`true`).

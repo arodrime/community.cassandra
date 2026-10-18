@@ -2,9 +2,9 @@
 # Rewrites this node's sstables in the running version's format (after an upgrade)
 - name: Rewrite the sstables
   community.cassandra.cassandra_upgradesstables:
-    num_jobs: "{{ cassandra_upgrade_sstables_jobs | default(2) }}"
+    num_jobs: "{{ cassandra_upgrade_sstables_jobs }}"
   module_defaults:
     community.cassandra.cassandra_upgradesstables: "{{ _cassandra_service_jmx }}"
-  async: "{{ cassandra_upgrade_sstables_timeout | default(86400) }}"
+  async: "{{ cassandra_upgrade_sstables_timeout }}"
   poll: 30
   when: not ansible_check_mode  # async has no check mode: the plan only
