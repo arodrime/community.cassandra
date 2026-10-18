@@ -50,12 +50,14 @@ def _unasked(result):
 
 
 def cassandra_health_findings(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
-                              down_ok=None, joining_ok=None, leaving_ok=None, names=None):
+                              down_ok=None, joining_ok=None, leaving_ok=None, names=None, mixed_versions=False, target=""):
     """The problems of cassandra_health_problems (same arguments) as
     [{kind, text (its sentence), ...}]: kind state (address, rack, state,
     seen_from), count (ring, expected, seen_from), nodetool (on, error), port
     (name, port, on, host), gossip, cql, streams (on), netstats (on, error),
-    schema (msg).
+    schema (msg); and warning (what, msg): not a problem, said as such (a
+    schema disagreement while an upgrade mixes versions: mixed_versions, the
+    target version the nodes agree again on).
     e.g. (the same) -> [{kind: "state", address: "10.0.0.4", rack: "r1", state: "DN", seen_from: "node1", text:
     "node4 (10.0.0.4, r1) is DN, seen from node1"}]."""
     names = _by_ip(names)
@@ -109,7 +111,13 @@ def cassandra_health_findings(views, expected, node, gossip=None, binary=None, n
         elif netstats["streaming"]:
             found.append({"kind": "streams", "on": node, "text": "streams in progress on %s (nodetool netstats)" % node})
     if schema is not None and schema.get("failed"):
-        found.append({"kind": "schema", "msg": schema.get("msg", ""), "text": "schema disagreement: %s" % schema.get("msg", "")})
+        msg = schema.get("msg", "")
+        if mixed_versions and not msg.startswith("nodetool error"):
+            found.append({"kind": "warning", "what": "schema", "msg": msg,
+                          "text": "schema versions differ: expected while the versions are mixed, agreed again once every node "
+                                  "runs %s" % (target or "the same version")})
+        else:
+            found.append({"kind": "schema", "msg": msg, "text": "schema disagreement: %s" % msg})
     return found
 
 
@@ -179,7 +187,7 @@ def cassandra_health_wait_line(waiting, names=None, waited=0, timeout=0, index=0
 
 
 def cassandra_health_problems(views, expected, node, gossip=None, binary=None, netstats=None, schema=None, ports=None,
-                              down_ok=None, joining_ok=None, leaving_ok=None, names=None):
+                              down_ok=None, joining_ok=None, leaving_ok=None, names=None, mixed_versions=False, target=""):
     """views: [{'from': host, 'result': cassandra_status result}]; the others
     are this node's registered results (ports: a wait_for loop over
     {'name', 'host', 'port'} items). down_ok: addresses expected down (a dead
@@ -187,12 +195,13 @@ def cassandra_health_problems(views, expected, node, gossip=None, binary=None, n
     bootstrap still running). leaving_ok: addresses expected up and leaving (a
     decommission still running). names: {address: inventory name}
     (cassandra_host_addresses), a node of the ring named by it. Returns a
-    list of problems.
+    list of problems (the warnings left out).
     e.g. ([{from: node1, result: <a ring where 10.0.0.4 is DN>}], 2, "node1", names={"10.0.0.4": "node4"}) ->
     ["node4 (10.0.0.4, r1) is DN, seen from node1"]."""
     return [f["text"] for f in cassandra_health_findings(
         views, expected, node, gossip=gossip, binary=binary, netstats=netstats, schema=schema, ports=ports,
-        down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok, names=names)]
+        down_ok=down_ok, joining_ok=joining_ok, leaving_ok=leaving_ok, names=names, mixed_versions=mixed_versions,
+        target=target) if f["kind"] != "warning"]
 
 
 def _lost_guess(names, found, unreachable, ring):
@@ -305,7 +314,7 @@ def cassandra_health_report(findings, cluster, hosts, unreachable=None, absent=N
     unreachable = [h for h in hosts if h in (unreachable or [])]
     checked = [h for h in hosts if h not in unreachable]
     rows, seen = [], {}
-    found = [f for host in checked for f in (findings or {}).get(host) or []]
+    found = [f for host in checked for f in (findings or {}).get(host) or [] if f.get("kind") != "warning"]
     guess = _lost_guess(names, found, unreachable, ring)
     if guess:
         names[guess[0]] = guess[1]

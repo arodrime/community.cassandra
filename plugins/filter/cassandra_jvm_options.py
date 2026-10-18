@@ -5,7 +5,10 @@ cassandra_jvm_options: the table of checks).
 
 cassandra_jvm_option_checks: a node's extra options variables, its series and
     Java -> the warnings on the options that Java gets from the files the role
-    writes (refusals=true: the options a move to that Java is refused with)."""
+    writes (refusals=true: the options a move to that Java is refused with).
+cassandra_jvm_options_file: series, Java -> the jvm<N>-server.options that
+    Java reads besides jvm-server.options.
+cassandra_jvm_options_variable: an options file -> its extra options variable."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -51,8 +54,21 @@ def cassandra_jvm_option_checks(variables, series, java="", refusals=False, kept
     return jvm.check(options, java, refusals=bool(refusals))
 
 
+def cassandra_jvm_options_file(series, java):
+    """The jvm<N>-server.options a Java reads besides jvm-server.options, '' when not known: "50x", "17" ->
+    "jvm17-server.options"."""
+    return jvm.options_file(str(series), java)
+
+
+def cassandra_jvm_options_variable(name):
+    """jvm11-server.options -> cassandra_jvm11_extra_options."""
+    return jvm.options_variable(str(name))
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_jvm_option_checks": cassandra_jvm_option_checks,
+            "cassandra_jvm_options_file": cassandra_jvm_options_file,
+            "cassandra_jvm_options_variable": cassandra_jvm_options_variable,
         }
