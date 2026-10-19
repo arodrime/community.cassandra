@@ -98,6 +98,8 @@ def test_the_restarted_node_runs_the_java_asked_for():
 
     assert runs("17")[0] is True
     assert runs("1.8", wanted="8")[0] is True
+    assert runs("1.8", wanted="1.8")[0] is True  # the inventory's spelling, as the other checks read it
+    assert runs("17", wanted="1.8")[1].startswith("n2 restarted on Java 17 (/usr/lib/jvm/java-11-openjdk-amd64/bin/java), not 8:")
     ok, text = runs("11")
     assert ok is False
     assert text.startswith("n2 restarted on Java 11 (/usr/lib/jvm/java-11-openjdk-amd64/bin/java), not 17: the default java was not switched.")

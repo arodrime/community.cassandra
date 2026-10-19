@@ -541,19 +541,23 @@ def test_the_reload_only_where_the_list_changed_or_a_reload_is_owed():
 
 def test_a_cassandra_yaml_with_no_seeds_line_to_rewrite_stops_the_node():
     # the seed provider written another way (parameters: [{seeds: "..."}]): nothing matched, the old list would stay
-    # with the node "ok"
+    # with the node "ok". The file itself is read: the preflight's live list is empty for a node added by this run,
+    # whose file may hold the new list already (nothing to rewrite)
     names = [t["name"] for t in flat(SEEDS_APPLY)]
+    look = task(SEEDS_APPLY, "Look for the seeds line")
     stop = task(SEEDS_APPLY, "Stop when cassandra.yaml has no seeds line to rewrite")
-    assert names.index("Write the new seed list") < names.index(stop["name"]) < names.index("Reload the seeds on the running node")
+    assert names.index("Write the new seed list") < names.index(look["name"]) < names.index(stop["name"]) < names.index(
+        "Reload the seeds on the running node")
+    assert look["ansible.builtin.command"] == "grep -qE '^\\s*- seeds:' \"{{ _seeds_file }}\""
+    assert look["register"] == "cassandra_seeds_line"
+    assert look["changed_when"] is False and look["failed_when"] is False and look["check_mode"] is False  # a read
     assert "ansible.builtin.fail" in stop
     assert stop["vars"]["cassandra_output"] is True  # a verdict: its msg as is (ops callback)
-    for changed, live, expected in ((False, "10.0.0.1", True), (False, "10.0.0.1,10.0.0.2", False), (True, "10.0.0.1", False),
-                                    (False, "", True)):
-        variables = {"cassandra_seeds_change": {"changed": changed}, "_cassandra_preflight": {"live_seeds": live},
-                     "_seeds_new": "10.0.0.1,10.0.0.2"}
-        assert all(render("{{ %s }}" % w, **variables) for w in stop["when"]) is expected, (changed, live)
+    assert "live_seeds" not in str(stop["when"])
+    assert render("{{ %s }}" % stop["when"], cassandra_seeds_line={"rc": 1}) is True  # no line
+    assert render("{{ %s }}" % stop["when"], cassandra_seeds_line={"rc": 0}) is False  # a line, rewritten or already right
     msg = render(stop["ansible.builtin.fail"]["msg"], inventory_hostname="n1", _seeds_file="/etc/cassandra/cassandra.yaml",
-                 _seeds_new="10.0.0.1,10.0.0.2", _cassandra_preflight={"live_seeds": "10.0.0.1"})
+                 _seeds_new="10.0.0.1,10.0.0.2")
     assert msg == ("n1: /etc/cassandra/cassandra.yaml has no '- seeds:' line the role can rewrite (its seed provider is written"
                    " another way). Write the list there by hand, in the parameters of SimpleSeedProvider"
                    ' (- seeds: "10.0.0.1,10.0.0.2"), then run again.')

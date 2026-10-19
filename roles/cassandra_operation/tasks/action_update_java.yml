@@ -36,10 +36,10 @@
 
 - name: Check it runs Java {{ cassandra_java_version }}
   ansible.builtin.assert:
-    that: _major == cassandra_java_version | string
+    that: _major == _wanted
     fail_msg: >-
       {{ inventory_hostname }} restarted on Java {{ _major or 'unknown' }} ({{ cassandra_jvm.exe | default('not running', true) }}),
-      not {{ cassandra_java_version }}: the default java was not switched. Check update-alternatives --display java
+      not {{ _wanted }}: the default java was not switched. Check update-alternatives --display java
       (alternatives on RedHat) there and set it by hand, or set cassandra_java_home to the Java {{ cassandra_java_version }}
       home; then run update_java again (this node is done again).
     quiet: true
@@ -48,4 +48,5 @@
       {{ cassandra_update_java_restarted.stderr | default('') | regex_findall('java[.]specification[.]version = (\S+)')
          | first | default('') }}
     _major: "{{ _spec | community.cassandra.cassandra_java_major }}"
+    _wanted: "{{ cassandra_java_version | community.cassandra.cassandra_java_major }}"  # "1.8" in the inventory: 8
   when: not ansible_check_mode

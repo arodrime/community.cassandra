@@ -63,6 +63,16 @@
         replace: '\g<1>"{{ _seeds_new }}"'
       register: cassandra_seeds_written
 
+    # the file itself, not the preflight's live list: a node added by this run had no cassandra.yaml then, and its
+    # file may hold the new list already (nothing to rewrite, nothing to stop on). A read (grep): no module reads
+    # a line without fetching the file
+    - name: Look for the seeds line
+      ansible.builtin.command: grep -qE '^\s*- seeds:' "{{ _seeds_file }}"
+      register: cassandra_seeds_line
+      changed_when: false
+      failed_when: false  # rc 1: no line, the stop below says
+      check_mode: false
+
     # a seed provider written another way (e.g. parameters: [{seeds: "..."}]): nothing matched, the old list stays
     - name: Stop when cassandra.yaml has no seeds line to rewrite
       ansible.builtin.fail:
@@ -70,9 +80,7 @@
           {{ inventory_hostname }}: {{ _seeds_file }} has no '- seeds:' line the role can rewrite (its seed provider is
           written another way). Write the list there by hand, in the parameters of SimpleSeedProvider
           (- seeds: "{{ _seeds_new }}"), then run again.
-      when:
-        - cassandra_seeds_change is not changed
-        - _cassandra_preflight.live_seeds | default('') != _seeds_new
+      when: cassandra_seeds_line.rc != 0
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
 

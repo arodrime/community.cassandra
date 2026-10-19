@@ -166,22 +166,40 @@ def test_a_series_the_playbook_does_not_upgrade_from_is_said():
 
 def test_the_schema_may_disagree_while_the_versions_are_mixed():
     # from the canary's restart to the last node's: preflight lets the versions differ from the rolling phase on
-    # (the canary phase starts on one version), the health checks around each node take a schema disagreement as
-    # a warning only while some nodes are on the target and some not (the facts of the run's start); the canary's
-    # own run, and a rolling run again once every node is done, stop on one
+    # (the canary phase starts on one version); the health checks around each node take a schema disagreement as
+    # a warning only while some nodes of the run are on the target and some not, each node's cassandra_upgrade_done
+    # turned true by its upgrade: the canary's check before its restart and the last rolling node's check after
+    # its own stop on one
     allowed = play("Preflight")["vars"]["cassandra_allow_mixed_versions"]
     assert [render(allowed, cassandra_upgrade_phase=phase) for phase in ["preflight", "prepare", "canary", "rolling", "sstables", "cleanup"]] == [
         False, False, False, True, True, True]
+    # every node of the run, noted by the checks play: the canary play's hosts are the canary alone
+    noted = task("Upgrade checks", "Note the nodes of the run")["ansible.builtin.set_fact"]
+    assert noted == {"cassandra_upgrade_run_nodes": "{{ ansible_play_hosts_all }}"}
     mixed = play("Upgrade, one node at a time")["vars"]["cassandra_allow_mixed_versions"]
+    assert "ansible_play_hosts" not in mixed
 
     def allowed_for(**done):
         hostvars = dict((node, {"cassandra_upgrade_done": value}) for node, value in done.items())
-        return render(mixed, hostvars=hostvars, ansible_play_hosts_all=list(hostvars))
+        return render(mixed, hostvars=hostvars, cassandra_upgrade_run_nodes=list(hostvars), ansible_play_hosts_all=["n1"])
 
-    assert allowed_for(n1=False) is False  # the canary phase: its node only, nobody done yet
-    assert allowed_for(n1=False, n2=False, n3=False) is False
-    assert allowed_for(n1=True, n2=True, n3=True) is False
-    assert allowed_for(n1="True", n2=False, n3="False") is True  # the rolling phase: the canary done, the others not
+    assert allowed_for(n1=False, n2=False, n3=False) is False  # the canary's check before its restart: nobody done yet
+    assert allowed_for(n1=True, n2=False, n3="False") is True  # its check after: the canary on the target, the others not
+    assert allowed_for(n1="True", n2=True, n3=False) is True  # the rolling phase, up to the last node's check before
+    assert allowed_for(n1=True, n2=True, n3=True) is False  # the last node's check after: everybody done
     with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "cluster_health_read.yml"), encoding="utf-8") as f:
         text = f.read()
     assert "mixed_versions=cassandra_allow_mixed_versions | default(false) | bool" in text
+
+
+def test_a_node_is_noted_as_upgraded_once_it_runs_the_target():
+    # the flag above reads it: set after the version check of its restart (not under --check: nothing was upgraded)
+    with open(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "action_upgrade.yml"), encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)
+    names = [t["name"] for t in tasks]
+    assert names.index("Check it runs the target version") == names.index("Note it as upgraded") - 1
+    noted = tasks[names.index("Note it as upgraded")]
+    assert noted["ansible.builtin.set_fact"] == {"cassandra_upgrade_done": True} and noted["when"] == "not ansible_check_mode"
+    # its own play reads the flag too: a node already on the target is said so before its upgrade would turn it
+    names = [t["name"] for t in play("Upgrade, one node at a time")["tasks"]]
+    assert names.index("Already upgraded") < names.index("Upgrade this node")

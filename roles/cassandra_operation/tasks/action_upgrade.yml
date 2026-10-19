@@ -63,3 +63,9 @@
     fail_msg: "{{ inventory_hostname }} runs {{ cassandra_upgrade_version.stdout | default('') | trim }}, not {{ cassandra_package_version }}"
     quiet: true
   when: not ansible_check_mode
+
+# the versions are mixed from here until the last node: the plays' cassandra_allow_mixed_versions reads it
+- name: Note it as upgraded
+  ansible.builtin.set_fact:
+    cassandra_upgrade_done: true
+  when: not ansible_check_mode
