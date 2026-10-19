@@ -125,7 +125,7 @@ def test_a_slew_is_in_progress_not_failed():
         fix = yaml.safe_load(f)
     block = next(t for t in fix if t["name"] == "Set the clock")
     wait = next(t for t in block["block"] if t["name"] == "Wait for its daemon to synchronise")
-    assert render(wait["vars"]["_cassandra_clock_wait"], _cassandra_clock_action="slew", cassandra_clock_sync_timeout=180) == 0
+    assert int(render(wait["vars"]["_cassandra_clock_wait"], _cassandra_clock_action="slew", cassandra_clock_sync_timeout=180)) == 0  # str on 2.16
     assert render(wait["vars"]["_cassandra_clock_wait"], _cassandra_clock_action="start", cassandra_clock_sync_timeout=180) == 180
     clock = {"daemon": "chrony", "service": "chronyd", "active": True, "synchronised": True, "offset": -0.025, "bound": 0.04}
     slewing = render(block["vars"]["_slewing"], _cassandra_clock=clock, cassandra_clock_step_ms=400, cassandra_clock_max_offset_ms=50)

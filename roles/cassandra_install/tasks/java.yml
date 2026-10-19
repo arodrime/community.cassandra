@@ -137,7 +137,9 @@
       vars:
         _command: "{{ 'update-alternatives' if ansible_facts['os_family'] == 'Debian' else 'alternatives' }}"
         _entries: "{{ cassandra_java_alternatives.stdout_lines | default([]) | select('match', '^/') | map('regex_replace', ' .*$', '') | list }}"
-      when: not ansible_check_mode  # the package may not be installed yet
+      when:
+        - not ansible_check_mode  # the package may not be installed yet
+        - cassandra_java_files.rc | default(1) == 0  # nor when it is not (offline: the refusal below says it)
 
     - name: Make it the default java
       community.general.alternatives:

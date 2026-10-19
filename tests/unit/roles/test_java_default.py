@@ -68,7 +68,13 @@ def test_the_file_list_is_read_from_the_package():
 def test_none_found_stops_with_the_way_out():
     stop = INNER["Stop when its java is not among the alternatives"]
     assert stop["ansible.builtin.assert"]["that"] == "_path != ''"
-    assert stop["when"] == "not ansible_check_mode"
+    # not under --check (the package may not be installed yet), nor when the package is not installed (offline: the
+    # role's own refusal follows, the molecule scenario checks it)
+    assert stop["when"] == ["not ansible_check_mode", "cassandra_java_files.rc | default(1) == 0"]
+    installed = "{{ " + stop["when"][1] + " }}"
+    assert render(installed, cassandra_java_files={"rc": 1}) is False
+    assert render(installed, cassandra_java_files={"rc": 0}) is True
+    assert render(installed) is False  # not registered at all
     variables = dict(stop["vars"], _path="", cassandra_java_package="zulu17-jdk-headless", cassandra_java_version="17",
                      cassandra_java_alternatives={"stdout_lines": ALTERNATIVES}, ansible_facts={"os_family": "RedHat"})
     text = " ".join(render(stop["ansible.builtin.assert"]["fail_msg"], **variables).split())
