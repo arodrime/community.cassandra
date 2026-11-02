@@ -94,8 +94,8 @@ def test_the_operation_given_wins():
         "DONE  remove_datacenter  1 decommissioned  1m05s"
 
 
-RESULTS = [("node1", "restart done in 110s"), ("node2", "restart FAILED after 629s: cluster unhealthy"), ("node3", None),
-           ("node4", "not reached"), ("node5", "not in this run (--limit)")]
+RESULTS = [("node1", "restart done in 110s"), ("node2", "restart FAILED after 629s: cluster unhealthy"),
+           ("node3", None), ("node4", "not reached"), ("node5", "not in this run (--limit)")]
 HEALTH = ["node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited (cassandra_service_health_timeout 600s).",
           "WAY OUT  start node4 (the server, then Cassandra), then resume",
           "if the server is lost: replace_node; remove_dead_node only as a last resort"]
@@ -132,8 +132,8 @@ def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
     lines = stop("boom", resume=True)
     assert lines[-2:] == ["WAY OUT  fix it, then resume:",
                           "  ansible-playbook community.cassandra.rolling_restart -e cassandra_rolling_resume=true"]
-    assert stop("boom", resume=False)[-1] == ("WAY OUT  fix it, then check where the cluster stands (the status playbook)"
-                                               " before running it again")
+    status = "WAY OUT  fix it, then check where the cluster stands (the status playbook) before running it again"
+    assert stop("boom", resume=False)[-1] == status
     # the nodes done at the same time (a batch)
     assert stop("boom", resume=False, batch=True)[0] == "FAILED at node2: boom. The nodes done at the same time: as in the table."
 

@@ -119,7 +119,7 @@ def _warnings(spec, session, notes, check):
     skipped, lines = [], []
     for warning in kept:
         if check and warning.get("real_run"):
-            name = warning.get("label") or str(warning["text"]).split(":")[0]
+            name = warning.get("label") or str(warning["text"]).split(":", maxsplit=1)[0]
             if name not in skipped:
                 skipped.append(name)
             continue

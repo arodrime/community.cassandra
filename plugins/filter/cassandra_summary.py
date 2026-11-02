@@ -17,7 +17,6 @@ cassandra_differs: {node: value} of a setting that must be the same on every
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import os
 import re
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command

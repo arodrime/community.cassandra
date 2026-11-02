@@ -10,7 +10,6 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_screen imp
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import preview
 
 
-
 def role_diff(tmp_path, live, new, name="cassandra.yaml"):
     """The diff cassandra_config's preview gives (its own reader: masked as the role masks)."""
     d = tmp_path / ("role-diff-%d" % len(list(tmp_path.iterdir())))
