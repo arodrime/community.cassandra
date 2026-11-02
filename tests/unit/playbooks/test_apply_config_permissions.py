@@ -199,7 +199,7 @@ def test_the_action_restarts_starts_or_only_writes():
     tasks = [t for t in tasks if t["name"] not in ("Check the JVM a file is written back for still runs", "Check the files written back")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
     # (no "Restarting node..." phase line before the restart: its wait line says it)
-    tasks.pop(5)  # its time sync before a start (test_apply_config_os.py)
+    tasks.pop(4)  # its time sync before a start (test_apply_config_os.py)
     clear, write, report, restart, start = tasks
     # --check: the plan's comparison (the same role run in check mode, just before) reported, nothing rendered again
     assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"
