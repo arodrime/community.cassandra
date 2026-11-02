@@ -73,19 +73,31 @@ Conventions
   ``would prepare`` under ``--check`` (``prepare_lines``, filter ``community.cassandra.cassandra_prepare_lines``,
   from each role's change report: the lists per role and node with ``-v`` or in ``cassandra_change_report_dir``).
   The data disks' summary follows only when something was set, a line to act on (not tuned yet, a restart to take it), a warning, or with ``-v``.
-- **Progress**: one line per check, then always the nodes at the other end, in aligned columns (as many as fit
-  in the terminal, 4 at most; here 100 columns), by name, a stalled one in place, its line in red::
+- **Progress**: one line per node while the run goes (``[i/n] node  operation``, two spaces after the node), the
+  nodes at the other end under it after one blank line, in aligned columns (as many as fit in the terminal, 4 at
+  most; here 100 columns), by name; under the ops callback the node's lines are rewritten in place on a terminal
+  (one line every 5 minutes and at each change of state in a log), and frozen into one line when the node is
+  done::
 
-    [1/2] node5 bootstrap  JOINING  [####------]  46%  25.2/54.0 GiB  89 MiB/s  ETA 13:33 (5m)  10m
-          from node1  18.0/34.0 GiB   52%           from node2    3.0/3.0 GiB  100%
-          from node3   4.2/17.0 GiB   24% STALLED
+    [1/2] node5  bootstrap  JOINING  [#####-----]  52%  52.2/100.0 GiB  89 MiB/s  ETA 13:33 (9m)  10m
+
+          from node1  18.0/34.0 GiB   52%   from node3  21.1/40.0 GiB   53%   from node4  13.1/26.0 GiB   50%
+
+    [1/2] node2  bootstrapped  NORMAL  100.0 GiB in 19m02s  avg 89 MiB/s
+    [1/2] node4  decommissioned  53.2 GiB in 12m40s  avg 72 MiB/s
+
+  A problem replaces the speed on the main line (``STALLED 6m/30m``) and only the peer in cause is detailed under
+  it (``from node3  13.4/33.0 GiB  41%  nothing for 6m    (node1, node2 done)``). The waits without streams (a
+  restart, a config written) are the same single line: ``[2/5] node2  restart  waiting  node4 is DN, waiting for
+  it to come back  9m52s/10m``, then ``[1/5] node1  restarted  NORMAL after 30s  1m50s``.
 
   Above 30 of them (a node streaming both ways counts twice), one line sums them up: the ones done, the ones
   keeping up and their average, the stalled ones, the ones behind (below half the average of all the ones not
   done, once that is 10%) and the 3 slowest (as many as fit); only the stalled ones and the ones behind are
   detailed under it, 12 at most (the others counted, ``+13 more: 8 STALLED, 5 behind``)::
 
-    [1/1] node3 decommission  LEAVING  [####------]  43%  282.2/648.0 GiB  410 MiB/s  ETA 16:01 (15m)  2h10m
+    [1/1] node3  decommission  LEAVING  [####------]  43%  282.2/648.0 GiB  410 MiB/s  ETA 16:01 (15m)  2h10m
+
           90 peers: 87 ok (avg 44%), 1 STALLED, 2 behind; slowest: node5 0% STALLED, node31 12%
           to node5   0.0/7.2 GiB   0% STALLED   to node31  0.9/7.2 GiB  12%
           to node44  0.9/7.2 GiB  12%

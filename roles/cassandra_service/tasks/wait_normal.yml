@@ -45,7 +45,8 @@
     msg: >-
       {{ 'NORMAL' | community.cassandra.cassandra_normal_wait_line(
            done=true, waited=now().timestamp() | int - _cassandra_normal_start | int,
-           index=_head.index, steps=_head.steps, node=_head.node, operation=_head.operation) }}
+           index=_head.index, steps=_head.steps, node=_head.node, operation=_head.operation,
+           elapsed=(now().timestamp() | int - _cassandra_op_start | int) if _cassandra_op_start is defined else 0) }}
   when:
     - _cassandra_normal_said | bool  # after its progress lines
     - cassandra_service_netstats.mode | default('') == 'NORMAL'

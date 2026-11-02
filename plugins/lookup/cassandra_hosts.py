@@ -272,17 +272,15 @@ DCS_NAMED = 3
 
 
 def summary(group, nodes, dcs, absent=0):
-    """"prod  5 nodes  2 DCs (dc1, dc2)": the fields two spaces apart; nodes, how many hosts of the group are part
-    of the cluster; dcs: their datacenters (named up to DCS_NAMED, counted beyond); absent: the hosts marked
-    cassandra_node_state=absent ("4 nodes + 1 marked absent")."""
-    parts = [group, "%d node%s" % (nodes, "" if nodes == 1 else "s")]
-    if absent:
-        parts[-1] += " + %d marked absent" % absent
+    """"prod  5 nodes  2 DCs (dc1, dc2)": the fields two spaces apart, as the ops callback reads the line; nodes,
+    how many hosts of the group are part of the cluster (the hosts marked cassandra_node_state=absent, absent,
+    are not counted nor said: the status playbook lists them); dcs: their datacenters (named up to DCS_NAMED,
+    counted beyond)."""
+    del absent
     names = sorted(set(str(dc) for dc in dcs))
-    if names:
-        count = "%d DC%s" % (len(names), "" if len(names) == 1 else "s")
-        parts.append(count if len(names) > DCS_NAMED else "%s (%s)" % (count, ", ".join(names)))
-    return "  ".join(parts)
+    count = "%d DC%s" % (len(names), "" if len(names) == 1 else "s")
+    return "  ".join([group, "%d node%s" % (nodes, "" if nodes == 1 else "s"),
+                      count if len(names) > DCS_NAMED or not names else "%s (%s)" % (count, ", ".join(names))])
 
 
 def banner(group, why, nodes, dcs, absent=0):

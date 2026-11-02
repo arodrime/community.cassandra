@@ -1225,12 +1225,12 @@ def test_the_help_playbook_under_the_ops_callback(tmp_path):
     plain = re.sub("\x1b\\[[0-9;]*m", "", output)
     assert "\n==== Nodes " + "=" * 67 + "\n" in plain
     # (the cluster's line is one line, whatever its length: not help text; the commands cut too)
-    assert not [line for line in plain.splitlines() if len(line) > 78 and not line.startswith("CLUSTER ")]
+    assert not [line for line in plain.splitlines() if len(line) > 78]
     rc, output = help_run(tmp_path)  # ANSIBLE_NOCOLOR: the same text, plain
     assert rc == 0 and output == plain, output
     # its first line and its last: the cluster, and how it was picked
     said = [line for line in plain.splitlines() if line.strip()]
-    banner = "CLUSTER cassandra (3 nodes, dc1) | chosen by: the only cluster in the inventory"
+    banner = "cassandra  3 nodes  1 DC (dc1)"
     assert said[0] == banner and said[-1] == banner, plain
 
 
@@ -1256,7 +1256,7 @@ def test_the_help_playbook_of_several_clusters_none_named(tmp_path):
     assert rc == 0 and (tmp_path / "RUNBOOK.md").exists(), output
     rc, output = run(tmp_path, "- import_playbook: community.cassandra.help\n", "-e", "cassandra_hosts=other",
                      INVENTORY=str(tmp_path / "hosts.yml"))
-    assert rc == 0 and output.split("\n")[0] == "CLUSTER other (1 node, dc1) | chosen by: -e cassandra_hosts", output
+    assert rc == 0 and output.split("\n")[0] == "other  1 node  1 DC (dc1)", output
     assert "CLUSTER_GROUP" not in output
 
 
@@ -1346,7 +1346,7 @@ def test_a_task_with_diff_false_shows_no_diff():
     assert shown == []
 
 
-CLUSTER_LINE = "CLUSTER prod (2 nodes, dc1) | chosen by: -e cassandra_hosts"
+CLUSTER_LINE = "prod  2 nodes  1 DC (dc1)"
 CLUSTER_PLAYBOOK = """
 - hosts: localhost
   gather_facts: false
@@ -1397,7 +1397,7 @@ def test_the_cluster_line_with_a_datacenter_only_the_node_knows(tmp_path):
                      "    - ansible.builtin.include_role:\n        name: community.cassandra.cassandra_operation\n"
                      "        tasks_from: cluster_banner.yml\n", INVENTORY=str(tmp_path / "hosts.yml"))
     assert rc == 0, output
-    banner = "CLUSTER prod (2 nodes + 1 marked absent, dc1, dc?) | chosen by: the only cluster in the inventory"
+    banner = "prod  2 nodes  2 DCs (dc1, dc?)"
     assert [line for line in output.splitlines() if line.strip()] == [banner, banner], output
 
 

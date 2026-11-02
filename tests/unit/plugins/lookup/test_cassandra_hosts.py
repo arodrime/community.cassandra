@@ -386,8 +386,13 @@ def test_banner():
     """The cluster, its nodes, its datacenters (named up to 3, counted beyond), two spaces apart; not how the group
     was picked (a disagreement is refused before)."""
     assert banner("prod", BY_GIVEN, 5, ["dc1"] * 5) == "prod  5 nodes  1 DC (dc1)"
-    assert banner("prod", BY_ONLY, 1, ["dc2", "dc1"], absent=1) == "prod  1 node + 1 marked absent  2 DCs (dc1, dc2)"
-    assert banner("prod", BY_ENV, 3, []) == "prod  3 nodes"
+    assert banner("prod", BY_ONLY, 1, ["dc2", "dc1"], absent=1) == "prod  1 node  2 DCs (dc1, dc2)"  # (absent: not said)
+    assert banner("prod", BY_ENV, 3, []) == "prod  3 nodes  0 DCs"
+    # the ops callback's regex for the line
+    import re
+    for line in (banner("prod", BY_GIVEN, 5, ["dc1"] * 5), banner("big", BY_ENV, 60, ["dc%d" % i for i in range(6)]),
+                 banner("prod", BY_GIVEN, 5, ["dc1"] * 5) + "  Cassandra 5.0.9"):
+        assert re.match(r"\S+  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra \S+)?$", line), line
     assert banner("big", BY_ENV, 60, ["dc%d" % i for i in range(6)]) == "big  60 nodes  6 DCs"
     assert banner("big", BY_ENV, 6, ["dc1", "dc2", "dc3"]) == "big  6 nodes  3 DCs (dc1, dc2, dc3)"
 
@@ -399,10 +404,10 @@ def test_lookup_banner(monkeypatch):
                 "n3": {"cassandra_dc": "dc2", "cassandra_node_state": "absent"}}
     groups = {"all": ["n1", "n2", "n3"], "prod": ["n1", "n2", "n3"], "prod_dc1": ["n1", "n2"], "prod_dc2": ["n3"]}
     lookup = "{{ lookup('community.cassandra.cassandra_hosts', banner=true) }}"
-    assert render(lookup, groups=groups, hostvars=hostvars, the_dc="eu") == "prod  2 nodes + 1 marked absent  2 DCs (dc1, eu)"
+    assert render(lookup, groups=groups, hostvars=hostvars, the_dc="eu") == "prod  2 nodes  2 DCs (dc1, eu)"
     assert render(lookup, groups=groups, hostvars={}, cassandra_hosts="prod_dc1") == "prod_dc1  2 nodes  1 DC (dc1)"
     hostvars["n2"]["cassandra_dc"] = trust_as_template("{{ ansible_facts.nope }}")  # only the node knows it
-    assert render(lookup, groups=groups, hostvars=hostvars, ansible_facts={}) == "prod  2 nodes + 1 marked absent  2 DCs (dc1, dc?)"
+    assert render(lookup, groups=groups, hostvars=hostvars, ansible_facts={}) == "prod  2 nodes  2 DCs (dc1, dc?)"
     monkeypatch.setenv(ENV, "prod")
     assert render(lookup, groups=groups, hostvars={}) == "prod  3 nodes  1 DC (dc1)"  # (no inventory dc: the role's default)
 
