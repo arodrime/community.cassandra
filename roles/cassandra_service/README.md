@@ -69,7 +69,7 @@ Role Variables
 * `cassandra_service_wait_for_normal` (default `true`) and
   `cassandra_service_wait_timeout` (seconds, default 600). While the node is
   not NORMAL, a progress line at each read of its mode, as the other waits
-  (`node2 restart  waiting for NORMAL (mode STARTING)  40s/10m`).
+  (`node2  restart  waiting  mode STARTING, waiting for NORMAL  40s/10m`).
 * `cassandra_stream_early_check_interval` (default 10),
   `cassandra_stream_early_time` (default 300) and
   `cassandra_stream_check_interval` (default 30): the wait reads the node

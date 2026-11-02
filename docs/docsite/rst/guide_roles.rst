@@ -276,7 +276,7 @@ gossip and the native transport running, no streams, schema agreement, and the s
 node is only touched when the cluster is healthy, and the run stops at the first node that does not come back
 healthy: a node down (or this node's ports, gossip or native transport not up yet) is waited for up to
 ``cassandra_service_health_timeout`` (600 s),
-with a progress line at each check (``waiting for node4 (10.0.0.4) DN to come back  1m30s/10m``), then the run stops
+with a progress line at each check (``[2/5] node2  restart  waiting  node4 is DN, waiting for it to come back  1m30s/10m``), then the run stops
 (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same checks on
 its own, changing nothing, and fails when there is a problem, so it can be scheduled. It also reads every node's
 clock, as ``sync_clocks --check`` does (the Clocks section below),
@@ -291,8 +291,8 @@ a verdict), then the warnings of the cluster; a clock not in sync, or not read, 
     NOT HEALTHY  my_cluster  2 nodes checked, 1 problem
       clocks:  node2 OFF (CLOCKS above says why)
     TO DO
-      1. bring the clocks in sync (sync_clocks; --check first shows what it would do and changes nothing):
-         ansible-playbook -i inventory community.cassandra.sync_clocks --check
+      1. bring the clocks in sync with sync_clocks (--check first shows what it would do and changes nothing):
+         ansible-playbook -i inventory community.cassandra.sync_clocks
 ``status`` only shows the ring as one node sees it (the first that answers, of ``cassandra_target_nodes`` if given), per
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.

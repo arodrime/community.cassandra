@@ -468,8 +468,8 @@ def test_report_a_clock_not_in_sync_once_with_the_way_out():
         "NOT HEALTHY  my_cluster  3 nodes checked, 1 problem",
         "  clocks:  n2 OFF, n3 NO TIME SYNC (CLOCKS above says why)",
         "TO DO",
-        "  1. bring the clocks in sync (sync_clocks; --check first shows what it would do and changes nothing):",
-        "     ansible-playbook -i inv.yml community.cassandra.sync_clocks --check",
+        "  1. bring the clocks in sync with sync_clocks (--check first shows what it would do and changes nothing):",
+        "     ansible-playbook -i inv.yml community.cassandra.sync_clocks",
     ]
     # with a node down too: the clocks after the ring, their item last
     per_host["n1"] = findings("n1", [view("n1", node("10.0.0.1"), node("10.0.0.2", status="D"), node("10.0.0.3"))]) + [clocks]

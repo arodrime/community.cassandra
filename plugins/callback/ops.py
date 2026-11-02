@@ -34,7 +34,7 @@ description:
     C(IMPORT ... FAILED), C(SELF-CHECK FAILED), a
     C(CHECK) with a node that C(failed) and a progress line that stalled or failed as an error; C(NOTE), the
     progress lines (C([1/2] node5 ...), and the waits for nodes down or a node to be NORMAL, C(... waiting for ...  1m30s/10m)),
-    the phase lines (ending with C(...)) and the first line of a plan or a screen (C(PLAN  ...), C(ADD NODE  ...))
+    the phase lines (ending with C(...)) and the first line of a plan or a screen (C(ADD NODE  ...), C(REFUSED  ...))
     in O(progress_color). The lines of an informative summary
     (a task that also sets the task variable C(cassandra_output_info) to C(true), a literal like C(cassandra_output))
     in O(progress_color) too, but for its C(WARNING) lines and its lines with a mark of their own. The lines
@@ -49,8 +49,8 @@ description:
     as a change, C(1 NODE DOWN), C(1 NODE NOT REACHED) as an error; a ring that differs from the inventory, a
     C(WARNING  ...) line under the verdict, as a warning; the rows of its table (C( DN  10.0.0.5 ...)) by the
     node's state, down as an error, joining, leaving or moving as a change. The messages themselves stay plain text.
-  - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(PLAN  ...),
-    C(REFUSED  ...), C(READY  ...), C(IMPORT <cluster> ...), or a plan's title, the operation in capitals (C(ADD NODE  ...)))
+  - Rules mark the blocks out. A heavy one (C(=====)) above a plan or a screen (its first line C(REFUSED  ...),
+    C(READY  ...), C(IMPORT <cluster> ...), or a plan's title, the operation in capitals (C(ADD NODE  ...)))
     and around a recap (C(DONE  ...), C(FAILED  ...), C(STOPPED at ...), C(WAY OUT  ...), C(CHECK  ...), C(NOTHING TO DO  ...),
     C(HEALTHY  ...), C(NOT HEALTHY  ...)), above the C(status) playbook's report and around its
     verdict, its last line (and the warning under it). A light one (C(-----)) for each empty line inside them (the blank lines of the status
@@ -162,7 +162,7 @@ _PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
 _BANNER = re.compile(r".+?  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra .+)?$")
 # a wait outside a rolling operation (no [i/n]): for nodes down, for a node to be NORMAL
 _WAIT = re.compile(r"\S+  \S.*  (waiting  .*  \d+[smhd]\S*/\d+[smhd]\S*|(all back|NORMAL) after \d\S*)$")
-# the first line of a plan or a screen ("PLAN  ...", "add_node on cluster ..."): as the progress lines
+# the first line of a plan or a screen ("ADD NODE  ...", "REFUSED  ..."): as the progress lines
 PLAN_COLOUR = "PROGRESS"
 _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
 # the colour of a message line by its start, the lines indented under it the same

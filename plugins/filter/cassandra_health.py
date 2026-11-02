@@ -289,8 +289,8 @@ def _report_todo(rows, names, unreachable, absent, counted, topology_command):
         todo.append("wait for the streams to end (nodetool netstats), then run this again")
     clocks = [k for k in rows if k[0] == "clocks"]
     if clocks:
-        todo.append({"text": "bring the clocks in sync (sync_clocks; --check first shows what it would do and changes"
-                             " nothing)", "command": clocks[0][2]})
+        todo.append({"text": "bring the clocks in sync with sync_clocks (--check first shows what it would do and changes"
+                             " nothing)", "command": clocks[0][2].replace(" --check", "")})
     return todo
 
 
