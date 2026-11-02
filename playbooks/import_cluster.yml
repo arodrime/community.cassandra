@@ -9,7 +9,8 @@
 # secrets.yml, vaulted when a vault password file is set) and a report.
 #
 # A re-import reads the cluster from the inventory and keeps the files it did
-# not write; --check --diff shows its changes first.
+# not write; --check --diff shows its changes first. A DataStax Enterprise or
+# ScyllaDB node is refused before anything is written: Apache Cassandra only.
 #
 # Options and defaults: ansible-playbook community.cassandra.help -e help_topic=import_cluster
 
@@ -180,6 +181,38 @@
       ansible.builtin.set_fact:
         import_cluster_given: "{{ ansible_play_hosts_all }}"  # unreachable ones too, for the errors
       run_once: true
+
+    # DataStax Enterprise and ScyllaDB answer nodetool status too: what runs on the given nodes, before the ring
+    # is read (files/import_distribution.sh: the java processes' main class, the dse and scylla commands and
+    # configuration directories, their versions; nothing started)
+    - name: Read what runs on the given nodes
+      ansible.builtin.shell: |
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/files/import_distribution.sh') }}
+        # nothing known runs here: a DataStax Enterprise build answers nodetool with a four-number
+        # ReleaseVersion (4.0.0.6816)
+        [ -z "$dist" ] && echo "release=$({{ _cassandra_service_nodetool }} version 2>/dev/null | sed -n 's/^ReleaseVersion: //p')"
+        exit 0
+      register: import_cluster_distribution
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read only
+
+    - name: Refuse a DataStax Enterprise or ScyllaDB cluster
+      ansible.builtin.assert:
+        that: _refused | length == 0
+        fail_msg: "{{ _refused | join(_nl) }}"
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _read: >-
+          {%- set out = {} -%}
+          {%- for h in import_cluster_given if hostvars[h].import_cluster_distribution.stdout is defined -%}
+          {%-   set _ = out.update({h: hostvars[h].import_cluster_distribution.stdout}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _refused: "{{ _read | community.cassandra.cassandra_import_unsupported }}"
 
     - name: Read the ring
       community.cassandra.cassandra_status:
@@ -440,7 +473,13 @@
         for p in $(pgrep -x java); do
           tr '\0' '\n' < /proc/$p/cmdline | grep -qx org.apache.cassandra.service.CassandraDaemon && { pid=$p; break; }
         done
-        [ -n "$pid" ] || exit 3
+        # DataStax Enterprise or ScyllaDB instead (refused by the next task): what runs here, and its version
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/files/import_distribution.sh') }}
+        # (nothing known runs here: a DataStax Enterprise build answers nodetool with a four-number ReleaseVersion)
+        [ -n "$pid" ] || {
+          [ -z "$dist" ] && echo "release=$({{ _cassandra_service_nodetool }} version 2>/dev/null | sed -n 's/^ReleaseVersion: //p')"
+          exit 3
+        }
         cfg=$(tr '\0' '\n' < /proc/$pid/cmdline | sed -n 's#^-Dcassandra.config=\(file://\)\?##p' | head -1)
         echo "config=$cfg"
         # its version from its jar on the classpath (apache-cassandra-4.1.5.jar), else nodetool (a JVM to start:
@@ -545,6 +584,24 @@
       changed_when: false
       failed_when: false
       check_mode: false
+
+    # a node found in the ring, or re-imported, that runs DataStax Enterprise or ScyllaDB: refused as the given ones
+    - name: Refuse a DataStax Enterprise or ScyllaDB node
+      ansible.builtin.assert:
+        that: _refused | length == 0
+        fail_msg: "{{ _refused | join(_nl) }}"
+        quiet: true
+      run_once: true
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _read: >-
+          {%- set out = {} -%}
+          {%- for h in ansible_play_hosts if hostvars[h].import_cluster_running.stdout is defined -%}
+          {%-   set _ = out.update({h: hostvars[h].import_cluster_running.stdout}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _refused: "{{ _read | community.cassandra.cassandra_import_unsupported }}"
 
     - name: Work out the series and the conf dir
       ansible.builtin.set_fact:
