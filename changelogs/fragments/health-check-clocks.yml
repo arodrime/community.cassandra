@@ -1,0 +1,2 @@
+minor_changes:
+  - health_check - a ``CLOCKS`` block shows each node's clock as ``sync_clocks --check`` does (its time sync daemon, source, offset and error bound, a verdict), read-only; a clock not in sync, or not read, is a problem of the report, with ``sync_clocks`` as the way out. ``-e cassandra_clock_check=false`` leaves the clocks out.

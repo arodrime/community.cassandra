@@ -281,7 +281,21 @@ healthy: a node down (or this node's ports, gossip or native transport not up ye
 ``cassandra_service_health_timeout`` (600 s),
 with a progress line at each check (``waiting for node4 (10.0.0.4) DN to come back  1m30s/10m``), then the run stops
 (``cassandra_service_health_force: true`` goes on anyway, at your own risk). ``health_check`` runs the same checks on
-its own, changing nothing, and fails when there is a problem, so it can be scheduled.
+its own, changing nothing, and fails when there is a problem, so it can be scheduled. It also reads every node's
+clock, as ``sync_clocks --check`` does (the Clocks section below),
+in a ``CLOCKS`` block above its verdict: one line per node (its time sync daemon, its source, offset and error bound,
+a verdict), then the warnings of the cluster; a clock not in sync, or not read, is a problem of the report, with
+``sync_clocks`` as the way out::
+
+    CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms (cassandra_clock_max_offset_ms)
+      node1  ok   chronyd, synchronised to 192.0.2.1, -0.0 ms (±0.7 ms)
+      node2  OFF  chronyd, synchronised to 192.0.2.1, +200.0 ms (±0.7 ms): ahead of its source by 200.0 ms, more than 50.0 ms
+
+    NOT HEALTHY  my_cluster  2 nodes checked, 1 problem
+      clocks:  node2 OFF (CLOCKS above says why)
+    TO DO
+      1. bring the clocks in sync (sync_clocks; --check first shows what it would do and changes nothing):
+         ansible-playbook -i inventory community.cassandra.sync_clocks --check
 ``status`` only shows the ring as one node sees it (the first that answers, of ``cassandra_target_nodes`` if given), per
 datacenter with the nodes up, down, joining, leaving and moving, the total load, and the hosts the inventory and the
 ring do not share; a down node is shown, not an error. ``cassandra_status_raw: true`` adds nodetool's own output.
@@ -830,8 +844,9 @@ move to chrony; an installed but stopped ntpd is not replaced.
 ``create_cluster`` and ``add_node`` check the clocks the same way before they start any node (after ``cassandra_linux``
 started time sync, waiting up to ``cassandra_clock_sync_timeout`` seconds for it to synchronise), the running nodes too
 for ``add_node``. A node off by more than the threshold, or without a synchronised source, stops the run with nothing
-started, and the way out: ``sync_clocks``, or the NTP configuration of these nodes. ``-e cassandra_clock_check=false``
-skips the check, for clocks kept in sync by other means.
+started, and the way out: ``sync_clocks``, or the NTP configuration of these nodes. ``health_check`` shows the
+clocks the same way (its ``CLOCKS`` block), a clock not in sync one of its problems. ``-e cassandra_clock_check=false``
+skips the check and the block, for clocks kept in sync by other means.
 
 chrony is the safer daemon: systemd-timesyncd follows one server, reports the offset of its last poll only, slews a
 smaller offset through the kernel at most 0.5 ms per second (minutes: ``sync_clocks`` says so rather than waiting),

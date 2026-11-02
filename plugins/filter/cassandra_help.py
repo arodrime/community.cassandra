@@ -64,8 +64,9 @@ OPERATIONS = [
                  ("-e cassandra_status_raw=true", "also prints nodetool's own output", "false")],
      "example": ("from one node", ["-e cassandra_target_nodes=<node>"])},
     {"name": "health_check", "theme": "read-only", "guide": "Operation playbooks",
-     "summary": "Checks the cluster from every node (ring, gossip, native transport, streams, schema, ports); fails"
-                " on a problem, so it can be scheduled."},
+     "summary": "Checks the cluster from every node (ring, gossip, native transport, streams, schema, ports,"
+                " clocks); fails on a problem, so it can be scheduled.",
+     "options": [("-e cassandra_clock_check=false", "leaves the clocks out", "true")]},
     {"name": "preflight", "theme": "read-only", "guide": "Operation playbooks",
      "summary": "Checks the nodes against the inventory before a change: settings that must match, racks for the"
                 " token allocator, versions, seeds."},

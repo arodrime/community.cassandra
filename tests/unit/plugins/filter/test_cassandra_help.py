@@ -97,8 +97,9 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
           -e cassandra_target_nodes=node1
 
   ● health_check       Checks the cluster from every node (ring, gossip, native transport, streams,
-                       schema, ports); fails on a problem, so it can be scheduled.
+                       schema, ports, clocks); fails on a problem, so it can be scheduled.
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.health_check
+        -e cassandra_clock_check=false        leaves the clocks out (default: true)
 
   ● preflight          Checks the nodes against the inventory before a change: settings that must
                        match, racks for the token allocator, versions, seeds.
