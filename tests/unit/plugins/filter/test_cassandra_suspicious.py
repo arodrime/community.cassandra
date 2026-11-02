@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_suspicious import (
-    KEPT, SUSPICIOUS, cassandra_suspicious_settings, suspicious)
+    KEPT, SUSPICIOUS, cassandra_suspicious_settings, suspicious, cassandra_restart_blockers)
 
 MEMBERS = ["node4", "node5"]
 AB_WHY = "a node that loses its data would restart empty, without streaming it back"
@@ -96,6 +96,18 @@ def test_replace_flag_left_on_a_member(values, found):
     assert [(t, f) for r, t, f in rows(values)] == found
     assert rows(values, members=["node5"]) == []  # not a member yet: replace_node's own flag
     assert rows(values, members=None) == []  # the ring not read
+
+
+def test_a_replace_flag_is_a_restart_blocker_in_every_plan():
+    # the posture findings are health_check's; a flag that fails the next start is said in the operations' plans
+    nodes = {"node4": {"cassandra_jvm_extra_options": ["-Dcassandra.replace_address=10.0.0.9"],
+                       "cassandra_heap_size": "1G"}}
+    assert cassandra_restart_blockers(nodes, members=["node4"]) == [
+        "WARNING  replace flag -Dcassandra.replace_address=10.0.0.9 in cassandra_jvm_extra_options on node4: " + BOOTSTRAPPED,
+        "  remove -Dcassandra.replace_address=10.0.0.9 from cassandra_jvm_extra_options before any restart"]
+    assert cassandra_restart_blockers(nodes, members=["node5"]) == []  # not a member: replace_node's own flag
+    assert cassandra_restart_blockers(nodes, members=None) == []  # the ring not read
+    assert cassandra_restart_blockers({"node4": {"cassandra_heap_size": "1G"}}, members=["node4"]) == []  # posture only
 
 
 HS = "set cassandra_heap_size"

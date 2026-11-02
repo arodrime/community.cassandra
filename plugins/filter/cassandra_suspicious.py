@@ -236,6 +236,18 @@ def cassandra_suspicious_settings(nodes, members=None):
     return lines + unknown_lines(nodes)
 
 
+def cassandra_restart_blockers(nodes, members=None):
+    """Filter: the findings that make a member's NEXT START fail (a replace flag left on it), as WARNING lines for
+    the plan of every operation (they are not posture: the next restart, planned or not, would fail). Two lines
+    each: "WARNING  <finding>", then what to do. -> lines; none: []."""
+    lines = []
+    for row, names, text, fix in suspicious(nodes, members):
+        if row == "replace_address":
+            lines += ["WARNING  " + text.format(nodes=out.nodes(names)), "  %s before any restart" % fix]
+    return lines
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_suspicious_settings": cassandra_suspicious_settings}
+        return {"cassandra_suspicious_settings": cassandra_suspicious_settings,
+                "cassandra_restart_blockers": cassandra_restart_blockers}
