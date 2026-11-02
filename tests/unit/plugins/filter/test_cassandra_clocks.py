@@ -539,7 +539,7 @@ def test_health_block_a_clock_off_or_not_read_is_a_finding():
                         " source by 200.0 ms, more than 50.0 ms")
     assert lines[3].startswith("  node3  NO TIME SYNC  chronyd installed, not running")
     assert lines[4] == "  node4  NOT READ      its clock could not be read: MODULE FAILURE"
-    assert lines[5].startswith("WARNING - node2's clock is AHEAD by about 200.0 ms")  # Cassandra runs there
+    assert lines[5].startswith("WARNING  node2's clock is AHEAD by about 200.0 ms")  # Cassandra runs there
     assert "\u2192" not in "\n".join(lines)  # no action: health_check does nothing
     assert health["finding"] == {
         "kind": "clocks", "text": "node2 OFF, node3 NO TIME SYNC, node4 NOT READ (CLOCKS above says why)",

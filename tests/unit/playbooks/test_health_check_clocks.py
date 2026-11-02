@@ -116,8 +116,6 @@ def test_every_clock_in_sync(tmp_path, port):
         "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open",
         "",
         "====",
-        "",
-        CLUSTER,
     ]
     assert (tmp_path / "fake" / "log").read_text().count("chronyc -n tracking") == 3  # one read per node
 
@@ -137,7 +135,7 @@ def test_a_clock_off_and_one_not_read_are_a_problem(tmp_path, port):
         " more than 50.0 ms",
     ]
     assert lines[5].startswith("  node3  NOT READ  its clock could not be read: Module result deserialization failed")
-    assert lines[6].startswith("WARNING - node2's clock is AHEAD by about 200.0 ms: the writes it stamped as coordinator")
+    assert lines[6].startswith("WARNING  node2's clock is AHEAD by about 200.0 ms: the writes it stamped as coordinator")
     verdict = lines.index("NOT HEALTHY  my_cluster  3 nodes checked, 1 problem")
     assert lines[verdict - 3:verdict] == ["", "====", ""]
     assert lines[verdict:] == [
@@ -148,8 +146,6 @@ def test_a_clock_off_and_one_not_read_are_a_problem(tmp_path, port):
         "     ansible-playbook -i hosts.ini community.cassandra.sync_clocks --check",
         "",
         "====",
-        "",
-        CLUSTER,
     ]
 
 
