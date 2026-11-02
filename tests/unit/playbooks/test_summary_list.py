@@ -39,7 +39,8 @@ def test_operation_summary_is_a_recap():
     task = load("roles", "cassandra_operation", "tasks", "summary.yml")[0]
     hostvars = {"n1": {"cassandra_op_result": "add done in 5s"}, "n2": {}, "n3": {}}
     variables = dict(cassandra_service_summary_hosts=["n1", "n2", "n3"], hostvars=hostvars, groups={"prod": ["n1", "n2", "n3"]}, cassandra_hosts="prod",
-                     ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster")
+                     ansible_play_hosts_all=["n1", "n2"], ansible_check_mode=False, cassandra_cluster_name="my_cluster",
+                     _seconds=None)
     defaults = load("roles", "cassandra_operation", "defaults", "main.yml")  # the results list: a role default (lazy)
     variables["_cassandra_op_results"] = render(defaults["_cassandra_op_results"], **variables)
     assert variables["_cassandra_op_results"] == [{"node": "n1", "result": "add done in 5s"}, {"node": "n2", "result": "not reached"},

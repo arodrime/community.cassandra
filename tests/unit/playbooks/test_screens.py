@@ -503,7 +503,7 @@ def test_apply_config_recap():
         "node5  not in this run (--limit)"]
     # how long the run took, from its start (the first play)
     hostvars["node3"]["_cassandra_apply_config_start"] = 1000  # an epoch (0 would read as no start)
-    assert re.match(r"^DONE  apply_config  my_cluster  2 applied, .* not in this run [(][0-9dhms]+[)]$", recap(False)[0])
+    assert re.match(r"^DONE  apply_config  my_cluster  2 applied, .* not in this run  [0-9dhms]+$", recap(False)[0])
     # the read-ahead set live on node1, node3 (no restart): the rolling restart to take it, optional, for the cluster
     # as the run named it
     from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import READ_AHEAD_LIVE
