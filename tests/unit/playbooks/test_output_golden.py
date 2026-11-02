@@ -150,9 +150,10 @@ def ruled(output):
     return [re.sub(r"^([-=])\1{3,}$", lambda m: m.group(1) * 4, line) for line in output.splitlines()]
 
 
+# (the clocks left out: this host's time sync is not the test's; test_health_check_clocks shows the CLOCKS block)
 def test_health_check_a_node_down(tmp_path, port):
     rc, output = run(tmp_path, "health_check", True, "-e", "cassandra_storage_port=%d" % port,
-                     "-e", "cassandra_native_transport_port=%d" % port)
+                     "-e", "cassandra_native_transport_port=%d" % port, "-e", "cassandra_clock_check=false")
     assert rc != 0, output  # for scheduling
     assert ruled(output) == [
         CLUSTER,
@@ -172,7 +173,7 @@ def test_health_check_a_node_down(tmp_path, port):
 
 def test_health_check_healthy(tmp_path, port):
     rc, output = run(tmp_path, "health_check", False, "-e", "cassandra_storage_port=%d" % port,
-                     "-e", "cassandra_native_transport_port=%d" % port)
+                     "-e", "cassandra_native_transport_port=%d" % port, "-e", "cassandra_clock_check=false")
     assert rc == 0, output
     assert ruled(output) == [CLUSTER, "", "====", "", "HEALTHY  my_cluster  3 nodes  3 UN, schema agreed, no streams, ports open",
                              "", "====", "", CLUSTER]

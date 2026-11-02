@@ -1,0 +1,53 @@
+---
+# health_check's CLOCKS block, on the nodes of the play at once: each clock as
+# its time sync daemon reports it (clocks_read.yml, as sync_clocks --check
+# shows it: daemon, source, offset, error bound, a verdict), then the warnings
+# of the cluster (a clock ahead, unrelated sources). Read-only: nothing is
+# started, stepped or waited for. A node not in sync, or whose clock could
+# not be read (NOT READ: the node stays in the play), is one finding of the
+# report (cassandra_health_findings), sync_clocks the way out.
+# cassandra_clock_check: false skips the block (clocks kept in sync by other means).
+- name: Read the clocks
+  when: cassandra_clock_check | bool
+  block:
+    - name: Note Cassandra runs here
+      ansible.builtin.set_fact:
+        _cassandra_clock_running: true  # a node of a running cluster: a clock ahead stamps writes (its warning)
+
+    - name: Read and compare the clocks
+      ansible.builtin.include_tasks: clocks_read.yml
+      vars:
+        _cassandra_clock_wait: 0  # nothing just started: one read
+
+    - name: Note what the clocks say
+      ansible.builtin.set_fact:
+        _cassandra_clock_health: >-
+          {{ _cassandra_clock_verdicts | community.cassandra.cassandra_clock_health(unread=_unread, command=_command) }}
+      run_once: true
+      vars:
+        # the nodes whose read failed or did not answer (ignore_unreachable: still in the play), with its message
+        _unread: >-
+          {%- set d = {} -%}
+          {%- for h in ansible_play_hosts if not hostvars[h]._cassandra_clock_read_ok | default(false) | bool -%}
+          {%-   set _ = d.update({h: hostvars[h]._cassandra_clock_last.msg | default('') | string
+                                     | regex_replace('\s+', ' ') | trim}) -%}
+          {%- endfor -%}
+          {{ d }}
+        _command: >-
+          {{ 'sync_clocks' | community.cassandra.cassandra_command(
+               inventory=ansible_inventory_sources, default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
+               hosts=cassandra_hosts | default(''), cwd=lookup('ansible.builtin.env', 'PWD')) }}
+
+    - name: Show the clocks
+      ansible.builtin.debug:
+        msg: "{{ _cassandra_clock_health.lines }}"
+      run_once: true
+      vars:
+        cassandra_output: true  # a block of the report (ops callback)
+        cassandra_output_gap: true  # a blank line above it (the cluster line, or a warning, right before)
+
+    # on every node (the report takes each node's findings; the same finding on all is said once)
+    - name: Count a clock not in sync among the problems
+      ansible.builtin.set_fact:
+        cassandra_health_findings: "{{ cassandra_health_findings | default([]) + [_cassandra_clock_health.finding] }}"
+      when: _cassandra_clock_health.finding is not none
