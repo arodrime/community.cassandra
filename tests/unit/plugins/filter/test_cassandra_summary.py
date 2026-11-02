@@ -124,6 +124,25 @@ def test_a_stop_on_purpose_says_the_cause_the_table_and_the_way_out_once():
         "  progress: .cassandra_progress/x"]
 
 
+def test_the_hint_stays_under_the_failures_own_way_out():
+    # add_node has no resume: the health check's "then resume" becomes "then:" and the hint says how
+    lines = stop(HEALTH, resume=False, hint="run add_node again, the same command: the nodes already in the ring are only checked")
+    assert lines[-3:] == ["WAY OUT  start node4 (the server, then Cassandra), then:",
+                          "  if the server is lost: replace_node; remove_dead_node only as a last resort",
+                          "  run add_node again, the same command: the nodes already in the ring are only checked"]
+
+
+def test_a_failed_command_is_named_with_the_last_line_of_its_stderr():
+    # Ansible's generic words for a failed command: the task's name and its stderr say what happened
+    lines = stop("non-zero return code", resume=True, task="Find the running Cassandra JVM",
+                 stderr="pgrep: no such option\nusage: pgrep [options]")
+    assert lines[0] == ("FAILED at node2: Find the running Cassandra JVM: non-zero return code (usage: pgrep [options])."
+                        " No other node was touched.")
+    # a message of its own: the task's name only
+    assert stop("Timeout waiting for NORMAL", resume=False, task="Wait")[0] == (
+        "FAILED at node2: Wait: Timeout waiting for NORMAL. No other node was touched.")
+
+
 def test_a_task_that_failed_is_failed_with_the_hint_or_the_resume():
     # not one of our stops (no WAY OUT line): FAILED, the way out is the hint given, else the resume, else the status
     lines = stop("Timeout waiting for NORMAL", resume=False, hint="Once fixed, run move_node again.")

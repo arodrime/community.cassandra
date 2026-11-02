@@ -104,6 +104,10 @@ def cassandra_op_recap(results, check=False, cluster="", operation="", action=""
     return out.recap(operation, str(cluster or ""), outcomes, check=check, seconds=seconds)
 
 
+# Ansible's own words for a command that failed: the task's stderr says more
+_GENERIC = re.compile(r"^(non-zero return code|MODULE FAILURE)")
+
+
 def _cause_and_way_out(failure):
     """A failed task's msg (a string or lines) -> (the cause's lines, the way out's lines: from its WAY OUT line
     on, the mark removed from the first; none: [])."""
@@ -118,12 +122,14 @@ def _cause_and_way_out(failure):
 
 def cassandra_stop_block(results, node, failure, operation="", action="", cluster="", check=False, hint="",
                          resume=True, progress_file="", inventory=None, default_inventory=None, hosts="", cwd=None,
-                         batch=False):
+                         batch=False, task="", stderr=""):
     """The end of a run that stopped at node: results, the nodes' results (cassandra_op_result, as cassandra_op_recap);
     failure, the failed task's msg: its cause, and its way out from its WAY OUT line on when it has one (one of our
     stops: the block says STOPPED), else FAILED, and the way out is hint (cassandra_service_resume_hint) or, with
     resume, the run's command plus -e cassandra_rolling_resume=true (inventory, default_inventory, hosts, cwd: see
-    cassandra_command), the progress file's path under it; batch: the nodes done at the same time.
+    cassandra_command), the progress file's path under it; batch: the nodes done at the same time; task, stderr: the
+    failed task's name and stderr, said in a FAILED head when the cause is Ansible's generic one ("non-zero return
+    code"); a hint stays under the failure's own WAY OUT (add_node has no resume: "run add_node again").
     -> lines: ["STOPPED at node2: node4 (10.0.0.4, r1) is DN, seen from node1 and node2, 10m29s waited
     (cassandra_service_health_timeout 600s). No other node was touched.", "", "  node1  restarted  1m50s", "  node2
     not done  cluster unhealthy", "  node3..node5  not touched", "", "WAY OUT  start node4 (the server, then
@@ -132,7 +138,11 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     cause, way_out = _cause_and_way_out(failure)
     verdict = "STOPPED" if way_out else "FAILED"
     touched = ("The nodes done at the same time: as in the table." if batch else "No other node was touched.")
-    head = ["%s at %s: %s" % (verdict, node, cause[0] if cause else "a task failed (see above)")]
+    first_cause = cause[0] if cause else "a task failed (see above)"
+    if not way_out and task:
+        detail = [line.strip() for line in str(stderr or "").split("\n") if line.strip()]
+        first_cause = "%s: %s" % (task, first_cause) + (" (%s)" % detail[-1] if detail and _GENERIC.match(first_cause) else "")
+    head = ["%s at %s: %s" % (verdict, node, first_cause)]
     head += ["  " + line for line in cause[1:]]
     head[-1] += ("" if head[-1].endswith((".", "!", "?")) else ".") + " " + touched
     table = out.recap(operation, str(cluster or ""), outcomes, check=check, head=False, causes=False)
@@ -143,6 +153,8 @@ def cassandra_stop_block(results, node, failure, operation="", action="", cluste
     if not way_out:
         way_out = [hint.strip() if hint else ("fix it, then resume:" if command else
                    "fix it, then check where the cluster stands (the status playbook) before running it again")]
+    elif hint and not command:  # the failure's own way out ends "then resume": the hint says how
+        way_out = [re.sub(r",? then resume:?$", ", then:", way_out[0])] + way_out[1:] + [hint.strip()]
     first = way_out[0]
     if command and not first.endswith(":"):
         first += ":"

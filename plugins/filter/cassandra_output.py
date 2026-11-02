@@ -119,7 +119,7 @@ def cassandra_normal_wait_line(mode, waited=0, timeout=0, index=0, steps=0, node
     mode = str(mode or "").upper()
     if done:
         head = out.step_head(index, steps, node, out.done_word(operation))
-        took = out.duration(elapsed) if elapsed is not None else ""
+        took = out.duration(elapsed) if elapsed else ""  # none or 0: not in a rolling operation
         return "  ".join(x for x in [head, "NORMAL after %s" % out.duration(waited), took] if x)
     if mode in _MODE_STATE:
         what = "%s, waiting for UN" % _MODE_STATE[mode]

@@ -207,7 +207,7 @@ _BLOCK = re.compile(r"SELF-CHECK FAILED  ")
 _STEP = re.compile(r"\[\d+/\d+\] \S+  ")
 # a progress line still going, rewritten in place on a terminal: a bar, a wait, a pause; any other is frozen (the
 # step over, STALLED, FAILED...)
-_GOING = re.compile(r"  (\[[#-]+\]|waiting\b|no progress\b|all sent, finishing)")
+_GOING = re.compile(r"  (\[[#-]+\]|waiting\b|no progress\b|all sent, finishing|STALLED \d)")
 # the figures of a progress line (a bar, a duration, a size, a speed, a percent, a time): without them, its state
 _FIGURES = re.compile(r"\[[#-]+\]|(?:\d+[smhd])+\b|[\d.:,]+(?:\s*(?:[KMGT]iB(?:/s)?|%))?")
 LOG_EVERY = 300  # seconds between two lines of a step going on, in a log or a pipe (a change of state: at once)
@@ -544,8 +544,8 @@ class CallbackModule(DefaultCallback):
 
     def _progress_block(self, texts):
         """A node's progress line, the other ends of its streams under it. On a terminal, rewritten in place
-        while the step goes on (the previous block of the same node cleared first); a frozen line (the step over,
-        STALLED, FAILED: not _GOING) replaces the going block and stays; the block of another node starts under
+        while the step goes on, STALLED included (the previous block of the same node cleared first); a frozen
+        line (the step over, FAILED: not _GOING) replaces the going block and stays; the block of another node starts under
         what is there. In a log or a pipe: the first line of a node, then one every LOG_EVERY seconds and every
         change of state (a terminal's log file gets those too)."""
         texts = [t if t.strip() else "" for t in texts]

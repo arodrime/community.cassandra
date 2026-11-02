@@ -82,6 +82,7 @@
                'the batch ' ~ _todo | join(', '), ansible_failed_result.msg | default(''), check=ansible_check_mode,
                cluster=cassandra_cluster_name | default(''), operation=cassandra_service_summary_operation | default(''),
                action='cleanup', resume=cassandra_progress_file is defined, progress_file=cassandra_progress_file | default(''),
+               task=ansible_failed_task.name | default(''), stderr=ansible_failed_result.stderr | default(''),
                hint=cassandra_service_resume_hint | default('' if cassandra_progress_file is defined
                                                             else 'clean up this batch and the ones after it with the cleanup playbook (--limit those nodes)'),
                batch=true, **_cassandra_run_command_args) }}

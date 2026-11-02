@@ -641,9 +641,9 @@ def test_progress_lines_are_recognised():
 
 
 def test_progress_on_a_terminal_rewritten_in_place_until_frozen():
-    """A node's block rewritten in place (cursor up, cleared to the end of the screen) while it goes on; the frozen
-    line (done, STALLED) replaces the going block and stays; a going line after a frozen one goes under it;
-    another node's block starts under what is there."""
+    """A node's block rewritten in place (cursor up, cleared to the end of the screen) while it goes on, STALLED
+    included (one block per node, not one line per check); the frozen line (done) replaces the going block and
+    stays; a going line after a frozen one goes under it; another node's block starts under what is there."""
     import io
     callback = quiet_callback(tty=True)
     callback._gap = True
@@ -664,9 +664,9 @@ def test_progress_on_a_terminal_rewritten_in_place_until_frozen():
     assert out.getvalue() == (
         "\n".join(going("node5", 50)) + "\n"
         + up + "\n".join(going("node5", 51)) + "\n"
-        + up + "\n".join(STALLED) + "\n"  # frozen: the next one goes under it
-        + "\n".join(STALLED) + "\n"
-        + "\n".join(going("node5", 56)) + "\n"
+        + up + "\n".join(STALLED) + "\n"  # still going: the next check rewrites it
+        + up + "\n".join(STALLED) + "\n"
+        + up + "\n".join(going("node5", 56)) + "\n"
         + up + DONE[0] + "\n"
         + "\n" + "\n".join(going("node6", 0, step=2)) + "\n")  # another node: a blank line (the gap), under
     # the log file: as a pipe gets it (the first line, each change of state)
