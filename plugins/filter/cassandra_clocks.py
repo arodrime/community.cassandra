@@ -33,6 +33,9 @@ cassandra_clock_verdicts: the nodes' probes, their date samples and context
 cassandra_clock_lines: the verdicts -> the table, one line per node.
 cassandra_clock_refusal: the verdicts -> the REFUSED block of a start
     (create_cluster, add_node), with the way out.
+cassandra_clock_health: the verdicts -> health_check's CLOCKS block (the
+    table, the warnings) and its finding for the report when a node is not
+    in sync.
 cassandra_clock_nodes: the nodes whose clock was read (clocks_read.yml), as
     cassandra_clock_verdicts takes them.
 """
@@ -753,6 +756,38 @@ def cassandra_clock_lines(verdicts, actions=True):
     return [("  %s  %s  %s" % (r[0].ljust(width[0]), r[1].ljust(width[1]), r[2])).rstrip() for r in rows]
 
 
+def _unread_rows(unread):
+    """{node: why} of the nodes that answered but whose clock could not be read -> their rows, as
+    cassandra_clock_lines takes them (NOT READ)."""
+    return [{"node": n, "verdict": "unread", "text": "its clock could not be read", "why": str(why or ""),
+             "action": "manual", "running": False} for n, why in sorted((unread or {}).items())]
+
+
+def cassandra_clock_health(verdicts, unread=None, command=""):
+    """The verdicts of health_check's nodes (and {node: why} of the clocks not read) -> {lines, finding}: its
+    CLOCKS block (what in sync means, one line per node as sync_clocks shows it, the warnings of the cluster)
+    and, when a node is not in sync or not read, the finding of its report ({kind: clocks, text, command}: the
+    nodes and their verdicts, sync_clocks as the way out; None when every clock is in sync).
+    e.g. (verdicts with node1 ok and node2 off, command="ansible-playbook community.cassandra.sync_clocks") ->
+    {lines: ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within 50 ms
+    (cassandra_clock_max_offset_ms)", "  node1  ok   chronyd, ...", "  node2  OFF  chronyd, ..."],
+    finding: {kind: "clocks", text: "node2 OFF (CLOCKS above says why)", command: "ansible-playbook
+    community.cassandra.sync_clocks --check"}}."""
+    verdicts = verdicts or {}
+    rows = list(verdicts.get("nodes", [])) + _unread_rows(unread)
+    lines = ["CLOCKS  in sync: synchronised to a source, offset plus the daemon's error bound within %g ms"
+             " (cassandra_clock_max_offset_ms)" % verdicts.get("max_ms", 50)]
+    lines += cassandra_clock_lines({"nodes": rows}, actions=False)
+    lines += cassandra_output.warning_lines(verdicts.get("warnings", []))
+    bad = [v for v in rows if v["verdict"] != "ok"]
+    if not bad:
+        return {"lines": lines, "finding": None}
+    said = ", ".join("%s %s" % (v["node"], VERDICT_WORDS.get(v["verdict"], v["verdict"])) for v in bad)
+    return {"lines": lines, "finding": {
+        "kind": "clocks", "text": said + " (CLOCKS above says why)",
+        "command": (command or "ansible-playbook community.cassandra.sync_clocks") + " --check"}}
+
+
 def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", check=False, later_ok=False, unread=None):
     """The verdicts of a start (create_cluster, add_node) -> its REFUSED block (under check: what a real run would refuse),
     the nodes not in sync, why, and the way out; [] when every node is. check (--check started no time sync),
@@ -762,9 +797,7 @@ def cassandra_clock_refusal(verdicts, operation="", cluster="", command="", chec
     Output: [str]. e.g. (verdicts with node2 off, cluster="my_cluster") -> ["REFUSED  clocks  my_cluster  nothing
     was started", "  node2  OFF  chronyd, ...", "", ..., "TO DO", ...]."""
     verdicts = verdicts or {}
-    bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"]
-    bad += [{"node": n, "verdict": "unread", "text": "its clock could not be read", "why": str(why or ""),
-             "action": "manual", "running": False} for n, why in sorted((unread or {}).items())]
+    bad = [v for v in verdicts.get("nodes", []) if v["verdict"] != "ok"] + _unread_rows(unread)
     later = [v["node"] for v in bad if (check or later_ok) and v["verdict"] == "no_sync" and v["action"] != "manual"
              and (later_ok or not v["running"])]  # (before a wipe: every node stopped, then set up)
     bad = [v for v in bad if v["node"] not in later]
@@ -824,5 +857,5 @@ class FilterModule(object):
                 "cassandra_clock_wait_line": cassandra_clock_wait_line,
                 "cassandra_clock_in_sync": cassandra_clock_in_sync,
                 "cassandra_clock_verdicts": cassandra_clock_verdicts, "cassandra_clock_lines": cassandra_clock_lines,
-                "cassandra_clock_refusal": cassandra_clock_refusal,
+                "cassandra_clock_refusal": cassandra_clock_refusal, "cassandra_clock_health": cassandra_clock_health,
                 "cassandra_clock_nodes": cassandra_clock_nodes}

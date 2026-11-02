@@ -4,12 +4,11 @@
 #   ansible-playbook community.cassandra.health_check
 #
 # Each node checks the ring, gossip, the native transport, streams, schema
-# agreement and the ports. The report starts with the verdict, HEALTHY or NOT
-# HEALTHY, then each problem once and what to do; then SETTINGS TO REVIEW, the
-# settings of the inventory that weaken the cluster (no authentication on a
-# reachable address, a heap too small, a failure policy ignore, a replace flag
-# left on a member, auto_bootstrap false), two lines each: why it matters, what
-# to do and how to keep it on purpose (cassandra_settings_kept_on_purpose).
+# agreement and the ports, and reads its clock (CLOCKS, as sync_clocks shows
+# it). The report starts with the verdict, HEALTHY or NOT HEALTHY, then each
+# problem once and what to do; then SETTINGS TO REVIEW, the inventory settings
+# that weaken the cluster (no authentication on a reachable address, a heap too
+# small, a failure policy ignore, a replace flag left, auto_bootstrap false).
 #
 # Fails on a problem (non-zero exit), so it can be scheduled.
 #
@@ -93,6 +92,13 @@
         cassandra_service_health_report_only: true
         _cassandra_health_no_wait: true  # a report: one read, no waiting for down nodes
         cassandra_service_health_timeout: 5  # (its ports asked for 5s)
+
+    # each node's clock as its time sync daemon reports it (the CLOCKS block); a
+    # clock not in sync is a problem of the report. -e cassandra_clock_check=false skips it
+    - name: Read the clocks
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: cluster_clocks.yml
 
     # the verdict first (HEALTHY or NOT HEALTHY), each problem once with the
     # nodes that saw it, then what to do, then the SETTINGS TO REVIEW block; fails the

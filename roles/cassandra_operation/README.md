@@ -140,7 +140,8 @@ Set in the inventory, as any role variable.
   86400 seconds per node).
 * The clocks: `cassandra_clock_max_offset_ms` (50), `cassandra_clock_step_ms`
   (400), `cassandra_clock_sync_timeout` (180), `cassandra_clock_check`
-  (`true`).
+  (`true`: checked before `create_cluster` and `add_node` start nodes, shown
+  by `health_check`).
 * `cassandra_cql_username` / `cassandra_cql_password`: CQL access for the
   checks that read the schema, when authentication is on.
 

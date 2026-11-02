@@ -249,8 +249,9 @@ argument_specs:
         default: true
         description:
           - Check the clocks before C(create_cluster) and C(add_node) start nodes
-            (refused when not in sync, nothing started). V(false) skips it, for
-            clocks kept in sync by other means.
+            (refused when not in sync, nothing started), and show them in
+            C(health_check) (its CLOCKS block, a clock not in sync a problem).
+            V(false) skips it, for clocks kept in sync by other means.
       cassandra_operation_confirm:
         type: bool
         default: true
