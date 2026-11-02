@@ -938,8 +938,6 @@ def table(rows, indent=""):
             for r in rows]
 
 
-
-
 # --- warnings --------------------------------------------------------------------------------
 
 # The one mark of a warning, everywhere: "WARNING  what" (the keyword first,

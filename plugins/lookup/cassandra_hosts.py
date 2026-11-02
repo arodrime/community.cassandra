@@ -279,7 +279,6 @@ def summary(group, nodes, dcs):
                       count if len(names) > DCS_NAMED or not names else "%s (%s)" % (count, ", ".join(names))])
 
 
-
 def not_given(given, loader, inventory=False):
     """Why a cassandra_hosts is refused (None when it is not): from the inventory (group_vars, host_vars:
     inventory, not -e), the plays' hosts would not see it, the play running on another group than its tasks

@@ -111,11 +111,8 @@ def test_preflight_says_the_cluster_first():
     assert names.index("Say which cluster the run is on") < names.index("Check cassandra_target_nodes")  # before any refusal
     assert "_cassandra_banner_version" not in str(say)  # no version on the line: nothing is read yet
     assert say["ansible.builtin.include_role"]["tasks_from"] == "cluster_banner.yml" and "always" in say["tags"]
-    version = say["vars"]["_cassandra_banner_version"]
-    describe = {"stdout": "Cluster Information:\n\tName: prod\n\tDatabase versions:\n\t\t5.0.9: [10.0.0.1:7000]\n"}
-    assert render(version, cassandra_preflight_describe=describe, _cassandra_preflight_running_nodes=["n1"]) == "5.0.9"
-    assert render(version, cassandra_preflight_describe=describe, _cassandra_preflight_running_nodes=[]) == ""
-    # the banner's line: the lookup's, then the version when it is known
+    # the banner's line: the lookup's; a caller that knows the version adds it
+    assert render(SAY["ansible.builtin.debug"]["msg"], groups=GROUPS) == "prod  2 nodes  1 DC (dc1)"
     line = render(SAY["ansible.builtin.debug"]["msg"], groups=GROUPS, _cassandra_banner_version="5.0.9")
     assert line == "prod  2 nodes  1 DC (dc1)  Cassandra 5.0.9"
 
