@@ -215,8 +215,9 @@ def test_a_deleted_config_file_is_shown_and_written_back(tmp_path, series, delet
     assert cassandra_apply_config_warnings(nodes) == ([{"label": "n2", "text": warning[len("WARNING  "):]}] if keep else [])
     if keep:  # the role run alone says it too
         said = find(ROLE, "Warn that a file kept by hand is missing")
+        mark = "WARNING"  # (the spaces normalised: one after the mark)
         assert " ".join(render(said["ansible.builtin.debug"]["msg"], dict(role, inventory_hostname="n2")).split()) == (
-            "WARNING n2: " + warning[len("WARNING  "):])  # (the spaces normalised)
+            mark + " n2: " + warning[len("WARNING  "):])
 
     # the view of what differs: the file, absent on n2, written whole
     view = cassandra_apply_config_diff([

@@ -5,11 +5,11 @@
 #
 # Each node checks the ring, gossip, the native transport, streams, schema
 # agreement and the ports. The report starts with the verdict, HEALTHY or NOT
-# HEALTHY, then each problem once and what to do; then SETTINGS TO REVIEW, the settings
-# of the inventory that weaken the cluster (no authentication on a reachable
-# address, a heap too small, a failure policy ignore, a replace flag left on a
-# member, auto_bootstrap false), two lines each: why it matters, what to do and
-# how to keep it on purpose (cassandra_settings_kept_on_purpose).
+# HEALTHY, then each problem once and what to do; then SETTINGS TO REVIEW, the
+# settings of the inventory that weaken the cluster (no authentication on a
+# reachable address, a heap too small, a failure policy ignore, a replace flag
+# left on a member, auto_bootstrap false), two lines each: why it matters, what
+# to do and how to keep it on purpose (cassandra_settings_kept_on_purpose).
 #
 # Fails on a problem (non-zero exit), so it can be scheduled.
 #
