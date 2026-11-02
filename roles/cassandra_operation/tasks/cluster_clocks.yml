@@ -30,7 +30,7 @@
           {%- set d = {} -%}
           {%- for h in ansible_play_hosts if not hostvars[h]._cassandra_clock_read_ok | default(false) | bool -%}
           {%-   set _ = d.update({h: hostvars[h]._cassandra_clock_last.msg | default('') | string
-                                     | regex_replace('\s+', ' ') | trim}) -%}
+                                     | regex_replace('\\s+', ' ') | trim}) -%}
           {%- endfor -%}
           {{ d }}
         _command: >-

@@ -902,7 +902,7 @@ def test_keys_typed_during_the_run_do_not_reach_the_shell(tmp_path):
             if not data:
                 break
         output += data
-        if typed == 0 and b"Answer yes to go on" in output:
+        if typed == 0 and b"Answer yes or no" in output:
             time.sleep(1)  # pause drops what was typed before it reads
             os.write(fd, b"yes\r")
             typed, at = 1, time.time()
@@ -1548,7 +1548,9 @@ def test_the_cluster_line_first_and_once(tmp_path, stop):
 def test_the_cluster_line_is_recognised_in_the_progress_colour():
     from ansible_collections.community.cassandra.plugins.callback.ops import colour
     for line in (CLUSTER_LINE, "hostile_cluster  5 nodes  1 DC (dc1)  Cassandra 5.0.9", "prod_eu  12 nodes  2 DCs (dc1, dc2)",
-                 "big  60 nodes  6 DCs  Cassandra 4.0.20", "one  1 node  1 DC (dc1)"):
+                 "big  60 nodes  6 DCs  Cassandra 4.0.20", "one  1 node  1 DC (dc1)",
+                 "prod  5 nodes  1 DC (dc1)  Cassandra 4.1.12, 5.0.9",  # during an upgrade
+                 "Orders EU  5 nodes  1 DC (dc1)  Cassandra 5.0.9"):  # a group name with a space
         assert colour(line) == "cyan", line
     assert colour("prod  2 nodes  1 DC (dc1)  something else") is None
 

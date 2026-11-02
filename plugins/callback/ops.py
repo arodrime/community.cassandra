@@ -159,7 +159,7 @@ def _result(result):
 # a phase line: what the run does now, a block of its own
 _PHASE = re.compile(r"\S.*[^,]\.\.\.$")  # "Checking the cluster (3 nodes)..."
 # the run's first line, the cluster it is on: "prod  5 nodes  1 DC (dc1)  Cassandra 5.0.9" (the version once known)
-_BANNER = re.compile(r"\S+  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra \S+)?$")
+_BANNER = re.compile(r".+?  \d+ nodes?  \d+ DCs?( \(.*\))?(  Cassandra .+)?$")
 # a wait outside a rolling operation (no [i/n]): for nodes down, for a node to be NORMAL
 _WAIT = re.compile(r"\S+  \S.*  (waiting  .*  \d+[smhd]\S*/\d+[smhd]\S*|(all back|NORMAL) after \d\S*)$")
 # the first line of a plan or a screen ("PLAN  ...", "add_node on cluster ..."): as the progress lines
